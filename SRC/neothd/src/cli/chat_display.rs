@@ -27,7 +27,10 @@ pub fn render_context_bar(used: u32, limit: u32) -> Option<String> {
     const WIDTH: u32 = 20;
     let filled = ((pct as f64 / 100.0) * WIDTH as f64).round() as u32;
     let filled = filled.min(WIDTH);
-    let bar: String = "━".repeat(filled as usize) + &"╌".repeat((WIDTH - filled) as usize);
+    // `.as_str()` (not `&`): under `--features matrix-channel`, matrix-sdk-base
+    // pulls `decancer`, whose `impl Add<Translation> for String` makes a bare
+    // `String + &String` ambiguous (the RHS no longer coerces &String→&str).
+    let bar: String = "━".repeat(filled as usize) + "╌".repeat((WIDTH - filled) as usize).as_str();
     Some(format!(
         "  context {bar} {pct}% {}/{}",
         format_tokens(used),

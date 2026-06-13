@@ -120,6 +120,19 @@ pty-subprocess = ["dep:portable-pty"]
 # `neoth ingest pdf <file>` for text-only extraction" error.
 pdf-forms = ["dep:pdfium-render"]
 
+# GOLD-FEAT-10 — Matrix client behind the `matrix-channel` feature (off by
+# default, same precedent as `wasm-plugin-host` / `imap_fetch` / `os-clipboard`).
+# Heavy E2EE tree (vodozemac crypto + ruma + the matrix-sdk-sqlite store). The
+# store shares NEOTH's `links="sqlite3"` native lib via the workspace rusqlite
+# 0.37 pin (matrix-sdk-sqlite needs rusqlite ^0.37) — two sqlite linkers cannot
+# coexist, which is why the rusqlite bump is a hard prerequisite of this feature.
+# Runtime is gated by the operator's `matrix:` credentials block; the cargo
+# feature only decides whether the matrix-sdk backend is compiled in at all. All
+# matrix adapter code is `#[cfg(feature = "matrix-channel")]`; the
+# `ChannelKind::Matrix` variant + `MatrixFormatter` + probe row stay compiled in
+# both configs (pure data, no matrix-sdk dependency).
+matrix-channel = ["dep:matrix-sdk"]
+
 [dependencies]
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
@@ -229,15 +242,6 @@ opendal = { version = "0.56", default-features = false, features = ["services-fs
 # atomic_replace_binary renames it onto the running daemon path.
 # Runtime, not test-only.
 tempfile = "3"
-
-# Pick #36 (Session 14, Agent #4 design-consensus): async-aware
-# Connection wrapper for `views.db`. Eliminates `block_in_place` +
-# per-message `store::open` in `cli/serve.rs`. One `AsyncConnection`
-# runs on a dedicated background thread; `.call()` ships a `!Send`
-# closure that holds the `Transaction` on that thread. The outer
-# Future returned by `.call()` is `Send`, so we can pass an
-# `Arc<AsyncConnection>` into the channel pipeline handler.
-tokio-rusqlite = "0.5"
 
 # Cluster auto-discovery Phase 2 (R-2 SPEC):
 # mDNS service announcer + listener. Pure-Rust, no system zeroconf
@@ -425,7 +429,13 @@ teloxide     = { version = "0.17", default-features = false, features = ["ctrlc_
 # Day-11 (SQLite recall views) -- bundled feature means rusqlite ships its own
 # libsqlite3, no system dep. NEOTH stays self-contained per the hard rule.
 # FTS5 deferred to Day-11b; the bundled build does include it when we want it.
-rusqlite     = { version = "0.31", features = ["bundled"] }
+#
+# GOLD-FEAT-10: pinned to 0.37 (libsqlite3-sys 0.30) so the `matrix-channel`
+# feature's matrix-sdk-sqlite store (rusqlite ^0.37) shares ONE `links="sqlite3"`
+# native lib with us — two rusqlite majors cannot coexist (cargo forbids two
+# crates linking the same native lib). Bumping here is the single source of the
+# sqlite version across the whole workspace.
+rusqlite     = { version = "0.37", features = ["bundled"] }
 
 # V10-08 (Workstream E) — HNSW embedding index. Pure-Rust approximate nearest-
 # neighbour index. Replaces the O(N) cosine scan in memory/embeddings.rs for
@@ -496,6 +506,16 @@ wasmtime = { version = "36", default-features = false, features = ["cranelift", 
 # an `Err` from `Clipboard::new()` at RUNTIME → mapped to `ClipboardUnavailable`
 # (never a panic, never a build failure).
 arboard = { version = "3", default-features = false, features = ["wl-clipboard-rs"], optional = true }
+
+# GOLD-FEAT-10 — Matrix E2EE client (feature `matrix-channel`, off by default).
+# `e2e-encryption` (vodozemac) + `sqlite` (the persistent crypto/state store —
+# REQUIRED for E2EE key continuity across daemon restarts; an in-memory store
+# would regenerate the device identity each restart and break decryption). No
+# `bundled-sqlite` here: NEOTH's own rusqlite 0.37 `bundled` already bundles the
+# now-shared libsqlite3-sys 0.35, so the single native lib is bundled exactly
+# once. TLS is matrix-sdk's internal default — 0.18 exposes no rustls/native-tls
+# feature toggle to set.
+matrix-sdk = { version = "0.18", features = ["e2e-encryption", "sqlite"], optional = true }
 
 # Unix-only: mlock for SecretString pages, umask at daemon startup.
 # Inline libc shim in main.rs covered umask; the libc crate is required for

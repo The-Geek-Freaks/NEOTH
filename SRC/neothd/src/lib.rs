@@ -16,6 +16,14 @@
 // imports the lib via `use neothd::run;` and `crate::*` inside main.rs
 // is now empty (the bin only contains `fn main`).
 
+// GOLD-FEAT-10: matrix-sdk's E2EE async (`get_user_devices` et al.) nests deep
+// enough that evaluating `Send` for a future that awaits it overflows rustc's
+// default recursion limit (128). matrix-sdk itself raises this to 256; the
+// Matrix channel adapter's handler future wraps that, so 512 gives headroom.
+// Harmless for non-matrix builds — it only widens the compile-time recursion
+// budget for trait/`Send` evaluation, never changes runtime behaviour.
+#![recursion_limit = "512"]
+
 // Crate-level clippy lints. The disabled ones are stylistic / documentation
 // nits where the project's chosen formatting (4-space indented continuation
 // lines in doc bullets, explicit `..Default::default()` after partial

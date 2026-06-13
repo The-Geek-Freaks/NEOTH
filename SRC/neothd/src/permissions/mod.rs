@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn cluster_peer_pairing_detail_carries_pub_key_prefix_and_via() {
         let action = Action::ClusterPeerPairing {
-            pub_key_hex: "deadbeef".to_string() + &"00".repeat(28),
+            pub_key_hex: "deadbeef".to_string() + "00".repeat(28).as_str(),
             discovered_via: "hysteria_relay".into(),
         };
         let dec = evaluate(&action, AutonomyLevel::Standard);

@@ -36,6 +36,14 @@ pub mod keet_wal;
 /// SPEC-11 — stateful send-then-edit wrapper for streaming previews + post-reply
 /// corrections. First call sends, later calls edit-in-place + emit `0x38`.
 pub mod live_delivery;
+/// GOLD-FEAT-10 — Matrix E2EE adapter (`matrix-sdk`). Feature-gated: the heavy
+/// crypto tree is only compiled in `--features matrix-channel` builds. The
+/// `ChannelKind::Matrix` variant + `MatrixFormatter` + probe row stay compiled
+/// in every build (pure data, no `matrix-sdk` dependency).
+#[cfg(feature = "matrix-channel")]
+pub mod matrix;
+#[cfg(feature = "matrix-channel")]
+pub mod matrix_client;
 pub mod pears_bridge;
 pub mod probe;
 pub mod rate_limit;

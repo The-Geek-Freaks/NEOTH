@@ -49,8 +49,10 @@ ignore = "0.4"
 
 # V10-06 Pick #35 — Sqlite reader (cq_commons + context_mode_fts5).
 # Bundled feature so the migrator ships without a system sqlite dep,
-# matching `neothd`'s self-contained posture.
-rusqlite = { version = "0.31", features = ["bundled"] }
+# matching `neothd`'s self-contained posture. Pinned to 0.37 in lockstep with
+# `neothd` (GOLD-FEAT-10 / matrix-sdk-sqlite parity) — one workspace, one
+# libsqlite3-sys (the `links="sqlite3"` native lib admits only one version).
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -384,7 +384,10 @@ mod tests {
     fn consult_excerpt_includes_a_matching_token() {
         let vault = tempfile::tempdir().unwrap();
         let dir = vault.path().join("NEOTH").join("Paperless");
-        let body = "# Paperless\n".to_string() + &"x".repeat(500) + " invoice " + &"y".repeat(500);
+        let body = "# Paperless\n".to_string()
+            + "x".repeat(500).as_str()
+            + " invoice "
+            + "y".repeat(500).as_str();
         write_md(&dir, "a.md", &body);
         let r = consult(vault.path(), "NEOTH", "invoice", 5);
         assert_eq!(r.matches.len(), 1);

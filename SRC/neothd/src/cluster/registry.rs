@@ -573,7 +573,7 @@ mod tests {
         let legacy = "\
 peers:
   - pub_key_hex: ".to_string()
-            + &"ab".repeat(32)
+            + "ab".repeat(32).as_str()
             + "
     instance_label: laptop
     addr: 10.0.0.5:443
@@ -765,7 +765,7 @@ peers:
 peers:
   - pub_key_hex: "
             .to_string()
-            + &"ab".repeat(32)
+            + "ab".repeat(32).as_str()
             + "
     instance_label: laptop
     hostname: ''

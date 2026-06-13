@@ -1434,6 +1434,57 @@ pub(crate) fn spawn_channel_adapters(
         (None, None, _) => {}
     }
 
+    // GOLD-FEAT-10 — Matrix inbound via matrix-sdk (feature `matrix-channel`).
+    // Spawns when the homeserver + bot user id + a provider are all present;
+    // the adapter logs in (or restores the persisted device session) lazily on
+    // its first sync. Compiled only in `--features matrix-channel` builds —
+    // without the feature a configured `matrix:` block is surfaced by `neoth
+    // doctor`'s probe row instead of silently ignored. Mirrors the Signal arm.
+    #[cfg(feature = "matrix-channel")]
+    {
+        match (
+            creds.matrix_homeserver.clone(),
+            creds.matrix_user_id.clone(),
+            shared_provider.as_ref(),
+        ) {
+            (Some(homeserver), Some(user_id), Some(provider)) => {
+                let channel = crate::channels::matrix::MatrixChannel::new(
+                    homeserver,
+                    user_id,
+                    creds.matrix_password.clone(),
+                    creds.matrix_store_path.clone().map(std::path::PathBuf::from),
+                );
+                let handler: PipelineHandler = build_channel_handler(
+                    provider.clone(),
+                    config,
+                    writer,
+                    provider_meter,
+                    rate_limiter,
+                    segment_path,
+                    shared_views_conn,
+                    reload_controller,
+                );
+                spawn_channel_run(channel, handler, "Matrix", channel_tasks);
+                info!(
+                    channel = "matrix",
+                    status = "LIVE",
+                    "channel: spawned (matrix-sdk E2EE sync loop)"
+                );
+            }
+            (Some(_), Some(_), None) => warn!(
+                channel = "matrix",
+                status = "CONFIGURED-NOT-STARTED",
+                "Matrix configured but provider unavailable; channel not started"
+            ),
+            (Some(_), None, _) | (None, Some(_), _) => warn!(
+                channel = "matrix",
+                status = "CONFIGURED-NOT-STARTED",
+                "Matrix needs BOTH matrix_homeserver and matrix_user_id; only one supplied — not started"
+            ),
+            (None, None, _) => {}
+        }
+    }
+
     // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
     // verify-token + app-secret + provider are all present. Listens on
     // 127.0.0.1:<whatsapp_webhook_port> (default 8443).

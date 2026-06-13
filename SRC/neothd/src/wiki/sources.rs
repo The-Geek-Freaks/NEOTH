@@ -88,7 +88,13 @@ pub fn prettify_stem(stem: &str) -> String {
             } else {
                 let mut cs = w.chars();
                 match cs.next() {
-                    Some(f) => f.to_ascii_uppercase().to_string() + &cs.as_str().to_ascii_lowercase(),
+                    // `.as_str()` not `&`: decancer (via matrix-sdk-base) adds
+                    // `Add<Translation> for String`, so `String + &String` is
+                    // ambiguous under `--features matrix-channel`.
+                    Some(f) => {
+                        f.to_ascii_uppercase().to_string()
+                            + cs.as_str().to_ascii_lowercase().as_str()
+                    }
                     None => String::new(),
                 }
             }
