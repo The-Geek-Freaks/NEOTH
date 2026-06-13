@@ -12,8 +12,8 @@ use crate::tools::web_search::{self, Provider};
 
 #[derive(Args, Debug, Clone)]
 pub struct SearchArgs {
-    /// Query string.
-    pub query: String,
+    /// Query string. Optional only when `--stats` is given.
+    pub query: Option<String>,
     /// Provider override: `brave` or `tavily`.
     #[arg(long, value_name = "NAME")]
     pub provider: Option<String>,
@@ -24,12 +24,25 @@ pub struct SearchArgs {
     /// Max results (1-20).
     #[arg(long, default_value = "5")]
     pub limit: usize,
+    /// GOLD-ADAPT-ODY-30 — print `web_search` usage analytics (top queries +
+    /// success/fail/cache-hit counters) instead of running a search.
+    #[arg(long)]
+    pub stats: bool,
 
     #[arg(skip)]
     pub output: OutputFormat,
 }
 
 pub async fn run_search(args: SearchArgs) -> Result<()> {
+    if args.stats {
+        return print_search_stats(args.output);
+    }
+    let query = match args.query.clone() {
+        Some(q) => q,
+        None => anyhow::bail!(
+            "neoth search: provide a <query> (or pass --stats for usage analytics)"
+        ),
+    };
     let provider_name = args
         .provider
         .clone()
@@ -47,7 +60,9 @@ pub async fn run_search(args: SearchArgs) -> Result<()> {
             ),
         },
     };
-    let hits = web_search::search(provider, &key, &args.query, args.limit).await?;
+    // GOLD-ADAPT-ODY-29 — go through the disk-LRU cache so a repeated query
+    // inside the TTL window is served free instead of re-billing the provider.
+    let hits = web_search::search_cached(provider, &key, &query, args.limit).await?;
 
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -72,6 +87,41 @@ pub async fn run_search(args: SearchArgs) -> Result<()> {
     Ok(())
 }
 
+/// GOLD-ADAPT-ODY-30 — render `web_search` usage analytics for `--stats`.
+fn print_search_stats(output: OutputFormat) -> Result<()> {
+    use crate::tools::search_analytics::SearchAnalytics;
+    let a = SearchAnalytics::load(&SearchAnalytics::default_path());
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&a)?);
+        }
+        OutputFormat::Table => {
+            let total = a.total();
+            let hit_rate = if total > 0 {
+                a.cache_hit as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            println!("web_search analytics:");
+            println!(
+                "  total: {total}   success: {}   fail: {}   cache_hit: {}",
+                a.success, a.fail, a.cache_hit
+            );
+            println!("  cache hit-rate: {hit_rate:.1}%");
+            println!("  top queries:");
+            let top = a.top_patterns(10);
+            if top.is_empty() {
+                println!("    (none recorded yet)");
+            } else {
+                for (q, c) in top {
+                    println!("    {c:>5}  {q}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,10 +129,11 @@ mod tests {
     #[tokio::test]
     async fn search_unknown_provider_errors() {
         let args = SearchArgs {
-            query: "rust".to_string(),
+            query: Some("rust".to_string()),
             provider: Some("googlebot".to_string()),
             api_key: Some("dummy".to_string()),
             limit: 5,
+            stats: false,
             output: OutputFormat::Json,
         };
         let err = run_search(args).await.unwrap_err();
@@ -97,13 +148,43 @@ mod tests {
         let _env = crate::test_env::lock();
         unsafe { std::env::remove_var("NEOTH_WEB_SEARCH_KEY") };
         let args = SearchArgs {
-            query: "rust".to_string(),
+            query: Some("rust".to_string()),
             provider: Some("brave".to_string()),
             api_key: None,
             limit: 5,
+            stats: false,
             output: OutputFormat::Json,
         };
         let err = run_search(args).await.unwrap_err();
         assert!(err.to_string().contains("no API key"));
+    }
+
+    #[tokio::test]
+    async fn missing_query_without_stats_errors() {
+        let args = SearchArgs {
+            query: None,
+            provider: Some("brave".to_string()),
+            api_key: Some("dummy".to_string()),
+            limit: 5,
+            stats: false,
+            output: OutputFormat::Json,
+        };
+        let err = run_search(args).await.unwrap_err();
+        assert!(err.to_string().contains("provide a <query>"));
+    }
+
+    #[tokio::test]
+    async fn stats_flag_runs_without_a_query() {
+        // `--stats` short-circuits to the analytics printer before any query /
+        // provider / key resolution, so it succeeds with no query.
+        let args = SearchArgs {
+            query: None,
+            provider: None,
+            api_key: None,
+            limit: 5,
+            stats: true,
+            output: OutputFormat::Json,
+        };
+        run_search(args).await.unwrap();
     }
 }

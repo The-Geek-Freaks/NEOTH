@@ -15,14 +15,14 @@ use serde::Deserialize;
 use crate::providers::http_client;
 use crate::secret::SecretString;
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SearchHit {
     pub title: String,
     pub url: String,
     pub snippet: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Provider {
     Brave,
     Tavily,
@@ -34,6 +34,14 @@ impl Provider {
             "brave" => Some(Provider::Brave),
             "tavily" => Some(Provider::Tavily),
             _ => None,
+        }
+    }
+
+    /// Stable lower-snake label — used as part of the `search_cache` key.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Provider::Brave => "brave",
+            Provider::Tavily => "tavily",
         }
     }
 }
@@ -53,6 +61,62 @@ pub async fn search(
     match provider {
         Provider::Brave => brave_search(api_key, query, count).await,
         Provider::Tavily => tavily_search(api_key, query, count).await,
+    }
+}
+
+/// GOLD-ADAPT-ODY-29 — [`search`] with a disk-backed LRU result cache in
+/// front. A repeated `{provider, query, count}` inside the cache TTL is served
+/// from `~/.neoth/cache/search/` instead of re-billing the provider. Set
+/// `NEOTH_SEARCH_CACHE_DISABLED` (any value) to force a live call + skip the
+/// cache entirely. The `count` is clamped the same way [`search`] clamps it, so
+/// the cache key matches the request that would actually be issued.
+pub async fn search_cached(
+    provider: Provider,
+    api_key: &SecretString,
+    query: &str,
+    count: usize,
+) -> Result<Vec<SearchHit>> {
+    // GOLD-ADAPT-ODY-30 — record every invocation (cache_hit / success / fail)
+    // unless analytics are disabled. Best-effort: never breaks a search.
+    let analytics_on = std::env::var_os("NEOTH_SEARCH_ANALYTICS_DISABLED").is_none();
+    let record = |outcome: crate::tools::search_analytics::Outcome| {
+        if analytics_on {
+            use crate::tools::search_analytics::SearchAnalytics;
+            SearchAnalytics::record_to(&SearchAnalytics::default_path(), query, outcome);
+        }
+    };
+    use crate::tools::search_analytics::Outcome;
+
+    if std::env::var_os("NEOTH_SEARCH_CACHE_DISABLED").is_some() {
+        let result = search(provider, api_key, query, count).await;
+        record(if result.is_ok() {
+            Outcome::Success
+        } else {
+            Outcome::Fail
+        });
+        return result;
+    }
+
+    let key_count = count.clamp(1, 20);
+    let cache = crate::tools::search_cache::SearchCache::at_default();
+    let now = crate::tools::search_cache::now_unix_secs();
+    if let Some(hits) = cache.get(provider.as_str(), query, key_count, now) {
+        tracing::debug!(provider = provider.as_str(), "web_search cache hit");
+        record(Outcome::CacheHit);
+        return Ok(hits);
+    }
+    match search(provider, api_key, query, count).await {
+        Ok(hits) => {
+            record(Outcome::Success);
+            if let Err(e) = cache.put(provider.as_str(), query, key_count, &hits, now) {
+                tracing::warn!(error = %e, "web_search cache write failed (non-fatal)");
+            }
+            Ok(hits)
+        }
+        Err(e) => {
+            record(Outcome::Fail);
+            Err(e)
+        }
     }
 }
 
