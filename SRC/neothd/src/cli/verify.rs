@@ -1090,6 +1090,102 @@ mod tests {
             .expect("a compressed segment with an intact marker verifies clean");
     }
 
+    /// GOLD-ARCH-03b end-to-end: redacting a frame INSIDE a sealed compressed
+    /// segment leaves its COMPACTION_MARKER HMAC mismatched (the logical bytes
+    /// changed) — and an operator-signed 0xF3 REDACTION_MARKER whose offsets the
+    /// REAL `scan_and_redact` recorded reclassifies that mismatch to PASS. This
+    /// is the load-bearing proof that the compressed-redaction path records frame
+    /// offsets in the SAME logical-segment coordinate space `verify` walks
+    /// (`header_len + pos`); a raw-file offset here would never overlap the
+    /// window and the authorised redaction would surface as a bogus FAIL.
+    #[tokio::test]
+    async fn run_verify_reclassifies_a_redaction_inside_a_compressed_segment() {
+        use crate::wal::HeaderBuilder;
+        use crate::wal::compaction::{CompactionState, load_or_init_key};
+        use crate::wal::compress::compress_frames;
+        use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_RAW_TEXT};
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{
+            SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN, SegmentHeaderV2,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path();
+        let seg = wal_dir.join("000001.wal");
+        let key_path = wal_dir.join("hmac.key");
+        let key = load_or_init_key(&key_path).unwrap();
+        let from = SEGMENT_HEADER_V2_LEN as u64;
+
+        // 3 data frames (one carrying the topic) + a COMPACTION_MARKER over them.
+        let payloads: [&[u8]; 3] = [b"alpha keep", b"AcmeCorp bravo secret", b"charlie keep"];
+        let mut data = Vec::new();
+        for p in payloads {
+            let h = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, p).build();
+            data.extend_from_slice(&encode_frame(&h, p));
+        }
+        let to = from + data.len() as u64;
+        let mut state = CompactionState::new(&key, from);
+        state.update(&data);
+        let marker = state.finalise_marker(&key, to);
+        let mpayload = serde_json::to_vec(&marker).unwrap();
+        let mh = HeaderBuilder::new(EVENT_TYPE_COMPACTION_MARKER, &mpayload).build();
+        data.extend_from_slice(&encode_frame(&mh, &mpayload));
+
+        // Seal it (zstd blob body) — exactly what finalize_compressed_segment writes.
+        let blob = compress_frames(&data).unwrap();
+        let hdr = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        let mut file = hdr.to_le_bytes().to_vec();
+        file.extend_from_slice(&blob);
+        std::fs::write(&seg, file).unwrap();
+
+        let args = || VerifyArgs {
+            wal_dir: Some(wal_dir.to_path_buf()),
+            key: Some(key_path.clone()),
+            segment: None,
+            since_rotation: false,
+            output: OutputFormat::Json,
+        };
+        // Intact → PASS.
+        run_verify(args())
+            .await
+            .expect("an intact compressed marker verifies clean");
+
+        // Redact the topic frame with the REAL primitive (decompress → redact →
+        // recompress → atomic rewrite). The segment stays a valid sealed v2.
+        let report = crate::wal::redact::scan_and_redact(
+            &seg,
+            crate::wal::redact::payload_contains_topic("acmecorp"),
+        )
+        .expect("redact sealed segment");
+        assert_eq!(report.frames_redacted_count(), 1, "the topic frame is scrubbed");
+
+        // Marker HMAC now mismatches + NO authorisation → FAIL.
+        assert!(
+            run_verify(args()).await.is_err(),
+            "a redacted compressed segment with no 0xF3 authorisation must FAIL",
+        );
+
+        // Operator-signed 0xF3 over the offsets `scan_and_redact` recorded → the
+        // window reclassifies to PASS (real emit signs with <wal_dir>/signing.key).
+        let (rw, rj) = crate::wal::writer::spawn(wal_dir.join("redact-audit.wal")).unwrap();
+        crate::wal::redact::emit_redaction_marker(
+            &rw,
+            &seg,
+            &report.frames_redacted,
+            report.bytes_redacted,
+            "AcmeCorp",
+            "e2e",
+            1700,
+        )
+        .await
+        .unwrap();
+        drop(rw);
+        let _ = rj.await;
+        run_verify(args())
+            .await
+            .expect("operator-signed 0xF3 over the redacted compressed window reclassifies to PASS");
+    }
+
     #[test]
     fn verify_flags_a_corrupt_header_segment_as_tamper_suspect() {
         // GR-007: a segment large enough to carry a header but whose header does
