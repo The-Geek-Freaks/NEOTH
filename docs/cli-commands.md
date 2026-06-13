@@ -1230,17 +1230,79 @@ GOLD-FEAT-07 — inspect the LOWKEY moral-core directives (operator behavioural 
 
 - `--dir <PATH>` — Override the moral-core directory. Defaults to `~/.neoth/moral_core/`
 
+### `neoth moral-core add`
+
+Append a free-text directive to a category (creates the file if missing). This is the "write your own as text" path
+
+- `<CATEGORY>` — Category file stem, `[a-z0-9_-]+`
+- `<DIRECTIVE>` — Directive text (the `- ` bullet prefix is added automatically)
+
+### `neoth moral-core disable`
+
+Disable a category block (renamed to `*.md.disabled`; the loader skips it, so it is not injected). Re-enable with `enable`
+
+- `<CATEGORY>`
+
 ### `neoth moral-core doctor`
 
 Validate the moral-core directory: report presence + block/directive counts, and warn when it is empty or has no directives
+
+### `neoth moral-core enable`
+
+Re-enable a previously disabled category block
+
+- `<CATEGORY>`
+
+### `neoth moral-core init`
+
+Scaffold a starter moral core (honesty + voice + anti-hedging defaults), then show what would be injected. Idempotent unless `--force`
+
+- `--force <FORCE>` — Reset the starter blocks even if the directory already has content
 
 ### `neoth moral-core list`
 
 List the parsed blocks (tag, directive count, source file)
 
+### `neoth moral-core new`
+
+Create an empty category block `<category>.md` with a heading, ready for `add`. (Plain `add` also auto-creates — `new` is for setting a custom heading.)
+
+- `<CATEGORY>` — Category file stem, `[a-z0-9_-]+` (e.g. `honesty`)
+- `--heading <HEADING>` — Block heading; defaults to the capitalised category
+
 ### `neoth moral-core preview`
 
 Print the compact directive text that WOULD be injected at enrichment position 0 (highest priority). Empty when no moral core is configured
+
+### `neoth moral-core remove`
+
+Remove one directive by its 1-based index (as shown by `list`)
+
+- `<CATEGORY>`
+- `<INDEX>`
+
+### `neoth moral-core template`
+
+Manage the built-in directive-template catalog (the "pick a feature" path)
+
+#### `neoth moral-core template add`
+
+Apply a template: append its directives to the matching category file
+
+- `<ID>` — Template id `<category>/<slug>`
+- `--into <INTO>` — Override the target category file stem (defaults to the template's)
+
+#### `neoth moral-core template list`
+
+List the built-in templates, optionally filtered by group
+
+- `--group <GROUP>` — Filter by display group (e.g. `Honesty`, `Voice`, `Latitude`)
+
+#### `neoth moral-core template show`
+
+Print a template's directives without applying it
+
+- `<ID>` — Template id `<category>/<slug>` (e.g. `honesty/no-fabrication`)
 
 ## `neoth n8n`
 
