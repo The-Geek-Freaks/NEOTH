@@ -214,6 +214,13 @@ pub enum DecomposerError {
 
     #[error("task #{index} has an empty title")]
     EmptyTaskTitle { index: usize },
+
+    #[error(
+        "task #{index} title is a placeholder (matched marker {marker:?}) — \
+         the decomposer must emit a concrete imperative title, not a stub \
+         the dispatcher would then try to execute"
+    )]
+    PlaceholderTitle { index: usize, marker: &'static str },
 }
 
 /// Cerebellum LLM trait. Pick #5 wires a real provider (claude_cli,
@@ -393,6 +400,36 @@ pub fn clamp_task_type(raw: &str) -> (TaskType, bool) {
     (clamped, false)
 }
 
+/// Unambiguous placeholder/stub markers that must never appear in a
+/// decomposed task title. Deliberately a CONSERVATIVE subset of
+/// `plan_writer::PLACEHOLDER_TOKENS`: the broad tokens there (`?`,
+/// `...`, `xxx`, `see #`) suit a strict plan-review gate but would
+/// false-reject legit LLM task titles (a concrete title may end in `?`
+/// or `...`). These markers only ever appear in stubs, and each is
+/// long enough not to collide with a real word as a substring
+/// (`tba` ⊄ `database`, `tbd` ⊄ any English word). Case-insensitive.
+const TITLE_PLACEHOLDER_MARKERS: &[&str] = &[
+    "todo:",
+    "todo ",
+    "tbd",
+    "tba",
+    "fixme",
+    "placeholder",
+    "[redacted]",
+    "[fill in",
+    "[unknown",
+];
+
+/// First placeholder marker found in `title` (case-insensitive), or
+/// `None` when the title is concrete. Pure; no I/O.
+fn first_title_placeholder(title: &str) -> Option<&'static str> {
+    let lower = title.to_lowercase();
+    TITLE_PLACEHOLDER_MARKERS
+        .iter()
+        .find(|&&marker| lower.contains(marker))
+        .copied()
+}
+
 /// Validate the task list pre-insert. Catches every dep-shape error
 /// before sqlite touches the tables; if any check fails the whole
 /// decomposition is rejected so the kanban board never holds a
@@ -400,14 +437,18 @@ pub fn clamp_task_type(raw: &str) -> (TaskType, bool) {
 ///
 /// Checks (each maps to one error variant):
 /// 1. Empty titles → `EmptyTaskTitle`
-/// 2. Out-of-range `depends_on` → `DependencyOutOfRange`
-/// 3. Self-dependency → `SelfDependency`
-/// 4. Duplicate `depends_on` entries → `DuplicateDependency`
-/// 5. Dep cycle (DFS visited-set) → `CyclicDependency`
+/// 2. Placeholder/stub titles (`TODO:`, `TBD`, `FIXME`, …) → `PlaceholderTitle`
+/// 3. Out-of-range `depends_on` → `DependencyOutOfRange`
+/// 4. Self-dependency → `SelfDependency`
+/// 5. Duplicate `depends_on` entries → `DuplicateDependency`
+/// 6. Dep cycle (DFS visited-set) → `CyclicDependency`
 pub fn validate_tasks(tasks: &[DecomposedTask]) -> Result<(), DecomposerError> {
     for (i, task) in tasks.iter().enumerate() {
         if task.title.trim().is_empty() {
             return Err(DecomposerError::EmptyTaskTitle { index: i });
+        }
+        if let Some(marker) = first_title_placeholder(&task.title) {
+            return Err(DecomposerError::PlaceholderTitle { index: i, marker });
         }
         let mut seen: Vec<usize> = Vec::with_capacity(task.depends_on.len());
         for &dep in &task.depends_on {
@@ -795,6 +836,32 @@ mod tests {
         let tasks = vec![t("ok", vec![]), t("", vec![])];
         let err = validate_tasks(&tasks).unwrap_err();
         assert!(matches!(err, DecomposerError::EmptyTaskTitle { index: 1 }));
+    }
+
+    #[test]
+    fn validate_tasks_rejects_placeholder_title() {
+        // A lazy LLM emitting a stub title must not reach the kanban —
+        // the dispatcher would otherwise pick it up and "execute" a TODO.
+        let tasks = vec![t("Add login form", vec![]), t("TODO: implement X", vec![1])];
+        let err = validate_tasks(&tasks).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                DecomposerError::PlaceholderTitle { index: 1, marker } if marker == "todo:"
+            ),
+            "TODO-prefixed title must be rejected, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_tasks_accepts_concrete_titles_with_innocuous_substrings() {
+        // "database"/"metadata" must NOT trip the short `tba`/`tbd`
+        // markers; concrete imperative titles pass untouched.
+        let tasks = vec![
+            t("Add database migration for metadata table", vec![]),
+            t("Wire up the standby failover path", vec![0]),
+        ];
+        validate_tasks(&tasks).expect("concrete titles must validate");
     }
 
     #[test]
