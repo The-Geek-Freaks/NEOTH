@@ -266,6 +266,18 @@ pub struct DispatchOutcome {
     pub budget_exhausted: bool,
 }
 
+/// TASK-02 — hard wall-clock ceiling for a single `worker.execute()`
+/// call. A provider that never returns (network hang, wedged local
+/// model, deadlocked CLI subprocess) would otherwise pin its hemisphere
+/// slot for the entire dispatch — and a `neoth code` ONE-SHOT has no
+/// daemon `worker_watch` to reap it. Past this budget the dispatcher
+/// abandons the call (dropping the future cancels the in-flight
+/// request), marks the task `Blocked`, and emits `0x4D WORKER_DIED`.
+/// 300s tracks the default test-timeout ballpark; exposing it as
+/// `freedom.yaml::coding.task_timeout_secs` is a `config/mod.rs`
+/// follow-up (ARCH-04 lane) — kept a const here to stay MY-LANE.
+const WORKER_EXECUTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Run one dispatch pass over the session's BACKLOG tasks. Picks
 /// BACKLOG tasks whose hemisphere has a bound worker, transitions
 /// them to `InProgress`, fires the worker, transitions to `Review`
@@ -395,7 +407,10 @@ pub async fn dispatch_session_with_apply(
                 let worker = workers
                     .get(task.hemisphere)
                     .expect("pick_batch only returns tasks whose hemisphere has a bound worker");
-                worker.execute(task)
+                // TASK-02: hard per-worker timeout. Dropping the timeout
+                // future on Elapsed cancels the in-flight provider call, so
+                // a hung hemisphere can't stall the whole join_all batch.
+                tokio::time::timeout(WORKER_EXECUTE_TIMEOUT, worker.execute(task))
             })
             .collect();
         let exec_results = futures_util::future::join_all(exec_futures).await;
@@ -404,7 +419,37 @@ pub async fn dispatch_session_with_apply(
         // early-stop state (retry_policy / patch_spiral / recent_outputs)
         // and all `conn` writes happen here, one task at a time, so the
         // match arms below are byte-identical to the pre-COR-19 serial loop.
-        for (task, exec_result) in batch.into_iter().zip(exec_results) {
+        for (task, timed_result) in batch.into_iter().zip(exec_results) {
+        // TASK-02: unwrap the per-worker timeout layer first. A hung
+        // worker (Elapsed) is a HARD block — a wall-clock hang is not a
+        // transient retryable error, so it goes straight to Blocked +
+        // 0x4D WORKER_DIED rather than burning the retry rotation. A
+        // worker that finished within budget yields its own Result,
+        // handled byte-identically by the arms below.
+        let exec_result = match timed_result {
+            Ok(r) => r,
+            Err(_elapsed) => {
+                let now_ns = now_unix_ns();
+                if let Err(e) =
+                    store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+                {
+                    tracing::warn!(
+                        task_id = task.task_id.raw(),
+                        error = %e,
+                        "transition InProgress → Blocked (worker timeout) failed"
+                    );
+                }
+                outcome.tasks_blocked += 1;
+                patch_spiral.record(task.task_id, false);
+                warn!(
+                    task_id = task.task_id.raw(),
+                    timeout_secs = WORKER_EXECUTE_TIMEOUT.as_secs(),
+                    "worker.execute() exceeded per-task timeout; Blocked + 0x4D WORKER_DIED"
+                );
+                emit_worker_died_wal(writer_for_progress, &task, WORKER_EXECUTE_TIMEOUT);
+                continue;
+            }
+        };
         match exec_result {
             // QU-01 harte-Kritik fix (Session 28): a refusal can
             // arrive STRUCTURALLY review-ready — the worker emits
@@ -904,6 +949,43 @@ fn emit_kanban_task_progress_wal(
             task_id = task.task_id.raw(),
             error = %e,
             "WAL emit for KANBAN_TASK_PROGRESS failed (non-fatal)"
+        );
+    }
+}
+
+/// TASK-02 — emit `0x4D WORKER_DIED` when a `worker.execute()` is
+/// abandoned at the per-task hard timeout. The daemon `worker_watch`
+/// reaps worker deaths in the long-running serve path, but a `neoth
+/// code` one-shot has no watcher — so the dispatcher emits the same
+/// frame inline when it kills a hung worker. Best-effort, mirroring the
+/// progress emit (sync `try_append_sync`): a failed append logs at warn
+/// and never aborts the dispatch. The payload is a superset of
+/// `worker_watch::emit_worker_died`'s (`worker` + `ts_unix`) so both
+/// emit sites produce frames a `worker_died` consumer can read.
+fn emit_worker_died_wal(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    task: &KanbanTask,
+    timeout: std::time::Duration,
+) {
+    let Some(writer) = writer else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "worker": task.hemisphere.as_str(),
+        "task_id": task.task_id.raw(),
+        "session_id": task.session_id.raw(),
+        "reason": "worker_execute_timeout",
+        "timeout_secs": timeout.as_secs(),
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_WORKER_DIED, &payload);
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(
+            task_id = task.task_id.raw(),
+            error = %e,
+            "WAL emit for WORKER_DIED (timeout) failed (non-fatal)"
         );
     }
 }
@@ -1410,6 +1492,24 @@ mod tests {
         }
     }
 
+    /// A worker that never returns within the dispatcher's per-task
+    /// timeout. Under `#[tokio::test(start_paused = true)]` tokio
+    /// auto-advances virtual time, so the dispatcher's
+    /// `timeout(WORKER_EXECUTE_TIMEOUT, …)` fires long before this
+    /// 1-hour sleep would — no real wall-clock wait. Exercises TASK-02.
+    struct HangingWorker;
+
+    #[async_trait]
+    impl Worker for HangingWorker {
+        async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            Ok(green_outcome())
+        }
+        fn name(&self) -> &'static str {
+            "hanging-worker"
+        }
+    }
+
     fn fresh_db() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("views.db");
@@ -1481,6 +1581,41 @@ mod tests {
             .unwrap();
         assert_eq!(task.task_id, task_id);
         assert_eq!(task.status, TaskStatus::Review);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn worker_timeout_blocks_task_and_does_not_hang() {
+        // TASK-02: a worker.execute() that never returns within
+        // WORKER_EXECUTE_TIMEOUT must NOT pin the dispatch forever — the
+        // dispatcher abandons it, marks the task Blocked, and the run
+        // completes (the one-shot path has no daemon worker_watch to reap
+        // the hang). start_paused lets tokio auto-advance past the 300s
+        // budget with zero real wall-clock wait.
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(Hemisphere::Left, Box::new(HangingWorker));
+
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.tasks_attempted, 1);
+        assert_eq!(outcome.tasks_completed, 0, "a hung worker completes nothing");
+        assert_eq!(outcome.tasks_blocked, 1, "the timed-out task lands Blocked");
+
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(
+            task.status,
+            TaskStatus::Blocked,
+            "timed-out task must be Blocked, not left InProgress"
+        );
     }
 
     #[tokio::test]
