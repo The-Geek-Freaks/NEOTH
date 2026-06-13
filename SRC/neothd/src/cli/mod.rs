@@ -980,7 +980,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Sudomode => {
             autonomy::run_autonomy(
                 autonomy::AutonomyArgs {
-                    action: autonomy::AutonomyAction::FullAuto,
+                    // `neoth sudomode` is the interactive CLI shortcut → no GUI
+                    // pre-confirm; it still runs the TTY y/N gate.
+                    action: autonomy::AutonomyAction::FullAuto { gui_confirmed: false },
                 },
                 global_output,
             )

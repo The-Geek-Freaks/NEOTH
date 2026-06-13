@@ -379,6 +379,14 @@ component PanelHeader inherits VerticalLayout {
 export component SettingsView inherits Rectangle {
     in-out property <SettingsTab> active: SettingsTab.chat;
     in-out property <string> autonomy-current: "standard";
+    // GOLD-FEAT-01c — full-auto (sudomode) toggle. `full-auto-active` reflects the
+    // live posture (Rust sets it from the trust snapshot); `full-auto-pending` is
+    // the GUI-local two-step-confirm state. Enabling fires `full-auto-confirmed`
+    // (→ CLI `autonomy full-auto --gui-confirmed`); disabling fires `full-auto-gated`.
+    in-out property <bool> full-auto-active: false;
+    in-out property <bool> full-auto-pending: false;
+    callback full-auto-confirmed();
+    callback full-auto-gated();
     in-out property <string> provider-current: "claude_cli";
 
     // GR-10 — Safety Rails (from `neoth security safe-mode --json`), rendered in
@@ -1025,6 +1033,59 @@ export component SettingsView inherits Rectangle {
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
                             wrap: word-wrap;
+                        }
+                        // GOLD-FEAT-01c — full-auto (sudomode) toggle. Enabling is a
+                        // deliberate two-step action (button → consequence + confirm);
+                        // disabling is one click (the safe direction). The in-GUI
+                        // confirm IS the consent, so the CLI is invoked with
+                        // --gui-confirmed (the bare CLI path stays TTY-fail-closed).
+                        if !root.full-auto-active && !root.full-auto-pending: NeothButton {
+                            label: "Enable full-auto (sudomode)…";
+                            primary: false;
+                            clicked => {
+                                root.full-auto-pending = true;
+                            }
+                        }
+                        if root.full-auto-pending: Text {
+                            text: "⚠ FULL-AUTO: NEOTH acts WITHOUT asking — shell commands, channel sends, file writes, and token spend happen automatically. (Self-replace · dangerous targets · unsigned plugins stay blocked.)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
+                            wrap: word-wrap;
+                        }
+                        if root.full-auto-pending: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            NeothButton {
+                                label: "Enable full-auto";
+                                clicked => {
+                                    root.full-auto-pending = false;
+                                    root.full-auto-confirmed();
+                                }
+                            }
+                            NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                clicked => {
+                                    root.full-auto-pending = false;
+                                }
+                            }
+                        }
+                        if root.full-auto-active: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "● FULL-AUTO ACTIVE — NEOTH acts without asking.";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.accent-amber;
+                                vertical-alignment: center;
+                            }
+                            NeothButton {
+                                label: "Switch to gated";
+                                primary: false;
+                                clicked => {
+                                    root.full-auto-gated();
+                                }
+                            }
                         }
                     }
                 }

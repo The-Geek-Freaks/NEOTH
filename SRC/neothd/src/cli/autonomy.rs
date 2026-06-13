@@ -48,7 +48,16 @@ pub enum AutonomyAction {
     /// `trust_all_tools` and unsigned-plugin trust are NOT flipped — each needs
     /// its own opt-in). Same effect as `neoth sudomode`.
     #[command(name = "full-auto")]
-    FullAuto,
+    FullAuto {
+        /// Internal: the NEOTH GUI's own explicit two-step confirm dialog
+        /// already obtained operator consent → skip the interactive TTY y/N.
+        /// The consequence banner is still printed and the 0xDD
+        /// SUDOMODE_PRESET_APPLIED audit frame still fires; the security floor is
+        /// unchanged. Hidden so the bare `neoth autonomy full-auto` path stays
+        /// interactive + fail-closed (GR-101 accident-protection).
+        #[arg(long, hide = true)]
+        gui_confirmed: bool,
+    },
 }
 
 /// Pure core of `set`: validate `level`, return the config with the new
@@ -225,8 +234,10 @@ pub async fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()
     match args.action {
         AutonomyAction::Show => run_show(output),
         AutonomyAction::Set { level } => run_set(&level, output).await,
-        AutonomyAction::Gated => run_set_mode(false, output).await,
-        AutonomyAction::FullAuto => run_set_mode(true, output).await,
+        AutonomyAction::Gated => run_set_mode(false, false, output).await,
+        AutonomyAction::FullAuto { gui_confirmed } => {
+            run_set_mode(true, gui_confirmed, output).await
+        }
     }
 }
 
@@ -266,7 +277,7 @@ fn run_show(output: OutputFormat) -> Result<()> {
 /// Headline operating-mode switch: `gated` (safe default) or `full-auto`.
 /// Persists `autonomy` + `skills.enable_all_bundled` atomically, audits the
 /// authority change, and (for full-auto) prints the consequence up front.
-async fn run_set_mode(full_auto: bool, output: OutputFormat) -> Result<()> {
+async fn run_set_mode(full_auto: bool, gui_confirmed: bool, output: OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path().context(
         "load freedom.yaml (run `neoth init` first if this is a fresh install)",
     )?;
@@ -287,7 +298,7 @@ async fn run_set_mode(full_auto: bool, output: OutputFormat) -> Result<()> {
     // so it can never be enabled unattended/scripted. Switching back to GATED —
     // the safe direction — needs no confirmation.
     if full_auto {
-        confirm_full_auto()?;
+        confirm_full_auto(gui_confirmed)?;
     }
     next.save_public_to_default_path()
         .context("persist the operating mode to freedom.yaml")?;
@@ -356,7 +367,9 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     // when stdin is not a TTY). A no-op (already Full) or a de-escalation needs
     // no confirmation.
     if applied == AutonomyLevel::Full && previous != AutonomyLevel::Full {
-        confirm_full_auto()?;
+        // The raw `neoth autonomy set full` path stays interactive (no GUI
+        // pre-confirm) — pass false so it fails closed without a TTY.
+        confirm_full_auto(false)?;
     }
     next.save_public_to_default_path()
         .context("persist the new autonomy level to freedom.yaml")?;
@@ -392,13 +405,22 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
 /// persisted. Prints the consequence, then requires an interactive y/N. Fails
 /// closed when stdin is not a terminal so FULL-AUTO can never be enabled
 /// unattended / from a script.
-fn confirm_full_auto() -> Result<()> {
+fn confirm_full_auto(pre_confirmed: bool) -> Result<()> {
     use std::io::{IsTerminal, Write};
     eprintln!(
         "  ⚠ FULL-AUTO lets NEOTH act WITHOUT asking — shell commands, channel sends, writes,\n\
          \x20   and token spend happen automatically (self-replace / patch-apply / dangerous\n\
          \x20   targets / unsigned plugins stay blocked)."
     );
+    // GOLD-FEAT-01c — a pre-confirmed caller (the NEOTH GUI, which ran its own
+    // explicit two-step confirm dialog BEFORE this call) skips the interactive
+    // TTY y/N: the consequence banner above still printed and the 0xDD audit
+    // frame still fires. The bare CLI path passes pre_confirmed=false, so
+    // `neoth autonomy full-auto` / `set full` stay fail-closed without a TTY
+    // (GR-101 accident-protection preserved for the default, un-flagged path).
+    if pre_confirmed {
+        return Ok(());
+    }
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "refusing to enable FULL-AUTO without an interactive confirmation (stdin is not a \
@@ -445,11 +467,19 @@ mod tests {
         );
     }
 
+    /// GOLD-FEAT-01c: a GUI-pre-confirmed call skips the TTY gate (the GUI ran
+    /// its own explicit two-step confirm), so it must NOT fail closed even
+    /// though the test harness has no TTY.
+    #[test]
+    fn confirm_full_auto_pre_confirmed_skips_tty_check() {
+        confirm_full_auto(true).expect("pre-confirmed must bypass the TTY gate");
+    }
+
     #[test]
     fn confirm_full_auto_fails_closed_when_not_a_tty() {
         // GR-101: enabling FULL-AUTO from a non-interactive stdin (the test
         // harness has no TTY) must be REFUSED, never silently persisted.
-        let err = confirm_full_auto().unwrap_err();
+        let err = confirm_full_auto(false).unwrap_err();
         assert!(
             err.to_string().contains("not a terminal"),
             "must fail closed without a TTY: {err}"

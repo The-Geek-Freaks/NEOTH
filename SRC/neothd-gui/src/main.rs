@@ -1072,6 +1072,74 @@ fn main() -> Result<()> {
         }
     });
 
+    // GOLD-FEAT-01c — operator confirmed enabling full-auto (sudomode) via the
+    // GUI's two-step confirm. The in-GUI confirm IS the consent → invoke the CLI
+    // with --gui-confirmed so it skips the TTY y/N (the bare CLI path stays
+    // fail-closed). The 0xDD SUDOMODE_PRESET_APPLIED audit frame fires in the CLI.
+    let weak_fa_on = window.as_weak();
+    window.on_full_auto_confirmed(move || {
+        let weak = weak_fa_on.clone();
+        std::thread::spawn(move || {
+            let ok = match which_neothd() {
+                Some(bin) => spawn_neothd_plain(&bin)
+                    .arg("autonomy")
+                    .arg("full-auto")
+                    .arg("--gui-confirmed")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false),
+                None => false,
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    if ok {
+                        w.set_full_auto_active(true);
+                        w.set_status_line(
+                            "FULL-AUTO enabled — NEOTH now acts without asking. Switch back any time."
+                                .into(),
+                        );
+                    } else {
+                        w.set_status_line(
+                            "Enabling full-auto failed (is the daemon installed + on PATH?). Still gated."
+                                .into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+
+    // GOLD-FEAT-01c — switch back to GATED (the safe direction → no confirm).
+    let weak_fa_off = window.as_weak();
+    window.on_full_auto_gated(move || {
+        let weak = weak_fa_off.clone();
+        std::thread::spawn(move || {
+            let ok = match which_neothd() {
+                Some(bin) => spawn_neothd_plain(&bin)
+                    .arg("autonomy")
+                    .arg("gated")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false),
+                None => false,
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    if ok {
+                        w.set_full_auto_active(false);
+                        w.set_status_line(
+                            "Switched to GATED — NEOTH asks before sensitive actions.".into(),
+                        );
+                    } else {
+                        w.set_status_line(
+                            "Switching to gated failed (is the daemon installed?).".into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+
     // PF-01-GUI — operator flipped the Skills auto-route toggle. Mutate
     // `skills.always_embed_route` losslessly + drop the reload sentinel, same
     // dispatch path as the cluster mDNS toggle.
@@ -1736,6 +1804,11 @@ fn apply_trust(window: &MainWindow, snap: panel_logic::TrustSnapshot) {
             .collect();
         ModelRc::new(VecModel::from(v))
     };
+    // GOLD-FEAT-01c — reflect the full-auto (sudomode) toggle from the live
+    // autonomy posture (autonomy=full is the proxy for the full-auto preset;
+    // toggling it applies the full preset via the CLI). Compare before the
+    // `.into()` below consumes the string.
+    window.set_full_auto_active(snap.autonomy_level == "full");
     window.set_trust_autonomy_level(snap.autonomy_level.into());
     window.set_trust_autonomy_behavior(snap.autonomy_behavior.into());
     window.set_trust_privacy(to_rows(snap.privacy));

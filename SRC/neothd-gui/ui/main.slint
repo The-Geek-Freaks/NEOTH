@@ -237,6 +237,10 @@ export component MainWindow inherits Window {
     in-out property <int> cluster-listen-port: 49737;
     in-out property <string> cluster-trusted-ssids-summary: "";
     callback cluster-mdns-enabled-changed(bool);
+    // GOLD-FEAT-01c — full-auto (sudomode) toggle, forwarded to SettingsView.
+    in-out property <bool> full-auto-active: false;
+    callback full-auto-confirmed();
+    callback full-auto-gated();
 
     /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
     /// preset tile. Rust shells `neothd preset apply <active>`
@@ -1517,6 +1521,13 @@ export component MainWindow inherits Window {
             cluster-trusted-ssids-summary: root.cluster-trusted-ssids-summary;
             cluster-mdns-enabled-changed(enabled) => {
                 root.cluster-mdns-enabled-changed(enabled);
+            }
+            full-auto-active <=> root.full-auto-active;
+            full-auto-confirmed => {
+                root.full-auto-confirmed();
+            }
+            full-auto-gated => {
+                root.full-auto-gated();
             }
             // G-5 fix: route "← Chat" back to the Chat surface so the
             // operator can leave Settings without hunting for an exit.
