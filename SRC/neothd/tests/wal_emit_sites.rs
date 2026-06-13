@@ -27,10 +27,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// `(const-name, why-it-is-not-yet-wired)`. Keep this list short + justified.
-const RESERVED: &[(&str, &str)] = &[(
-    "EVENT_TYPE_CHANNEL_ACK",
-    "SP-5 C-prime: ack_received deferred until a 2nd production messenger lands",
-)];
+const RESERVED: &[(&str, &str)] = &[
+    (
+        "EVENT_TYPE_CHANNEL_ACK",
+        "SP-5 C-prime: ack_received deferred until a 2nd production messenger lands",
+    ),
+    (
+        "EVENT_TYPE_RISK_GATE_BLOCKED",
+        "GOLD-ADOPT-23: the single 0xCF RISK_GATE_BLOCKED was superseded by the \
+         distinct 0x52..0x55 risk-gate event types; 0xCF stays registered ONLY for \
+         replaying pre-split WALs and intentionally has no new emit site",
+    ),
+];
 
 #[test]
 fn every_event_type_constant_is_wired() {
