@@ -91,9 +91,10 @@ impl ChannelCredsView {
             whatsapp_phone_id: creds.whatsapp_phone_id.is_some(),
             whatsapp_verify_token: creds.whatsapp_verify_token.is_some(),
             keet_seed: creds.keet_seed_phrase.is_some(),
-            // Discord has no credential field wired from config yet (the adapter
-            // takes a bot token but the daemon never constructs it from config).
-            discord_bot: false,
+            // GOLD-PROG-16 wired `credentials.discord_bot_token`; serve_tasks
+            // now builds `DiscordChannel::new(creds.discord_bot_token)` + spawns
+            // the gateway receive loop, so presence == configured.
+            discord_bot: creds.discord_bot_token.is_some(),
             signal_cli_url: creds.signal_cli_url.is_some(),
             signal_phone_number: creds.signal_phone_number.is_some(),
         }
@@ -176,10 +177,13 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
                 (ProbeStatus::NotConfigured, "no keet_seed_phrase")
             }
         }
-        ChannelKind::Discord => (
-            ProbeStatus::NotConfigured,
-            "adapter present but no Discord bot token is wired from config yet",
-        ),
+        ChannelKind::Discord => {
+            if v.discord_bot {
+                (ProbeStatus::Ok, "bot token configured (gateway receive loop)")
+            } else {
+                (ProbeStatus::NotConfigured, "no discord_bot_token")
+            }
+        }
         ChannelKind::Signal => match (v.signal_cli_url, v.signal_phone_number) {
             (true, true) => (
                 ProbeStatus::Ok,
@@ -309,6 +313,25 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(probe_channel(ChannelKind::Keet, &v).status, ProbeStatus::Warn);
+    }
+
+    #[test]
+    fn discord_ok_when_bot_token_set_else_not_configured() {
+        // GOLD-PROG-16 wired discord_bot_token + the gateway receive loop, so a
+        // present token reports Ok (was wrongly pinned NotConfigured before).
+        let none = ChannelCredsView::default();
+        assert_eq!(
+            probe_channel(ChannelKind::Discord, &none).status,
+            ProbeStatus::NotConfigured
+        );
+        let configured = ChannelCredsView {
+            discord_bot: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            probe_channel(ChannelKind::Discord, &configured).status,
+            ProbeStatus::Ok
+        );
     }
 
     #[test]
