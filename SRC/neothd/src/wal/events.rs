@@ -546,6 +546,16 @@ pub const EVENT_TYPE_COMPRESSION_APPLIED: u8 = 0x5D;
 /// `{segment, error, ts_unix}`. (0x5D is the WS-HR COMPRESSION_APPLIED frame;
 /// this took 0x5E so both merges stay collision-free.)
 pub const EVENT_TYPE_INDEXER_TAMPER_SUSPECT: u8 = 0x5E;
+/// `0x5F WATCHDOG_RESTART` — GOLD-FEAT-09. The daemon watchdog cron found a
+/// supervised local service (n8n / Ollama) down for `consecutive_failures_
+/// before_restart` ticks and acted. Payload `{service, decision, restarts_in_
+/// window, ts_unix}` where `decision` is one of `restart` (Elevated+ autonomy
+/// spawned the restart command), `alert_only` (service down but autonomy
+/// below Elevated — observe-only), or `rate_limited` (restart budget for the
+/// window exhausted — crash-loop guard tripped). Batchable behind the next
+/// sync-on-write frame. `0x5D`/`0x5E` are reserved for in-flight branches
+/// (COMPRESSION_APPLIED / INDEXER_TAMPER_SUSPECT) — do not reuse.
+pub const EVENT_TYPE_WATCHDOG_RESTART: u8 = 0x5F;
 
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
@@ -1798,6 +1808,10 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             // Batchable behind the next sync-on-write frame.
             | EVENT_TYPE_CONTEXT_COMPACTION_START
             | EVENT_TYPE_CONTEXT_COMPACTION_DONE
+            // GOLD-FEAT-09: a watchdog restart/alert is an operational anchor
+            // (the service is back or flagged) — observable from the next
+            // probe + the frame itself. Batchable behind the next sync frame.
+            | EVENT_TYPE_WATCHDOG_RESTART
     )
 }
 
@@ -1881,6 +1895,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     ("context_compaction_done", EVENT_TYPE_CONTEXT_COMPACTION_DONE),
     ("indexer_tamper_suspect", EVENT_TYPE_INDEXER_TAMPER_SUSPECT),
+    ("watchdog_restart", EVENT_TYPE_WATCHDOG_RESTART),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2201,6 +2216,8 @@ const _: () = {
         || EVENT_TYPE_CONTEXT_COMPACTION_DONE > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_INDEXER_TAMPER_SUSPECT < 0x50
         || EVENT_TYPE_INDEXER_TAMPER_SUSPECT > 0x5F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_WATCHDOG_RESTART < 0x50 || EVENT_TYPE_WATCHDOG_RESTART > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
         || EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL < 0x60
@@ -2622,6 +2639,7 @@ mod tests {
                 EVENT_TYPE_CONTEXT_COMPACTION_START,
             ),
             ("CONTEXT_COMPACTION_DONE", EVENT_TYPE_CONTEXT_COMPACTION_DONE),
+            ("WATCHDOG_RESTART", EVENT_TYPE_WATCHDOG_RESTART),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),

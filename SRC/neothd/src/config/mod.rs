@@ -421,6 +421,13 @@ pub struct FreedomConfig {
     /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Default OFF (opt-in).
     #[serde(default)]
     pub monitor: MonitorConfig,
+    /// GOLD-FEAT-09 — daemon watchdog / auto-recovery cron. When `enabled`,
+    /// the daemon probes supervised local services (n8n / Ollama) every
+    /// `interval_secs` and restarts a service that has been down for
+    /// `consecutive_failures_before_restart` ticks (only at `Elevated`+
+    /// autonomy), emitting `0x5F WATCHDOG_RESTART`. Default OFF (opt-in).
+    #[serde(default)]
+    pub watchdog: WatchdogConfig,
     /// SPEC-05 — passive user-adaptation engine. When `enabled = true`,
     /// a daemon cron (`daemon::profile_adapt_cron`) re-aggregates the
     /// behavioural snapshot from the WAL every `interval_secs`, runs the
@@ -989,6 +996,58 @@ impl DriftAlertConfig {
 /// against a cutover anchor; a weekly re-check is plenty + keeps the provider
 /// + embed cost negligible).
 pub const DEFAULT_REGRESSION_INTERVAL_SECS: u64 = 7 * 24 * 3600;
+
+/// GOLD-FEAT-09 — daemon watchdog / auto-recovery cron config. When `enabled`,
+/// the daemon probes the supervised local services (n8n / Ollama) every
+/// `interval_secs`, and once a service has been down for
+/// `consecutive_failures_before_restart` ticks it restarts it (only at
+/// `Elevated`+ autonomy — below that it alerts only) under a per-window restart
+/// budget (`max_restarts_per_window` per `window_secs`). Emits
+/// `0x5F WATCHDOG_RESTART`. Default OFF (opt-in).
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct WatchdogConfig {
+    /// Master switch. Default `false`.
+    pub enabled: bool,
+    /// Probe cadence, seconds. Default 60s. Clamped to a 10s floor by
+    /// [`Self::interval_duration`] so a misconfigured `0` can't tight-loop.
+    pub interval_secs: u64,
+    /// Restart only after this many consecutive failed probes. Default 3.
+    pub consecutive_failures_before_restart: u32,
+    /// Restart budget per `window_secs`. Default 3.
+    pub max_restarts_per_window: u32,
+    /// Restart-budget window length, seconds. Default 1h.
+    pub window_secs: u64,
+    /// TCP port the n8n service is probed on. Default 5678.
+    pub n8n_port: u16,
+    /// TCP port the Ollama service is probed on. Default 11434.
+    pub ollama_port: u16,
+}
+
+/// 1 hour — the watchdog restart-budget window default.
+pub const DEFAULT_WATCHDOG_WINDOW_SECS: u64 = 3600;
+
+impl Default for WatchdogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 60,
+            consecutive_failures_before_restart: 3,
+            max_restarts_per_window: 3,
+            window_secs: DEFAULT_WATCHDOG_WINDOW_SECS,
+            n8n_port: 5678,
+            ollama_port: 11434,
+        }
+    }
+}
+
+impl WatchdogConfig {
+    /// Probe interval as a `Duration`, clamped to a 10s minimum so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(10))
+    }
+}
 
 /// ADV-14 — longitudinal recall-regression anchor cron config. When `enabled`,
 /// the daemon weekly re-asks each anchor query, embeds the fresh answer, and
