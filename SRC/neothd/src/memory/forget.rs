@@ -60,6 +60,13 @@ pub struct ForgetReport {
     pub profile_pending_rows: i64,
     #[serde(default)]
     pub profile_outbox_rows: i64,
+    /// GOLD-ADAPT-MEM-06 — knowledge-graph cascade: entities whose name matches
+    /// the topic + every relation touching them. Without this a forgotten
+    /// subject would linger as a graph node with edges.
+    #[serde(default)]
+    pub entity_rows: i64,
+    #[serde(default)]
+    pub relation_rows: i64,
     pub topic: String,
 }
 
@@ -73,6 +80,8 @@ impl ForgetReport {
             + self.profile_rows
             + self.profile_pending_rows
             + self.profile_outbox_rows
+            + self.entity_rows
+            + self.relation_rows
     }
 }
 
@@ -196,6 +205,11 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
             .context("wipe idx_embedding channel-side")?;
     }
 
+    // GOLD-ADAPT-MEM-06 — cascade the GDPR wipe into the knowledge graph:
+    // entities whose name matches the topic + every relation touching them.
+    let (entity_rows, relation_rows) =
+        crate::memory::entities::forget_entities_like(conn, &pattern)?;
+
     Ok(ForgetReport {
         episode_rows,
         consolidated_rows,
@@ -205,6 +219,8 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         profile_rows,
         profile_pending_rows,
         profile_outbox_rows,
+        entity_rows,
+        relation_rows,
         topic: topic.to_string(),
     })
 }

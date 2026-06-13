@@ -103,6 +103,22 @@ pub struct RecallArgs {
     #[arg(long, value_name = "EVENT_ID", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify"])]
     pub downvote: Option<i64>,
 
+    /// GOLD-ADAPT-MEM-06 — knowledge-graph query: print the entities reachable
+    /// from this entity name within `--graph-depth` hops (BFS over the
+    /// extracted entity/relation graph). Bypasses search.
+    #[arg(long, value_name = "ENTITY", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote"])]
+    pub graph: Option<String>,
+
+    /// Max BFS hops for `--graph`. Default 2.
+    #[arg(long, default_value = "2")]
+    pub graph_depth: u32,
+
+    /// GOLD-ADAPT-MEM-06 — extract entities + relations from this text via the
+    /// configured provider and persist them into the knowledge graph (the
+    /// ingest path). Bypasses search.
+    #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph"])]
+    pub extract: Option<String>,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -134,6 +150,64 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 println!("{}", serde_json::json!({ "query": q, "tier": tier.as_str() }));
             }
             crate::cli::OutputFormat::Table => println!("recall tier: {}", tier.as_str()),
+        }
+        return Ok(());
+    }
+
+    // GOLD-ADAPT-MEM-06 knowledge-graph query short-circuit.
+    if let Some(entity) = args.graph.clone() {
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
+        let neighbors =
+            crate::memory::entities::get_neighbors(&conn, &entity, args.graph_depth)?;
+        match args.output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+                let rows: Vec<_> = neighbors
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({ "name": n.name, "depth": n.depth, "via": n.via_relation })
+                    })
+                    .collect();
+                println!("{}", serde_json::json!({ "entity": entity, "neighbors": rows }));
+            }
+            crate::cli::OutputFormat::Table => {
+                if neighbors.is_empty() {
+                    println!("no graph neighbours for '{entity}' (unknown entity or no relations)");
+                } else {
+                    println!("graph neighbours of '{entity}' (≤{} hops):", args.graph_depth);
+                    for n in &neighbors {
+                        println!("  [{}] {} (via {})", n.depth, n.name, n.via_relation);
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // GOLD-ADAPT-MEM-06 entity-extraction (ingest) short-circuit — run the
+    // configured provider over the text + persist entities/relations.
+    if let Some(text) = args.extract.clone() {
+        let config = crate::config::FreedomConfig::load_from_default_path()
+            .context("load freedom.yaml for entity extraction")?;
+        let provider = crate::providers::from_config(&config)
+            .await
+            .context("build provider for entity extraction")?;
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let (ents, rels) =
+            crate::memory::entities::extract_and_persist(&conn, &text, provider.as_ref(), now_unix)
+                .await?;
+        match args.output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+                println!("{}", serde_json::json!({ "entities": ents, "relations": rels }));
+            }
+            crate::cli::OutputFormat::Table => {
+                println!("knowledge graph: +{ents} entit(y/ies), +{rels} relation(s)")
+            }
         }
         return Ok(());
     }
@@ -365,7 +439,43 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     }
 
     render(&rows, args.output, &args.query);
+
+    // GOLD-ADAPT-MEM-06 Stage-3 — append knowledge-graph facts for any entity
+    // the query names. Additive + best-effort: an unknown entity / empty graph
+    // prints nothing, so the default flat-recall output is unchanged.
+    append_graph_facts(&db_path, &args.query, args.output);
+
     Ok(())
+}
+
+/// MEM-06 Stage-3 — resolve the query (whole + per-word) as graph entities and
+/// print a `[RELEVANT FACTS]` block for each match. Table output only (JSON
+/// stays the pure search payload). Best-effort: any error prints nothing.
+fn append_graph_facts(db_path: &std::path::Path, query: &str, output: crate::cli::OutputFormat) {
+    if !matches!(output, crate::cli::OutputFormat::Table) {
+        return;
+    }
+    let Ok(conn) = store::open(db_path) else {
+        return;
+    };
+    let mut candidates: Vec<String> = vec![query.trim().to_string()];
+    candidates.extend(
+        query
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+            .filter(|w| w.chars().count() >= 3),
+    );
+    let mut seen = std::collections::HashSet::new();
+    for cand in candidates {
+        if cand.is_empty() || !seen.insert(cand.to_lowercase()) {
+            continue;
+        }
+        if let Ok(neighbors) = crate::memory::entities::get_neighbors(&conn, &cand, 2) {
+            if !neighbors.is_empty() {
+                print!("\n{}", crate::memory::context_inject::build_facts_block(&cand, &neighbors));
+            }
+        }
+    }
 }
 
 /// Render the dream rows ahead of the episode hits. Compact one-line
@@ -1151,6 +1261,9 @@ mod tests {
             sessions: None,
             classify: None,
             downvote: None,
+            graph: None,
+            graph_depth: 2,
+            extract: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1423,6 +1536,9 @@ mod tests {
             sessions: None,
             classify: None,
             downvote: None,
+            graph: None,
+            graph_depth: 2,
+            extract: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1453,6 +1569,9 @@ mod tests {
             sessions: None,
             classify: None,
             downvote: None,
+            graph: None,
+            graph_depth: 2,
+            extract: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1483,6 +1602,9 @@ mod tests {
             sessions: None,
             classify: None,
             downvote: None,
+            graph: None,
+            graph_depth: 2,
+            extract: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,

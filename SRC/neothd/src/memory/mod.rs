@@ -30,6 +30,11 @@ pub mod gc_task;
 pub mod groundtruth;
 pub mod hindsight;
 pub mod indexer;
+/// GOLD-ADAPT-MEM-06 — knowledge-graph layer (typed entities + weighted
+/// relations + bounded BFS neighbour expansion). `neoth recall --graph`.
+pub mod entities;
+/// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
+pub mod context_inject;
 /// GOLD-FEAT-07 — LOWKEY moral-core loader (operator behavioural directives
 /// injected at enrichment position 0). `neoth moral-core {list,preview,doctor}`.
 pub mod moral_core;

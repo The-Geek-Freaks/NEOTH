@@ -586,6 +586,32 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             first_seen_unix  INTEGER NOT NULL
         );
 
+        -- GOLD-ADAPT-MEM-06 — knowledge-graph layer (NEOTH's only structural
+        -- memory gap). Typed entities + weighted directed relations. The LLM
+        -- entity/relation extraction at ingest lands in a later slice; the
+        -- schema + persistence + BFS-neighbour query ship now. `forget`
+        -- cascades into both. CREATE-IF-NOT-EXISTS → backward-safe.
+        CREATE TABLE IF NOT EXISTS idx_entities (
+            id           INTEGER PRIMARY KEY,
+            name         TEXT NOT NULL,
+            entity_type  TEXT NOT NULL DEFAULT 'unknown',
+            attributes   TEXT NOT NULL DEFAULT '{}',
+            source_count INTEGER NOT NULL DEFAULT 1,
+            first_seen   INTEGER NOT NULL DEFAULT 0,
+            last_seen    INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(name)
+        );
+        CREATE TABLE IF NOT EXISTS idx_relations (
+            id        INTEGER PRIMARY KEY,
+            src_id    INTEGER NOT NULL,
+            dst_id    INTEGER NOT NULL,
+            relation  TEXT NOT NULL,
+            weight    REAL NOT NULL DEFAULT 1.0,
+            UNIQUE(src_id, dst_id, relation)
+        );
+        CREATE INDEX IF NOT EXISTS idx_relations_src ON idx_relations (src_id);
+        CREATE INDEX IF NOT EXISTS idx_relations_dst ON idx_relations (dst_id);
+
         -- ── Schema v9: idx_profile_outbox (Pick #12, Session 14) ────────────
         --
         -- Codex-flagged consistency hole: profile/apply.rs commits idx_profile

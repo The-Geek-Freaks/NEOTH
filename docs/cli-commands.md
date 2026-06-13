@@ -1698,6 +1698,9 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--sessions <TEXT>` — GOLD-ADAPT-ODY-25 — search past session cards (title / ranked topics / one-line summary / opening+closing utterance) for this query and print the matching sessions ranked by relevance. NEOTH compresses transcripts into cards, so this finds *which session* discussed something rather than raw transcript lines. Bypasses episode recall entirely
 - `--classify <TEXT>` — GOLD-ADAPT-MEM-09 — classify how much recall a query warrants (`skip` / `single` / `multi`) and print the verdict instead of searching. Lets an operator see why a trivial status/identity query would skip recall
 - `--downvote <EVENT_ID>` — GOLD-ADAPT-MEM-08 — operator negative feedback: weaken the importance of the memory with this `event_id` (asymmetric Hebbian −0.10, floored at 0) across whichever tier holds it. Bypasses search
+- `--graph <ENTITY>` — GOLD-ADAPT-MEM-06 — knowledge-graph query: print the entities reachable from this entity name within `--graph-depth` hops (BFS over the extracted entity/relation graph). Bypasses search
+- `--graph-depth <GRAPH_DEPTH>` — Max BFS hops for `--graph`. Default 2
+- `--extract <TEXT>` — GOLD-ADAPT-MEM-06 — extract entities + relations from this text via the configured provider and persist them into the knowledge graph (the ingest path). Bypasses search
 
 ## `neoth recall-score`
 
