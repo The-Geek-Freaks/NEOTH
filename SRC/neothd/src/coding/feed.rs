@@ -354,6 +354,9 @@ pub(crate) fn build_session_summary_item(
         source: "coding_session".to_string(),
         body: render_session_summary(outcome, session_id),
         scheduled_for_unix: 0,
+        // GOLD-FEAT-13 — a session that ended with blocked tasks is a
+        // partial failure → routing prefers the operator's failure_channel.
+        is_failure: outcome.tasks_blocked > 0,
     }
 }
 

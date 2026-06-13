@@ -329,6 +329,7 @@ pub fn build_proposal_notification(proposal: &ProposedAction) -> ProactiveItem {
             proposal.title, proposal.id
         ),
         scheduled_for_unix: 0,
+        is_failure: false,
     }
 }
 

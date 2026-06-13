@@ -82,6 +82,12 @@ pub struct ProactiveItem {
     /// items whose `scheduled_for_unix > now_unix`. Default 0 =
     /// drain immediately.
     pub scheduled_for_unix: i64,
+    /// GOLD-FEAT-13 — when `true`, channel routing prefers the operator's
+    /// configured `failure_channel` (e.g. a coding session that ended with
+    /// blocked tasks). `#[serde(default)]` so queue files written before this
+    /// field deserialise as non-failure.
+    #[serde(default)]
+    pub is_failure: bool,
 }
 
 /// Daily-cap configuration. `max_per_day = 3` is the AGENTER hard-
@@ -295,6 +301,7 @@ mod tests {
             source: source.into(),
             body: format!("body of {key}"),
             scheduled_for_unix: 0,
+            is_failure: false,
         }
     }
 

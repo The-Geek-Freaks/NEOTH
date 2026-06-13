@@ -141,6 +141,7 @@ pub fn build_g02_proactive_item(
         source: "g02_surfacing".to_string(),
         body,
         scheduled_for_unix: now_unix,
+        is_failure: false,
     }
 }
 

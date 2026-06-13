@@ -164,6 +164,7 @@ pub fn build_reflection_item(
         source: "g_01_mini".into(),
         body,
         scheduled_for_unix,
+        is_failure: false,
     })
 }
 

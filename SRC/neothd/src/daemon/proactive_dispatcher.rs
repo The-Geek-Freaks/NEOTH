@@ -181,6 +181,9 @@ pub(crate) enum DeliveryRoute {
     /// GOLD-FEAT-13 — deliver to Discord. `channel_id` = operator's configured
     /// `discord_channel_id` routing destination.
     Discord { channel_id: String },
+    /// GOLD-FEAT-13 — deliver to WhatsApp Cloud. `recipient` = operator's
+    /// configured `whatsapp_recipient` (E.164), never item-influenced.
+    WhatsApp { recipient: String },
 }
 
 /// G-01 / GOLD-FEAT-13 — decide how (and whether) to deliver an item whose
@@ -234,6 +237,23 @@ pub(crate) fn plan_delivery(
             },
             _ => DeliveryRoute::SidecarOnly,
         },
+        "whatsapp" | "whatsapp_business" | "whatsapp_baileys" => match (
+            credentials.whatsapp_token.as_ref(),
+            credentials.whatsapp_phone_id.as_ref(),
+            credentials.whatsapp_verify_token.as_ref(),
+            dest,
+        ) {
+            (Some(_), Some(_), Some(_), Some(recipient)) => DeliveryRoute::WhatsApp {
+                recipient: recipient.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        // GOLD-FEAT-13: Keet proactive send needs a live Pears bridge that the
+        // delivery tick can't construct on-demand (the daemon's running Keet
+        // adapter holds it). Until that bridge is shared with the tick, a Keet
+        // route resolves to the ledger (SidecarOnly) rather than a
+        // guaranteed-failed send — slice-3 follow-up.
+        "keet" => DeliveryRoute::SidecarOnly,
         _ => DeliveryRoute::SidecarOnly,
     }
 }
@@ -298,7 +318,7 @@ pub async fn run_proactive_delivery_tick(
         // GOLD-FEAT-13 — route by the item's `source` (per-purpose), falling
         // back to the item's own channel when no routing rule applies.
         let target_channel = routing
-            .resolve_channel(&item.source, false)
+            .resolve_channel(&item.source, item.is_failure)
             .unwrap_or_else(|| item.channel.clone());
         let (status, recipient) =
             match plan_delivery(&target_channel, autonomy, config, &routing, &credentials) {
@@ -389,6 +409,40 @@ pub async fn run_proactive_delivery_tick(
                             "discord adapter construct failed; recorded as failed"
                         );
                         (ProactiveStatus::Failed, channel_id)
+                    }
+                }
+            }
+            DeliveryRoute::WhatsApp { recipient } => {
+                // Safe: plan_delivery returned WhatsApp only when all three
+                // credential fields are present. recipient = operator-own E.164.
+                let access = credentials
+                    .whatsapp_token
+                    .clone()
+                    .expect("plan_delivery guarantees whatsapp_token is Some");
+                let phone_id = credentials
+                    .whatsapp_phone_id
+                    .clone()
+                    .expect("plan_delivery guarantees whatsapp_phone_id is Some");
+                let verify = credentials
+                    .whatsapp_verify_token
+                    .clone()
+                    .expect("plan_delivery guarantees whatsapp_verify_token is Some");
+                let channel =
+                    crate::channels::whatsapp::WhatsAppChannel::new(access, phone_id, verify);
+                use crate::channels::Channel;
+                match channel.send_proactive(&recipient, &item.body).await {
+                    Ok(_) => {
+                        delivered += 1;
+                        (ProactiveStatus::Delivered, recipient)
+                    }
+                    Err(e) => {
+                        warn!(
+                            channel = "whatsapp",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "proactive send failed; recorded as failed (not re-enqueued)"
+                        );
+                        (ProactiveStatus::Failed, recipient)
                     }
                 }
             }
@@ -531,6 +585,7 @@ mod tests {
             source: "test".to_string(),
             body: format!("test body {key}"),
             scheduled_for_unix: ts,
+            is_failure: false,
         }
     }
 
@@ -775,6 +830,51 @@ mod tests {
             plan_delivery("slack", AutonomyLevel::Full, &cfg, &rt, &creds_bot_only),
             DeliveryRoute::SidecarOnly,
             "slack requires BOTH bot + app tokens"
+        );
+    }
+
+    #[test]
+    fn plan_delivery_routes_to_whatsapp_when_all_creds_and_dest() {
+        // WhatsApp needs access_token + phone_id + verify_token (the 3-arg
+        // constructor) AND a configured recipient.
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.whatsapp_recipient = Some("+15551234567".to_string());
+        let creds = crate::config::credentials::Credentials {
+            whatsapp_token: Some(crate::secret::SecretString::from("acc".to_string())),
+            whatsapp_phone_id: Some("phone123".to_string()),
+            whatsapp_verify_token: Some(crate::secret::SecretString::from("vt".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("whatsapp", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::WhatsApp {
+                recipient: "+15551234567".to_string()
+            }
+        );
+        // Missing the phone_id → can't construct → sidecar.
+        let creds_no_phone = crate::config::credentials::Credentials {
+            whatsapp_token: Some(crate::secret::SecretString::from("acc".to_string())),
+            whatsapp_verify_token: Some(crate::secret::SecretString::from("vt".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("whatsapp", AutonomyLevel::Full, &cfg, &rt, &creds_no_phone),
+            DeliveryRoute::SidecarOnly
+        );
+    }
+
+    #[test]
+    fn plan_delivery_keet_is_sidecar_only_pending_bridge() {
+        // Keet proactive send needs a live Pears bridge the tick can't build →
+        // ledger-only (SidecarOnly), even with a configured topic.
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.keet_topic = Some("topic".to_string());
+        assert_eq!(
+            plan_delivery("keet", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
+            DeliveryRoute::SidecarOnly,
+            "keet routes to ledger until the bridge is shared with the tick"
         );
     }
 

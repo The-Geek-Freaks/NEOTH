@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
+use crate::channels::routing::{CHANNEL_ROUTING_FILE, ChannelRouting};
 use crate::proactive::action_staging::{
     ProposalKind, ProposalStatus, ProposedAction, list_proposals, load_proposal,
     set_proposal_status, sync_proposals_to_obsidian,
@@ -73,6 +74,29 @@ pub enum ProactiveAction {
         vault: Option<PathBuf>,
         #[arg(long, value_name = "NAME", default_value = "NEOTH")]
         subdir: String,
+    },
+    /// GOLD-FEAT-13 — view or set per-purpose channel routing for proactive
+    /// sends (`~/.neoth/channel_routing.json`). No flags → print the current
+    /// routing. `--source X --channel Y` routes source X to channel Y;
+    /// `--channel Y --dest Z` sets channel Y's destination id;
+    /// `--default --channel Y` sets the default channel;
+    /// `--failure --channel Y` sets the failure-alert channel.
+    Route {
+        /// Source tag to route (e.g. `coding_session`). With `--channel`.
+        #[arg(long)]
+        source: Option<String>,
+        /// Channel name (`telegram`/`slack`/`discord`/`whatsapp`/`keet`).
+        #[arg(long)]
+        channel: Option<String>,
+        /// Per-channel destination id (use with `--channel`).
+        #[arg(long)]
+        dest: Option<String>,
+        /// Set `--channel` as the default proactive destination.
+        #[arg(long)]
+        default: bool,
+        /// Set `--channel` as the failure-alert destination.
+        #[arg(long)]
+        failure: bool,
     },
 }
 
@@ -155,7 +179,66 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             );
             Ok(())
         }
+        ProactiveAction::Route {
+            source,
+            channel,
+            dest,
+            default,
+            failure,
+        } => run_route(&home, source, channel, dest, default, failure),
     }
+}
+
+/// GOLD-FEAT-13 — `neoth proactive route`. Loads `channel_routing.json`,
+/// applies ONE mutation per invocation (destination > per-source > default >
+/// failure), or prints the current routing when no actionable flags are
+/// given. Operator-facing surface over the [`ChannelRouting`] side-file.
+fn run_route(
+    home: &std::path::Path,
+    source: Option<String>,
+    channel: Option<String>,
+    dest: Option<String>,
+    default: bool,
+    failure: bool,
+) -> Result<()> {
+    let path = home.join(CHANNEL_ROUTING_FILE);
+    let mut routing = ChannelRouting::load_from(&path).context("load channel routing")?;
+    let mut changed = false;
+
+    if let (Some(ch), Some(id)) = (channel.as_ref(), dest.as_ref()) {
+        if routing.destinations.set_for_channel(ch, id.clone()) {
+            println!("destination[{ch}] = {id}");
+            changed = true;
+        } else {
+            anyhow::bail!("unknown channel '{ch}' (use telegram/slack/discord/whatsapp/keet)");
+        }
+    } else if let (Some(src), Some(ch)) = (source.as_ref(), channel.as_ref()) {
+        routing.by_source.insert(src.clone(), ch.clone());
+        println!("route: source '{src}' -> {ch}");
+        changed = true;
+    } else if default {
+        let ch = channel.as_ref().context("--default requires --channel")?;
+        routing.default_channel = Some(ch.clone());
+        println!("default proactive channel -> {ch}");
+        changed = true;
+    } else if failure {
+        let ch = channel.as_ref().context("--failure requires --channel")?;
+        routing.failure_channel = Some(ch.clone());
+        println!("failure-alert channel -> {ch}");
+        changed = true;
+    }
+
+    if changed {
+        routing.save_to(&path).context("save channel routing")?;
+        println!("(saved → {})", path.display());
+    } else {
+        println!(
+            "current channel routing ({}):\n{}",
+            path.display(),
+            serde_json::to_string_pretty(&routing).unwrap_or_default()
+        );
+    }
+    Ok(())
 }
 
 fn print_status_change(p: &ProposedAction) {

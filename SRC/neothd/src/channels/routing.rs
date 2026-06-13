@@ -66,6 +66,23 @@ impl ChannelDestinations {
             _ => None,
         }
     }
+
+    /// Set the destination for the canonical channel name. Returns `false`
+    /// for an unrecognised channel (caller can warn). Used by `neoth
+    /// proactive route --channel X --dest Y`.
+    pub fn set_for_channel(&mut self, channel: &str, id: String) -> bool {
+        match channel {
+            "telegram" => self.telegram_chat_id = Some(id),
+            "slack" => self.slack_channel_id = Some(id),
+            "discord" => self.discord_channel_id = Some(id),
+            "whatsapp" | "whatsapp_business" | "whatsapp_baileys" => {
+                self.whatsapp_recipient = Some(id)
+            }
+            "keet" => self.keet_topic = Some(id),
+            _ => return false,
+        }
+        true
+    }
 }
 
 /// GOLD-FEAT-13 routing config. Persisted to `~/.neoth/channel_routing.json`.
@@ -239,5 +256,18 @@ mod tests {
         original.save_to(&path).expect("save");
         let loaded = ChannelRouting::load_from(&path).expect("load");
         assert_eq!(loaded, original, "routing config survives a save/load roundtrip");
+    }
+
+    #[test]
+    fn set_for_channel_sets_known_and_rejects_unknown() {
+        let mut d = ChannelDestinations::default();
+        assert!(d.set_for_channel("discord", "123".into()));
+        assert_eq!(d.discord_channel_id.as_deref(), Some("123"));
+        assert!(d.set_for_channel("whatsapp_business", "+15551234567".into()));
+        assert_eq!(d.whatsapp_recipient.as_deref(), Some("+15551234567"));
+        assert!(
+            !d.set_for_channel("nonsense", "x".into()),
+            "unknown channel name → false (caller warns)"
+        );
     }
 }

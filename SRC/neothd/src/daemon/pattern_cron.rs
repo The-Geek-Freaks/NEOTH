@@ -115,6 +115,7 @@ pub fn detect_inactivity_gap(
              (`neoth status` zeigt, woran wir zuletzt waren.)"
         ),
         scheduled_for_unix: 0,
+        is_failure: false,
     })
 }
 
@@ -255,6 +256,7 @@ pub fn detect_query_repeat(
             ex = excerpt(&text, 80),
         ),
         scheduled_for_unix: 0,
+        is_failure: false,
     })
 }
 
@@ -325,6 +327,7 @@ pub fn detect_topic_burst(
              den letzten Tagen) — soll ich dazu was sammeln oder eine Notiz/Skill anlegen?"
         ),
         scheduled_for_unix: 0,
+        is_failure: false,
     })
 }
 
@@ -371,6 +374,7 @@ pub fn detect_time_of_day_shift(
              ~{recent_peak:02}:00 UTC) — soll ich Briefings/Reminders entsprechend timen?"
         ),
         scheduled_for_unix: 0,
+        is_failure: false,
     })
 }
 
