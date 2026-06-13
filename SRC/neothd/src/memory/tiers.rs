@@ -370,6 +370,80 @@ pub fn hebbian_reinforce_at_tier(
     Ok(Some(ReinforceOutcome { old, new, tier }))
 }
 
+/// The (select, update) importance SQL pair for a tier — compile-time literal
+/// table names. Used by the GOLD-ADAPT-MEM-08 weaken path; reinforce inlines
+/// the same strings.
+fn tier_importance_sql(tier: Tier) -> (&'static str, &'static str) {
+    match tier {
+        Tier::Hot => (
+            "SELECT importance FROM idx_episode WHERE event_id = ?1",
+            "UPDATE idx_episode SET importance = ?1, last_access_ts = ?2 WHERE event_id = ?3",
+        ),
+        Tier::Warm => (
+            "SELECT importance FROM idx_consolidated WHERE COALESCE(event_id, -id) = ?1",
+            "UPDATE idx_consolidated SET importance = ?1, last_access_ts = ?2 \
+             WHERE COALESCE(event_id, -id) = ?3",
+        ),
+        Tier::Cold => (
+            "SELECT importance FROM idx_longterm WHERE event_id = ?1",
+            "UPDATE idx_longterm SET importance = ?1, last_access_ts = ?2 WHERE event_id = ?3",
+        ),
+    }
+}
+
+/// Default harmful penalty (−0.10) for the operator negative-feedback path —
+/// asymmetric vs reinforce's gentler multiplicative bump (GOLD-ADAPT-MEM-08).
+pub const HEBBIAN_HARMFUL_PENALTY: f64 = 0.10;
+
+/// GOLD-ADAPT-MEM-08 — asymmetric Hebbian weaken: an unhelpful/harmful memory
+/// is penalised by an ABSOLUTE `penalty` decrement (floored at 0), heavier than
+/// the multiplicative reinforce so a single downvote outweighs several recall
+/// hits.
+pub fn hebbian_weaken_value(old: f64, penalty: f64) -> f64 {
+    (old - penalty).max(0.0)
+}
+
+/// Weaken one row's importance in `tier` by `penalty`. Mirrors
+/// [`hebbian_reinforce_at_tier`] but subtracts. `None` when no row in that tier
+/// matches `event_id`.
+pub fn hebbian_weaken_at_tier(
+    conn: &Connection,
+    tier: Tier,
+    event_id: i64,
+    penalty: f64,
+    now_ns: u64,
+) -> Result<Option<ReinforceOutcome>> {
+    use rusqlite::OptionalExtension;
+    let (select_sql, update_sql) = tier_importance_sql(tier);
+    let old: Option<f64> = conn
+        .query_row(select_sql, params![event_id], |r| r.get::<_, f64>(0))
+        .optional()
+        .with_context(|| format!("lookup {} row for hebbian weaken, event_id={event_id}", tier.as_str()))?;
+    let Some(old) = old else {
+        return Ok(None);
+    };
+    let new = hebbian_weaken_value(old, penalty);
+    conn.execute(update_sql, params![new, now_ns as i64, event_id])
+        .with_context(|| format!("update {} importance after downvote, event_id={event_id}", tier.as_str()))?;
+    Ok(Some(ReinforceOutcome { old, new, tier }))
+}
+
+/// Operator downvote: find `event_id` across Hot→Warm→Cold and weaken the first
+/// tier it lives in. Returns the outcome (with the tier), or `None` if absent.
+pub fn hebbian_weaken_across_tiers(
+    conn: &Connection,
+    event_id: i64,
+    penalty: f64,
+    now_ns: u64,
+) -> Result<Option<ReinforceOutcome>> {
+    for tier in [Tier::Hot, Tier::Warm, Tier::Cold] {
+        if let Some(outcome) = hebbian_weaken_at_tier(conn, tier, event_id, penalty, now_ns)? {
+            return Ok(Some(outcome));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +467,38 @@ mod tests {
         assert_eq!(tier_for(now, now - 3 * DAY_NS), Tier::Hot);
         assert_eq!(tier_for(now, now - 30 * DAY_NS), Tier::Warm);
         assert_eq!(tier_for(now, now - 200 * DAY_NS), Tier::Cold);
+    }
+
+    #[test]
+    fn hebbian_weaken_value_floors_at_zero() {
+        assert!((hebbian_weaken_value(0.5, 0.1) - 0.4).abs() < 1e-9);
+        assert_eq!(hebbian_weaken_value(0.05, 0.1), 0.0, "floors at 0");
+        // Asymmetry: a single weaken (−0.10) outweighs a reinforce from 0.5
+        // (which only adds k·(1−0.5) < 0.10 for every tier coefficient < 0.2).
+        let reinforced = hebbian_reinforce_value(0.5, Tier::Hot);
+        let weakened = hebbian_weaken_value(0.5, HEBBIAN_HARMFUL_PENALTY);
+        assert!(0.5 - weakened >= reinforced - 0.5, "harmful penalty ≥ helpful bump");
+    }
+
+    #[test]
+    fn hebbian_weaken_across_tiers_penalises_and_persists() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        insert_row(&conn, 42, 1_000, 0.6);
+        let outcome = hebbian_weaken_across_tiers(&conn, 42, HEBBIAN_HARMFUL_PENALTY, 2_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome.tier, Tier::Hot);
+        assert!((outcome.old - 0.6).abs() < 1e-9);
+        assert!((outcome.new - 0.5).abs() < 1e-9);
+        let imp: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 42", [], |r| r.get(0))
+            .unwrap();
+        assert!((imp - 0.5).abs() < 1e-9, "downvote persisted");
+        // An absent event_id weakens nothing.
+        assert!(hebbian_weaken_across_tiers(&conn, 999, HEBBIAN_HARMFUL_PENALTY, 3_000)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

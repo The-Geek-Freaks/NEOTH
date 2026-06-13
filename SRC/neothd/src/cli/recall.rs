@@ -97,6 +97,12 @@ pub struct RecallArgs {
     #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions"])]
     pub classify: Option<String>,
 
+    /// GOLD-ADAPT-MEM-08 — operator negative feedback: weaken the importance of
+    /// the memory with this `event_id` (asymmetric Hebbian −0.10, floored at 0)
+    /// across whichever tier holds it. Bypasses search.
+    #[arg(long, value_name = "EVENT_ID", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify"])]
+    pub downvote: Option<i64>,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -128,6 +134,44 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 println!("{}", serde_json::json!({ "query": q, "tier": tier.as_str() }));
             }
             crate::cli::OutputFormat::Table => println!("recall tier: {}", tier.as_str()),
+        }
+        return Ok(());
+    }
+
+    // GOLD-ADAPT-MEM-08 operator downvote short-circuit — weaken one memory's
+    // importance, no search.
+    if let Some(event_id) = args.downvote {
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let outcome = crate::memory::tiers::hebbian_weaken_across_tiers(
+            &conn,
+            event_id,
+            crate::memory::tiers::HEBBIAN_HARMFUL_PENALTY,
+            now_ns,
+        )?;
+        match (outcome, args.output) {
+            (Some(o), crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl) => {
+                println!(
+                    "{}",
+                    serde_json::json!({ "event_id": event_id, "tier": o.tier.as_str(), "old": o.old, "new": o.new })
+                );
+            }
+            (Some(o), crate::cli::OutputFormat::Table) => println!(
+                "downvoted event {event_id}: importance {:.3} → {:.3} ({})",
+                o.old,
+                o.new,
+                o.tier.as_str()
+            ),
+            (None, crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl) => {
+                println!("{}", serde_json::json!({ "event_id": event_id, "found": false }));
+            }
+            (None, crate::cli::OutputFormat::Table) => {
+                println!("no memory found for event {event_id}")
+            }
         }
         return Ok(());
     }
@@ -1106,6 +1150,7 @@ mod tests {
             citation_check: None,
             sessions: None,
             classify: None,
+            downvote: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1377,6 +1422,7 @@ mod tests {
             citation_check: None,
             sessions: None,
             classify: None,
+            downvote: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1406,6 +1452,7 @@ mod tests {
             citation_check: None,
             sessions: None,
             classify: None,
+            downvote: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1435,6 +1482,7 @@ mod tests {
             citation_check: None,
             sessions: None,
             classify: None,
+            downvote: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
