@@ -83,6 +83,14 @@ pub struct RecallArgs {
     #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text"])]
     pub citation_check: Option<String>,
 
+    /// GOLD-ADAPT-ODY-25 — search past session cards (title / ranked topics /
+    /// one-line summary / opening+closing utterance) for this query and print
+    /// the matching sessions ranked by relevance. NEOTH compresses transcripts
+    /// into cards, so this finds *which session* discussed something rather than
+    /// raw transcript lines. Bypasses episode recall entirely.
+    #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check"])]
+    pub sessions: Option<String>,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -98,6 +106,12 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // reads stdin so operators can pipe their drafts in.
     if let Some(text_arg) = args.citation_check.clone() {
         return run_citation_check(&text_arg, args.output).await;
+    }
+
+    // GOLD-ADAPT-ODY-25 session-card search short-circuit. Reads the on-disk
+    // HindsightCards (no DB, no WAL, no network) and ranks them by query.
+    if let Some(q) = args.sessions.clone() {
+        return run_session_search(&q, args.limit, args.output);
     }
 
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
@@ -616,6 +630,57 @@ fn hot_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeHit> {
 use rusqlite::Connection;
 
 /// Image → embedding store similarity recall.
+/// GOLD-ADAPT-ODY-25 — render the session-card keyword search.
+fn run_session_search(query: &str, limit: usize, output: crate::cli::OutputFormat) -> Result<()> {
+    use crate::cli::OutputFormat;
+    let home = FreedomConfig::default_neoth_home();
+    let cards = crate::memory::hindsight::list_cards(&home);
+    let hits = crate::memory::session_search::search_session_cards(&cards, query, limit);
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = hits
+                .iter()
+                .map(|h| {
+                    serde_json::json!({
+                        "session_id": h.card.session_id,
+                        "display_name": h.card.display_name,
+                        "started_at_unix": h.card.started_at_unix,
+                        "topics": h.card.top_topics,
+                        "summary": h.card.one_line_summary,
+                        "score": h.score,
+                        "matched_fields": h.matched_fields,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        }
+        OutputFormat::Table => {
+            if hits.is_empty() {
+                println!("no sessions matched '{query}'");
+                return Ok(());
+            }
+            for h in &hits {
+                let title = h
+                    .card
+                    .display_name
+                    .as_deref()
+                    .unwrap_or(&h.card.one_line_summary);
+                println!(
+                    "[{}] {} (score {}, matched {})",
+                    h.card.session_id,
+                    title,
+                    h.score,
+                    h.matched_fields.join("+")
+                );
+                if !h.card.top_topics.is_empty() {
+                    println!("    topics: {}", h.card.top_topics.join(", "));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// QM-18 citation-check CLI surface. Reads text from `arg` directly,
 /// or from stdin when `arg == "-"`. Runs `recall::citation_check::
 /// audit_offline` + renders the verdict per the global `--output`
@@ -1021,6 +1086,7 @@ mod tests {
             similar_to_text: None,
             similar_kind: "image".to_string(),
             citation_check: None,
+            sessions: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1290,6 +1356,7 @@ mod tests {
             similar_to_text: None,
             similar_kind: "image".to_string(),
             citation_check: None,
+            sessions: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1317,6 +1384,7 @@ mod tests {
             similar_to_text: Some("sunset".to_string()),
             similar_kind: "image".to_string(),
             citation_check: None,
+            sessions: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1344,6 +1412,7 @@ mod tests {
             similar_to_text: None,
             similar_kind: "image".to_string(),
             citation_check: None,
+            sessions: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,

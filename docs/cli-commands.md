@@ -1652,6 +1652,7 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--similar-to-text <TEXT>` — Cross-modal text-to-image query — encode the prompt through the CLIP text tower, then look up the top-N similar embeddings. Mutually exclusive with `--similar-to`
 - `--similar-kind <KIND>` — Optional kind filter for `--similar-to{,-text}`. Defaults to `image`. Use `any` to search across every stored kind
 - `--citation-check <TEXT>` — QM-18 citation-check: run the offline citation-extraction + contamination heuristics against the supplied text and report findings. Bypasses recall search entirely; no DB / no WAL / no network. Use `--citation-check -` to read from stdin
+- `--sessions <TEXT>` — GOLD-ADAPT-ODY-25 — search past session cards (title / ranked topics / one-line summary / opening+closing utterance) for this query and print the matching sessions ranked by relevance. NEOTH compresses transcripts into cards, so this finds *which session* discussed something rather than raw transcript lines. Bypasses episode recall entirely
 
 ## `neoth recall-score`
 
