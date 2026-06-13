@@ -45,6 +45,15 @@ pub enum CredentialAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Scan a file or directory for committed secrets (AWS / GitHub / OpenAI /
+    /// Slack / Google keys, PEM private keys, `api_key = "…"` assignments).
+    /// Findings REDACT the matched value. Exits non-zero when any secret is
+    /// found (CI-friendly). Directories are walked recursively; `.git`,
+    /// `target`, `node_modules`, dotdirs, binary + >2 MB files are skipped.
+    Scan {
+        /// File or directory to scan.
+        path: PathBuf,
+    },
 }
 
 /// Sorted names of the credential fields that are currently set. Reads the
@@ -113,6 +122,126 @@ pub fn run_credential(args: CredentialArgs, output: OutputFormat) -> Result<()> 
     match args.action {
         CredentialAction::List => run_list(output),
         CredentialAction::Import { file, dry_run } => run_import(&file, dry_run, output),
+        CredentialAction::Scan { path } => run_scan(&path, output),
+    }
+}
+
+/// Scan `path` (file or recursively-walked dir) for committed secrets, print a
+/// redacted report, and return an error (non-zero exit) if anything was found.
+fn run_scan(path: &std::path::Path, output: OutputFormat) -> Result<()> {
+    use crate::security::secrets_scan;
+    let mut findings: Vec<(String, secrets_scan::Finding)> = Vec::new();
+    let mut files_scanned = 0usize;
+    scan_path(path, &mut findings, &mut files_scanned)
+        .with_context(|| format!("scan {}", path.display()))?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = findings
+                .iter()
+                .map(|(file, f)| {
+                    serde_json::json!({
+                        "file": file,
+                        "line": f.line,
+                        "pattern": f.pattern,
+                        "redacted": f.redacted,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::json!({
+                    "files_scanned": files_scanned,
+                    "findings": rows,
+                    "count": findings.len(),
+                })
+            );
+        }
+        OutputFormat::Table => {
+            if findings.is_empty() {
+                println!("no secrets found ({files_scanned} files scanned)");
+            } else {
+                println!("⚠ {} secret(s) in {files_scanned} files scanned:", findings.len());
+                for (file, f) in &findings {
+                    println!("  {file}:{}  [{}]  {}", f.line, f.pattern, f.redacted);
+                }
+            }
+        }
+    }
+
+    if findings.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{} secret(s) found across {files_scanned} scanned files",
+            findings.len()
+        )
+    }
+}
+
+/// Recursively walk `path`, collecting findings. Skips symlinks, `.git`/
+/// `target`/`node_modules`/dotdirs, and anything `scan_file` rejects.
+fn scan_path(
+    path: &std::path::Path,
+    out: &mut Vec<(String, crate::security::secrets_scan::Finding)>,
+    files_scanned: &mut usize,
+) -> Result<()> {
+    let meta = std::fs::metadata(path)
+        .with_context(|| format!("stat {}", path.display()))?;
+    if meta.is_file() {
+        scan_file(path, out, files_scanned);
+        return Ok(());
+    }
+    if !meta.is_dir() {
+        return Ok(());
+    }
+    for de in std::fs::read_dir(path)?.flatten() {
+        let p = de.path();
+        let m = match de.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if m.file_type().is_symlink() {
+            continue;
+        }
+        if m.is_dir() {
+            let name = de.file_name().to_string_lossy().to_string();
+            if matches!(name.as_str(), ".git" | "target" | "node_modules") || name.starts_with('.') {
+                continue;
+            }
+            scan_path(&p, out, files_scanned)?;
+        } else if m.is_file() {
+            scan_file(&p, out, files_scanned);
+        }
+    }
+    Ok(())
+}
+
+/// Scan one file: skip >2 MB + binary (NUL byte / non-UTF8), else run the
+/// text scanner and tag each finding with the file path.
+fn scan_file(
+    path: &std::path::Path,
+    out: &mut Vec<(String, crate::security::secrets_scan::Finding)>,
+    files_scanned: &mut usize,
+) {
+    const MAX_BYTES: u64 = 2 * 1024 * 1024;
+    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_BYTES {
+        return;
+    }
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    if bytes.contains(&0) {
+        return; // binary
+    }
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    *files_scanned += 1;
+    for f in crate::security::secrets_scan::scan_text(text) {
+        out.push((path.display().to_string(), f));
     }
 }
 
@@ -198,6 +327,29 @@ fn run_import(file: &Path, dry_run: bool, output: OutputFormat) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_path_walks_dir_finds_secrets_skips_binary_and_skiplist_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("clean.txt"), "nothing to see here\n").unwrap();
+        std::fs::write(root.join("leak.env"), "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n").unwrap();
+        // binary file (NUL byte) — must be skipped even if it contains a match.
+        std::fs::write(root.join("blob.bin"), b"AKIAIOSFODNN7EXAMPLE\x00\x01").unwrap();
+        // a .git dir whose contents must NOT be scanned.
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git").join("config"), "token=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00\n").unwrap();
+
+        let mut findings = Vec::new();
+        let mut scanned = 0usize;
+        scan_path(root, &mut findings, &mut scanned).unwrap();
+
+        // Exactly the leak.env AWS key — not the binary blob, not the .git token.
+        assert_eq!(findings.len(), 1, "only the one real text leak");
+        assert!(findings[0].0.ends_with("leak.env"));
+        assert_eq!(findings[0].1.pattern, "aws_access_key_id");
+        assert!(!findings[0].1.redacted.contains("AKIAIOSFODNN7EXAMPLE"));
+    }
 
     /// Build a Credentials from partial YAML (avoids constructing SecretString
     /// by hand + exercises the same Deserialize path import uses).

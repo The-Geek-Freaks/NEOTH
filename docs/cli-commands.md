@@ -451,6 +451,12 @@ Merge a credentials.yaml-shaped file into `~/.neoth/credentials.yaml`. Set field
 
 List which credential keys are currently set. Prints KEY NAMES ONLY — never the secret values
 
+### `neoth credential scan`
+
+Scan a file or directory for committed secrets (AWS / GitHub / OpenAI / Slack / Google keys, PEM private keys, `api_key = "…"` assignments). Findings REDACT the matched value. Exits non-zero when any secret is found (CI-friendly). Directories are walked recursively; `.git`, `target`, `node_modules`, dotdirs, binary + >2 MB files are skipped
+
+- `<PATH>` — File or directory to scan
+
 ## `neoth cron`
 
 Fire a scheduled job NOW, out of band of the daemon scheduler: `cron run <id>` loads jobs.yaml, runs the job through the configured provider (real call + delivery), writing the same WAL frames the scheduler does. Refused while `neoth serve` owns the WAL

@@ -19,6 +19,9 @@ pub mod refusal_detect;
 pub mod refusal_recovery;
 pub mod refusal_reframings;
 pub mod risk_gate;
+/// Secrets scanner — regex over text for leaked-credential formats; powers
+/// `neoth credential scan <path>`. Findings redact the matched value.
+pub mod secrets_scan;
 pub mod stream_batch_sanitizer;
 
 /// GOLD-ADOPT-23 — a combined egress + dangerous-command finding for one tool
