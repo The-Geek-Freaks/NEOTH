@@ -67,6 +67,12 @@ pub mod resource_watch;
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
+/// GOLD-FEAT-09 — daemon watchdog/auto-recovery cron. Probes supervised local
+/// services (n8n / Ollama) every `watchdog.interval_secs`, restarts them at
+/// `Elevated`+ autonomy after `consecutive_failures_before_restart` down ticks
+/// (crash-loop-guarded by a per-window restart budget), and emits
+/// `0x5F WATCHDOG_RESTART`. Off by default.
+pub mod watchdog_cron;
 /// MONITOR-02 — real-time worker-task death detection. Polls the daemon's
 /// long-running cron/worker abort handles + emits `0x4D WORKER_DIED` (naming the
 /// task) the moment one panics/exits — lower latency + attribution than the

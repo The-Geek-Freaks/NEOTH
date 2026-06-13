@@ -333,6 +333,35 @@ pub(crate) fn spawn_monitor_cron(
     handle
 }
 
+/// GOLD-FEAT-09 — spawn the daemon watchdog / auto-recovery cron. `None` when
+/// `watchdog.enabled = false`. The restart ACTION (spawning a service) is gated
+/// to `Elevated`/`Full` autonomy, resolved once here and passed as a plain
+/// `bool` so the watchdog module stays decoupled from the autonomy enum; below
+/// that the loop is observe-only (alerts, no spawn).
+pub(crate) fn spawn_watchdog_cron(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    use crate::permissions::AutonomyLevel;
+    let restart_allowed = matches!(
+        config.autonomy,
+        AutonomyLevel::Elevated | AutonomyLevel::Full
+    );
+    let handle = crate::daemon::watchdog_cron::spawn_watchdog_cron_loop(
+        config.watchdog,
+        restart_allowed,
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.watchdog.interval_secs,
+            restart_allowed,
+            "watchdog cron loop spawned (GOLD-FEAT-09)"
+        );
+    }
+    handle
+}
+
 /// OM-01 — local OMI transcript ingest. `None` when `omi.enabled = false`.
 pub(crate) fn spawn_omi_ingest(
     config: &FreedomConfig,
@@ -1727,6 +1756,7 @@ pub(crate) struct BackgroundHandles {
     pub doctor_cron_task: Option<JoinHandle<()>>,
     pub resource_watch_handle: Option<JoinHandle<()>>,
     pub monitor_cron_handle: Option<JoinHandle<()>>,
+    pub watchdog_cron_handle: Option<JoinHandle<()>>,
     pub snapshot_refresh_handle: Option<JoinHandle<()>>,
     pub omi_handle: Option<JoinHandle<()>>,
     pub updater_self_task: Option<JoinHandle<()>>,
@@ -1794,6 +1824,7 @@ pub(crate) async fn shutdown_background_tasks(
         doctor_cron_task,
         resource_watch_handle,
         monitor_cron_handle,
+        watchdog_cron_handle,
         snapshot_refresh_handle,
         omi_handle,
         updater_self_task,
@@ -1888,6 +1919,8 @@ pub(crate) async fn shutdown_background_tasks(
 
     // Abort the HO-07 monitor alerting cron loop (drain before writer close).
     crate::cli::serve_tasks::abort_optional(monitor_cron_handle).await;
+    // Abort the GOLD-FEAT-09 watchdog/auto-recovery cron loop.
+    crate::cli::serve_tasks::abort_optional(watchdog_cron_handle).await;
     // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
     // frames (only SQLite reads + an atomic snapshot rename), so its ordering vs
     // the writer drain is irrelevant — but abort it cleanly like the others.

@@ -797,6 +797,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let monitor_cron_handle =
         crate::cli::serve_tasks::spawn_monitor_cron(&config, &wal_dir, writer.clone());
 
+    // GOLD-FEAT-09 — daemon watchdog / auto-recovery cron. Default OFF → no
+    // idle task; opt-in via `watchdog.enabled = true`. The restart action is
+    // gated to Elevated/Full autonomy inside the spawn helper.
+    let watchdog_cron_handle =
+        crate::cli::serve_tasks::spawn_watchdog_cron(&config, writer.clone());
+
     // ── GOLD-WIRE-07b — daemon HNSW snapshot auto-freshness ────────────────────
     // WIRE-07 made `neoth recall` cold-load the on-disk HNSW snapshot, but it
     // only refreshed on the manual `neoth memory --rebuild-index`. This task
@@ -1316,6 +1322,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         doctor_cron_task,
         resource_watch_handle,
         monitor_cron_handle,
+        watchdog_cron_handle,
         snapshot_refresh_handle,
         omi_handle,
         updater_self_task,
