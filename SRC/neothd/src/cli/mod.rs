@@ -74,6 +74,7 @@ pub mod keys;
 pub mod lease;
 pub mod mcp;
 pub mod memory;
+pub mod moral_core;
 pub mod migrate;
 pub mod mode;
 pub mod monitor;
@@ -278,6 +279,11 @@ pub enum Commands {
     /// / IN_PROGRESS / REVIEW / DONE) onto NEOTH's `idx_kanban_*`
     /// tables. Pick #5a per `PLAN/SPEC_coding_workflow.md` build order.
     Kanban(kanban::KanbanArgs),
+
+    /// GOLD-FEAT-07 — inspect the LOWKEY moral-core directives (operator
+    /// behavioural constitution injected at enrichment position 0):
+    /// `list` / `preview` / `doctor`.
+    MoralCore(moral_core::MoralCoreArgs),
 
     /// View or set the operator autonomy level (`strict | standard | elevated
     /// | full | custom`) in freedom.yaml. `show` prints the current level + the
@@ -973,6 +979,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Kanban(mut args) => {
             args.output = global_output;
             kanban::run_kanban(args).await?;
+        }
+        Commands::MoralCore(mut args) => {
+            args.output = global_output;
+            moral_core::run_moral_core(args)?;
         }
         Commands::Autonomy(args) => {
             autonomy::run_autonomy(args, global_output).await?;

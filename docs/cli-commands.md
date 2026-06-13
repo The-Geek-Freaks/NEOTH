@@ -1224,6 +1224,24 @@ HO-07 alert sidecar summary. `status` reads the WAL + crash.log and prints a 3-r
 - `--hours <HOURS>` — Look-back window in hours (default 24)
 - `--json <JSON>` — Print JSON instead of the table
 
+## `neoth moral-core`
+
+GOLD-FEAT-07 — inspect the LOWKEY moral-core directives (operator behavioural constitution injected at enrichment position 0): `list` / `preview` / `doctor`
+
+- `--dir <PATH>` — Override the moral-core directory. Defaults to `~/.neoth/moral_core/`
+
+### `neoth moral-core doctor`
+
+Validate the moral-core directory: report presence + block/directive counts, and warn when it is empty or has no directives
+
+### `neoth moral-core list`
+
+List the parsed blocks (tag, directive count, source file)
+
+### `neoth moral-core preview`
+
+Print the compact directive text that WOULD be injected at enrichment position 0 (highest priority). Empty when no moral core is configured
+
 ## `neoth n8n`
 
 Inspect the n8n integration (READ-ONLY): `status` reports the webhook base URL n8n POSTs to + whether the `n8n` binary is on PATH; `workflows` lists the NEOTH starter workflows bundled in the binary

@@ -30,6 +30,9 @@ pub mod gc_task;
 pub mod groundtruth;
 pub mod hindsight;
 pub mod indexer;
+/// GOLD-FEAT-07 — LOWKEY moral-core loader (operator behavioural directives
+/// injected at enrichment position 0). `neoth moral-core {list,preview,doctor}`.
+pub mod moral_core;
 pub mod infra_scan;
 pub mod ingress;
 pub mod integrity;
