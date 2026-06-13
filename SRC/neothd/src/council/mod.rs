@@ -42,6 +42,7 @@ pub mod eval;
 /// catches it independently.
 pub mod factual_check;
 pub mod last_ts;
+pub mod nspace;
 pub mod orchestrator;
 pub mod qa_verdict;
 pub mod quality_score;

@@ -16,6 +16,7 @@ pub mod paperless_ingest;
 pub mod redact;
 pub mod refusal_cause;
 pub mod refusal_detect;
+pub mod refusal_hard_block;
 pub mod refusal_recovery;
 pub mod refusal_reframings;
 pub mod risk_gate;
