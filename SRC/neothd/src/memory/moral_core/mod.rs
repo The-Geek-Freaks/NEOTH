@@ -16,6 +16,9 @@
 //! lines + prose are ignored. The compact render concatenates every block's
 //! directives under a single `[MORAL CORE]` banner for injection.
 
+pub mod catalog;
+pub mod writer;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
