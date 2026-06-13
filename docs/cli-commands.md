@@ -1174,6 +1174,14 @@ Manage the local model caches under `~/.neoth/models/`
 
 _Aliases:_ `neoth model`
 
+### `neoth models fit`
+
+GOLD-ADAPT-ODY-13 — estimate decode throughput (tok/s) for a ladder of quantized local models on a GPU, ranked by VRAM-fit then speed. Complements `recommend` (which model) with "how fast". The estimate is memory-bandwidth-bound: `tok/s ≈ 0.55 × bandwidth / model_GB`
+
+- `--gpu <NAME>` — GPU name (e.g. `RTX 4090`, `A100`) — matched against a built-in bandwidth table. Provides both bandwidth + VRAM
+- `--bandwidth <GB_S>` — Memory bandwidth (GB/s) — required when `--gpu` isn't in the table
+- `--vram <GB>` — VRAM (GB) for the fit check. Defaults to the `--gpu` table value; 0 (or omitted with a custom `--bandwidth`) ranks by speed only
+
 ### `neoth models list`
 
 Print every known model + whether its artifacts are cached

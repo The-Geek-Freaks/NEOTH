@@ -73,6 +73,23 @@ pub enum ModelsAction {
         #[arg(long)]
         offline: bool,
     },
+    /// GOLD-ADAPT-ODY-13 — estimate decode throughput (tok/s) for a ladder of
+    /// quantized local models on a GPU, ranked by VRAM-fit then speed.
+    /// Complements `recommend` (which model) with "how fast". The estimate is
+    /// memory-bandwidth-bound: `tok/s ≈ 0.55 × bandwidth / model_GB`.
+    Fit {
+        /// GPU name (e.g. `RTX 4090`, `A100`) — matched against a built-in
+        /// bandwidth table. Provides both bandwidth + VRAM.
+        #[arg(long, value_name = "NAME")]
+        gpu: Option<String>,
+        /// Memory bandwidth (GB/s) — required when `--gpu` isn't in the table.
+        #[arg(long, value_name = "GB_S")]
+        bandwidth: Option<f64>,
+        /// VRAM (GB) for the fit check. Defaults to the `--gpu` table value;
+        /// 0 (or omitted with a custom `--bandwidth`) ranks by speed only.
+        #[arg(long, value_name = "GB")]
+        vram: Option<f64>,
+    },
 }
 
 /// Operator-facing lineage choice for `models recommend`.
@@ -151,7 +168,102 @@ pub async fn run_models(args: ModelsArgs) -> Result<()> {
             class,
             offline,
         } => run_recommend(vram, class.into(), offline, &args.output).await,
+        ModelsAction::Fit {
+            gpu,
+            bandwidth,
+            vram,
+        } => run_models_fit(gpu.as_deref(), bandwidth, vram, &args.output),
     }
+}
+
+/// GOLD-ADAPT-ODY-13 — render the hardware-fit tok/s ranking.
+fn run_models_fit(
+    gpu: Option<&str>,
+    bandwidth: Option<f64>,
+    vram: Option<f64>,
+    output: &crate::cli::OutputFormat,
+) -> Result<()> {
+    use crate::cli::OutputFormat;
+    use crate::hwfit;
+
+    // Resolve (label, bandwidth, vram) from the GPU table or explicit flags.
+    let (label, bw, vr) = if let Some(name) = gpu {
+        match hwfit::lookup_gpu(name) {
+            Some(g) => (
+                g.name.to_string(),
+                bandwidth.unwrap_or(g.bandwidth_gb_s),
+                vram.unwrap_or(g.vram_gb),
+            ),
+            None => {
+                let bw = bandwidth.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "GPU `{name}` not in the built-in table — pass `--bandwidth <GB/s>` \
+                         (and optionally `--vram <GB>`)"
+                    )
+                })?;
+                (name.to_string(), bw, vram.unwrap_or(0.0))
+            }
+        }
+    } else if let Some(bw) = bandwidth {
+        ("custom".to_string(), bw, vram.unwrap_or(0.0))
+    } else {
+        anyhow::bail!(
+            "`models fit` needs a GPU: pass `--gpu <name>` (e.g. \"RTX 4090\") or \
+             `--bandwidth <GB/s>` for a GPU not in the table"
+        );
+    };
+
+    let candidates = hwfit::default_candidates();
+    let ranked = hwfit::rank_models(vr, bw, &candidates);
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = ranked
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "model": m.label,
+                        "size_gb": m.size_gb,
+                        "fits": m.fits,
+                        "tok_s": (m.tok_s * 10.0).round() / 10.0,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "gpu": label,
+                    "bandwidth_gb_s": bw,
+                    "vram_gb": vr,
+                    "models": rows,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "hardware fit — {label} ({bw:.0} GB/s{}):",
+                if vr > 0.0 {
+                    format!(", {vr:.0} GB VRAM")
+                } else {
+                    String::new()
+                }
+            );
+            println!("  {:<10} {:>8} {:>6} {:>10}", "model", "size", "fits", "~tok/s");
+            for m in &ranked {
+                println!(
+                    "  {:<10} {:>6.1}GB {:>6} {:>10.0}",
+                    m.label,
+                    m.size_gb,
+                    if m.fits { "yes" } else { "no" },
+                    m.tok_s
+                );
+            }
+            println!(
+                "  (estimate: memory-bandwidth-bound, ~0.55 efficiency; real tok/s varies by runtime)"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// One recommended local-model choice: a size at a quant, resolved to a
