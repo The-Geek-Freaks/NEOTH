@@ -91,6 +91,12 @@ pub struct RecallArgs {
     #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check"])]
     pub sessions: Option<String>,
 
+    /// GOLD-ADAPT-MEM-09 — classify how much recall a query warrants (`skip` /
+    /// `single` / `multi`) and print the verdict instead of searching. Lets an
+    /// operator see why a trivial status/identity query would skip recall.
+    #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions"])]
+    pub classify: Option<String>,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -112,6 +118,18 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // HindsightCards (no DB, no WAL, no network) and ranks them by query.
     if let Some(q) = args.sessions.clone() {
         return run_session_search(&q, args.limit, args.output);
+    }
+
+    // GOLD-ADAPT-MEM-09 recall-gate classification short-circuit (pure; no DB).
+    if let Some(q) = args.classify.clone() {
+        let tier = crate::memory::recall_gate::classify_recall_need(&q);
+        match args.output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+                println!("{}", serde_json::json!({ "query": q, "tier": tier.as_str() }));
+            }
+            crate::cli::OutputFormat::Table => println!("recall tier: {}", tier.as_str()),
+        }
+        return Ok(());
     }
 
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
@@ -1087,6 +1105,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            classify: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1357,6 +1376,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            classify: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1385,6 +1405,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            classify: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1413,6 +1434,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            classify: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,

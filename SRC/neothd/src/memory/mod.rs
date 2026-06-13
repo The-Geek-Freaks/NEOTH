@@ -39,6 +39,8 @@ pub mod integrity;
 pub mod migrations;
 pub mod operator_md;
 pub mod pre_decay_export;
+/// GOLD-ADAPT-MEM-09 — recall decision gating (skip / single / multi tier).
+pub mod recall_gate;
 pub mod region_router;
 pub mod channel_weights;
 pub mod regions;
