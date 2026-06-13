@@ -80,6 +80,12 @@ pub enum ObsidianAction {
         /// List the pages that would be written without writing anything.
         #[arg(long)]
         dry_run: bool,
+        /// GOLD-FEAT-03 slice 2 — after writing, push one recall-friendly
+        /// pointer per doc into ground-truth (`idx_groundtruth`, scope
+        /// `neoth-self-wiki`) so the design corpus surfaces on recall. Prior
+        /// self-wiki rows are revoked first (idempotent). Ignored on dry-run.
+        #[arg(long)]
+        ingest: bool,
     },
 }
 
@@ -119,10 +125,27 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
             subdir,
             source_dir,
             dry_run,
+            ingest,
         } => {
             let out_dir = vault.join(&subdir);
             let (stats, slugs) = crate::wiki::build_wiki(&source_dir, &out_dir, dry_run)?;
             render_wiki_build(&stats, &slugs, &out_dir, args.output);
+            if ingest && !dry_run {
+                let sources = crate::wiki::discover_sources(&source_dir)?;
+                let conn = crate::memory::store::open(&crate::memory::store::default_path())
+                    .context("open views.db for self-wiki ground-truth ingest")?;
+                let now_ns = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0);
+                let ist = crate::wiki::ingest_sources(&conn, &sources, now_ns)?;
+                println!(
+                    "self-wiki ingest: {} ground-truth pointer(s) inserted, {} prior revoked (scope {})",
+                    ist.inserted,
+                    ist.revoked,
+                    crate::wiki::WIKI_SCOPE
+                );
+            }
         }
     }
     Ok(())

@@ -10,10 +10,12 @@
 //! groundtruth ingest pass + the background rebuild cron (those need a WAL
 //! event byte + `SelfWikiConfig`, deferred to keep slice 1 disjoint).
 
+pub mod ingest;
 pub mod renderer;
 pub mod sources;
 pub mod writer;
 
+pub use ingest::{ingest_sources, IngestStats, WIKI_SCOPE};
 pub use renderer::{render_index, render_page, INDEX_SLUG};
 pub use sources::{discover_sources, SourceCategory, WikiSource};
 pub use writer::{build_wiki, plan_wiki, write_plan, WikiBuildPlan, WikiBuildStats};

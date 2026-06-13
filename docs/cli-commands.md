@@ -1253,6 +1253,7 @@ GOLD-FEAT-03 — render NEOTH's own `PLAN/` design corpus (SPECs, design docs, C
 - `--subdir <SUBDIR>` — Subdirectory inside the vault for the wiki. Created on demand
 - `--source-dir <SOURCE_DIR>` — Directory holding the source design docs. Defaults to `PLAN` (run from the repo root); point it elsewhere if the docs moved
 - `--dry-run <DRY_RUN>` — List the pages that would be written without writing anything
+- `--ingest <INGEST>` — GOLD-FEAT-03 slice 2 — after writing, push one recall-friendly pointer per doc into ground-truth (`idx_groundtruth`, scope `neoth-self-wiki`) so the design corpus surfaces on recall. Prior self-wiki rows are revoked first (idempotent). Ignored on dry-run
 
 ## `neoth os`
 
