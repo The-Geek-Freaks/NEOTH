@@ -265,9 +265,62 @@ pub fn default_table() -> ModelRoleTable {
         )
 }
 
+/// GOLD-PROG-14 / [neoth_model_version_agnostic] — the provider's CURRENT top
+/// model from the live `models_catalog.json`: its first non-deprecated entry.
+/// The catalog lists models in provider-preference order (the wizard's
+/// default-selection is the first non-deprecated), so that entry IS the
+/// provider's flagship. Pure + testable (caller supplies the catalog). `None`
+/// when the provider is absent or has only deprecated entries → the caller keeps
+/// the pinned [`default_table`] flagship. Only the Flagship role uses this: the
+/// catalog carries no Balanced/Fast tier signal.
+pub fn flagship_from_catalog(
+    catalog: &crate::models::catalog::ModelsCatalog,
+    provider_id: &str,
+) -> Option<String> {
+    catalog
+        .providers
+        .get(provider_id)
+        .and_then(|pc| pc.models.iter().find(|m| !m.deprecated))
+        .map(|m| m.id.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flagship_from_catalog_picks_first_non_deprecated() {
+        use crate::models::catalog::{ModelEntry, ModelsCatalog, ProviderCatalog};
+        let mut cat = ModelsCatalog::in_memory();
+        cat.providers.insert(
+            "anthropic_api".to_string(),
+            ProviderCatalog {
+                models: vec![
+                    ModelEntry::new("claude-old").marked_deprecated(),
+                    ModelEntry::new("claude-opus-4-9"),
+                    ModelEntry::new("claude-sonnet-4-7"),
+                ],
+                ..Default::default()
+            },
+        );
+        // First NON-deprecated wins (the deprecated head is skipped).
+        assert_eq!(
+            flagship_from_catalog(&cat, "anthropic_api").as_deref(),
+            Some("claude-opus-4-9")
+        );
+        // Absent provider → None (caller keeps the pinned default).
+        assert_eq!(flagship_from_catalog(&cat, "openai_api"), None);
+        // Only-deprecated entries → None.
+        let mut only_dep = ModelsCatalog::in_memory();
+        only_dep.providers.insert(
+            "x".to_string(),
+            ProviderCatalog {
+                models: vec![ModelEntry::new("d").marked_deprecated()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(flagship_from_catalog(&only_dep, "x"), None);
+    }
 
     #[test]
     fn role_round_trips_through_serde() {

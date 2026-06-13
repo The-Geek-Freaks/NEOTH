@@ -500,6 +500,21 @@ pub(crate) fn default_model(
     role: model_roles::ModelRole,
     hardcoded: &str,
 ) -> String {
+    // GOLD-PROG-14 / [neoth_model_version_agnostic] — for the Flagship role,
+    // prefer the live catalog's provider-preferred (first non-deprecated) model
+    // so a newly shipped flagship flows in WITHOUT hand-editing `default_table()`.
+    // The catalog carries no Balanced/Fast tier signal, so those roles keep the
+    // pinned defaults. Catalog absent/empty (fresh install, isolated tests) → the
+    // existing `default_table()`/`hardcoded` path, so behaviour is unchanged there.
+    if matches!(role, model_roles::ModelRole::Flagship) {
+        let path = crate::models::catalog::ModelsCatalog::default_path(
+            &FreedomConfig::default_neoth_home(),
+        );
+        let catalog = crate::models::catalog::ModelsCatalog::load_from(&path);
+        if let Some(id) = model_roles::flagship_from_catalog(&catalog, provider_id) {
+            return id;
+        }
+    }
     model_roles::default_table()
         .resolve(provider_id, role)
         .unwrap_or(hardcoded)
@@ -843,30 +858,39 @@ mod tests {
 
     #[test]
     fn default_model_resolves_from_table_then_falls_back() {
-        // GOLD-WIRE-03: `default_model` is the from_config fallback path. For a
-        // provider present in `default_table` the TABLE value wins (so
-        // changing the table changes what the daemon selects); an absent
-        // provider falls back to the per-arm hardcoded string.
+        // GOLD-WIRE-03 / GOLD-PROG-14: `default_model` is the from_config
+        // fallback path. With NO catalog present (isolated NEOTH_HOME below) the
+        // `default_table` value wins for every role; an absent provider falls
+        // back to the per-arm hardcoded string. PROG-14 layers a catalog
+        // override for Flagship ON TOP — exercised in the second half.
         use model_roles::{default_table, ModelRole};
+
+        // PROG-14: isolate NEOTH_HOME to an empty dir so default_model's catalog
+        // read finds nothing → the pre-PROG-14 default_table behaviour holds. The
+        // crate env lock serialises this against any sibling env test (#4 gotcha).
+        let _env = crate::test_env::lock();
+        let tmp = tempfile::TempDir::new().unwrap();
+        unsafe { std::env::set_var("NEOTH_HOME", tmp.path()) };
 
         // Present provider → table value, NOT the hardcoded fallback.
         assert_eq!(
             default_model("claude_cli", ModelRole::Flagship, "IGNORED"),
             "claude-opus-4-7"
         );
-        // The link that makes "changing default_table changes selection" true.
+        // Catalog-absent: the "changing default_table changes selection" link.
         assert_eq!(
             default_model("claude_cli", ModelRole::Flagship, "IGNORED"),
             default_table()
                 .resolve("claude_cli", ModelRole::Flagship)
                 .unwrap()
         );
-        // anthropic_api defaults to Balanced (cost choice = sonnet).
+        // anthropic_api defaults to Balanced (cost choice = sonnet). Balanced is
+        // never catalog-overridden, so this holds regardless of any catalog.
         assert_eq!(
             default_model("anthropic_api", ModelRole::Balanced, "x"),
             "claude-sonnet-4-6"
         );
-        // cohere_api is now table-sourced (GOLD-WIRE-03 added its row).
+        // cohere_api is table-sourced (GOLD-WIRE-03 added its row).
         assert_eq!(
             default_model("cohere_api", ModelRole::Flagship, "x"),
             "command-a-plus-05-2026"
@@ -876,6 +900,36 @@ mod tests {
             default_model("not_in_table", ModelRole::Flagship, "FALLBACK"),
             "FALLBACK"
         );
+
+        // PROG-14: with a live catalog present, the Flagship role takes the
+        // catalog's first non-deprecated id (a new flagship flows in without
+        // hand-editing default_table); Balanced still ignores the catalog.
+        let mut cat = crate::models::catalog::ModelsCatalog::in_memory();
+        cat.providers.insert(
+            "anthropic_api".to_string(),
+            crate::models::catalog::ProviderCatalog {
+                models: vec![crate::models::catalog::ModelEntry::new("claude-opus-4-9-NEW")],
+                ..Default::default()
+            },
+        );
+        let cat_path = crate::models::catalog::ModelsCatalog::default_path(
+            &FreedomConfig::default_neoth_home(),
+        );
+        std::fs::create_dir_all(cat_path.parent().unwrap()).unwrap();
+        std::fs::write(&cat_path, serde_json::to_vec(&cat).unwrap()).unwrap();
+
+        assert_eq!(
+            default_model("anthropic_api", ModelRole::Flagship, "IGNORED"),
+            "claude-opus-4-9-NEW",
+            "PROG-14: catalog flagship overrides the pinned default_table flagship"
+        );
+        // Balanced is NOT catalog-driven → still the pinned default.
+        assert_eq!(
+            default_model("anthropic_api", ModelRole::Balanced, "x"),
+            "claude-sonnet-4-6"
+        );
+
+        unsafe { std::env::remove_var("NEOTH_HOME") };
     }
 
     #[test]
