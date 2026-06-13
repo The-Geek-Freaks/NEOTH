@@ -174,23 +174,35 @@ pub(crate) enum DeliveryRoute {
     /// the proactive item could influence (items carry no chat id), so the
     /// "attacker-chosen recipient" vector is structurally absent.
     Telegram { chat_id: String },
+    /// GOLD-FEAT-13 — deliver to Slack. `channel_id` is the operator's OWN
+    /// configured routing destination (`ChannelRouting.destinations.slack_channel_id`),
+    /// never item-influenced — same anti-spoof invariant as Telegram.
+    Slack { channel_id: String },
+    /// GOLD-FEAT-13 — deliver to Discord. `channel_id` = operator's configured
+    /// `discord_channel_id` routing destination.
+    Discord { channel_id: String },
 }
 
-/// G-01 — decide how (and whether) to deliver an item whose target is
-/// `channel`, given the operator's autonomy level + config. Two gates:
-/// (1) the autonomy `Action::ProactiveChannelSend` gate, (2) live-adapter
-/// availability. The `proactive.enabled` master switch is checked by the
-/// caller BEFORE this; this function assumes the feature is enabled.
+/// G-01 / GOLD-FEAT-13 — decide how (and whether) to deliver an item whose
+/// target is `channel`, given the operator's autonomy level + config +
+/// routing destinations + credentials. Two gates: (1) the autonomy
+/// `Action::ProactiveChannelSend` gate, (2) live-adapter availability
+/// (token present AND a configured destination). The `proactive.enabled`
+/// master switch is checked by the caller BEFORE this.
 ///
-/// v1.0 scope: only Telegram has authoritative recipient resolution
-/// (`telegram_user_id` is the single configured operator). Other channel
-/// families (Slack/Discord/Keet/WhatsApp) have no persisted proactive
-/// recipient, so they fall back to `SidecarOnly` until a per-channel
-/// recipient is wired — the operator still sees the item in the ledger.
+/// Recipient/destination is ALWAYS the operator's OWN configured value
+/// (`telegram_user_id` or a `ChannelRouting.destinations.*`), NEVER a value
+/// the proactive item could influence — the anti-spoof invariant holds for
+/// every channel. A channel with no token or no configured destination →
+/// `SidecarOnly` (the operator still sees it in the ledger). Slice 2 wires
+/// Telegram/Slack/Discord; WhatsApp/Keet (multi-arg / bridge constructors)
+/// land in slice 3 and currently fall to `SidecarOnly`.
 pub(crate) fn plan_delivery(
     channel: &str,
     autonomy: AutonomyLevel,
     config: &FreedomConfig,
+    routing: &crate::channels::routing::ChannelRouting,
+    credentials: &crate::config::credentials::Credentials,
 ) -> DeliveryRoute {
     let action = Action::ProactiveChannelSend {
         channel: channel.to_string(),
@@ -198,10 +210,27 @@ pub(crate) fn plan_delivery(
     if !evaluate(&action, autonomy).is_allow() {
         return DeliveryRoute::Suppressed;
     }
+    let dest = routing.destinations.for_channel(channel);
     match channel {
         "telegram" => match (&config.telegram_token, config.telegram_user_id) {
             (Some(_token), Some(uid)) => DeliveryRoute::Telegram {
                 chat_id: uid.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        "slack" => match (
+            credentials.slack_bot_token.as_ref(),
+            credentials.slack_app_token.as_ref(),
+            dest,
+        ) {
+            (Some(_), Some(_), Some(channel_id)) => DeliveryRoute::Slack {
+                channel_id: channel_id.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        "discord" => match (credentials.discord_bot_token.as_ref(), dest) {
+            (Some(_), Some(channel_id)) => DeliveryRoute::Discord {
+                channel_id: channel_id.to_string(),
             },
             _ => DeliveryRoute::SidecarOnly,
         },
@@ -252,12 +281,27 @@ pub async fn run_proactive_delivery_tick(
     }
 
     let autonomy = config.autonomy;
+    // GOLD-FEAT-13 — load the per-purpose routing + credentials ONCE per tick
+    // (cheap file reads, mirroring the queue load above). A missing routing
+    // file → default (no rules: items keep their own channel / sidecar). A
+    // missing credentials file → default (non-Telegram channels → SidecarOnly).
+    let routing = crate::channels::routing::ChannelRouting::load_from(
+        &home.join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+    )
+    .unwrap_or_default();
+    let credentials = crate::config::credentials::Credentials::load().unwrap_or_default();
     let mut records: Vec<(crate::proactive::ProactiveItem, ProactiveStatus)> =
         Vec::with_capacity(drained.len());
     let mut delivered = 0usize;
 
     for item in drained {
-        let (status, recipient) = match plan_delivery(&item.channel, autonomy, config) {
+        // GOLD-FEAT-13 — route by the item's `source` (per-purpose), falling
+        // back to the item's own channel when no routing rule applies.
+        let target_channel = routing
+            .resolve_channel(&item.source, false)
+            .unwrap_or_else(|| item.channel.clone());
+        let (status, recipient) =
+            match plan_delivery(&target_channel, autonomy, config, &routing, &credentials) {
             DeliveryRoute::Suppressed => (ProactiveStatus::Suppressed, String::new()),
             DeliveryRoute::SidecarOnly => (ProactiveStatus::SidecarOnly, String::new()),
             DeliveryRoute::Telegram { chat_id } => {
@@ -286,12 +330,76 @@ pub async fn run_proactive_delivery_tick(
                     }
                 }
             }
+            DeliveryRoute::Slack { channel_id } => {
+                // Safe: plan_delivery returned Slack only when both tokens are
+                // present. channel_id is the operator's configured destination.
+                let bot = credentials
+                    .slack_bot_token
+                    .clone()
+                    .expect("plan_delivery guarantees slack_bot_token is Some");
+                let app = credentials
+                    .slack_app_token
+                    .clone()
+                    .expect("plan_delivery guarantees slack_app_token is Some");
+                let channel = crate::channels::slack::SlackChannel::new(bot, app);
+                use crate::channels::Channel;
+                match channel.send_proactive(&channel_id, &item.body).await {
+                    Ok(_) => {
+                        delivered += 1;
+                        (ProactiveStatus::Delivered, channel_id)
+                    }
+                    Err(e) => {
+                        warn!(
+                            channel = "slack",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "proactive send failed; recorded as failed (not re-enqueued)"
+                        );
+                        (ProactiveStatus::Failed, channel_id)
+                    }
+                }
+            }
+            DeliveryRoute::Discord { channel_id } => {
+                let token = credentials
+                    .discord_bot_token
+                    .clone()
+                    .expect("plan_delivery guarantees discord_bot_token is Some");
+                use crate::channels::Channel;
+                match crate::channels::discord::DiscordChannel::new(token) {
+                    Ok(channel) => match channel.send_proactive(&channel_id, &item.body).await {
+                        Ok(_) => {
+                            delivered += 1;
+                            (ProactiveStatus::Delivered, channel_id)
+                        }
+                        Err(e) => {
+                            warn!(
+                                channel = "discord",
+                                dedup_key = %item.dedup_key,
+                                error = %e,
+                                "proactive send failed; recorded as failed (not re-enqueued)"
+                            );
+                            (ProactiveStatus::Failed, channel_id)
+                        }
+                    },
+                    Err(e) => {
+                        warn!(
+                            channel = "discord",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "discord adapter construct failed; recorded as failed"
+                        );
+                        (ProactiveStatus::Failed, channel_id)
+                    }
+                }
+            }
         };
 
         // Distinct WAL frame (0x3A) so an operator can grep exactly when
         // the daemon spoke UNPROMPTED. recipient is hashed, never raw.
+        // GOLD-FEAT-13: log the ROUTED target channel (where it actually went),
+        // not the item's original channel tag.
         let payload = serde_json::to_vec(&serde_json::json!({
-            "channel": item.channel,
+            "channel": target_channel,
             "recipient_hash": recipient_hash(&recipient),
             "dedup_key": item.dedup_key,
             "source": item.source,
@@ -544,13 +652,20 @@ mod tests {
         c
     }
 
+    fn default_rt() -> crate::channels::routing::ChannelRouting {
+        crate::channels::routing::ChannelRouting::default()
+    }
+    fn default_creds() -> crate::config::credentials::Credentials {
+        crate::config::credentials::Credentials::default()
+    }
+
     #[test]
     fn plan_delivery_strict_suppresses() {
         // Strict autonomy denies daemon-initiated outbound regardless of
         // channel config.
         let cfg = cfg_with_telegram(AutonomyLevel::Strict);
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Strict, &cfg),
+            plan_delivery("telegram", AutonomyLevel::Strict, &cfg, &default_rt(), &default_creds()),
             DeliveryRoute::Suppressed
         );
     }
@@ -560,7 +675,7 @@ mod tests {
         // Standard ⇒ Confirm ⇒ not Allow ⇒ suppressed (no daemon TTY).
         let cfg = cfg_with_telegram(AutonomyLevel::Standard);
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Standard, &cfg),
+            plan_delivery("telegram", AutonomyLevel::Standard, &cfg, &default_rt(), &default_creds()),
             DeliveryRoute::Suppressed
         );
     }
@@ -569,7 +684,7 @@ mod tests {
     fn plan_delivery_elevated_telegram_configured_routes_to_telegram() {
         let cfg = cfg_with_telegram(AutonomyLevel::Elevated);
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg),
+            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg, &default_rt(), &default_creds()),
             DeliveryRoute::Telegram {
                 chat_id: "123456".to_string()
             }
@@ -583,22 +698,84 @@ mod tests {
         cfg.autonomy = AutonomyLevel::Elevated;
         // No telegram_token / telegram_user_id set.
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg),
+            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg, &default_rt(), &default_creds()),
             DeliveryRoute::SidecarOnly
         );
     }
 
     #[test]
-    fn plan_delivery_non_telegram_channel_is_sidecar_only_for_now() {
-        // v1.0 scope: only telegram has authoritative recipient resolution.
+    fn plan_delivery_unconfigured_non_telegram_is_sidecar_only() {
+        // GOLD-FEAT-13: with NO routing destination + NO credentials, every
+        // non-telegram channel is ledger-only — the fallback-chain terminal.
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         for ch in ["slack", "discord", "keet", "whatsapp", "cli"] {
             assert_eq!(
-                plan_delivery(ch, AutonomyLevel::Full, &cfg),
+                plan_delivery(ch, AutonomyLevel::Full, &cfg, &default_rt(), &default_creds()),
                 DeliveryRoute::SidecarOnly,
-                "channel {ch} should be sidecar-only until per-channel recipient is wired",
+                "channel {ch} with no dest/token must be sidecar-only",
             );
         }
+    }
+
+    #[test]
+    fn plan_delivery_routes_to_discord_when_token_and_destination_configured() {
+        // GOLD-FEAT-13: a configured Discord destination + bot token → Discord
+        // route. channel_id is the operator's OWN configured value.
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.discord_channel_id = Some("987654321".to_string());
+        let creds = crate::config::credentials::Credentials {
+            discord_bot_token: Some(crate::secret::SecretString::from("bot".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("discord", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::Discord {
+                channel_id: "987654321".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn plan_delivery_discord_without_destination_is_sidecar_only() {
+        // Token present but NO configured destination → sidecar (never guess).
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let creds = crate::config::credentials::Credentials {
+            discord_bot_token: Some(crate::secret::SecretString::from("bot".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("discord", AutonomyLevel::Full, &cfg, &default_rt(), &creds),
+            DeliveryRoute::SidecarOnly
+        );
+    }
+
+    #[test]
+    fn plan_delivery_slack_needs_both_tokens_and_destination() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.slack_channel_id = Some("C0B0QV5434G".to_string());
+        let creds = crate::config::credentials::Credentials {
+            slack_bot_token: Some(crate::secret::SecretString::from("xoxb".to_string())),
+            slack_app_token: Some(crate::secret::SecretString::from("xapp".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("slack", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::Slack {
+                channel_id: "C0B0QV5434G".to_string()
+            }
+        );
+        // Missing the app token → sidecar (SlackChannel::new needs both).
+        let creds_bot_only = crate::config::credentials::Credentials {
+            slack_bot_token: Some(crate::secret::SecretString::from("xoxb".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("slack", AutonomyLevel::Full, &cfg, &rt, &creds_bot_only),
+            DeliveryRoute::SidecarOnly,
+            "slack requires BOTH bot + app tokens"
+        );
     }
 
     #[test]
