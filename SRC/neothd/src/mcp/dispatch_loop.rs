@@ -1029,6 +1029,7 @@ mod tests {
             },
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
+            None,
         )
         .await
         .unwrap();
