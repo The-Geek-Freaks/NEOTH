@@ -53,6 +53,10 @@ pub enum CredentialAction {
     Scan {
         /// File or directory to scan.
         path: PathBuf,
+        /// Also flag long, high-entropy tokens that match no named pattern
+        /// (catches generic/opaque secrets). Trades precision for recall.
+        #[arg(long)]
+        entropy: bool,
     },
 }
 
@@ -122,17 +126,17 @@ pub fn run_credential(args: CredentialArgs, output: OutputFormat) -> Result<()> 
     match args.action {
         CredentialAction::List => run_list(output),
         CredentialAction::Import { file, dry_run } => run_import(&file, dry_run, output),
-        CredentialAction::Scan { path } => run_scan(&path, output),
+        CredentialAction::Scan { path, entropy } => run_scan(&path, entropy, output),
     }
 }
 
 /// Scan `path` (file or recursively-walked dir) for committed secrets, print a
 /// redacted report, and return an error (non-zero exit) if anything was found.
-fn run_scan(path: &std::path::Path, output: OutputFormat) -> Result<()> {
+fn run_scan(path: &std::path::Path, entropy: bool, output: OutputFormat) -> Result<()> {
     use crate::security::secrets_scan;
     let mut findings: Vec<(String, secrets_scan::Finding)> = Vec::new();
     let mut files_scanned = 0usize;
-    scan_path(path, &mut findings, &mut files_scanned)
+    scan_path(path, entropy, &mut findings, &mut files_scanned)
         .with_context(|| format!("scan {}", path.display()))?;
 
     match output {
@@ -183,13 +187,14 @@ fn run_scan(path: &std::path::Path, output: OutputFormat) -> Result<()> {
 /// `target`/`node_modules`/dotdirs, and anything `scan_file` rejects.
 fn scan_path(
     path: &std::path::Path,
+    entropy: bool,
     out: &mut Vec<(String, crate::security::secrets_scan::Finding)>,
     files_scanned: &mut usize,
 ) -> Result<()> {
     let meta = std::fs::metadata(path)
         .with_context(|| format!("stat {}", path.display()))?;
     if meta.is_file() {
-        scan_file(path, out, files_scanned);
+        scan_file(path, entropy, out, files_scanned);
         return Ok(());
     }
     if !meta.is_dir() {
@@ -209,21 +214,23 @@ fn scan_path(
             if matches!(name.as_str(), ".git" | "target" | "node_modules") || name.starts_with('.') {
                 continue;
             }
-            scan_path(&p, out, files_scanned)?;
+            scan_path(&p, entropy, out, files_scanned)?;
         } else if m.is_file() {
-            scan_file(&p, out, files_scanned);
+            scan_file(&p, entropy, out, files_scanned);
         }
     }
     Ok(())
 }
 
 /// Scan one file: skip >2 MB + binary (NUL byte / non-UTF8), else run the
-/// text scanner and tag each finding with the file path.
+/// text scanner (+ the opt-in entropy pass) and tag each finding with the path.
 fn scan_file(
     path: &std::path::Path,
+    entropy: bool,
     out: &mut Vec<(String, crate::security::secrets_scan::Finding)>,
     files_scanned: &mut usize,
 ) {
+    use crate::security::secrets_scan;
     const MAX_BYTES: u64 = 2 * 1024 * 1024;
     if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_BYTES {
         return;
@@ -240,8 +247,18 @@ fn scan_file(
         Err(_) => return,
     };
     *files_scanned += 1;
-    for f in crate::security::secrets_scan::scan_text(text) {
-        out.push((path.display().to_string(), f));
+    let file = path.display().to_string();
+    for f in secrets_scan::scan_text(text) {
+        out.push((file.clone(), f));
+    }
+    if entropy {
+        for f in secrets_scan::entropy_findings(
+            text,
+            secrets_scan::ENTROPY_MIN_LEN,
+            secrets_scan::ENTROPY_MIN_BITS,
+        ) {
+            out.push((file.clone(), f));
+        }
     }
 }
 
@@ -342,7 +359,7 @@ mod tests {
 
         let mut findings = Vec::new();
         let mut scanned = 0usize;
-        scan_path(root, &mut findings, &mut scanned).unwrap();
+        scan_path(root, false, &mut findings, &mut scanned).unwrap();
 
         // Exactly the leak.env AWS key — not the binary blob, not the .git token.
         assert_eq!(findings.len(), 1, "only the one real text leak");

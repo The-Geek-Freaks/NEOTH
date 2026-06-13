@@ -456,6 +456,7 @@ List which credential keys are currently set. Prints KEY NAMES ONLY — never th
 Scan a file or directory for committed secrets (AWS / GitHub / OpenAI / Slack / Google keys, PEM private keys, `api_key = "…"` assignments). Findings REDACT the matched value. Exits non-zero when any secret is found (CI-friendly). Directories are walked recursively; `.git`, `target`, `node_modules`, dotdirs, binary + >2 MB files are skipped
 
 - `<PATH>` — File or directory to scan
+- `--entropy <ENTROPY>` — Also flag long, high-entropy tokens that match no named pattern (catches generic/opaque secrets). Trades precision for recall
 
 ## `neoth cron`
 
