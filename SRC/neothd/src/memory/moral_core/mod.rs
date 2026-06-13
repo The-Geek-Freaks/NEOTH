@@ -124,6 +124,21 @@ pub fn compact_directives(blocks: &[MoralCoreBlock]) -> String {
     s
 }
 
+/// GOLD-FEAT-07 — one-shot load of the default moral-core directory into the
+/// compact injectable string for the enrichment pipeline. Returns `None` when
+/// the directory is absent or holds no directives (so the enrichment layer is
+/// simply skipped). Best-effort: a load error yields `None` (never breaks a
+/// turn).
+pub fn compact_for_injection() -> Option<String> {
+    let blocks = load_moral_core(&default_dir()).unwrap_or_default();
+    let compact = compact_directives(&blocks);
+    if compact.is_empty() {
+        None
+    } else {
+        Some(compact)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

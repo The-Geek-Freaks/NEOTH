@@ -777,6 +777,9 @@ pub async fn run_chat_with(
     let repo_context_block = maybe_repo_context_block(&config, &prompt);
 
     // ── Compose layered system prompt via shared helper ───────────────────
+    // GOLD-FEAT-07 — load the operator's LOWKEY moral core (if any) for
+    // position-0 injection. Best-effort; `None` when not configured.
+    let moral_core = crate::memory::moral_core::compact_for_injection();
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt: &prompt,
         operator_context: operator_context.as_deref(),
@@ -787,6 +790,7 @@ pub async fn run_chat_with(
         used_skill_id: used_skill_id.as_deref(),
         mcp_catalogue: mcp_catalogue.as_deref(),
         persona_override: persona_override.as_deref(),
+        moral_core: moral_core.as_deref(),
     });
     let combined_system = enriched.system;
     // used_skill_id is plumbed through for any downstream audit

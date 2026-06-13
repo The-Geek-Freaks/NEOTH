@@ -973,6 +973,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &sanitized_text,
             );
 
+            // GOLD-FEAT-07 — moral core for channel turns too (position 0).
+            let channel_moral_core = crate::memory::moral_core::compact_for_injection();
             let channel_enriched =
                 crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
                     prompt: &sanitized_text,
@@ -984,6 +986,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     used_skill_id: used_skill_id.as_deref(),
                     mcp_catalogue: channel_mcp_catalogue.as_deref(),
                     persona_override: channel_persona.as_deref(),
+                    moral_core: channel_moral_core.as_deref(),
                 });
             let channel_enriched_system = channel_enriched.system;
             let _channel_used_skill_id = channel_enriched.used_skill_id;

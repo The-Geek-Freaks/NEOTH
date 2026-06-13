@@ -2252,6 +2252,7 @@ mod tests {
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
+            moral_core: None,
         });
 
         let system = out.system.expect("system layered");
@@ -2301,6 +2302,7 @@ mod tests {
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
+            moral_core: None,
         });
         // Exact "op\n\nuser" — no third blank line between them.
         assert_eq!(out.system.as_deref(), Some("op\n\nuser"));

@@ -91,6 +91,11 @@ pub struct EnrichmentInputs<'a> {
     /// `tweaks.toml::persona_override`. Rendered as a top-line
     /// `"Tone + persona: ..."` prefix when present.
     pub persona_override: Option<&'a str>,
+    /// GOLD-FEAT-07 — the LOWKEY moral-core directives (compact-rendered by
+    /// `memory::moral_core::compact_directives`). Injected at **position 0** of
+    /// the layered body — the operator's behavioural constitution the model
+    /// reads first. `None` when no moral core is configured.
+    pub moral_core: Option<&'a str>,
 }
 
 /// Output of [`build_enriched_request`]. Owned strings — the caller
@@ -133,7 +138,9 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     // Trim leading/trailing whitespace from every borrowed input so a
     // stray newline at the edge of one block doesn't widen the gap to
     // the next. The merge below adds the canonical "\n\n" separator.
-    let layers: [Option<&str>; 6] = [
+    let layers: [Option<&str>; 7] = [
+        // GOLD-FEAT-07 — moral core is position 0: highest-priority directives.
+        inputs.moral_core.map(str::trim).filter(|s| !s.is_empty()),
         inputs
             .operator_context
             .map(str::trim)
@@ -206,7 +213,29 @@ mod tests {
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
+            moral_core: None,
         }
+    }
+
+    #[test]
+    fn moral_core_injects_at_position_zero() {
+        // GOLD-FEAT-07: moral core is the FIRST layer of the body — ahead of
+        // operator context + every other block.
+        let mut inputs = empty_inputs("hi");
+        inputs.moral_core = Some("[MORAL CORE]\n- never fabricate");
+        inputs.operator_context = Some("Operator: Alex.");
+        let out = build_enriched_request(inputs);
+        let system = out.system.expect("system present");
+        assert!(system.starts_with("[MORAL CORE]"), "moral core leads: {system:?}");
+        let moral_pos = system.find("[MORAL CORE]").unwrap();
+        let ctx_pos = system.find("Operator: Alex.").unwrap();
+        assert!(moral_pos < ctx_pos, "moral core precedes operator context");
+    }
+
+    #[test]
+    fn no_moral_core_is_unchanged() {
+        let out = build_enriched_request(empty_inputs("hi"));
+        assert!(out.system.is_none(), "empty inputs → no system");
     }
 
     /// GR-051: template skills (pm-*) carry a `$ARGUMENTS` slot that the
@@ -385,6 +414,7 @@ mod tests {
             used_skill_id: Some("systematic-debugging"),
             mcp_catalogue: Some("# Available MCP Tools\n## Server `fs`\n- read_file"),
             persona_override: Some("concise"),
+            moral_core: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -415,6 +445,7 @@ mod tests {
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
+            moral_core: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -452,6 +483,7 @@ mod tests {
             used_skill_id: Some("morning-news"),
             mcp_catalogue: None,
             persona_override: Some("warm"),
+            moral_core: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
