@@ -66,6 +66,18 @@ pub enum KanbanAction {
         /// `done` / `blocked` / `archived`.
         status: String,
     },
+    /// GOLD-PROG-11 (QU-10c) — close a task to DONE, optionally gating the
+    /// transition on a live `cargo test` pass. `--verify-tests` runs the test
+    /// suite in the current directory FIRST and refuses to move the task to
+    /// done if it fails (prints the failure, returns non-zero), so a task is
+    /// never marked finished over a red suite. Without the flag this is a plain
+    /// move-to-done (`neoth kanban finish 42` == `neoth kanban move 42 done`).
+    Finish {
+        task_id: i64,
+        /// Run `cargo test` in the current directory and refuse DONE on failure.
+        #[arg(long)]
+        verify_tests: bool,
+    },
     /// Assign a task to a hemisphere + optional worker provider.
     Assign {
         task_id: i64,
@@ -155,6 +167,13 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
         KanbanAction::Move { task_id, status } => {
             let conn = open_views_db(&db_path)?;
             run_move(&conn, KanbanTaskId(task_id), &status)
+        }
+        KanbanAction::Finish {
+            task_id,
+            verify_tests,
+        } => {
+            let conn = open_views_db(&db_path)?;
+            run_finish(&conn, task_id, verify_tests)
         }
         KanbanAction::Assign {
             task_id,
@@ -387,6 +406,43 @@ fn run_move(conn: &Connection, task_id: KanbanTaskId, raw_status: &str) -> Resul
     let now_ns = now_unix_ns();
     store::patch_task_status(conn, task_id, status, now_ns)?;
     println!("task #{} → {}", task_id.raw(), status.as_str());
+    Ok(())
+}
+
+/// GOLD-PROG-11 — close a task to DONE, optionally gating on a live `cargo test`
+/// pass. `--verify-tests` runs the suite in the CWD first; a red suite refuses
+/// the transition so a task is never marked finished over failing tests.
+fn run_finish(conn: &Connection, task_id: i64, verify_tests: bool) -> Result<()> {
+    if verify_tests {
+        let cwd =
+            std::env::current_dir().context("resolve current dir for --verify-tests")?;
+        let passed = run_cargo_tests(&cwd)?;
+        gate_finish(task_id, passed)?;
+        println!("--verify-tests: cargo test passed");
+    }
+    run_move(conn, KanbanTaskId(task_id), "done")
+}
+
+/// Run `cargo test` in `dir`; `Ok(true)` iff it exited 0. Inherits stdio so the
+/// operator watches the suite live.
+fn run_cargo_tests(dir: &std::path::Path) -> Result<bool> {
+    let status = std::process::Command::new("cargo")
+        .arg("test")
+        .current_dir(dir)
+        .status()
+        .context("spawn `cargo test` for --verify-tests")?;
+    Ok(status.success())
+}
+
+/// Decide whether a `--verify-tests` finish may proceed. Pure (testable without
+/// spawning cargo): a passing suite is `Ok`, a failing one bails so the task
+/// stays put.
+fn gate_finish(task_id: i64, tests_passed: bool) -> Result<()> {
+    if !tests_passed {
+        return Err(anyhow!(
+            "--verify-tests: `cargo test` failed — task #{task_id} NOT moved to done"
+        ));
+    }
     Ok(())
 }
 
@@ -977,6 +1033,16 @@ fn format_ts_short(ts_ns: u64) -> String {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn gate_finish_blocks_on_red_suite_allows_green() {
+        // GOLD-PROG-11: --verify-tests refuses DONE when cargo test fails.
+        assert!(gate_finish(42, true).is_ok());
+        let err = gate_finish(42, false).unwrap_err().to_string();
+        assert!(err.contains("cargo test"), "err names the failure: {err}");
+        assert!(err.contains("#42"), "err names the task: {err}");
+        assert!(err.contains("NOT moved"), "err states the task stays put: {err}");
+    }
 
     fn fresh_db() -> (tempfile::TempDir, Connection) {
         let dir = tempdir().unwrap();
