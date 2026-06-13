@@ -2727,6 +2727,25 @@ impl FreedomConfig {
         if let Some(t) = creds.telegram_token {
             config.telegram_token = Some(t);
         }
+        // GR-041: per-slot inference keys. `save_public_to_default_path` strips
+        // `inference.{left,right,cerebellum,default_slot}.key` from freedom.yaml
+        // and the doc tells operators to set them in credentials.yaml — but the
+        // Credentials struct had no field for them, so a per-slot key was
+        // silently DROPPED on the next save (and unconfigurable via the
+        // documented file). Merge them back here, matching provider_key's
+        // "credentials.yaml wins" posture.
+        if let Some(k) = creds.inference_left_key {
+            config.inference.left.key = Some(k);
+        }
+        if let Some(k) = creds.inference_right_key {
+            config.inference.right.key = Some(k);
+        }
+        if let Some(k) = creds.inference_cerebellum_key {
+            config.inference.cerebellum.key = Some(k);
+        }
+        if let Some(k) = creds.inference_default_slot_key {
+            config.inference.default_slot.key = Some(k);
+        }
         Ok(config)
     }
 }

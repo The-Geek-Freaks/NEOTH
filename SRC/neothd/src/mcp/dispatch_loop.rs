@@ -188,6 +188,11 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                     continue;
                 }
             }
+            // GR-128: when a grind run is cut by the iteration cap, the model
+            // emits no tool calls and exits HERE (the nudge is gated on
+            // `iterations < max_iterations`), so `hit_cap` must be set on this
+            // clean-exit path too — otherwise the cap-truncation is invisible.
+            hit_cap = iterations >= max_iterations;
             break;
         }
         if iterations >= max_iterations {
@@ -450,10 +455,15 @@ async fn compact_if_needed<D: CompletionDriver + Send>(
     )
     .await;
 
-    let summary_prompt = crate::context::compaction::build_compaction_prompt(&prompt);
+    // GR-120: summarize only the OLDER history and re-attach the most recent
+    // exchange verbatim, so the last tool result can never be summarized away
+    // (the retention instruction alone was a behavioural hint, not a guarantee).
+    let (older, last_exchange) = crate::context::compaction::split_last_exchange(&prompt);
+    let summary_prompt = crate::context::compaction::build_compaction_prompt(older);
     match driver.complete(&summary_prompt).await {
         Ok(summary) if !summary.trim().is_empty() => {
-            let compacted = crate::context::compaction::wrap_summary(&summary);
+            let compacted =
+                crate::context::compaction::wrap_summary_with_last_exchange(&summary, last_exchange);
             let after_tokens = crate::tokens::budget::count_tokens(&compacted);
             info!(
                 iteration,
@@ -990,6 +1000,42 @@ mod tests {
         use crate::context::compress::{CompressionRuntime, Gate, Thresholds};
         // A disabled gate yields no runtime → the loop's `if let Some` never fires.
         assert!(CompressionRuntime::new(Gate::disabled(), Thresholds::default()).is_none());
+    }
+
+    // ── GR-128 grind cut by the iteration cap ───────────────────────────────
+
+    #[tokio::test]
+    async fn hit_cap_set_when_grind_run_is_cut_by_iteration_cap() {
+        // A grind re-nudges on every clean exit (no tool calls) until the cap;
+        // at the cap the nudge is gated out (`iterations < max_iterations` is
+        // false) and the loop exits via the clean-exit break. GR-128: that path
+        // must still flag hit_cap, else the cap-truncation is invisible to the
+        // caller. Driver always returns a no-tool-call reply.
+        let mut driver = ScriptedDriver::new(vec!["done", "still done", "and again", "more"]);
+        let servers = McpServers::default();
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "x".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            3, // max_iterations
+            &crate::config::SecurityPolicy::default(),
+            crate::mcp::goal_tracker::GoalContext {
+                goal: None,
+                grind: Some("keep iterating".into()),
+            },
+            true,
+            crate::context::compaction::CompactionPolicy::disabled(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            outcome.hit_cap,
+            "a grind run cut at the iteration cap via the clean-exit branch must set hit_cap"
+        );
     }
 
     // ── GOLD-ADOPT-19 context compaction ───────────────────────────────────

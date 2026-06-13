@@ -240,7 +240,19 @@ async fn discover_scan(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>> {
         // GOLD-SEC-26 / A-28: drop peers whose mDNS-announced pubkey isn't
         // valid hex BEFORE they reach the picker / confirm path — defends the
         // downstream slicing + keeps a malformed announce from polluting the list.
-        .filter(|(pub_key_hex, _)| validate_pub_key_hex(pub_key_hex).is_ok())
+        // GR-150: log each rejection (key truncated via short_key against
+        // log-injection) so an operator can tell zero-peers-on-network apart
+        // from all-peers-rejected-as-malformed.
+        .filter(|(pub_key_hex, _)| {
+            let ok = validate_pub_key_hex(pub_key_hex).is_ok();
+            if !ok {
+                tracing::debug!(
+                    pub_key = short_key(pub_key_hex),
+                    "cluster discover: dropping peer with invalid pubkey hex"
+                );
+            }
+            ok
+        })
         .map(|(pub_key_hex, (label, addr))| DiscoveredPeer {
             pub_key_hex,
             label,

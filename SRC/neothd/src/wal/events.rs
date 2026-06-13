@@ -539,6 +539,14 @@ pub const EVENT_TYPE_CONTEXT_COMPACTION_DONE: u8 = 0x5C;
 /// saved (a passthrough emits nothing).
 pub const EVENT_TYPE_COMPRESSION_APPLIED: u8 = 0x5D;
 
+/// `0x5E INDEXER_TAMPER_SUSPECT` — GR-164. The WAL memory indexer hit an
+/// unreconstructable segment (`logical_segment_bytes` failed — HMAC mismatch
+/// or corrupt zstd blob) and skipped it for this pass. Without this frame the
+/// tamper event was warn-only and not auditable after the fact. Payload
+/// `{segment, error, ts_unix}`. (0x5D is the WS-HR COMPRESSION_APPLIED frame;
+/// this took 0x5E so both merges stay collision-free.)
+pub const EVENT_TYPE_INDEXER_TAMPER_SUSPECT: u8 = 0x5E;
+
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
 /// Scheduled job fired by the cron scheduler.
@@ -1872,6 +1880,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_CONTEXT_COMPACTION_START,
     ),
     ("context_compaction_done", EVENT_TYPE_CONTEXT_COMPACTION_DONE),
+    ("indexer_tamper_suspect", EVENT_TYPE_INDEXER_TAMPER_SUSPECT),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2190,6 +2199,8 @@ const _: () = {
         || EVENT_TYPE_CONTEXT_COMPACTION_START > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONTEXT_COMPACTION_DONE < 0x50
         || EVENT_TYPE_CONTEXT_COMPACTION_DONE > 0x5F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_INDEXER_TAMPER_SUSPECT < 0x50
+        || EVENT_TYPE_INDEXER_TAMPER_SUSPECT > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
         || EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL < 0x60

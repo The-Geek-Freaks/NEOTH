@@ -24,14 +24,28 @@ use tokio::fs;
 use tracing::{debug, warn};
 
 use crate::wal::events::{
-    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_PROVIDER_REQUEST,
-    EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_INDEXER_TAMPER_SUSPECT,
+    EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
 };
 use crate::wal::frame::decode_frame;
+use crate::wal::writer::WalWriterHandle;
 
 /// Index every new frame in `segment_path` into `conn`. Returns the number of
 /// frames newly indexed.
 pub async fn replay_once(conn: &mut Connection, segment_path: &Path) -> Result<usize> {
+    replay_once_audited(conn, segment_path, None).await
+}
+
+/// GR-164 — like [`replay_once`] but, when `writer` is `Some`, emits a
+/// `0x5E INDEXER_TAMPER_SUSPECT` WAL frame if a segment fails to reconstruct
+/// (tamper-suspect), so the skip is auditable after the fact. The `tail`
+/// daemon loop passes a writer; CLI/test callers use the writerless
+/// [`replay_once`].
+pub async fn replay_once_audited(
+    conn: &mut Connection,
+    segment_path: &Path,
+    writer: Option<&WalWriterHandle>,
+) -> Result<usize> {
     let segment_key = segment_path.to_string_lossy().to_string();
     let start_offset = load_cursor(conn, &segment_key)?;
 
@@ -60,6 +74,12 @@ pub async fn replay_once(conn: &mut Connection, segment_path: &Path) -> Result<u
                 segment = %segment_path.display(),
                 "indexer: unreconstructable (tamper-suspect) segment — skipping this pass"
             );
+            // GR-164: the monitor cron only scans for already-written recovery
+            // frames; this decode-time failure leaves none, so without an
+            // explicit frame the tamper event is unauditable. Emit one.
+            if let Some(w) = writer {
+                emit_tamper_suspect(w, segment_path, &e.to_string()).await;
+            }
             return Ok(0);
         }
     };
@@ -115,9 +135,15 @@ pub async fn replay_once(conn: &mut Connection, segment_path: &Path) -> Result<u
 /// it as a seed file inside the WAL directory and walk every `.wal`
 /// sibling. The seed file itself is always indexed even if it does not
 /// (yet) exist on disk.
-pub async fn tail(mut conn: Connection, segment_path: PathBuf, interval: Duration) -> Result<()> {
+pub async fn tail(
+    mut conn: Connection,
+    segment_path: PathBuf,
+    interval: Duration,
+    // GR-164: when `Some`, a tamper-suspect segment emits a 0x5E alert frame.
+    writer: Option<WalWriterHandle>,
+) -> Result<()> {
     loop {
-        match replay_all_segments(&mut conn, &segment_path).await {
+        match replay_all_segments_audited(&mut conn, &segment_path, writer.as_ref()).await {
             Ok(n) if n > 0 => debug!(frames = n, "indexer caught up"),
             Ok(_) => {}
             Err(e) => warn!(error = %e, "indexer pass failed; retrying"),
@@ -134,6 +160,16 @@ pub async fn tail(mut conn: Connection, segment_path: PathBuf, interval: Duratio
 ///
 /// Returns the total number of frames newly indexed across all segments.
 pub async fn replay_all_segments(conn: &mut Connection, seed: &Path) -> Result<usize> {
+    replay_all_segments_audited(conn, seed, None).await
+}
+
+/// GR-164 — writer-aware variant of [`replay_all_segments`]; threads `writer`
+/// down to [`replay_once_audited`] so a tamper-suspect segment emits an alert.
+async fn replay_all_segments_audited(
+    conn: &mut Connection,
+    seed: &Path,
+    writer: Option<&WalWriterHandle>,
+) -> Result<usize> {
     let mut total = 0usize;
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
@@ -141,7 +177,7 @@ pub async fn replay_all_segments(conn: &mut Connection, seed: &Path) -> Result<u
     // yet (fresh boot before the writer creates 000001.wal). replay_once
     // tolerates missing files by returning Ok(0).
     if seen.insert(seed.to_path_buf()) {
-        total += replay_once(conn, seed).await?;
+        total += replay_once_audited(conn, seed, writer).await?;
     }
 
     // Discover sibling segments. Parent missing = nothing to walk; that
@@ -171,9 +207,27 @@ pub async fn replay_all_segments(conn: &mut Connection, seed: &Path) -> Result<u
     // Sort by filename so per-segment cursors advance in segment-seq order.
     paths.sort();
     for p in paths {
-        total += replay_once(conn, &p).await?;
+        total += replay_once_audited(conn, &p, writer).await?;
     }
     Ok(total)
+}
+
+/// GR-164 — append a `0x5E INDEXER_TAMPER_SUSPECT` frame. Best-effort: a WAL
+/// failure here must not crash the indexer loop (it logs and moves on).
+async fn emit_tamper_suspect(writer: &WalWriterHandle, segment_path: &Path, error: &str) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "segment": segment_path.display().to_string(),
+        "error": error,
+        "ts_unix": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    }))
+    .unwrap_or_default();
+    let header = crate::wal::make_header(EVENT_TYPE_INDEXER_TAMPER_SUSPECT, &payload);
+    if let Err(e) = writer.append(header, payload).await {
+        warn!(error = %e, "indexer: failed to emit INDEXER_TAMPER_SUSPECT frame");
+    }
 }
 
 fn load_cursor(conn: &Connection, segment_key: &str) -> Result<usize> {

@@ -875,15 +875,24 @@ pub(crate) async fn spawn_cron_scheduler(
 
 /// Memory indexer — tails the WAL into the SQLite views db so `neoth recall` is
 /// near-real-time. Opens its own `views.db` connection; `None` (logged) when the
-/// open fails (recall then runs a per-query index pass). WAL-free (reads the WAL,
-/// writes SQLite).
-pub(crate) fn spawn_indexer(segment_path: &std::path::Path) -> Option<JoinHandle<()>> {
+/// open fails (recall then runs a per-query index pass). GR-164: when `writer`
+/// is `Some`, a tamper-suspect (unreconstructable) segment emits a 0x5E alert
+/// frame so the skip is auditable; otherwise read-only against the WAL.
+pub(crate) fn spawn_indexer(
+    segment_path: &std::path::Path,
+    writer: Option<crate::wal::writer::WalWriterHandle>,
+) -> Option<JoinHandle<()>> {
     let conn_path = crate::memory::store::default_path();
     let seg = segment_path.to_path_buf();
     match crate::memory::store::open(&conn_path) {
         Ok(conn) => Some(tokio::spawn(async move {
-            if let Err(e) =
-                crate::memory::indexer::tail(conn, seg, std::time::Duration::from_millis(500)).await
+            if let Err(e) = crate::memory::indexer::tail(
+                conn,
+                seg,
+                std::time::Duration::from_millis(500),
+                writer,
+            )
+            .await
             {
                 tracing::error!(error = %e, "indexer tail task exited with error");
             }
@@ -1374,6 +1383,11 @@ pub(crate) fn spawn_channel_adapters(
                 // COR-34: track this listener's detached Meta fan-out tasks so
                 // shutdown can drain their WAL writes before the writer closes.
                 dispatch_join: Some(std::sync::Arc::clone(dispatch_join)),
+                // GR-010: dedup inbound wamids so Meta reconnect-storm
+                // re-deliveries don't re-run the pipeline (+ re-send the reply).
+                inbound_dedup: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
+                    crate::channels::webhook_listener::InboundDedup::new(2048),
+                ))),
             };
             let task = tokio::spawn(async move {
                 let shutdown = std::future::pending::<()>();

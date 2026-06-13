@@ -147,6 +147,42 @@ pub struct WebhookListenerConfig {
     /// drain that relied on the dispatch task holding a `WalWriterHandle` clone.
     /// `None` (tests / non-Meta listeners) keeps the legacy fire-and-forget spawn.
     pub dispatch_join: Option<Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>>,
+    /// GR-010: bounded seen-set for inbound wamids. When `Some`,
+    /// `dispatch_messages` skips messages whose `message_id` was already
+    /// processed, so a Meta reconnect-storm re-delivery never triggers a
+    /// duplicate pipeline run (and duplicate outbound reply). `None` disables
+    /// dedup (tests + non-WhatsApp listeners that never set `message_id`).
+    pub inbound_dedup: Option<Arc<tokio::sync::Mutex<InboundDedup>>>,
+}
+
+/// Bounded FIFO dedup ring for inbound WhatsApp message IDs (wamids). Capacity
+/// covers the longest plausible Meta reconnect burst; older entries evict FIFO
+/// so the set never grows unbounded (GR-010).
+pub struct InboundDedup {
+    ring: std::collections::VecDeque<String>,
+    cap: usize,
+}
+
+impl InboundDedup {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            ring: std::collections::VecDeque::with_capacity(cap.min(4096)),
+            cap: cap.max(1),
+        }
+    }
+
+    /// `true` if `id` was already seen (duplicate); otherwise inserts it and
+    /// returns `false`.
+    pub fn check_and_insert(&mut self, id: &str) -> bool {
+        if self.ring.iter().any(|s| s == id) {
+            return true;
+        }
+        if self.ring.len() >= self.cap {
+            self.ring.pop_front();
+        }
+        self.ring.push_back(id.to_owned());
+        false
+    }
 }
 
 /// GR-01 Pick B: WhatsApp credentials needed by the webhook listener
@@ -373,13 +409,21 @@ async fn handle_request(
     }
 }
 
-/// GOLD-COR-08 / A-12: upper bound on concurrently-running webhook pipeline
+/// GOLD-COR-08 / A-12: upper bound on concurrently-EXECUTING webhook pipeline
 /// dispatches. Now that `handle_meta` ACKs Meta with 200 BEFORE running the LLM
 /// pipeline (so a slow turn can't trip Meta's retry → duplicate processing),
 /// the dispatch runs in a detached task and no longer holds the connection
-/// semaphore permit. This gate restores the "no unbounded `tokio::spawn`"
-/// invariant the R2 reviewer added: a fan-out storm queues on this gate instead
-/// of spawning thousands of simultaneous provider calls. Generous default — far
+/// semaphore permit.
+///
+/// GR-012 — accuracy: this gate bounds how many dispatches RUN at once
+/// (`acquire().await` is inside the spawned task), NOT how many tasks are
+/// spawned. Under a fan-out storm, tasks are still spawned and queue on the
+/// permit; each is lightweight (a future awaiting a permit) and Meta
+/// rate-limits inbound, so the spawned-but-waiting set stays small in practice.
+/// Acquiring BEFORE the spawn (to bound the spawn COUNT) is deliberately NOT
+/// done: the 200 is already returned below regardless, so dropping an
+/// over-the-cap webhook would silently LOSE it (Meta does not redeliver an
+/// ACKed message). Queue-on-gate is the lesser evil. Generous default — far
 /// above any real inbound rate, well below resource exhaustion. (Graceful
 /// shutdown-drain of these detached tasks is tracked by GOLD-COR-34.)
 const DISPATCH_CONCURRENCY: usize = 64;
@@ -520,6 +564,15 @@ async fn append_audit(
 
 async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage>) {
     for msg in msgs {
+        // GR-010: skip duplicate wamids — a Meta reconnect-storm re-delivers the
+        // same message_id, and without this every re-delivery would re-run the
+        // whole pipeline (and re-send the reply when send creds are wired).
+        if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref()) {
+            if dedup.lock().await.check_and_insert(mid) {
+                debug!(message_id = mid, "webhook: duplicate wamid — skipping re-delivery");
+                continue;
+            }
+        }
         let chat_id = msg.chat_id.clone();
         match (cfg.pipeline)(msg).await {
             Ok(Some(outbound)) => {
@@ -801,6 +854,20 @@ mod tests {
     use super::super::webhook_verify::{sign_meta, sign_slack};
     use super::*;
 
+    #[test]
+    fn inbound_dedup_skips_dups_passes_new_and_evicts_at_cap() {
+        let mut d = InboundDedup::new(2);
+        // New wamid → not seen; repeat → seen.
+        assert!(!d.check_and_insert("wamid.A"));
+        assert!(d.check_and_insert("wamid.A"));
+        // A second distinct id is new.
+        assert!(!d.check_and_insert("wamid.B"));
+        // Cap is 2 → inserting a third evicts the oldest ("wamid.A"), so it is
+        // no longer considered seen and re-inserts as new.
+        assert!(!d.check_and_insert("wamid.C"));
+        assert!(!d.check_and_insert("wamid.A"));
+    }
+
     fn fake_pipeline() -> PipelineHandler {
         Box::new(|_msg| {
             Box::pin(
@@ -850,6 +917,7 @@ mod tests {
         // (non-WhatsApp consumer) MUST log+drop pipeline replies, not
         // panic. Pre-GR-01 behaviour preserved.
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -867,6 +935,7 @@ mod tests {
     /// verdicts below never touch the network, so the fake token is safe).
     fn gated_cfg(gov: SendGovernance, base_url: Option<String>) -> WebhookListenerConfig {
         WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1041,6 +1110,7 @@ mod tests {
     async fn server_handles_meta_get_handshake_end_to_end() {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "verify123".to_string(),
             slack_signing_secret: b"slack-sig".to_vec(),
@@ -1086,6 +1156,7 @@ mod tests {
     async fn server_handles_meta_post_signature_path() {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1155,6 +1226,7 @@ mod tests {
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1238,6 +1310,7 @@ mod tests {
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1300,6 +1373,7 @@ mod tests {
     async fn server_handles_slack_url_verification() {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"slackkey".to_vec(),
@@ -1349,6 +1423,7 @@ mod tests {
     async fn unknown_path_returns_404() {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1387,6 +1462,7 @@ mod tests {
         // didn't allocate the full payload first.
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1443,6 +1519,7 @@ mod tests {
         // second request against it.
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1518,6 +1595,7 @@ mod tests {
     async fn shutdown_signal_stops_accept_loop() {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
