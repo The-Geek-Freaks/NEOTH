@@ -476,6 +476,8 @@ Ctx-mode parity — persistent indexed knowledge with hybrid FTS5 search
 - `--doctor <DOCTOR>` — Run health probe (FTS5, trigram tokenizer, journal_mode)
 - `--purge <PURGE>` — Purge mode. Use with `--label`, `--category`, or `--all`
 - `--all <ALL>` — Purge scope: every source. Mutually exclusive with `--label`/`--category`
+- `--retrieve <KEY>` — GOLD-HR-10 — retrieve a CCR-cached original by its `[0-9a-f]{24}` key (the `<<ccr:KEY>>` marker the compression pipeline left inline). Pulls the byte-exact dropped block back from the persistent store
+- `--savings <SAVINGS>` — GOLD-HR-10 — print cumulative token-compression savings (blocks compressed, bytes before/after, ratio)
 - `--limit <LIMIT>` — Maximum hits returned by `--search`
 
 ## `neoth doctor`

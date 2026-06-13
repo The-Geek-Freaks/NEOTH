@@ -531,6 +531,14 @@ pub const EVENT_TYPE_CONTEXT_COMPACTION_START: u8 = 0x5B;
 /// Payload `{iteration, before_tokens, after_tokens, ts_unix}`. Batchable.
 pub const EVENT_TYPE_CONTEXT_COMPACTION_DONE: u8 = 0x5C;
 
+/// `0x5D COMPRESSION_APPLIED` — GOLD-HR-08. A tool-result block was shrunk by
+/// the WS-HR compression pipeline before entering the next loop prompt (lossy
+/// on the wire, lossless via CCR — the original is in the store under each
+/// `cache_key`). Payload `{iteration, before_bytes, after_bytes, steps,
+/// cache_keys, ts_unix}`. Batchable; emitted only when bytes were actually
+/// saved (a passthrough emits nothing).
+pub const EVENT_TYPE_COMPRESSION_APPLIED: u8 = 0x5D;
+
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
 /// Scheduled job fired by the cron scheduler.

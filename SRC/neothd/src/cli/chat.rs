@@ -1399,6 +1399,14 @@ pub async fn run_chat_with(
                     config.tokens.max_per_request,
                     config.compaction.threshold_fraction,
                 ),
+                // GOLD-HR-08/10 — tool-result compression (None when disabled).
+                // Persistent store so `neoth ctx retrieve` can pull dropped
+                // blocks back + savings are metered.
+                crate::context::compress::CompressionRuntime::persistent(
+                    config.compression.gate(),
+                    config.compression.thresholds(),
+                    crate::context::compress::default_ccr_dir(),
+                ),
             )
             .await
             {
@@ -2971,7 +2979,21 @@ pub(crate) fn maybe_repo_context_block_at(
         _ => return None,
     };
     let block = crate::code_map::recall::render_context_block(&hits);
-    if block.is_empty() { None } else { Some(block) }
+    if block.is_empty() {
+        return None;
+    }
+    // GOLD-HR-09 — the repo-context block is `file:line:` shaped (SearchResults),
+    // so when compression is enabled the search offload thins a large block
+    // per-file and stashes the original in the persistent CCR store (retrievable
+    // via `neoth ctx retrieve`). Prose-only / small blocks pass through.
+    if let Some(rt) = crate::context::compress::CompressionRuntime::persistent(
+        config.compression.gate(),
+        config.compression.thresholds(),
+        crate::context::compress::default_ccr_dir(),
+    ) {
+        return Some(rt.compress_for_llm(&block).0);
+    }
+    Some(block)
 }
 
 /// The operator's role as a human-readable label. The free-form
@@ -3940,6 +3962,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
     hints_enabled: bool,
     // GOLD-ADOPT-19 — auto context-compaction policy (freedom.yaml::compaction).
     compaction: crate::context::compaction::CompactionPolicy,
+    // GOLD-HR-08 — per-block tool-result compression (freedom.yaml::compression).
+    // `None` = disabled (the default); behaviour is then unchanged.
+    compression: Option<crate::context::compress::CompressionRuntime>,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -4026,6 +4051,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         goal_context,
         hints_enabled,
         compaction,
+        compression,
     )
     .await
 }

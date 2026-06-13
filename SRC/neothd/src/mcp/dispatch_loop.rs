@@ -96,6 +96,8 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         // builds an explicit policy from freedom.yaml. Keeps the wrapper's
         // (test-only) callers free of surprise summarization calls.
         crate::context::compaction::CompactionPolicy::disabled(),
+        // GOLD-HR-08 — compression off in the bare wrapper (same rationale).
+        None,
     )
     .await
 }
@@ -123,6 +125,10 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // accumulated prompt is LLM-summarized once it crosses the token threshold,
     // before the next completion. `CompactionPolicy::disabled()` = off.
     compaction: crate::context::compaction::CompactionPolicy,
+    // GOLD-HR-08 — per-block token compression of tool-result output. `None`
+    // (freedom.yaml::compression.enabled = false) = off; the loop is then
+    // byte-for-byte identical to the pre-HR-08 behaviour.
+    compression: Option<crate::context::compress::CompressionRuntime>,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -397,6 +403,13 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 }
             }
         }
+        // GOLD-HR-08 — shrink large tool-result blocks before they enter the
+        // next prompt. CCR-backed (every dropped byte is retrievable), so this
+        // is safe to run on the freshly-produced blocks; a passthrough leaves
+        // them untouched. Off (None) = no change.
+        if let Some(runtime) = compression.as_ref() {
+            compress_tool_results(&mut tool_result_blocks, runtime, iterations, writer).await;
+        }
         prompt = build_next_prompt(&prompt, &current_text, &tool_result_blocks, &hint_blocks);
     }
 
@@ -482,6 +495,51 @@ async fn emit_compaction_wal(
     let header = crate::wal::HeaderBuilder::new(event_type, &bytes).build();
     if let Err(e) = w.append(header, bytes).await {
         warn!(error = %e, event_type, "compaction WAL append failed");
+    }
+}
+
+/// GOLD-HR-08 — compress each tool-result block in place. A block is replaced
+/// only when the pipeline actually saved bytes; otherwise it's left verbatim.
+/// Each real shrink emits a `0x5D COMPRESSION_APPLIED` frame. Tool output is
+/// data, not a conversational turn, so it's compressed regardless of recency
+/// (`age_from_tail = MAX`); the live-zone knob governs the compaction path.
+async fn compress_tool_results(
+    blocks: &mut [String],
+    runtime: &crate::context::compress::CompressionRuntime,
+    iteration: u32,
+    writer: Option<&WalWriterHandle>,
+) {
+    let ctx = crate::context::compress::CompressionContext::default();
+    for block in blocks.iter_mut() {
+        let result = runtime.pipeline.compress_block(
+            block,
+            usize::MAX,
+            &runtime.gate,
+            &ctx,
+            runtime.store.as_ref(),
+        );
+        if result.skipped.is_some() || result.bytes_saved == 0 {
+            continue;
+        }
+        let before = block.len();
+        let after = result.output.len();
+        *block = result.output;
+        // GOLD-HR-10 — meter the saving (persistent path only) so
+        // `neoth ctx savings` can report cumulative compression.
+        runtime.meter(before, after);
+        emit_compaction_wal(
+            writer,
+            crate::wal::events::EVENT_TYPE_COMPRESSION_APPLIED,
+            serde_json::json!({
+                "iteration": iteration,
+                "before_bytes": before,
+                "after_bytes": after,
+                "steps": result.steps_applied,
+                "cache_keys": result.cache_keys,
+                "ts_unix": now_unix_i64(),
+            }),
+        )
+        .await;
     }
 }
 
@@ -891,6 +949,49 @@ mod tests {
         }
     }
 
+    // ── GOLD-HR-08 tool-result compression ─────────────────────────────────
+
+    #[tokio::test]
+    async fn hr08_compresses_large_tool_blocks_and_leaves_small_ones() {
+        use crate::context::compress::{extract_keys, CompressionRuntime, Gate, Thresholds};
+
+        let runtime = CompressionRuntime::new(Gate::enabled(512, 3), Thresholds::default())
+            .expect("enabled gate builds a runtime");
+
+        // A 300-row JSON array routes to the SmartCrusher offload, which always
+        // samples + CCR-stashes (vs the lossless log-template path which needs
+        // no marker). This exercises the offload + retrieval wiring end to end.
+        let big_json = format!(
+            "[{}]",
+            (0..300)
+                .map(|i| format!(r#"{{"id":{i},"name":"event-{i}","value":{}}}"#, i * 10))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let small = "INFO ok\n".to_string(); // < 512 bytes → TooSmall → untouched
+        let mut blocks = vec![big_json.clone(), small.clone()];
+
+        // writer = None: WAL emit is best-effort and must no-op cleanly.
+        compress_tool_results(&mut blocks, &runtime, 5, None).await;
+
+        // Big array shrank and carries a CCR retrieval marker.
+        assert!(blocks[0].len() < big_json.len(), "big array should compress");
+        assert!(blocks[0].contains("<<ccr:"), "compressed block carries a CCR marker");
+        // Small block left byte-identical.
+        assert_eq!(blocks[1], small, "small block must be untouched");
+        // The byte-exact original is retrievable from the shared store.
+        let keys = extract_keys(&blocks[0]);
+        assert!(!keys.is_empty());
+        assert_eq!(runtime.store.get(&keys[0]).as_deref(), Some(big_json.as_str()));
+    }
+
+    #[tokio::test]
+    async fn hr08_disabled_runtime_is_none_and_noop() {
+        use crate::context::compress::{CompressionRuntime, Gate, Thresholds};
+        // A disabled gate yields no runtime → the loop's `if let Some` never fires.
+        assert!(CompressionRuntime::new(Gate::disabled(), Thresholds::default()).is_none());
+    }
+
     // ── GOLD-ADOPT-19 context compaction ───────────────────────────────────
 
     #[tokio::test]
@@ -999,6 +1100,7 @@ mod tests {
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
+            None,
         )
         .await
         .unwrap();
@@ -1054,6 +1156,7 @@ mod tests {
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
+            None,
         )
         .await
         .unwrap();
@@ -1156,6 +1259,7 @@ mod tests {
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
+            None,
         )
         .await
         .unwrap();
@@ -1209,6 +1313,7 @@ mod tests {
             },
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
+            None,
         )
         .await
         .unwrap();
@@ -1242,6 +1347,7 @@ mod tests {
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
+            None,
         )
         .await
         .unwrap();
@@ -1331,6 +1437,7 @@ mod tests {
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
+            None,
         )
         .await
         .unwrap();
