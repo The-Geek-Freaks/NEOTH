@@ -276,10 +276,25 @@ fn parse_status_changed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
     })
 }
 
+/// GOLD-TASK-03 — render a fixed-width 8-cell Unicode progress bar for a
+/// 0–100 percent, `[████░░░░]` style. Used in the `kanban watch` activity
+/// feed so a task's lifecycle heartbeat is glanceable as a bar, not just a
+/// number. Cells are filled by NEAREST rounding (each cell = 12.5%), so
+/// 0% → all empty, 100% → all full, 50% → 4 filled. `pct` is clamped to
+/// 100 (a malformed >100 frame can't overflow the cell count).
+fn progress_bar(pct: u8) -> String {
+    const CELLS: usize = 8;
+    let p = (pct as usize).min(100);
+    let filled = ((p * CELLS + 50) / 100).min(CELLS);
+    let empty = CELLS - filled;
+    format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
+}
+
 /// SD-02 — render the dispatcher's lifecycle heartbeat (`0x77`) into a
 /// feed line, so `neoth kanban watch` shows "dispatched" / "review-ready"
 /// progress. The actor is the hemisphere that ran the task (or `system`
-/// when unset); the message carries the percent + the dispatcher's note.
+/// when unset); the message carries a Unicode progress bar + the percent +
+/// the dispatcher's note (GOLD-TASK-03 prettified the bar prefix).
 fn parse_task_progress(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
     let p: TaskProgressPayload = serde_json::from_slice(payload).ok()?;
     let actor = if p.hemisphere.is_empty() {
@@ -287,10 +302,11 @@ fn parse_task_progress(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
     } else {
         p.hemisphere
     };
+    let bar = progress_bar(p.progress_pct);
     let message = if p.message.is_empty() {
-        format!("{}% complete", p.progress_pct)
+        format!("{bar} {}% complete", p.progress_pct)
     } else {
-        format!("{}% — {}", p.progress_pct, p.message)
+        format!("{bar} {}% — {}", p.progress_pct, p.message)
     };
     Some(FeedEntry {
         ts_ns,
@@ -531,6 +547,11 @@ mod tests {
         )
         .expect("parse task_progress");
         assert_eq!(entry.actor, "left");
+        assert!(
+            entry.message.starts_with("[░░░░░░░░]"),
+            "0% renders an empty bar prefix, got: {}",
+            entry.message
+        );
         assert!(entry.message.contains("0%"), "got: {}", entry.message);
         assert!(
             entry.message.contains("dispatched"),
@@ -554,8 +575,20 @@ mod tests {
         )
         .expect("parse task_progress");
         assert_eq!(entry.actor, "system");
-        assert_eq!(entry.message, "100% complete");
+        assert_eq!(entry.message, "[████████] 100% complete");
         assert_eq!(entry.event_type, EVENT_TYPE_KANBAN_TASK_PROGRESS);
+    }
+
+    #[test]
+    fn progress_bar_renders_filled_proportional_to_pct() {
+        assert_eq!(progress_bar(0), "[░░░░░░░░]");
+        assert_eq!(progress_bar(50), "[████░░░░]");
+        assert_eq!(progress_bar(100), "[████████]");
+        // nearest rounding, 12.5% per cell
+        assert_eq!(progress_bar(13), "[█░░░░░░░]");
+        assert_eq!(progress_bar(6), "[░░░░░░░░]", "6% rounds down to 0 cells");
+        // a malformed >100 frame is clamped, never overflows the cell count
+        assert_eq!(progress_bar(255), "[████████]");
     }
 
     #[test]
