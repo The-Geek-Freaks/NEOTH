@@ -41,6 +41,8 @@ pub mod probe;
 pub mod rate_limit;
 pub mod routing;
 pub mod send_gate;
+pub mod signal;
+pub mod signal_api;
 pub mod slack;
 pub mod slack_api;
 pub mod slack_events;
@@ -80,6 +82,8 @@ pub enum ChannelKind {
     WhatsAppBusiness,
     WhatsAppBaileys,
     Discord,
+    /// GOLD-FEAT-10 — Signal via a local `signal-cli` REST/JSON-RPC daemon.
+    Signal,
 }
 
 impl ChannelKind {
@@ -91,6 +95,7 @@ impl ChannelKind {
             ChannelKind::WhatsAppBusiness => "whatsapp_business",
             ChannelKind::WhatsAppBaileys => "whatsapp_baileys",
             ChannelKind::Discord => "discord",
+            ChannelKind::Signal => "signal",
         }
     }
 }

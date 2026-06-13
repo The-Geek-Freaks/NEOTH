@@ -1386,6 +1386,54 @@ pub(crate) fn spawn_channel_adapters(
         (None, _) => {}
     }
 
+    // GOLD-FEAT-10 — Signal inbound via the signal-cli poll loop. Spawns when
+    // the cli URL + registered number + a provider are all present
+    // (`SignalChannel::run` polls /v1/receive). Mirrors the Discord creds arm.
+    match (
+        creds.signal_cli_url.clone(),
+        creds.signal_phone_number.clone(),
+        shared_provider.as_ref(),
+    ) {
+        (Some(url), Some(number), Some(provider)) => {
+            match crate::channels::signal::SignalChannel::new(url, number) {
+                Ok(channel) => {
+                    let handler: PipelineHandler = build_channel_handler(
+                        provider.clone(),
+                        config,
+                        writer,
+                        provider_meter,
+                        rate_limiter,
+                        segment_path,
+                        shared_views_conn,
+                        reload_controller,
+                    );
+                    spawn_channel_run(channel, handler, "Signal", channel_tasks);
+                    info!(
+                        channel = "signal",
+                        status = "LIVE",
+                        "channel: spawned (signal-cli poll loop)"
+                    );
+                }
+                Err(e) => warn!(
+                    channel = "signal",
+                    error = %e,
+                    "Signal configured but adapter construction failed; channel not started"
+                ),
+            }
+        }
+        (Some(_), Some(_), None) => warn!(
+            channel = "signal",
+            status = "CONFIGURED-NOT-STARTED",
+            "Signal configured but provider unavailable; channel not started"
+        ),
+        (Some(_), None, _) | (None, Some(_), _) => warn!(
+            channel = "signal",
+            status = "CONFIGURED-NOT-STARTED",
+            "Signal needs BOTH signal_cli_url and signal_phone_number; only one supplied — not started"
+        ),
+        (None, None, _) => {}
+    }
+
     // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
     // verify-token + app-secret + provider are all present. Listens on
     // 127.0.0.1:<whatsapp_webhook_port> (default 8443).

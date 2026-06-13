@@ -69,6 +69,8 @@ pub struct ChannelCredsView {
     pub whatsapp_verify_token: bool,
     pub keet_seed: bool,
     pub discord_bot: bool,
+    pub signal_cli_url: bool,
+    pub signal_phone_number: bool,
 }
 
 impl ChannelCredsView {
@@ -92,18 +94,21 @@ impl ChannelCredsView {
             // Discord has no credential field wired from config yet (the adapter
             // takes a bot token but the daemon never constructs it from config).
             discord_bot: false,
+            signal_cli_url: creds.signal_cli_url.is_some(),
+            signal_phone_number: creds.signal_phone_number.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 6] = [
+pub const ALL_CHANNELS: [ChannelKind; 7] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
     ChannelKind::WhatsAppBaileys,
     ChannelKind::Keet,
     ChannelKind::Discord,
+    ChannelKind::Signal,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -175,6 +180,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             ProbeStatus::NotConfigured,
             "adapter present but no Discord bot token is wired from config yet",
         ),
+        ChannelKind::Signal => match (v.signal_cli_url, v.signal_phone_number) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "signal_cli_url + phone_number configured (poll loop) — requires a running signal-cli daemon at that URL",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no signal config"),
+            _ => (
+                ProbeStatus::Error,
+                "Signal needs BOTH signal_cli_url AND signal_phone_number",
+            ),
+        },
     };
     ChannelHealth {
         channel: kind.as_str(),

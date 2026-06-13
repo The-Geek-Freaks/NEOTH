@@ -78,6 +78,15 @@ pub struct Credentials {
     /// (`DiscordChannel::run`). The inbound adapter needs only the bot token —
     /// the gateway surfaces the channels itself.
     pub discord_bot_token: Option<SecretString>,
+    /// GOLD-FEAT-10 — base URL of the operator's local `signal-cli` HTTP
+    /// daemon (e.g. `http://127.0.0.1:8080`). When present alongside
+    /// `signal_phone_number`, the daemon spawns the Signal receive loop
+    /// (`SignalChannel::run`). Not a secret (a loopback URL) but lives here
+    /// with the other channel config.
+    pub signal_cli_url: Option<String>,
+    /// GOLD-FEAT-10 — our registered Signal number (`+E.164`). Used as the
+    /// `number` on every signal-cli send + the `/v1/receive/{number}` path.
+    pub signal_phone_number: Option<String>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -213,6 +222,8 @@ impl Credentials {
             slack_bot_token,
             slack_app_token,
             discord_bot_token,
+            signal_cli_url,
+            signal_phone_number,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -241,6 +252,8 @@ impl Credentials {
             && slack_bot_token.is_none()
             && slack_app_token.is_none()
             && discord_bot_token.is_none()
+            && signal_cli_url.is_none()
+            && signal_phone_number.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

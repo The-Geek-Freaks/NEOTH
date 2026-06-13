@@ -105,6 +105,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         }
         ChannelKind::Discord => Some(Box::new(DiscordFormatter)),
         ChannelKind::Keet => Some(Box::new(KeetFormatter)),
+        ChannelKind::Signal => Some(Box::new(SignalFormatter)),
     }
 }
 
@@ -368,6 +369,48 @@ impl Formatter for KeetFormatter {
         split_into_messages(
             &rendered,
             KEET_MAX_CHARS - SPLIT_HEADROOM,
+            reply.length_hint,
+        )
+    }
+}
+
+// ── Signal (plaintext) ───────────────────────────────────────────────
+
+/// GOLD-FEAT-10 — Signal formatter. signal-cli `send` takes a plaintext
+/// `message` (no markdown dialect to honour), so this mirrors the Keet
+/// plaintext renderer: append code blocks as literal triple-backtick
+/// fences (readable + copy-paste-clean) and split at the 2000-char UX
+/// floor (Signal has no hard protocol cap, but mobile render degrades
+/// above ~2k).
+pub struct SignalFormatter;
+
+const SIGNAL_MAX_CHARS: usize = 2_000;
+
+impl Formatter for SignalFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Signal
+    }
+    fn max_chars_per_message(&self) -> usize {
+        SIGNAL_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        let mut rendered = String::new();
+        rendered.push_str(&reply.text);
+        for cb in &reply.code_blocks {
+            rendered.push_str("\n```");
+            if !cb.lang.is_empty() {
+                rendered.push_str(&cb.lang);
+            }
+            rendered.push('\n');
+            rendered.push_str(&cb.body);
+            if !cb.body.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered.push_str("```");
+        }
+        split_into_messages(
+            &rendered,
+            SIGNAL_MAX_CHARS - SPLIT_HEADROOM,
             reply.length_hint,
         )
     }
