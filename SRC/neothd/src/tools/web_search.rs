@@ -26,6 +26,10 @@ pub struct SearchHit {
 pub enum Provider {
     Brave,
     Tavily,
+    /// GOLD-ADAPT-ODY-19 — self-hosted SearXNG meta-search. Free, no API key;
+    /// the instance URL comes from `NEOTH_SEARXNG_URL` (default
+    /// `http://127.0.0.1:8888`). Removes the paid-API requirement for search.
+    SearXng,
 }
 
 impl Provider {
@@ -33,6 +37,7 @@ impl Provider {
         match s {
             "brave" => Some(Provider::Brave),
             "tavily" => Some(Provider::Tavily),
+            "searxng" => Some(Provider::SearXng),
             _ => None,
         }
     }
@@ -42,7 +47,13 @@ impl Provider {
         match self {
             Provider::Brave => "brave",
             Provider::Tavily => "tavily",
+            Provider::SearXng => "searxng",
         }
+    }
+
+    /// Whether this provider needs an API key. SearXNG is keyless (self-hosted).
+    pub fn needs_api_key(self) -> bool {
+        !matches!(self, Provider::SearXng)
     }
 }
 
@@ -61,6 +72,7 @@ pub async fn search(
     match provider {
         Provider::Brave => brave_search(api_key, query, count).await,
         Provider::Tavily => tavily_search(api_key, query, count).await,
+        Provider::SearXng => searxng_search(query, count).await,
     }
 }
 
@@ -214,6 +226,66 @@ async fn tavily_search_against(
         .collect())
 }
 
+/// Default SearXNG instance when `NEOTH_SEARXNG_URL` is unset — the loopback
+/// port the docker-compose'd SearXNG binds by convention.
+pub const SEARXNG_DEFAULT_URL: &str = "http://127.0.0.1:8888";
+
+async fn searxng_search(query: &str, count: usize) -> Result<Vec<SearchHit>> {
+    let base = std::env::var("NEOTH_SEARXNG_URL")
+        .unwrap_or_else(|_| SEARXNG_DEFAULT_URL.to_string());
+    searxng_search_against(base.trim_end_matches('/'), query, count).await
+}
+
+/// Internal test seam — production `searxng_search` calls this with the
+/// configured instance; wiremock tests pass a mock server's URI. SearXNG's
+/// JSON API: `GET {base}/search?q=…&format=json` → `{ results: [{title, url,
+/// content}] }`. No API key (self-hosted). Results are truncated to `count`.
+async fn searxng_search_against(
+    base: &str,
+    query: &str,
+    count: usize,
+) -> Result<Vec<SearchHit>> {
+    let client = http_client::build_client()?;
+    let endpoint = format!("{base}/search");
+    let resp = client
+        .get(&endpoint)
+        .header("Accept", "application/json")
+        .query(&[("q", query), ("format", "json")])
+        .send()
+        .await
+        .context("searxng search request")?;
+    if !resp.status().is_success() {
+        anyhow::bail!("searxng search returned {}", resp.status());
+    }
+    let body: SearxngBody = resp.json().await.context("searxng search decode")?;
+    Ok(body
+        .results
+        .into_iter()
+        .take(count)
+        .map(|r| SearchHit {
+            title: r.title,
+            url: r.url,
+            snippet: r.content.unwrap_or_default(),
+        })
+        .collect())
+}
+
+#[derive(Deserialize)]
+struct SearxngBody {
+    #[serde(default)]
+    results: Vec<SearxngResult>,
+}
+
+#[derive(Deserialize)]
+struct SearxngResult {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    url: String,
+    /// SearXNG calls the snippet `content`; some engines omit it.
+    content: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct BraveBody {
     web: Option<BraveWeb>,
@@ -254,7 +326,61 @@ mod tests {
             Provider::from_str("tavily"),
             Some(Provider::Tavily)
         ));
+        assert!(matches!(
+            Provider::from_str("searxng"),
+            Some(Provider::SearXng)
+        ));
         assert!(Provider::from_str("unknown").is_none());
+    }
+
+    #[test]
+    fn searxng_is_keyless_others_need_a_key() {
+        assert!(!Provider::SearXng.needs_api_key());
+        assert!(Provider::Brave.needs_api_key());
+        assert!(Provider::Tavily.needs_api_key());
+        assert_eq!(Provider::SearXng.as_str(), "searxng");
+    }
+
+    #[tokio::test]
+    async fn searxng_decodes_real_response_shape() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .and(query_param("q", "rust async"))
+            .and(query_param("format", "json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {"title": "Async Book", "url": "https://rust-lang.github.io/async-book/", "content": "Asynchronous Rust."},
+                    {"title": "Tokio", "url": "https://tokio.rs/", "content": null},
+                    {"title": "Third", "url": "https://example.org/3", "content": "third"}
+                ]
+            })))
+            .mount(&mock)
+            .await;
+        // count=2 → only the first two results survive the truncation.
+        let hits = searxng_search_against(&mock.uri(), "rust async", 2)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].title, "Async Book");
+        assert_eq!(hits[0].snippet, "Asynchronous Rust.");
+        assert_eq!(hits[1].snippet, "", "null content → empty snippet");
+    }
+
+    #[tokio::test]
+    async fn searxng_propagates_non_2xx_as_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(502))
+            .mount(&mock)
+            .await;
+        let r = searxng_search_against(&mock.uri(), "q", 5).await;
+        assert!(r.is_err());
+        assert!(r.unwrap_err().to_string().contains("502"));
     }
 
     #[tokio::test]

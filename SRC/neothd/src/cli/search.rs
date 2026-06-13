@@ -49,16 +49,24 @@ pub async fn run_search(args: SearchArgs) -> Result<()> {
         .or_else(|| std::env::var("NEOTH_WEB_SEARCH_PROVIDER").ok())
         .unwrap_or_else(|| "brave".to_string());
     let provider = Provider::from_str(&provider_name).ok_or_else(|| {
-        anyhow::anyhow!("unknown web_search provider `{provider_name}` — known: brave, tavily")
+        anyhow::anyhow!(
+            "unknown web_search provider `{provider_name}` — known: brave, tavily, searxng"
+        )
     })?;
-    let key = match args.api_key.clone() {
-        Some(k) => SecretString::from(k),
-        None => match std::env::var("NEOTH_WEB_SEARCH_KEY") {
-            Ok(k) => SecretString::from(k),
-            Err(_) => anyhow::bail!(
-                "no API key. Pass --api-key, set NEOTH_WEB_SEARCH_KEY, or add to credentials.yaml."
-            ),
-        },
+    // SearXNG is self-hosted + keyless (instance from `NEOTH_SEARXNG_URL`);
+    // every other provider needs an API key.
+    let key = if provider.needs_api_key() {
+        match args.api_key.clone() {
+            Some(k) => SecretString::from(k),
+            None => match std::env::var("NEOTH_WEB_SEARCH_KEY") {
+                Ok(k) => SecretString::from(k),
+                Err(_) => anyhow::bail!(
+                    "no API key. Pass --api-key, set NEOTH_WEB_SEARCH_KEY, or add to credentials.yaml."
+                ),
+            },
+        }
+    } else {
+        SecretString::from(String::new())
     };
     // GOLD-ADAPT-ODY-29 — go through the disk-LRU cache so a repeated query
     // inside the TTL window is served free instead of re-billing the provider.
