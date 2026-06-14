@@ -4,8 +4,9 @@
 //! so a trivial status/identity query ("hi", "what time is it", "who are you")
 //! skips the recall pass entirely, an ordinary query runs a single lane, and a
 //! historical/exploratory query ("what did we discuss about X", "remind me…")
-//! fans out across lanes. Surfaced today via `neoth recall --classify`; the
-//! chat auto-recall path consumes the same fn in a later slice.
+//! fans out across lanes. Surfaced via `neoth recall --classify`; the chat
+//! auto-recall path (`cli::chat::maybe_recall_block_at`) gates Block::D
+//! recall-episode injection on this fn — a Skip-tier turn pays no DB hit.
 //!
 //! Pure (no I/O), so the tier mapping is unit-tested directly.
 

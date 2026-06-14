@@ -469,6 +469,16 @@ async fn build_prompt_bundle(
     // Best-effort: any failure silently skips injection.
     let repo_context_block = maybe_repo_context_block(&config, &prompt);
 
+    // ── GOLD-WIRE Block::D + GOLD-ADAPT-MEM-09 — auto-recall injection ────
+    // Fold the operator's most-relevant stored episodes into the system
+    // prompt on a non-Skip-tier turn (greetings / status / identity skip the
+    // DB hit via classify_recall_need). Folded into `combined_system` below,
+    // NOT into `bundle_entries` / the prompt-bundle hash — that hash anchors
+    // operator INTENT (Block::A `--system` + Block::E prompt) and excludes the
+    // whole assembled context (skills/MCP/moral/repo all sit outside it too),
+    // so recall stays off the ARCH-02 replay-determinism surface. Best-effort.
+    let recall_block = maybe_recall_block(&prompt).await;
+
     // ── Compose layered system prompt via shared helper ───────────────────
     // GOLD-FEAT-07 — load the operator's LOWKEY moral core (if any) for
     // position-0 injection. Best-effort; `None` when not configured.
@@ -485,7 +495,14 @@ async fn build_prompt_bundle(
         persona_override: persona_override.as_deref(),
         moral_core: moral_core.as_deref(),
     });
-    let combined_system = enriched.system;
+    // Append the recall block (Block::D) after the enriched layers — recall is
+    // background context, so it sits at the prompt tail, closest to the user's
+    // turn. None on a Skip-tier / empty-recall turn leaves the system untouched.
+    let combined_system = match (enriched.system, recall_block) {
+        (Some(sys), Some(rb)) => Some(format!("{sys}\n\n{rb}")),
+        (None, Some(rb)) => Some(rb),
+        (sys, _) => sys,
+    };
     // used_skill_id is plumbed through for any downstream audit
     // consumers; the existing chat path consumes `combined_system`
     // the same way it did before the helper extraction.
@@ -3298,6 +3315,94 @@ pub(crate) fn maybe_repo_context_block_at(
         return Some(rt.compress_for_llm(&block).0);
     }
     Some(block)
+}
+
+/// GOLD-WIRE Block::D + GOLD-ADAPT-MEM-09 — auto-recall episode block for
+/// [`build_prompt_bundle`]. On a non-trivial chat turn, fold the operator's
+/// most-relevant stored episodes into the system prompt so the model answers
+/// with continuity instead of cold. [`crate::memory::recall_gate::classify_recall_need`]
+/// gates it: greetings / status / identity (Skip-tier) pay no DB hit.
+///
+/// **Scope — CLI/TTY path only.** This runs inside `build_prompt_bundle`, the
+/// local-`neoth chat` assembler the operator already owns, so reading their own
+/// memory back into the prompt needs no per-sender authorization. The autonomous
+/// channel path (`serve_pipeline.rs`) keeps its stricter GOLD-WIRE-02b
+/// provable-operator gate and does NOT call this.
+///
+/// Best-effort: Skip-tier / missing DB / query error / no hits → `None`, never
+/// fails the turn. Production resolves the episode store from the operator's
+/// HOME (mirrors [`maybe_repo_context_block`]); see [`maybe_recall_block_at`]
+/// for the explicit-path test variant.
+async fn maybe_recall_block(prompt: &str) -> Option<String> {
+    let db_path = crate::memory::store::default_path();
+    maybe_recall_block_at(prompt, &db_path).await
+}
+
+/// Test-friendly inner: resolve the episode store at an explicit path instead
+/// of through `HOME` / `USERPROFILE` (avoids env-var mutation in tests that
+/// would race under parallel execution). Same best-effort contract.
+async fn maybe_recall_block_at(prompt: &str, db_path: &std::path::Path) -> Option<String> {
+    use crate::memory::recall_gate::{RecallTier, classify_recall_need};
+    // MEM-09 gate: a status/identity/greeting turn needs no memory recall.
+    if classify_recall_need(prompt) == RecallTier::Skip {
+        return None;
+    }
+    if !db_path.exists() {
+        return None;
+    }
+    // Run the synchronous rusqlite recall off the async worker (K-Perf-3),
+    // mirroring `answer_conversational_recall`. A JoinError degrades to None.
+    let prompt_owned = prompt.to_string();
+    let db_owned = db_path.to_path_buf();
+    let hits = tokio::task::spawn_blocking(move || recall_episodes_for_block(&db_owned, &prompt_owned))
+        .await
+        .ok()
+        .flatten()?;
+    if hits.is_empty() {
+        return None;
+    }
+    Some(render_recall_block(&hits))
+}
+
+/// Routed multi-region recall for the auto-recall block (region-classify →
+/// per-region LIKE recall → importance-sorted merge). Best-effort: any open /
+/// query error → `None`. Synchronous (rusqlite) — call inside `spawn_blocking`.
+fn recall_episodes_for_block(
+    db_path: &std::path::Path,
+    prompt: &str,
+) -> Option<Vec<crate::memory::views::EpisodeHit>> {
+    // Cap per turn so a large episode store can't bloat the prompt. The
+    // budget-aware Block::D degradation is a separate later refinement; 5
+    // length-bounded snippets stay comfortably under the cap.
+    const RECALL_BLOCK_LIMIT: usize = 5;
+    let conn = crate::memory::store::open(db_path).ok()?;
+    let plan = crate::memory::region_router::route_query(prompt);
+    crate::memory::region_router::run_routed_recall(&conn, &plan, prompt, RECALL_BLOCK_LIMIT).ok()
+}
+
+/// Render recall hits into a trailing Block::D system section. Each line is the
+/// episode tier + a length-bounded, newline-flattened snippet so one episode =
+/// one compact line and the whole block stays prompt-budget-friendly.
+fn render_recall_block(hits: &[crate::memory::views::EpisodeHit]) -> String {
+    const MAX_SNIPPET_CHARS: usize = 240;
+    let mut out = String::from(
+        "## Relevant memory (recall)\n\
+         Background retrieved from your own stored memory — use it for continuity; \
+         it is context, not the current request:\n",
+    );
+    for (i, h) in hits.iter().enumerate() {
+        let text = h.text.trim();
+        let snippet = if text.chars().count() > MAX_SNIPPET_CHARS {
+            let mut s: String = text.chars().take(MAX_SNIPPET_CHARS).collect();
+            s.push('…');
+            s
+        } else {
+            text.to_string()
+        };
+        let snippet = snippet.replace('\n', " ");
+        out.push_str(&format!("{}. [{}] {}\n", i + 1, h.tier, snippet));
+    }
+    out
 }
 
 /// The operator's role as a human-readable label. The free-form
@@ -6159,6 +6264,91 @@ mod tests {
             block.contains("auth_middleware"),
             "block must include the matched symbol; got: {block}"
         );
+    }
+
+    // ── GOLD-WIRE Block::D + GOLD-ADAPT-MEM-09 — auto-recall injection ────
+    //
+    // Drive `maybe_recall_block_at` with an explicit tempdir views.db (same
+    // parallel-safe idiom as the repo-context tests — no HOME mutation).
+
+    #[tokio::test]
+    async fn recall_block_skips_skip_tier_prompt() {
+        // A Skip-tier prompt ("hi") must NOT inject, even when the episode
+        // store holds a row that would otherwise match — the MEM-09 gate fires
+        // before any DB work.
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = crate::memory::store::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (1, 1, 1000, ?1, 'h', 0.9, 0)",
+            rusqlite::params!["hi — notes on the quantum widget proposal"],
+        )
+        .unwrap();
+        drop(conn);
+        assert!(
+            maybe_recall_block_at("hi", &db).await.is_none(),
+            "Skip-tier prompt must not inject a recall block"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_block_none_when_db_absent() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("does_not_exist.db");
+        assert!(
+            maybe_recall_block_at("the quantum widget proposal", &missing)
+                .await
+                .is_none(),
+            "missing DB must yield None, not panic"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_block_injects_for_matching_non_skip_prompt() {
+        // A non-Skip prompt whose words appear in a stored hot-tier episode
+        // injects a Block::D recall section carrying that episode's text.
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = crate::memory::store::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (1, 1, 1000, ?1, 'h', 0.7, 0)",
+            rusqlite::params!["notes on the quantum widget proposal from our chat"],
+        )
+        .unwrap();
+        drop(conn);
+        let block = maybe_recall_block_at("quantum widget proposal", &db)
+            .await
+            .expect("a matching episode on a non-Skip prompt must inject a block");
+        assert!(block.contains("Relevant memory"), "header present: {block}");
+        assert!(
+            block.contains("quantum widget proposal"),
+            "episode text present: {block}"
+        );
+    }
+
+    #[test]
+    fn render_recall_block_truncates_and_flattens_newlines() {
+        let hit = crate::memory::views::EpisodeHit {
+            event_id: 1,
+            event_type: 1,
+            ts_ns: 1,
+            text: format!("line1\nline2 {}", "x".repeat(400)),
+            text_hash: "h".into(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "hot".into(),
+            importance: Some(0.5),
+            access_count: 0,
+            trust: 1,
+        };
+        let out = render_recall_block(std::slice::from_ref(&hit));
+        assert!(out.contains("Relevant memory"), "header: {out}");
+        assert!(out.contains("[hot]"), "tier tag: {out}");
+        assert!(out.contains("line1 line2"), "newline flattened to space: {out}");
+        assert!(out.contains('…'), "over-long snippet truncated with ellipsis");
     }
 
     #[test]
