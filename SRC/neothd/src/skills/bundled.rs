@@ -475,6 +475,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "requesting_code_review",
         include_str!("../../assets/skills/requesting_code_review/skill.yaml"),
     ),
+    // GOLD-ADAPT-SKILL-03 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
+    (
+        "source_driven_development",
+        include_str!("../../assets/skills/source_driven_development/skill.yaml"),
+    ),
     (
         "systematic_debugging",
         include_str!("../../assets/skills/systematic_debugging/skill.yaml"),
