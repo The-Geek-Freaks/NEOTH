@@ -746,6 +746,614 @@ async fn enforce_preflight(
     })
 }
 
+/// GOLD-ARCH-02 phase 3 — make the provider call for one chat turn: build the
+/// Request (+ Karpathy code-discipline preamble), emit the AP-2 local-inference
+/// trace pair, dispatch via the stream / council / MCP-tool-loop / direct-complete
+/// branch, release the cluster in-flight gauge, and bump the provider quota on
+/// success. Owns the WAL writer + join handle so every error path drains them
+/// byte-for-byte; returns the reply + token/latency/model + the (prompt, system)
+/// pair the post-reply refusal-recovery path reissues.
+struct DispatchOutput {
+    response_text: String,
+    final_input_tokens: Option<u32>,
+    final_output_tokens: Option<u32>,
+    model_used: String,
+    total_latency: std::time::Duration,
+    writer: crate::wal::writer::WalWriterHandle,
+    writer_join: tokio::task::JoinHandle<()>,
+    final_prompt: String,
+    final_system: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_provider(
+    final_prompt: String,
+    final_system: Option<String>,
+    args: &ChatArgs,
+    provider: &dyn crate::providers::Provider,
+    config: &FreedomConfig,
+    writer: crate::wal::writer::WalWriterHandle,
+    writer_join: tokio::task::JoinHandle<()>,
+    quota_path: std::path::PathBuf,
+    prompt: &str,
+    predicted_cost: &crate::providers::cost::CostEstimate,
+    skill_tool_allowlist: Option<Vec<String>>,
+) -> Result<DispatchOutput> {
+    let provider_name = provider.name();
+    // ── Provider call (sync OR stream) ────────────────────────────────────
+    // R-04 2026-05-17: clone final_prompt + final_system here rather
+    // than move so the LOWKEY refusal-recovery path post-reply can
+    // reissue the same (prompt, system) pair under a reframing.
+    // Original moves were tightening Rust's borrow-checker around the
+    // Request literal; the cost of the extra Option<String> clone is
+    // negligible compared to the LLM round-trip about to fire.
+    // Q1 (Session 19): inject the Karpathy metacognitive
+    // preamble (think-before-coding / simplicity-first /
+    // surgical-changes) before the operator-supplied system
+    // block. Idempotent — re-entry from council debate
+    // doesn't double-inject. Per
+    // `PLAN/QUELLEN_ADOPT_karpathy_2026-05-21.md`.
+    let merged_system = Some(crate::providers::context_guards::apply_code_discipline_preamble(
+        final_system.as_deref(),
+    ));
+    let req = Request {
+        prompt: final_prompt.clone(),
+        system: merged_system.clone(),
+        model: args.model.clone(),
+        temperature: args.temperature,
+        top_p: args.top_p,
+        sampling_seed: args.sampling_seed,
+        stop_sequences: Vec::new(),
+    };
+
+    let started = std::time::Instant::now();
+
+    // AP-2: every local-inference call (stream OR non-stream) leaves a WAL
+    // START + END trace pair. Hoisted out of the branch arms so the same
+    // emission path covers both `provider.complete(req)` and
+    // `provider.stream(req)`. The Request is consumed by each call below,
+    // so we read its fields once here.
+    let is_local_inference = crate::providers::is_local_provider(provider.name());
+    let inference_id: u64 = if is_local_inference {
+        let id = rand_u64_for_trace();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "request_id": id,
+            "prompt_hash": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
+            "model": req.model.clone(),
+            "stream": args.stream,
+            "ts_unix": now_unix(),
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START,
+            &payload,
+        )
+        .build();
+        if let Err(e) = writer.append(header, payload).await {
+            tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
+        }
+        id
+    } else {
+        0
+    };
+    let inference_started = std::time::Instant::now();
+
+    // SL-00(1c): mark this provider request as in-flight for the cluster
+    // local-load gauge. The RAII guard decrements on drop (covers both the
+    // stream + non-stream branches, and any early `?`); we drop it explicitly
+    // right after the call so the count reflects only the actual provider work.
+    // GOLD-SEC-16: the cluster local-load gauge only exists with the `cluster` feature.
+    #[cfg(feature = "cluster")]
+    let inflight_guard = crate::cluster::local_load::inflight_guard();
+
+    let (response_text, final_input_tokens, final_output_tokens, model_used) = if args.stream {
+        // B-1 follow-up (Session 13) — streaming-branch audit gap.
+        // Council never fans out on the streaming path (council needs
+        // sync semantics + dissent scoring across full responses).
+        // Emit a COUNCIL_SKIP audit anyway so the operator's WAL trace
+        // shows every chat turn was reasoned about WRT council, even
+        // when streaming mode forces the light path. Reason is
+        // operator-greppable: `streaming_mode_disables_council`.
+        {
+            let prompt_hash_stream = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+            let _ = emit_council_skip(
+                &writer,
+                prompt_hash_stream,
+                "streaming_mode_disables_council",
+            )
+            .await;
+        }
+        // QM-10 Phase 2.5: streaming path also consults the breaker.
+        // Acquire BEFORE provider.stream so an Open breaker rejects
+        // the call without opening a stream we'd have to drain.
+        let stream_permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+            Ok(p) => Some(p),
+            Err(berr) => {
+                drop(writer);
+                let _ = writer_join.await;
+                return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
+            }
+        };
+        let stream_call_started = std::time::Instant::now();
+        // Streaming path: print each delta as it arrives, accumulate the
+        // full response for the WAL PROVIDER_RESPONSE frame.
+        let mut stream = match provider.stream(req).await {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(p) = stream_permit {
+                    p.record_failure();
+                }
+                if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
+                    record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
+                }
+                warn!(error = %e, "provider stream open failed");
+                drop(writer);
+                let _ = writer_join.await;
+                return Err(e);
+            }
+        };
+        let mut acc = String::new();
+        let mut chunk_count: u32 = 0;
+        let mut input_tokens = None;
+        let mut output_tokens = None;
+        let mut model_used = args.model.clone().unwrap_or_default();
+        if model_used.is_empty() {
+            model_used = config
+                .provider_model
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+        }
+
+        use futures_util::stream::StreamExt;
+        use std::io::Write as _;
+        // GOLD-ADOPT-24 — safe-flush markdown buffer: print only the prefix that
+        // doesn't split an open construct (code fence, table, inline span). `acc`
+        // + the per-chunk WAL frame still see the RAW delta; only the terminal
+        // print is buffered, so the output text is identical, just fence-safe.
+        let mut md_buf = crate::cli::streaming_buffer::MarkdownBuffer::new();
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(chunk) => {
+                    if !chunk.delta.is_empty() {
+                        if let Some(safe) = md_buf.push(&chunk.delta) {
+                            print!("{safe}");
+                            let _ = std::io::stdout().flush();
+                        }
+                        acc.push_str(&chunk.delta);
+                        chunk_count += 1;
+                        emit_stream_chunk(&writer, provider.name(), &chunk, chunk_count).await?;
+                    }
+                    if chunk.done {
+                        // Release any construct still held at stream end.
+                        let rest = md_buf.flush();
+                        if !rest.is_empty() {
+                            print!("{rest}");
+                            let _ = std::io::stdout().flush();
+                        }
+                        input_tokens = chunk.input_tokens;
+                        output_tokens = chunk.output_tokens;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    if let Some(p) = stream_permit {
+                        p.record_failure();
+                    }
+                    warn!(error = %e, "stream chunk error");
+                    // GR-091: release any markdown tail still buffered so the
+                    // already-streamed partial output isn't swallowed on error.
+                    let tail = md_buf.flush();
+                    if !tail.is_empty() {
+                        print!("{tail}");
+                        let _ = std::io::stdout().flush();
+                    }
+                    drop(writer);
+                    let _ = writer_join.await;
+                    return Err(e);
+                }
+            }
+        }
+        // Loop only reaches here on clean exit — every Err arm
+        // returns above so success path is implicit.
+        // GOLD-ADOPT-24 — defensive: if the stream ended without a `done` chunk,
+        // release any markdown tail still buffered (the done-arm flush didn't run).
+        {
+            let rest = md_buf.flush();
+            if !rest.is_empty() {
+                use std::io::Write as _;
+                print!("{rest}");
+                let _ = std::io::stdout().flush();
+            }
+        }
+        if let Some(p) = stream_permit {
+            p.record_success();
+        }
+        {
+            // QM-9 Phase 1.5 / GR-15: persist a usage event for the
+            // streaming chat path via the shared best-effort helper.
+            let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
+            crate::daemon::usage_log::record_provider_call_best_effort(
+                provider_name,
+                &model_used,
+                input_tokens,
+                output_tokens,
+                elapsed_ms,
+                true,
+            );
+        }
+        // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
+        // truncated streams.
+        println!();
+        println!(
+            "{}",
+            serde_json::json!({"neoth_stream":"done","count":chunk_count})
+        );
+        (acc, input_tokens, output_tokens, model_used)
+    } else {
+        // Non-streaming: existing behavior. START frame already emitted
+        // above the branch; END frame fires after both arms converge.
+        //
+        // CH-02 council wedge — smart-trigger default (Codex feedback
+        // 2026-05-16): the chat dispatch now consults CH-14's
+        // `should_convene` BY DEFAULT on every call. Tri-state env:
+        //   - `NEOTH_COUNCIL_DISABLE=1`  → never (operator opt-out wins)
+        //   - `NEOTH_COUNCIL_ENABLE=1`   → always (force-convene every
+        //                                  call, bypasses the gates;
+        //                                  expensive — operator's choice)
+        //   - unset / anything else      → AUTO via `should_convene`
+        //                                  (dissent marker + complexity
+        //                                  + rate + budget gates).
+        //                                  `NEOTH_COUNCIL_AUTO=1` is
+        //                                  accepted for backward compat
+        //                                  but no longer required —
+        //                                  the gate fires automatically.
+        //
+        // Takes priority over MCP autoroute when both apply (they're
+        // mutually exclusive — council debates many providers;
+        // autoroute wraps one). Smart-trigger's default-Skip semantic
+        // (no dissent marker → Skip) means casual prompts like "what's
+        // the time" don't convene; "should I use Rust or Go?" does.
+        let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let council_disable_env = std::env::var("NEOTH_COUNCIL_DISABLE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        // SPEC-03 suppress: the persistent `freedom.yaml::council.disabled`
+        // flag (set via `neoth council suppress`) is the durable twin of
+        // the env override — either one forces the single-hemisphere path.
+        // `config` is fresh per CLI invocation so the flag is always current.
+        let council_disable_cfg = config.council.disabled.unwrap_or(false);
+        let council_disable = council_disable_env || council_disable_cfg;
+        // Trigger decision is computed even when not used so the WAL
+        // audit (next iteration) can record "council was triggerable
+        // but skipped because operator opted out".
+        let trigger_decision = if council_disable {
+            crate::council::TriggerDecision::Skip {
+                // Record BOTH sources when co-active so the audit trail
+                // doesn't hide the persistent suppress behind the env var
+                // (clearing the env later would otherwise leave no WAL hint
+                // that `council.disabled=true` is still in effect).
+                reason: match (council_disable_env, council_disable_cfg) {
+                    (true, true) => {
+                        "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
+                    }
+                    (true, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
+                    (false, _) => "freedom.yaml::council.disabled=true".into(),
+                },
+            }
+        } else if council_force {
+            crate::council::TriggerDecision::Convene {
+                reason: "NEOTH_COUNCIL_ENABLE=1 (force)".into(),
+            }
+        } else {
+            // B-3 (Session 13) — feed real `seconds_since_last_council`
+            // from `~/.neoth/council_last.json` so Gate 2 (rate cooldown)
+            // is honoured. Missing / malformed file → `u64::MAX` (gate
+            // open), matching prior behaviour for fresh installs.
+            let home_b3 = FreedomConfig::default_neoth_home();
+            let now_unix_b3 = crate::council::last_ts::now_unix();
+            let secs_since = crate::council::last_ts::seconds_since_last(&home_b3, now_unix_b3);
+            let ctx = crate::council::TriggerContext {
+                seconds_since_last_council: secs_since,
+                remaining_budget_eur: None,
+                estimated_single_call_eur: predicted_cost.total_eur.max(0.01),
+            };
+            // SPEC-03b: operator-tunable thresholds from
+            // `freedom.yaml::council.trigger` (defaults reproduce the prior
+            // hardcoded policy exactly).
+            crate::council::should_convene(prompt, &ctx, &config.council.trigger.to_policy())
+        };
+        // GOLD-SEC-32 / B-19: hard rolling-24h convene cap, enforced before
+        // convening and independent of the EUR budget gate (which is None on
+        // the local/free path). Operator-forced council bypasses it.
+        let council_home = FreedomConfig::default_neoth_home();
+        let council_now = crate::council::last_ts::now_unix() as i64;
+        let council_cap_hit = !council_force
+            && trigger_decision.should_convene()
+            && crate::council::day_counter::cap_reached(&council_home, council_now);
+        if council_cap_hit {
+            tracing::warn!(
+                cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                "council daily convene cap reached — single-provider for this turn"
+            );
+        }
+        let council_enable = trigger_decision.should_convene() && !council_cap_hit;
+        if council_enable {
+            crate::council::day_counter::record_convene(&council_home, council_now);
+        }
+        if !council_force && !council_disable {
+            info!(
+                decision = ?trigger_decision,
+                will_convene = council_enable,
+                "council smart-trigger evaluated"
+            );
+        }
+        // B-1 (Session 13) — emit COUNCIL_SKIP audit when the trigger
+        // resolved to Skip so the operator's WAL audit distinguishes
+        // "light path: single hemisphere answered because trigger said
+        // skip" from "council fired but everyone agreed silently".
+        // Reason carries the exact gate (env override, complexity,
+        // rate, budget) so an operator can grep refusal causes per
+        // gate over time.
+        if !council_enable {
+            let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+            let reason = if council_cap_hit {
+                "daily convene cap (rolling 24h) reached"
+            } else {
+                trigger_decision.reason()
+            };
+            let _ = emit_council_skip(&writer, prompt_hash_skip, reason).await;
+        }
+        // A8 / Konsens-decision #8 — MCP autoroute is now AUTO by default
+        // when `mcp_servers.yaml` has ≥1 enabled server. Tri-state:
+        //   - NEOTH_MCP_AUTOROUTE=1 / true / on / yes → forced ON
+        //   - NEOTH_MCP_AUTOROUTE=0 / false / off / no → forced OFF
+        //   - unset / empty / other → AUTO (on when servers present)
+        // Decision threaded via `McpServers::autoroute_decision` so the
+        // chat dispatch can log *why* the loop is on/off (operator
+        // opt-in vs auto-derive vs zero-server-default-off).
+        // Council always wins when explicitly enabled — the two paths
+        // are mutually exclusive (council debates many providers,
+        // autoroute wraps one).
+        let mcp_servers_for_loop = if !council_enable {
+            crate::mcp::McpServers::load().unwrap_or_else(|e| {
+                warn!(error = %e, "mcp_servers.yaml load failed in autoroute path — proceeding without MCP tools");
+                Default::default()
+            })
+        } else {
+            crate::mcp::McpServers::default()
+        };
+        let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
+        let autoroute_decision = mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
+        let use_loop = !council_enable && autoroute_decision.is_on();
+        if council_enable {
+            info!(
+                trigger = ?trigger_decision,
+                "council convened — running 3-hemisphere debate"
+            );
+            // COR-17: the full debate → recovery → winner-selection →
+            // self-reflect → partial-refusal-prefix pipeline lives in the
+            // shared `dispatch_council_with_recovery` (also driven by the
+            // channel path in serve.rs), so the CLI and daemon paths can
+            // never drift. CLI-specific bits stay here: the convened log
+            // above, the WAL-writer shutdown on failure, stdout print, and
+            // the cost-estimate tuple below.
+            let response_text =
+                match dispatch_council_with_recovery(&req, config, &writer).await {
+                    Ok(text) => text,
+                    Err(e) => {
+                        // CLI returns the error to the caller (after a clean
+                        // WAL-writer shutdown) rather than falling back to a
+                        // single provider the way the channel path does.
+                        warn!(error = %e, "council debate failed; returning error");
+                        drop(writer);
+                        let _ = writer_join.await;
+                        return Err(e);
+                    }
+                };
+            println!("{response_text}");
+            (
+                response_text,
+                None,
+                None,
+                model_for_estimate(args, config),
+            )
+        } else if use_loop {
+            info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
+            // SC-11 — scope the MCP gate to the matched skill's
+            // tool_allowlist (empty/None ⇒ no skill-level restriction).
+            let skill_allowlist = skill_tool_allowlist.as_deref();
+            let outcome = match run_mcp_dispatch_loop(
+                provider,
+                req.clone(),
+                &mcp_servers_for_loop,
+                config.autonomy,
+                &writer,
+                Some(&config.rollback),
+                skill_allowlist,
+                config.goal.max_turns,
+                &config.security,
+                crate::mcp::goal_tracker::GoalContext {
+                    goal: config.goal.goal.clone(),
+                    grind: config.goal.grind.clone(),
+                },
+                config.hints.enabled,
+                crate::context::compaction::CompactionPolicy::from_config(
+                    config.compaction.enabled,
+                    config.compaction.progressive,
+                    config.tokens.max_per_request,
+                    config.compaction.threshold_fraction,
+                ),
+                // GOLD-HR-08/10 — tool-result compression (None when disabled).
+                // Persistent store so `neoth ctx retrieve` can pull dropped
+                // blocks back + savings are metered.
+                crate::context::compress::CompressionRuntime::persistent(
+                    config.compression.gate(),
+                    config.compression.thresholds(),
+                    crate::context::compress::default_ccr_dir(),
+                ),
+            )
+            .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
+                        record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
+                    }
+                    warn!(error = %e, "MCP dispatch loop failed");
+                    drop(writer);
+                    let _ = writer_join.await;
+                    return Err(e);
+                }
+            };
+            info!(
+                iterations = outcome.iterations,
+                successful_calls = outcome.successful_calls,
+                failed_calls = outcome.failed_calls,
+                hit_cap = outcome.hit_cap,
+                "MCP dispatch loop complete"
+            );
+            println!("{}", outcome.final_text);
+            (
+                outcome.final_text,
+                None,
+                None,
+                model_for_estimate(args, config),
+            )
+        } else {
+            // QM-10 Phase 2: consult the circuit breaker for this
+            // provider before dispatching. Open breakers reject
+            // immediately with operator-readable retry_after.
+            let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+                Ok(p) => Some(p),
+                Err(berr) => {
+                    warn!(
+                        provider = provider_name,
+                        breaker_err = %berr,
+                        "circuit breaker rejected call"
+                    );
+                    drop(writer);
+                    let _ = writer_join.await;
+                    return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
+                }
+            };
+            let call_started = std::time::Instant::now();
+            let result = provider.complete(req).await;
+            let elapsed_ms = call_started.elapsed().as_millis() as u64;
+            match result {
+                Ok(completion) => {
+                    // QM-10 Phase 2: settle the permit on success.
+                    if let Some(p) = permit {
+                        p.record_success();
+                    }
+                    // QM-9 Phase 1.5 / GR-15: persist a usage event for
+                    // the non-streaming chat path via the shared helper.
+                    crate::daemon::usage_log::record_provider_call_best_effort(
+                        provider_name,
+                        &completion.model,
+                        completion.input_tokens,
+                        completion.output_tokens,
+                        elapsed_ms,
+                        true,
+                    );
+                    println!("{}", completion.text);
+                    (
+                        completion.text,
+                        completion.input_tokens,
+                        completion.output_tokens,
+                        completion.model,
+                    )
+                }
+                Err(e) => {
+                    // QM-10 Phase 2: settle the permit on failure.
+                    if let Some(p) = permit {
+                        p.record_failure();
+                    }
+                    // Record the failure too so the rollup distinguishes
+                    // ok-vs-err for the same provider (GR-15 helper).
+                    let model = model_for_estimate(args, config);
+                    crate::daemon::usage_log::record_provider_call_best_effort(
+                        provider_name,
+                        &model,
+                        None,
+                        None,
+                        elapsed_ms,
+                        false,
+                    );
+                    if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
+                        record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
+                    }
+                    warn!(error = %e, "provider call failed");
+                    drop(writer);
+                    let _ = writer_join.await;
+                    return Err(e);
+                }
+            }
+        }
+    };
+
+    // SL-00(1c): the provider work is done — release the in-flight slot and
+    // feed the cluster local-load gauge the REAL measured throughput so our
+    // outbound heartbeats carry honest numbers (no faked metrics).
+    #[cfg(feature = "cluster")]
+    {
+        drop(inflight_guard);
+        crate::cluster::local_load::record_completion(
+            final_output_tokens.unwrap_or(0),
+            inference_started.elapsed(),
+        );
+    }
+
+    // AP-2 END half: fires for stream + non-stream paths after the model
+    // produced a reply. Reads the final accumulated text from the same
+    // tuple binding both branches return.
+    if is_local_inference {
+        let latency_ns = u64::try_from(inference_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "request_id": inference_id,
+            "output_hash": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
+            "input_tokens": final_input_tokens,
+            "output_tokens": final_output_tokens,
+            "latency_ns": latency_ns,
+            "stream": args.stream,
+            "ts_unix": now_unix(),
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_END,
+            &payload,
+        )
+        .build();
+        if let Err(e) = writer.append(header, payload).await {
+            tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
+        }
+    }
+    let total_latency = started.elapsed();
+
+    // Successful remote call → bump the per-provider daily counter for the
+    // quota tracker so `neoth quota status` reflects actual usage. Local
+    // providers are not tracked.
+    if !crate::providers::is_local_provider(provider_name) {
+        let mut tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
+        tracker.record_success(provider_name, crate::providers::quota::now_unix());
+        if let Err(e) = tracker.save() {
+            tracing::warn!(error = %e, "quota.json save after success failed (best-effort)");
+        }
+    }
+    Ok(DispatchOutput {
+        response_text,
+        final_input_tokens,
+        final_output_tokens,
+        model_used,
+        total_latency,
+        writer,
+        writer_join,
+        final_prompt,
+        final_system,
+    })
+}
+
 pub async fn run_chat_with(
     mut args: ChatArgs,
     config: FreedomConfig,
@@ -1115,568 +1723,30 @@ pub async fn run_chat_with(
                 final_system, prompt, quota_path, hooks,
             ),
         };
-    let provider_name = provider.name();
-    // ── Provider call (sync OR stream) ────────────────────────────────────
-    // R-04 2026-05-17: clone final_prompt + final_system here rather
-    // than move so the LOWKEY refusal-recovery path post-reply can
-    // reissue the same (prompt, system) pair under a reframing.
-    // Original moves were tightening Rust's borrow-checker around the
-    // Request literal; the cost of the extra Option<String> clone is
-    // negligible compared to the LLM round-trip about to fire.
-    // Q1 (Session 19): inject the Karpathy metacognitive
-    // preamble (think-before-coding / simplicity-first /
-    // surgical-changes) before the operator-supplied system
-    // block. Idempotent — re-entry from council debate
-    // doesn't double-inject. Per
-    // `PLAN/QUELLEN_ADOPT_karpathy_2026-05-21.md`.
-    let merged_system = Some(crate::providers::context_guards::apply_code_discipline_preamble(
-        final_system.as_deref(),
-    ));
-    let req = Request {
-        prompt: final_prompt.clone(),
-        system: merged_system.clone(),
-        model: args.model.clone(),
-        temperature: args.temperature,
-        top_p: args.top_p,
-        sampling_seed: args.sampling_seed,
-        stop_sequences: Vec::new(),
-    };
-
-    let started = std::time::Instant::now();
-
-    // AP-2: every local-inference call (stream OR non-stream) leaves a WAL
-    // START + END trace pair. Hoisted out of the branch arms so the same
-    // emission path covers both `provider.complete(req)` and
-    // `provider.stream(req)`. The Request is consumed by each call below,
-    // so we read its fields once here.
-    let is_local_inference = crate::providers::is_local_provider(provider.name());
-    let inference_id: u64 = if is_local_inference {
-        let id = rand_u64_for_trace();
-        let payload = serde_json::to_vec(&serde_json::json!({
-            "request_id": id,
-            "prompt_hash": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
-            "model": req.model.clone(),
-            "stream": args.stream,
-            "ts_unix": now_unix(),
-        }))
-        .unwrap_or_default();
-        let header = crate::wal::HeaderBuilder::new(
-            crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START,
-            &payload,
-        )
-        .build();
-        if let Err(e) = writer.append(header, payload).await {
-            tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
-        }
-        id
-    } else {
-        0
-    };
-    let inference_started = std::time::Instant::now();
-
-    // SL-00(1c): mark this provider request as in-flight for the cluster
-    // local-load gauge. The RAII guard decrements on drop (covers both the
-    // stream + non-stream branches, and any early `?`); we drop it explicitly
-    // right after the call so the count reflects only the actual provider work.
-    // GOLD-SEC-16: the cluster local-load gauge only exists with the `cluster` feature.
-    #[cfg(feature = "cluster")]
-    let inflight_guard = crate::cluster::local_load::inflight_guard();
-
-    let (response_text, final_input_tokens, final_output_tokens, model_used) = if args.stream {
-        // B-1 follow-up (Session 13) — streaming-branch audit gap.
-        // Council never fans out on the streaming path (council needs
-        // sync semantics + dissent scoring across full responses).
-        // Emit a COUNCIL_SKIP audit anyway so the operator's WAL trace
-        // shows every chat turn was reasoned about WRT council, even
-        // when streaming mode forces the light path. Reason is
-        // operator-greppable: `streaming_mode_disables_council`.
-        {
-            let prompt_hash_stream = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-            let _ = emit_council_skip(
-                &writer,
-                prompt_hash_stream,
-                "streaming_mode_disables_council",
-            )
-            .await;
-        }
-        // QM-10 Phase 2.5: streaming path also consults the breaker.
-        // Acquire BEFORE provider.stream so an Open breaker rejects
-        // the call without opening a stream we'd have to drain.
-        let stream_permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
-            Ok(p) => Some(p),
-            Err(berr) => {
-                drop(writer);
-                let _ = writer_join.await;
-                return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
-            }
-        };
-        let stream_call_started = std::time::Instant::now();
-        // Streaming path: print each delta as it arrives, accumulate the
-        // full response for the WAL PROVIDER_RESPONSE frame.
-        let mut stream = match provider.stream(req).await {
-            Ok(s) => s,
-            Err(e) => {
-                if let Some(p) = stream_permit {
-                    p.record_failure();
-                }
-                if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                    record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
-                }
-                warn!(error = %e, "provider stream open failed");
-                drop(writer);
-                let _ = writer_join.await;
-                return Err(e);
-            }
-        };
-        let mut acc = String::new();
-        let mut chunk_count: u32 = 0;
-        let mut input_tokens = None;
-        let mut output_tokens = None;
-        let mut model_used = args.model.clone().unwrap_or_default();
-        if model_used.is_empty() {
-            model_used = config
-                .provider_model
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-        }
-
-        use futures_util::stream::StreamExt;
-        use std::io::Write as _;
-        // GOLD-ADOPT-24 — safe-flush markdown buffer: print only the prefix that
-        // doesn't split an open construct (code fence, table, inline span). `acc`
-        // + the per-chunk WAL frame still see the RAW delta; only the terminal
-        // print is buffered, so the output text is identical, just fence-safe.
-        let mut md_buf = crate::cli::streaming_buffer::MarkdownBuffer::new();
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(chunk) => {
-                    if !chunk.delta.is_empty() {
-                        if let Some(safe) = md_buf.push(&chunk.delta) {
-                            print!("{safe}");
-                            let _ = std::io::stdout().flush();
-                        }
-                        acc.push_str(&chunk.delta);
-                        chunk_count += 1;
-                        emit_stream_chunk(&writer, provider.name(), &chunk, chunk_count).await?;
-                    }
-                    if chunk.done {
-                        // Release any construct still held at stream end.
-                        let rest = md_buf.flush();
-                        if !rest.is_empty() {
-                            print!("{rest}");
-                            let _ = std::io::stdout().flush();
-                        }
-                        input_tokens = chunk.input_tokens;
-                        output_tokens = chunk.output_tokens;
-                        break;
-                    }
-                }
-                Err(e) => {
-                    if let Some(p) = stream_permit {
-                        p.record_failure();
-                    }
-                    warn!(error = %e, "stream chunk error");
-                    // GR-091: release any markdown tail still buffered so the
-                    // already-streamed partial output isn't swallowed on error.
-                    let tail = md_buf.flush();
-                    if !tail.is_empty() {
-                        print!("{tail}");
-                        let _ = std::io::stdout().flush();
-                    }
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
-                }
-            }
-        }
-        // Loop only reaches here on clean exit — every Err arm
-        // returns above so success path is implicit.
-        // GOLD-ADOPT-24 — defensive: if the stream ended without a `done` chunk,
-        // release any markdown tail still buffered (the done-arm flush didn't run).
-        {
-            let rest = md_buf.flush();
-            if !rest.is_empty() {
-                use std::io::Write as _;
-                print!("{rest}");
-                let _ = std::io::stdout().flush();
-            }
-        }
-        if let Some(p) = stream_permit {
-            p.record_success();
-        }
-        {
-            // QM-9 Phase 1.5 / GR-15: persist a usage event for the
-            // streaming chat path via the shared best-effort helper.
-            let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
-            crate::daemon::usage_log::record_provider_call_best_effort(
-                provider_name,
-                &model_used,
-                input_tokens,
-                output_tokens,
-                elapsed_ms,
-                true,
-            );
-        }
-        // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
-        // truncated streams.
-        println!();
-        println!(
-            "{}",
-            serde_json::json!({"neoth_stream":"done","count":chunk_count})
-        );
-        (acc, input_tokens, output_tokens, model_used)
-    } else {
-        // Non-streaming: existing behavior. START frame already emitted
-        // above the branch; END frame fires after both arms converge.
-        //
-        // CH-02 council wedge — smart-trigger default (Codex feedback
-        // 2026-05-16): the chat dispatch now consults CH-14's
-        // `should_convene` BY DEFAULT on every call. Tri-state env:
-        //   - `NEOTH_COUNCIL_DISABLE=1`  → never (operator opt-out wins)
-        //   - `NEOTH_COUNCIL_ENABLE=1`   → always (force-convene every
-        //                                  call, bypasses the gates;
-        //                                  expensive — operator's choice)
-        //   - unset / anything else      → AUTO via `should_convene`
-        //                                  (dissent marker + complexity
-        //                                  + rate + budget gates).
-        //                                  `NEOTH_COUNCIL_AUTO=1` is
-        //                                  accepted for backward compat
-        //                                  but no longer required —
-        //                                  the gate fires automatically.
-        //
-        // Takes priority over MCP autoroute when both apply (they're
-        // mutually exclusive — council debates many providers;
-        // autoroute wraps one). Smart-trigger's default-Skip semantic
-        // (no dissent marker → Skip) means casual prompts like "what's
-        // the time" don't convene; "should I use Rust or Go?" does.
-        let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let council_disable_env = std::env::var("NEOTH_COUNCIL_DISABLE")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        // SPEC-03 suppress: the persistent `freedom.yaml::council.disabled`
-        // flag (set via `neoth council suppress`) is the durable twin of
-        // the env override — either one forces the single-hemisphere path.
-        // `config` is fresh per CLI invocation so the flag is always current.
-        let council_disable_cfg = config.council.disabled.unwrap_or(false);
-        let council_disable = council_disable_env || council_disable_cfg;
-        // Trigger decision is computed even when not used so the WAL
-        // audit (next iteration) can record "council was triggerable
-        // but skipped because operator opted out".
-        let trigger_decision = if council_disable {
-            crate::council::TriggerDecision::Skip {
-                // Record BOTH sources when co-active so the audit trail
-                // doesn't hide the persistent suppress behind the env var
-                // (clearing the env later would otherwise leave no WAL hint
-                // that `council.disabled=true` is still in effect).
-                reason: match (council_disable_env, council_disable_cfg) {
-                    (true, true) => {
-                        "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
-                    }
-                    (true, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
-                    (false, _) => "freedom.yaml::council.disabled=true".into(),
-                },
-            }
-        } else if council_force {
-            crate::council::TriggerDecision::Convene {
-                reason: "NEOTH_COUNCIL_ENABLE=1 (force)".into(),
-            }
-        } else {
-            // B-3 (Session 13) — feed real `seconds_since_last_council`
-            // from `~/.neoth/council_last.json` so Gate 2 (rate cooldown)
-            // is honoured. Missing / malformed file → `u64::MAX` (gate
-            // open), matching prior behaviour for fresh installs.
-            let home_b3 = FreedomConfig::default_neoth_home();
-            let now_unix_b3 = crate::council::last_ts::now_unix();
-            let secs_since = crate::council::last_ts::seconds_since_last(&home_b3, now_unix_b3);
-            let ctx = crate::council::TriggerContext {
-                seconds_since_last_council: secs_since,
-                remaining_budget_eur: None,
-                estimated_single_call_eur: predicted_cost.total_eur.max(0.01),
-            };
-            // SPEC-03b: operator-tunable thresholds from
-            // `freedom.yaml::council.trigger` (defaults reproduce the prior
-            // hardcoded policy exactly).
-            crate::council::should_convene(&prompt, &ctx, &config.council.trigger.to_policy())
-        };
-        // GOLD-SEC-32 / B-19: hard rolling-24h convene cap, enforced before
-        // convening and independent of the EUR budget gate (which is None on
-        // the local/free path). Operator-forced council bypasses it.
-        let council_home = FreedomConfig::default_neoth_home();
-        let council_now = crate::council::last_ts::now_unix() as i64;
-        let council_cap_hit = !council_force
-            && trigger_decision.should_convene()
-            && crate::council::day_counter::cap_reached(&council_home, council_now);
-        if council_cap_hit {
-            tracing::warn!(
-                cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
-                "council daily convene cap reached — single-provider for this turn"
-            );
-        }
-        let council_enable = trigger_decision.should_convene() && !council_cap_hit;
-        if council_enable {
-            crate::council::day_counter::record_convene(&council_home, council_now);
-        }
-        if !council_force && !council_disable {
-            info!(
-                decision = ?trigger_decision,
-                will_convene = council_enable,
-                "council smart-trigger evaluated"
-            );
-        }
-        // B-1 (Session 13) — emit COUNCIL_SKIP audit when the trigger
-        // resolved to Skip so the operator's WAL audit distinguishes
-        // "light path: single hemisphere answered because trigger said
-        // skip" from "council fired but everyone agreed silently".
-        // Reason carries the exact gate (env override, complexity,
-        // rate, budget) so an operator can grep refusal causes per
-        // gate over time.
-        if !council_enable {
-            let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-            let reason = if council_cap_hit {
-                "daily convene cap (rolling 24h) reached"
-            } else {
-                trigger_decision.reason()
-            };
-            let _ = emit_council_skip(&writer, prompt_hash_skip, reason).await;
-        }
-        // A8 / Konsens-decision #8 — MCP autoroute is now AUTO by default
-        // when `mcp_servers.yaml` has ≥1 enabled server. Tri-state:
-        //   - NEOTH_MCP_AUTOROUTE=1 / true / on / yes → forced ON
-        //   - NEOTH_MCP_AUTOROUTE=0 / false / off / no → forced OFF
-        //   - unset / empty / other → AUTO (on when servers present)
-        // Decision threaded via `McpServers::autoroute_decision` so the
-        // chat dispatch can log *why* the loop is on/off (operator
-        // opt-in vs auto-derive vs zero-server-default-off).
-        // Council always wins when explicitly enabled — the two paths
-        // are mutually exclusive (council debates many providers,
-        // autoroute wraps one).
-        let mcp_servers_for_loop = if !council_enable {
-            crate::mcp::McpServers::load().unwrap_or_else(|e| {
-                warn!(error = %e, "mcp_servers.yaml load failed in autoroute path — proceeding without MCP tools");
-                Default::default()
-            })
-        } else {
-            crate::mcp::McpServers::default()
-        };
-        let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
-        let autoroute_decision = mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
-        let use_loop = !council_enable && autoroute_decision.is_on();
-        if council_enable {
-            info!(
-                trigger = ?trigger_decision,
-                "council convened — running 3-hemisphere debate"
-            );
-            // COR-17: the full debate → recovery → winner-selection →
-            // self-reflect → partial-refusal-prefix pipeline lives in the
-            // shared `dispatch_council_with_recovery` (also driven by the
-            // channel path in serve.rs), so the CLI and daemon paths can
-            // never drift. CLI-specific bits stay here: the convened log
-            // above, the WAL-writer shutdown on failure, stdout print, and
-            // the cost-estimate tuple below.
-            let response_text =
-                match dispatch_council_with_recovery(&req, &config, &writer).await {
-                    Ok(text) => text,
-                    Err(e) => {
-                        // CLI returns the error to the caller (after a clean
-                        // WAL-writer shutdown) rather than falling back to a
-                        // single provider the way the channel path does.
-                        warn!(error = %e, "council debate failed; returning error");
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Err(e);
-                    }
-                };
-            println!("{response_text}");
-            (
-                response_text,
-                None,
-                None,
-                model_for_estimate(&args, &config),
-            )
-        } else if use_loop {
-            info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
-            // SC-11 — scope the MCP gate to the matched skill's
-            // tool_allowlist (empty/None ⇒ no skill-level restriction).
-            let skill_allowlist = skill_tool_allowlist.as_deref();
-            let outcome = match run_mcp_dispatch_loop(
-                provider,
-                req.clone(),
-                &mcp_servers_for_loop,
-                config.autonomy,
-                &writer,
-                Some(&config.rollback),
-                skill_allowlist,
-                config.goal.max_turns,
-                &config.security,
-                crate::mcp::goal_tracker::GoalContext {
-                    goal: config.goal.goal.clone(),
-                    grind: config.goal.grind.clone(),
-                },
-                config.hints.enabled,
-                crate::context::compaction::CompactionPolicy::from_config(
-                    config.compaction.enabled,
-                    config.compaction.progressive,
-                    config.tokens.max_per_request,
-                    config.compaction.threshold_fraction,
-                ),
-                // GOLD-HR-08/10 — tool-result compression (None when disabled).
-                // Persistent store so `neoth ctx retrieve` can pull dropped
-                // blocks back + savings are metered.
-                crate::context::compress::CompressionRuntime::persistent(
-                    config.compression.gate(),
-                    config.compression.thresholds(),
-                    crate::context::compress::default_ccr_dir(),
-                ),
-            )
-            .await
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                        record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
-                    }
-                    warn!(error = %e, "MCP dispatch loop failed");
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
-                }
-            };
-            info!(
-                iterations = outcome.iterations,
-                successful_calls = outcome.successful_calls,
-                failed_calls = outcome.failed_calls,
-                hit_cap = outcome.hit_cap,
-                "MCP dispatch loop complete"
-            );
-            println!("{}", outcome.final_text);
-            (
-                outcome.final_text,
-                None,
-                None,
-                model_for_estimate(&args, &config),
-            )
-        } else {
-            // QM-10 Phase 2: consult the circuit breaker for this
-            // provider before dispatching. Open breakers reject
-            // immediately with operator-readable retry_after.
-            let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
-                Ok(p) => Some(p),
-                Err(berr) => {
-                    warn!(
-                        provider = provider_name,
-                        breaker_err = %berr,
-                        "circuit breaker rejected call"
-                    );
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
-                }
-            };
-            let call_started = std::time::Instant::now();
-            let result = provider.complete(req).await;
-            let elapsed_ms = call_started.elapsed().as_millis() as u64;
-            match result {
-                Ok(completion) => {
-                    // QM-10 Phase 2: settle the permit on success.
-                    if let Some(p) = permit {
-                        p.record_success();
-                    }
-                    // QM-9 Phase 1.5 / GR-15: persist a usage event for
-                    // the non-streaming chat path via the shared helper.
-                    crate::daemon::usage_log::record_provider_call_best_effort(
-                        provider_name,
-                        &completion.model,
-                        completion.input_tokens,
-                        completion.output_tokens,
-                        elapsed_ms,
-                        true,
-                    );
-                    println!("{}", completion.text);
-                    (
-                        completion.text,
-                        completion.input_tokens,
-                        completion.output_tokens,
-                        completion.model,
-                    )
-                }
-                Err(e) => {
-                    // QM-10 Phase 2: settle the permit on failure.
-                    if let Some(p) = permit {
-                        p.record_failure();
-                    }
-                    // Record the failure too so the rollup distinguishes
-                    // ok-vs-err for the same provider (GR-15 helper).
-                    let model = model_for_estimate(&args, &config);
-                    crate::daemon::usage_log::record_provider_call_best_effort(
-                        provider_name,
-                        &model,
-                        None,
-                        None,
-                        elapsed_ms,
-                        false,
-                    );
-                    if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                        record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
-                    }
-                    warn!(error = %e, "provider call failed");
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
-                }
-            }
-        }
-    };
-
-    // SL-00(1c): the provider work is done — release the in-flight slot and
-    // feed the cluster local-load gauge the REAL measured throughput so our
-    // outbound heartbeats carry honest numbers (no faked metrics).
-    #[cfg(feature = "cluster")]
-    {
-        drop(inflight_guard);
-        crate::cluster::local_load::record_completion(
-            final_output_tokens.unwrap_or(0),
-            inference_started.elapsed(),
-        );
-    }
-
-    // AP-2 END half: fires for stream + non-stream paths after the model
-    // produced a reply. Reads the final accumulated text from the same
-    // tuple binding both branches return.
-    if is_local_inference {
-        let latency_ns = u64::try_from(inference_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-        let payload = serde_json::to_vec(&serde_json::json!({
-            "request_id": inference_id,
-            "output_hash": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
-            "input_tokens": final_input_tokens,
-            "output_tokens": final_output_tokens,
-            "latency_ns": latency_ns,
-            "stream": args.stream,
-            "ts_unix": now_unix(),
-        }))
-        .unwrap_or_default();
-        let header = crate::wal::HeaderBuilder::new(
-            crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_END,
-            &payload,
-        )
-        .build();
-        if let Err(e) = writer.append(header, payload).await {
-            tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
-        }
-    }
-    let total_latency = started.elapsed();
-
-    // Successful remote call → bump the per-provider daily counter for the
-    // quota tracker so `neoth quota status` reflects actual usage. Local
-    // providers are not tracked.
-    if !crate::providers::is_local_provider(provider_name) {
-        let mut tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
-        tracker.record_success(provider_name, crate::providers::quota::now_unix());
-        if let Err(e) = tracker.save() {
-            tracing::warn!(error = %e, "quota.json save after success failed (best-effort)");
-        }
-    }
+    let DispatchOutput {
+        response_text,
+        final_input_tokens,
+        final_output_tokens,
+        model_used,
+        total_latency,
+        writer,
+        writer_join,
+        final_prompt,
+        final_system,
+    } = dispatch_provider(
+        final_prompt,
+        final_system,
+        &args,
+        provider,
+        &config,
+        writer,
+        writer_join,
+        quota_path,
+        &prompt,
+        &predicted_cost,
+        skill_tool_allowlist,
+    )
+    .await?;
 
     // ── TOML hooks: PostProviderCall (Phase 29 R-15) ─────────────────────
     // Last chance to mutate or block the model's reply before it lands in
