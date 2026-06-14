@@ -60,12 +60,31 @@ pub async fn run_recall_latency_tick(
     let db_path = home.join("views.db");
     // Read + DROP the (!Send) sqlite Connection in a tight scope BEFORE any
     // await, so this tick's future stays Send for `tokio::spawn`.
-    let latencies = {
+    let (latencies, scorecard) = {
         let conn =
             crate::memory::store::open(&db_path).map_err(|e| format!("open views.db: {e}"))?;
-        crate::memory::store::recent_recall_latencies_ms(&conn, config.window)
-            .map_err(|e| format!("read recall latencies: {e}"))?
+        let latencies = crate::memory::store::recent_recall_latencies_ms(&conn, config.window)
+            .map_err(|e| format!("read recall latencies: {e}"))?;
+        // GOLD-ADAPT-MEM-15 — best-effort rolling recall-quality scorecard for
+        // operators tailing daemon logs (debug-level; the on-demand
+        // `neoth recall --scorecard` CLI is the primary surface). A read failure
+        // must never break the latency alert path. Computed in the SAME conn
+        // scope so the (!Send) Connection is dropped before any await below.
+        let scorecard = crate::memory::store::recall_scorecard(&conn, config.window).ok();
+        (latencies, scorecard)
     };
+    if let Some(sc) = &scorecard {
+        tracing::debug!(
+            hit_rate = sc.hit_rate,
+            empty_rate = sc.empty_rate,
+            p50_ms = sc.latency_p50_ms,
+            p95_ms = sc.latency_p95_ms,
+            tier_skip_pct = sc.tier_skip_pct,
+            data_sufficient = sc.data_sufficient,
+            samples = sc.window,
+            "recall-quality scorecard",
+        );
+    }
 
     let Some((p95_ms, sample_count)) =
         evaluate_recall_p95(&latencies, config.p95_threshold_ms, config.min_samples)

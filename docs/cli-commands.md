@@ -1765,6 +1765,7 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--extract <TEXT>` — GOLD-ADAPT-MEM-06 — extract entities + relations from this text via the configured provider and persist them into the knowledge graph (the ingest path). Bypasses search
 - `--assoc <EVENT_ID>` — GOLD-ADAPT-MEM-07 — co-access association query: list the memories most frequently recalled ALONGSIDE this `event_id` (1-hop neighbourhood, ordered by link weight DESC). Bypasses search
 - `--bootstrap-assoc <BOOTSTRAP_ASSOC>` — GOLD-ADAPT-MEM-07b — one-shot: bootstrap co-access association edges from episode history (memories in the same time-window get a weak initial link), so a fresh install has associations before live recall accrues. Idempotent — safe to re-run (never touches existing edges)
+- `--scorecard <N>` — GOLD-ADAPT-MEM-15 — print the recall-quality scorecard over the most recent N recall outcomes (hit-rate / result-count / reinforcement-rate / tier mix / latency percentiles) instead of searching. `--scorecard 0` uses the default window (500)
 
 ## `neoth recall-score`
 

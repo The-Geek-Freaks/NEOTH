@@ -132,6 +132,13 @@ pub struct RecallArgs {
     #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc"])]
     pub bootstrap_assoc: bool,
 
+    /// GOLD-ADAPT-MEM-15 — print the recall-quality scorecard over the most
+    /// recent N recall outcomes (hit-rate / result-count / reinforcement-rate /
+    /// tier mix / latency percentiles) instead of searching. `--scorecard 0`
+    /// uses the default window (500).
+    #[arg(long, value_name = "N", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc"])]
+    pub scorecard: Option<usize>,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -356,6 +363,19 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         return Ok(());
     }
 
+    // GOLD-ADAPT-MEM-15 recall-quality scorecard short-circuit. Reads the recent
+    // recall-outcome + latency windows and renders the scorecard instead of
+    // searching. No WAL, no network.
+    if let Some(window) = args.scorecard {
+        const DEFAULT_SCORECARD_WINDOW: usize = 500;
+        let window = if window == 0 { DEFAULT_SCORECARD_WINDOW } else { window.min(5000) };
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
+        let card = store::recall_scorecard(&conn, window).context("compute recall scorecard")?;
+        render_scorecard(&card, args.output);
+        return Ok(());
+    }
+
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
 
     // Cross-modal similarity paths are their own short-circuits: text
@@ -421,10 +441,11 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // GOLD-ADAPT-MEM-03 budget-adaptive lane selection. Classified on the async
     // side (pure, no I/O) and moved into the blocking task. A genuinely-no-recall
     // query (status/identity/greeting) sheds the warm+cold scans; ordinary and
-    // historical queries cover all available text tiers.
-    let budget = crate::memory::recall_lanes::budget_for(
-        crate::memory::recall_gate::classify_recall_need(&query),
-    );
+    // historical queries cover all available text tiers. GOLD-ADAPT-MEM-15: the
+    // tier label is recorded with each recall outcome for the quality scorecard.
+    let recall_tier = crate::memory::recall_gate::classify_recall_need(&query);
+    let budget = crate::memory::recall_lanes::budget_for(recall_tier);
+    let tier_str = recall_tier.as_str();
     let (rows, reinforcements) = tokio::task::spawn_blocking(
         move || -> Result<RecallTaskOutput> {
             // RECALL-METER-01: time the full multi-tier recall query.
@@ -545,6 +566,21 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                         "access_count bump failed",
                     );
                 }
+            }
+
+            // GOLD-ADAPT-MEM-15 — record this recall's outcome for the quality
+            // scorecard (result count + reinforcement count + tier). Recorded
+            // AFTER the reinforce loop so reinforcements.len() is final; the
+            // latency sample above stays measured pre-reinforce (the MONITOR-03
+            // p95 semantic is unchanged). Best-effort — never fails the recall.
+            if let Err(e) = store::record_recall_event(
+                &conn,
+                ts_unix,
+                rows.len() as u32,
+                reinforcements.len() as u32,
+                tier_str,
+            ) {
+                tracing::debug!(error = %e, "recall: scorecard event not recorded");
             }
 
             Ok((rows, reinforcements))
@@ -726,6 +762,50 @@ fn render_dreams(dreams: &[crate::daemon::dreaming::Dream]) {
         );
     }
     println!("── episodes ──");
+}
+
+/// GOLD-ADAPT-MEM-15 — render the recall-quality scorecard. JSON output is the
+/// full struct (for scripting); Table is a compact human summary.
+fn render_scorecard(card: &crate::memory::store::RecallScorecard, output: crate::cli::OutputFormat) {
+    match output {
+        crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+            match serde_json::to_string_pretty(card) {
+                Ok(s) => println!("{s}"),
+                Err(e) => eprintln!("scorecard: serialize failed: {e}"),
+            }
+        }
+        crate::cli::OutputFormat::Table => {
+            let span = match (card.window_start_ts, card.window_end_ts) {
+                (Some(a), Some(b)) => format!("{} → {}", format_ts(a * 1_000_000_000), format_ts(b * 1_000_000_000)),
+                _ => "no data".to_string(),
+            };
+            println!("Recall Quality Scorecard (window: {}, {})", card.window, span);
+            println!("──────────────────────────────────────────────────────────");
+            println!(
+                "Total recalls        : {:<6}  Data sufficient: {}",
+                card.total_recalls,
+                if card.data_sufficient { "yes" } else { "no (need ≥10 non-skip)" }
+            );
+            println!(
+                "Hit rate             : {:>5.1}%  Empty rate     : {:>5.1}%",
+                card.hit_rate * 100.0,
+                card.empty_rate * 100.0
+            );
+            println!(
+                "Mean result count    : {:>5.1}   Reinforcement  : {:>5.1}%",
+                card.mean_result_count,
+                card.reinforcement_rate * 100.0
+            );
+            println!(
+                "Tier skip/single/multi: {:.1}% / {:.1}% / {:.1}%",
+                card.tier_skip_pct, card.tier_single_pct, card.tier_multi_pct
+            );
+            println!(
+                "Latency p50/p95/mean : {:.0}ms / {:.0}ms / {:.0}ms",
+                card.latency_p50_ms, card.latency_p95_ms, card.latency_mean_ms
+            );
+        }
+    }
 }
 
 /// Sort recall hits by composite ranking score, descending. Stable order so
@@ -1492,6 +1572,7 @@ mod tests {
             extract: None,
             assoc: None,
             bootstrap_assoc: false,
+            scorecard: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1769,6 +1850,7 @@ mod tests {
             extract: None,
             assoc: None,
             bootstrap_assoc: false,
+            scorecard: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1804,6 +1886,7 @@ mod tests {
             extract: None,
             assoc: None,
             bootstrap_assoc: false,
+            scorecard: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1839,6 +1922,7 @@ mod tests {
             extract: None,
             assoc: None,
             bootstrap_assoc: false,
+            scorecard: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -2003,5 +2087,53 @@ mod tests {
             rows[0].tier, "groundtruth",
             "ground-truth must prepend the episodic ranking"
         );
+    }
+
+    #[tokio::test]
+    async fn scorecard_short_circuit_runs_over_recorded_events() {
+        // GOLD-ADAPT-MEM-15: seed a few recall-outcome samples, then run recall
+        // in scorecard mode and assert it returns Ok (renders, no search/WAL).
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = store::open(&db).unwrap();
+        for i in 0..12i64 {
+            let tier = if i < 2 { "skip" } else { "single" };
+            store::record_recall_event(&conn, i, if i < 2 { 0 } else { 4 }, 1, tier).unwrap();
+        }
+        store::record_recall_latency(&conn, 1, 25.0).unwrap();
+        drop(conn);
+
+        let args = RecallArgs {
+            query: String::new(),
+            limit: 20,
+            db: Some(db.clone()),
+            wal_segment: None,
+            no_index_pass: true,
+            similar_to: None,
+            similar_to_text: None,
+            similar_kind: "image".to_string(),
+            citation_check: None,
+            sessions: None,
+            classify: None,
+            downvote: None,
+            graph: None,
+            graph_depth: 2,
+            extract: None,
+            assoc: None,
+            bootstrap_assoc: false,
+            scorecard: Some(500),
+            include_dreams: false,
+            dreams_lookback_days: 7,
+            dreams_max_hits: 5,
+            output: crate::cli::OutputFormat::Json,
+        };
+        run_recall(args).await.expect("scorecard mode returns Ok");
+
+        // Verify the underlying scorecard reflects the seeded events.
+        let conn = store::open(&db).unwrap();
+        let card = store::recall_scorecard(&conn, 500).unwrap();
+        assert_eq!(card.total_recalls, 12);
+        assert!((card.hit_rate - 1.0).abs() < 1e-9, "all 10 non-skip returned rows");
+        assert!(card.data_sufficient);
     }
 }

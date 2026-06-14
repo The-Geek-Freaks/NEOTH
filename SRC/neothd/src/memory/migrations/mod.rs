@@ -132,6 +132,14 @@ pub const MIGRATIONS: &[Migration] = &[
                       MEM-06 idx_entities/idx_relations on existing DBs)",
         run: migration_v15_to_v16,
     },
+    Migration {
+        from: 16,
+        to: 17,
+        description: "GOLD-ADAPT-MEM-15: add idx_recall_events — per-recall outcome \
+                      samples (result/reinforcement counts + tier) for the \
+                      recall-quality scorecard",
+        run: migration_v16_to_v17,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -228,6 +236,27 @@ fn migration_v15_to_v16(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("v15->v16: create idx_memory_links (+ back-fill MEM-06 graph tables)")?;
+    Ok(())
+}
+
+/// v16 → v17: add `idx_recall_events` — per-recall outcome samples (result count,
+/// reinforcement count, query tier) feeding the GOLD-ADAPT-MEM-15 recall-quality
+/// scorecard. Mirrors the canonical table in `store::apply_schema`. Idempotent
+/// (`CREATE TABLE IF NOT EXISTS`).
+fn migration_v16_to_v17(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_recall_events (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_unix          INTEGER NOT NULL,
+            result_count     INTEGER NOT NULL,
+            reinforced_count INTEGER NOT NULL,
+            tier             TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_recall_events_id ON idx_recall_events (id DESC);
+        "#,
+    )
+    .context("v16->v17: create idx_recall_events (recall-quality scorecard)")?;
     Ok(())
 }
 

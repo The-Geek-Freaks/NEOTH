@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 16;
+pub const SCHEMA_VERSION: i64 = 17;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -226,6 +226,173 @@ pub fn recent_recall_latencies_ms(
     rows.collect()
 }
 
+/// GOLD-ADAPT-MEM-15 — record one `neoth recall` outcome sample (result count,
+/// reinforcement count, query tier) for the recall-quality scorecard, pruning to
+/// the most recent ~5000 rows. Best-effort like [`record_recall_latency`] — the
+/// caller logs-and-ignores any error; scorecard metering must NEVER fail the
+/// recall itself.
+pub fn record_recall_event(
+    conn: &Connection,
+    ts_unix: i64,
+    result_count: u32,
+    reinforced_count: u32,
+    tier: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO idx_recall_events (ts_unix, result_count, reinforced_count, tier) \
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![ts_unix, result_count as i64, reinforced_count as i64, tier],
+    )?;
+    conn.execute(
+        "DELETE FROM idx_recall_events \
+         WHERE id <= (SELECT MAX(id) FROM idx_recall_events) - 5000",
+        [],
+    )?;
+    Ok(())
+}
+
+/// One stored recall-outcome sample (the recent-window row of [`idx_recall_events`]).
+#[derive(Debug, Clone)]
+pub struct RecallEvent {
+    pub ts_unix: i64,
+    pub result_count: u32,
+    pub reinforced_count: u32,
+    pub tier: String,
+}
+
+/// GOLD-ADAPT-MEM-15 — the recent recall-outcome window (newest first), capped at
+/// `limit` rows. Empty when no recall has run yet.
+pub fn recent_recall_events(
+    conn: &Connection,
+    limit: usize,
+) -> rusqlite::Result<Vec<RecallEvent>> {
+    let mut stmt = conn.prepare(
+        "SELECT ts_unix, result_count, reinforced_count, tier \
+         FROM idx_recall_events ORDER BY id DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![limit as i64], |r| {
+        Ok(RecallEvent {
+            ts_unix: r.get(0)?,
+            result_count: r.get::<_, i64>(1)? as u32,
+            reinforced_count: r.get::<_, i64>(2)? as u32,
+            tier: r.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// GOLD-ADAPT-MEM-15 — recall-quality scorecard computed over a recent window.
+/// Label-free: every metric is derived from signals NEOTH already records (result
+/// counts, Hebbian reinforcements as a usefulness proxy, query tier, latency). The
+/// hit/empty/reinforcement rates EXCLUDE Skip-tier queries (a status/identity
+/// query returning nothing is not a recall miss).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecallScorecard {
+    /// Number of outcome samples actually present in the window.
+    pub window: usize,
+    /// Total recalls in the window (all tiers).
+    pub total_recalls: u32,
+    /// `false` until at least 10 non-Skip recalls exist (rates aren't trustworthy
+    /// on a handful of queries — don't cry wolf on cold start).
+    pub data_sufficient: bool,
+    /// Fraction of non-Skip recalls that returned at least one row.
+    pub hit_rate: f64,
+    /// `1.0 - hit_rate`.
+    pub empty_rate: f64,
+    /// Mean result count over non-empty non-Skip recalls.
+    pub mean_result_count: f64,
+    /// Mean of `reinforced_count / result_count` over non-empty non-Skip recalls
+    /// (a row surfaced + then Hebbian-reinforced is a usefulness signal).
+    pub reinforcement_rate: f64,
+    pub tier_skip_pct: f64,
+    pub tier_single_pct: f64,
+    pub tier_multi_pct: f64,
+    pub latency_p50_ms: f64,
+    pub latency_p95_ms: f64,
+    pub latency_mean_ms: f64,
+    pub window_start_ts: Option<i64>,
+    pub window_end_ts: Option<i64>,
+}
+
+/// Nearest-rank percentile over the samples (`pct` in `[0,1]`). Empty → 0.0.
+/// Inlined here (rather than reused from the daemon cron) so `memory` keeps no
+/// dependency on `daemon`.
+fn percentile(latencies: &[f64], pct: f64) -> f64 {
+    if latencies.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = latencies.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let idx = (((sorted.len() - 1) as f64) * pct).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
+}
+
+/// Pure scorecard aggregation over the recall-outcome window + the latency
+/// window. Separated from the DB read so it is unit-tested directly.
+pub fn compute_scorecard(events: &[RecallEvent], latencies: &[f64]) -> RecallScorecard {
+    let total = events.len() as u32;
+    let skip = events.iter().filter(|e| e.tier == "skip").count();
+    let single = events.iter().filter(|e| e.tier == "single").count();
+    let multi = events.iter().filter(|e| e.tier == "multi").count();
+
+    let non_skip: Vec<&RecallEvent> = events.iter().filter(|e| e.tier != "skip").collect();
+    let non_empty: Vec<&&RecallEvent> =
+        non_skip.iter().filter(|e| e.result_count >= 1).collect();
+
+    let hit_rate = if non_skip.is_empty() {
+        0.0
+    } else {
+        non_empty.len() as f64 / non_skip.len() as f64
+    };
+    let mean_result_count = if non_empty.is_empty() {
+        0.0
+    } else {
+        non_empty.iter().map(|e| e.result_count as f64).sum::<f64>() / non_empty.len() as f64
+    };
+    let reinforcement_rate = if non_empty.is_empty() {
+        0.0
+    } else {
+        non_empty
+            .iter()
+            .map(|e| e.reinforced_count as f64 / e.result_count as f64)
+            .sum::<f64>()
+            / non_empty.len() as f64
+    };
+    let pct = |n: usize| if total == 0 { 0.0 } else { n as f64 / total as f64 * 100.0 };
+    let latency_mean_ms = if latencies.is_empty() {
+        0.0
+    } else {
+        latencies.iter().sum::<f64>() / latencies.len() as f64
+    };
+
+    RecallScorecard {
+        window: events.len(),
+        total_recalls: total,
+        data_sufficient: non_skip.len() >= 10,
+        hit_rate,
+        empty_rate: if non_skip.is_empty() { 0.0 } else { 1.0 - hit_rate },
+        mean_result_count,
+        reinforcement_rate,
+        tier_skip_pct: pct(skip),
+        tier_single_pct: pct(single),
+        tier_multi_pct: pct(multi),
+        latency_p50_ms: percentile(latencies, 0.50),
+        latency_p95_ms: percentile(latencies, 0.95),
+        latency_mean_ms,
+        window_start_ts: events.iter().map(|e| e.ts_unix).min(),
+        window_end_ts: events.iter().map(|e| e.ts_unix).max(),
+    }
+}
+
+/// GOLD-ADAPT-MEM-15 — read the recent recall-outcome + latency windows and
+/// compute the [`RecallScorecard`]. The two windows are independent id sequences
+/// aligned by recency (both `ORDER BY id DESC LIMIT window`), not joined.
+pub fn recall_scorecard(conn: &Connection, window: usize) -> rusqlite::Result<RecallScorecard> {
+    let events = recent_recall_events(conn, window)?;
+    let latencies = recent_recall_latencies_ms(conn, window)?;
+    Ok(compute_scorecard(&events, &latencies))
+}
+
 fn apply_schema(conn: &Connection) -> Result<()> {
     // `meta` first — used to track schema version + WAL cursor.
     conn.execute_batch(
@@ -314,6 +481,21 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             latency_ms REAL    NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_recall_latency_id ON idx_recall_latency (id DESC);
+
+        -- GOLD-ADAPT-MEM-15 — per-`neoth recall` outcome samples feeding the
+        -- recall-quality scorecard (hit-rate / result-count / reinforcement-rate
+        -- / tier mix over time). Kept SEPARATE from idx_recall_latency so the
+        -- MONITOR-03 p95 latency-alert path stays untouched. `tier` is the
+        -- MEM-09 RecallTier ('skip'|'single'|'multi'). Bounded by the same
+        -- prune-on-insert (~5000 most-recent samples).
+        CREATE TABLE IF NOT EXISTS idx_recall_events (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_unix          INTEGER NOT NULL,
+            result_count     INTEGER NOT NULL,
+            reinforced_count INTEGER NOT NULL,
+            tier             TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_recall_events_id ON idx_recall_events (id DESC);
 
         -- FTS5 virtual table content-linked to idx_episode. Stores no rows
         -- of its own; SELECT through MATCH pulls the linked rows via
@@ -750,5 +932,100 @@ mod tests {
         let _ = open(&path).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    // ── GOLD-ADAPT-MEM-15 recall-quality scorecard ──
+
+    fn ev(result_count: u32, reinforced_count: u32, tier: &str) -> RecallEvent {
+        RecallEvent { ts_unix: 1, result_count, reinforced_count, tier: tier.to_string() }
+    }
+
+    #[test]
+    fn record_recall_event_round_trips_and_prunes() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open(&dir.path().join("views.db")).unwrap();
+        for _ in 0..3 {
+            record_recall_event(&conn, 100, 5, 2, "single").unwrap();
+        }
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_recall_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 3, "three events recorded");
+        let rows = recent_recall_events(&conn, 10).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].tier, "single");
+        assert_eq!(rows[0].result_count, 5);
+        assert_eq!(rows[0].reinforced_count, 2);
+    }
+
+    #[test]
+    fn compute_scorecard_hit_rate_excludes_skip_and_gates_on_sufficiency() {
+        // 5 skip + 8 non-skip-with-results + 2 non-skip-empty = 15 total, 10 non-skip.
+        let mut events = Vec::new();
+        for _ in 0..5 {
+            events.push(ev(0, 0, "skip"));
+        }
+        for _ in 0..8 {
+            events.push(ev(5, 0, "single"));
+        }
+        for _ in 0..2 {
+            events.push(ev(0, 0, "multi"));
+        }
+        let sc = compute_scorecard(&events, &[]);
+        assert_eq!(sc.total_recalls, 15);
+        assert!(sc.data_sufficient, "10 non-skip recalls ≥ the 10 floor");
+        assert!((sc.hit_rate - 0.8).abs() < 1e-9, "8/10 non-skip returned rows");
+        assert!((sc.empty_rate - 0.2).abs() < 1e-9);
+        assert!((sc.tier_skip_pct - (5.0 / 15.0 * 100.0)).abs() < 1e-6);
+        assert!((sc.tier_single_pct - (8.0 / 15.0 * 100.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn compute_scorecard_reinforcement_rate_is_mean_over_non_empty() {
+        // (4 results, 2 reinforced)→0.5 and (2 results, 2 reinforced)→1.0 ⇒ mean 0.75.
+        let events = vec![ev(4, 2, "single"), ev(2, 2, "multi")];
+        let sc = compute_scorecard(&events, &[]);
+        assert!((sc.reinforcement_rate - 0.75).abs() < 1e-9);
+        assert!((sc.mean_result_count - 3.0).abs() < 1e-9);
+        assert!(!sc.data_sufficient, "2 non-skip < 10");
+    }
+
+    #[test]
+    fn compute_scorecard_latency_percentiles_are_nearest_rank() {
+        let lat: Vec<f64> = (1..=100).map(|x| x as f64).collect();
+        let sc = compute_scorecard(&[], &lat);
+        // nearest-rank: p95 idx round(99*0.95)=94 ⇒ 95; p50 idx round(99*0.5)=50 ⇒ 51.
+        assert_eq!(sc.latency_p95_ms, 95.0);
+        assert_eq!(sc.latency_p50_ms, 51.0);
+        assert!((sc.latency_mean_ms - 50.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn compute_scorecard_empty_window_is_all_zero() {
+        let sc = compute_scorecard(&[], &[]);
+        assert_eq!(sc.total_recalls, 0);
+        assert!(!sc.data_sufficient);
+        assert_eq!(sc.hit_rate, 0.0);
+        assert_eq!(sc.empty_rate, 0.0);
+        assert_eq!(sc.window_start_ts, None);
+        assert_eq!(sc.window_end_ts, None);
+    }
+
+    #[test]
+    fn recall_scorecard_reads_both_windows_from_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open(&dir.path().join("views.db")).unwrap();
+        for i in 0..12i64 {
+            let tier = if i < 2 { "skip" } else { "single" };
+            let rc = if i < 2 { 0 } else { 3 };
+            record_recall_event(&conn, i, rc, 1, tier).unwrap();
+        }
+        record_recall_latency(&conn, 1, 42.0).unwrap();
+        let sc = recall_scorecard(&conn, 500).unwrap();
+        assert_eq!(sc.total_recalls, 12);
+        assert_eq!(sc.window, 12);
+        assert!((sc.hit_rate - 1.0).abs() < 1e-9, "all 10 non-skip returned rows");
+        assert!(sc.data_sufficient);
+        assert_eq!(sc.latency_p50_ms, 42.0);
     }
 }
