@@ -49,6 +49,10 @@ pub mod ingress;
 pub mod integrity;
 pub mod migrations;
 pub mod operator_md;
+/// GOLD-ADAPT-OH-10 — per-person relationship scorer (recency × frequency ×
+/// reciprocity × depth, clamped) → proactive surfacing priority. Surfaced via
+/// `neoth memory --people`; recorded on every in-scope channel interaction.
+pub mod people;
 pub mod pre_decay_export;
 /// GOLD-ADAPT-MEM-09 — recall decision gating (skip / single / multi tier).
 pub mod recall_gate;

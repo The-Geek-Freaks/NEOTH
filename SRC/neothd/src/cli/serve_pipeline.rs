@@ -1664,6 +1664,37 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     ) {
                         tracing::debug!(error = %e, "channel_weights: acceptance record failed (non-fatal)");
                     }
+
+                    // GOLD-ADAPT-OH-10 — record the per-person relationship
+                    // signal alongside the channel-weight. Same in-scope gate
+                    // (only learn from operator/allowlisted senders so a
+                    // stranger can't manufacture a high-priority contact), same
+                    // `home`/`now`. Best-effort; a write error is non-fatal.
+                    let person_key = inbound
+                        .human_uuid
+                        .as_deref()
+                        .unwrap_or(inbound.sender_id.as_str());
+                    let is_reply_to_bot = matches!(
+                        inbound.mention_kind,
+                        Some(
+                            crate::channels::MentionKind::ReplyToBot
+                                | crate::channels::MentionKind::QuotedBot
+                        )
+                    );
+                    let msg_len = inbound.text.as_deref().unwrap_or("").chars().count() as u32;
+                    if let Err(e) = crate::memory::people::record_interaction(
+                        &home,
+                        &crate::memory::people::Interaction {
+                            person_key,
+                            channel: channel_str,
+                            display: inbound.sender_display.as_deref(),
+                            is_reply_to_bot,
+                            msg_len,
+                        },
+                        now,
+                    ) {
+                        tracing::debug!(error = %e, "people: interaction record failed (non-fatal)");
+                    }
                 } else {
                     tracing::debug!(
                         channel = channel_str,

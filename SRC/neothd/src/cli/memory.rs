@@ -103,6 +103,13 @@ pub struct MemoryArgs {
     #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget"])]
     pub dimension: bool,
 
+    /// GOLD-ADAPT-OH-10 — print the per-person relationship ranking (recency ×
+    /// frequency × reciprocity × depth, clamped). Pure read of
+    /// `~/.neoth/people.json`, no behaviour change. Honours `--limit` (default
+    /// 20; `--limit 0` returns the full ranking).
+    #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin"])]
+    pub people: bool,
+
     /// V10-08 — rebuild the HNSW embedding index from scratch by scanning
     /// all rows in `idx_embedding`. Writes the snapshot to
     /// `<neoth_home>/embeddings.hnsw`. Use after a database restore or when
@@ -145,6 +152,9 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     }
     if args.dimension {
         return run_memory_dimension(&args).await;
+    }
+    if args.people {
+        return run_memory_people(&args);
     }
     if args.rebuild_index {
         return run_memory_rebuild_index(&args).await;
@@ -727,6 +737,46 @@ async fn run_memory_dimension(args: &MemoryArgs) -> Result<()> {
     Ok(())
 }
 
+/// `neoth memory --people` — GOLD-ADAPT-OH-10. Print the per-person
+/// relationship ranking (recency × frequency × reciprocity × depth, clamped).
+/// Pure read of `~/.neoth/people.json`; `--limit 0` returns the full ranking.
+fn run_memory_people(args: &MemoryArgs) -> Result<()> {
+    use crate::memory::people;
+    let home = FreedomConfig::default_neoth_home();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let ranked = people::top_people(&home, args.limit, now_unix);
+    match args.output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&ranked)?);
+        }
+        OutputFormat::Table => {
+            if ranked.is_empty() {
+                println!(
+                    "no people recorded yet — the ranking fills in as in-scope contacts \
+                     message you across channels (~/.neoth/people.json)."
+                );
+                return Ok(());
+            }
+            println!("# People ranking (GOLD-ADAPT-OH-10)");
+            println!();
+            println!("  score   seen(d)   msgs   who");
+            println!("  -----   -------   ----   ---");
+            for p in &ranked {
+                let days = now_unix.saturating_sub(p.last_seen_unix) / 86_400;
+                let who = p.display.clone().unwrap_or_else(|| p.person_key.clone());
+                println!(
+                    "  {:>5.3}   {:>7}   {:>4}   {} [{}]",
+                    p.score, days, p.interaction_count as u64, who, p.channel
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `neoth memory --rebuild-index` — V10-08. Rebuild the HNSW embedding index
 /// from scratch by scanning `idx_embedding` and persist to
 /// `<neoth_home>/embeddings.hnsw`.
@@ -861,6 +911,7 @@ mod tests {
             pin,
             unpin,
             dimension: false,
+            people: false,
             rebuild_index: false,
             limit: 20,
             db: Some(db),
