@@ -84,6 +84,20 @@ impl LoadedOuroModel {
         }
     }
 
+    /// GOLD-ADAPT-KV-01 — snapshot/restore the full per-loop KV across native + Q8.
+    fn snapshot_all_kv(&self) -> super::prefix_kv_cache::KvSnapshot {
+        match self {
+            Self::Native(m) => m.snapshot_all_kv(),
+            Self::Quantized(m) => m.snapshot_all_kv(),
+        }
+    }
+    fn restore_all_kv(&mut self, snap: super::prefix_kv_cache::KvSnapshot) {
+        match self {
+            Self::Native(m) => m.restore_all_kv(snap),
+            Self::Quantized(m) => m.restore_all_kv(snap),
+        }
+    }
+
     fn hidden_size(&self) -> usize {
         match self {
             Self::Native(m) => m.hidden_size(),
@@ -110,6 +124,11 @@ struct LoadedOuro {
     /// compares a per-instance `DeviceId`, so two `device_for` calls
     /// would yield non-interoperable devices on real CUDA/Metal.
     device: candle_core::Device,
+    /// GOLD-ADAPT-KV-01 — cross-request prefix-KV reuse cache (opt-in via
+    /// `NEOTH_OURO_PREFIX_KV=1` + per_loop; default inert). Bounded; lives behind
+    /// the same model lock + is cleared on daemon restart with the rest of
+    /// `LoadedOuro`, so no stale KV survives a tokenizer/model swap.
+    prefix_kv_cache: super::prefix_kv_cache::PrefixKvCache,
 }
 
 /// `LocalOuroAdapter` — operator-facing chat + embed provider
@@ -430,6 +449,9 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         tokenizer,
         eos_id,
         device,
+        // GOLD-ADAPT-KV-01 — small bound: an operator runs one or a few system
+        // prompts, so a handful of cached prefixes covers the live set.
+        prefix_kv_cache: super::prefix_kv_cache::PrefixKvCache::new(8),
     });
     Ok(())
 }
@@ -478,21 +500,96 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
     let sampling = adapter.sampling.merged_with_request(req);
     let max_new = adapter.max_new_tokens;
 
-    // Reset KV cache before this completion — prior conversations
-    // must not leak.
-    loaded.model.clear_kv_cache();
+    // GOLD-ADAPT-KV-01 — cross-request prefix-KV reuse (opt-in). When a request
+    // shares a system-prompt PREFIX with a cached one, restore that prefix's
+    // per-loop KV + forward ONLY the suffix at `seqlen_offset = prefix_len`,
+    // skipping the prefix re-prefill. Requires the per_loop incremental path;
+    // default OFF → the plain clear+full-prefill below is byte-identical to the
+    // old behaviour. Correctness proven by `prefix_kv_restore_matches_full_
+    // prefill_baseline` (forward.rs + quantized_forward.rs) on synthetic weights.
+    let prefix_kv_on = std::env::var("NEOTH_OURO_KV_CACHE_MODE")
+        .map(|v| v.eq_ignore_ascii_case("per_loop"))
+        .unwrap_or(false)
+        && std::env::var("NEOTH_OURO_PREFIX_KV")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+    // The system block is a stable TOKEN-prefix of the chatml prompt (system
+    // comes first; `<|im_start|>`/`<|im_end|>` are registered special tokens, so
+    // the block tokenizes identically regardless of the user turn).
+    let prefix_token_count = match req.system.as_deref().filter(|s| !s.is_empty()) {
+        Some(sys) if prefix_kv_on => loaded
+            .tokenizer
+            .encode(format!("<|im_start|>system\n{sys}<|im_end|>\n"), false)
+            .map_err(|e| anyhow::anyhow!("Ouro: tokenize system prefix: {e}"))?
+            .get_ids()
+            .len(),
+        _ => 0,
+    };
+    // Require a real prefix AND a non-empty suffix (`< len` ⇒ ≥1 suffix token —
+    // this also handles the prefix==full edge by falling through to the default
+    // path, never reusing stale logits).
+    let prefix_kv_active = prefix_token_count > 0 && prefix_token_count < prompt_ids.len();
 
-    // Prompt pass.
-    let input = Tensor::new(prompt_ids.as_slice(), &device)
-        .context("Ouro: build prompt input tensor")?
-        .unsqueeze(0)
-        .context("Ouro: add batch dim")?;
-    let mut logits = loaded
-        .model
-        .forward(&input, 0)
-        .context("Ouro: prompt forward")?
-        .squeeze(0)
-        .context("Ouro: drop batch from prompt logits")?;
+    let mut logits = if prefix_kv_active {
+        let prefix_ids = &prompt_ids[..prefix_token_count];
+        let suffix_ids = &prompt_ids[prefix_token_count..];
+        let cache_key = super::prefix_kv_cache::PrefixKvCache::key(prefix_ids);
+        // Clone the snapshot OUT of the cache entry first so the immutable borrow
+        // of `prefix_kv_cache` ends before the mutable `model` access below.
+        let hit = loaded
+            .prefix_kv_cache
+            .get(cache_key)
+            .map(|e| (e.snapshot.clone(), e.prefix_ids.clone()));
+        if let Some((snap, cached_prefix)) = hit {
+            debug_assert_eq!(prefix_ids, cached_prefix.as_slice(), "KV-01 prefix mismatch");
+            loaded.model.restore_all_kv(snap);
+        } else {
+            // MISS: full prefill of the prefix at offset 0, then snapshot + cache.
+            loaded.model.clear_kv_cache();
+            let prefix_input = Tensor::new(prefix_ids, &device)
+                .context("Ouro: build prefix input tensor")?
+                .unsqueeze(0)
+                .context("Ouro: prefix batch dim")?;
+            let _ = loaded
+                .model
+                .forward(&prefix_input, 0)
+                .context("Ouro: prefix forward (KV-01 miss)")?;
+            let snap = loaded.model.snapshot_all_kv();
+            loaded.prefix_kv_cache.insert(
+                cache_key,
+                super::prefix_kv_cache::PrefixKvEntry {
+                    snapshot: snap,
+                    prefix_ids: prefix_ids.to_vec(),
+                },
+            );
+        }
+        // HIT + MISS converge: the caches now hold the prefix at positions
+        // `0..prefix_len`; forward the suffix at `seqlen_offset = prefix_len`.
+        let suffix_input = Tensor::new(suffix_ids, &device)
+            .context("Ouro: build suffix input tensor")?
+            .unsqueeze(0)
+            .context("Ouro: suffix batch dim")?;
+        loaded
+            .model
+            .forward(&suffix_input, prefix_token_count)
+            .context("Ouro: suffix forward (KV-01)")?
+            .squeeze(0)
+            .context("Ouro: drop batch from suffix logits")?
+    } else {
+        // Default path (unchanged): reset the KV cache so a prior conversation
+        // can't leak, then full-prefill the whole prompt at offset 0.
+        loaded.model.clear_kv_cache();
+        let input = Tensor::new(prompt_ids.as_slice(), &device)
+            .context("Ouro: build prompt input tensor")?
+            .unsqueeze(0)
+            .context("Ouro: add batch dim")?;
+        loaded
+            .model
+            .forward(&input, 0)
+            .context("Ouro: prompt forward")?
+            .squeeze(0)
+            .context("Ouro: drop batch from prompt logits")?
+    };
     let mut next = sample_token(&logits, sampling).context("Ouro: sample from prompt logits")?;
     new_tokens.push(next);
 

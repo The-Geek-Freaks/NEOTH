@@ -36,6 +36,9 @@ pub mod forward;
 pub mod layers;
 pub mod model;
 pub mod model_trait;
+/// GOLD-ADAPT-KV-01 — cross-request prefix-KV reuse cache (LMCache idea, adapted
+/// to Ouro's recurrent per-loop KV). Gated OFF by default.
+pub mod prefix_kv_cache;
 pub mod quantize;
 pub mod quantized_forward;
 pub mod quantized_layers;

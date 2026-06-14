@@ -21,6 +21,7 @@ use candle_nn::{Embedding, RmsNorm, VarBuilder, rms_norm};
 use candle_transformers::quantized_nn::Linear as QuantizedLinear;
 
 use super::model::OuroConfig;
+use super::prefix_kv_cache::KvSnapshot;
 use super::quantized_layers::{QuantizedOuroLayer, load_quantized_linear_no_bias};
 use super::rope::OuroRoPE;
 
@@ -187,6 +188,18 @@ impl QuantizedOuroModel {
             layer.clear_kv_cache();
         }
     }
+
+    /// GOLD-ADAPT-KV-01 — snapshot/restore ALL layers × loops (mirrors the
+    /// native `OuroModel`).
+    pub fn snapshot_all_kv(&self) -> KvSnapshot {
+        self.layers.iter().map(|l| l.snapshot_kv()).collect()
+    }
+    pub fn restore_all_kv(&mut self, snap: KvSnapshot) {
+        debug_assert_eq!(snap.len(), self.layers.len());
+        for (layer, s) in self.layers.iter_mut().zip(snap) {
+            layer.restore_kv(s);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +346,49 @@ mod tests {
                 (b - inc).abs() < 1e-4,
                 "quantized per-loop-cache decode diverged at logit[{k}]: {b} vs {inc}"
             );
+        }
+    }
+
+    /// GOLD-ADAPT-KV-01 ORACLE (quantized path): snapshot/restore round-trip
+    /// parity, mirroring the native oracle. Q8 quantizes the projection weights
+    /// once at load; the cached KV tensors are post-projection activations, so
+    /// snapshot/restore is mechanically identical to the native path.
+    #[test]
+    fn quantized_prefix_kv_restore_matches_full_prefill_baseline() {
+        let dev = Device::Cpu;
+        let cfg = tiny_cfg();
+        let mut model = QuantizedOuroModel::new(&cfg, synthetic_nonzero_vb(&dev)).expect("build");
+        let lv = |t: &Tensor| -> Vec<f32> { t.flatten_all().unwrap().to_vec1().unwrap() };
+
+        model.clear_kv_cache();
+        let baseline = lv(&model.forward(&input_ids(&dev, &[1, 2, 3, 4, 5]), 0).unwrap());
+        model.clear_kv_cache();
+        let other = lv(&model.forward(&input_ids(&dev, &[5, 4, 3, 2, 1]), 0).unwrap());
+        assert!(
+            baseline.iter().zip(&other).any(|(a, b)| (a - b).abs() > 1e-3),
+            "non-zero quantized weights must be context-sensitive"
+        );
+
+        let prefix: &[u32] = &[1, 2, 3];
+        let suffix: &[u32] = &[4, 5];
+        model.clear_kv_cache();
+        let _ = model.forward(&input_ids(&dev, prefix), 0).unwrap();
+        let snap = model.snapshot_all_kv();
+        model.restore_all_kv(snap.clone());
+        let kv01 = lv(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+
+        assert_eq!(baseline.len(), kv01.len());
+        for (i, (b, k)) in baseline.iter().zip(&kv01).enumerate() {
+            assert!(
+                (b - k).abs() < 1e-4,
+                "quantized KV-01 prefix-restore diverged at logit[{i}]: {b} vs {k}"
+            );
+        }
+        // Reusability: the snapshot must survive the suffix forward unmutated.
+        model.restore_all_kv(snap);
+        let kv01_again = lv(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+        for (i, (a, b)) in kv01.iter().zip(&kv01_again).enumerate() {
+            assert!((a - b).abs() < 1e-6, "quantized snapshot mutated at logit[{i}]");
         }
     }
 

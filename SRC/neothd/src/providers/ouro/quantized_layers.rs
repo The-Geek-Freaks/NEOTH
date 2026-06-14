@@ -227,6 +227,19 @@ impl QuantizedOuroAttention {
             *slot = None;
         }
     }
+
+    /// GOLD-ADAPT-KV-01 — snapshot/restore the per-loop KV (Arc-clone; mirrors
+    /// the native `OuroAttention`).
+    pub fn snapshot_kv_caches(&self) -> Vec<Option<(Tensor, Tensor)>> {
+        self.kv_caches
+            .iter()
+            .map(|slot| slot.as_ref().map(|(k, v)| (k.clone(), v.clone())))
+            .collect()
+    }
+    pub fn restore_kv_caches(&mut self, snap: Vec<Option<(Tensor, Tensor)>>) {
+        debug_assert_eq!(snap.len(), self.kv_caches.len());
+        self.kv_caches = snap;
+    }
 }
 
 // ── QuantizedOuroLayer ─────────────────────────────────────────────
@@ -294,6 +307,14 @@ impl QuantizedOuroLayer {
 
     pub fn clear_kv_cache(&mut self) {
         self.self_attn.clear_kv_cache();
+    }
+
+    /// GOLD-ADAPT-KV-01 — snapshot/restore this layer's per-loop KV.
+    pub fn snapshot_kv(&self) -> Vec<Option<(Tensor, Tensor)>> {
+        self.self_attn.snapshot_kv_caches()
+    }
+    pub fn restore_kv(&mut self, snap: Vec<Option<(Tensor, Tensor)>>) {
+        self.self_attn.restore_kv_caches(snap);
     }
 }
 

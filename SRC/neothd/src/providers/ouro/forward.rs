@@ -36,6 +36,7 @@ use std::sync::Arc;
 
 use super::layers::OuroLayer;
 use super::model::OuroConfig;
+use super::prefix_kv_cache::KvSnapshot;
 use super::rope::OuroRoPE;
 
 /// Top-level LoopLM model — weight-shared 24-layer stack applied
@@ -216,6 +217,22 @@ impl OuroModel {
     pub fn clear_kv_cache(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.clear_kv_cache();
+        }
+    }
+
+    /// GOLD-ADAPT-KV-01 — snapshot the KV caches of ALL layers × ALL recurrent
+    /// loops. `Tensor::clone` is an Arc refcount bump, so this allocates only the
+    /// `Vec`/`Option` spine, never the tensor data.
+    pub fn snapshot_all_kv(&self) -> KvSnapshot {
+        self.layers.iter().map(|l| l.snapshot_kv()).collect()
+    }
+
+    /// GOLD-ADAPT-KV-01 — restore from a [`Self::snapshot_all_kv`] result (same
+    /// num_layers × total_ut_steps shape).
+    pub fn restore_all_kv(&mut self, snap: KvSnapshot) {
+        debug_assert_eq!(snap.len(), self.layers.len());
+        for (layer, s) in self.layers.iter_mut().zip(snap) {
+            layer.restore_kv(s);
         }
     }
 }
@@ -399,6 +416,63 @@ mod tests {
                 (b - inc).abs() < 1e-4,
                 "per-loop-cache decode diverged from full-resequence at logit[{k}]: {b} vs {inc}"
             );
+        }
+    }
+
+    /// GOLD-ADAPT-KV-01 ORACLE: snapshot a PREFIX's per-loop KV, then restore +
+    /// forward only the SUFFIX at `seqlen_offset=prefix_len` — must produce
+    /// logits identical to a clean full-prefill of the whole sequence. This is
+    /// the correctness property cross-request prefix reuse relies on. COR-36
+    /// above proves incremental decode but does NOT exercise the snapshot/restore
+    /// round-trip, so this oracle is required. Non-zero synthetic weights make
+    /// any divergence detectable (the property is algebraic — position encoding +
+    /// causal attention — so synthetic weights are sufficient; no real weights).
+    #[test]
+    fn prefix_kv_restore_matches_full_prefill_baseline() {
+        let dev = Device::Cpu;
+        let cfg = tiny_cfg();
+        let mut model =
+            OuroModel::new(&cfg, synthetic_nonzero_vb(&dev, true)).expect("build model");
+
+        // Baseline: full-prefill [1,2,3,4,5] @0, last-token logits.
+        model.clear_kv_cache();
+        let baseline = logits_vec(&model.forward(&input_ids(&dev, &[1, 2, 3, 4, 5]), 0).unwrap());
+
+        // Context-sensitivity guard (else the oracle is vacuous).
+        model.clear_kv_cache();
+        let other = logits_vec(&model.forward(&input_ids(&dev, &[5, 4, 3, 2, 1]), 0).unwrap());
+        assert!(
+            baseline.iter().zip(&other).any(|(a, b)| (a - b).abs() > 1e-3),
+            "non-zero weights must make the model context-sensitive"
+        );
+
+        // KV-01: forward prefix [1,2,3] @0 → snapshot; restore → forward suffix
+        // [4,5] @3 (absolute positions 3,4). The last-token logit is position 4,
+        // the same position the baseline's last token predicts from.
+        let prefix: &[u32] = &[1, 2, 3];
+        let suffix: &[u32] = &[4, 5];
+        model.clear_kv_cache();
+        let _ = model.forward(&input_ids(&dev, prefix), 0).unwrap();
+        let snap = model.snapshot_all_kv();
+        model.restore_all_kv(snap.clone());
+        let kv01 = logits_vec(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+
+        assert_eq!(baseline.len(), kv01.len());
+        for (i, (b, k)) in baseline.iter().zip(&kv01).enumerate() {
+            assert!(
+                (b - k).abs() < 1e-4,
+                "KV-01 prefix-restore diverged from full-prefill at logit[{i}]: {b} vs {k}"
+            );
+        }
+
+        // Reusability: the snapshot must NOT be mutated by the suffix forward —
+        // re-restore + re-forward yields the same logits (guards against a latent
+        // Arc-shared-storage mutation).
+        model.restore_all_kv(snap);
+        let kv01_again =
+            logits_vec(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+        for (i, (a, b)) in kv01.iter().zip(&kv01_again).enumerate() {
+            assert!((a - b).abs() < 1e-6, "snapshot mutated by forward at logit[{i}]");
         }
     }
 
