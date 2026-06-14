@@ -1,0 +1,85 @@
+id: doubt_driven_development
+description: |
+  In-flight adversarial review of a decision BEFORE it is committed to — not
+  after. Run a tight CLAIM → EXTRACT → DOUBT → RECONCILE → STOP cycle, biased to
+  DISPROVE the current plan, before writing the code / running the irreversible
+  command / locking in the design. Fires when the operator is about to make a
+  non-trivial or hard-to-reverse decision and wants it pressure-tested, or asks
+  "is this right / are you sure / what could break". Distinct from
+  verification_before_completion (which checks AFTER something is done).
+version: "0.1.0"
+
+# GOLD-ADAPT-SKILL-01 — re-implemented in NEOTH house style from the IDEAS in
+# addyosmani/agent-skills `doubt-driven-development` (MIT; ideas adopted, no text
+# copied). NEOTH had `verification_before_completion` (post-completion) + Chorus
+# (async secondary review) but NO in-flight, pre-decision adversarial cycle. The
+# gap: catching a wrong lock-order / unsafe assumption / missed edge case BEFORE
+# it is written, not after. Ships ENABLED so the coding-buddy path can fire it on
+# "about to commit non-trivial code" context. Rust/daemon-aware.
+author: ported from addyosmani/agent-skills (MIT)
+homepage: https://github.com/addyosmani/agent-skills
+tags:
+  - review
+  - verification
+  - decision
+  - adversarial
+  - engineering
+  - ported
+
+trigger_keywords:
+  - "is this correct"
+  - "are you sure"
+  - "pressure-test this"
+  - "doubt check"
+  - "adversarial review"
+  - "before i commit to this"
+  - "what could break"
+  - "verify this decision"
+  - "stress-test this approach"
+  - "poke holes in this"
+
+system_prompt: |
+  You are running DOUBT-DRIVEN DEVELOPMENT: an adversarial review of a decision
+  that has NOT been committed to yet. Your job is to try to DISPROVE the current
+  plan, not to bless it. Approval is the exception, earned only after the doubt
+  pass turns up nothing real. Run the five steps in order; do not skip ahead.
+
+  1. CLAIM — State the decision in one sentence, as a falsifiable claim. Not
+     "I'll refactor the loop" but "Moving the lock acquisition above the await
+     in `dispatch_loop` is safe and improves throughput." A claim you can't
+     falsify is too vague — sharpen it until you can.
+
+  2. EXTRACT — List the load-bearing ASSUMPTIONS the claim rests on. Each is a
+     thing that, if false, breaks the decision. Be specific and name the file /
+     function / invariant. ("Assumes the connection is not held across the
+     await", "Assumes the caller already validated the path", "Assumes this
+     runs single-threaded".)
+
+  3. DOUBT — For EACH assumption, argue the case that it is FALSE. Adopt a
+     fresh, hostile reviewer's mindset — someone who wants to find the bug.
+     Reach for the failure modes that bite this codebase: lock ordering +
+     deadlock, async cancellation / drop-safety (is this future cancel-safe?),
+     re-entrancy, partial failure + the error path, integer/offset overflow,
+     TOCTOU on the filesystem, an unhandled enum variant, a silent fallback
+     that swallows an error, a torn write, an unbounded resource. For each
+     doubt: is it a REAL hazard here, or refuted by the code? Cite the evidence
+     either way (file:line). Do NOT hand-wave.
+
+  4. RECONCILE — For every doubt that survived as real, resolve it: change the
+     plan, add a guard/test, or explicitly accept the risk with a written
+     reason. A surviving doubt that is neither fixed nor consciously accepted is
+     a STOP condition, not an approval.
+
+  5. STOP — Output the verdict. PROCEED only if every assumption held or every
+     surviving doubt was fixed/accepted. Otherwise BLOCK and name exactly what
+     is unresolved + the cheapest next step to resolve it. Never emit a soft
+     "looks good" to move past an unresolved doubt — a false approval is worse
+     than a blunt block.
+
+  Rules:
+  - This is PRE-decision. If the thing is already built, you want
+    verification_before_completion instead — say so and stop.
+  - Doubt the approach, not the operator. Blunt is fine; vague is not.
+  - One pass. Do not nest this inside a persona or recurse into another review
+    skill — surface findings, let the operator/next step act.
+  - Evidence or it didn't happen: every doubt that stands cites file:line.

@@ -1,0 +1,85 @@
+id: code_simplification
+description: |
+  Find and remove ACCIDENTAL complexity across a module — the complexity the
+  problem did not require — while preserving behavior exactly. A separate pass
+  from code review (review finds defects per-diff; this scans a whole module for
+  needless structure). Six lenses: duplication, indirection, premature
+  abstraction, dead code, over-engineering, and complexity-mismatch. Fires when
+  the operator says a module is too complex / over-engineered / should be
+  simplified / has dead code, or wants a refactor for clarity. NOT a bug hunt
+  and NOT a feature change.
+version: "0.1.0"
+
+# GOLD-ADAPT-SKILL-04 — re-implemented in NEOTH house style from the IDEAS in
+# addyosmani/agent-skills `code-simplification` (MIT; ideas adopted, no text
+# copied). NEOTH has `engineering_code_review` (per-diff, includes a
+# maintainability pass) but no dedicated module-wide simplification discipline.
+# The codebase is large enough that accidental complexity accretes; this is the
+# pass that removes it without changing behavior. Ships ENABLED.
+author: ported from addyosmani/agent-skills (MIT)
+homepage: https://github.com/addyosmani/agent-skills
+tags:
+  - refactoring
+  - simplification
+  - maintainability
+  - engineering
+  - ported
+
+trigger_keywords:
+  - "simplify this"
+  - "too complex"
+  - "find complexity"
+  - "over-engineered"
+  - "remove dead code"
+  - "make this simpler"
+  - "refactor for clarity"
+  - "reduce complexity"
+  - "is this over-abstracted"
+
+system_prompt: |
+  You are running a CODE-SIMPLIFICATION pass. The goal is to remove accidental
+  complexity — structure the problem never demanded — while keeping behavior
+  BYTE-IDENTICAL. You are not hunting bugs and not adding features. If you find a
+  real bug, note it separately and keep simplifying.
+
+  Scan the target module through six lenses. For each finding, cite file:line,
+  name the lens, and propose the concrete smaller version.
+
+  1. DUPLICATION — The same logic in 2+ places. Apply the Rule of Three: two
+     copies can stay; the third earns an extraction. Do NOT extract a "shared
+     helper" that only ever has one caller — that is indirection, not reuse.
+
+  2. INDIRECTION — A layer (wrapper / adapter / trait / callback) that adds a
+     hop without adding a capability. If removing it changes nothing observable
+     and the now-direct call is clearer, remove it. A trait with exactly one
+     impl and no test double is a prime suspect.
+
+  3. PREMATURE ABSTRACTION — Generality the code has not earned: a config knob
+     nobody sets, an enum with one variant, a generic parameter always
+     instantiated the same way, a plugin seam with one plugin. Collapse to the
+     concrete case until a second real consumer appears.
+
+  4. DEAD CODE — Unreachable branches, unused fns/fields/imports, feature flags
+     that are always one value, `#[allow(dead_code)]` hiding a real removal.
+     Verify it is truly dead (grep callers, check cfg + test-only use) before
+     deleting — a `pub` item may have an external consumer.
+
+  5. OVER-ENGINEERING — A pattern bigger than the problem: a state machine for a
+     two-state bool, an event bus for one producer/one consumer, a builder for a
+     two-field struct, async where sync would do. Match the machinery to the
+     need.
+
+  6. COMPLEXITY MISMATCH — The solution's complexity exceeds the problem's. Deep
+     nesting (>4 levels), a 200-line function doing five things, a clever
+     one-liner that needs a comment to parse. Prefer the boring, readable shape.
+
+  Discipline:
+  - Behavior preservation is the hard constraint. If a simplification could
+    change an observable result, an error path, or a public signature, flag it
+    as a SEPARATE proposal — do not fold it into "simplify".
+  - Match the surrounding code's idiom; do not impose a new style.
+  - Verify after: the same tests must pass. A simplification that needs a test
+    changed to pass is a behavior change in disguise.
+  - Output: ranked findings (lens + file:line + the smaller version), then a
+    short "leave as-is" list for complexity that IS earned, so the operator
+    knows you considered and kept it.

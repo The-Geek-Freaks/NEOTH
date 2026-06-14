@@ -62,9 +62,19 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "brainstorming",
         include_str!("../../assets/skills/brainstorming/skill.yaml"),
     ),
+    // GOLD-ADAPT-SKILL-04 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
+    (
+        "code_simplification",
+        include_str!("../../assets/skills/code_simplification/skill.yaml"),
+    ),
     (
         "conductor",
         include_str!("../../assets/skills/conductor/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL-05 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
+    (
+        "context_engineering",
+        include_str!("../../assets/skills/context_engineering/skill.yaml"),
     ),
     (
         "cybersec_detection_engineering",
@@ -97,6 +107,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "dispatching_parallel_agents",
         include_str!("../../assets/skills/dispatching_parallel_agents/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL-01 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
+    (
+        "doubt_driven_development",
+        include_str!("../../assets/skills/doubt_driven_development/skill.yaml"),
     ),
     (
         "engineering_code_review",

@@ -1,0 +1,77 @@
+id: context_engineering
+description: |
+  Curate what goes into the working context, in priority order, so output
+  quality stays high and the model stops hallucinating APIs or drifting from the
+  codebase. A five-level hierarchy (rules > spec > relevant source > errors >
+  history) plus a compaction protocol for when the window fills and a
+  session-startup sequence for a fresh start in a large codebase. Fires when the
+  operator notices quality degrading, wrong patterns, hallucinated APIs, a stale
+  context, or wants to start a fresh session / compact what is loaded.
+version: "0.1.0"
+
+# GOLD-ADAPT-SKILL-05 — re-implemented in NEOTH house style from the IDEAS in
+# addyosmani/agent-skills `context-engineering` (MIT; ideas adopted, no text
+# copied). NEOTH has context-budget logic (`enforce_budget`) + the context-mode
+# storage layer, but no operator-facing DISCIPLINE for what to load and in what
+# order when quality degrades. This is that discipline. Ships ENABLED.
+author: ported from addyosmani/agent-skills (MIT)
+homepage: https://github.com/addyosmani/agent-skills
+tags:
+  - context
+  - quality
+  - engineering
+  - prompting
+  - ported
+
+trigger_keywords:
+  - "context is getting stale"
+  - "quality is degrading"
+  - "you keep hallucinating"
+  - "wrong patterns"
+  - "start a fresh session"
+  - "what context do you have"
+  - "compact the context"
+  - "curate the context"
+  - "you lost the thread"
+
+system_prompt: |
+  You are doing CONTEXT ENGINEERING: deciding what belongs in the working
+  context and in what priority, so the model reasons over the right material.
+  Bad output is usually a context problem, not a model problem — wrong/missing
+  context in beats a bigger window every time.
+
+  Load context in this PRIORITY ORDER. Higher levels are authoritative; when the
+  window is tight, shed from the bottom up, never the top.
+
+  1. RULES — The operator's standing instructions + project conventions
+     (CLAUDE.md / NEOTH.md / freedom.yaml policy). These are non-negotiable and
+     always stay loaded. If they conflict with anything below, they win.
+  2. SPEC / TASK — The current objective + acceptance criteria. What "done"
+     means for THIS task. A vague task is the #1 cause of drift — sharpen it
+     before loading more.
+  3. RELEVANT SOURCE — Only the files the task actually touches + their direct
+     dependencies. Read them before claiming what they do; do NOT carry the
+     whole repo. Progressive disclosure: pull a file in when you reach it, not
+     speculatively.
+  4. ERRORS — The exact, current error output (compiler / test / runtime),
+     verbatim. A real error message outranks a remembered one — re-run, don't
+     recall.
+  5. HISTORY — Prior turns. The lowest priority and the first to compact: a
+     summary of what was decided + the open thread, not the full transcript.
+
+  COMPACTION (window filling): summarize HISTORY into "decisions made + current
+  open question + the file:line currently in flight", drop superseded
+  exploration, KEEP rules/spec/active-source/current-error intact. Never compact
+  away the active error or the operator's rules.
+
+  FRESH START (new session in a big codebase): (1) load rules, (2) restate the
+  task + acceptance criteria, (3) identify the 1-3 entry-point files and read
+  them, (4) only then act. Do not start editing before the entry points are
+  read — that is how an agent hallucinates an API that doesn't exist.
+
+  Red flags that you have a context problem, not a hard task: you are
+  referencing an API you have not opened the file for; you are repeating a
+  mistake already corrected this session; your answer contradicts the rules; you
+  are reasoning from a remembered file instead of the current one. When you see
+  these, STOP and re-curate — re-read the source, re-run the error, restate the
+  task — before producing more output.
