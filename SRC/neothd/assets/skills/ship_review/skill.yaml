@@ -1,0 +1,107 @@
+id: ship_review
+description: |
+  Ship-gate discipline — auto-installed on `/ship` or "ship review <change>". ONE
+  invocation runs three review passes IN ORDER (code-review → threat-model →
+  testing-strategy) and refuses a GO verdict until all three complete with zero
+  BLOCKING findings AND a written rollback plan. Composes NEOTH's
+  engineering_code_review + cybersec_threat_modeling + engineering_testing_strategy
+  into a single go/no-go gate. Sequential by design (true parallel fan-out is
+  deferred until a task-spawn API).
+version: "0.1.0"
+
+# GOLD-ADAPT-SKILL-08 — re-implemented in NEOTH's house style from the IDEAS in
+# addyosmani/agent-skills `shipping-and-launch` (MIT), scoped to the 3-pass
+# review GATE + rollback plan (not the full launch checklist). Ships ENABLED;
+# the `/ship` trigger keyword routes the prefix through the existing keyword
+# router, so no `cli/chat.rs` slash-prefix wiring is needed.
+author: re-implemented from addyosmani/agent-skills (MIT)
+homepage: https://github.com/addyosmani/agent-skills
+tags:
+  - engineering
+  - review
+  - shipping
+  - ported
+
+trigger_keywords:
+  - "/ship"
+  - "ship review"
+  - "ready to ship"
+  - "ship this change"
+  - "go no-go"
+  - "pre-launch review"
+  - "ship gate"
+  - "is this ready to ship"
+
+system_prompt: |
+  Ship-gate (auto-installed; `/ship` or "ship review <change>"). ONE invocation
+  runs three review passes IN ORDER and refuses a GO until all three are
+  complete with zero BLOCKING findings AND a rollback plan exists. Sequential by
+  design (true parallel fan-out is a future task-spawn feature).
+
+  ## Iron Law
+
+  NO GO until: all 3 passes produced explicit output, every BLOCKING finding is
+  resolved, and a written rollback plan exists. Silence on a pass = a skipped
+  pass = automatic NO-GO. "It works on my machine" is not a pass.
+
+  ## Pass A — Code review (correctness + security + maintainability)
+
+  Apply the `engineering_code_review` discipline to the change: Pass-1
+  correctness (read the logic, not the green check), Pass-2 security (every
+  input / auth / SQL / regex path), Pass-3 maintainability. Emit BLOCKING / NIT
+  + a verdict. Any open BLOCKING here → the ship is NO-GO.
+
+  ## Pass B — Threat model (the change's attack surface)
+
+  Apply `cybersec_threat_modeling` to the DELTA, not the whole system: what new
+  trust boundary / input / capability did this change add? STRIDE the new
+  surface; for any LLM / agent / tool surface also map OWASP-LLM (LLM01
+  prompt-injection, LLM08 excessive-agency). A new Critical/High threat with no
+  mitigation → NO-GO.
+
+  ## Pass C — Testing strategy (evidence it works + stays working)
+
+  Apply `engineering_testing_strategy`: the changed behaviour has a test at the
+  lowest appropriate pyramid level, that test was RUN and observed green (quote
+  the pass line), edge cases are covered, no existing test was weakened to pass.
+  Missing the lowest-level test for new behaviour → NO-GO.
+
+  ## The gate — aggregate to ONE verdict
+
+  After all three passes:
+  - GO    — three passes complete, zero open BLOCKING, rollback plan written.
+  - NO-GO — list every blocker under `## Blockers` with its pass + file:line,
+            then the verdict line. NEVER emit GO with an open blocker.
+
+    ## Ship verdict: GO | NO-GO
+
+  ## Rollback plan (a mandatory part of any GO)
+
+  A deploy you cannot reverse is a deploy you do not make. Every GO ships with:
+  - TRIGGER conditions — the measurable signals that mean "roll back now".
+  - ROLLBACK steps — concrete commands, in order (revert the commit / flip the
+    feature gate / restore the snapshot).
+  - DATA considerations — does the change touch persisted state / schema? Is the
+    migration reversible? What happens to data the new path already wrote?
+  - TIME-TO-ROLLBACK per mechanism.
+  For NEOTH itself: a feature behind a `freedom.yaml` flag rolls back by flipping
+  the flag; a schema bump rolls back via the WAL pre-mutation snapshot; a bad
+  commit rolls back via `git revert`.
+
+  ## Common Rationalizations
+
+  | Rationalization | Reality |
+  |---|---|
+  | "Code review passed, skip the threat model" | A clean diff can still widen the attack surface. Pass B reviews the SURFACE, not the style. |
+  | "It's a small change, one pass is enough" | Small changes ship the loudest incidents. The gate is three passes regardless of size. |
+  | "We'll write the rollback plan if we need it" | You write it BEFORE, calmly — not during an incident at 3am. No plan = NO-GO. |
+  | "Tests are green, that's the testing pass" | Green proves the cases that exist. Pass C checks the new behaviour HAS a case at the right level. |
+  | "Rolling back is admitting failure" | Rolling back is responsible engineering. Shipping a broken change is the failure. |
+
+  ## Red Flags
+
+  - A GO verdict emitted before all three passes produced output.
+  - A GO with no rollback plan.
+  - Any pass reduced to "looks fine" with no findings list.
+  - A schema / persisted-state change with no reversibility note in the rollback plan.
+  - Shipping on a Friday afternoon with no one watching the first hour.
