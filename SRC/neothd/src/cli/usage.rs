@@ -153,19 +153,30 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
         roll.total_output_tokens,
         format_amount(total_in_target, currency),
     );
+    // VIEW-02 + VIEW-07 — spend RATE / projection + overall latency tail.
+    let burn_in_target = convert_from_usd(roll.burn_rate_usd_per_day, currency);
+    let monthly_in_target = convert_from_usd(roll.projected_monthly_usd, currency);
+    println!(
+        "  spend rate: {}/day  ->  projected {}/month   |   latency p50={}ms p90={}ms",
+        format_amount(burn_in_target, currency),
+        format_amount(monthly_in_target, currency),
+        roll.total_p50_latency_ms,
+        roll.total_p90_latency_ms,
+    );
     if roll.per_provider.is_empty() {
         println!("  (no events in window — check ~/.neoth/usage/)");
         return;
     }
     let cost_col = format!("cost_{}", currency.code().to_lowercase());
     println!(
-        "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>12} {:>10}",
-        "provider", "calls", "ok", "err", "in_tok", "out_tok", cost_col, "mean_ms"
+        "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>12} {:>8} {:>8} {:>8}",
+        "provider", "calls", "ok", "err", "in_tok", "out_tok", cost_col, "mean_ms", "p50_ms",
+        "p90_ms"
     );
     for p in &roll.per_provider {
         let cost_in_target = convert_from_usd(p.cost_usd, currency);
         println!(
-            "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>12} {:>10.0}",
+            "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>12} {:>8.0} {:>8} {:>8}",
             p.provider,
             p.call_count,
             p.ok_count,
@@ -174,6 +185,8 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
             p.output_tokens,
             format_amount(cost_in_target, currency),
             p.mean_latency_ms,
+            p.p50_latency_ms,
+            p.p90_latency_ms,
         );
     }
 }

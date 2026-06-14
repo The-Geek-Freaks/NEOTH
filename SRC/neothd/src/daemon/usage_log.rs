@@ -59,6 +59,10 @@ pub struct PerProviderTotals {
     pub output_tokens: u64,
     pub cost_usd: f64,
     pub mean_latency_ms: f64,
+    /// VIEW-07 — median + 90th-percentile latency (ms) across this provider's
+    /// calls in the window. The mean alone hides tail latency; p90 surfaces it.
+    pub p50_latency_ms: u64,
+    pub p90_latency_ms: u64,
 }
 
 /// Aggregate across the requested time range.
@@ -73,6 +77,13 @@ pub struct UsageRollup {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_cost_usd: f64,
+    /// VIEW-07 — overall latency percentiles across every provider (ms).
+    pub total_p50_latency_ms: u64,
+    pub total_p90_latency_ms: u64,
+    /// VIEW-02 — spend RATE derived from `total_cost_usd` over the window:
+    /// USD/day + the 30-day projection. Zero when the window has no spend.
+    pub burn_rate_usd_per_day: f64,
+    pub projected_monthly_usd: f64,
     /// Per-provider breakdown, sorted by `provider` alphabetically.
     pub per_provider: Vec<PerProviderTotals>,
 }
@@ -217,7 +228,10 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
         return roll;
     }
     let mut per: std::collections::BTreeMap<String, PerProviderTotals> = Default::default();
-    let mut latency_sum: std::collections::BTreeMap<String, u128> = Default::default();
+    // VIEW-07 — collect the raw latency samples per provider (+ overall) so we
+    // can compute percentiles, not just the running mean.
+    let mut latency_samples: std::collections::BTreeMap<String, Vec<u64>> = Default::default();
+    let mut all_latency: Vec<u64> = Vec::new();
     let entries = match fs::read_dir(&dir) {
         Ok(e) => e,
         Err(_) => return roll,
@@ -261,21 +275,48 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
             } else {
                 totals.err_count += 1;
             }
-            *latency_sum.entry(ev.provider).or_insert(0) += ev.latency_ms as u128;
+            all_latency.push(ev.latency_ms);
+            latency_samples
+                .entry(ev.provider)
+                .or_default()
+                .push(ev.latency_ms);
         }
     }
     for (provider, mut totals) in per.into_iter() {
-        let sum = *latency_sum.get(&provider).unwrap_or(&0);
-        totals.mean_latency_ms = if totals.call_count > 0 {
-            sum as f64 / totals.call_count as f64
-        } else {
-            0.0
-        };
+        let mut samples = latency_samples.remove(&provider).unwrap_or_default();
+        if !samples.is_empty() {
+            let sum: u128 = samples.iter().map(|&x| x as u128).sum();
+            totals.mean_latency_ms = sum as f64 / samples.len() as f64;
+            samples.sort_unstable();
+            totals.p50_latency_ms = percentile_u64(&samples, 50.0);
+            totals.p90_latency_ms = percentile_u64(&samples, 90.0);
+        }
         roll.per_provider.push(totals);
     }
     roll.per_provider
         .sort_by(|a, b| a.provider.cmp(&b.provider));
+    // VIEW-07 — overall latency percentiles across every provider.
+    if !all_latency.is_empty() {
+        all_latency.sort_unstable();
+        roll.total_p50_latency_ms = percentile_u64(&all_latency, 50.0);
+        roll.total_p90_latency_ms = percentile_u64(&all_latency, 90.0);
+    }
+    // VIEW-02 — spend rate over the window → USD/day + 30-day projection.
+    let window_secs = (until_unix - since_unix).max(1) as f64;
+    roll.burn_rate_usd_per_day = roll.total_cost_usd / window_secs * 86_400.0;
+    roll.projected_monthly_usd = roll.burn_rate_usd_per_day * 30.0;
     roll
+}
+
+/// Nearest-rank percentile over a SORTED-ascending slice (`p` in `0..=100`):
+/// the sample at the `ceil(p% × n)`-th rank (1-indexed). Empty slice → 0.
+fn percentile_u64(sorted: &[u64], p: f64) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let n = sorted.len();
+    let rank = ((p / 100.0) * n as f64).ceil().max(1.0) as usize;
+    sorted[rank.min(n) - 1]
 }
 
 /// Format unix-seconds as `YYYY-MM-DD` in UTC. Avoids pulling in
@@ -471,6 +512,75 @@ mod tests {
         assert_eq!(totals.call_count, 3);
         let expected = 900.0 / 3.0;
         assert!((totals.mean_latency_ms - expected).abs() < 0.0001);
+    }
+
+    #[test]
+    fn percentile_u64_nearest_rank() {
+        assert_eq!(percentile_u64(&[], 50.0), 0);
+        let s = [100u64, 200, 600]; // already sorted ascending
+        assert_eq!(percentile_u64(&s, 0.0), 100); // rank clamps to 1 → idx 0
+        assert_eq!(percentile_u64(&s, 50.0), 200); // ceil(0.5*3)=2 → idx 1
+        assert_eq!(percentile_u64(&s, 90.0), 600); // ceil(0.9*3)=3 → idx 2
+        assert_eq!(percentile_u64(&s, 100.0), 600);
+    }
+
+    #[test]
+    fn aggregate_computes_latency_percentiles() {
+        // VIEW-07: ten calls 10..=100ms → p50=50, p90=90 (nearest-rank).
+        let dir = tempdir().unwrap();
+        for ms in [10u64, 20, 30, 40, 50, 60, 70, 80, 90, 100] {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: 1_779_494_400,
+                    provider: "x".into(),
+                    model: "m".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_usd: 0.0,
+                    latency_ms: ms,
+                    ok: true,
+                },
+            )
+            .unwrap();
+        }
+        let r = aggregate(dir.path(), 0, i64::MAX);
+        let p = &r.per_provider[0];
+        assert_eq!(p.p50_latency_ms, 50);
+        assert_eq!(p.p90_latency_ms, 90);
+        assert_eq!(r.total_p50_latency_ms, 50);
+        assert_eq!(r.total_p90_latency_ms, 90);
+    }
+
+    #[test]
+    fn aggregate_computes_burn_rate_and_monthly_projection() {
+        // VIEW-02: $2.00 spend over a 2-day window → $1/day → $30/month.
+        let dir = tempdir().unwrap();
+        let day = 86_400i64;
+        for (ts, cost) in [(0i64, 1.0f64), (day, 1.0)] {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: ts,
+                    provider: "p".into(),
+                    model: "m".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_usd: cost,
+                    latency_ms: 1,
+                    ok: true,
+                },
+            )
+            .unwrap();
+        }
+        let r = aggregate(dir.path(), 0, 2 * day);
+        assert!((r.total_cost_usd - 2.0).abs() < 1e-9);
+        assert!(
+            (r.burn_rate_usd_per_day - 1.0).abs() < 1e-9,
+            "burn_rate got {}",
+            r.burn_rate_usd_per_day
+        );
+        assert!((r.projected_monthly_usd - 30.0).abs() < 1e-9);
     }
 
     #[test]
