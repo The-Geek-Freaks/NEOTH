@@ -649,6 +649,23 @@ fn run_stream(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let loaded_model = slot.as_mut().expect("ensure_loaded populated slot");
+    // GOLD-ADAPT-KV-05 DECISION (4-lens gremium consensus 2026-06-14): NO
+    // cross-request prefix-KV reuse here, by design — unlike the NEOTH-authored
+    // Ouro path (providers/ouro/prefix_kv_cache.rs, GOLD-ADAPT-KV-01). qwen2's
+    // `kv_cache` is PRIVATE to the upstream `candle_transformers` crate; a
+    // snapshot/restore surface would require permanently vendoring (forking) the
+    // ~600-LOC qwen2 model and becoming its sole backport owner for every
+    // upstream security/correctness fix. This candle-F16 path is the SECONDARY /
+    // air-gap fallback: the primary local-abliterated path (wizard `local-multi`)
+    // runs GGUFs through Ollama, which already does per-slot prefix-KV natively,
+    // and the FEAT-08 abliterated fallback is a cold path (default-off, opt-in,
+    // SafetyPolicy-only). Declined as a bad tradeoff (a fork for a near-zero-rate
+    // consumer), NOT deferred. Revisit ONLY when a real high-call-rate caller
+    // with a shared system prompt appears (e.g. a tight skill-router re-rank
+    // loop): then file an upstream candle PR exposing snapshot/restore and reuse
+    // `providers::ouro::prefix_kv_cache::PrefixKvCache` here. Future alternative:
+    // route local_qwen chat through Ollama too (one local-chat path, Ollama's KV
+    // for free) — keep candle-F16 for embedding + air-gap only.
     loaded_model.model.clear_kv_cache();
 
     let prompt_text = build_chatml_prompt(req.system.as_deref(), &req.prompt);
@@ -882,7 +899,9 @@ fn run_forward(
     }
     // From here on, slot.as_mut().unwrap() is safe.
     let loaded_model = slot.as_mut().expect("slot just initialised");
-    // Reset KV cache so previous conversations don't leak.
+    // Reset KV cache so previous conversations don't leak. (No cross-request
+    // prefix-KV reuse here by design — see the GOLD-ADAPT-KV-05 decision note at
+    // the run_forward `clear_kv_cache()` site above.)
     loaded_model.model.clear_kv_cache();
 
     // ── 2. Render the ChatML prompt. ──────────────────────────────────────
