@@ -7,15 +7,24 @@
 //! [`FactState::Contradicted`] so it drops out of recall (`surface_for_recall`
 //! already gates on `verified`).
 //!
-//! ## No embeddings — a text-similarity proxy
-//! NEOTH has no text embeddings for facts (`idx_embedding` is CLIP-media-only),
-//! so the plan's "cosine" similarity is replaced by **token-Jaccard** over
-//! normalised statement tokens, split into a SUBJECT part (before the first
-//! copula) and a VALUE part (after it). Two facts contradict when they share a
-//! subject (subject-Jaccard ≥ [`SUBJECT_SIM_THRESHOLD`]) AND either their
-//! polarity differs (one carries a negation marker the other lacks — reusing
+//! ## Subject similarity: deterministic Jaccard, with an optional semantic lift
+//! The always-available core is **token-Jaccard** over normalised statement
+//! tokens, split into a SUBJECT part (before the first copula) and a VALUE part
+//! (after it). Two facts contradict when they share a subject (subject-Jaccard ≥
+//! [`SUBJECT_SIM_THRESHOLD`]) AND either their polarity differs (one carries a
+//! negation marker the other lacks — reusing
 //! `council::factual_check::DEFAULT_NEGATION_MARKERS`, bilingual EN/DE) OR their
-//! value tokens diverge.
+//! value tokens diverge (value-Jaccard < [`VALUE_JACCARD_THRESHOLD`], so a
+//! superset like "nas at X" vs "nas at X primary" is NOT flagged).
+//!
+//! The **on-demand scan** ([`scan_contradictions`]) optionally takes an
+//! [`crate::providers::embed::EmbedProvider`] and replaces the subject-Jaccard
+//! gate with embedding COSINE (catches "nas" ≈ "storage server"), falling back to
+//! Jaccard on any embed failure — mirroring `council::dissent`. The synchronous
+//! insert-time path ([`detect_contradictions_for`], inside `groundtruth::insert`)
+//! stays Jaccard-only: it runs in a sync DB callback with no async runtime or
+//! provider in scope. Values are token-normalised ("5pm" ≡ "17:00") so equivalent
+//! values don't false-diverge.
 //!
 //! ## Triggers (no new cron, no `serve_tasks.rs`)
 //! Detection runs best-effort inside [`crate::memory::groundtruth::insert`] for
@@ -35,10 +44,23 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::council::factual_check::DEFAULT_NEGATION_MARKERS;
 use crate::memory::groundtruth::{self, FactState, GroundTruth};
+use crate::providers::embed::{EmbedProvider, EmbedRequest, cosine};
 
 /// Minimum subject-token Jaccard for two facts to be considered "about the same
 /// thing" — below this they're different subjects (e.g. nas vs router).
 pub const SUBJECT_SIM_THRESHOLD: f32 = 0.5;
+
+/// Minimum value-token Jaccard ABOVE which two values count as "the same" (so NOT
+/// a divergence). Replaces the old exact set-inequality test, which false-flagged
+/// a superset ("nas at X" vs "nas at X primary", overlap 0.5) as a contradiction.
+pub const VALUE_JACCARD_THRESHOLD: f32 = 0.5;
+
+/// Minimum subject-embedding COSINE for the semantic on-demand scan to treat two
+/// facts as the same subject. Set higher than the Jaccard threshold because
+/// cosine on L2-normalised paraphrase embeddings clusters high (0.8–0.95); 0.75
+/// is conservative enough to avoid cross-topic false positives while still
+/// catching "nas" ≈ "storage server".
+pub const SUBJECT_SIM_COSINE_THRESHOLD: f32 = 0.75;
 
 /// Minimum fused confidence for a pair to be emitted into the ledger.
 pub const EMIT_THRESHOLD: f32 = 0.7;
@@ -97,12 +119,75 @@ fn token_set(s: &str) -> HashSet<String> {
         .collect()
 }
 
-/// Raw lowercased tokens (punctuation-trimmed) in order — used for subject/value
-/// splitting where ORDER matters (the copula position).
+/// Canonicalise a single lowercased token so equivalent VALUES don't false-
+/// diverge: a 12-hour clock time → 24h ("5pm" → "17:00", "9am" → "09:00",
+/// "12am" → "00:00", "12pm" → "12:00") and "h:mm"/"hh:mm" → zero-padded "HH:MM".
+/// Everything else (IPs, hostnames, words) is returned unchanged — distinct IPs
+/// already compare correctly as opaque tokens.
+fn normalize_token(t: &str) -> String {
+    // 12-hour clock: <digits>am / <digits>pm
+    if let Some(hour) = t.strip_suffix("am").or_else(|| t.strip_suffix("pm")) {
+        if !hour.is_empty() && hour.bytes().all(|b| b.is_ascii_digit()) {
+            if let Ok(h) = hour.parse::<u32>() {
+                if h <= 12 {
+                    let h24 = match (h, t.ends_with("pm")) {
+                        (12, false) => 0,    // 12am = midnight
+                        (12, true) => 12,    // 12pm = noon
+                        (h, false) => h,     // 1am..11am
+                        (h, true) => h + 12, // 1pm..11pm
+                    };
+                    return format!("{h24:02}:00");
+                }
+            }
+        }
+    }
+    // h:mm / hh:mm → zero-padded HH:MM
+    if let Some((hh, mm)) = t.split_once(':') {
+        if !hh.is_empty()
+            && hh.bytes().all(|b| b.is_ascii_digit())
+            && mm.len() == 2
+            && mm.bytes().all(|b| b.is_ascii_digit())
+        {
+            if let Ok(h) = hh.parse::<u32>() {
+                if h < 24 {
+                    return format!("{h:02}:{mm}");
+                }
+            }
+        }
+    }
+    t.to_string()
+}
+
+/// Truncate a multi-clause fact to its FIRST clause when a conjunction joins two
+/// separate copula-bearing clauses ("nas is at X and router is at Y" → "nas is at
+/// X"), so the second clause's tokens don't bleed into this fact's subject/value.
+/// Conservative: only truncates when a COPULA actually appears AFTER the
+/// conjunction (so "server is up and responsive" — no second copula — is left
+/// whole). The slice is guarded so a rare Unicode case-shift can never panic.
+fn first_clause(s: &str) -> &str {
+    let lower = s.to_lowercase();
+    for conj in [" and ", " und ", " oder "] {
+        if let Some(pos) = lower.find(conj) {
+            if !s.is_char_boundary(pos) {
+                continue;
+            }
+            let tail_has_copula = lower[pos + conj.len()..]
+                .split_whitespace()
+                .any(|w| COPULAS.contains(&w.trim_matches(|c: char| c.is_ascii_punctuation())));
+            if tail_has_copula {
+                return &s[..pos];
+            }
+        }
+    }
+    s
+}
+
+/// Raw lowercased tokens (punctuation-trimmed + value-normalised) in order — used
+/// for subject/value splitting where ORDER matters (the copula position).
 fn ordered_tokens(s: &str) -> Vec<String> {
     s.to_lowercase()
         .split_whitespace()
-        .map(|t| t.trim_matches(|c: char| c.is_ascii_punctuation()).to_string())
+        .map(|t| normalize_token(t.trim_matches(|c: char| c.is_ascii_punctuation())))
         .filter(|t| !t.is_empty())
         .collect()
 }
@@ -111,21 +196,28 @@ fn ordered_tokens(s: &str) -> Vec<String> {
 /// the first 3 content tokens. Stopwords (other than the copula delimiter) are
 /// dropped so "the primary nas" and "primary nas" match.
 fn subject_tokens(s: &str) -> HashSet<String> {
-    let toks = ordered_tokens(s);
-    let cut = toks.iter().position(|t| COPULAS.contains(&t.as_str()));
-    let head: Vec<&String> = match cut {
-        Some(i) => toks[..i].iter().collect(),
-        None => toks.iter().take(3).collect(),
-    };
-    head.into_iter()
-        .filter(|t| !STOPWORDS.contains(&t.as_str()))
-        .cloned()
-        .collect()
+    let toks = ordered_tokens(first_clause(s));
+    match toks.iter().position(|t| COPULAS.contains(&t.as_str())) {
+        // Everything before the copula (stopwords dropped).
+        Some(i) => toks[..i]
+            .iter()
+            .filter(|t| !STOPWORDS.contains(&t.as_str()))
+            .cloned()
+            .collect(),
+        // No copula: the first 3 CONTENT tokens. Filter stopwords FIRST so they
+        // don't consume the budget ("the primary nas server" → {primary,nas,server}).
+        None => toks
+            .iter()
+            .filter(|t| !STOPWORDS.contains(&t.as_str()))
+            .take(3)
+            .cloned()
+            .collect(),
+    }
 }
 
 /// Content tokens AFTER the first copula (the value). Empty if no copula.
 fn value_tokens(s: &str) -> HashSet<String> {
-    let toks = ordered_tokens(s);
+    let toks = ordered_tokens(first_clause(s));
     match toks.iter().position(|t| COPULAS.contains(&t.as_str())) {
         Some(i) => toks[i + 1..]
             .iter()
@@ -189,14 +281,18 @@ pub fn pair_confidence(stmt_a: &str, stmt_b: &str) -> Option<PairSignal> {
     let negation = has_negation(stmt_a) != has_negation(stmt_b);
     let va = value_tokens(stmt_a);
     let vb = value_tokens(stmt_b);
-    // Diverging values: both have a value and they are not equal sets. (Identical
-    // values with the same subject = the same fact, not a contradiction.)
-    let value_diverges = !va.is_empty() && !vb.is_empty() && va != vb;
+    // Values DIVERGE when both are present AND their overlap is below the
+    // threshold — a Jaccard test, not exact inequality, so a superset ("nas at X"
+    // vs "nas at X primary", overlap 0.5) is NOT flagged as a contradiction.
+    let vj = jaccard(&va, &vb);
+    let value_diverges = !va.is_empty() && !vb.is_empty() && vj < VALUE_JACCARD_THRESHOLD;
 
     if !negation && !value_diverges {
         return None;
     }
-    let signal = if negation { 0.4 } else { 0.3 };
+    // A polarity flip is a strong fixed signal; a value divergence scales with how
+    // disjoint the values are (fully disjoint vj=0 → 0.3, near-threshold → ~0.15).
+    let signal = if negation { 0.4 } else { (1.0 - vj) * 0.3 };
     let confidence = (subj * 0.6 + signal).min(1.0);
     if confidence >= EMIT_THRESHOLD {
         Some(PairSignal { confidence, negation })
@@ -366,13 +462,88 @@ pub fn detect_contradictions_for(
     Ok(detected)
 }
 
+/// Cosine of two facts' SUBJECT phrases via the embedding provider. The subject
+/// phrase is the sorted content tokens joined by spaces (deterministic; order
+/// barely matters for these short phrases). Returns `Err` so the caller owns the
+/// Jaccard fallback — mirrors `council::dissent::score_dissent_via_embedding`.
+async fn subject_sim_via_embedding(
+    stmt_a: &str,
+    stmt_b: &str,
+    provider: &dyn EmbedProvider,
+) -> Result<f32> {
+    fn phrase(s: &str) -> String {
+        let mut toks: Vec<String> = subject_tokens(s).into_iter().collect();
+        toks.sort();
+        toks.join(" ")
+    }
+    let (pa, pb) = (phrase(stmt_a), phrase(stmt_b));
+    if pa.is_empty() || pb.is_empty() {
+        return Ok(0.0);
+    }
+    let ra = provider.embed(EmbedRequest::new(pa)).await?;
+    let rb = provider.embed(EmbedRequest::new(pb)).await?;
+    Ok(cosine(&ra.vector, &rb.vector))
+}
+
+/// Semantic variant of [`pair_confidence`]: the subject gate uses embedding COSINE
+/// (catches "nas" ≈ "storage server") with a Jaccard FALLBACK on any embed
+/// failure. The negation + value-divergence logic is identical to the sync path,
+/// so on embed failure this returns exactly what [`pair_confidence`] would.
+pub async fn pair_confidence_semantic(
+    stmt_a: &str,
+    stmt_b: &str,
+    provider: &dyn EmbedProvider,
+) -> Option<PairSignal> {
+    // Subject weight: cosine when the embed succeeds + clears the cosine gate;
+    // Jaccard (the deterministic core) on embed failure.
+    let subj = match subject_sim_via_embedding(stmt_a, stmt_b, provider).await {
+        Ok(cos) if cos >= SUBJECT_SIM_COSINE_THRESHOLD => cos,
+        Ok(_) => return None, // cosine below the gate → different subjects
+        Err(_) => {
+            let j = jaccard(&subject_tokens(stmt_a), &subject_tokens(stmt_b));
+            if j < SUBJECT_SIM_THRESHOLD {
+                return None;
+            }
+            j
+        }
+    };
+    let negation = has_negation(stmt_a) != has_negation(stmt_b);
+    let va = value_tokens(stmt_a);
+    let vb = value_tokens(stmt_b);
+    let vj = jaccard(&va, &vb);
+    let value_diverges = !va.is_empty() && !vb.is_empty() && vj < VALUE_JACCARD_THRESHOLD;
+    if !negation && !value_diverges {
+        return None;
+    }
+    let signal = if negation { 0.4 } else { (1.0 - vj) * 0.3 };
+    let confidence = (subj * 0.6 + signal).min(1.0);
+    if confidence >= EMIT_THRESHOLD {
+        Some(PairSignal { confidence, negation })
+    } else {
+        None
+    }
+}
+
 /// TRIGGER 2 — full re-scan over every active Verified fact (grouped by scope).
 /// Idempotent (existing pairs are `INSERT OR IGNORE`d). Returns the count of NEW
 /// ledger rows created.
-pub fn scan_contradictions(conn: &Connection, now_ns: i64) -> Result<usize> {
+///
+/// When `embed` is `Some`, subject similarity uses embedding cosine (semantic;
+/// catches paraphrased subjects) with a per-pair Jaccard fallback; `None` runs the
+/// deterministic Jaccard path unchanged.
+pub async fn scan_contradictions(
+    conn: &Connection,
+    now_ns: i64,
+    embed: Option<&dyn EmbedProvider>,
+) -> Result<usize> {
     let all = groundtruth::surface_for_recall(conn, 100_000, true)?;
     let verified: Vec<GroundTruth> =
         all.into_iter().filter(|g| is_comparable(&g.fact_state)).collect();
+    tracing::info!(
+        facts = verified.len(),
+        semantic = embed.is_some(),
+        "MEM-02: contradiction scan starting",
+    );
     let mut new_rows = 0usize;
     for i in 0..verified.len() {
         for j in (i + 1)..verified.len() {
@@ -381,7 +552,11 @@ pub fn scan_contradictions(conn: &Connection, now_ns: i64) -> Result<usize> {
             if a.scope != b.scope {
                 continue;
             }
-            if let Some(sig) = pair_confidence(&a.statement, &b.statement) {
+            let sig = match embed {
+                Some(p) => pair_confidence_semantic(&a.statement, &b.statement, p).await,
+                None => pair_confidence(&a.statement, &b.statement),
+            };
+            if let Some(sig) = sig {
                 if record_pair(conn, a, b, sig, now_ns)? {
                     new_rows += 1;
                 }
@@ -706,5 +881,196 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_contradictions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(remaining, 1);
+    }
+
+    // ── Hardening: stopword-first fallback, value-Jaccard, multi-clause, time ──
+
+    #[test]
+    fn subject_tokens_copula_free_drops_stopwords_before_truncating() {
+        // A leading stopword must NOT steal a slot from a content token: the
+        // budget is the first 3 CONTENT tokens, so 'nas' survives despite 'the'.
+        let s = subject_tokens("the big primary nas");
+        assert!(s.contains("nas"), "content token survives the stopword budget");
+        assert!(!s.contains("the"));
+    }
+
+    #[test]
+    fn superset_value_is_not_a_contradiction() {
+        // "nas at X" vs "nas at X primary" — the second is a superset, overlap
+        // 0.5, which is NOT below VALUE_JACCARD_THRESHOLD → no contradiction.
+        assert!(
+            pair_confidence("nas is at 192.168.1.20", "nas is at 192.168.1.20 primary").is_none(),
+            "a value superset must not be flagged",
+        );
+    }
+
+    #[test]
+    fn disjoint_value_still_fires() {
+        // Genuinely different values (overlap 0) still diverge.
+        let sig = pair_confidence("nas is at 192.168.1.20", "nas is at 192.168.1.21");
+        assert!(sig.is_some());
+        assert!(!sig.unwrap().negation);
+    }
+
+    #[test]
+    fn first_clause_isolates_subject_and_value_in_multi_clause_facts() {
+        // The router clause must not bleed into the nas fact's value set.
+        let v = value_tokens("nas is at 192.168.1.20 and router is at 10.0.0.1");
+        assert!(v.contains("192.168.1.20"));
+        assert!(!v.contains("router"), "second clause must be truncated");
+        assert!(!v.contains("10.0.0.1"));
+        // Whole when the conjunction has no second copula ("up and responsive").
+        assert!(value_tokens("vpn is up and responsive").contains("up"));
+        assert!(value_tokens("vpn is up and responsive").contains("responsive"));
+    }
+
+    #[test]
+    fn multi_clause_pair_detects_only_the_diverging_clause() {
+        let facts = vec![
+            gt(1, "nas is at 192.168.1.20 and router is at 10.0.0.1", "global", "verified", "{}"),
+            gt(2, "nas is at 10.0.0.5 and router is at 10.0.0.1", "global", "verified", "{}"),
+        ];
+        // Only the nas value diverges (router is identical in both) → exactly one pair.
+        assert_eq!(detect_contradictions(&facts).len(), 1);
+    }
+
+    #[test]
+    fn time_normalisation_equivalence_is_not_a_contradiction() {
+        // "5pm" ≡ "17:00" — equivalent values must NOT false-diverge.
+        assert!(pair_confidence("standup is at 5pm", "standup is at 17:00").is_none());
+        assert!(pair_confidence("standup is at 9:00", "standup is at 09:00").is_none());
+    }
+
+    #[test]
+    fn time_normalisation_divergence_still_fires() {
+        assert!(pair_confidence("standup is at 5pm", "standup is at 9am").is_some());
+    }
+
+    #[test]
+    fn normalize_token_clock_edges() {
+        assert_eq!(normalize_token("12am"), "00:00", "midnight");
+        assert_eq!(normalize_token("12pm"), "12:00", "noon");
+        assert_eq!(normalize_token("5pm"), "17:00");
+        assert_eq!(normalize_token("9am"), "09:00");
+        assert_eq!(normalize_token("17:00"), "17:00");
+        // Non-time tokens are returned verbatim (no false normalisation).
+        assert_eq!(normalize_token("192.168.1.20"), "192.168.1.20");
+        assert_eq!(normalize_token("team"), "team");
+        assert_eq!(normalize_token("spam"), "spam");
+    }
+
+    // ── Semantic (embedding-cosine) on-demand scan ───────────────────────────
+
+    use crate::providers::embed::EmbedResponse;
+
+    /// Mock embedder that maps each subject phrase to one of three orthogonal
+    /// slots by keyword, so synonyms ("nas" / "storage") share a slot and score
+    /// cosine 1.0. Mirrors the SlotMock pattern in `council::dissent` tests.
+    struct SlotMockEmbed;
+
+    #[async_trait::async_trait]
+    impl EmbedProvider for SlotMockEmbed {
+        fn name(&self) -> &'static str {
+            "slot-mock"
+        }
+        fn default_dim(&self) -> usize {
+            3
+        }
+        async fn embed(&self, req: EmbedRequest) -> anyhow::Result<EmbedResponse> {
+            let t = req.text.to_lowercase();
+            let slot = if t.contains("nas") || t.contains("storage") {
+                0
+            } else if t.contains("router") {
+                1
+            } else {
+                2
+            };
+            let mut v = vec![0.0f32; 3];
+            v[slot] = 1.0;
+            Ok(EmbedResponse {
+                vector: v,
+                model: "slot-mock".into(),
+                latency: std::time::Duration::from_micros(1),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_with_embed_catches_synonym_subjects_jaccard_cannot() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        // Synonym subjects ("nas" vs "storage server") with diverging values. The
+        // subjects share ZERO tokens, so the insert-time Jaccard trigger records
+        // nothing — the ledger is empty after both inserts.
+        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 1)
+            .unwrap();
+        groundtruth::insert(
+            &conn,
+            "storage server is at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            2,
+        )
+        .unwrap();
+        assert!(list_contradictions(&conn, true).unwrap().is_empty(), "Jaccard insert sees nothing");
+        // Deterministic re-scan (None) also finds nothing — subjects don't overlap.
+        assert_eq!(scan_contradictions(&conn, 10, None).await.unwrap(), 0);
+        // Semantic scan clusters nas ≈ storage → records the contradiction.
+        let mock = SlotMockEmbed;
+        assert_eq!(
+            scan_contradictions(&conn, 20, Some(&mock)).await.unwrap(),
+            1,
+            "embedding cosine catches the synonym subject"
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_none_embed_runs_the_deterministic_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 1)
+            .unwrap();
+        groundtruth::insert(&conn, "nas is at 10.0.0.5", &Source::OperatorRuntime, "global", 2)
+            .unwrap();
+        // Insert-time already recorded the divergence; clear it to exercise the
+        // scan(None) detection path directly.
+        conn.execute("DELETE FROM idx_contradictions", []).unwrap();
+        assert_eq!(
+            scan_contradictions(&conn, 99, None).await.unwrap(),
+            1,
+            "deterministic None-embed scan re-detects the value divergence"
+        );
+    }
+
+    #[tokio::test]
+    async fn pair_confidence_semantic_falls_back_to_jaccard_on_embed_error() {
+        // A failing embedder must make the semantic path return exactly what the
+        // sync Jaccard path returns.
+        struct FailingEmbed;
+        #[async_trait::async_trait]
+        impl EmbedProvider for FailingEmbed {
+            fn name(&self) -> &'static str {
+                "failing"
+            }
+            fn default_dim(&self) -> usize {
+                3
+            }
+            async fn embed(&self, _req: EmbedRequest) -> anyhow::Result<EmbedResponse> {
+                anyhow::bail!("embed model unavailable")
+            }
+        }
+        let f = FailingEmbed;
+        // Same-subject diverging value → both paths agree (Some, !negation).
+        let sync = pair_confidence("nas is at 192.168.1.20", "nas is at 10.0.0.5");
+        let semantic =
+            pair_confidence_semantic("nas is at 192.168.1.20", "nas is at 10.0.0.5", &f).await;
+        assert_eq!(sync.is_some(), semantic.is_some());
+        assert_eq!(sync.unwrap().negation, semantic.unwrap().negation);
+        // Different subject → both None.
+        assert!(
+            pair_confidence_semantic("nas is at 192.168.1.1", "router is at 192.168.1.1", &f)
+                .await
+                .is_none()
+        );
     }
 }

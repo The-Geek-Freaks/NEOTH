@@ -158,7 +158,7 @@ pub async fn run_groundtruth(args: GroundtruthArgs) -> Result<()> {
         GroundtruthAction::Revoke { id } => revoke(&conn, id, args.output),
         GroundtruthAction::State { id, state } => set_state(&conn, id, &state, args.output),
         GroundtruthAction::Contradictions { detect, resolved } => {
-            contradictions(&conn, detect, resolved, args.output)
+            contradictions(&conn, detect, resolved, args.output).await
         }
         GroundtruthAction::ResolveContradiction { id } => {
             resolve_contradiction(&conn, id, args.output)
@@ -639,7 +639,7 @@ fn set_state(conn: &rusqlite::Connection, id: i64, state: &str, output: OutputFo
 }
 
 /// GOLD-ADAPT-MEM-02 — `neoth groundtruth contradictions [--detect] [--resolved]`.
-fn contradictions(
+async fn contradictions(
     conn: &rusqlite::Connection,
     detect: bool,
     resolved: bool,
@@ -650,7 +650,13 @@ fn contradictions(
         .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
         .unwrap_or(0);
     let detected = if detect {
-        crate::memory::contradiction::scan_contradictions(conn, now_ns)?
+        // Use semantic (embedding cosine) subject-similarity when an embed
+        // provider is configured + loadable; the scan falls back to deterministic
+        // Jaccard per-pair otherwise (same seam as cli/dream.rs).
+        let config = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+        let embed = crate::providers::embed_provider_from_config(&config).await;
+        info!(semantic = embed.is_some(), "contradiction scan starting");
+        crate::memory::contradiction::scan_contradictions(conn, now_ns, embed.as_deref()).await?
     } else {
         0
     };
