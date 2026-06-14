@@ -1070,6 +1070,20 @@ pub struct SessionHealthConfig {
     /// Alert when the recent day's grade is at or below this letter (`A`..`F`).
     /// Default `D`.
     pub alert_at_or_below: String,
+    /// Regression alert: the most-recent day also alerts when its score falls
+    /// more than this many points below the trailing baseline (a sharp
+    /// "worse-than-usual" drop), even if its absolute grade is above
+    /// `alert_at_or_below`. Default 20.0 (≈ one letter grade).
+    pub regression_drop_threshold: f64,
+    /// How many prior days form the regression baseline (a trailing mean of
+    /// qualifying days). Default 7. Needs ≥3 qualifying days or the regression
+    /// check is skipped (no false alerts on a fresh install).
+    pub regression_baseline_days: u64,
+    /// A regression alert ALSO requires the day's score to be below this floor,
+    /// so a drop from an A-baseline into a still-healthy B never fires noise.
+    /// Default 75.0 (the C/B boundary — only alert once the day is genuinely
+    /// degraded). Set to 100.0 to alert on any baseline drop.
+    pub regression_min_score_floor: f64,
 }
 
 /// 6 hours — the session-health cron default cadence.
@@ -1082,6 +1096,9 @@ impl Default for SessionHealthConfig {
             interval_secs: DEFAULT_SESSION_HEALTH_INTERVAL_SECS,
             min_activity: 10,
             alert_at_or_below: "D".to_string(),
+            regression_drop_threshold: 20.0,
+            regression_baseline_days: 7,
+            regression_min_score_floor: 75.0,
         }
     }
 }
