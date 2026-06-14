@@ -418,10 +418,22 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // await point while in scope.
     let query = args.query.clone();
     let limit = args.limit;
+    // GOLD-ADAPT-MEM-03 budget-adaptive lane selection. Classified on the async
+    // side (pure, no I/O) and moved into the blocking task. A genuinely-no-recall
+    // query (status/identity/greeting) sheds the warm+cold scans; ordinary and
+    // historical queries cover all available text tiers.
+    let budget = crate::memory::recall_lanes::budget_for(
+        crate::memory::recall_gate::classify_recall_need(&query),
+    );
     let (rows, reinforcements) = tokio::task::spawn_blocking(
         move || -> Result<RecallTaskOutput> {
             // RECALL-METER-01: time the full multi-tier recall query.
             let recall_t0 = std::time::Instant::now();
+            // GOLD-ADAPT-MEM-03 — Semantic lane (hot tier): FTS5/bm25 keyword
+            // match, LIKE fallback. Hits stay in their native bm25-relevance
+            // order so the lane's rank carries the keyword-match signal into the
+            // RRF fusion below (previously this ordering was fetched then thrown
+            // away when everything was re-sorted by composite_score alone).
             let hot = match recall_fts(&conn, &query, limit) {
                 Ok(hits) if !hits.is_empty() => hits,
                 Ok(_) => recall_like(&conn, &query, limit)?,
@@ -430,20 +442,44 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                     recall_like(&conn, &query, limit)?
                 }
             };
-            let warm = recall_warm_like(&conn, &query, limit)?;
-            let cold = recall_cold_like(&conn, &query, limit)?;
+
+            // Episodic lane (warm + cold tier-utility) — skipped for Skip-tier
+            // queries (status/identity) to save the LIKE scans. Ranked in place
+            // by composite_score FIRST so its within-lane rank carries the full
+            // JV-MEM-05/07/09/14 signal (importance/trust/recency/access/length)
+            // into the fusion.
+            let mut episodic_lane: Vec<EpisodeHit> = Vec::new();
+            if budget.episodic {
+                let warm = recall_warm_like(&conn, &query, limit)?;
+                let cold = recall_cold_like(&conn, &query, limit)?;
+                episodic_lane.reserve(warm.len() + cold.len());
+                episodic_lane.extend(warm);
+                episodic_lane.extend(cold);
+                rank_in_place(&mut episodic_lane, now_ns);
+            }
+
             let gt_rows = recall_groundtruth_like(&conn, &query, limit)?;
 
-            let mut episodic: Vec<EpisodeHit> =
-                Vec::with_capacity(hot.len() + warm.len() + cold.len());
-            episodic.extend(hot);
-            episodic.extend(warm);
-            episodic.extend(cold);
-            rank_in_place(&mut episodic, now_ns);
+            // Late fusion: RRF across the Semantic + Episodic lanes, deduped by
+            // text_hash (a hot hit and a warm summary of the same content
+            // collapse to one). Semantic is weighted above Episodic. Groundtruth
+            // is operator-asserted truth → prepended, never fused/scored.
+            let mut lanes: Vec<crate::memory::recall_lanes::LaneResult> = Vec::with_capacity(2);
+            lanes.push(crate::memory::recall_lanes::LaneResult {
+                weight: crate::memory::recall_lanes::SEMANTIC_WEIGHT,
+                hits: hot,
+            });
+            if !episodic_lane.is_empty() {
+                lanes.push(crate::memory::recall_lanes::LaneResult {
+                    weight: crate::memory::recall_lanes::EPISODIC_WEIGHT,
+                    hits: episodic_lane,
+                });
+            }
+            let fused = crate::memory::recall_lanes::fuse_lanes(&lanes, limit);
 
-            let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + episodic.len());
+            let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + fused.len());
             rows.extend(gt_rows);
-            rows.extend(episodic);
+            rows.extend(fused);
             rows.truncate(limit);
 
             // RECALL-METER-01: record a best-effort latency sample for the

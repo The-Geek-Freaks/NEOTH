@@ -50,6 +50,8 @@ pub mod operator_md;
 pub mod pre_decay_export;
 /// GOLD-ADAPT-MEM-09 — recall decision gating (skip / single / multi tier).
 pub mod recall_gate;
+/// GOLD-ADAPT-MEM-03 — parallel recall lanes + RRF late fusion.
+pub mod recall_lanes;
 pub mod region_router;
 pub mod channel_weights;
 pub mod regions;
