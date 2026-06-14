@@ -3354,55 +3354,90 @@ async fn maybe_recall_block_at(prompt: &str, db_path: &std::path::Path) -> Optio
     // mirroring `answer_conversational_recall`. A JoinError degrades to None.
     let prompt_owned = prompt.to_string();
     let db_owned = db_path.to_path_buf();
-    let hits = tokio::task::spawn_blocking(move || recall_episodes_for_block(&db_owned, &prompt_owned))
-        .await
-        .ok()
-        .flatten()?;
-    if hits.is_empty() {
-        return None;
-    }
-    Some(render_recall_block(&hits))
+    let output =
+        tokio::task::spawn_blocking(move || recall_lanes_for_block(&db_owned, &prompt_owned))
+            .await
+            .ok()
+            .flatten()?;
+    Some(render_recall_block_layered(&output))
 }
 
-/// Routed multi-region recall for the auto-recall block (region-classify →
-/// per-region LIKE recall → importance-sorted merge). Best-effort: any open /
-/// query error → `None`. Synchronous (rusqlite) — call inside `spawn_blocking`.
-fn recall_episodes_for_block(
+/// GOLD-ADAPT-JV-MEM-10 — three-lane recall for the auto-recall block: canonical
+/// ground-truth facts + region-routed episodes + prompt-relevant pending
+/// contradictions, each lane queried independently. `None` when ALL lanes are
+/// empty (a non-Skip turn that recalls nothing suppresses Block::D entirely).
+/// Best-effort: a DB open error → `None`. Synchronous (rusqlite) — call inside
+/// `spawn_blocking`.
+fn recall_lanes_for_block(
     db_path: &std::path::Path,
     prompt: &str,
-) -> Option<Vec<crate::memory::views::EpisodeHit>> {
-    // Cap per turn so a large episode store can't bloat the prompt. The
-    // budget-aware Block::D degradation is a separate later refinement; 5
-    // length-bounded snippets stay comfortably under the cap.
+) -> Option<crate::cli::recall::RecallOutput> {
+    // Per-lane cap so a large store can't bloat the prompt. The budget-aware
+    // Block::D degradation is a separate later refinement; length-bounded
+    // snippets keep the block comfortably under the cap.
     const RECALL_BLOCK_LIMIT: usize = 5;
     let conn = crate::memory::store::open(db_path).ok()?;
     let plan = crate::memory::region_router::route_query(prompt);
-    crate::memory::region_router::run_routed_recall(&conn, &plan, prompt, RECALL_BLOCK_LIMIT).ok()
+    let output = crate::cli::recall::query_three_lanes(&conn, &plan, prompt, RECALL_BLOCK_LIMIT);
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
+    }
 }
 
-/// Render recall hits into a trailing Block::D system section. Each line is the
-/// episode tier + a length-bounded, newline-flattened snippet so one episode =
-/// one compact line and the whole block stays prompt-budget-friendly.
-fn render_recall_block(hits: &[crate::memory::views::EpisodeHit]) -> String {
+/// Length-bound + newline-flatten one recall statement so one item = one compact
+/// line and the whole Block::D stays prompt-budget-friendly.
+fn recall_snippet(text: &str) -> String {
     const MAX_SNIPPET_CHARS: usize = 240;
-    let mut out = String::from(
+    let text = text.trim();
+    let s = if text.chars().count() > MAX_SNIPPET_CHARS {
+        let mut s: String = text.chars().take(MAX_SNIPPET_CHARS).collect();
+        s.push('…');
+        s
+    } else {
+        text.to_string()
+    };
+    s.replace('\n', " ")
+}
+
+/// GOLD-ADAPT-JV-MEM-10 — render the three recall lanes as a trailing Block::D
+/// system section with DISTINCT, confidence-tiered sub-headings, so the model
+/// can tell an operator-asserted canonical fact from a fuzzy episode from a
+/// flagged contradiction. An empty lane emits no heading (a fresh install with
+/// no ground-truth / no contradictions shows only the episodes section). The
+/// caller only invokes this when at least one lane is non-empty.
+fn render_recall_block_layered(out: &crate::cli::recall::RecallOutput) -> String {
+    let mut s = String::from(
         "## Relevant memory (recall)\n\
-         Background retrieved from your own stored memory — use it for continuity; \
-         it is context, not the current request:\n",
+         Background retrieved from your own stored memory — context, not the \
+         current request:\n",
     );
-    for (i, h) in hits.iter().enumerate() {
-        let text = h.text.trim();
-        let snippet = if text.chars().count() > MAX_SNIPPET_CHARS {
-            let mut s: String = text.chars().take(MAX_SNIPPET_CHARS).collect();
-            s.push('…');
-            s
-        } else {
-            text.to_string()
-        };
-        let snippet = snippet.replace('\n', " ");
-        out.push_str(&format!("{}. [{}] {}\n", i + 1, h.tier, snippet));
+    if !out.canonical.is_empty() {
+        s.push_str("### Canonical facts (operator-asserted)\n");
+        for (i, h) in out.canonical.iter().enumerate() {
+            s.push_str(&format!("{}. {}\n", i + 1, recall_snippet(&h.text)));
+        }
     }
-    out
+    if !out.episodes.is_empty() {
+        s.push_str("### Relevant episodes\n");
+        for (i, h) in out.episodes.iter().enumerate() {
+            s.push_str(&format!("{}. [{}] {}\n", i + 1, h.tier, recall_snippet(&h.text)));
+        }
+    }
+    if !out.contradictions.is_empty() {
+        s.push_str("### Flagged contradictions (pending review — treat as disputed)\n");
+        for (i, c) in out.contradictions.iter().enumerate() {
+            s.push_str(&format!(
+                "{}. \"{}\" vs \"{}\" (confidence {:.2})\n",
+                i + 1,
+                recall_snippet(&c.statement_a),
+                recall_snippet(&c.statement_b),
+                c.confidence
+            ));
+        }
+    }
+    s
 }
 
 /// The operator's role as a human-readable label. The free-form
@@ -6344,11 +6379,22 @@ mod tests {
             access_count: 0,
             trust: 1,
         };
-        let out = render_recall_block(std::slice::from_ref(&hit));
+        let output = crate::cli::recall::RecallOutput {
+            episodes: vec![hit],
+            ..Default::default()
+        };
+        let out = render_recall_block_layered(&output);
         assert!(out.contains("Relevant memory"), "header: {out}");
+        assert!(out.contains("### Relevant episodes"), "episodes sub-heading: {out}");
         assert!(out.contains("[hot]"), "tier tag: {out}");
         assert!(out.contains("line1 line2"), "newline flattened to space: {out}");
         assert!(out.contains('…'), "over-long snippet truncated with ellipsis");
+        // JV-MEM-10: empty lanes emit no sub-heading.
+        assert!(!out.contains("Canonical facts"), "empty canonical lane → no heading: {out}");
+        assert!(
+            !out.contains("Flagged contradictions"),
+            "empty contradiction lane → no heading: {out}"
+        );
     }
 
     #[test]

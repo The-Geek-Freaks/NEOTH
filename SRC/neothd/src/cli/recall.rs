@@ -1088,6 +1088,103 @@ fn recall_groundtruth_like(
     Ok(rows)
 }
 
+/// GOLD-ADAPT-JV-MEM-10 — one flagged contradiction rendered for prompt
+/// injection: the two conflicting operator-asserted statements + the detector's
+/// confidence. Distinct from [`crate::memory::contradiction::ContradictionRow`]
+/// (which carries fact *ids*) — the recall renderer needs the statement TEXT.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ContradictionLine {
+    pub statement_a: String,
+    pub statement_b: String,
+    pub confidence: f32,
+}
+
+/// GOLD-ADAPT-JV-MEM-10 — three confidence-tiered recall lanes for layered
+/// prompt injection, queried + ranked INDEPENDENTLY so the renderer can label
+/// and order them by trust rather than flattening everything into one
+/// undifferentiated block:
+///   - `canonical`   — operator-asserted ground-truth facts (highest trust).
+///   - `episodes`    — region-routed episodic recall (the prior flat lane).
+///   - `contradictions` — prompt-relevant PENDING fact-conflicts (caution flag).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RecallOutput {
+    pub canonical: Vec<EpisodeHit>,
+    pub episodes: Vec<EpisodeHit>,
+    pub contradictions: Vec<ContradictionLine>,
+}
+
+impl RecallOutput {
+    /// True when no lane surfaced anything — the caller suppresses the whole
+    /// Block::D section (same effect as a Skip-tier turn).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.canonical.is_empty() && self.episodes.is_empty() && self.contradictions.is_empty()
+    }
+}
+
+/// Max pending contradictions surfaced into one prompt — operator-attention
+/// items, kept tiny so a noisy ledger can't crowd out the actual recall.
+const CONTRADICTION_LANE_LIMIT: usize = 3;
+
+/// GOLD-ADAPT-JV-MEM-10 — populate the three recall lanes for `prompt`.
+/// **Canonical:** [`recall_groundtruth_like`] (already `fact_state='verified'`
+/// AND `revoked_at IS NULL` gated — candidate/deprecated facts never leak).
+/// **Episodes:** [`crate::memory::region_router::run_routed_recall`] (the SAME
+/// region-weighted call the flat Block::D path used, so no recall regression).
+/// **Contradictions:** prompt-relevant pending pairs joined to their statement
+/// text. Best-effort PER LANE — a lane query error yields an empty lane, never
+/// an `Err`, so one bad lane can't suppress the others.
+pub(crate) fn query_three_lanes(
+    conn: &Connection,
+    plan: &crate::memory::region_router::RouterPlan,
+    prompt: &str,
+    limit: usize,
+) -> RecallOutput {
+    let canonical = recall_groundtruth_like(conn, prompt, limit).unwrap_or_default();
+    let episodes = crate::memory::region_router::run_routed_recall(conn, plan, prompt, limit)
+        .unwrap_or_default();
+    let contradictions =
+        recall_pending_contradictions(conn, prompt, CONTRADICTION_LANE_LIMIT).unwrap_or_default();
+    RecallOutput {
+        canonical,
+        episodes,
+        contradictions,
+    }
+}
+
+/// Prompt-relevant PENDING contradictions, joined to both facts' statement text.
+/// Surfaces only conflicts touching the current topic (a `LIKE` on EITHER
+/// statement) so the model treats disputed facts with caution without drowning
+/// every turn in the operator's whole unresolved-conflict backlog. Both facts
+/// must be un-revoked. Highest-confidence first.
+fn recall_pending_contradictions(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<ContradictionLine>> {
+    let pattern = format!("%{query}%");
+    let mut stmt = conn.prepare(
+        "SELECT a.statement, b.statement, c.confidence \
+         FROM idx_contradictions c \
+         JOIN idx_groundtruth a ON a.id = c.fact_a_id \
+         JOIN idx_groundtruth b ON b.id = c.fact_b_id \
+         WHERE c.decision = 'pending' \
+           AND a.revoked_at IS NULL AND b.revoked_at IS NULL \
+           AND (a.statement LIKE ?1 COLLATE NOCASE OR b.statement LIKE ?1 COLLATE NOCASE) \
+         ORDER BY c.confidence DESC \
+         LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![pattern, limit as i64], |r| {
+            Ok(ContradictionLine {
+                statement_a: r.get(0)?,
+                statement_b: r.get(1)?,
+                confidence: r.get::<_, f64>(2)? as f32,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 fn hot_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeHit> {
     Ok(EpisodeHit {
         event_id: r.get(0)?,
@@ -2136,5 +2233,103 @@ mod tests {
         assert_eq!(card.total_recalls, 12);
         assert!((card.hit_rate - 1.0).abs() < 1e-9, "all 10 non-skip returned rows");
         assert!(card.data_sufficient);
+    }
+
+    // ── GOLD-ADAPT-JV-MEM-10 — three-lane recall ─────────────────────────
+
+    #[test]
+    fn query_three_lanes_populates_all_three_lanes() {
+        use crate::memory::region_router::route_query;
+        use crate::memory::store;
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = store::open(&db).unwrap();
+        // Episodes lane: an idx_episode row matching the prompt.
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (1, 1, 1000, ?1, 'h', 0.7, 0)",
+            params!["debugging the payment flow last week"],
+        )
+        .unwrap();
+        // Canonical lane: a VERIFIED ground-truth fact matching the prompt.
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, statement, source, scope, asserted_at, fact_state) \
+             VALUES (10, ?1, 'op', 'global', 1000, 'verified')",
+            params!["the payment provider is Stripe"],
+        )
+        .unwrap();
+        // Contradiction lane: two verified facts + a PENDING contradiction; both
+        // statements mention 'payment' so the prompt-relevance filter matches.
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, statement, source, scope, asserted_at, fact_state) \
+             VALUES (11, ?1, 'op', 'global', 1001, 'verified'), (12, ?2, 'op', 'global', 1002, 'verified')",
+            params!["the payment retry limit is 3", "the payment retry limit is 5"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_contradictions (fact_a_id, fact_b_id, confidence, detected_at, decision) \
+             VALUES (11, 12, 0.9, 1003, 'pending')",
+            [],
+        )
+        .unwrap();
+
+        let plan = route_query("payment");
+        let out = query_three_lanes(&conn, &plan, "payment", 5);
+        assert!(
+            out.canonical.iter().any(|h| h.text.contains("Stripe")),
+            "canonical lane must surface the verified ground-truth fact"
+        );
+        assert!(!out.episodes.is_empty(), "episodes lane must surface the matching episode");
+        assert_eq!(out.contradictions.len(), 1, "exactly one pending contradiction matches 'payment'");
+        let c = &out.contradictions[0];
+        assert!(
+            c.statement_a.contains("retry limit") && c.statement_b.contains("retry limit"),
+            "contradiction JOIN must carry BOTH statements' text, not fact ids: {c:?}"
+        );
+        assert!((c.confidence - 0.9).abs() < 1e-4);
+        assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn query_three_lanes_excludes_unverified_facts_and_resolved_contradictions() {
+        use crate::memory::region_router::route_query;
+        use crate::memory::store;
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = store::open(&db).unwrap();
+        // A CANDIDATE (unverified) fact must NOT leak into the canonical lane.
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, statement, source, scope, asserted_at, fact_state) \
+             VALUES (1, ?1, 'omi', 'global', 1000, 'candidate')",
+            params!["the widget color is teal"],
+        )
+        .unwrap();
+        // A DISMISSED contradiction must NOT surface (only 'pending' does).
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, statement, source, scope, asserted_at, fact_state) \
+             VALUES (2, ?1, 'op', 'global', 1000, 'verified'), (3, ?2, 'op', 'global', 1000, 'verified')",
+            params!["the widget color is red", "the widget color is blue"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_contradictions (fact_a_id, fact_b_id, confidence, detected_at, decision) \
+             VALUES (2, 3, 0.8, 1000, 'dismissed')",
+            [],
+        )
+        .unwrap();
+        let plan = route_query("widget color");
+        let out = query_three_lanes(&conn, &plan, "widget color", 5);
+        assert!(
+            !out.canonical.iter().any(|h| h.text.contains("teal")),
+            "a 'candidate' fact must NOT appear in the canonical lane (verified-only gate)"
+        );
+        assert!(
+            out.canonical.iter().any(|h| h.text.contains("red") || h.text.contains("blue")),
+            "verified facts SHOULD populate the canonical lane"
+        );
+        assert!(
+            out.contradictions.is_empty(),
+            "a 'dismissed' contradiction must NOT surface (pending-only gate)"
+        );
     }
 }
