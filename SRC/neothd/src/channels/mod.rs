@@ -56,6 +56,11 @@ pub mod matrix_client;
 pub mod irc_api;
 #[cfg(feature = "irc-channel")]
 pub mod irc;
+/// GOLD-FEAT-10 — Mattermost (self-hosted, Slack-style team chat). WebSocket
+/// receive + REST send over the always-present `tokio-tungstenite` + `reqwest`
+/// deps — no new crate, no feature gate. NEOTH dials OUT, so no public URL.
+pub mod mattermost;
+pub mod mattermost_api;
 pub mod pears_bridge;
 pub mod probe;
 pub mod rate_limit;
@@ -115,6 +120,10 @@ pub enum ChannelKind {
     /// public URL). The adapter module is behind the `irc-channel` feature; this
     /// variant + its formatter/probe row stay compiled in every build.
     Irc,
+    /// GOLD-FEAT-10 — Mattermost (self-hosted, Slack-style team chat) via the
+    /// WebSocket API (NEOTH dials OUT, so no public URL). Always compiled —
+    /// reuses `tokio-tungstenite` + `reqwest`, no new crate.
+    Mattermost,
 }
 
 impl ChannelKind {
@@ -130,6 +139,7 @@ impl ChannelKind {
             ChannelKind::Matrix => "matrix",
             ChannelKind::Line => "line",
             ChannelKind::Irc => "irc",
+            ChannelKind::Mattermost => "mattermost",
         }
     }
 }

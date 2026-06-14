@@ -126,6 +126,12 @@ pub struct Credentials {
     pub irc_channels: Option<String>,
     /// GOLD-FEAT-10 — use TLS for the IRC connection. `None` ⇒ true.
     pub irc_tls: Option<bool>,
+    /// GOLD-FEAT-10 — Mattermost server base URL (e.g. `https://mm.example.com`).
+    /// NEOTH dials out to the WebSocket API, so no public URL is needed. Not a
+    /// secret.
+    pub mattermost_url: Option<String>,
+    /// GOLD-FEAT-10 — Mattermost personal-access or bot token. Secret.
+    pub mattermost_token: Option<SecretString>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -277,6 +283,8 @@ impl Credentials {
             irc_password,
             irc_channels,
             irc_tls,
+            mattermost_url,
+            mattermost_token,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -321,6 +329,8 @@ impl Credentials {
             && irc_password.is_none()
             && irc_channels.is_none()
             && irc_tls.is_none()
+            && mattermost_url.is_none()
+            && mattermost_token.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

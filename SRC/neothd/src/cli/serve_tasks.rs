@@ -1479,6 +1479,47 @@ pub(crate) fn spawn_channel_adapters(
         (None, None, _) => {}
     }
 
+    // GOLD-FEAT-10 — Mattermost inbound via the WebSocket API (NEOTH dials OUT,
+    // no public URL). Always compiled (reuses tokio-tungstenite + reqwest, no new
+    // crate). Spawns when the server URL + token + a provider are all present
+    // (`MattermostChannel::run` fetches /users/me then streams the WS).
+    match (
+        creds.mattermost_url.clone(),
+        creds.mattermost_token.clone(),
+        shared_provider.as_ref(),
+    ) {
+        (Some(url), Some(token), Some(provider)) => {
+            let channel = crate::channels::mattermost::MattermostChannel::new(url, token);
+            let handler: PipelineHandler = build_channel_handler(
+                provider.clone(),
+                config,
+                writer,
+                provider_meter,
+                rate_limiter,
+                segment_path,
+                shared_views_conn,
+                reload_controller,
+            );
+            spawn_channel_run(channel, handler, "Mattermost", channel_tasks);
+            info!(
+                channel = "mattermost",
+                status = "LIVE",
+                "channel: spawned (mattermost WebSocket loop)"
+            );
+        }
+        (Some(_), Some(_), None) => warn!(
+            channel = "mattermost",
+            status = "CONFIGURED-NOT-STARTED",
+            "Mattermost configured but provider unavailable; channel not started"
+        ),
+        (Some(_), None, _) | (None, Some(_), _) => warn!(
+            channel = "mattermost",
+            status = "CONFIGURED-NOT-STARTED",
+            "Mattermost needs BOTH mattermost_url and mattermost_token; only one supplied — not started"
+        ),
+        (None, None, _) => {}
+    }
+
     // GOLD-FEAT-10 — Matrix inbound via matrix-sdk (feature `matrix-channel`).
     // Spawns when the homeserver + bot user id + a provider are all present;
     // the adapter logs in (or restores the persisted device session) lazily on

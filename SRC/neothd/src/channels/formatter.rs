@@ -109,6 +109,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Matrix => Some(Box::new(MatrixFormatter)),
         ChannelKind::Line => Some(Box::new(LineFormatter)),
         ChannelKind::Irc => Some(Box::new(IrcFormatter)),
+        ChannelKind::Mattermost => Some(Box::new(MattermostFormatter)),
     }
 }
 
@@ -528,6 +529,48 @@ impl Formatter for IrcFormatter {
             rendered.push_str("```");
         }
         split_into_messages(&rendered, IRC_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
+    }
+}
+
+// ── Mattermost (GitHub-flavored Markdown) ────────────────────────────
+
+/// Mattermost formatter. Mattermost renders full GitHub-flavored Markdown, so —
+/// like Slack — this formatter is permissive: pass the canonical text through
+/// verbatim and append code blocks as triple-backtick fences (with the language
+/// hint, which Mattermost DOES use for syntax highlighting).
+pub struct MattermostFormatter;
+
+/// Mattermost's default `MaxPostSize` is 16383 chars; split a hair under it so
+/// the `[N/M]` continuation marker + any server-side trimming stay safe.
+const MATTERMOST_MAX_CHARS: usize = 16000;
+
+impl Formatter for MattermostFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Mattermost
+    }
+    fn max_chars_per_message(&self) -> usize {
+        MATTERMOST_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        let mut rendered = String::new();
+        rendered.push_str(&reply.text);
+        for cb in &reply.code_blocks {
+            rendered.push_str("\n```");
+            if !cb.lang.is_empty() {
+                rendered.push_str(&cb.lang);
+            }
+            rendered.push('\n');
+            rendered.push_str(&cb.body);
+            if !cb.body.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered.push_str("```");
+        }
+        split_into_messages(
+            &rendered,
+            MATTERMOST_MAX_CHARS - SPLIT_HEADROOM,
+            reply.length_hint,
+        )
     }
 }
 

@@ -82,6 +82,10 @@ pub struct ChannelCredsView {
     pub irc_server: bool,
     /// GOLD-FEAT-10 — IRC bot nick present.
     pub irc_nick: bool,
+    /// GOLD-FEAT-10 — Mattermost server URL present.
+    pub mattermost_url: bool,
+    /// GOLD-FEAT-10 — Mattermost personal-access/bot token present.
+    pub mattermost_token: bool,
 }
 
 impl ChannelCredsView {
@@ -114,12 +118,14 @@ impl ChannelCredsView {
             line_channel_secret: creds.line_channel_secret.is_some(),
             irc_server: creds.irc_server.is_some(),
             irc_nick: creds.irc_nick.is_some(),
+            mattermost_url: creds.mattermost_url.is_some(),
+            mattermost_token: creds.mattermost_token.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 10] = [
+pub const ALL_CHANNELS: [ChannelKind; 11] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -130,6 +136,7 @@ pub const ALL_CHANNELS: [ChannelKind; 10] = [
     ChannelKind::Matrix,
     ChannelKind::Line,
     ChannelKind::Irc,
+    ChannelKind::Mattermost,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -248,6 +255,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             ),
             (false, false) => (ProbeStatus::NotConfigured, "no irc config"),
             _ => (ProbeStatus::Error, "IRC needs BOTH irc_server AND irc_nick"),
+        },
+        ChannelKind::Mattermost => match (v.mattermost_url, v.mattermost_token) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "mattermost_url + mattermost_token configured — NEOTH dials out to the WebSocket API (no public URL)",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no mattermost config"),
+            _ => (
+                ProbeStatus::Error,
+                "Mattermost needs BOTH mattermost_url AND mattermost_token",
+            ),
         },
     };
     ChannelHealth {
