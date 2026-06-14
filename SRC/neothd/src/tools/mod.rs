@@ -41,3 +41,6 @@ pub mod web_extract;
 /// GOLD-ADOPT-04 — persistent selector cache wrapping web_extract with
 /// adaptive recovery + WAL audit.
 pub mod web_selector_cache;
+/// GOLD-ADAPT-SKILL-03 — conditional-GET (HTTP-304) doc cache for `web_fetch`
+/// (the NEOTH-correct form of the agent-skills `sdd-cache` hook).
+pub mod web_doc_cache;

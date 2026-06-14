@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use tokio::net::lookup_host;
 
 use crate::providers::http_client;
+use crate::tools::web_doc_cache;
 
 /// Cloud metadata hostnames that resolve to link-local 169.254.x.x in
 /// practice but are sometimes resolvable to public IPs in misconfigured
@@ -100,19 +101,72 @@ async fn fetch_inner(url: &str) -> Result<(String, FetchResult)> {
     // and call `fetch` again (each call re-validates).
     let client =
         http_client::build_client_no_redirect().context("build web_fetch reqwest client")?;
-    let resp = client
+
+    // GOLD-ADAPT-SKILL-03 — conditional-GET doc cache: if we hold a prior copy,
+    // revalidate it with the origin (If-None-Match / If-Modified-Since). The
+    // SSRF guard above + the no-redirect client still gate this request; the
+    // cache only adds validator headers and a 304-serve branch, and is inert
+    // until `web_doc_cache::init` has opted the process in.
+    let cache_dir = web_doc_cache::dir();
+    let cached = cache_dir
+        .as_deref()
+        .and_then(|d| web_doc_cache::lookup(d, url));
+
+    let mut req = client
         .get(parsed.as_str())
-        .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)")
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?;
+        .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)");
+    if let Some(c) = &cached {
+        if let Some(etag) = &c.etag {
+            req = req.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
+        }
+        if let Some(lm) = &c.last_modified {
+            req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm.as_str());
+        }
+    }
+    let resp = req.send().await.with_context(|| format!("GET {url}"))?;
     let status = resp.status().as_u16();
+
+    // 304 Not Modified — the origin confirms our cached copy is current. Serve
+    // it (re-deriving the stripped text so the result is byte-identical to a
+    // fresh fetch of the same body).
+    if status == 304 {
+        if let Some(c) = cached {
+            let (text, truncated) = derive_text(&c.raw, &c.content_type);
+            let bytes = c.raw.len();
+            return Ok((
+                c.raw,
+                FetchResult {
+                    url: url.to_string(),
+                    status: c.status,
+                    content_type: c.content_type,
+                    bytes,
+                    text,
+                    truncated,
+                },
+            ));
+        }
+        // 304 without a cached body (protocol violation, or the entry was
+        // evicted mid-flight) — nothing to serve. Fail loudly, never silently.
+        anyhow::bail!("web_fetch: {url} returned 304 with no cached body to serve");
+    }
+
     let content_type = resp
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
+    // Capture cache validators BEFORE the body consumes `resp`.
+    let etag = resp
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let last_modified = resp
+        .headers()
+        .get(reqwest::header::LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let body = resp
         .bytes()
         .await
@@ -125,17 +179,39 @@ async fn fetch_inner(url: &str) -> Result<(String, FetchResult)> {
         );
     }
     let raw = String::from_utf8_lossy(&body).into_owned();
-    let (text, truncated) = if content_type.starts_with("text/html") {
-        let stripped = strip_html(&raw);
-        truncate(&stripped, MAX_EXTRACTED_BYTES)
-    } else if content_type.starts_with("text/")
-        || content_type.contains("json")
-        || content_type.contains("xml")
-    {
-        truncate(&raw, MAX_EXTRACTED_BYTES)
-    } else {
-        (String::new(), false)
-    };
+    let (text, truncated) = derive_text(&raw, &content_type);
+
+    // Cache only a successful, revalidatable, bounded body. A response with no
+    // ETag/Last-Modified cannot be conditionally revalidated, so caching it
+    // would risk serving stale content — skip it.
+    if let Some(dir) = &cache_dir {
+        // doc-cache review LOW-1: only a full 200 OK is cacheable — a 206
+        // Partial Content (or other 2xx) would cache an incomplete body.
+        // LOW-2: never cache a response whose URL carries a credential param.
+        if status == 200
+            && (etag.is_some() || last_modified.is_some())
+            && raw.len() <= web_doc_cache::MAX_CACHEABLE_BYTES
+            && !web_doc_cache::url_has_credential_params(url)
+        {
+            let stored_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            web_doc_cache::store(
+                dir,
+                &web_doc_cache::CachedDoc {
+                    url: url.to_string(),
+                    etag,
+                    last_modified,
+                    content_type: content_type.clone(),
+                    status,
+                    raw: raw.clone(),
+                    stored_unix,
+                },
+            );
+        }
+    }
+
     Ok((
         raw,
         FetchResult {
@@ -147,6 +223,22 @@ async fn fetch_inner(url: &str) -> Result<(String, FetchResult)> {
             truncated,
         },
     ))
+}
+
+/// Strip + truncate a raw body into displayed text by content type. Shared by
+/// the live fetch and the 304-cache-hit path so both produce identical text.
+fn derive_text(raw: &str, content_type: &str) -> (String, bool) {
+    if content_type.starts_with("text/html") {
+        let stripped = strip_html(raw);
+        truncate(&stripped, MAX_EXTRACTED_BYTES)
+    } else if content_type.starts_with("text/")
+        || content_type.contains("json")
+        || content_type.contains("xml")
+    {
+        truncate(raw, MAX_EXTRACTED_BYTES)
+    } else {
+        (String::new(), false)
+    }
 }
 
 /// SX-01: parse + validate URL. Rejects non-http(s) schemes, hostnames

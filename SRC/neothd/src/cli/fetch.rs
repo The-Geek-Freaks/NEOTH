@@ -37,6 +37,10 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
     if args.jina && args.selector.is_some() {
         anyhow::bail!("--jina and --selector are mutually exclusive");
     }
+    // GOLD-ADAPT-SKILL-03 — opt this fetch process into the conditional-GET doc
+    // cache so a re-fetch of the same documentation URL is revalidated (304),
+    // not re-downloaded. Applies to plain, --selector, and --jina fetches.
+    crate::tools::web_doc_cache::init(&crate::config::FreedomConfig::default_neoth_home());
     // GOLD-ADOPT-04 — CSS-selector extraction path.
     if let Some(selector) = args.selector.clone() {
         if selector.trim().is_empty() {
