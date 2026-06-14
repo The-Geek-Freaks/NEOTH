@@ -211,10 +211,13 @@ pub fn score_response(resp: &HemisphereResponse) -> QualityScore {
 ///     plain neutral.
 ///   - **Structural bonus**: +0.05 per structural cue (code block,
 ///     markdown list, citation marker), capped at +0.15.
+///   - **N-Space penalty** (GOLD-ADAPT-LOWKEY-03): graduated per-group penalty
+///     for AI-theater / filler / disclaimer / hedging anti-patterns via
+///     [`super::nspace::scan_nspace`], capped at `NSPACE_PENALTY_CAP` (0.50).
 ///
 /// Final formula:
 /// ```text
-/// raw = length_score - refusal_penalty + structural_bonus
+/// raw = length_score - refusal_penalty - nspace_penalty + structural_bonus
 /// clamped = raw.clamp(0.0, 1.0)
 /// ```
 pub fn dynamic_signal_from_text(text: &str) -> f32 {
@@ -226,8 +229,15 @@ pub fn dynamic_signal_from_text(text: &str) -> f32 {
     let length_score = length_signal(trimmed);
     let refusal_penalty = refusal_penalty_signal(trimmed);
     let structural_bonus = structural_signal(trimmed);
+    // GOLD-ADAPT-LOWKEY-03 — subtract the N-Space anti-pattern penalty (AI
+    // theater / filler / disclaimers / hedging, capped at NSPACE_PENALTY_CAP
+    // 0.50). `council::nspace::scan_nspace` was fully built + tested but its
+    // output was never wired into the live council quality score — this is the
+    // wire. Built-in groups only (`&[]`); the operator `anti_hedging` moral-core
+    // extension is a clean follow-on (not required to activate the base signal).
+    let nspace_penalty = super::nspace::scan_nspace(trimmed, &[]).total_penalty;
 
-    let raw = length_score - refusal_penalty + structural_bonus;
+    let raw = length_score - refusal_penalty - nspace_penalty + structural_bonus;
     clamp_unit(raw)
 }
 
@@ -632,4 +642,38 @@ Steps to reproduce:
         assert!(w_score.is_finite());
     }
 
+    // ── GOLD-ADAPT-LOWKEY-03 — N-Space penalty wired into the live score ──
+
+    #[test]
+    fn nspace_penalty_lowers_score_for_assistant_theater() {
+        // Both texts are length-maxed (>800 chars) so `length_signal` == 1.0 for
+        // each → the only differentiator is the N-Space anti-pattern penalty.
+        let clean =
+            "the cluster syncs peers over the gossip channel and merges vector clocks. ".repeat(15);
+        let theater =
+            "as an ai assistant my purpose is to help and it is worth noting that generally speaking this is fine. "
+                .repeat(10);
+        assert!(clean.chars().count() > 800 && theater.chars().count() > 800);
+        let s_clean = dynamic_signal_from_text(&clean);
+        let s_theater = dynamic_signal_from_text(&theater);
+        assert!(
+            s_theater < s_clean,
+            "AI-theater response must score below a direct one: theater={s_theater} clean={s_clean}"
+        );
+    }
+
+    #[test]
+    fn nspace_clean_response_keeps_full_signal() {
+        // A direct, anti-pattern-free response incurs zero N-Space penalty, so
+        // its dynamic signal is unchanged by LOWKEY-03 — length-maxed + no
+        // refusal / structural / nspace hit → exactly 1.0.
+        let clean =
+            "the wal writer rotates segments at 64 mib and fsyncs each frame. ".repeat(15);
+        assert_eq!(
+            crate::council::nspace::scan_nspace(clean.trim(), &[]).total_penalty,
+            0.0,
+            "a clean technical response must incur no N-Space penalty"
+        );
+        assert!((dynamic_signal_from_text(&clean) - 1.0).abs() < 1e-6);
+    }
 }
