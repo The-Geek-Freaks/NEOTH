@@ -72,6 +72,13 @@ pub struct ForgetReport {
     /// forgotten memory would dangle as a graph endpoint.
     #[serde(default)]
     pub link_rows: i64,
+    /// GOLD-ADAPT-MEM-02 — contradiction ledger rows deleted: every
+    /// `idx_contradictions` row referencing a revoked ground-truth fact. Without
+    /// this a forgotten fact lingers as a live leg of a pair — both a dangling
+    /// reference and a GDPR re-identification risk (the ledger reveals that fact A
+    /// contradicted fact B).
+    #[serde(default)]
+    pub contradiction_rows: i64,
     pub topic: String,
 }
 
@@ -88,6 +95,7 @@ impl ForgetReport {
             + self.entity_rows
             + self.relation_rows
             + self.link_rows
+            + self.contradiction_rows
     }
 }
 
@@ -180,6 +188,24 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         )
         .context("delete from idx_profile")? as i64;
 
+    // GOLD-ADAPT-MEM-02 — collect the ground-truth ids that WILL be revoked,
+    // BEFORE the revoke runs, so the contradiction-ledger cascade can reference
+    // them (the revoke flips `revoked_at`, not the id, but pre-collecting keeps
+    // the cascade independent of revoke ordering — mirrors the forgotten_event_ids
+    // pattern above).
+    let revoked_gt_ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM idx_groundtruth \
+                 WHERE revoked_at IS NULL AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            )
+            .context("pre-collect groundtruth ids for contradiction cascade")?;
+        stmt.query_map(rusqlite::params![pattern], |r| r.get::<_, i64>(0))
+            .context("query groundtruth ids for contradiction cascade")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect groundtruth ids for contradiction cascade")?
+    };
+
     // Ground-truth: revoke instead of delete. The row itself stays for
     // audit (operator can prove they didn't assert X after revocation),
     // but recall queries filter on `revoked_at IS NULL` so it stops
@@ -192,6 +218,11 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
             rusqlite::params![now_unix, pattern],
         )
         .context("revoke idx_groundtruth")? as i64;
+
+    // GOLD-ADAPT-MEM-02 — cascade the GDPR wipe into the contradiction ledger so
+    // a revoked fact never lingers as a live leg of a pair.
+    let contradiction_rows =
+        crate::memory::contradiction::forget_for_ids(conn, &revoked_gt_ids)?;
 
     // GOLD-SEC-28 — in-flight profile extractions. A pending delta or a queued
     // outbox frame mentioning the topic would re-materialise the forgotten data
@@ -248,6 +279,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         entity_rows,
         relation_rows,
         link_rows,
+        contradiction_rows,
         topic: topic.to_string(),
     })
 }

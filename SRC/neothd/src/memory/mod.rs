@@ -35,6 +35,8 @@ pub mod indexer;
 pub mod entities;
 /// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
 pub mod context_inject;
+/// GOLD-ADAPT-MEM-02 — contradiction detection + ledger over ground-truth facts.
+pub mod contradiction;
 /// GOLD-ADAPT-MEM-07 — Hebbian co-access association graph between memory rows
 /// (episodes). Co-recalled memories reinforce a symmetric weighted link;
 /// `neoth recall --assoc <event_id>` queries the 1-hop neighbourhood.

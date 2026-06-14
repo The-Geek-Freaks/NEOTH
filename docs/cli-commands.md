@@ -730,6 +730,13 @@ Run the bilingual Q&A pass — re-entrant version of the wizard step. Operator c
 
 - `--lang <LANG>` — Override the primary language for the prompts (defaults to freedom.yaml::language_primary, then `en`)
 
+### `neoth groundtruth contradictions`
+
+GOLD-ADAPT-MEM-02 — list the contradiction ledger (pairs of facts that disagree). The lower-credibility fact in each pair is auto-flagged `contradicted` and drops from recall
+
+- `--detect <DETECT>` — Run a full contradiction re-scan over all verified facts first
+- `--resolved <RESOLVED>` — Include already-dismissed pairs in the listing
+
 ### `neoth groundtruth import-agent`
 
 Import ground-truth rows from another agent's memory store. Phase 28c R-24 GT-8
@@ -763,6 +770,12 @@ List active ground-truth rows
 
 - `--scope <SCOPE>` — Filter by scope (default `global`). Pass `*` to list every scope
 - `--limit <LIMIT>` — Max rows to return
+
+### `neoth groundtruth resolve-contradiction`
+
+GOLD-ADAPT-MEM-02 — dismiss a contradiction ledger entry by its id (the operator judged it a non-conflict). Does NOT change either fact's state
+
+- `<ID>` — Ledger row id (`neoth groundtruth contradictions` shows ids)
 
 ### `neoth groundtruth revoke`
 

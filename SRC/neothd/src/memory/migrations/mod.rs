@@ -148,6 +148,13 @@ pub const MIGRATIONS: &[Migration] = &[
                       only verified facts feed recall/council)",
         run: migration_v17_to_v18,
     },
+    Migration {
+        from: 18,
+        to: 19,
+        description: "GOLD-ADAPT-MEM-02: add idx_contradictions — contradiction \
+                      detection ledger over ground-truth facts",
+        run: migration_v18_to_v19,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -287,6 +294,32 @@ fn migration_v17_to_v18(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_groundtruth_state ON idx_groundtruth (fact_state)",
         [],
     );
+    Ok(())
+}
+
+/// v18 → v19: add `idx_contradictions` — the GOLD-ADAPT-MEM-02 contradiction
+/// detection ledger. Mirrors the canonical table in `store::apply_schema`.
+/// Idempotent (`CREATE TABLE IF NOT EXISTS`).
+fn migration_v18_to_v19(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_contradictions (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            fact_a_id    INTEGER NOT NULL,
+            fact_b_id    INTEGER NOT NULL,
+            confidence   REAL    NOT NULL DEFAULT 1.0,
+            detected_at  INTEGER NOT NULL,
+            resolved_at  INTEGER,
+            decision     TEXT    NOT NULL DEFAULT 'pending',
+            CHECK (fact_a_id < fact_b_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_contradictions_pair ON idx_contradictions (fact_a_id, fact_b_id);
+        CREATE INDEX IF NOT EXISTS idx_contradictions_a ON idx_contradictions (fact_a_id);
+        CREATE INDEX IF NOT EXISTS idx_contradictions_b ON idx_contradictions (fact_b_id);
+        CREATE INDEX IF NOT EXISTS idx_groundtruth_scope_state ON idx_groundtruth (scope, revoked_at, fact_state);
+        "#,
+    )
+    .context("v18->v19: create idx_contradictions (contradiction ledger)")?;
     Ok(())
 }
 

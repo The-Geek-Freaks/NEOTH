@@ -64,6 +64,23 @@ pub enum GroundtruthAction {
         /// New state: raw | candidate | verified | superseded | contradicted | deprecated.
         state: String,
     },
+    /// GOLD-ADAPT-MEM-02 — list the contradiction ledger (pairs of facts that
+    /// disagree). The lower-credibility fact in each pair is auto-flagged
+    /// `contradicted` and drops from recall.
+    Contradictions {
+        /// Run a full contradiction re-scan over all verified facts first.
+        #[arg(long)]
+        detect: bool,
+        /// Include already-dismissed pairs in the listing.
+        #[arg(long)]
+        resolved: bool,
+    },
+    /// GOLD-ADAPT-MEM-02 — dismiss a contradiction ledger entry by its id (the
+    /// operator judged it a non-conflict). Does NOT change either fact's state.
+    ResolveContradiction {
+        /// Ledger row id (`neoth groundtruth contradictions` shows ids).
+        id: i64,
+    },
     /// Run the bilingual Q&A pass — re-entrant version of the wizard step.
     /// Operator can run any time after `neoth init`.
     Ask {
@@ -140,6 +157,12 @@ pub async fn run_groundtruth(args: GroundtruthArgs) -> Result<()> {
         GroundtruthAction::Add { statement, scope } => add(&conn, &statement, &scope, args.output),
         GroundtruthAction::Revoke { id } => revoke(&conn, id, args.output),
         GroundtruthAction::State { id, state } => set_state(&conn, id, &state, args.output),
+        GroundtruthAction::Contradictions { detect, resolved } => {
+            contradictions(&conn, detect, resolved, args.output)
+        }
+        GroundtruthAction::ResolveContradiction { id } => {
+            resolve_contradiction(&conn, id, args.output)
+        }
         GroundtruthAction::Ask { lang } => {
             drop(conn);
             ask(&db_path, lang.as_deref(), args.output)
@@ -611,6 +634,72 @@ fn set_state(conn: &rusqlite::Connection, id: i64, state: &str, output: OutputFo
             println!("{}", serde_json::json!({"id": id, "state": fs.as_str()}));
         }
         OutputFormat::Table => println!("ground-truth #{id} → {}", fs.as_str()),
+    }
+    Ok(())
+}
+
+/// GOLD-ADAPT-MEM-02 — `neoth groundtruth contradictions [--detect] [--resolved]`.
+fn contradictions(
+    conn: &rusqlite::Connection,
+    detect: bool,
+    resolved: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    let detected = if detect {
+        crate::memory::contradiction::scan_contradictions(conn, now_ns)?
+    } else {
+        0
+    };
+    let rows = crate::memory::contradiction::list_contradictions(conn, resolved)?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({ "detected_new": detected, "ledger": rows })
+            );
+        }
+        OutputFormat::Table => {
+            if detect {
+                println!("contradiction scan: {detected} new pair(s) detected");
+            }
+            if rows.is_empty() {
+                println!("no contradictions in the ledger");
+                return Ok(());
+            }
+            println!("# {} contradiction(s){}", rows.len(), if resolved { " (incl. dismissed)" } else { "" });
+            for c in &rows {
+                let mark = if c.decision == "dismissed" { " [dismissed]" } else { "" };
+                println!(
+                    "  [{:>4}] fact {} vs {}  conf={:.2}{}",
+                    c.ledger_id, c.fact_a_id, c.fact_b_id, c.confidence, mark,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// GOLD-ADAPT-MEM-02 — `neoth groundtruth resolve-contradiction <id>`: dismiss a
+/// ledger entry (operator judged it a non-conflict).
+fn resolve_contradiction(conn: &rusqlite::Connection, id: i64, output: OutputFormat) -> Result<()> {
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    let ok = crate::memory::contradiction::resolve(conn, id, now_ns)?;
+    if !ok {
+        anyhow::bail!("no pending contradiction ledger row #{id}");
+    }
+    info!(id, "contradiction ledger entry dismissed");
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::json!({"resolved": id}));
+        }
+        OutputFormat::Table => println!("dismissed contradiction #{id}"),
     }
     Ok(())
 }

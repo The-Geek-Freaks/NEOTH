@@ -182,6 +182,15 @@ fn default_source_weight() -> String {
     "{}".to_string()
 }
 
+impl GroundTruth {
+    /// GOLD-ADAPT-MEM-02 — number of DISTINCT sources that have asserted this
+    /// fact (from the `source_weight` JSON map). Used to pick the more-credible
+    /// fact when two contradict. A malformed map counts as 1 (the row exists).
+    pub fn source_count(&self) -> usize {
+        parse_source_weight(&self.source_weight).len().max(1)
+    }
+}
+
 /// Insert a ground-truth fact, or CORROBORATE an existing identical one
 /// (GOLD-ADAPT-MEM-01). Returns the row id (new or existing).
 ///
@@ -218,7 +227,7 @@ pub fn insert(
         .optional()
         .context("query existing ground-truth")?;
 
-    if let Some((id, state_str, sw_json)) = existing {
+    let id = if let Some((id, state_str, sw_json)) = existing {
         let mut weights = parse_source_weight(&sw_json);
         *weights.entry(source.as_str().to_string()).or_insert(0) += 1;
         let mut state = FactState::parse(&state_str).unwrap_or(FactState::Candidate);
@@ -234,20 +243,29 @@ pub fn insert(
             params![source_weight_json(&weights), state.as_str(), id],
         )
         .context("corroborate ground-truth")?;
-        return Ok(id);
-    }
+        id
+    } else {
+        let state = source.initial_fact_state();
+        let mut weights = std::collections::BTreeMap::new();
+        weights.insert(source.as_str().to_string(), 1u32);
+        conn.execute(
+            "INSERT INTO idx_groundtruth \
+                (statement, source, scope, asserted_at, revoked_at, fact_state, source_weight) \
+             VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
+            params![stmt, source.as_str(), scope, now_ns, state.as_str(), source_weight_json(&weights)],
+        )
+        .context("insert ground-truth")?;
+        conn.last_insert_rowid()
+    };
 
-    let state = source.initial_fact_state();
-    let mut weights = std::collections::BTreeMap::new();
-    weights.insert(source.as_str().to_string(), 1u32);
-    conn.execute(
-        "INSERT INTO idx_groundtruth \
-            (statement, source, scope, asserted_at, revoked_at, fact_state, source_weight) \
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
-        params![stmt, source.as_str(), scope, now_ns, state.as_str(), source_weight_json(&weights)],
-    )
-    .context("insert ground-truth")?;
-    Ok(conn.last_insert_rowid())
+    // GOLD-ADAPT-MEM-02 — best-effort contradiction scan for the (re)asserted
+    // fact. No-op unless the row is now Verified (gated inside). Covers direct
+    // operator inserts AND corroboration-promotions (both end here). A detection
+    // failure must NEVER propagate to the insert caller.
+    if let Err(e) = crate::memory::contradiction::detect_contradictions_for(conn, id, now_ns) {
+        tracing::debug!(error = %e, id, "contradiction scan failed (non-fatal)");
+    }
+    Ok(id)
 }
 
 /// GOLD-ADAPT-MEM-01 — set a fact's trust state explicitly (operator transition:

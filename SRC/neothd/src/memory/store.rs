@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 18;
+pub const SCHEMA_VERSION: i64 = 19;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -664,6 +664,31 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_groundtruth_source   ON idx_groundtruth (source);
         CREATE INDEX IF NOT EXISTS idx_groundtruth_revoked  ON idx_groundtruth (revoked_at);
         CREATE INDEX IF NOT EXISTS idx_groundtruth_state    ON idx_groundtruth (fact_state);
+
+        -- GOLD-ADAPT-MEM-02 — contradiction ledger: pairs of ground-truth facts
+        -- that disagree (same scope, same subject, opposite polarity or diverging
+        -- value). Canonical fact_a_id < fact_b_id (CHECK) + a UNIQUE pair index so
+        -- a pair is recorded once. The lower-credibility fact is flagged
+        -- fact_state='contradicted' in idx_groundtruth (MEM-01); this ledger is the
+        -- audit + the operator's dismiss decision. `forget` deletes referencing
+        -- rows (the FK is intentionally NOT declared — groundtruth is revoked, not
+        -- deleted, so an explicit cascade in forget.rs handles cleanup).
+        CREATE TABLE IF NOT EXISTS idx_contradictions (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            fact_a_id    INTEGER NOT NULL,
+            fact_b_id    INTEGER NOT NULL,
+            confidence   REAL    NOT NULL DEFAULT 1.0,
+            detected_at  INTEGER NOT NULL,
+            resolved_at  INTEGER,
+            decision     TEXT    NOT NULL DEFAULT 'pending',
+            CHECK (fact_a_id < fact_b_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_contradictions_pair ON idx_contradictions (fact_a_id, fact_b_id);
+        CREATE INDEX IF NOT EXISTS idx_contradictions_a ON idx_contradictions (fact_a_id);
+        CREATE INDEX IF NOT EXISTS idx_contradictions_b ON idx_contradictions (fact_b_id);
+        -- GOLD-ADAPT-MEM-02 — composite index for the contradiction scan's
+        -- same-scope active-verified fact lookup.
+        CREATE INDEX IF NOT EXISTS idx_groundtruth_scope_state ON idx_groundtruth (scope, revoked_at, fact_state);
 
         -- ── Schema v6: embedding store (R-9 vision Phase 2b persistence) ──
         --
