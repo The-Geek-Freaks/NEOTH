@@ -78,6 +78,10 @@ pub struct ChannelCredsView {
     pub line_access_token: bool,
     /// GOLD-FEAT-10 — LINE channel secret (inbound signature verify) present.
     pub line_channel_secret: bool,
+    /// GOLD-FEAT-10 — IRC server host present.
+    pub irc_server: bool,
+    /// GOLD-FEAT-10 — IRC bot nick present.
+    pub irc_nick: bool,
 }
 
 impl ChannelCredsView {
@@ -108,12 +112,14 @@ impl ChannelCredsView {
             matrix_login: creds.matrix_password.is_some() || creds.matrix_access_token.is_some(),
             line_access_token: creds.line_channel_access_token.is_some(),
             line_channel_secret: creds.line_channel_secret.is_some(),
+            irc_server: creds.irc_server.is_some(),
+            irc_nick: creds.irc_nick.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 9] = [
+pub const ALL_CHANNELS: [ChannelKind; 10] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -123,6 +129,7 @@ pub const ALL_CHANNELS: [ChannelKind; 9] = [
     ChannelKind::Signal,
     ChannelKind::Matrix,
     ChannelKind::Line,
+    ChannelKind::Irc,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -233,6 +240,14 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
                 ProbeStatus::Error,
                 "LINE needs line_channel_access_token to send (the channel secret alone cannot push)",
             ),
+        },
+        ChannelKind::Irc => match (v.irc_server, v.irc_nick) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "irc_server + irc_nick configured — NEOTH dials out (no public URL); requires an `irc-channel` feature build to start",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no irc config"),
+            _ => (ProbeStatus::Error, "IRC needs BOTH irc_server AND irc_nick"),
         },
     };
     ChannelHealth {

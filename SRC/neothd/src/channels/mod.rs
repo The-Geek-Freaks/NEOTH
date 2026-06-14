@@ -50,6 +50,12 @@ pub mod line_api;
 pub mod matrix;
 #[cfg(feature = "matrix-channel")]
 pub mod matrix_client;
+/// GOLD-FEAT-10 — IRC. The pure protocol-mapping module (`irc_api`) is always
+/// compiled (carries no `irc` dependency); the connection adapter (`irc`) is
+/// behind the `irc-channel` feature.
+pub mod irc_api;
+#[cfg(feature = "irc-channel")]
+pub mod irc;
 pub mod pears_bridge;
 pub mod probe;
 pub mod rate_limit;
@@ -105,6 +111,10 @@ pub enum ChannelKind {
     /// GOLD-FEAT-10 — LINE Messaging API via the shared webhook listener
     /// (inbound) + push REST (outbound). Zero extra deps; always compiled.
     Line,
+    /// GOLD-FEAT-10 — IRC via the `irc` crate (raw TCP; NEOTH dials OUT, so no
+    /// public URL). The adapter module is behind the `irc-channel` feature; this
+    /// variant + its formatter/probe row stay compiled in every build.
+    Irc,
 }
 
 impl ChannelKind {
@@ -119,6 +129,7 @@ impl ChannelKind {
             ChannelKind::Signal => "signal",
             ChannelKind::Matrix => "matrix",
             ChannelKind::Line => "line",
+            ChannelKind::Irc => "irc",
         }
     }
 }

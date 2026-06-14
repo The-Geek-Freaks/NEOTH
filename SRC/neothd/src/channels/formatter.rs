@@ -108,6 +108,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Signal => Some(Box::new(SignalFormatter)),
         ChannelKind::Matrix => Some(Box::new(MatrixFormatter)),
         ChannelKind::Line => Some(Box::new(LineFormatter)),
+        ChannelKind::Irc => Some(Box::new(IrcFormatter)),
     }
 }
 
@@ -493,6 +494,40 @@ impl Formatter for LineFormatter {
             rendered.push_str("```");
         }
         split_into_messages(&rendered, LINE_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
+    }
+}
+
+/// GOLD-FEAT-10 — IRC plain-text formatter. IRC is line-oriented with a 512-byte
+/// line cap, so the payload splits at 400 chars (matches
+/// `irc_api::IRC_MAX_TEXT_CHARS`); the `irc` adapter additionally splits on
+/// newlines (one PRIVMSG per line) at send time.
+pub struct IrcFormatter;
+
+const IRC_MAX_CHARS: usize = 400;
+
+impl Formatter for IrcFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Irc
+    }
+    fn max_chars_per_message(&self) -> usize {
+        IRC_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        let mut rendered = String::new();
+        rendered.push_str(&reply.text);
+        for cb in &reply.code_blocks {
+            rendered.push_str("\n```");
+            if !cb.lang.is_empty() {
+                rendered.push_str(&cb.lang);
+            }
+            rendered.push('\n');
+            rendered.push_str(&cb.body);
+            if !cb.body.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered.push_str("```");
+        }
+        split_into_messages(&rendered, IRC_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
     }
 }
 

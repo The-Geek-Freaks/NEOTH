@@ -132,8 +132,16 @@ pdf-forms = ["dep:pdfium-render"]
 # `ChannelKind::Matrix` variant + `MatrixFormatter` + probe row stay compiled in
 # both configs (pure data, no matrix-sdk dependency).
 matrix-channel = ["dep:matrix-sdk"]
+# GOLD-FEAT-10 — IRC channel via the aatxe `irc` crate (raw TCP, tokio-native).
+# Off by default (opt-in). The `ChannelKind::Irc` variant + `IrcFormatter` + the
+# probe row + the pure `irc_api` mapping stay compiled in every build (they
+# carry no `irc` dependency); only the connection adapter needs the feature.
+irc-channel = ["dep:irc"]
 
 [dependencies]
+# GOLD-FEAT-10 — IRC channel (optional, behind `irc-channel`). Tokio-native,
+# owns the IRC wire protocol + PING/PONG + reconnect. rustls TLS (no system lib).
+irc = { version = "1", default-features = false, features = ["tls-rust"], optional = true }
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
 serde              = { version = "1", features = ["derive"] }

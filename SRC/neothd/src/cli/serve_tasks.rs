@@ -1530,6 +1530,56 @@ pub(crate) fn spawn_channel_adapters(
         }
     }
 
+    // GOLD-FEAT-10 — IRC inbound via the `irc` crate (raw TCP; NEOTH dials OUT,
+    // no public URL). Compiled only in `--features irc-channel` builds. Starts
+    // when irc_server + irc_nick + a provider are all present.
+    #[cfg(feature = "irc-channel")]
+    {
+        match (
+            creds.irc_server.clone(),
+            creds.irc_nick.clone(),
+            shared_provider.as_ref(),
+        ) {
+            (Some(server), Some(nick), Some(provider)) => {
+                let channel = crate::channels::irc::IrcChannel::new(
+                    server,
+                    creds.irc_port.unwrap_or(6697),
+                    nick,
+                    creds.irc_password.clone(),
+                    creds.irc_channels.clone().unwrap_or_default(),
+                    creds.irc_tls.unwrap_or(true),
+                );
+                let handler: PipelineHandler = build_channel_handler(
+                    provider.clone(),
+                    config,
+                    writer,
+                    provider_meter,
+                    rate_limiter,
+                    segment_path,
+                    shared_views_conn,
+                    reload_controller,
+                );
+                spawn_channel_run(channel, handler, "IRC", channel_tasks);
+                info!(
+                    channel = "irc",
+                    status = "LIVE",
+                    "channel: spawned (irc TCP receive loop)"
+                );
+            }
+            (Some(_), Some(_), None) => warn!(
+                channel = "irc",
+                status = "CONFIGURED-NOT-STARTED",
+                "IRC configured but provider unavailable; channel not started"
+            ),
+            (Some(_), None, _) | (None, Some(_), _) => warn!(
+                channel = "irc",
+                status = "CONFIGURED-NOT-STARTED",
+                "IRC needs BOTH irc_server and irc_nick; only one supplied — not started"
+            ),
+            (None, None, _) => {}
+        }
+    }
+
     // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
     // verify-token + app-secret + provider are all present. Listens on
     // 127.0.0.1:<whatsapp_webhook_port> (default 8443).

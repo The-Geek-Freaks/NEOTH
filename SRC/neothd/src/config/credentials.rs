@@ -113,6 +113,19 @@ pub struct Credentials {
     /// HTTPS reverse proxy. Not a secret; kept here with the other channel
     /// config (and out of the `config/mod.rs` hot zone). `None` ⇒ default port.
     pub line_webhook_port: Option<u16>,
+    /// GOLD-FEAT-10 — IRC server host (e.g. `irc.libera.chat`). NEOTH dials out,
+    /// so no public URL is needed. Not a secret.
+    pub irc_server: Option<String>,
+    /// GOLD-FEAT-10 — IRC server port. `None` ⇒ 6697 (TLS). Not a secret.
+    pub irc_port: Option<u16>,
+    /// GOLD-FEAT-10 — IRC bot nick. Not a secret.
+    pub irc_nick: Option<String>,
+    /// GOLD-FEAT-10 — IRC server / NickServ / bouncer password. Secret.
+    pub irc_password: Option<SecretString>,
+    /// GOLD-FEAT-10 — comma-separated channels to join (e.g. `#neoth,#dev`).
+    pub irc_channels: Option<String>,
+    /// GOLD-FEAT-10 — use TLS for the IRC connection. `None` ⇒ true.
+    pub irc_tls: Option<bool>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -258,6 +271,12 @@ impl Credentials {
             line_channel_access_token,
             line_channel_secret,
             line_webhook_port,
+            irc_server,
+            irc_port,
+            irc_nick,
+            irc_password,
+            irc_channels,
+            irc_tls,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -296,6 +315,12 @@ impl Credentials {
             && line_channel_access_token.is_none()
             && line_channel_secret.is_none()
             && line_webhook_port.is_none()
+            && irc_server.is_none()
+            && irc_port.is_none()
+            && irc_nick.is_none()
+            && irc_password.is_none()
+            && irc_channels.is_none()
+            && irc_tls.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()
