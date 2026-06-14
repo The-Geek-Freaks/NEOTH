@@ -30,6 +30,9 @@ pub mod drift_alert_cron;
 /// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron (scans WAL usage
 /// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
 pub mod token_anomaly_cron;
+/// GOLD-ADAPT-VIEW-05 — session-health / outcome cron (A–F daily grade from the
+/// WAL audit trail; alerts on degradation).
+pub mod session_health_cron;
 pub mod export;
 /// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
 /// `idx_profile` for novel high-confidence claims via

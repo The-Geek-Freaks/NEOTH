@@ -355,6 +355,29 @@ pub(crate) fn spawn_token_anomaly_cron(
     handle
 }
 
+/// GOLD-ADAPT-VIEW-05 — spawn the session-health / outcome cron: grades the
+/// most-recent active UTC day A–F from the WAL audit trail + emits
+/// `0x6F SESSION_HEALTH_DEGRADED` on a degraded grade. `None` when
+/// `session_health.enabled = false`.
+pub(crate) fn spawn_session_health_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::session_health_cron::spawn_session_health_cron_loop(
+        config.session_health.clone(),
+        wal_dir.to_path_buf(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.session_health.interval_secs,
+            "session-health cron loop spawned (GOLD-ADAPT-VIEW-05)"
+        );
+    }
+    handle
+}
+
 /// GOLD-FEAT-09 — spawn the daemon watchdog / auto-recovery cron. `None` when
 /// `watchdog.enabled = false`. The restart ACTION (spawning a service) is gated
 /// to `Elevated`/`Full` autonomy, resolved once here and passed as a plain
@@ -2081,6 +2104,7 @@ pub(crate) struct BackgroundHandles {
     pub g02_surfacing_cron_handle: JoinHandle<()>,
     pub drift_alert_cron_handle: Option<JoinHandle<()>>,
     pub token_anomaly_cron_handle: Option<JoinHandle<()>>,
+    pub session_health_cron_handle: Option<JoinHandle<()>>,
     pub regression_cron_handle: Option<JoinHandle<()>>,
     pub recall_latency_cron_handle: Option<JoinHandle<()>>,
     pub profile_adapt_cron_handle: Option<JoinHandle<()>>,
@@ -2150,6 +2174,7 @@ pub(crate) async fn shutdown_background_tasks(
         g02_surfacing_cron_handle,
         drift_alert_cron_handle,
         token_anomaly_cron_handle,
+        session_health_cron_handle,
         regression_cron_handle,
         recall_latency_cron_handle,
         profile_adapt_cron_handle,
@@ -2342,6 +2367,9 @@ pub(crate) async fn shutdown_background_tasks(
     // discipline: abort + await BEFORE the WAL writer drops so an in-flight 0x6E
     // frame isn't lost).
     crate::cli::serve_tasks::abort_optional(token_anomaly_cron_handle).await;
+    // GOLD-ADAPT-VIEW-05 — abort the session-health cron (same drain-before-close
+    // order so an in-flight 0x6F frame isn't lost).
+    crate::cli::serve_tasks::abort_optional(session_health_cron_handle).await;
     // Abort the ADV-14 regression-anchor cron (same drain-before-close order
     // so an in-flight 0x3F frame isn't lost).
     crate::cli::serve_tasks::abort_optional(regression_cron_handle).await;

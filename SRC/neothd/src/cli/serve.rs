@@ -807,6 +807,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let token_anomaly_cron_handle =
         crate::cli::serve_tasks::spawn_token_anomaly_cron(&config, &wal_dir, writer.clone());
 
+    // GOLD-ADAPT-VIEW-05 — session-health / outcome cron: grades the recent day
+    // A–F from the WAL + emits 0x6F SESSION_HEALTH_DEGRADED on degradation.
+    // Default OFF → no idle task; opt-in via `session_health.enabled = true`.
+    let session_health_cron_handle =
+        crate::cli::serve_tasks::spawn_session_health_cron(&config, &wal_dir, writer.clone());
+
     // GOLD-FEAT-09 — daemon watchdog / auto-recovery cron. Default OFF → no
     // idle task; opt-in via `watchdog.enabled = true`. The restart action is
     // gated to Elevated/Full autonomy inside the spawn helper.
@@ -1362,6 +1368,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         g02_surfacing_cron_handle,
         drift_alert_cron_handle,
         token_anomaly_cron_handle,
+        session_health_cron_handle,
         regression_cron_handle,
         recall_latency_cron_handle,
         profile_adapt_cron_handle,

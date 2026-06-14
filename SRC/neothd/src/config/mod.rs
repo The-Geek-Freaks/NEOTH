@@ -400,6 +400,9 @@ pub struct FreedomConfig {
     /// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron. Default OFF.
     #[serde(default)]
     pub token_anomaly: TokenAnomalyConfig,
+    /// GOLD-ADAPT-VIEW-05 — session-health / outcome cron. Default OFF.
+    #[serde(default)]
+    pub session_health: SessionHealthConfig,
     /// ADV-14 — longitudinal recall-regression anchor cron. When `enabled`,
     /// the daemon weekly re-asks the anchor queries, re-embeds the answers,
     /// and emits `0x3F REGRESSION_ALERT` for any whose cosine to the cutover
@@ -1041,6 +1044,49 @@ impl Default for TokenAnomalyConfig {
 }
 
 impl TokenAnomalyConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// GOLD-ADAPT-VIEW-05 — session-health / outcome cron config. When `enabled`,
+/// the daemon grades the most-recent active UTC day A–F from the WAL audit trail
+/// (refusal-failures `0x1A`/`0x27` + job-failures `0x42` over `0x21` activity)
+/// and emits `0x6F SESSION_HEALTH_DEGRADED` when the grade is at or below
+/// `alert_at_or_below`. Default OFF.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct SessionHealthConfig {
+    /// Master switch. Default `false`.
+    pub enabled: bool,
+    /// Cron tick interval, seconds. Default 6h; clamped to a 60s floor by
+    /// [`Self::interval_duration`].
+    pub interval_secs: u64,
+    /// Minimum `0x21` replies a day needs before it is graded — a near-idle day
+    /// is not meaningfully gradeable. Default 10.
+    pub min_activity: u64,
+    /// Alert when the recent day's grade is at or below this letter (`A`..`F`).
+    /// Default `D`.
+    pub alert_at_or_below: String,
+}
+
+/// 6 hours — the session-health cron default cadence.
+pub const DEFAULT_SESSION_HEALTH_INTERVAL_SECS: u64 = 6 * 3600;
+
+impl Default for SessionHealthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_SESSION_HEALTH_INTERVAL_SECS,
+            min_activity: 10,
+            alert_at_or_below: "D".to_string(),
+        }
+    }
+}
+
+impl SessionHealthConfig {
     /// Tick interval as a `Duration`, clamped to a 60s minimum so an
     /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
     pub fn interval_duration(&self) -> std::time::Duration {

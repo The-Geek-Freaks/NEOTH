@@ -876,6 +876,18 @@ pub const EVENT_TYPE_CHANNEL_SEND_DENIED: u8 = 0x68;
 /// baseline_max, baseline_days, day_models:[..], new_models:[..], ts_unix}`.
 pub const EVENT_TYPE_TOKEN_ANOMALY_DETECTED: u8 = 0x6E;
 
+/// `0x6F SESSION_HEALTH_DEGRADED` — GOLD-ADAPT-VIEW-05 session-health cron. The
+/// daemon grades the most-recent active UTC day A–F from the WAL audit trail
+/// (refusal-failures `0x1A`/`0x27` + job-failures `0x42` over `0x21` activity)
+/// and emits this when the grade is at or below the configured floor (default
+/// `D`). Counts + a grade are not secrets → the payload is in the clear.
+/// **Band note**: a health/outcome signal sits in the free tail of
+/// `0x60..=0x6F` next to the other gate/decision/monitor events (same rationale
+/// as `0x6E`).
+/// Payload (JSON): `{grade, score, day_unix, activity, refusal_failures,
+/// job_failures, refusal_rate, failure_rate, mean_input_tokens}`.
+pub const EVENT_TYPE_SESSION_HEALTH_DEGRADED: u8 = 0x6F;
+
 // ---- 0x70..=0x7F  Coding workflow (V11 Pick #38, 2026-05-19) --------------
 //
 // Hermes-adapted autonomous software engineering pipeline per
@@ -1905,6 +1917,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("channel_send", EVENT_TYPE_CHANNEL_SEND),
     ("channel_send_denied", EVENT_TYPE_CHANNEL_SEND_DENIED),
     ("token_anomaly_detected", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
+    ("session_health_degraded", EVENT_TYPE_SESSION_HEALTH_DEGRADED),
     ("mcp_tool_called", EVENT_TYPE_MCP_TOOL_CALLED),
     ("mcp_tool_rejected", EVENT_TYPE_MCP_TOOL_REJECTED),
     ("risk_gate_blocked", EVENT_TYPE_RISK_GATE_BLOCKED),
@@ -2278,6 +2291,8 @@ const _: () = {
         || EVENT_TYPE_CHANNEL_SEND_DENIED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TOKEN_ANOMALY_DETECTED < 0x60
         || EVENT_TYPE_TOKEN_ANOMALY_DETECTED > 0x6F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_SESSION_HEALTH_DEGRADED < 0x60
+        || EVENT_TYPE_SESSION_HEALTH_DEGRADED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_FIRED < 0x80 || EVENT_TYPE_HOOK_FIRED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_BLOCKED < 0x80 || EVENT_TYPE_HOOK_BLOCKED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_REPLACED < 0x80 || EVENT_TYPE_HOOK_REPLACED > 0x8F) as usize];
@@ -2605,6 +2620,7 @@ mod tests {
             ("CHANNEL_SEND", EVENT_TYPE_CHANNEL_SEND),
             ("CHANNEL_SEND_DENIED", EVENT_TYPE_CHANNEL_SEND_DENIED),
             ("TOKEN_ANOMALY_DETECTED", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
+            ("SESSION_HEALTH_DEGRADED", EVENT_TYPE_SESSION_HEALTH_DEGRADED),
             ("HOOK_FIRED", EVENT_TYPE_HOOK_FIRED),
             ("HOOK_BLOCKED", EVENT_TYPE_HOOK_BLOCKED),
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),
