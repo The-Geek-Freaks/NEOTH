@@ -479,6 +479,11 @@ async fn build_prompt_bundle(
     // so recall stays off the ARCH-02 replay-determinism surface. Best-effort.
     let recall_block = maybe_recall_block(&prompt).await;
 
+    // ── GOLD-ADAPT-MEM-12 — session-guidance block (recent hindsight sessions
+    // + open fact-contradictions), folded above the recall block as session-
+    // wide context. Best-effort → None on a fresh install / quiet week.
+    let guidance_block = maybe_guidance_block(&home).await;
+
     // ── Compose layered system prompt via shared helper ───────────────────
     // GOLD-FEAT-07 — load the operator's LOWKEY moral core (if any) for
     // position-0 injection. Best-effort; `None` when not configured.
@@ -495,14 +500,14 @@ async fn build_prompt_bundle(
         persona_override: persona_override.as_deref(),
         moral_core: moral_core.as_deref(),
     });
-    // Append the recall block (Block::D) after the enriched layers — recall is
-    // background context, so it sits at the prompt tail, closest to the user's
-    // turn. None on a Skip-tier / empty-recall turn leaves the system untouched.
-    let combined_system = match (enriched.system, recall_block) {
-        (Some(sys), Some(rb)) => Some(format!("{sys}\n\n{rb}")),
-        (None, Some(rb)) => Some(rb),
-        (sys, _) => sys,
-    };
+    // Fold the layers in authority order: enriched.system (operator / skills /
+    // MCP / moral) > guidance (MEM-12 session-wide context) > recall (Block::D
+    // turn-specific episodes, closest to the user turn). `None` lanes drop out;
+    // all-None → None (byte-identical to before guidance/recall when both empty).
+    let combined_system = [enriched.system, guidance_block, recall_block]
+        .into_iter()
+        .flatten()
+        .reduce(|acc, next| format!("{acc}\n\n{next}"));
     // used_skill_id is plumbed through for any downstream audit
     // consumers; the existing chat path consumes `combined_system`
     // the same way it did before the helper extraction.
@@ -3055,6 +3060,90 @@ fn compose_voice_system(
     }
 }
 
+/// GOLD-ADAPT-MEM-10 — map an outer council [`HemisphereRole`] to the memory
+/// region whose episodic band fits that hemisphere's cognitive style. **Left**
+/// + **Right** → Hippocampus (episodic/factual band 0x01-0x0F; they share the
+/// region but the rendered fragment frames it differently — Left leads with
+/// operator-asserted facts, Right with narrative episodes); **Cerebellum** →
+/// Cerebellum (the operational band: provider / council / kanban / MCP). No
+/// wildcard arm — a new `HemisphereRole` variant must choose its region.
+fn hemisphere_region(
+    role: crate::config::inference::HemisphereRole,
+) -> crate::memory::regions::MemoryRegion {
+    use crate::config::inference::HemisphereRole as R;
+    use crate::memory::regions::MemoryRegion as Region;
+    match role {
+        R::Left | R::Right => Region::Hippocampus,
+        R::Cerebellum => Region::Cerebellum,
+    }
+}
+
+/// Per-hemisphere recall limit — tiny so three concurrent hemisphere fragments
+/// stay well under the council prompt budget.
+const HEMISPHERE_RECALL_LIMIT: usize = 3;
+
+/// GOLD-ADAPT-MEM-10 — async wrapper: a per-hemisphere region-biased recall
+/// fragment for `prompt`, run off the tokio worker (mirrors the CH-11
+/// [`profile_block_for_callosum`] spawn_blocking pattern). Production resolves
+/// the store from the operator's HOME; tests call [`hemisphere_recall_fragment_at`].
+async fn hemisphere_recall_fragment(
+    role: crate::config::inference::HemisphereRole,
+    prompt: &str,
+) -> Option<String> {
+    let prompt = prompt.to_string();
+    tokio::task::spawn_blocking(move || {
+        let db_path = crate::memory::store::default_path();
+        hemisphere_recall_fragment_at(&db_path, role, &prompt)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Test-friendly core of [`hemisphere_recall_fragment`]: explicit `db_path`.
+/// Recalls from the role's region (+ operator-asserted ground-truth facts for
+/// the **Left** factual hemisphere) and renders a short biased-recall fragment
+/// that gets appended BELOW the operator's `combined_system` (bias, not
+/// override). Best-effort: missing DB / query error / no hits → `None`.
+/// Synchronous read-only rusqlite — call inside `spawn_blocking`.
+fn hemisphere_recall_fragment_at(
+    db_path: &std::path::Path,
+    role: crate::config::inference::HemisphereRole,
+    prompt: &str,
+) -> Option<String> {
+    use crate::config::inference::HemisphereRole as R;
+    if !db_path.exists() {
+        return None;
+    }
+    let conn = crate::memory::store::open(db_path).ok()?;
+    let region = hemisphere_region(role);
+    let episodes =
+        crate::memory::regions::recall_from_region(&conn, region, prompt, HEMISPHERE_RECALL_LIMIT)
+            .unwrap_or_default();
+    // Left is the FACTUAL hemisphere — lead with operator-asserted ground-truth.
+    let facts = if matches!(role, R::Left) {
+        crate::cli::recall::recall_groundtruth_like(&conn, prompt, 2).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if episodes.is_empty() && facts.is_empty() {
+        return None;
+    }
+    let (label, lead) = match role {
+        R::Left => ("Left", "factual"),
+        R::Right => ("Right", "narrative"),
+        R::Cerebellum => ("Cerebellum", "operational"),
+    };
+    let mut s = format!("## {label} hemisphere — {lead} memory bias\n");
+    for f in &facts {
+        s.push_str(&format!("- (fact) {}\n", recall_snippet(&f.text)));
+    }
+    for e in &episodes {
+        s.push_str(&format!("- {}\n", recall_snippet(&e.text)));
+    }
+    Some(s)
+}
+
 /// Build a fresh `ProviderHemisphere` for `role` using the configured
 /// per-role provider (defaults collapse to single-mode in Single
 /// topology). Used by `run_council_debate` to build all three plus by
@@ -3098,9 +3187,22 @@ async fn build_hemisphere_with_config(
     // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
     // resolved before the `config` Arc is moved into the struct.
     let voice = config.inference.slot_for(role).voice;
+    // GOLD-ADAPT-MEM-10: bias THIS outer hemisphere's base prompt with region-
+    // matched recall (Left=factual, Right=narrative, Cerebellum=operational).
+    // Appended at the system layer BELOW the operator's combined_system (bias,
+    // not override). Outer council only — inner/sub wrappers carry
+    // `outer_role: None` and skip this, so recursion doesn't double-inject.
+    // Best-effort → leaves base_req untouched on empty recall.
+    let mut base_req = req.clone();
+    if let Some(frag) = hemisphere_recall_fragment(role, &req.prompt).await {
+        base_req.system = match base_req.system.take() {
+            Some(s) if !s.trim().is_empty() => Some(format!("{s}\n\n{frag}")),
+            _ => Some(frag),
+        };
+    }
     Ok(ProviderHemisphere {
         provider,
-        base_req: req.clone(),
+        base_req,
         config: Some(config),
         outer_role: Some(role),
         voice,
@@ -3315,6 +3417,91 @@ pub(crate) fn maybe_repo_context_block_at(
         return Some(rt.compress_for_llm(&block).0);
     }
     Some(block)
+}
+
+/// GOLD-ADAPT-MEM-12 — assemble a per-session "guidance" context block from the
+/// operator's own recent activity: the last few session hindsight cards (NEOTH's
+/// "lessons-7d" equivalent — there is no separate lessons store; the hindsight
+/// card IS the per-session summary) + a count of pending fact-contradictions
+/// awaiting review. Folded into the system prompt at `build_prompt_bundle` time
+/// (the same seam as the Block::D recall), so every chat turn opens with a
+/// compressed sense of "what you've been working on + what's unresolved" instead
+/// of cold.
+///
+/// CLI/TTY path only (the data is the operator's own sessions — no per-sender
+/// authz needed). Best-effort: no recent cards AND no pending → `None`.
+/// Production resolves both stores under the operator's HOME; see
+/// [`maybe_guidance_block_at`] for the explicit-path test variant.
+async fn maybe_guidance_block(home: &std::path::Path) -> Option<String> {
+    let home = home.to_path_buf();
+    let now = now_unix() as i64;
+    tokio::task::spawn_blocking(move || maybe_guidance_block_at(&home, now))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Sliding window for the "recent sessions" lane — one week of hindsight cards.
+const GUIDANCE_RECENCY_SECS: i64 = 7 * 86_400;
+/// Cap on cards rendered so a busy week can't bloat the prompt.
+const GUIDANCE_MAX_CARDS: usize = 5;
+
+/// Test-friendly core of [`maybe_guidance_block`]: explicit `home` (hindsight
+/// cards live under `home/hindsight/`, contradictions under `home/views.db` —
+/// both derived from `home`, NOT `default_path()`, so tests stay hermetic) +
+/// explicit `now_unix` so the 7-day window is deterministic. Sync (filesystem +
+/// rusqlite) — call inside `spawn_blocking`.
+fn maybe_guidance_block_at(home: &std::path::Path, now_unix: i64) -> Option<String> {
+    let cutoff = now_unix - GUIDANCE_RECENCY_SECS;
+    let mut cards = crate::memory::hindsight::list_cards(home);
+    cards.retain(|c| c.ended_at_unix >= cutoff);
+    cards.truncate(GUIDANCE_MAX_CARDS);
+
+    // Pending fact-contradictions — best-effort, derived from `home` so tests
+    // stay hermetic (a missing views.db simply yields 0).
+    let pending = {
+        let db = home.join("views.db");
+        if db.exists() {
+            crate::memory::store::open(&db)
+                .ok()
+                .and_then(|c| crate::memory::contradiction::list_contradictions(&c, false).ok())
+                .map(|v| v.len())
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    render_guidance_block(&cards, pending)
+}
+
+/// Render the guidance lanes. `None` when there is nothing to say (no recent
+/// cards AND no pending contradictions) so a fresh install / quiet week adds no
+/// empty block.
+fn render_guidance_block(
+    recent_cards: &[crate::memory::hindsight::HindsightCard],
+    pending_contradictions: usize,
+) -> Option<String> {
+    if recent_cards.is_empty() && pending_contradictions == 0 {
+        return None;
+    }
+    let mut s = String::from(
+        "## Session context\n\
+         A compressed view of your own recent work — orient on it; it is not the \
+         current request:\n",
+    );
+    if !recent_cards.is_empty() {
+        s.push_str("### Recent sessions (last 7 days)\n");
+        for c in recent_cards {
+            let label = c.display_name.as_deref().unwrap_or(&c.one_line_summary);
+            s.push_str(&format!("- {}\n", recall_snippet(label)));
+        }
+    }
+    if pending_contradictions > 0 {
+        s.push_str(&format!(
+            "### Open items\n- {pending_contradictions} flagged fact-contradiction(s) pending review\n"
+        ));
+    }
+    Some(s)
 }
 
 /// GOLD-WIRE Block::D + GOLD-ADAPT-MEM-09 — auto-recall episode block for
@@ -6395,6 +6582,130 @@ mod tests {
             !out.contains("Flagged contradictions"),
             "empty contradiction lane → no heading: {out}"
         );
+    }
+
+    // ── GOLD-ADAPT-MEM-12 — session-guidance block ───────────────────────
+
+    #[test]
+    fn guidance_block_none_when_nothing_to_say() {
+        assert!(render_guidance_block(&[], 0).is_none());
+    }
+
+    #[test]
+    fn guidance_block_pending_only_omits_sessions_section() {
+        let out = render_guidance_block(&[], 3).expect("pending alone yields a block");
+        assert!(out.contains("Session context"), "header: {out}");
+        assert!(out.contains("3 flagged fact-contradiction"), "pending count: {out}");
+        assert!(!out.contains("Recent sessions"), "no cards → no sessions heading: {out}");
+    }
+
+    #[test]
+    fn guidance_block_renders_recent_card() {
+        let card = crate::memory::hindsight::HindsightCard {
+            session_id: "s1".into(),
+            started_at_unix: 1000,
+            ended_at_unix: 1500,
+            turn_count: 4,
+            operator_turn_count: 2,
+            agent_turn_count: 2,
+            top_topics: vec!["rust".into()],
+            opening_utterance: "hi".into(),
+            closing_utterance: "bye".into(),
+            one_line_summary: "4 turns on the cluster design".into(),
+            display_name: None,
+        };
+        let out = render_guidance_block(std::slice::from_ref(&card), 0)
+            .expect("a recent card yields a block");
+        assert!(out.contains("### Recent sessions"), "{out}");
+        assert!(out.contains("4 turns on the cluster design"), "summary rendered: {out}");
+    }
+
+    #[test]
+    fn maybe_guidance_block_at_empty_home_is_none() {
+        let dir = tempdir().unwrap();
+        assert!(maybe_guidance_block_at(dir.path(), 1_700_000_000).is_none());
+    }
+
+    #[test]
+    fn maybe_guidance_block_at_counts_pending_contradictions() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = crate::memory::store::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, statement, source, scope, asserted_at, fact_state) \
+             VALUES (1, ?1, 'op', 'g', 1, 'verified'), (2, ?2, 'op', 'g', 1, 'verified')",
+            rusqlite::params!["the limit is three", "the limit is five"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_contradictions (fact_a_id, fact_b_id, confidence, detected_at, decision) \
+             VALUES (1, 2, 0.9, 1, 'pending')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let out = maybe_guidance_block_at(dir.path(), 1_700_000_000)
+            .expect("a pending contradiction yields a block");
+        assert!(out.contains("1 flagged fact-contradiction"), "{out}");
+    }
+
+    // ── GOLD-ADAPT-MEM-10 — hemisphere-aware recall ──────────────────────
+
+    #[test]
+    fn hemisphere_region_maps_roles_exhaustively() {
+        use crate::config::inference::HemisphereRole as R;
+        use crate::memory::regions::MemoryRegion as Region;
+        assert!(matches!(hemisphere_region(R::Left), Region::Hippocampus));
+        assert!(matches!(hemisphere_region(R::Right), Region::Hippocampus));
+        assert!(matches!(hemisphere_region(R::Cerebellum), Region::Cerebellum));
+    }
+
+    #[test]
+    fn hemisphere_recall_fragment_at_missing_db_is_none() {
+        use crate::config::inference::HemisphereRole as R;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("nope.db");
+        assert!(hemisphere_recall_fragment_at(&db, R::Left, "anything").is_none());
+    }
+
+    #[test]
+    fn hemisphere_recall_fragment_left_leads_with_groundtruth() {
+        use crate::config::inference::HemisphereRole as R;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = crate::memory::store::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, statement, source, scope, asserted_at, fact_state) \
+             VALUES (1, ?1, 'op', 'g', 1, 'verified')",
+            rusqlite::params!["the canonical fact about quokkas"],
+        )
+        .unwrap();
+        drop(conn);
+        let frag = hemisphere_recall_fragment_at(&db, R::Left, "quokkas")
+            .expect("Left fact match yields a fragment");
+        assert!(frag.contains("Left hemisphere"), "{frag}");
+        assert!(frag.contains("(fact)"), "Left leads with groundtruth: {frag}");
+        assert!(frag.contains("quokkas"), "{frag}");
+    }
+
+    #[test]
+    fn hemisphere_recall_fragment_cerebellum_pulls_operational_band() {
+        use crate::config::inference::HemisphereRole as R;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = crate::memory::store::open(&db).unwrap();
+        // event_type 0x20 (=32) = provider band → Cerebellum region.
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (1, 32, 1000, ?1, 'h', 0.5, 0)",
+            rusqlite::params!["council picked the local cerebellum provider"],
+        )
+        .unwrap();
+        drop(conn);
+        let frag = hemisphere_recall_fragment_at(&db, R::Cerebellum, "cerebellum provider")
+            .expect("Cerebellum band match yields a fragment");
+        assert!(frag.contains("Cerebellum hemisphere"), "{frag}");
+        assert!(frag.contains("operational"), "{frag}");
     }
 
     #[test]

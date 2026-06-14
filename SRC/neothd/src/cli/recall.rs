@@ -1043,7 +1043,9 @@ fn recall_cold_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
 /// rows with `tier == "groundtruth"` so the recall surface treats them as a
 /// distinct tier and the renderer can flag them visually. `revoked_at IS NULL`
 /// filters tombstoned facts.
-fn recall_groundtruth_like(
+// GOLD-ADAPT-MEM-10: `pub(crate)` so the council Left (factual) hemisphere can
+// lead its region-recall with operator-asserted ground-truth facts.
+pub(crate) fn recall_groundtruth_like(
     conn: &Connection,
     query: &str,
     limit: usize,
