@@ -72,7 +72,7 @@ fn forget_topic_revokes_matching_groundtruth_but_keeps_row_addressable() {
     // The MATCHING gt row stops surfacing via recall but the row
     // remains in the table with `revoked_at` set — addressable for
     // forensic queries.
-    let gt: Vec<_> = surface_for_recall(&conn, 50).unwrap();
+    let gt: Vec<_> = surface_for_recall(&conn, 50, true).unwrap();
     assert_eq!(gt.len(), 1, "only the non-matching gt row is still active");
     assert_eq!(gt[0].id, other_id);
     let (statement, revoked_at): (String, Option<i64>) = conn
@@ -147,7 +147,7 @@ fn revoke_hides_groundtruth_from_recall_but_keeps_row_addressable() {
 
     // surface_for_recall + count_active both exclude revoked rows.
     assert_eq!(count_active(&conn).unwrap(), 0);
-    assert!(surface_for_recall(&conn, 50).unwrap().is_empty());
+    assert!(surface_for_recall(&conn, 50, true).unwrap().is_empty());
 
     // Forensic addressability: the row is STILL in the table with
     // revoked_at populated.

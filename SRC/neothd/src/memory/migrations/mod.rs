@@ -140,6 +140,14 @@ pub const MIGRATIONS: &[Migration] = &[
                       recall-quality scorecard",
         run: migration_v16_to_v17,
     },
+    Migration {
+        from: 17,
+        to: 18,
+        description: "GOLD-ADAPT-MEM-01: add idx_groundtruth.fact_state + source_weight \
+                      — fact trust state machine (existing rows default to 'verified'; \
+                      only verified facts feed recall/council)",
+        run: migration_v17_to_v18,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -257,6 +265,28 @@ fn migration_v16_to_v17(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("v16->v17: create idx_recall_events (recall-quality scorecard)")?;
+    Ok(())
+}
+
+/// v17 → v18: add the fact-state machine columns to `idx_groundtruth`
+/// (GOLD-ADAPT-MEM-01). `fact_state` defaults to `'verified'` so EVERY existing
+/// row stays trusted + surfaced (backward-compat); only newly-inserted external
+/// facts start as `'candidate'`. `source_weight` is a JSON `{source:count}` map.
+/// Mirrors the canonical columns in `store::apply_schema`. Idempotent (the `let _`
+/// swallows a duplicate-column error on a re-run).
+fn migration_v17_to_v18(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_groundtruth ADD COLUMN fact_state TEXT NOT NULL DEFAULT 'verified'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE idx_groundtruth ADD COLUMN source_weight TEXT NOT NULL DEFAULT '{}'",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_groundtruth_state ON idx_groundtruth (fact_state)",
+        [],
+    );
     Ok(())
 }
 

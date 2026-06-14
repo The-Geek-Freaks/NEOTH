@@ -770,6 +770,13 @@ Revoke an existing row by id. Row stays in the table for audit but stops appeari
 
 - `<ID>` — Row id (`neoth groundtruth list` shows ids)
 
+### `neoth groundtruth state`
+
+GOLD-ADAPT-MEM-01 — set a fact's trust state. Only `verified` facts are surfaced into recall; promote a corroborated candidate, or retire one as `superseded` / `contradicted` / `deprecated`
+
+- `<ID>` — Row id (`neoth groundtruth list` shows ids + current state)
+- `<STATE>` — New state: raw | candidate | verified | superseded | contradicted | deprecated
+
 ## `neoth gui`
 
 Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves the separate GUI binary (next to `neoth`, else via PATH) and spawns it. `--locate` resolves + prints the path without launching. Prints the install command if the GUI binary isn't present

@@ -55,6 +55,15 @@ pub enum GroundtruthAction {
         /// Row id (`neoth groundtruth list` shows ids).
         id: i64,
     },
+    /// GOLD-ADAPT-MEM-01 — set a fact's trust state. Only `verified` facts are
+    /// surfaced into recall; promote a corroborated candidate, or retire one as
+    /// `superseded` / `contradicted` / `deprecated`.
+    State {
+        /// Row id (`neoth groundtruth list` shows ids + current state).
+        id: i64,
+        /// New state: raw | candidate | verified | superseded | contradicted | deprecated.
+        state: String,
+    },
     /// Run the bilingual Q&A pass — re-entrant version of the wizard step.
     /// Operator can run any time after `neoth init`.
     Ask {
@@ -130,6 +139,7 @@ pub async fn run_groundtruth(args: GroundtruthArgs) -> Result<()> {
         GroundtruthAction::List { scope, limit } => list(&conn, &scope, limit, args.output),
         GroundtruthAction::Add { statement, scope } => add(&conn, &statement, &scope, args.output),
         GroundtruthAction::Revoke { id } => revoke(&conn, id, args.output),
+        GroundtruthAction::State { id, state } => set_state(&conn, id, &state, args.output),
         GroundtruthAction::Ask { lang } => {
             drop(conn);
             ask(&db_path, lang.as_deref(), args.output)
@@ -494,8 +504,11 @@ fn list(
     limit: usize,
     output: OutputFormat,
 ) -> Result<()> {
+    // Operator inspection: show ALL trust states (incl. candidates) so the
+    // `fact_state` column is meaningful — only the recall surface gates on
+    // verified (GOLD-ADAPT-MEM-01).
     let rows = if scope == "*" {
-        groundtruth::surface_for_recall(conn, limit)?
+        groundtruth::surface_for_recall(conn, limit, true)?
     } else {
         groundtruth::list_for_scope(conn, scope)?
             .into_iter()
@@ -518,8 +531,8 @@ fn list(
             );
             for g in &rows {
                 println!(
-                    "  [{:>4}] {:<22} {:<24}  {}",
-                    g.id, g.source, g.scope, g.statement,
+                    "  [{:>4}] {:<11} {:<22} {:<24}  {}",
+                    g.id, g.fact_state, g.source, g.scope, g.statement,
                 );
             }
         }
@@ -574,6 +587,30 @@ fn revoke(conn: &rusqlite::Connection, id: i64, output: OutputFormat) -> Result<
         (false, _) => {
             anyhow::bail!("no ground-truth row with id {id}");
         }
+    }
+    Ok(())
+}
+
+/// GOLD-ADAPT-MEM-01 — `neoth groundtruth state <id> <state>`: operator-driven
+/// trust-state transition (promote a corroborated candidate, supersede,
+/// contradict, or deprecate a fact).
+fn set_state(conn: &rusqlite::Connection, id: i64, state: &str, output: OutputFormat) -> Result<()> {
+    let Some(fs) = groundtruth::FactState::parse(state) else {
+        anyhow::bail!(
+            "unknown fact state '{state}' — use one of: \
+             raw, candidate, verified, superseded, contradicted, deprecated"
+        );
+    };
+    let changed = groundtruth::set_fact_state(conn, id, fs)?;
+    if !changed {
+        anyhow::bail!("no ground-truth row with id {id}");
+    }
+    info!(id, state = fs.as_str(), "ground-truth fact state set");
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::json!({"id": id, "state": fs.as_str()}));
+        }
+        OutputFormat::Table => println!("ground-truth #{id} → {}", fs.as_str()),
     }
     Ok(())
 }

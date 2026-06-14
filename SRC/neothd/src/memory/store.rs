@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 17;
+pub const SCHEMA_VERSION: i64 = 18;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -650,12 +650,20 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             source          TEXT NOT NULL,
             scope           TEXT NOT NULL,
             asserted_at     INTEGER NOT NULL,
-            revoked_at      INTEGER
+            revoked_at      INTEGER,
+            -- GOLD-ADAPT-MEM-01: fact trust state machine. Only 'verified' facts
+            -- are surfaced into recall/council. Existing rows migrate to
+            -- 'verified' (backward-compat); new external (import/omi) facts start
+            -- 'candidate' until corroborated. source_weight is a JSON {source:count}
+            -- map; >=2 distinct sources auto-promotes a candidate to verified.
+            fact_state      TEXT NOT NULL DEFAULT 'verified',
+            source_weight   TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE INDEX IF NOT EXISTS idx_groundtruth_scope    ON idx_groundtruth (scope);
         CREATE INDEX IF NOT EXISTS idx_groundtruth_source   ON idx_groundtruth (source);
         CREATE INDEX IF NOT EXISTS idx_groundtruth_revoked  ON idx_groundtruth (revoked_at);
+        CREATE INDEX IF NOT EXISTS idx_groundtruth_state    ON idx_groundtruth (fact_state);
 
         -- ── Schema v6: embedding store (R-9 vision Phase 2b persistence) ──
         --

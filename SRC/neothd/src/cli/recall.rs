@@ -1053,6 +1053,7 @@ fn recall_groundtruth_like(
         "SELECT id, statement, asserted_at \
          FROM idx_groundtruth \
          WHERE revoked_at IS NULL \
+           AND fact_state = 'verified' \
            AND statement LIKE ?1 COLLATE NOCASE \
          ORDER BY asserted_at DESC \
          LIMIT ?2",
