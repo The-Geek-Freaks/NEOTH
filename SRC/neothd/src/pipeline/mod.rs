@@ -26,5 +26,10 @@
 //!   metadata (channel vs CLI).
 
 pub mod enriched_request;
+/// GOLD-ADAPT-ODY-18 — untrusted-source-data sandbox (`<<<UNTRUSTED_SOURCE_DATA>>>`
+/// guard + policy preamble + marker-injection defang) applied to external tool
+/// output before it re-enters the LLM prompt.
+pub mod untrusted_wrap;
 
 pub use enriched_request::{EnrichedRequest, EnrichmentInputs, build_enriched_request};
+pub use untrusted_wrap::wrap_untrusted;
