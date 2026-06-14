@@ -1621,6 +1621,53 @@ pub(crate) fn spawn_channel_adapters(
         }
     }
 
+    // GOLD-FEAT-10 — Twitch chat via the IRC adapter (Twitch chat IS IRC). Same
+    // `irc-channel` feature; NEOTH dials OUT to irc.chat.twitch.tv, no public URL.
+    // Starts when twitch_username + twitch_oauth_token + a provider are present.
+    #[cfg(feature = "irc-channel")]
+    {
+        match (
+            creds.twitch_username.clone(),
+            creds.twitch_oauth_token.clone(),
+            shared_provider.as_ref(),
+        ) {
+            (Some(username), Some(oauth), Some(provider)) => {
+                let channel = crate::channels::irc::IrcChannel::for_twitch(
+                    username,
+                    oauth,
+                    creds.twitch_channels.clone().unwrap_or_default(),
+                );
+                let handler: PipelineHandler = build_channel_handler(
+                    provider.clone(),
+                    config,
+                    writer,
+                    provider_meter,
+                    rate_limiter,
+                    segment_path,
+                    shared_views_conn,
+                    reload_controller,
+                );
+                spawn_channel_run(channel, handler, "Twitch", channel_tasks);
+                info!(
+                    channel = "twitch",
+                    status = "LIVE",
+                    "channel: spawned (twitch IRC receive loop)"
+                );
+            }
+            (Some(_), Some(_), None) => warn!(
+                channel = "twitch",
+                status = "CONFIGURED-NOT-STARTED",
+                "Twitch configured but provider unavailable; channel not started"
+            ),
+            (Some(_), None, _) | (None, Some(_), _) => warn!(
+                channel = "twitch",
+                status = "CONFIGURED-NOT-STARTED",
+                "Twitch needs BOTH twitch_username and twitch_oauth_token; only one supplied — not started"
+            ),
+            (None, None, _) => {}
+        }
+    }
+
     // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
     // verify-token + app-secret + provider are all present. Listens on
     // 127.0.0.1:<whatsapp_webhook_port> (default 8443).

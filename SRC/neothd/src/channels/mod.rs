@@ -124,6 +124,10 @@ pub enum ChannelKind {
     /// WebSocket API (NEOTH dials OUT, so no public URL). Always compiled —
     /// reuses `tokio-tungstenite` + `reqwest`, no new crate.
     Mattermost,
+    /// GOLD-FEAT-10 — Twitch chat, which is IRC under the hood. Served by the IRC
+    /// adapter (`IrcChannel::for_twitch`) behind the `irc-channel` feature; this
+    /// variant + its formatter/probe row stay compiled in every build.
+    Twitch,
 }
 
 impl ChannelKind {
@@ -140,6 +144,7 @@ impl ChannelKind {
             ChannelKind::Line => "line",
             ChannelKind::Irc => "irc",
             ChannelKind::Mattermost => "mattermost",
+            ChannelKind::Twitch => "twitch",
         }
     }
 }

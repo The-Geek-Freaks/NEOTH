@@ -86,6 +86,10 @@ pub struct ChannelCredsView {
     pub mattermost_url: bool,
     /// GOLD-FEAT-10 — Mattermost personal-access/bot token present.
     pub mattermost_token: bool,
+    /// GOLD-FEAT-10 — Twitch bot username present.
+    pub twitch_username: bool,
+    /// GOLD-FEAT-10 — Twitch OAuth token present.
+    pub twitch_oauth: bool,
 }
 
 impl ChannelCredsView {
@@ -120,12 +124,14 @@ impl ChannelCredsView {
             irc_nick: creds.irc_nick.is_some(),
             mattermost_url: creds.mattermost_url.is_some(),
             mattermost_token: creds.mattermost_token.is_some(),
+            twitch_username: creds.twitch_username.is_some(),
+            twitch_oauth: creds.twitch_oauth_token.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 11] = [
+pub const ALL_CHANNELS: [ChannelKind; 12] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -137,6 +143,7 @@ pub const ALL_CHANNELS: [ChannelKind; 11] = [
     ChannelKind::Line,
     ChannelKind::Irc,
     ChannelKind::Mattermost,
+    ChannelKind::Twitch,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -265,6 +272,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             _ => (
                 ProbeStatus::Error,
                 "Mattermost needs BOTH mattermost_url AND mattermost_token",
+            ),
+        },
+        ChannelKind::Twitch => match (v.twitch_username, v.twitch_oauth) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "twitch_username + twitch_oauth_token configured — NEOTH dials out to Twitch IRC (no public URL); requires an `irc-channel` feature build to start",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no twitch config"),
+            _ => (
+                ProbeStatus::Error,
+                "Twitch needs BOTH twitch_username AND twitch_oauth_token",
             ),
         },
     };

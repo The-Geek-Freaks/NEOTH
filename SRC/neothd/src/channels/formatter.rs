@@ -110,6 +110,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Line => Some(Box::new(LineFormatter)),
         ChannelKind::Irc => Some(Box::new(IrcFormatter)),
         ChannelKind::Mattermost => Some(Box::new(MattermostFormatter)),
+        ChannelKind::Twitch => Some(Box::new(TwitchFormatter)),
     }
 }
 
@@ -571,6 +572,35 @@ impl Formatter for MattermostFormatter {
             MATTERMOST_MAX_CHARS - SPLIT_HEADROOM,
             reply.length_hint,
         )
+    }
+}
+
+// ── Twitch (plaintext IRC) ───────────────────────────────────────────
+
+/// Twitch chat formatter. Twitch chat is IRC: plaintext, no markdown rendering.
+/// Mirrors [`IrcFormatter`] but at Twitch's 500-char per-message cap (the send
+/// path's `irc_lines` applies a further wire-safety split). Code blocks are kept
+/// as literal text so the operator still sees the code.
+pub struct TwitchFormatter;
+
+/// Twitch's per-message limit is 500 characters.
+const TWITCH_MAX_CHARS: usize = 500;
+
+impl Formatter for TwitchFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Twitch
+    }
+    fn max_chars_per_message(&self) -> usize {
+        TWITCH_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        let mut rendered = String::new();
+        rendered.push_str(&reply.text);
+        for cb in &reply.code_blocks {
+            rendered.push('\n');
+            rendered.push_str(&cb.body);
+        }
+        split_into_messages(&rendered, TWITCH_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
     }
 }
 

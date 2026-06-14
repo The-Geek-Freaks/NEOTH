@@ -132,6 +132,14 @@ pub struct Credentials {
     pub mattermost_url: Option<String>,
     /// GOLD-FEAT-10 — Mattermost personal-access or bot token. Secret.
     pub mattermost_token: Option<SecretString>,
+    /// GOLD-FEAT-10 — Twitch bot username (the account NEOTH chats as).
+    /// Lowercased at connect. Not a secret.
+    pub twitch_username: Option<String>,
+    /// GOLD-FEAT-10 — Twitch OAuth token (`chat:read` + `chat:edit` scopes).
+    /// NEOTH prepends the required `oauth:` prefix. Secret.
+    pub twitch_oauth_token: Option<SecretString>,
+    /// GOLD-FEAT-10 — comma-separated Twitch channels to join (e.g. `#mychannel`).
+    pub twitch_channels: Option<String>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -285,6 +293,9 @@ impl Credentials {
             irc_tls,
             mattermost_url,
             mattermost_token,
+            twitch_username,
+            twitch_oauth_token,
+            twitch_channels,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -331,6 +342,9 @@ impl Credentials {
             && irc_tls.is_none()
             && mattermost_url.is_none()
             && mattermost_token.is_none()
+            && twitch_username.is_none()
+            && twitch_oauth_token.is_none()
+            && twitch_channels.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

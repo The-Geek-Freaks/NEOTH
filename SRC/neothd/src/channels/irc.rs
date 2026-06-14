@@ -34,14 +34,17 @@ use tracing::{info, warn};
 use crate::secret::SecretString;
 
 use super::irc_api::{irc_lines, map_irc_privmsg};
-use super::{Channel, ChannelError, MessageId, PipelineHandler};
+use super::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
 
 /// IRC adapter. Holds the connection config + the live send handle (published by
-/// the receive loop once it connects).
+/// the receive loop once it connects). The same adapter serves **Twitch chat**
+/// (which is IRC under the hood) via [`Self::for_twitch`] — `kind` records which
+/// so inbound messages, routing, and the WAL see the right channel family.
 pub struct IrcChannel {
     config: Config,
     nick: String,
     sender: tokio::sync::OnceCell<Sender>,
+    kind: ChannelKind,
 }
 
 impl IrcChannel {
@@ -77,7 +80,35 @@ impl IrcChannel {
             config,
             nick,
             sender: tokio::sync::OnceCell::new(),
+            kind: ChannelKind::Irc,
         }
+    }
+
+    /// Configure this adapter for **Twitch chat** — which is IRC under the hood
+    /// (`irc.chat.twitch.tv:6697`, TLS). The operator supplies the bot's Twitch
+    /// username + an OAuth token carrying `chat:read` (+ `chat:edit` to send)
+    /// scopes; NEOTH prepends the required `oauth:` prefix. Rich Twitch features
+    /// (typed tags, sub/raid events) are out of scope — this is the basic chat
+    /// round-trip, identical to the IRC path.
+    pub fn for_twitch(
+        username: impl Into<String>,
+        oauth_token: SecretString,
+        channels_csv: impl AsRef<str>,
+    ) -> Self {
+        // Twitch logins + channel names are lowercase by convention.
+        let username = username.into().to_lowercase();
+        let channels = channels_csv.as_ref().to_lowercase();
+        let password = SecretString::from(format!("oauth:{}", oauth_token.expose()));
+        let mut ch = Self::new(
+            "irc.chat.twitch.tv",
+            6697,
+            username,
+            Some(password),
+            channels,
+            true,
+        );
+        ch.kind = ChannelKind::Twitch;
+        ch
     }
 }
 
@@ -101,7 +132,7 @@ fn now_unix() -> u64 {
 #[async_trait]
 impl Channel for IrcChannel {
     fn name(&self) -> &'static str {
-        "irc"
+        self.kind.as_str()
     }
 
     /// Connect, identify + join, publish the send handle, then stream inbound
@@ -122,11 +153,14 @@ impl Channel for IrcChannel {
                 continue;
             };
             let source_nick = message.source_nickname();
-            let Some(inbound) =
+            let Some(mut inbound) =
                 map_irc_privmsg(target, text, source_nick, &self.nick, now_unix())
             else {
                 continue;
             };
+            // Twitch chat reuses the IRC mapping; stamp the real channel family so
+            // routing / formatting / WAL see "twitch", not "irc".
+            inbound.channel = self.kind;
             let reply_to = inbound.chat_id.clone();
             match handler(inbound).await {
                 Ok(Some(out)) => {
@@ -221,5 +255,22 @@ mod tests {
             ChannelError::Transport(m) => assert!(m.contains("not connected")),
             other => panic!("expected a not-connected Transport error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn twitch_adapter_reports_twitch_name() {
+        let c = IrcChannel::for_twitch("MyBot", SecretString::from("tok"), "#chan");
+        assert_eq!(c.name(), "twitch", "Twitch reuses the IRC adapter but reports its own kind");
+    }
+
+    #[test]
+    fn for_twitch_builds_twitch_server_oauth_and_lowercases() {
+        let c = IrcChannel::for_twitch("MyBot", SecretString::from("abc"), "#MyChannel, #Two");
+        assert_eq!(c.config.server.as_deref(), Some("irc.chat.twitch.tv"));
+        assert_eq!(c.config.port, Some(6697));
+        assert_eq!(c.config.use_tls, Some(true));
+        assert_eq!(c.config.nickname.as_deref(), Some("mybot"), "username lowercased");
+        assert_eq!(c.config.password.as_deref(), Some("oauth:abc"), "oauth: prefix prepended");
+        assert_eq!(c.config.channels, vec!["#mychannel", "#two"], "channels lowercased + parsed");
     }
 }
