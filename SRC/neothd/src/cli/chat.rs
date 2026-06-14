@@ -1354,400 +1354,38 @@ async fn dispatch_provider(
     })
 }
 
-pub async fn run_chat_with(
-    mut args: ChatArgs,
+/// GOLD-ARCH-02 phase 4 — post-reply pipelines for one chat turn: the
+/// PostProviderCall hook, the PROVIDER_RESPONSE WAL frame, mirror-refusal
+/// detection (0x16), LOWKEY refusal recovery + the FEAT-08 abliterated
+/// fallback, ADR extraction, SESSION_ARCHIVE, the opt-in profile pipeline,
+/// the two-stage review gate, hindsight compression, optional session
+/// naming, and the turn-end usage bar. Owns the WAL writer + join handle and
+/// drains them at the end; returns `Ok(())` (the chat turn result) or bails
+/// if the PostProviderCall hook blocks the reply.
+#[allow(clippy::too_many_arguments)]
+async fn run_post_reply_pipelines(
+    response_text: String,
+    writer: crate::wal::writer::WalWriterHandle,
+    writer_join: tokio::task::JoinHandle<()>,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
+    args: ChatArgs,
+    prompt: String,
+    final_prompt: String,
+    final_system: Option<String>,
+    model_used: String,
+    final_input_tokens: Option<u32>,
+    final_output_tokens: Option<u32>,
+    total_latency: std::time::Duration,
+    review_context: Option<(String, String)>,
+    hooks: Vec<crate::hooks::schema::HookDef>,
+    segment_path: std::path::PathBuf,
+    raw_event_id: i64,
+    first_tour_home: std::path::PathBuf,
+    chat_ts_unix: i64,
+    current_session_id: String,
+    prompt_token_estimate: u32,
 ) -> Result<()> {
-    info!(provider = provider.name(), "neoth chat");
-
-    // R-05 (Session 24) — surface the first-tour greeting at most
-    // once per wizard run. `consume_first_tour_marker` reads + deletes
-    // the marker so subsequent chat invocations don't repeat it. Best-
-    // effort: a missing or unreadable marker means "operator past the
-    // onboarding moment", which is the safe default.
-    let first_tour_home = crate::config::FreedomConfig::default_neoth_home();
-    if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
-        println!("[neoth] {greeting}");
-    }
-
-    // Round-3 v0.4 QU-11 / ARS-6 — if `--resume-from <hash>` is set,
-    // hydrate the prior session's `MODE_CHECKPOINT` snapshot from
-    // views.db + prepend a RESUME-CONTEXT block to the system prompt
-    // so the assistant knows the prior pipeline shape. Failures
-    // (missing checkpoint, unreadable views.db, hash mismatch) print
-    // a one-line warning + proceed without the context — the operator
-    // still gets a chat turn, just without the resume hydration.
-    if let Some(hash_prefix) = args.resume_from.clone() {
-        match hydrate_resume_context(&hash_prefix, args.system.as_deref()) {
-            Ok((banner, combined_system)) => {
-                println!("{banner}");
-                args.system = Some(combined_system);
-            }
-            Err(why) => {
-                println!("[neoth] resume-from `{hash_prefix}` failed: {why}");
-            }
-        }
-    }
-
-    let prompt = resolve_prompt(&args).await?;
-
-    // G-03 self-correction signal. If this turn reads as a CORRECTION of the
-    // preceding reply (rule-based follow-up-tone scorer crosses the negative
-    // threshold), record an `OPERATOR_FEEDBACK` (0xBB) WAL frame so the
-    // operator can audit where NEOTH underperformed
-    // (`neoth wal show --type operator_feedback`). Fire-and-forget +
-    // best-effort: it never blocks or fails the chat turn, and stores only a
-    // prompt_hash (no message-content leak). The adaptation consumer (profile
-    // cron biasing self-dev proposals on this signal) is a follow-on slice.
-    let _ = crate::feedback::record_operator_correction(
-        &crate::config::FreedomConfig::default_neoth_home(),
-        &prompt,
-    )
-    .await;
-
-    // Round-3 v0.4 — coding-intent auto-dispatch. When the prompt
-    // looks like a coding request (bilingual EN/DE heuristic: verb
-    // at front + programming-noun anchor; see
-    // `coding::intent::detect_coding_intent`), route through the
-    // dedicated coding workflow (`cli::code::run_code`) instead of
-    // a single-turn chat reply. The coding workflow opens a kanban
-    // session + decomposes + dispatches to the hemisphere worker +
-    // runs patch+test loop — much better operator outcome than
-    // chat-only for "build me X" requests.
-    //
-    // Operator opt-out: `NEOTH_NO_AUTO_CODE=1` env var disables
-    // auto-dispatch entirely. Low-confidence detections (verb XOR
-    // noun, not both) print an offer banner but still run the chat
-    // turn — only High confidence auto-dispatches.
-    if crate::coding::intent::should_auto_dispatch(&prompt) {
-        let intent = crate::coding::intent::detect_coding_intent(&prompt)
-            .expect("should_auto_dispatch returned true so detect must return Some");
-        println!("{}", crate::coding::intent::format_dispatch_banner(&intent));
-        let code_args = crate::cli::code::CodeArgs {
-            prompt: prompt.clone(),
-            db: None,
-            source_channel: "chat".to_string(),
-            no_assign: false,
-            dispatch: false, // operator runs `neoth kanban` after to drive dispatch
-            apply: None,
-            run_pending: false,
-            output: crate::cli::OutputFormat::default(),
-        };
-        return crate::cli::code::run_code(code_args).await;
-    } else if let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt) {
-        // Low-confidence: print an offer banner + continue with chat.
-        println!(
-            "[neoth] coding intent detected at low confidence (verb={:?} noun={:?}). \
-             Try `neoth code \"{}\"` for the dedicated coding workflow.",
-            intent.matched_verb.as_deref().unwrap_or("?"),
-            intent.matched_noun.as_deref().unwrap_or("?"),
-            prompt
-                .lines()
-                .next()
-                .unwrap_or(&prompt)
-                .chars()
-                .take(60)
-                .collect::<String>(),
-        );
-    }
-
-    // OP-02 (Session 25) — next-session seed banner. Read the
-    // most-recent hindsight card + surface its `one_line_summary`
-    // so the operator picks up where they left off. Best-effort:
-    // a missing or empty hindsight dir is the silent default.
-    // Skipping the first_tour greeting case keeps the onboarding
-    // banner clean (operator just finished the wizard — no "since
-    // last time" makes sense).
-    let chat_ts_unix = now_unix() as i64;
-    let current_session_id = crate::memory::hindsight::session_id_for(chat_ts_unix, &prompt);
-    let seed_banner =
-        crate::memory::hindsight::next_session_seed_banner(&first_tour_home, &current_session_id);
-    if !seed_banner.is_empty() {
-        println!("{seed_banner}");
-    }
-
-    // UX-02 — "memory is working" session-start signal. One line telling
-    // the operator NEOTH carried context across runs. Best-effort +
-    // naturally silent on a fresh install (zero memories → None), which
-    // also keeps the post-wizard first-tour banner clean.
-    if let Some(line) = session_memory_signal() {
-        println!("{line}");
-    }
-
-    // UX-05 — Day-30 "unlock moment": once, after 30+ days, nudge the
-    // operator toward opt-in features they still haven't switched on.
-    // Self-suppresses via a marker file; naturally silent pre-30-days,
-    // when all features are active, or on a fresh install.
-    if let Some(banner) = crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config)
-    {
-        println!("{banner}");
-    }
-
-    let wal_dir = FreedomConfig::default_wal_dir();
-    let segment_path = args
-        .wal_segment
-        .clone()
-        .unwrap_or_else(|| wal_dir.join("000001.wal"));
-    if let Some(parent) = segment_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create WAL dir {}", parent.display()))?;
-    }
-    let (writer, writer_join) = wal_spawn(segment_path.clone()).context("spawn WAL writer")?;
-
-    // ── RAW_TEXT (the actual prompt, for recall) ──────────────────────────
-    // Stored before the hashed PROVIDER_REQUEST so `neoth recall "..."` can
-    // find what the operator typed. WAL is mode-0600 / DACL-restricted, so
-    // raw prompts at rest match the existing trust boundary.
-    let raw_header = crate::wal::make_header(EVENT_TYPE_RAW_TEXT, prompt.as_bytes());
-    // Capture the event_id before the header moves into `append` — the
-    // post-reply profile-learning pipeline (B-Konsens 2026-05-17 below)
-    // uses this as the trigger anchor for `extract_window`.
-    let raw_event_id = raw_header.event_id.0 as i64;
-    writer
-        .append(raw_header, prompt.as_bytes().to_vec())
-        .await
-        .context("write RAW_TEXT WAL frame")?;
-
-    // ── P-08 briefing-gate marker (Workstream C, Session 22) ──────────────
-    // Update the operator-activity timestamp so the cron task's
-    // `should_emit_for_briefing` check sees a fresh "operator engaged"
-    // signal without re-scanning the WAL. Best-effort: a permission
-    // failure on the marker file MUST NOT fail the chat — recording is
-    // an audit signal, not a chat-correctness invariant.
-    let _ = crate::profile::briefing_gate::record_last_active(
-        &FreedomConfig::default_neoth_home(),
-        now_unix() as i64,
-    );
-
-    // ── GOLD-WIRE-02: conversational-recall short-circuit ─────────────────
-    // "Weißt du noch als wir über X geredet haben?" / "do you remember when
-    // we talked about X?" is answered straight from the local idx_episode
-    // store WITHOUT an LLM call — so NO PROVIDER_REQUEST / PROVIDER_RESPONSE
-    // frame is written for this turn. The RAW_TEXT frame above still records
-    // the question so it stays recallable later. The helper is best-effort on
-    // the DB (a recall miss yields a localized "nothing found" reply, never
-    // an error), and returns `None` for any non-recall prompt — which falls
-    // through to the normal provider path below unchanged.
-    // GR-039: gated on `memory.recall_shortcut` (default true) so operators
-    // can route recall-looking prompts to the provider like any other turn.
-    if config.memory.recall_shortcut {
-        if let Some(reply) = crate::cli::recall::answer_conversational_recall(
-            &prompt,
-            &crate::memory::store::default_path(),
-        )
-        .await
-        {
-            println!("{reply}");
-            // GR-090: machine consumers in --stream mode block on the
-            // done-sentinel — the recall early-return must emit it too.
-            if args.stream {
-                println!();
-                println!("{}", serde_json::json!({"neoth_stream":"done","count":1}));
-            }
-            // Same WAL-writer teardown every other early return in this fn uses.
-            drop(writer);
-            let _ = writer_join.await;
-            return Ok(());
-        }
-    }
-
-    // ── PROVIDER_REQUEST (hashed metadata) ────────────────────────────────
-    //
-    // ARCH-07 / Round-3 v0.4 — `prompt_bundle_hash` field added.
-    // Computed via `skills::versioning::compute_prompt_bundle_hash`
-    // over the minimal block set currently visible at this site
-    // (Block::A = operator-explicit --system if set, Block::E =
-    // operator's current message). As the prompt assembler grows to
-    // explicitly emit Block::B (active skill prompts), Block::C
-    // (profile context), Block::D (recall episodes), this set
-    // extends — the hash naturally evolves with the bundle shape.
-    // Replay-determinism contract (ARCH-02 test_prompt_bundle_replay_
-    // determinism): same bundle → same hash, deterministically.
-    let mut bundle_entries: Vec<crate::skills::versioning::BundleBlockEntry<'_>> = Vec::new();
-    if let Some(sys) = args.system.as_deref().filter(|s| !s.is_empty()) {
-        bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
-            block: crate::skills::versioning::BundleBlock::A,
-            content: sys,
-        });
-    }
-    bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
-        block: crate::skills::versioning::BundleBlock::E,
-        content: &prompt,
-    });
-    let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
-
-    // ── ARCH-04 integration: pre-flight block-layer budget check ─────────
-    //
-    // Convert the bundle entries we just built (Block::A + Block::E
-    // today; B/C/D extend as the assembler grows) into the matching
-    // BlockItem shape + run enforce_budget. The cap reads from
-    // `config.tokens.max_per_request` (operator-tunable via
-    // `freedom.yaml::tokens.max_per_request`; defaults to 100_000
-    // per `TokensConfig::default_max_per_request`). Operators on
-    // tight-context models (e.g. Gemini Flash 32k) lower the cap;
-    // operators on Opus 4.7 (200k) keep the default.
-    //
-    // Today's call site only carries A + E — both undegradable per
-    // ARCH-04 policy — so `enforce_budget` either returns None (under
-    // cap, no-op) or Some(detail) with `new_total > cap` (operator-
-    // visible "your prompt exceeds the cap; tighten Block::A/E"
-    // signal). When the assembler emits Block::B/C/D the degradation
-    // policy starts firing for real.
-    let prompt_token_estimate: u32 = {
-        use crate::tokens::budget::{Block, BlockItem, count_tokens};
-        let items: Vec<BlockItem> = bundle_entries
-            .iter()
-            .map(|e| BlockItem {
-                block: match e.block {
-                    crate::skills::versioning::BundleBlock::A => Block::A,
-                    crate::skills::versioning::BundleBlock::B => Block::B,
-                    crate::skills::versioning::BundleBlock::C => Block::C,
-                    crate::skills::versioning::BundleBlock::D => Block::D,
-                    crate::skills::versioning::BundleBlock::E => Block::E,
-                    crate::skills::versioning::BundleBlock::Conductor => Block::Conductor,
-                },
-                importance: 0.5,
-                ts_ns: 0,
-                tokens: count_tokens(e.content),
-                content: e.content.to_string(),
-            })
-            .collect();
-        let estimate: u32 = items.iter().map(|i| i.tokens).sum();
-        let mut items_mut = items;
-        let cap = config.tokens.max_per_request;
-        if let Some(detail) = crate::tokens::budget::enforce_budget(&mut items_mut, cap) {
-            // Emit BUDGET_EXCEEDED audit frame BEFORE PROVIDER_REQUEST
-            // so the audit-chain consumer sees them in cause-then-
-            // effect order. Best-effort emit — a WAL write failure
-            // here MUST NOT abort the chat turn (the audit signal is
-            // operator-visible via tracing::warn fallback).
-            warn!(
-                cap = detail.cap,
-                original_total = detail.original_total,
-                new_total = detail.new_total,
-                dropped_d = detail.dropped_d_count,
-                dropped_c = detail.dropped_c_count,
-                conductor_truncated = detail.conductor_truncated,
-                "prompt-bundle exceeded token cap; degradation applied (or A/B/E-only — operator should tighten)"
-            );
-            let budget_payload = serde_json::to_vec(&serde_json::json!({
-                "cap": detail.cap,
-                "original_total": detail.original_total,
-                "new_total": detail.new_total,
-                "dropped_d_count": detail.dropped_d_count,
-                "dropped_c_count": detail.dropped_c_count,
-                "conductor_truncated": detail.conductor_truncated,
-                "prompt_bundle_hash": prompt_bundle_hash,
-                "ts_unix": now_unix(),
-            }))
-            .unwrap_or_default();
-            let budget_header =
-                crate::wal::make_header(EVENT_TYPE_BUDGET_EXCEEDED, &budget_payload);
-            if let Err(e) = writer.append(budget_header, budget_payload).await {
-                warn!(error = %e, "BUDGET_EXCEEDED WAL emit failed (non-fatal)");
-            }
-        }
-        estimate
-    };
-
-    let req_payload = serde_json::to_vec(&serde_json::json!({
-        "operator_id": config.operator_id,
-        "provider": provider.name(),
-        // SPEC-04: on/off-device classification of THIS request's
-        // provider ("local" | "cloud") — the durable per-turn audit
-        // anchor for the privacy posture, alongside the extraction-path
-        // 0x2E PROFILE_EXTRACT_TARGET frame.
-        "target": crate::profile::runner::extract_target_label(provider.name()),
-        "model": args.model.clone().or_else(|| config.provider_model.clone()),
-        "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
-        "prompt_bytes": prompt.len(),
-        "prompt_bundle_hash": prompt_bundle_hash,
-        "prompt_token_estimate": prompt_token_estimate,
-        "ts_unix": now_unix(),
-    }))?;
-    let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
-    writer
-        .append(req_header, req_payload)
-        .await
-        .context("write PROVIDER_REQUEST WAL frame")?;
-
-    // ── Operator context + skills load — K-Perf-4 parallel resource load ──
-    // Both reads hit the filesystem and are mutually independent: operator_md
-    // assembles ~/.neoth/NEOTH.md + project + rules + memory, skills walks
-    // `<home>/skills/`. Running them sequentially was ~2× the wall time on
-    // cold caches (each ~5-20ms). tokio::join! drives them concurrently
-    // through the same runtime worker — the FS reads pipeline OS-side
-    // without extra threads. Per Performance agent's K-Perf-4 pick.
-    //
-    // The skill router (line below) consumes installed_skills, so loading
-    // it BEFORE the system-prompt assembly is mandatory — the parallel
-    // load just shaves the serial cost off the front edge.
-    let home = FreedomConfig::default_neoth_home();
-    let (
-        PromptBundle { combined_system, skill_tool_allowlist },
-        config,
-        prompt,
-        home,
-    ) = build_prompt_bundle(config, prompt, &args, &prompt_bundle_hash, home, &writer).await;
-
-    let (
-        writer,
-        writer_join,
-        predicted_cost,
-        review_context,
-        final_prompt,
-        final_system,
-        prompt,
-        quota_path,
-        hooks,
-    ) =
-        match enforce_preflight(
-            combined_system, prompt, provider, &args, &config, writer, writer_join, &home,
-        )
-        .await?
-        {
-            PreflightOutcome::Done => return Ok(()),
-            PreflightOutcome::Continue {
-                writer,
-                writer_join,
-                predicted_cost,
-                review_context,
-                final_prompt,
-                final_system,
-                prompt,
-                quota_path,
-                hooks,
-            } => (
-                writer, writer_join, predicted_cost, review_context, final_prompt,
-                final_system, prompt, quota_path, hooks,
-            ),
-        };
-    let DispatchOutput {
-        response_text,
-        final_input_tokens,
-        final_output_tokens,
-        model_used,
-        total_latency,
-        writer,
-        writer_join,
-        final_prompt,
-        final_system,
-    } = dispatch_provider(
-        final_prompt,
-        final_system,
-        &args,
-        provider,
-        &config,
-        writer,
-        writer_join,
-        quota_path,
-        &prompt,
-        &predicted_cost,
-        skill_tool_allowlist,
-    )
-    .await?;
-
     // ── TOML hooks: PostProviderCall (Phase 29 R-15) ─────────────────────
     // Last chance to mutate or block the model's reply before it lands in
     // the WAL + reaches the operator. Already-printed streaming output
@@ -2308,6 +1946,426 @@ pub async fn run_chat_with(
     drop(writer);
     let _ = writer_join.await;
     Ok(())
+}
+
+pub async fn run_chat_with(
+    mut args: ChatArgs,
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+) -> Result<()> {
+    info!(provider = provider.name(), "neoth chat");
+
+    // R-05 (Session 24) — surface the first-tour greeting at most
+    // once per wizard run. `consume_first_tour_marker` reads + deletes
+    // the marker so subsequent chat invocations don't repeat it. Best-
+    // effort: a missing or unreadable marker means "operator past the
+    // onboarding moment", which is the safe default.
+    let first_tour_home = crate::config::FreedomConfig::default_neoth_home();
+    if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
+        println!("[neoth] {greeting}");
+    }
+
+    // Round-3 v0.4 QU-11 / ARS-6 — if `--resume-from <hash>` is set,
+    // hydrate the prior session's `MODE_CHECKPOINT` snapshot from
+    // views.db + prepend a RESUME-CONTEXT block to the system prompt
+    // so the assistant knows the prior pipeline shape. Failures
+    // (missing checkpoint, unreadable views.db, hash mismatch) print
+    // a one-line warning + proceed without the context — the operator
+    // still gets a chat turn, just without the resume hydration.
+    if let Some(hash_prefix) = args.resume_from.clone() {
+        match hydrate_resume_context(&hash_prefix, args.system.as_deref()) {
+            Ok((banner, combined_system)) => {
+                println!("{banner}");
+                args.system = Some(combined_system);
+            }
+            Err(why) => {
+                println!("[neoth] resume-from `{hash_prefix}` failed: {why}");
+            }
+        }
+    }
+
+    let prompt = resolve_prompt(&args).await?;
+
+    // G-03 self-correction signal. If this turn reads as a CORRECTION of the
+    // preceding reply (rule-based follow-up-tone scorer crosses the negative
+    // threshold), record an `OPERATOR_FEEDBACK` (0xBB) WAL frame so the
+    // operator can audit where NEOTH underperformed
+    // (`neoth wal show --type operator_feedback`). Fire-and-forget +
+    // best-effort: it never blocks or fails the chat turn, and stores only a
+    // prompt_hash (no message-content leak). The adaptation consumer (profile
+    // cron biasing self-dev proposals on this signal) is a follow-on slice.
+    let _ = crate::feedback::record_operator_correction(
+        &crate::config::FreedomConfig::default_neoth_home(),
+        &prompt,
+    )
+    .await;
+
+    // Round-3 v0.4 — coding-intent auto-dispatch. When the prompt
+    // looks like a coding request (bilingual EN/DE heuristic: verb
+    // at front + programming-noun anchor; see
+    // `coding::intent::detect_coding_intent`), route through the
+    // dedicated coding workflow (`cli::code::run_code`) instead of
+    // a single-turn chat reply. The coding workflow opens a kanban
+    // session + decomposes + dispatches to the hemisphere worker +
+    // runs patch+test loop — much better operator outcome than
+    // chat-only for "build me X" requests.
+    //
+    // Operator opt-out: `NEOTH_NO_AUTO_CODE=1` env var disables
+    // auto-dispatch entirely. Low-confidence detections (verb XOR
+    // noun, not both) print an offer banner but still run the chat
+    // turn — only High confidence auto-dispatches.
+    if crate::coding::intent::should_auto_dispatch(&prompt) {
+        let intent = crate::coding::intent::detect_coding_intent(&prompt)
+            .expect("should_auto_dispatch returned true so detect must return Some");
+        println!("{}", crate::coding::intent::format_dispatch_banner(&intent));
+        let code_args = crate::cli::code::CodeArgs {
+            prompt: prompt.clone(),
+            db: None,
+            source_channel: "chat".to_string(),
+            no_assign: false,
+            dispatch: false, // operator runs `neoth kanban` after to drive dispatch
+            apply: None,
+            run_pending: false,
+            output: crate::cli::OutputFormat::default(),
+        };
+        return crate::cli::code::run_code(code_args).await;
+    } else if let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt) {
+        // Low-confidence: print an offer banner + continue with chat.
+        println!(
+            "[neoth] coding intent detected at low confidence (verb={:?} noun={:?}). \
+             Try `neoth code \"{}\"` for the dedicated coding workflow.",
+            intent.matched_verb.as_deref().unwrap_or("?"),
+            intent.matched_noun.as_deref().unwrap_or("?"),
+            prompt
+                .lines()
+                .next()
+                .unwrap_or(&prompt)
+                .chars()
+                .take(60)
+                .collect::<String>(),
+        );
+    }
+
+    // OP-02 (Session 25) — next-session seed banner. Read the
+    // most-recent hindsight card + surface its `one_line_summary`
+    // so the operator picks up where they left off. Best-effort:
+    // a missing or empty hindsight dir is the silent default.
+    // Skipping the first_tour greeting case keeps the onboarding
+    // banner clean (operator just finished the wizard — no "since
+    // last time" makes sense).
+    let chat_ts_unix = now_unix() as i64;
+    let current_session_id = crate::memory::hindsight::session_id_for(chat_ts_unix, &prompt);
+    let seed_banner =
+        crate::memory::hindsight::next_session_seed_banner(&first_tour_home, &current_session_id);
+    if !seed_banner.is_empty() {
+        println!("{seed_banner}");
+    }
+
+    // UX-02 — "memory is working" session-start signal. One line telling
+    // the operator NEOTH carried context across runs. Best-effort +
+    // naturally silent on a fresh install (zero memories → None), which
+    // also keeps the post-wizard first-tour banner clean.
+    if let Some(line) = session_memory_signal() {
+        println!("{line}");
+    }
+
+    // UX-05 — Day-30 "unlock moment": once, after 30+ days, nudge the
+    // operator toward opt-in features they still haven't switched on.
+    // Self-suppresses via a marker file; naturally silent pre-30-days,
+    // when all features are active, or on a fresh install.
+    if let Some(banner) = crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config)
+    {
+        println!("{banner}");
+    }
+
+    let wal_dir = FreedomConfig::default_wal_dir();
+    let segment_path = args
+        .wal_segment
+        .clone()
+        .unwrap_or_else(|| wal_dir.join("000001.wal"));
+    if let Some(parent) = segment_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create WAL dir {}", parent.display()))?;
+    }
+    let (writer, writer_join) = wal_spawn(segment_path.clone()).context("spawn WAL writer")?;
+
+    // ── RAW_TEXT (the actual prompt, for recall) ──────────────────────────
+    // Stored before the hashed PROVIDER_REQUEST so `neoth recall "..."` can
+    // find what the operator typed. WAL is mode-0600 / DACL-restricted, so
+    // raw prompts at rest match the existing trust boundary.
+    let raw_header = crate::wal::make_header(EVENT_TYPE_RAW_TEXT, prompt.as_bytes());
+    // Capture the event_id before the header moves into `append` — the
+    // post-reply profile-learning pipeline (B-Konsens 2026-05-17 below)
+    // uses this as the trigger anchor for `extract_window`.
+    let raw_event_id = raw_header.event_id.0 as i64;
+    writer
+        .append(raw_header, prompt.as_bytes().to_vec())
+        .await
+        .context("write RAW_TEXT WAL frame")?;
+
+    // ── P-08 briefing-gate marker (Workstream C, Session 22) ──────────────
+    // Update the operator-activity timestamp so the cron task's
+    // `should_emit_for_briefing` check sees a fresh "operator engaged"
+    // signal without re-scanning the WAL. Best-effort: a permission
+    // failure on the marker file MUST NOT fail the chat — recording is
+    // an audit signal, not a chat-correctness invariant.
+    let _ = crate::profile::briefing_gate::record_last_active(
+        &FreedomConfig::default_neoth_home(),
+        now_unix() as i64,
+    );
+
+    // ── GOLD-WIRE-02: conversational-recall short-circuit ─────────────────
+    // "Weißt du noch als wir über X geredet haben?" / "do you remember when
+    // we talked about X?" is answered straight from the local idx_episode
+    // store WITHOUT an LLM call — so NO PROVIDER_REQUEST / PROVIDER_RESPONSE
+    // frame is written for this turn. The RAW_TEXT frame above still records
+    // the question so it stays recallable later. The helper is best-effort on
+    // the DB (a recall miss yields a localized "nothing found" reply, never
+    // an error), and returns `None` for any non-recall prompt — which falls
+    // through to the normal provider path below unchanged.
+    // GR-039: gated on `memory.recall_shortcut` (default true) so operators
+    // can route recall-looking prompts to the provider like any other turn.
+    if config.memory.recall_shortcut {
+        if let Some(reply) = crate::cli::recall::answer_conversational_recall(
+            &prompt,
+            &crate::memory::store::default_path(),
+        )
+        .await
+        {
+            println!("{reply}");
+            // GR-090: machine consumers in --stream mode block on the
+            // done-sentinel — the recall early-return must emit it too.
+            if args.stream {
+                println!();
+                println!("{}", serde_json::json!({"neoth_stream":"done","count":1}));
+            }
+            // Same WAL-writer teardown every other early return in this fn uses.
+            drop(writer);
+            let _ = writer_join.await;
+            return Ok(());
+        }
+    }
+
+    // ── PROVIDER_REQUEST (hashed metadata) ────────────────────────────────
+    //
+    // ARCH-07 / Round-3 v0.4 — `prompt_bundle_hash` field added.
+    // Computed via `skills::versioning::compute_prompt_bundle_hash`
+    // over the minimal block set currently visible at this site
+    // (Block::A = operator-explicit --system if set, Block::E =
+    // operator's current message). As the prompt assembler grows to
+    // explicitly emit Block::B (active skill prompts), Block::C
+    // (profile context), Block::D (recall episodes), this set
+    // extends — the hash naturally evolves with the bundle shape.
+    // Replay-determinism contract (ARCH-02 test_prompt_bundle_replay_
+    // determinism): same bundle → same hash, deterministically.
+    let mut bundle_entries: Vec<crate::skills::versioning::BundleBlockEntry<'_>> = Vec::new();
+    if let Some(sys) = args.system.as_deref().filter(|s| !s.is_empty()) {
+        bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
+            block: crate::skills::versioning::BundleBlock::A,
+            content: sys,
+        });
+    }
+    bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
+        block: crate::skills::versioning::BundleBlock::E,
+        content: &prompt,
+    });
+    let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
+
+    // ── ARCH-04 integration: pre-flight block-layer budget check ─────────
+    //
+    // Convert the bundle entries we just built (Block::A + Block::E
+    // today; B/C/D extend as the assembler grows) into the matching
+    // BlockItem shape + run enforce_budget. The cap reads from
+    // `config.tokens.max_per_request` (operator-tunable via
+    // `freedom.yaml::tokens.max_per_request`; defaults to 100_000
+    // per `TokensConfig::default_max_per_request`). Operators on
+    // tight-context models (e.g. Gemini Flash 32k) lower the cap;
+    // operators on Opus 4.7 (200k) keep the default.
+    //
+    // Today's call site only carries A + E — both undegradable per
+    // ARCH-04 policy — so `enforce_budget` either returns None (under
+    // cap, no-op) or Some(detail) with `new_total > cap` (operator-
+    // visible "your prompt exceeds the cap; tighten Block::A/E"
+    // signal). When the assembler emits Block::B/C/D the degradation
+    // policy starts firing for real.
+    let prompt_token_estimate: u32 = {
+        use crate::tokens::budget::{Block, BlockItem, count_tokens};
+        let items: Vec<BlockItem> = bundle_entries
+            .iter()
+            .map(|e| BlockItem {
+                block: match e.block {
+                    crate::skills::versioning::BundleBlock::A => Block::A,
+                    crate::skills::versioning::BundleBlock::B => Block::B,
+                    crate::skills::versioning::BundleBlock::C => Block::C,
+                    crate::skills::versioning::BundleBlock::D => Block::D,
+                    crate::skills::versioning::BundleBlock::E => Block::E,
+                    crate::skills::versioning::BundleBlock::Conductor => Block::Conductor,
+                },
+                importance: 0.5,
+                ts_ns: 0,
+                tokens: count_tokens(e.content),
+                content: e.content.to_string(),
+            })
+            .collect();
+        let estimate: u32 = items.iter().map(|i| i.tokens).sum();
+        let mut items_mut = items;
+        let cap = config.tokens.max_per_request;
+        if let Some(detail) = crate::tokens::budget::enforce_budget(&mut items_mut, cap) {
+            // Emit BUDGET_EXCEEDED audit frame BEFORE PROVIDER_REQUEST
+            // so the audit-chain consumer sees them in cause-then-
+            // effect order. Best-effort emit — a WAL write failure
+            // here MUST NOT abort the chat turn (the audit signal is
+            // operator-visible via tracing::warn fallback).
+            warn!(
+                cap = detail.cap,
+                original_total = detail.original_total,
+                new_total = detail.new_total,
+                dropped_d = detail.dropped_d_count,
+                dropped_c = detail.dropped_c_count,
+                conductor_truncated = detail.conductor_truncated,
+                "prompt-bundle exceeded token cap; degradation applied (or A/B/E-only — operator should tighten)"
+            );
+            let budget_payload = serde_json::to_vec(&serde_json::json!({
+                "cap": detail.cap,
+                "original_total": detail.original_total,
+                "new_total": detail.new_total,
+                "dropped_d_count": detail.dropped_d_count,
+                "dropped_c_count": detail.dropped_c_count,
+                "conductor_truncated": detail.conductor_truncated,
+                "prompt_bundle_hash": prompt_bundle_hash,
+                "ts_unix": now_unix(),
+            }))
+            .unwrap_or_default();
+            let budget_header =
+                crate::wal::make_header(EVENT_TYPE_BUDGET_EXCEEDED, &budget_payload);
+            if let Err(e) = writer.append(budget_header, budget_payload).await {
+                warn!(error = %e, "BUDGET_EXCEEDED WAL emit failed (non-fatal)");
+            }
+        }
+        estimate
+    };
+
+    let req_payload = serde_json::to_vec(&serde_json::json!({
+        "operator_id": config.operator_id,
+        "provider": provider.name(),
+        // SPEC-04: on/off-device classification of THIS request's
+        // provider ("local" | "cloud") — the durable per-turn audit
+        // anchor for the privacy posture, alongside the extraction-path
+        // 0x2E PROFILE_EXTRACT_TARGET frame.
+        "target": crate::profile::runner::extract_target_label(provider.name()),
+        "model": args.model.clone().or_else(|| config.provider_model.clone()),
+        "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
+        "prompt_bytes": prompt.len(),
+        "prompt_bundle_hash": prompt_bundle_hash,
+        "prompt_token_estimate": prompt_token_estimate,
+        "ts_unix": now_unix(),
+    }))?;
+    let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
+    writer
+        .append(req_header, req_payload)
+        .await
+        .context("write PROVIDER_REQUEST WAL frame")?;
+
+    // ── Operator context + skills load — K-Perf-4 parallel resource load ──
+    // Both reads hit the filesystem and are mutually independent: operator_md
+    // assembles ~/.neoth/NEOTH.md + project + rules + memory, skills walks
+    // `<home>/skills/`. Running them sequentially was ~2× the wall time on
+    // cold caches (each ~5-20ms). tokio::join! drives them concurrently
+    // through the same runtime worker — the FS reads pipeline OS-side
+    // without extra threads. Per Performance agent's K-Perf-4 pick.
+    //
+    // The skill router (line below) consumes installed_skills, so loading
+    // it BEFORE the system-prompt assembly is mandatory — the parallel
+    // load just shaves the serial cost off the front edge.
+    let home = FreedomConfig::default_neoth_home();
+    let (
+        PromptBundle { combined_system, skill_tool_allowlist },
+        config,
+        prompt,
+        home,
+    ) = build_prompt_bundle(config, prompt, &args, &prompt_bundle_hash, home, &writer).await;
+
+    let (
+        writer,
+        writer_join,
+        predicted_cost,
+        review_context,
+        final_prompt,
+        final_system,
+        prompt,
+        quota_path,
+        hooks,
+    ) =
+        match enforce_preflight(
+            combined_system, prompt, provider, &args, &config, writer, writer_join, &home,
+        )
+        .await?
+        {
+            PreflightOutcome::Done => return Ok(()),
+            PreflightOutcome::Continue {
+                writer,
+                writer_join,
+                predicted_cost,
+                review_context,
+                final_prompt,
+                final_system,
+                prompt,
+                quota_path,
+                hooks,
+            } => (
+                writer, writer_join, predicted_cost, review_context, final_prompt,
+                final_system, prompt, quota_path, hooks,
+            ),
+        };
+    let DispatchOutput {
+        response_text,
+        final_input_tokens,
+        final_output_tokens,
+        model_used,
+        total_latency,
+        writer,
+        writer_join,
+        final_prompt,
+        final_system,
+    } = dispatch_provider(
+        final_prompt,
+        final_system,
+        &args,
+        provider,
+        &config,
+        writer,
+        writer_join,
+        quota_path,
+        &prompt,
+        &predicted_cost,
+        skill_tool_allowlist,
+    )
+    .await?;
+
+    run_post_reply_pipelines(
+        response_text,
+        writer,
+        writer_join,
+        config,
+        provider,
+        args,
+        prompt,
+        final_prompt,
+        final_system,
+        model_used,
+        final_input_tokens,
+        final_output_tokens,
+        total_latency,
+        review_context,
+        hooks,
+        segment_path,
+        raw_event_id,
+        first_tour_home,
+        chat_ts_unix,
+        current_session_id,
+        prompt_token_estimate,
+    )
+    .await
 }
 
 /// GOLD-ADOPT-21 — best-effort LLM title for the just-completed session, stored
