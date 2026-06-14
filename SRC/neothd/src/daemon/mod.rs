@@ -27,6 +27,9 @@ pub mod doctor_cron;
 /// `freedom.yaml::drift_alert.threshold`. Off by default (master
 /// switch `drift_alert.enabled`).
 pub mod drift_alert_cron;
+/// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron (scans WAL usage
+/// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
+pub mod token_anomaly_cron;
 pub mod export;
 /// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
 /// `idx_profile` for novel high-confidence claims via

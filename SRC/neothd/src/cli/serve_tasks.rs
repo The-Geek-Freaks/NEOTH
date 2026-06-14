@@ -333,6 +333,28 @@ pub(crate) fn spawn_monitor_cron(
     handle
 }
 
+/// GOLD-ADAPT-JV-PRO-02 — token-anomaly tripwire cron (`0x6E`). Buckets the WAL
+/// `0x21 PROVIDER_RESPONSE` token usage over a rolling baseline + alerts on a
+/// σ-spike / >1M jump / new model. `None` when `token_anomaly.enabled = false`.
+pub(crate) fn spawn_token_anomaly_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::token_anomaly_cron::spawn_token_anomaly_cron_loop(
+        config.token_anomaly,
+        wal_dir.to_path_buf(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.token_anomaly.interval_secs,
+            "token-anomaly cron loop spawned (GOLD-ADAPT-JV-PRO-02)"
+        );
+    }
+    handle
+}
+
 /// GOLD-FEAT-09 — spawn the daemon watchdog / auto-recovery cron. `None` when
 /// `watchdog.enabled = false`. The restart ACTION (spawning a service) is gated
 /// to `Elevated`/`Full` autonomy, resolved once here and passed as a plain
@@ -2058,6 +2080,7 @@ pub(crate) struct BackgroundHandles {
     pub proactive_dispatcher_handle: JoinHandle<()>,
     pub g02_surfacing_cron_handle: JoinHandle<()>,
     pub drift_alert_cron_handle: Option<JoinHandle<()>>,
+    pub token_anomaly_cron_handle: Option<JoinHandle<()>>,
     pub regression_cron_handle: Option<JoinHandle<()>>,
     pub recall_latency_cron_handle: Option<JoinHandle<()>>,
     pub profile_adapt_cron_handle: Option<JoinHandle<()>>,
@@ -2126,6 +2149,7 @@ pub(crate) async fn shutdown_background_tasks(
         proactive_dispatcher_handle,
         g02_surfacing_cron_handle,
         drift_alert_cron_handle,
+        token_anomaly_cron_handle,
         regression_cron_handle,
         recall_latency_cron_handle,
         profile_adapt_cron_handle,
@@ -2314,6 +2338,10 @@ pub(crate) async fn shutdown_background_tasks(
     // discipline as the doctor cron: abort + await BEFORE the WAL writer
     // is dropped so an in-flight 0xBA frame isn't lost.
     crate::cli::serve_tasks::abort_optional(drift_alert_cron_handle).await;
+    // Abort the GOLD-ADAPT-JV-PRO-02 token-anomaly cron (same drain-before-close
+    // discipline: abort + await BEFORE the WAL writer drops so an in-flight 0x6E
+    // frame isn't lost).
+    crate::cli::serve_tasks::abort_optional(token_anomaly_cron_handle).await;
     // Abort the ADV-14 regression-anchor cron (same drain-before-close order
     // so an in-flight 0x3F frame isn't lost).
     crate::cli::serve_tasks::abort_optional(regression_cron_handle).await;

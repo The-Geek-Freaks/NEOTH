@@ -861,6 +861,21 @@ pub const EVENT_TYPE_CHANNEL_SEND: u8 = 0x67;
 /// Payload (JSON): `{action:"channel_send", channel, to_hash, reason, ts_unix}`.
 pub const EVENT_TYPE_CHANNEL_SEND_DENIED: u8 = 0x68;
 
+/// `0x6E TOKEN_ANOMALY_DETECTED` — GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire.
+/// The daemon cron buckets WAL `0x21 PROVIDER_RESPONSE` token usage by UTC day
+/// and emits this when the most recent active day shows a σ-spike, a `>1M` jump
+/// over the baseline max, or a model unseen across the baseline window — a
+/// leaked provider key / runaway loop / unexpected model route can look like
+/// this. Token COUNTS + model NAMES are not secrets, so the payload is in the
+/// clear (no PII to hash, unlike channel-send egress).
+/// **Band note**: a usage-anomaly is a provider-lifecycle concern whose natural
+/// home is the `0x20..=0x2F` provider band, but that band is FULL — so it lands
+/// in the free tail of `0x60..=0x6F` next to the other gate/decision events
+/// (same band-note rationale as `0x67 CHANNEL_SEND`).
+/// Payload (JSON): `{kinds:[..], day_tokens, baseline_mean, baseline_stddev,
+/// baseline_max, baseline_days, day_models:[..], new_models:[..], ts_unix}`.
+pub const EVENT_TYPE_TOKEN_ANOMALY_DETECTED: u8 = 0x6E;
+
 // ---- 0x70..=0x7F  Coding workflow (V11 Pick #38, 2026-05-19) --------------
 //
 // Hermes-adapted autonomous software engineering pipeline per
@@ -1889,6 +1904,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("council_transcript", EVENT_TYPE_COUNCIL_TRANSCRIPT),
     ("channel_send", EVENT_TYPE_CHANNEL_SEND),
     ("channel_send_denied", EVENT_TYPE_CHANNEL_SEND_DENIED),
+    ("token_anomaly_detected", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
     ("mcp_tool_called", EVENT_TYPE_MCP_TOOL_CALLED),
     ("mcp_tool_rejected", EVENT_TYPE_MCP_TOOL_REJECTED),
     ("risk_gate_blocked", EVENT_TYPE_RISK_GATE_BLOCKED),
@@ -2260,6 +2276,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_CHANNEL_SEND < 0x60 || EVENT_TYPE_CHANNEL_SEND > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_SEND_DENIED < 0x60
         || EVENT_TYPE_CHANNEL_SEND_DENIED > 0x6F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_TOKEN_ANOMALY_DETECTED < 0x60
+        || EVENT_TYPE_TOKEN_ANOMALY_DETECTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_FIRED < 0x80 || EVENT_TYPE_HOOK_FIRED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_BLOCKED < 0x80 || EVENT_TYPE_HOOK_BLOCKED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_REPLACED < 0x80 || EVENT_TYPE_HOOK_REPLACED > 0x8F) as usize];
@@ -2586,6 +2604,7 @@ mod tests {
             ("COUNCIL_TRANSCRIPT", EVENT_TYPE_COUNCIL_TRANSCRIPT),
             ("CHANNEL_SEND", EVENT_TYPE_CHANNEL_SEND),
             ("CHANNEL_SEND_DENIED", EVENT_TYPE_CHANNEL_SEND_DENIED),
+            ("TOKEN_ANOMALY_DETECTED", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
             ("HOOK_FIRED", EVENT_TYPE_HOOK_FIRED),
             ("HOOK_BLOCKED", EVENT_TYPE_HOOK_BLOCKED),
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),

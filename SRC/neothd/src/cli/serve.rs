@@ -800,6 +800,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let monitor_cron_handle =
         crate::cli::serve_tasks::spawn_monitor_cron(&config, &wal_dir, writer.clone());
 
+    // ── GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire cron ─────────────────────
+    // Buckets WAL `0x21` token usage over a rolling baseline + emits
+    // `0x6E TOKEN_ANOMALY_DETECTED` on a σ-spike / >1M jump / new model.
+    // Default OFF → no idle task; opt-in via `token_anomaly.enabled = true`.
+    let token_anomaly_cron_handle =
+        crate::cli::serve_tasks::spawn_token_anomaly_cron(&config, &wal_dir, writer.clone());
+
     // GOLD-FEAT-09 — daemon watchdog / auto-recovery cron. Default OFF → no
     // idle task; opt-in via `watchdog.enabled = true`. The restart action is
     // gated to Elevated/Full autonomy inside the spawn helper.
@@ -1354,6 +1361,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         proactive_dispatcher_handle,
         g02_surfacing_cron_handle,
         drift_alert_cron_handle,
+        token_anomaly_cron_handle,
         regression_cron_handle,
         recall_latency_cron_handle,
         profile_adapt_cron_handle,

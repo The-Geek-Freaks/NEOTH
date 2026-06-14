@@ -397,6 +397,8 @@ pub struct FreedomConfig {
     /// Default OFF.
     #[serde(default)]
     pub drift_alert: DriftAlertConfig,
+    /// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron. Default OFF.
+    pub token_anomaly: TokenAnomalyConfig,
     /// ADV-14 — longitudinal recall-regression anchor cron. When `enabled`,
     /// the daemon weekly re-asks the anchor queries, re-embeds the answers,
     /// and emits `0x3F REGRESSION_ALERT` for any whose cosine to the cutover
@@ -987,6 +989,59 @@ impl DriftAlertConfig {
     /// Tick interval as a `Duration`, clamped to a 60s minimum so an
     /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
     /// Mirrors `DoctorCronConfig::interval_duration`.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire config. When
+/// `enabled`, a daemon cron buckets the WAL's `0x21 PROVIDER_RESPONSE` token
+/// usage by UTC day and emits `0x6E TOKEN_ANOMALY_DETECTED` when the most
+/// recent active day shows a σ-spike, a `>abs_jump_tokens` jump over the
+/// baseline max, or a model unseen across the baseline window. Default OFF.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct TokenAnomalyConfig {
+    /// Master switch. Default `false`.
+    pub enabled: bool,
+    /// Cron tick interval, seconds. Default 6h; clamped to a 60s floor by
+    /// [`Self::interval_duration`] so a misconfigured `0` can't tight-loop.
+    pub interval_secs: u64,
+    /// σ multiplier for the spike trigger (`day > mean + k·stddev`). Default 3.0.
+    pub sigma_multiplier: f64,
+    /// Absolute token jump over the baseline max that always trips, regardless
+    /// of variance. Default 1,000,000.
+    pub abs_jump_tokens: u64,
+    /// How many days back the baseline window spans. Default 5.
+    pub baseline_days: u32,
+    /// Minimum baseline days WITH usage required before the tripwire runs (too
+    /// little history = no meaningful baseline → skip). Default 3.
+    pub min_baseline_days: u32,
+    /// Absolute floor on a day's tokens before the σ trigger can fire — keeps a
+    /// low-volume operator's day-to-day noise from tripping it. Default 50,000.
+    pub min_absolute_tokens: u64,
+}
+
+/// 6 hours — the token-anomaly cron default cadence.
+pub const DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS: u64 = 6 * 3600;
+
+impl Default for TokenAnomalyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
+            sigma_multiplier: 3.0,
+            abs_jump_tokens: 1_000_000,
+            baseline_days: 5,
+            min_baseline_days: 3,
+            min_absolute_tokens: 50_000,
+        }
+    }
+}
+
+impl TokenAnomalyConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
