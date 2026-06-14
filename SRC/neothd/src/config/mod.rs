@@ -398,6 +398,7 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub drift_alert: DriftAlertConfig,
     /// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron. Default OFF.
+    #[serde(default)]
     pub token_anomaly: TokenAnomalyConfig,
     /// ADV-14 — longitudinal recall-regression anchor cron. When `enabled`,
     /// the daemon weekly re-asks the anchor queries, re-embeds the answers,
