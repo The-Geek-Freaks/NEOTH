@@ -36,8 +36,8 @@
 use std::collections::HashMap;
 
 use super::webhook_verify::{
-    MetaChallengeOutcome, SlackVerifyError, meta_challenge_response, verify_meta_signature,
-    verify_slack_signature,
+    MetaChallengeOutcome, SlackVerifyError, meta_challenge_response, verify_line_signature,
+    verify_meta_signature, verify_slack_signature,
 };
 
 /// HTTP request as seen by the router. Caller normalises into this
@@ -297,6 +297,72 @@ pub enum SlackRouteOutcome {
     UnsupportedMethod,
 }
 
+/// Route a LINE Messaging API webhook request. LINE POSTs every event batch to
+/// a single callback URL with an `X-Line-Signature` header (base64 HMAC-SHA256
+/// over the raw body — no GET handshake, no timestamp). The router enforces the
+/// signature, then returns the verified body to the caller for event decode.
+///
+/// `channel_secret` is the operator's LINE channel secret. Errors are never
+/// leaked verbatim — only short canonical reasons reach the response body; the
+/// detail goes into [`LineRouteOutcome`] for operator-facing logging.
+pub fn route_line_webhook(
+    req: &WebhookRequest,
+    channel_secret: &[u8],
+) -> (WebhookResponse, LineRouteOutcome) {
+    if req.method != HttpMethod::Post {
+        return (
+            WebhookResponse::method_not_allowed(),
+            LineRouteOutcome::UnsupportedMethod,
+        );
+    }
+    let sig = req
+        .headers_lc
+        .get("x-line-signature")
+        .map(String::as_str)
+        .unwrap_or("");
+    if sig.is_empty() {
+        return (
+            WebhookResponse::forbidden("forbidden"),
+            LineRouteOutcome::SignatureMissing,
+        );
+    }
+    if !verify_line_signature(&req.body, sig, channel_secret) {
+        return (
+            WebhookResponse::forbidden("forbidden"),
+            LineRouteOutcome::SignatureMismatch,
+        );
+    }
+    let raw = match std::str::from_utf8(&req.body) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            return (
+                WebhookResponse::bad_request("body is not utf-8"),
+                LineRouteOutcome::BodyNotUtf8,
+            );
+        }
+    };
+    (
+        WebhookResponse::ok(""),
+        LineRouteOutcome::Verified { raw_body: raw },
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineRouteOutcome {
+    /// Signature verified. Caller decodes `raw_body` via
+    /// `line_api::decode_line_payload`.
+    Verified { raw_body: String },
+    /// POST arrived without the `X-Line-Signature` header — LINE always sends
+    /// it, so its absence is treated like a signature mismatch.
+    SignatureMissing,
+    /// `X-Line-Signature` didn't match base64(HMAC-SHA256(channel_secret, body)).
+    SignatureMismatch,
+    /// Body wasn't valid UTF-8 — LINE sends JSON.
+    BodyNotUtf8,
+    /// Not POST — LINE webhooks are POST-only.
+    UnsupportedMethod,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct SlackUrlVerification {
     #[serde(rename = "type")]
@@ -307,7 +373,7 @@ struct SlackUrlVerification {
 
 #[cfg(test)]
 mod tests {
-    use super::super::webhook_verify::{sign_meta, sign_slack};
+    use super::super::webhook_verify::{sign_line, sign_meta, sign_slack};
     use super::*;
 
     fn meta_get_req(query: &str) -> WebhookRequest {
@@ -566,6 +632,71 @@ mod tests {
             }
             other => panic!("expected TimestampOutOfWindow rejection, got {other:?}"),
         }
+    }
+
+    // ── LINE POST verification ─────────────────────────────────────────
+
+    fn line_post_req(body: &[u8], sig: &str) -> WebhookRequest {
+        let mut headers = HashMap::new();
+        headers.insert("x-line-signature".into(), sig.to_string());
+        WebhookRequest {
+            method: HttpMethod::Post,
+            path: "/line/webhook".into(),
+            query: String::new(),
+            headers_lc: headers,
+            body: body.to_vec(),
+        }
+    }
+
+    #[test]
+    fn line_post_happy_path_returns_verified_body() {
+        let body = br#"{"destination":"Ubot","events":[]}"#;
+        let sig = sign_line(body, b"chan-secret");
+        let req = line_post_req(body, &sig);
+        let (resp, outcome) = route_line_webhook(&req, b"chan-secret");
+        assert_eq!(resp.status, 200);
+        match outcome {
+            LineRouteOutcome::Verified { raw_body } => assert!(raw_body.contains("destination")),
+            other => panic!("expected Verified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn line_post_missing_signature_is_forbidden() {
+        let req = WebhookRequest {
+            method: HttpMethod::Post,
+            path: "/line/webhook".into(),
+            query: String::new(),
+            headers_lc: HashMap::new(),
+            body: b"{}".to_vec(),
+        };
+        let (resp, outcome) = route_line_webhook(&req, b"k");
+        assert_eq!(resp.status, 403);
+        assert_eq!(outcome, LineRouteOutcome::SignatureMissing);
+    }
+
+    #[test]
+    fn line_post_signature_mismatch_is_forbidden() {
+        let body = b"original";
+        let sig = sign_line(body, b"right");
+        let req = line_post_req(body, &sig);
+        let (resp, outcome) = route_line_webhook(&req, b"wrong");
+        assert_eq!(resp.status, 403);
+        assert_eq!(outcome, LineRouteOutcome::SignatureMismatch);
+    }
+
+    #[test]
+    fn line_get_is_method_not_allowed() {
+        let req = WebhookRequest {
+            method: HttpMethod::Get,
+            path: "/line/webhook".into(),
+            query: String::new(),
+            headers_lc: HashMap::new(),
+            body: vec![],
+        };
+        let (resp, outcome) = route_line_webhook(&req, b"k");
+        assert_eq!(resp.status, 405);
+        assert_eq!(outcome, LineRouteOutcome::UnsupportedMethod);
     }
 
     // ── Response helpers ───────────────────────────────────────────────

@@ -1542,6 +1542,8 @@ pub(crate) fn spawn_channel_adapters(
                 inbound_dedup: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
                     crate::channels::webhook_listener::InboundDedup::new(2048),
                 ))),
+                // This is the WhatsApp/Meta listener — LINE has its own arm below.
+                line: None,
             };
             let task = tokio::spawn(async move {
                 let shutdown = std::future::pending::<()>();
@@ -1580,6 +1582,99 @@ pub(crate) fn spawn_channel_adapters(
         _ => false,
     };
     let _ = whatsapp_inbound_started;
+
+    // GOLD-FEAT-10 — LINE inbound via the shared webhook listener. Spawns when
+    // the channel access token + channel secret + a provider are all present.
+    // Listens on 127.0.0.1:<line_webhook_port> (default 8444); the operator
+    // fronts it with a public HTTPS reverse proxy. Outbound replies route back
+    // through the LINE push API, gated + audited like the WhatsApp arm.
+    match (
+        creds.line_channel_access_token.clone(),
+        creds.line_channel_secret.clone(),
+        shared_provider.as_ref(),
+    ) {
+        (Some(access_token), Some(secret), Some(provider)) => {
+            let handler: PipelineHandler = build_channel_handler(
+                provider.clone(),
+                config,
+                writer,
+                provider_meter,
+                rate_limiter,
+                segment_path,
+                shared_views_conn,
+                reload_controller,
+            );
+            let port = creds.line_webhook_port.unwrap_or(8444);
+            let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
+                .parse()
+                .expect("static bind addr parses");
+            let listener_cfg = crate::channels::webhook_listener::WebhookListenerConfig {
+                meta_app_secret: Vec::new(),
+                meta_verify_token: String::new(),
+                slack_signing_secret: Vec::new(),
+                pipeline: handler,
+                whatsapp_send_creds: None,
+                // P0 — gate + audit every LINE webhook reply under the active
+                // autonomy; honour the proof-hardline required-audit switch.
+                send_governance: crate::channels::webhook_listener::SendGovernance {
+                    wal_writer: Some(writer.clone()),
+                    decision: crate::permissions::evaluate(
+                        &crate::permissions::Action::ChannelSend,
+                        config.autonomy,
+                    ),
+                    required_audit: config.audit_rpc.required_for_oneshot_permission_events,
+                    dry_run: false,
+                },
+                max_concurrent_connections: None,
+                // COR-34: track the detached LINE fan-out tasks so shutdown can
+                // drain their WAL writes before the writer closes.
+                dispatch_join: Some(std::sync::Arc::clone(dispatch_join)),
+                // Dedup inbound webhookEventIds so a LINE redelivery doesn't
+                // re-run the pipeline (+ re-send the reply).
+                inbound_dedup: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
+                    crate::channels::webhook_listener::InboundDedup::new(2048),
+                ))),
+                line: Some(crate::channels::webhook_listener::LineConfig {
+                    channel_secret: secret.expose().as_bytes().to_vec(),
+                    access_token,
+                    base_url: None,
+                }),
+            };
+            let task = tokio::spawn(async move {
+                let shutdown = std::future::pending::<()>();
+                if let Err(e) =
+                    crate::channels::webhook_listener::serve(bind, listener_cfg, shutdown).await
+                {
+                    tracing::error!(error = %e, "LINE webhook listener exited with error");
+                }
+            });
+            channel_tasks.push(task);
+            info!(
+                channel = "line",
+                status = "LIVE",
+                port = port,
+                "channel: spawned (LINE webhook listener on 127.0.0.1)"
+            );
+        }
+        (Some(_), Some(_), None) => warn!(
+            channel = "line",
+            status = "CONFIGURED-NOT-STARTED",
+            "LINE configured but provider unavailable; channel not started"
+        ),
+        (Some(_), None, _) => warn!(
+            channel = "line",
+            status = "OUTBOUND-ONLY",
+            "LINE access token set but channel secret missing — inbound webhook needs \
+             line_channel_secret to verify signatures. Listener not started (send_text still works)."
+        ),
+        (None, Some(_), _) => warn!(
+            channel = "line",
+            status = "CONFIGURED-NOT-STARTED",
+            "LINE channel secret set but line_channel_access_token missing; cannot send. Listener not started."
+        ),
+        (None, None, _) => {}
+    }
+
     // Discord + Keet have no credential fields in credentials.yaml yet — when
     // they land, the same explicit-log pattern fires.
 }

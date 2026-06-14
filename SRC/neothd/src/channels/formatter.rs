@@ -107,6 +107,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Keet => Some(Box::new(KeetFormatter)),
         ChannelKind::Signal => Some(Box::new(SignalFormatter)),
         ChannelKind::Matrix => Some(Box::new(MatrixFormatter)),
+        ChannelKind::Line => Some(Box::new(LineFormatter)),
     }
 }
 
@@ -454,6 +455,44 @@ impl Formatter for MatrixFormatter {
             MATRIX_MAX_CHARS - SPLIT_HEADROOM,
             reply.length_hint,
         )
+    }
+}
+
+// ── LINE (plaintext) ─────────────────────────────────────────────────
+
+/// GOLD-FEAT-10 — LINE formatter. A LINE text message is a plain UTF-8 string
+/// (no markdown dialect to honour), so this mirrors the Signal/Matrix plaintext
+/// renderer: append code blocks as literal triple-backtick fences (readable +
+/// copy-paste-clean) and split at the LINE 5000-char-per-text-message API cap.
+pub struct LineFormatter;
+
+/// LINE rejects a text message body longer than 5000 chars (matches
+/// `line_api::LINE_MAX_TEXT_CHARS`).
+const LINE_MAX_CHARS: usize = 5_000;
+
+impl Formatter for LineFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Line
+    }
+    fn max_chars_per_message(&self) -> usize {
+        LINE_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        let mut rendered = String::new();
+        rendered.push_str(&reply.text);
+        for cb in &reply.code_blocks {
+            rendered.push_str("\n```");
+            if !cb.lang.is_empty() {
+                rendered.push_str(&cb.lang);
+            }
+            rendered.push('\n');
+            rendered.push_str(&cb.body);
+            if !cb.body.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered.push_str("```");
+        }
+        split_into_messages(&rendered, LINE_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
     }
 }
 

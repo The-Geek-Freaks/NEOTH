@@ -102,6 +102,17 @@ pub struct Credentials {
     /// sync state persist across restarts). Defaults to `~/.neoth/matrix_store/`
     /// when unset. Not a secret (a path).
     pub matrix_store_path: Option<String>,
+    /// GOLD-FEAT-10 — LINE long-lived channel access token (Messaging API tab in
+    /// the LINE Developers console). Bearer token for the push send API. Secret.
+    pub line_channel_access_token: Option<SecretString>,
+    /// GOLD-FEAT-10 — LINE channel secret (Basic Settings tab). Verifies the
+    /// inbound `X-Line-Signature` (base64 HMAC-SHA256 over the raw body). Secret.
+    pub line_channel_secret: Option<SecretString>,
+    /// GOLD-FEAT-10 — local bind port for the LINE webhook listener
+    /// (`127.0.0.1:<port>`, default 8444). The operator fronts it with a public
+    /// HTTPS reverse proxy. Not a secret; kept here with the other channel
+    /// config (and out of the `config/mod.rs` hot zone). `None` ⇒ default port.
+    pub line_webhook_port: Option<u16>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -244,6 +255,9 @@ impl Credentials {
             matrix_password,
             matrix_access_token,
             matrix_store_path,
+            line_channel_access_token,
+            line_channel_secret,
+            line_webhook_port,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -279,6 +293,9 @@ impl Credentials {
             && matrix_password.is_none()
             && matrix_access_token.is_none()
             && matrix_store_path.is_none()
+            && line_channel_access_token.is_none()
+            && line_channel_secret.is_none()
+            && line_webhook_port.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

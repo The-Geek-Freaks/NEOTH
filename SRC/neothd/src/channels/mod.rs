@@ -36,6 +36,12 @@ pub mod keet_wal;
 /// SPEC-11 — stateful send-then-edit wrapper for streaming previews + post-reply
 /// corrections. First call sends, later calls edit-in-place + emit `0x38`.
 pub mod live_delivery;
+/// GOLD-FEAT-10 — LINE Messaging API adapter. Inbound rides the shared webhook
+/// listener (LINE pushes events to a public URL); outbound goes through the
+/// push REST endpoint. Zero extra deps (pure reqwest + serde) → always
+/// compiled, no feature gate.
+pub mod line;
+pub mod line_api;
 /// GOLD-FEAT-10 — Matrix E2EE adapter (`matrix-sdk`). Feature-gated: the heavy
 /// crypto tree is only compiled in `--features matrix-channel` builds. The
 /// `ChannelKind::Matrix` variant + `MatrixFormatter` + probe row stay compiled
@@ -96,6 +102,9 @@ pub enum ChannelKind {
     /// the `matrix-channel` feature; this variant is always present so the
     /// formatter/probe/routing handle it even in builds without the feature).
     Matrix,
+    /// GOLD-FEAT-10 — LINE Messaging API via the shared webhook listener
+    /// (inbound) + push REST (outbound). Zero extra deps; always compiled.
+    Line,
 }
 
 impl ChannelKind {
@@ -109,6 +118,7 @@ impl ChannelKind {
             ChannelKind::Discord => "discord",
             ChannelKind::Signal => "signal",
             ChannelKind::Matrix => "matrix",
+            ChannelKind::Line => "line",
         }
     }
 }

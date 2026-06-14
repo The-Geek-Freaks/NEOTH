@@ -30,6 +30,7 @@
 //!   a timestamp more than ±5 minutes from now (replay defence).
 //!   `MAX_TIMESTAMP_SKEW_SECS = 300`.
 
+use base64::Engine;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -245,6 +246,41 @@ pub fn sign_slack(body: &[u8], timestamp_header: &str, signing_secret: &[u8]) ->
     mac.update(body);
     let tag = mac.finalize().into_bytes();
     format!("v0={}", hex_encode(&tag))
+}
+
+// ── LINE Messaging API ──────────────────────────────────────────────
+//
+// - **Signature header**: `X-Line-Signature: <digest>`, where `<digest>` is
+//   `base64( HMAC-SHA256(channelSecret, rawBody) )` — STANDARD base64 (not
+//   URL-safe), over the RAW request body bytes, with NO scheme prefix (unlike
+//   Meta's `sha256=` / Slack's `v0=`). Constant-time compare.
+// - **No GET handshake / timestamp**: LINE has no verify-token GET challenge
+//   and no timestamp header; the console "Verify" button POSTs an empty
+//   `events` array with a valid signature.
+
+/// Verify a LINE `X-Line-Signature` header against a raw body + the operator's
+/// channel secret. The header is `base64( HMAC-SHA256(channel_secret, body) )`
+/// (standard base64, over the raw bytes). The HMAC compare is constant-time
+/// (`verify_slice` uses a constant-time equality internally), so a timing
+/// attack can't distinguish a right-prefix/wrong-suffix signature from a fully
+/// wrong one. Returns `true` only on full match.
+pub fn verify_line_signature(body: &[u8], signature_header: &str, channel_secret: &[u8]) -> bool {
+    let Ok(provided) = base64::engine::general_purpose::STANDARD.decode(signature_header.trim())
+    else {
+        return false;
+    };
+    let mut mac = HmacSha256::new_from_slice(channel_secret).expect("HMAC-SHA256 accepts any key");
+    mac.update(body);
+    mac.verify_slice(&provided).is_ok()
+}
+
+/// Render the `X-Line-Signature` header value for a body + channel secret.
+/// Used by tests + replay tooling.
+pub fn sign_line(body: &[u8], channel_secret: &[u8]) -> String {
+    let mut mac = HmacSha256::new_from_slice(channel_secret).expect("HMAC-SHA256 accepts any key");
+    mac.update(body);
+    let tag = mac.finalize().into_bytes();
+    base64::engine::general_purpose::STANDARD.encode(tag)
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -646,6 +682,45 @@ mod tests {
             verify_slack_signature(b"tampered", ts, &header, b"k", 1_700_000_000),
             Err(SlackVerifyError::SignatureMismatch)
         );
+    }
+
+    // --- LINE signature ---
+
+    #[test]
+    fn line_sig_roundtrip_verifies() {
+        let body = br#"{"destination":"Ubot","events":[]}"#;
+        let secret = b"line-channel-secret";
+        let header = sign_line(body, secret);
+        assert!(verify_line_signature(body, &header, secret));
+    }
+
+    #[test]
+    fn line_sig_rejects_wrong_secret() {
+        let body = b"{}";
+        let header = sign_line(body, b"right-secret");
+        assert!(!verify_line_signature(body, &header, b"wrong-secret"));
+    }
+
+    #[test]
+    fn line_sig_rejects_tampered_body() {
+        let header = sign_line(b"original-body", b"k");
+        assert!(!verify_line_signature(b"tampered-body", &header, b"k"));
+    }
+
+    #[test]
+    fn line_sig_rejects_non_base64_header() {
+        assert!(!verify_line_signature(b"x", "!!! not base64 !!!", b"k"));
+    }
+
+    #[test]
+    fn line_sig_uses_standard_base64_not_hex() {
+        // Guard: LINE signs with base64 (not the hex Meta/Slack use) and with
+        // NO scheme prefix. A 32-byte HMAC-SHA256 → 44-char standard base64.
+        let header = sign_line(b"x", b"k");
+        assert!(!header.starts_with("sha256="), "no Meta-style prefix");
+        assert!(!header.starts_with("v0="), "no Slack-style prefix");
+        assert_eq!(header.len(), 44, "32-byte HMAC → 44-char standard base64");
+        assert!(base64::engine::general_purpose::STANDARD.decode(&header).is_ok());
     }
 
     // --- helpers ---

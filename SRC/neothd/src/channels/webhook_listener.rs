@@ -50,9 +50,10 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
 
+use super::line_api::{DecodedLineWebhook, decode_line_payload};
 use super::webhook_router::{
-    HttpMethod, MetaRouteOutcome, SlackRouteOutcome, WebhookRequest, WebhookResponse,
-    route_meta_webhook, route_slack_webhook,
+    HttpMethod, LineRouteOutcome, MetaRouteOutcome, SlackRouteOutcome, WebhookRequest,
+    WebhookResponse, route_line_webhook, route_meta_webhook, route_slack_webhook,
 };
 use super::webhook_verify::SlackVerifyError;
 use super::whatsapp_webhook::{DecodedWebhook, decode_payload};
@@ -153,6 +154,28 @@ pub struct WebhookListenerConfig {
     /// duplicate pipeline run (and duplicate outbound reply). `None` disables
     /// dedup (tests + non-WhatsApp listeners that never set `message_id`).
     pub inbound_dedup: Option<Arc<tokio::sync::Mutex<InboundDedup>>>,
+    /// GOLD-FEAT-10 — LINE webhook config. When `Some`, the listener serves
+    /// `POST /line/webhook`: verify the `X-Line-Signature`, decode events, and
+    /// route pipeline replies back through the LINE push API (gated + audited
+    /// via `send_governance`, deduped via `inbound_dedup` on the stable
+    /// `webhookEventId`). `None` ⇒ the `/line/webhook` path 404s (non-LINE
+    /// listeners).
+    pub line: Option<LineConfig>,
+}
+
+/// GOLD-FEAT-10 — LINE credentials the webhook listener needs: the channel
+/// secret (verify the inbound `X-Line-Signature`) + the long-lived channel
+/// access token (push outbound replies).
+pub struct LineConfig {
+    /// Channel secret bytes — verifies `X-Line-Signature` (base64 HMAC-SHA256
+    /// over the raw body).
+    pub channel_secret: Vec<u8>,
+    /// Long-lived channel access token (Bearer) for the push send API.
+    pub access_token: crate::secret::SecretString,
+    /// Push API base-URL override. `None` = production
+    /// (`line_api::LINE_API_BASE`); tests point it at a mock server so the send
+    /// path's gate contracts are machine-verified.
+    pub base_url: Option<String>,
 }
 
 /// Bounded FIFO dedup ring for inbound WhatsApp message IDs (wamids). Capacity
@@ -405,6 +428,11 @@ async fn handle_request(
         "/slack/events" => handle_slack(&cfg, webhook_req)
             .await
             .map_err(HandleError::Other),
+        // GOLD-FEAT-10: LINE pushes its event batch here. handle_line takes the
+        // Arc by value so it can clone it into the detached dispatch task.
+        "/line/webhook" => handle_line(cfg, webhook_req)
+            .await
+            .map_err(HandleError::Other),
         _ => Ok(plain_response(StatusCode::NOT_FOUND, "not found")),
     }
 }
@@ -535,6 +563,63 @@ async fn handle_slack(
         }
         SlackRouteOutcome::BodyNotUtf8 => warn!("Slack POST body not utf-8"),
         SlackRouteOutcome::UnsupportedMethod => debug!("Slack endpoint received non-POST"),
+    }
+    Ok(webhook_to_hyper(resp))
+}
+
+/// GOLD-FEAT-10 — LINE webhook handler. Verifies the `X-Line-Signature`, decodes
+/// the event batch, and — exactly like `handle_meta` — ACKs 200 immediately and
+/// runs the pipeline fan-out in a detached, `DISPATCH_GATE`-bounded task so a
+/// slow LLM turn can't trip LINE's webhook timeout (which would make LINE
+/// re-deliver and double-process). A listener with no `line` config 404s the
+/// path.
+async fn handle_line(
+    cfg: Arc<WebhookListenerConfig>,
+    req: WebhookRequest,
+) -> Result<HyperResponse<Full<Bytes>>> {
+    let Some(line) = cfg.line.as_ref() else {
+        return Ok(plain_response(StatusCode::NOT_FOUND, "not found"));
+    };
+    let (resp, outcome) = route_line_webhook(&req, &line.channel_secret);
+    match outcome {
+        LineRouteOutcome::SignatureMissing | LineRouteOutcome::SignatureMismatch => {
+            warn!("LINE POST signature failed verification");
+        }
+        LineRouteOutcome::BodyNotUtf8 => {
+            warn!("LINE POST body not utf-8");
+        }
+        LineRouteOutcome::UnsupportedMethod => {
+            debug!("LINE endpoint received non-POST");
+        }
+        LineRouteOutcome::Verified { ref raw_body } => match decode_line_payload(raw_body) {
+            DecodedLineWebhook::Messages(msgs) => {
+                let cfg2 = Arc::clone(&cfg);
+                let dispatch = async move {
+                    match DISPATCH_GATE.acquire().await {
+                        Ok(_permit) => dispatch_line_messages(&cfg2, msgs).await,
+                        Err(_) => {
+                            warn!("webhook dispatch gate closed — dropping LINE fan-out")
+                        }
+                    }
+                };
+                match cfg.dispatch_join.as_ref() {
+                    Some(join) => {
+                        let mut js = join.lock().await;
+                        js.spawn(dispatch);
+                        while js.try_join_next().is_some() {}
+                    }
+                    None => {
+                        tokio::spawn(dispatch);
+                    }
+                }
+            }
+            DecodedLineWebhook::NoMessages { reason } => {
+                debug!(reason = %reason, "LINE payload had no actionable messages");
+            }
+            DecodedLineWebhook::ParseError { reason } => {
+                warn!(reason = %reason, "LINE payload parse error after verify");
+            }
+        },
     }
     Ok(webhook_to_hyper(resp))
 }
@@ -783,6 +868,190 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
     let _ = ChannelKind::WhatsAppBusiness; // silence unused-import lint until adapter wires here
 }
 
+/// GOLD-FEAT-10 — LINE fan-out: for each decoded inbound message run the
+/// pipeline, then route any reply back through the LINE push API. Mirrors
+/// `dispatch_messages` (the WhatsApp path): the SAME `send_gate` governance
+/// gates + audits every reply (Deny → audit + skip; required-audit fail-closed;
+/// dry-run audits without sending), the recipient + body are HASHED in every
+/// WAL frame, and `inbound_dedup` skips a redelivered `webhookEventId` before it
+/// re-runs the pipeline.
+async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage>) {
+    let Some(line) = cfg.line.as_ref() else {
+        return; // handle_line guards Some; keep the fan-out total for safety
+    };
+    let base_url = line
+        .base_url
+        .as_deref()
+        .unwrap_or(crate::channels::line_api::LINE_API_BASE);
+    // One shared HTTP client for the whole batch's push sends.
+    let http = match crate::providers::http_client::build_client() {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(error = %e, "LINE dispatch: could not build HTTP client — dropping batch");
+            return;
+        }
+    };
+    for msg in msgs {
+        // LINE re-delivers the SAME webhookEventId (carried as message_id); skip
+        // a duplicate before it re-runs the pipeline (+ re-sends the reply).
+        if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref()) {
+            if dedup.lock().await.check_and_insert(mid) {
+                debug!(message_id = mid, "LINE webhook: duplicate event — skipping redelivery");
+                continue;
+            }
+        }
+        let chat_id = msg.chat_id.clone();
+        match (cfg.pipeline)(msg).await {
+            Ok(Some(outbound)) => {
+                use crate::channels::send_gate::{self, ChannelSendVerdict};
+                // LINE recipient ids (userId/groupId/roomId) are PII — hash for
+                // the tracing sink (the WAL helpers hash internally).
+                let recipient_hash = format!(
+                    "{:016x}",
+                    xxhash_rust::xxh3::xxh3_64(outbound.recipient_id.as_bytes())
+                );
+                let gov = &cfg.send_governance;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let verdict = send_gate::decide_channel_send(
+                    &gov.decision,
+                    gov.dry_run,
+                    gov.wal_writer.as_ref().is_some_and(|w| w.is_alive()),
+                    gov.required_audit,
+                );
+                match verdict {
+                    ChannelSendVerdict::Denied(reason) => {
+                        if let Some(w) = gov.wal_writer.as_ref() {
+                            let p = send_gate::channel_send_denied_payload(
+                                "line",
+                                &outbound.recipient_id,
+                                &reason,
+                                now,
+                            );
+                            append_audit(
+                                w,
+                                crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED,
+                                p,
+                                false,
+                                "WAL write failed for LINE channel-send denial audit frame",
+                            )
+                            .await;
+                        }
+                        warn!(
+                            recipient_hash = %recipient_hash,
+                            reason = %reason,
+                            "P0: LINE send DENIED by channel-send gate",
+                        );
+                    }
+                    ChannelSendVerdict::RefusedNoAudit => {
+                        warn!(
+                            recipient_hash = %recipient_hash,
+                            "P0: LINE send REFUSED — required-audit on but no writable audit sink (fail-closed)",
+                        );
+                    }
+                    ChannelSendVerdict::DryRun => {
+                        if let Some(w) = gov.wal_writer.as_ref() {
+                            let p = send_gate::channel_egress_payload(
+                                "line",
+                                &outbound.recipient_id,
+                                &outbound.text,
+                                None,
+                                true,
+                                false,
+                                now,
+                            );
+                            append_audit(
+                                w,
+                                crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                                p,
+                                false,
+                                "WAL write failed for LINE dry-run channel-send audit frame",
+                            )
+                            .await;
+                        }
+                        debug!(
+                            recipient_hash = %recipient_hash,
+                            "P0: LINE send DRY-RUN (audited, not sent)",
+                        );
+                    }
+                    ChannelSendVerdict::Send => {
+                        let send = crate::channels::line_api::send_line_push(
+                            &http,
+                            base_url,
+                            &line.access_token,
+                            &outbound.recipient_id,
+                            &outbound.text,
+                        )
+                        .await;
+                        match send {
+                            Ok(id) => {
+                                if let Some(w) = gov.wal_writer.as_ref() {
+                                    let p = send_gate::channel_egress_payload(
+                                        "line",
+                                        &outbound.recipient_id,
+                                        &outbound.text,
+                                        Some(&id.0),
+                                        false,
+                                        matches!(
+                                            gov.decision,
+                                            crate::permissions::Decision::Confirm(_)
+                                        ),
+                                        now,
+                                    );
+                                    append_audit(
+                                        w,
+                                        crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                                        p,
+                                        true,
+                                        "required-audit WAL write failed AFTER send — audit chain broken for a delivered LINE channel-send",
+                                    )
+                                    .await;
+                                }
+                                debug!(
+                                    recipient_hash = %recipient_hash,
+                                    message_id = %id.0,
+                                    "GOLD-FEAT-10: LINE webhook reply delivered via push API",
+                                );
+                            }
+                            Err(e) => {
+                                if let Some(w) = gov.wal_writer.as_ref() {
+                                    let p = send_gate::channel_egress_failed_payload(
+                                        "line",
+                                        &outbound.recipient_id,
+                                        "line_push_error",
+                                        now,
+                                    );
+                                    append_audit(
+                                        w,
+                                        crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                                        p,
+                                        false,
+                                        "WAL write failed for LINE push-error channel-send audit frame",
+                                    )
+                                    .await;
+                                }
+                                warn!(
+                                    recipient_hash = %recipient_hash,
+                                    error = %e,
+                                    "GOLD-FEAT-10: LINE webhook reply failed (push API)",
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(None) => {
+                debug!(chat_id = %chat_id, "LINE pipeline returned no outbound");
+            }
+            Err(e) => {
+                warn!(error = %e, chat_id = %chat_id, "LINE pipeline handler errored");
+            }
+        }
+    }
+}
+
 async fn translate(
     req: HyperRequest<IncomingBody>,
 ) -> std::result::Result<WebhookRequest, HandleError> {
@@ -918,6 +1187,7 @@ mod tests {
         // panic. Pre-GR-01 behaviour preserved.
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -936,6 +1206,7 @@ mod tests {
     fn gated_cfg(gov: SendGovernance, base_url: Option<String>) -> WebhookListenerConfig {
         WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1111,6 +1382,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "verify123".to_string(),
             slack_signing_secret: b"slack-sig".to_vec(),
@@ -1157,6 +1429,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1227,6 +1500,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1311,6 +1585,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"appsecret".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1374,6 +1649,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"slackkey".to_vec(),
@@ -1424,6 +1700,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1463,6 +1740,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1520,6 +1798,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
@@ -1596,6 +1875,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
+            line: None,
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),

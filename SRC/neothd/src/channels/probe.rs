@@ -74,6 +74,10 @@ pub struct ChannelCredsView {
     pub matrix_homeserver: bool,
     /// True when EITHER a password OR a pre-issued access token is present.
     pub matrix_login: bool,
+    /// GOLD-FEAT-10 — LINE long-lived channel access token (sending) present.
+    pub line_access_token: bool,
+    /// GOLD-FEAT-10 — LINE channel secret (inbound signature verify) present.
+    pub line_channel_secret: bool,
 }
 
 impl ChannelCredsView {
@@ -102,12 +106,14 @@ impl ChannelCredsView {
             signal_phone_number: creds.signal_phone_number.is_some(),
             matrix_homeserver: creds.matrix_homeserver.is_some(),
             matrix_login: creds.matrix_password.is_some() || creds.matrix_access_token.is_some(),
+            line_access_token: creds.line_channel_access_token.is_some(),
+            line_channel_secret: creds.line_channel_secret.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 8] = [
+pub const ALL_CHANNELS: [ChannelKind; 9] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -116,6 +122,7 @@ pub const ALL_CHANNELS: [ChannelKind; 8] = [
     ChannelKind::Discord,
     ChannelKind::Signal,
     ChannelKind::Matrix,
+    ChannelKind::Line,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -210,6 +217,21 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             _ => (
                 ProbeStatus::Error,
                 "Matrix needs matrix_homeserver AND (matrix_password OR matrix_access_token)",
+            ),
+        },
+        ChannelKind::Line => match (v.line_access_token, v.line_channel_secret) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "line_channel_access_token + line_channel_secret configured — inbound via the /line/webhook listener (front it with a public HTTPS reverse proxy), outbound via push",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no line config"),
+            (true, false) => (
+                ProbeStatus::Warn,
+                "send works; inbound webhook needs line_channel_secret to verify the X-Line-Signature",
+            ),
+            (false, true) => (
+                ProbeStatus::Error,
+                "LINE needs line_channel_access_token to send (the channel secret alone cannot push)",
             ),
         },
     };
