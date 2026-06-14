@@ -1154,6 +1154,7 @@ Inspect the assembled NEOTH.md operator context
 - `--pin <EVENT_ID>` — NN-MEM-01: pin a hot-tier episode by `event_id` so it becomes decay-immune — the daily consolidation pass skips its importance decay, so a critical-but-rarely-accessed memory can never fall below FORGET_FLOOR and be forgotten. Reverse with `--unpin`
 - `--unpin <EVENT_ID>` — NN-MEM-01: unpin a previously-pinned hot-tier episode by `event_id` (re-subjects it to the normal importance decay)
 - `--dimension <DIMENSION>` — Compute the fractal-dimension D_mem across the four memory tiers (EXP-FD-0 from `PLAN/FRACTAL_DIMENSION.md`). Pure read, no behaviour change. Prints the per-tier byte counts + the regressed log-log slope + an honest verdict on whether D_mem is meaningful for this operator's data
+- `--people <PEOPLE>` — GOLD-ADAPT-OH-10 — print the per-person relationship ranking (recency × frequency × reciprocity × depth, clamped). Pure read of `~/.neoth/people.json`, no behaviour change. Honours `--limit` (default 20; `--limit 0` returns the full ranking)
 - `--rebuild-index <REBUILD_INDEX>` — V10-08 — rebuild the HNSW embedding index from scratch by scanning all rows in `idx_embedding`. Writes the snapshot to `<neoth_home>/embeddings.hnsw`. Use after a database restore or when the snapshot is missing or corrupted. Safe to interrupt: the snapshot is written atomically (temp-file + rename)
 - `--limit <LIMIT>` — Max rows for `--tier` recall
 - `--db <PATH>` — Override the views.db path for `--tier`
