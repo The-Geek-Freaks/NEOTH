@@ -499,6 +499,253 @@ async fn build_prompt_bundle(
     )
 }
 
+/// GOLD-ARCH-02 phase 2 — pre-flight gates for one chat turn: cost preview +
+/// PaidProviderCall autonomy gate, provider-quota 429 backoff, sub-agent +
+/// slash-command dispatch, and the PrePipeline/PreProviderCall TOML hooks.
+/// Owns the WAL writer + its join handle so every abort path can drain them
+/// exactly as before; on success it threads them back to the caller. A typed
+/// slash action that handles the turn returns `Done` (the caller returns Ok).
+#[allow(clippy::large_enum_variant)]
+enum PreflightOutcome {
+    /// A slash action handled the turn — the caller returns `Ok(())`.
+    Done,
+    /// Proceed to the provider call with these resolved values.
+    Continue {
+        writer: crate::wal::writer::WalWriterHandle,
+        writer_join: tokio::task::JoinHandle<()>,
+        predicted_cost: crate::providers::cost::CostEstimate,
+        review_context: Option<(String, String)>,
+        final_prompt: String,
+        final_system: Option<String>,
+        prompt: String,
+        quota_path: std::path::PathBuf,
+        hooks: Vec<crate::hooks::schema::HookDef>,
+    },
+}
+
+async fn enforce_preflight(
+    combined_system: Option<String>,
+    prompt: String,
+    provider: &dyn crate::providers::Provider,
+    args: &ChatArgs,
+    config: &FreedomConfig,
+    writer: crate::wal::writer::WalWriterHandle,
+    writer_join: tokio::task::JoinHandle<()>,
+    home: &std::path::Path,
+) -> Result<PreflightOutcome> {
+    // ── Permission gate (Phase 28b AU-4) + C-14 cost preview ───────────────
+    // Real `eur_estimate` from the cost predictor — feeds both the
+    // `PaidProviderCall` autonomy gate (Confirm at standard above
+    // €0.50, at elevated above €5.00) AND a `COST_ESTIMATE_SHOWN`
+    // WAL frame so operators can audit what was projected vs what
+    // actually billed (PROVIDER_RESPONSE event reports actual usage
+    // post-call).
+    let predicted_cost = {
+        let meter = crate::providers::meter::Meter::with_default_window();
+        // Assemble the same string the provider sees: system prefix
+        // (operator-md + persona) + the user prompt. The predictor's
+        // 4-chars/token heuristic is conservative-high, which is the
+        // safer direction for a billing preview.
+        let assembled = format!("{}\n\n{}", combined_system.as_deref().unwrap_or(""), prompt);
+        crate::providers::cost::predict(
+            provider.name(),
+            &model_for_estimate(args, config),
+            &assembled,
+            &meter,
+        )
+    };
+    let est_payload = serde_json::to_vec(&serde_json::json!({
+        "provider": provider.name(),
+        "model": model_for_estimate(args, config),
+        "input_tokens": predicted_cost.input_tokens,
+        "output_tokens_est": predicted_cost.output_tokens_est,
+        "total_eur": predicted_cost.total_eur,
+        "ts_unix": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    }))
+    .unwrap_or_default();
+    if !est_payload.is_empty() {
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
+            &est_payload,
+        )
+        .build();
+        if let Err(e) = writer.append(header, est_payload).await {
+            tracing::warn!(error = %e, "WAL append COST_ESTIMATE_SHOWN failed (best-effort)");
+        }
+    }
+    info!(
+        provider = provider.name(),
+        eur = predicted_cost.total_eur,
+        in_tokens = predicted_cost.input_tokens,
+        out_tokens_est = predicted_cost.output_tokens_est,
+        "cost preview"
+    );
+    {
+        use crate::permissions::{Action, Gate};
+        let action = Action::PaidProviderCall {
+            eur_estimate: predicted_cost.total_eur,
+        };
+        let gate = Gate::for_level(config.autonomy).with_confirm(Gate::auto_confirm());
+        if let Err(e) = gate.check(&action, Some(&writer)).await {
+            warn!(error = %e, eur = predicted_cost.total_eur, "provider call blocked by autonomy gate");
+            drop(writer);
+            let _ = writer_join.await;
+            anyhow::bail!("permission denied: {e}");
+        }
+    }
+
+    // ── Provider quota pre-flight (H5 cascade) ─────────────────────────────
+    // If a previous turn recorded a 429 and the backoff window is still
+    // active, refuse the call HERE rather than paying the round-trip just
+    // to be rate-limited again. Local providers are never tracked.
+    let quota_path = crate::config::FreedomConfig::default_neoth_home().join("quota.json");
+    let provider_name = provider.name();
+    if !crate::providers::is_local_provider(provider_name) {
+        let tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
+        let now = crate::providers::quota::now_unix();
+        if let Some(state) = tracker.get(provider_name) {
+            if !state.is_healthy(now) {
+                let remaining = state.backoff_remaining_secs(now);
+                drop(writer);
+                let _ = writer_join.await;
+                anyhow::bail!(
+                    "{provider_name}: backoff active ({remaining}s remaining). \
+                     Wait for the window to clear, switch providers via `neoth init`, \
+                     or run `neoth quota reset {provider_name}` if you're confident \
+                     the remote has recovered."
+                );
+            }
+        }
+    }
+
+    // ── Sub-agent dispatch (Phase 30 R-18 SA-2) ────────────────────────────
+    // `/agent <name> <body>` swaps system+model+tools for the named agent.
+    // Built-ins: code-reviewer / security-reviewer / planner.
+    let agent_dir = home.join("agents");
+    let agents = crate::sub_agents::load_all(&agent_dir)
+        .await
+        .unwrap_or_default();
+    let agent_dispatch = crate::sub_agents::parse_agent_invocation(&prompt, &agents);
+    // Capture the original prompt + name BEFORE the dispatch consumes the
+    // values — needed for the two-stage review gate after the reply lands.
+    let review_context: Option<(String, String)> = agent_dispatch
+        .as_ref()
+        .map(|d| (d.agent_name.clone(), d.prompt.clone()));
+
+    // ── Slash command dispatch (Phase 28 R-17 SC-2) ────────────────────────
+    // If the operator typed `/help`, `/recall foo`, etc., look up the command
+    // in the merged registry (built-ins + `~/.neoth/commands/*.toml`).
+    // Matched commands replace the system prompt; the args become the
+    // user-facing prompt body. Non-commands pass through untouched.
+    let (final_prompt, final_system) = if let Some(d) = agent_dispatch {
+        info!(agent = %d.agent_name, "sub-agent dispatch");
+        (d.prompt, Some(d.system))
+    } else {
+        match crate::slash::parse_invocation(&prompt) {
+            crate::slash::Invocation::Command {
+                name,
+                args: cmd_args,
+            } => {
+                let slash_dir = home.join("commands");
+                let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
+                if let Some(cmd) = commands.iter().find(|c| c.name == name) {
+                    // Pick #31 — action-based slash short-circuit.
+                    // When the command carries a typed action, dispatch
+                    // it directly + skip the LLM round-trip. Operator
+                    // sees the handler output immediately; no provider
+                    // call, no token cost, no consent gate.
+                    if let Some(action) = cmd.action {
+                        info!(slash_command = %name, action = action.as_str(), "slash action dispatch");
+                        let outcome = crate::slash::dispatch_action(
+                            action,
+                            &cmd_args,
+                            config,
+                            crate::slash::CommandSource::Cli,
+                        );
+                        println!("{}", outcome.text());
+                        if outcome.should_exit() {
+                            return Ok(PreflightOutcome::Done);
+                        }
+                        // Action handled — no LLM call needed for this turn.
+                        return Ok(PreflightOutcome::Done);
+                    }
+                    let rendered = cmd.render(&cmd_args, config.operator_id.as_deref());
+                    info!(slash_command = %name, "slash dispatch");
+                    (cmd_args, Some(rendered))
+                } else {
+                    (prompt.clone(), combined_system)
+                }
+            }
+            crate::slash::Invocation::Escaped { text } => (text, combined_system),
+            crate::slash::Invocation::NotACommand => (prompt.clone(), combined_system),
+        }
+    };
+
+    // ── TOML hooks: PrePipeline + PreProviderCall (Phase 29 R-15) ─────────
+    // Load `~/.neoth/hooks/*.toml` once for this turn. Both stages apply
+    // against the prompt body. A Block at either stage aborts the turn
+    // with the hook's `reason` surfaced to the operator. Each fired hook
+    // writes a `HOOK_FIRED`/`HOOK_REPLACED`/`HOOK_BLOCKED` WAL frame so
+    // the audit trail is exact about which rules touched the call.
+    let hook_dir = home.join("hooks");
+    // Pick #34 (Session 14, silent-failure audit-fix): surface hook
+    // load failures at warn level — prior `unwrap_or_default()` silently
+    // disabled ALL hooks on a single bad TOML file.
+    let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
+        warn!(
+            error = %e,
+            dir = %hook_dir.display(),
+            "hook load failed — proceeding with empty hook set"
+        );
+        Default::default()
+    });
+    let final_prompt = match run_hook_stage(
+        crate::hooks::HookStage::PrePipeline,
+        &final_prompt,
+        &hooks,
+        &writer,
+    )
+    .await?
+    {
+        HookOutcome::Continue(body) => body,
+        HookOutcome::Blocked { name, reason } => {
+            drop(writer);
+            let _ = writer_join.await;
+            anyhow::bail!("hook `{name}` blocked the turn at pre_pipeline: {reason}");
+        }
+    };
+    let final_prompt = match run_hook_stage(
+        crate::hooks::HookStage::PreProviderCall,
+        &final_prompt,
+        &hooks,
+        &writer,
+    )
+    .await?
+    {
+        HookOutcome::Continue(body) => body,
+        HookOutcome::Blocked { name, reason } => {
+            drop(writer);
+            let _ = writer_join.await;
+            anyhow::bail!("hook `{name}` blocked the turn at pre_provider_call: {reason}");
+        }
+    };
+
+    Ok(PreflightOutcome::Continue {
+        writer,
+        writer_join,
+        predicted_cost,
+        review_context,
+        final_prompt,
+        final_system,
+        prompt,
+        quota_path,
+        hooks,
+    })
+}
+
 pub async fn run_chat_with(
     mut args: ChatArgs,
     config: FreedomConfig,
@@ -836,206 +1083,39 @@ pub async fn run_chat_with(
         home,
     ) = build_prompt_bundle(config, prompt, &args, &prompt_bundle_hash, home, &writer).await;
 
-    // ── Permission gate (Phase 28b AU-4) + C-14 cost preview ───────────────
-    // Real `eur_estimate` from the cost predictor — feeds both the
-    // `PaidProviderCall` autonomy gate (Confirm at standard above
-    // €0.50, at elevated above €5.00) AND a `COST_ESTIMATE_SHOWN`
-    // WAL frame so operators can audit what was projected vs what
-    // actually billed (PROVIDER_RESPONSE event reports actual usage
-    // post-call).
-    let predicted_cost = {
-        let meter = crate::providers::meter::Meter::with_default_window();
-        // Assemble the same string the provider sees: system prefix
-        // (operator-md + persona) + the user prompt. The predictor's
-        // 4-chars/token heuristic is conservative-high, which is the
-        // safer direction for a billing preview.
-        let assembled = format!("{}\n\n{}", combined_system.as_deref().unwrap_or(""), prompt);
-        crate::providers::cost::predict(
-            provider.name(),
-            &model_for_estimate(&args, &config),
-            &assembled,
-            &meter,
+    let (
+        writer,
+        writer_join,
+        predicted_cost,
+        review_context,
+        final_prompt,
+        final_system,
+        prompt,
+        quota_path,
+        hooks,
+    ) =
+        match enforce_preflight(
+            combined_system, prompt, provider, &args, &config, writer, writer_join, &home,
         )
-    };
-    let est_payload = serde_json::to_vec(&serde_json::json!({
-        "provider": provider.name(),
-        "model": model_for_estimate(&args, &config),
-        "input_tokens": predicted_cost.input_tokens,
-        "output_tokens_est": predicted_cost.output_tokens_est,
-        "total_eur": predicted_cost.total_eur,
-        "ts_unix": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-    }))
-    .unwrap_or_default();
-    if !est_payload.is_empty() {
-        let header = crate::wal::HeaderBuilder::new(
-            crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
-            &est_payload,
-        )
-        .build();
-        if let Err(e) = writer.append(header, est_payload).await {
-            tracing::warn!(error = %e, "WAL append COST_ESTIMATE_SHOWN failed (best-effort)");
-        }
-    }
-    info!(
-        provider = provider.name(),
-        eur = predicted_cost.total_eur,
-        in_tokens = predicted_cost.input_tokens,
-        out_tokens_est = predicted_cost.output_tokens_est,
-        "cost preview"
-    );
-    {
-        use crate::permissions::{Action, Gate};
-        let action = Action::PaidProviderCall {
-            eur_estimate: predicted_cost.total_eur,
+        .await?
+        {
+            PreflightOutcome::Done => return Ok(()),
+            PreflightOutcome::Continue {
+                writer,
+                writer_join,
+                predicted_cost,
+                review_context,
+                final_prompt,
+                final_system,
+                prompt,
+                quota_path,
+                hooks,
+            } => (
+                writer, writer_join, predicted_cost, review_context, final_prompt,
+                final_system, prompt, quota_path, hooks,
+            ),
         };
-        let gate = Gate::for_level(config.autonomy).with_confirm(Gate::auto_confirm());
-        if let Err(e) = gate.check(&action, Some(&writer)).await {
-            warn!(error = %e, eur = predicted_cost.total_eur, "provider call blocked by autonomy gate");
-            drop(writer);
-            let _ = writer_join.await;
-            anyhow::bail!("permission denied: {e}");
-        }
-    }
-
-    // ── Provider quota pre-flight (H5 cascade) ─────────────────────────────
-    // If a previous turn recorded a 429 and the backoff window is still
-    // active, refuse the call HERE rather than paying the round-trip just
-    // to be rate-limited again. Local providers are never tracked.
-    let quota_path = crate::config::FreedomConfig::default_neoth_home().join("quota.json");
     let provider_name = provider.name();
-    if !crate::providers::is_local_provider(provider_name) {
-        let tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
-        let now = crate::providers::quota::now_unix();
-        if let Some(state) = tracker.get(provider_name) {
-            if !state.is_healthy(now) {
-                let remaining = state.backoff_remaining_secs(now);
-                drop(writer);
-                let _ = writer_join.await;
-                anyhow::bail!(
-                    "{provider_name}: backoff active ({remaining}s remaining). \
-                     Wait for the window to clear, switch providers via `neoth init`, \
-                     or run `neoth quota reset {provider_name}` if you're confident \
-                     the remote has recovered."
-                );
-            }
-        }
-    }
-
-    // ── Sub-agent dispatch (Phase 30 R-18 SA-2) ────────────────────────────
-    // `/agent <name> <body>` swaps system+model+tools for the named agent.
-    // Built-ins: code-reviewer / security-reviewer / planner.
-    let agent_dir = home.join("agents");
-    let agents = crate::sub_agents::load_all(&agent_dir)
-        .await
-        .unwrap_or_default();
-    let agent_dispatch = crate::sub_agents::parse_agent_invocation(&prompt, &agents);
-    // Capture the original prompt + name BEFORE the dispatch consumes the
-    // values — needed for the two-stage review gate after the reply lands.
-    let review_context: Option<(String, String)> = agent_dispatch
-        .as_ref()
-        .map(|d| (d.agent_name.clone(), d.prompt.clone()));
-
-    // ── Slash command dispatch (Phase 28 R-17 SC-2) ────────────────────────
-    // If the operator typed `/help`, `/recall foo`, etc., look up the command
-    // in the merged registry (built-ins + `~/.neoth/commands/*.toml`).
-    // Matched commands replace the system prompt; the args become the
-    // user-facing prompt body. Non-commands pass through untouched.
-    let (final_prompt, final_system) = if let Some(d) = agent_dispatch {
-        info!(agent = %d.agent_name, "sub-agent dispatch");
-        (d.prompt, Some(d.system))
-    } else {
-        match crate::slash::parse_invocation(&prompt) {
-            crate::slash::Invocation::Command {
-                name,
-                args: cmd_args,
-            } => {
-                let slash_dir = home.join("commands");
-                let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
-                if let Some(cmd) = commands.iter().find(|c| c.name == name) {
-                    // Pick #31 — action-based slash short-circuit.
-                    // When the command carries a typed action, dispatch
-                    // it directly + skip the LLM round-trip. Operator
-                    // sees the handler output immediately; no provider
-                    // call, no token cost, no consent gate.
-                    if let Some(action) = cmd.action {
-                        info!(slash_command = %name, action = action.as_str(), "slash action dispatch");
-                        let outcome = crate::slash::dispatch_action(
-                            action,
-                            &cmd_args,
-                            &config,
-                            crate::slash::CommandSource::Cli,
-                        );
-                        println!("{}", outcome.text());
-                        if outcome.should_exit() {
-                            return Ok(());
-                        }
-                        // Action handled — no LLM call needed for this turn.
-                        return Ok(());
-                    }
-                    let rendered = cmd.render(&cmd_args, config.operator_id.as_deref());
-                    info!(slash_command = %name, "slash dispatch");
-                    (cmd_args, Some(rendered))
-                } else {
-                    (prompt.clone(), combined_system)
-                }
-            }
-            crate::slash::Invocation::Escaped { text } => (text, combined_system),
-            crate::slash::Invocation::NotACommand => (prompt.clone(), combined_system),
-        }
-    };
-
-    // ── TOML hooks: PrePipeline + PreProviderCall (Phase 29 R-15) ─────────
-    // Load `~/.neoth/hooks/*.toml` once for this turn. Both stages apply
-    // against the prompt body. A Block at either stage aborts the turn
-    // with the hook's `reason` surfaced to the operator. Each fired hook
-    // writes a `HOOK_FIRED`/`HOOK_REPLACED`/`HOOK_BLOCKED` WAL frame so
-    // the audit trail is exact about which rules touched the call.
-    let hook_dir = home.join("hooks");
-    // Pick #34 (Session 14, silent-failure audit-fix): surface hook
-    // load failures at warn level — prior `unwrap_or_default()` silently
-    // disabled ALL hooks on a single bad TOML file.
-    let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
-        warn!(
-            error = %e,
-            dir = %hook_dir.display(),
-            "hook load failed — proceeding with empty hook set"
-        );
-        Default::default()
-    });
-    let final_prompt = match run_hook_stage(
-        crate::hooks::HookStage::PrePipeline,
-        &final_prompt,
-        &hooks,
-        &writer,
-    )
-    .await?
-    {
-        HookOutcome::Continue(body) => body,
-        HookOutcome::Blocked { name, reason } => {
-            drop(writer);
-            let _ = writer_join.await;
-            anyhow::bail!("hook `{name}` blocked the turn at pre_pipeline: {reason}");
-        }
-    };
-    let final_prompt = match run_hook_stage(
-        crate::hooks::HookStage::PreProviderCall,
-        &final_prompt,
-        &hooks,
-        &writer,
-    )
-    .await?
-    {
-        HookOutcome::Continue(body) => body,
-        HookOutcome::Blocked { name, reason } => {
-            drop(writer);
-            let _ = writer_join.await;
-            anyhow::bail!("hook `{name}` blocked the turn at pre_provider_call: {reason}");
-        }
-    };
-
     // ── Provider call (sync OR stream) ────────────────────────────────────
     // R-04 2026-05-17: clone final_prompt + final_system here rather
     // than move so the LOWKEY refusal-recovery path post-reply can
@@ -1313,7 +1393,7 @@ pub async fn run_chat_with(
             let ctx = crate::council::TriggerContext {
                 seconds_since_last_council: secs_since,
                 remaining_budget_eur: None,
-                estimated_single_call_eur: predicted_cost.total_eur.max(0.01) as f32,
+                estimated_single_call_eur: predicted_cost.total_eur.max(0.01),
             };
             // SPEC-03b: operator-tunable thresholds from
             // `freedom.yaml::council.trigger` (defaults reproduce the prior
