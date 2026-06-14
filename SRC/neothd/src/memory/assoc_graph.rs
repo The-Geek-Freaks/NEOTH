@@ -24,6 +24,27 @@ use rusqlite::{params, Connection};
 /// this caps any caller defensively.
 const MAX_PAIR_SET: usize = 50;
 
+/// MEM-07b — default tumbling-window width for the co-occurrence bootstrap: 1 h
+/// in nanoseconds. Episodes in the same hour bucket are treated as co-occurring.
+/// 1 h matches the natural attention span (a single sitting) without merging
+/// unrelated morning/evening sessions the way a 1-day bucket would.
+pub const DEFAULT_BOOTSTRAP_WINDOW_NS: u64 = 3_600_000_000_000;
+/// MEM-07b — weight added per window a pair co-occurs in. Deliberately small:
+/// a bootstrap edge is INFERRED temporal proximity, not a confirmed co-recall
+/// (which the live path scores at +1.0).
+const BOOTSTRAP_WEIGHT_PER_WINDOW: f64 = 0.15;
+/// MEM-07b — ceiling on a bootstrap edge weight: strictly below the 1.0 a single
+/// live co-recall produces, so a bootstrap edge never masquerades as live-learned.
+const BOOTSTRAP_MAX_WEIGHT: f64 = 0.9;
+/// MEM-07b — skip a window with more than this many episodes: such a dense hour
+/// is an ingestion burst (import/backfill), not a conversation, and pairing it
+/// would create hundreds of spurious associations.
+const MAX_BOOTSTRAP_WINDOW_EPISODES: usize = 20;
+/// MEM-07b — backstop on the total distinct pairs the bootstrap will track, so a
+/// huge episode history can't balloon the in-memory accumulator. Once reached,
+/// accumulation stops (existing counts are still inserted).
+const MAX_BOOTSTRAP_PAIRS: usize = 50_000;
+
 /// Reinforce the co-access association between every unordered pair of
 /// `event_ids` (deduped, capped to [`MAX_PAIR_SET`]). A new pair is inserted at
 /// weight 1.0; a repeat bumps the weight by 1.0. All upserts run in one
@@ -121,6 +142,124 @@ pub fn forget_links_for_event(conn: &Connection, event_id: i64) -> Result<i64> {
         )
         .context("forget links for event")? as i64;
     Ok(n)
+}
+
+/// Accumulate all unordered canonical (lo<hi) pairs of one window's episode ids
+/// into `pair_counts` (+1 per pair). Returns `false` once the global pair cap is
+/// hit so the caller can stop the scan.
+fn accumulate_window_pairs(
+    ids: &[i64],
+    pair_counts: &mut std::collections::HashMap<(i64, i64), u32>,
+) -> bool {
+    if ids.len() < 2 {
+        return true;
+    }
+    for i in 0..ids.len() {
+        for j in (i + 1)..ids.len() {
+            let (a, b) = (ids[i], ids[j]);
+            if a == b {
+                continue;
+            }
+            let key = if a < b { (a, b) } else { (b, a) };
+            // Only let an existing key grow once the cap is reached — never add a
+            // NEW key past the cap (bounds the map).
+            if pair_counts.len() >= MAX_BOOTSTRAP_PAIRS && !pair_counts.contains_key(&key) {
+                return false;
+            }
+            *pair_counts.entry(key).or_insert(0) += 1;
+        }
+    }
+    true
+}
+
+/// MEM-07b — bootstrap co-occurrence edges from episode history.
+///
+/// Walks `idx_episode` in chronological order, assigns each episode to a tumbling
+/// bucket of `window_ns` nanoseconds, and counts the distinct buckets in which
+/// each canonical `(lo_id, hi_id)` pair co-appears. A NEW edge is inserted at
+/// `weight = min(0.15 * count, 0.9)`. Existing edges (live-learned or from a
+/// prior bootstrap) are NEVER modified (`ON CONFLICT DO NOTHING`) — so the
+/// bootstrap is idempotent on re-run and can never inflate a live weight.
+///
+/// Windows with more than [`MAX_BOOTSTRAP_WINDOW_EPISODES`] episodes are skipped
+/// (ingestion-burst guard). A bootstrapped weight-0.15 edge decays below the
+/// 0.05 prune floor in ~4.6 days of no reinforcement (0.30 in ~7.4 days), so a
+/// bootstrap edge is a weak hint that fades unless a real co-recall confirms it.
+///
+/// Returns the number of edges created (0 when every pair already existed).
+pub fn bootstrap_co_occurrence(conn: &Connection, window_ns: u64, now_unix: i64) -> Result<usize> {
+    if window_ns == 0 {
+        anyhow::bail!("bootstrap window must be non-zero");
+    }
+    let mut stmt = conn
+        .prepare("SELECT event_id, ts_ns FROM idx_episode ORDER BY ts_ns ASC")
+        .context("bootstrap: prepare episode cursor")?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+        .context("bootstrap: query episodes")?;
+
+    let mut pair_counts: std::collections::HashMap<(i64, i64), u32> =
+        std::collections::HashMap::new();
+    let mut current_bucket: Option<u64> = None;
+    let mut bucket_ids: Vec<i64> = Vec::new();
+    let mut skipped_windows: u64 = 0;
+    let mut capped = false;
+
+    'scan: for row in rows {
+        let (event_id, ts_ns) = row.context("bootstrap: read episode row")?;
+        // Corrupt/pre-epoch negatives wrap to a far bucket — harmless (they pair
+        // only with each other, and DO NOTHING covers the rare collision).
+        let bucket = (ts_ns as u64) / window_ns;
+        match current_bucket {
+            Some(b) if b == bucket => bucket_ids.push(event_id),
+            _ => {
+                if current_bucket.is_some() {
+                    if bucket_ids.len() > MAX_BOOTSTRAP_WINDOW_EPISODES {
+                        skipped_windows += 1;
+                    } else if !accumulate_window_pairs(&bucket_ids, &mut pair_counts) {
+                        capped = true;
+                        break 'scan;
+                    }
+                }
+                current_bucket = Some(bucket);
+                bucket_ids.clear();
+                bucket_ids.push(event_id);
+            }
+        }
+    }
+    // Flush the final bucket (unless we already stopped at the cap).
+    if !capped && current_bucket.is_some() {
+        if bucket_ids.len() > MAX_BOOTSTRAP_WINDOW_EPISODES {
+            skipped_windows += 1;
+        } else {
+            let _ = accumulate_window_pairs(&bucket_ids, &mut pair_counts);
+        }
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .context("bootstrap: begin insert tx")?;
+    let mut created = 0usize;
+    for ((lo, hi), count) in &pair_counts {
+        let weight = (BOOTSTRAP_WEIGHT_PER_WINDOW * (*count as f64)).min(BOOTSTRAP_MAX_WEIGHT);
+        created += tx
+            .execute(
+                "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access) \
+                 VALUES (?1, ?2, ?3, ?4) ON CONFLICT(lo_id, hi_id) DO NOTHING",
+                params![lo, hi, weight, now_unix],
+            )
+            .context("bootstrap: insert link")?;
+    }
+    tx.commit().context("bootstrap: commit insert tx")?;
+
+    tracing::debug!(
+        pairs = pair_counts.len(),
+        edges_created = created,
+        skipped_windows,
+        capped,
+        "assoc_graph: co-occurrence bootstrap complete"
+    );
+    Ok(created)
 }
 
 #[cfg(test)]
@@ -260,5 +399,99 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
             .unwrap();
         assert_eq!(remaining, 1, "(2,3) survives");
+    }
+
+    // ── MEM-07b: co-occurrence bootstrap ────────────────────────────────────
+
+    /// Seed an `idx_episode` row at an explicit `ts_ns` so it lands in a chosen
+    /// bootstrap bucket.
+    fn seed_episode_at(conn: &Connection, event_id: i64, ts_ns: i64) {
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
+             VALUES (?1, 1, ?2, 'x', 'h')",
+            params![event_id, ts_ns],
+        )
+        .unwrap();
+    }
+
+    const W: u64 = 1000; // small test window
+
+    #[test]
+    fn bootstrap_links_same_window_episodes_at_base_weight() {
+        let (_d, c) = conn();
+        for id in [1, 2] {
+            seed_episode_at(&c, id, 0); // same bucket
+        }
+        let created = bootstrap_co_occurrence(&c, W, 100).unwrap();
+        assert_eq!(created, 1, "one (1,2) edge");
+        assert!((weight(&c, 1, 2) - 0.15).abs() < 1e-9, "base bootstrap weight 0.15");
+    }
+
+    #[test]
+    fn bootstrap_is_idempotent() {
+        let (_d, c) = conn();
+        for id in [1, 2, 3] {
+            seed_episode_at(&c, id, 0);
+        }
+        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 3, "C(3,2)=3 edges");
+        // Re-run creates nothing + leaves weights untouched (DO NOTHING).
+        assert_eq!(bootstrap_co_occurrence(&c, W, 200).unwrap(), 0, "re-run is a no-op");
+        assert!((weight(&c, 1, 2) - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bootstrap_never_overwrites_a_live_edge() {
+        let (_d, c) = conn();
+        seed_episode_at(&c, 1, 0);
+        seed_episode_at(&c, 2, 0);
+        // A live co-recall first → weight 1.0.
+        reinforce_co_access(&c, &[1, 2], 1).unwrap();
+        // Bootstrap must NOT touch it (DO NOTHING).
+        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 0, "live edge skipped");
+        assert!((weight(&c, 1, 2) - 1.0).abs() < 1e-9, "live weight preserved");
+    }
+
+    #[test]
+    fn bootstrap_normalises_pairs_to_canonical_order() {
+        let (_d, c) = conn();
+        for id in [5, 2, 8] {
+            seed_episode_at(&c, id, 0);
+        }
+        // Would panic/abort on the CHECK(lo_id<hi_id) if any pair were unordered.
+        let created = bootstrap_co_occurrence(&c, W, 100).unwrap();
+        assert_eq!(created, 3, "(2,5),(2,8),(5,8)");
+        let unordered: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM idx_memory_links WHERE lo_id >= hi_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unordered, 0, "every row is canonical lo<hi");
+    }
+
+    #[test]
+    fn bootstrap_single_episode_window_makes_no_edge() {
+        let (_d, c) = conn();
+        seed_episode_at(&c, 1, 0);
+        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 0);
+    }
+
+    #[test]
+    fn bootstrap_does_not_link_across_windows() {
+        let (_d, c) = conn();
+        seed_episode_at(&c, 1, 0); // bucket 0
+        seed_episode_at(&c, 2, (W as i64) * 5); // bucket 5
+        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 0, "different windows → no edge");
+    }
+
+    #[test]
+    fn bootstrap_skips_a_dense_ingestion_burst_window() {
+        let (_d, c) = conn();
+        // MAX_BOOTSTRAP_WINDOW_EPISODES + 1 episodes in one bucket → skipped whole.
+        for id in 1..=(MAX_BOOTSTRAP_WINDOW_EPISODES as i64 + 1) {
+            seed_episode_at(&c, id, 0);
+        }
+        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 0, "dense window skipped");
     }
 }

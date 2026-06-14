@@ -125,6 +125,13 @@ pub struct RecallArgs {
     #[arg(long, value_name = "EVENT_ID", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract"])]
     pub assoc: Option<i64>,
 
+    /// GOLD-ADAPT-MEM-07b — one-shot: bootstrap co-access association edges from
+    /// episode history (memories in the same time-window get a weak initial
+    /// link), so a fresh install has associations before live recall accrues.
+    /// Idempotent — safe to re-run (never touches existing edges).
+    #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc"])]
+    pub bootstrap_assoc: bool,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -319,6 +326,31 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                         println!("  event {eid} (weight {w:.2})");
                     }
                 }
+            }
+        }
+        return Ok(());
+    }
+
+    // GOLD-ADAPT-MEM-07b — co-occurrence bootstrap short-circuit (one-shot).
+    if args.bootstrap_assoc {
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db for bootstrap")?;
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let created = crate::memory::assoc_graph::bootstrap_co_occurrence(
+            &conn,
+            crate::memory::assoc_graph::DEFAULT_BOOTSTRAP_WINDOW_NS,
+            now_unix,
+        )
+        .context("bootstrap_co_occurrence")?;
+        match args.output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+                println!("{}", serde_json::json!({ "edges_created": created }));
+            }
+            crate::cli::OutputFormat::Table => {
+                println!("bootstrap-assoc: {created} association edge(s) created");
             }
         }
         return Ok(());
@@ -1423,6 +1455,7 @@ mod tests {
             graph_depth: 2,
             extract: None,
             assoc: None,
+            bootstrap_assoc: false,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1699,6 +1732,7 @@ mod tests {
             graph_depth: 2,
             extract: None,
             assoc: None,
+            bootstrap_assoc: false,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1733,6 +1767,7 @@ mod tests {
             graph_depth: 2,
             extract: None,
             assoc: None,
+            bootstrap_assoc: false,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1767,6 +1802,7 @@ mod tests {
             graph_depth: 2,
             extract: None,
             assoc: None,
+            bootstrap_assoc: false,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
