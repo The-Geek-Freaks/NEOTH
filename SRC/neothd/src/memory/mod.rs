@@ -58,6 +58,9 @@ pub mod region_router;
 pub mod channel_weights;
 pub mod regions;
 pub mod routing_weights;
+/// GOLD-ADAPT-VIEW-04 — cross-agent session-transcript import (claude-code /
+/// codex / gemini → ground-truth candidates). `neoth import session`.
+pub mod session_import;
 pub mod session_search;
 pub mod snapshot_refresh;
 pub mod store;

@@ -908,6 +908,22 @@ Merge two identities: every alias of <victim> is reassigned to <canonical>, then
 
 Show THIS operator's X25519 transfer public key (base64) — share it so another NEOTH can `neoth transfer export --dest <this>` an encrypted memory bundle to you. The key is auto-managed at `~/.neoth/wal/transfer.key`
 
+## `neoth import`
+
+Import a past AI-agent session transcript (claude-code / codex / gemini) into ground-truth as un-surfaced corroboration candidates. GOLD-ADAPT-VIEW-04
+
+- `--db <PATH>` — Override the views.db path. Defaults to `~/.neoth/views.db`
+
+### `neoth import session`
+
+Import a past agent session transcript into ground-truth candidates
+
+- `<PATH>` — Path to the session transcript (`.jsonl` / `.json`)
+- `--format <FORMAT>` — Source format: `claude | codex | gemini`
+- `--scope <SCOPE>` — Scope tag for every inserted row
+- `--granularity <GRANULARITY>` — Claim granularity: `turns` (digest + each operator request) or `digest` (one summary row only)
+- `--dry-run <DRY_RUN>` — Parse + print claims without inserting any rows
+
 ## `neoth ingest`
 
 Multimodal asset ingest pipeline

@@ -35,6 +35,9 @@ pub enum Source {
     ImportOpenclaw,
     ImportOpenhuman,
     ImportVeronica,
+    /// GOLD-ADAPT-VIEW-04 — distilled from an imported foreign-agent SESSION
+    /// transcript (claude-code / codex / gemini). Candidate until corroborated.
+    ImportSession,
     /// Operator pasted a markdown file; the bulk-text extractor produced
     /// this claim.
     BulkText,
@@ -55,6 +58,7 @@ impl Source {
             Source::ImportOpenclaw => "import:openclaw",
             Source::ImportOpenhuman => "import:openhuman",
             Source::ImportVeronica => "import:veronica",
+            Source::ImportSession => "import:session",
             Source::BulkText => "bulk-text",
             Source::Omi => "omi",
         }

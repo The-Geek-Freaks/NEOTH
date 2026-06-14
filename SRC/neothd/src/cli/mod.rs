@@ -64,6 +64,7 @@ pub mod hardware;
 pub mod hemispheres;
 pub mod hooks;
 pub mod hysteria;
+pub mod import;
 pub mod ingest;
 pub mod init;
 pub mod installer;
@@ -415,6 +416,11 @@ pub enum Commands {
     /// `revoke <id>`. Facts are decay-immune; they always surface in recall
     /// before any episodic row.
     Groundtruth(groundtruth::GroundtruthArgs),
+
+    /// Import a past AI-agent session transcript (claude-code / codex / gemini)
+    /// into ground-truth as un-surfaced corroboration candidates.
+    /// GOLD-ADAPT-VIEW-04.
+    Import(import::ImportArgs),
 
     /// Opt-in anonymous version-check telemetry (E-18 Workstream N).
     ///
@@ -1057,6 +1063,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Groundtruth(mut args) => {
             args.output = global_output;
             groundtruth::run_groundtruth(args).await?;
+        }
+        Commands::Import(mut args) => {
+            args.output = global_output;
+            import::run_import(args).await?;
         }
         Commands::Telemetry(mut args) => {
             args.output = global_output;
