@@ -1016,11 +1016,22 @@ async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMe
                                 );
                             }
                             Err(e) => {
+                                // Distinguish the failure class in the audit
+                                // frame (mirrors the WhatsApp meta_api/transport
+                                // split) so the operator can tell a bad token /
+                                // rate-limit from a TCP failure in the WAL alone.
+                                let error_kind = match &e {
+                                    crate::channels::ChannelError::Auth(_) => "line_auth_error",
+                                    crate::channels::ChannelError::RateLimited { .. } => {
+                                        "line_rate_limited"
+                                    }
+                                    _ => "line_transport_error",
+                                };
                                 if let Some(w) = gov.wal_writer.as_ref() {
                                     let p = send_gate::channel_egress_failed_payload(
                                         "line",
                                         &outbound.recipient_id,
-                                        "line_push_error",
+                                        error_kind,
                                         now,
                                     );
                                     append_audit(
@@ -1350,6 +1361,109 @@ mod tests {
         assert_eq!(v["provider_message_id"], "wamid.OK");
         let text = String::from_utf8_lossy(&payload);
         assert!(!text.contains("+4900000"), "recipient leaked: {text}");
+    }
+
+    // ── GOLD-FEAT-10 LINE dispatch governance (L-01) ───────────────────────
+
+    /// LINE analogue of `gated_cfg`: a listener wired with `line` send config +
+    /// the given governance. The Deny/Allow verdicts drive the push path.
+    fn gated_line_cfg(gov: SendGovernance, base_url: Option<String>) -> WebhookListenerConfig {
+        WebhookListenerConfig {
+            inbound_dedup: None,
+            line: Some(LineConfig {
+                channel_secret: b"line-secret".to_vec(),
+                access_token: crate::secret::SecretString::from("fake-line-token"),
+                base_url,
+            }),
+            meta_app_secret: b"m".to_vec(),
+            meta_verify_token: "v".to_string(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline: pipeline_with_outbound(),
+            whatsapp_send_creds: None,
+            send_governance: gov,
+            max_concurrent_connections: None,
+            dispatch_join: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn line_denied_send_skips_push_api_and_audits_permission_denied() {
+        // A Deny verdict must NOT call the LINE push API and MUST emit a
+        // CHANNEL_SEND_DENIED frame with the recipient HASHED. base_url points
+        // at a wiremock server with NO mounted route — we machine-assert it saw
+        // ZERO requests (the "skips API" half).
+        use wiremock::MockServer;
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let cfg = gated_line_cfg(
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                decision: crate::permissions::Decision::Deny("test-deny".into()),
+                required_audit: false,
+                dry_run: false,
+            },
+            Some(server.uri()),
+        );
+        dispatch_line_messages(&cfg, vec![inbound_fixture()]).await;
+        drop(cfg);
+        drop(writer);
+        let _ = join.await;
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "Deny verdict must not hit the LINE push API"
+        );
+        let (event_type, payload) = read_first_frame(&seg);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED);
+        let text = String::from_utf8_lossy(&payload);
+        assert!(!text.contains("+4900000"), "recipient leaked: {text}");
+        assert!(text.contains("channel_send"), "denial payload tags the action");
+    }
+
+    #[tokio::test]
+    async fn line_send_hits_push_api_once_and_audits_without_leaking_pii() {
+        // Allow + not-dry-run → exactly ONE POST to /v2/bot/message/push
+        // (machine-verified via wiremock) AND a CHANNEL_SEND frame attesting the
+        // delivered reply with the recipient + body HASHED (never cleartext).
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/bot/message/push"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"sentMessages":[{"id":"line-msg-1"}]}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let cfg = gated_line_cfg(
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                decision: crate::permissions::Decision::Allow,
+                required_audit: false,
+                dry_run: false,
+            },
+            Some(server.uri()),
+        );
+        dispatch_line_messages(&cfg, vec![inbound_fixture()]).await;
+        drop(cfg);
+        drop(writer);
+        let _ = join.await;
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 1, "Allow+send must hit the LINE push API exactly once");
+        let (event_type, payload) = read_first_frame(&seg);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND);
+        let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(v["channel"], "line");
+        assert_eq!(v["provider_message_id"], "line-msg-1");
+        let text = String::from_utf8_lossy(&payload);
+        assert!(!text.contains("+4900000"), "recipient leaked: {text}");
+        assert!(!text.contains("auto-reply"), "message body leaked: {text}");
     }
 
     async fn http_get(host: &str, path: &str) -> (u16, String) {

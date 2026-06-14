@@ -149,20 +149,23 @@ pub enum DecodedLineWebhook {
 
 /// Resolve the conversation id a reply should route back to. A group event
 /// replies to the `groupId`, a room event to the `roomId`, a DM to the
-/// `userId` — so the push `to` lands in the same conversation.
+/// `userId` — so the push `to` lands in the same conversation. A KNOWN source
+/// type with its primary id absent returns `None` (the message is dropped, not
+/// cross-routed to a different recipient — e.g. a room event with no `roomId`
+/// must NOT be answered in the sender's DM). The cross-id fallback applies only
+/// to an UNKNOWN/future source type so a spec addition still routes somewhere.
 fn chat_id_of(src: &LineSource) -> Option<String> {
-    let by_kind = match src.source_type.as_str() {
+    let primary = match src.source_type.as_str() {
         "group" => src.group_id.clone(),
         "room" => src.room_id.clone(),
-        _ => src.user_id.clone(),
+        "user" => src.user_id.clone(),
+        _ => src
+            .user_id
+            .clone()
+            .or_else(|| src.group_id.clone())
+            .or_else(|| src.room_id.clone()),
     };
-    by_kind
-        .filter(|s| !s.is_empty())
-        // Fall back across the other ids so a source with an unexpected `type`
-        // but a present id still routes somewhere deterministic.
-        .or_else(|| src.group_id.clone().filter(|s| !s.is_empty()))
-        .or_else(|| src.room_id.clone().filter(|s| !s.is_empty()))
-        .or_else(|| src.user_id.clone().filter(|s| !s.is_empty()))
+    primary.filter(|s| !s.is_empty())
 }
 
 /// Parse one verified webhook POST body into a [`DecodedLineWebhook`]. Pure;
@@ -295,6 +298,17 @@ pub async fn send_line_push(
     to: &str,
     text: &str,
 ) -> std::result::Result<MessageId, ChannelError> {
+    // Pre-flight the LINE 5000-char-per-text-message cap: a longer body would be
+    // rejected by the API with a 400 that maps to an opaque transport error.
+    // Surface a clear, distinct error here instead — protects both the webhook
+    // reply path AND the proactive `send_text` path (the formatter only splits
+    // on the `send_canonical` path).
+    let char_count = text.chars().count();
+    if char_count > LINE_MAX_TEXT_CHARS {
+        return Err(ChannelError::Transport(format!(
+            "line push: text is {char_count} chars, exceeds the {LINE_MAX_TEXT_CHARS}-char per-message limit"
+        )));
+    }
     let url = format!("{}/v2/bot/message/push", base_url.trim_end_matches('/'));
     let body = PushRequest {
         to,
@@ -405,6 +419,41 @@ mod tests {
         );
         assert_eq!(msgs[0].chat_id, "Rroom");
         assert_eq!(msgs[0].sender_id, "Umember");
+    }
+
+    #[test]
+    fn room_event_without_room_id_is_dropped_not_misrouted_to_dm() {
+        // A known `room` source with no roomId must NOT be answered in the
+        // sender's DM — it is dropped (decode skips it → NoMessages).
+        let raw = r#"{"events":[{"type":"message","mode":"active","timestamp":1,
+            "source":{"type":"room","userId":"Umember"},
+            "webhookEventId":"e","message":{"id":"m","type":"text","text":"hi"}}]}"#;
+        assert!(
+            matches!(decode_line_payload(raw), DecodedLineWebhook::NoMessages { .. }),
+            "a room event with no roomId must be dropped, not cross-routed to the user's DM"
+        );
+    }
+
+    #[tokio::test]
+    async fn over_length_text_is_rejected_before_send() {
+        // The 5000-char pre-flight guard surfaces a clear error rather than an
+        // opaque LINE 400. A >5000-char string makes send_line_push bail with
+        // the length-guard Transport error before any network call (the
+        // unroutable base proves the guard fires first — a routing failure would
+        // instead report "line POST http://... :").
+        let http = reqwest::Client::new();
+        let secret = crate::secret::SecretString::from("t");
+        let long = "x".repeat(LINE_MAX_TEXT_CHARS + 1);
+        let err = send_line_push(&http, "http://127.0.0.1:1", &secret, "Ualice", &long)
+            .await
+            .unwrap_err();
+        match err {
+            ChannelError::Transport(m) => assert!(
+                m.contains("exceeds the") && m.contains("per-message limit"),
+                "expected the length-guard message, got: {m}"
+            ),
+            other => panic!("expected the length-guard Transport error, got {other:?}"),
+        }
     }
 
     #[test]
