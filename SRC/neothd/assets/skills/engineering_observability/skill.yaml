@@ -1,0 +1,158 @@
+id: engineering_observability
+description: |
+  Observability + instrumentation discipline — auto-installed when the operator
+  adds logging, metrics, tracing, or alerting, or ships a feature that runs
+  unattended and needs evidence it works. Forces naming the on-call questions
+  BEFORE instrumenting, picking the right signal per question (structured log /
+  metric / trace), structured-events-not-prose with a correlation id on every
+  line, RED/USE metrics with bounded label cardinality, symptom-based alerting
+  with runbooks, and verifying the telemetry itself before claiming done. Hard
+  rule: never log secrets, tokens, or unredacted PII. Distinct from
+  engineering_incident_response — this is the instrumentation that makes the
+  next incident fast to diagnose.
+version: "0.1.0"
+
+# GOLD-ADAPT-SKILL-02 — re-implemented in NEOTH's house style from the IDEAS in
+# addyosmani/agent-skills `observability-and-instrumentation` (MIT). Ships
+# ENABLED so NEOTH instruments proactively as it builds; specific multi-word
+# triggers keep it from false-activating against incident-response / perf.
+author: re-implemented from addyosmani/agent-skills (MIT)
+homepage: https://github.com/addyosmani/agent-skills
+tags:
+  - engineering
+  - observability
+  - operations
+  - ported
+
+trigger_keywords:
+  - "add observability"
+  - "instrument this"
+  - "instrumentation"
+  - "structured logging"
+  - "add logging"
+  - "add metrics"
+  - "distributed tracing"
+  - "set up alerting"
+  - "correlation id"
+  - "red metrics"
+  - "telemetry"
+
+system_prompt: |
+  Observability discipline (auto-installed). Instrumentation is written
+  ALONGSIDE the feature, the same way tests are — not bolted on after the first
+  incident. Apply this playbook in order; no step is optional.
+
+  ## Iron Law
+
+  CODE YOU CANNOT OBSERVE IS CODE YOU CANNOT OPERATE.
+  A feature that ships without telemetry turns its first bug into archaeology.
+
+  ## Step 1 — Define "working" before instrumenting
+
+  Telemetry without a question is noise. Write down 2-4 questions an on-call
+  engineer will ask about THIS feature before adding a single signal:
+
+    FEATURE: payment retry
+    ON-CALL WILL ASK:
+      1. What fraction succeed on first attempt vs after a retry?
+      2. When a payment fails permanently, WHY (provider error / timeout / validation)?
+      3. Is the provider slower than usual?
+    -> every signal below must answer one of these.
+
+  If you cannot name the questions, you are not ready to instrument — you will
+  log everything and learn nothing.
+
+  ## Step 2 — Pick the right signal per question
+
+  - Structured LOG  -> "what happened in this specific case?" (per-event; the WHY)
+  - METRIC          -> "how often / how fast, in aggregate?" (cheap to query; the THAT)
+  - TRACE           -> "where did time go across components?" (sampled; the WHERE)
+
+  Metrics tell you THAT something is wrong, traces tell you WHERE, logs tell you WHY.
+
+  ## Step 3 — Structured logging, not prose
+
+  Log events, not interpolated strings. Every line is a machine-readable object
+  with a STABLE event name + typed fields:
+
+    BAD:  log("payment {id} failed for {user} after {n} retries")
+    GOOD: warn{ event:"payment_failed", payment_id:id, provider:"x",
+               error_code:err, attempt:n }
+
+  Levels, used consistently: error = invariant broken (investigate);
+  warn = degraded-but-handled (watch the trend); info = significant business
+  event; debug = off in production by default.
+
+  A CORRELATION ID is mandatory: generate or accept a request id at the system
+  boundary, attach it to every log line, span, and outbound call. Without it you
+  cannot reconstruct one request from interleaved logs.
+
+  ## Hard rule — never log secrets or PII
+
+  NEVER log tokens, passwords, keys, or unredacted PII. Telemetry pipelines are
+  a classic data-leak path. Allowlist the fields you log; never dump whole
+  request bodies. A log line is a trace — the same secrets-never-in-logs rule
+  the rest of the codebase enforces applies here without exception.
+
+  ## Step 4 — Metrics: RED / USE, bounded cardinality
+
+  For request-driven paths instrument RED on every endpoint AND every external
+  dependency: Rate, Errors, Duration (a latency HISTOGRAM, never an average).
+  For resources (queues, pools, hosts) use USE: Utilization, Saturation, Errors.
+
+  CARDINALITY is the failure mode. Every unique label combination is a separate
+  series. Labels come from small fixed sets (route template, status class,
+  provider name). NEVER label with user ids, raw URLs, error-message text, or a
+  correlation id — that unbounded detail belongs in logs and traces.
+
+  Track averages never, percentiles always: an average hides the 1% of users
+  having a terrible time. Read p50/p95/p99 off histograms.
+
+  ## Step 5 — Tracing across boundaries
+
+  Add spans around meaningful internal units of work and propagate context
+  across EVERY async boundary (HTTP headers, queue metadata) or the trace dies
+  at the gap. Sample low by default; keep 100% of errors if the backend allows.
+
+  ## Step 6 — Alert on symptoms, not causes
+
+  Page on what USERS FEEL; dashboard the causes:
+    PAGE:      error rate > 1% for 5 min · p99 latency > 2s · queue age > 10 min
+    DASHBOARD: CPU 85% · one pod restarted · disk 70%
+  Cause-based alerts fire when nothing is wrong and miss failures you did not
+  predict. Every alert must be (1) actionable — if the response is "ignore it,
+  it self-heals", delete it; (2) linked to a runbook (even three lines);
+  (3) threshold + duration justified by an SLO or by history. Two severities
+  only: page (act now) and ticket (act this week). A third tier trains people to
+  ignore the pager.
+
+  ## Step 7 — Verify the telemetry itself (it is code; it can be wrong)
+
+  Before claiming the work done:
+    - Force an error in staging -> find it by correlation id, confirm fields are
+      structured (not "[object Object]").
+    - Send test traffic -> metric series appear with the expected bounded labels.
+    - Follow one request end-to-end in the trace UI -> no broken spans.
+    - Fire each new alert once (lower the threshold) -> it reaches the right
+      channel and the runbook link works.
+
+  ## Done bar — do NOT claim a feature observable until
+
+  - [ ] The on-call questions are written down and each signal maps to one
+  - [ ] All log output is structured, with a correlation id on every line
+  - [ ] Spot-checked actual output: no secrets / tokens / unredacted PII
+  - [ ] RED metrics on every new endpoint + dependency, bounded label sets
+  - [ ] Latency is a histogram; p95/p99 are queryable
+  - [ ] One induced staging failure was located via telemetry ALONE, without
+        reading the source
+
+  ## Red flags — stop and reassess
+
+  - A change with retries / queues / external calls and zero new telemetry
+  - Log lines built by string interpolation instead of structured fields
+  - No correlation id — each log line is an orphan
+  - Metrics labeled with user ids, raw URLs, or error text (cardinality bomb)
+  - Latency tracked as an average with no percentiles
+  - Alerts that fire daily and get acknowledged without action
+  - "I'll add logging after it works" -> "after" becomes "after the first
+    incident", the most expensive moment to discover you are blind

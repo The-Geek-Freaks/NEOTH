@@ -1,0 +1,128 @@
+id: deprecation_migration
+description: |
+  Deprecation + migration discipline — auto-installed when the operator removes
+  an old system/API/feature, migrates users from one implementation to another,
+  or weighs maintaining vs sunsetting code. Forces the deprecation-decision
+  questions first, building the replacement BEFORE announcing, migrating
+  consumers incrementally via strangler-fig / adapter / feature-flag, and
+  removing the old code only after verified-zero usage. Treats code as a
+  liability, honours Hyrum's Law (active migration, not just an announcement),
+  and refuses "soft" deprecations that drift advisory for years.
+version: "0.1.0"
+
+# GOLD-ADAPT-SKILL-06 — re-implemented in NEOTH's house style from the IDEAS in
+# addyosmani/agent-skills `deprecation-and-migration` (MIT). Ships ENABLED;
+# specific multi-word triggers keep it from false-activating against tech-debt.
+author: re-implemented from addyosmani/agent-skills (MIT)
+homepage: https://github.com/addyosmani/agent-skills
+tags:
+  - engineering
+  - migration
+  - lifecycle
+  - ported
+
+trigger_keywords:
+  - "deprecate"
+  - "deprecation notice"
+  - "sunset this feature"
+  - "migrate users from"
+  - "strangler pattern"
+  - "remove the old system"
+  - "zombie code"
+  - "retire this system"
+  - "migration guide"
+  - "consolidate duplicate implementations"
+
+system_prompt: |
+  Deprecation + migration discipline (auto-installed). Most teams build well and
+  remove badly. Apply this playbook in order; no step is optional.
+
+  ## Iron Law
+
+  DO NOT DEPRECATE WITHOUT A WORKING REPLACEMENT AND A MIGRATION PATH.
+  Announcing a deadline without tooling is abandonment, not deprecation.
+
+  ## First principles
+
+  - CODE IS A LIABILITY, not an asset. Every line costs tests, docs, security
+    patches, dependency updates, and onboarding overhead. The value is the
+    functionality, not the code — when the same function needs less code, the
+    old code should go.
+  - HYRUM'S LAW: with enough users, every observable behaviour (including bugs
+    and timing quirks) becomes depended on. That is why deprecation needs ACTIVE
+    migration, not just an announcement — users cannot "just switch".
+  - Deprecation planning starts at DESIGN time: when building new, ask "how would
+    we remove this in 3 years?" Clean interfaces, feature flags, and a minimal
+    surface area are what make later removal possible.
+
+  ## Step 1 — The deprecation decision (answer before touching anything)
+
+    1. Does this still provide UNIQUE value? -> if yes, maintain. If no, proceed.
+    2. How many consumers depend on it? -> quantify the migration scope.
+    3. Does a replacement EXIST? -> if no, build it first. Never deprecate
+       without an alternative.
+    4. What is the per-consumer migration cost? -> trivially automatable: do it.
+       Manual + high-effort: weigh against the maintenance cost.
+    5. What does NOT deprecating cost? -> security risk, engineer time, the
+       opportunity cost of carried complexity.
+
+  ## Step 2 — Advisory vs compulsory
+
+  - ADVISORY (default): old system stable, migration optional. Warnings, docs,
+    nudges; users move on their own timeline.
+  - COMPULSORY: old system has security issues / blocks progress / unsustainable
+    cost. A hard removal date — but ONLY with migration tooling, docs, and
+    support shipped first. You cannot just announce a deadline.
+
+  ## Step 3 — The migration process
+
+    1. BUILD THE REPLACEMENT first — covers all critical use cases, documented,
+       proven in production (not "theoretically better").
+    2. ANNOUNCE + DOCUMENT — a deprecation notice with status, replacement,
+       removal date (or "advisory, no deadline yet"), reason, and a concrete
+       migration guide with copy-pasteable steps.
+    3. MIGRATE INCREMENTALLY — one consumer at a time: identify touchpoints ->
+       switch to the replacement -> verify behaviour matches (tests/integration)
+       -> remove old references -> confirm no regressions.
+       THE CHURN RULE: if you own the infrastructure being deprecated, YOU
+       migrate your users (or ship backward-compatible updates that need no
+       migration). Never announce and leave them to figure it out.
+    4. REMOVE THE OLD SYSTEM — only after verified-zero usage (metrics, logs,
+       dependency analysis): delete the code, its tests, docs, and config, then
+       remove the deprecation notices. Removing code is an achievement.
+
+  ## Migration patterns
+
+  - STRANGLER-FIG: run old + new in parallel, route traffic incrementally
+    0% -> canary -> 50% -> 100% -> remove. The default for a risky cutover.
+  - ADAPTER: old interface, new implementation behind it; consumers keep the old
+    signature while you migrate the backend.
+  - FEATURE FLAG: switch consumers old -> new one cohort at a time, with instant
+    rollback if the new path misbehaves.
+
+  ## Zombie code (nobody owns it, everybody depends on it)
+
+  Signs: no commits in 6+ months but active consumers; no maintainer; failing
+  tests nobody fixes; known-vuln dependencies nobody updates. It cannot stay in
+  limbo — either assign an owner and maintain it properly, or deprecate it with a
+  concrete migration plan.
+
+  ## Done bar — do NOT claim a deprecation complete until
+
+  - [ ] The replacement is production-proven and covers all critical use cases
+  - [ ] A migration guide exists with concrete, runnable steps
+  - [ ] All active consumers are migrated, VERIFIED by metrics/logs (not assumed)
+  - [ ] Old code, tests, docs, and config are fully removed
+  - [ ] No references to the deprecated system remain (grep clean)
+  - [ ] The deprecation notices are removed — they served their purpose
+
+  ## Red flags — stop and reassess
+
+  - Deprecating with no replacement available
+  - An announcement with no migration tooling or docs
+  - "Soft" deprecation that has been advisory for years with zero progress
+  - Zombie code with no owner and active consumers
+  - New features added to a deprecated system (invest in the replacement instead)
+  - Removing code without measuring current usage first
+  - "It still works, why remove it?" -> unmaintained working code accrues
+    security debt silently; the maintenance cost grows whether you look or not

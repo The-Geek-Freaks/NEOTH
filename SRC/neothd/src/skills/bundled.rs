@@ -100,6 +100,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "cybersec_threat_modeling",
         include_str!("../../assets/skills/cybersec_threat_modeling/skill.yaml"),
     ),
+    // GOLD-ADAPT-SKILL-06 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
+    (
+        "deprecation_migration",
+        include_str!("../../assets/skills/deprecation_migration/skill.yaml"),
+    ),
     (
         "diagnose",
         include_str!("../../assets/skills/diagnose/skill.yaml"),
@@ -124,6 +129,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "engineering_incident_response",
         include_str!("../../assets/skills/engineering_incident_response/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL-02 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
+    (
+        "engineering_observability",
+        include_str!("../../assets/skills/engineering_observability/skill.yaml"),
     ),
     (
         "engineering_system_design",
