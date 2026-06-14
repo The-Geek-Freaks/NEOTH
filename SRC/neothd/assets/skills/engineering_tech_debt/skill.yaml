@@ -126,3 +126,15 @@ system_prompt: |
   - "The old code is gone, so the old tests are gone too" → characterisation
     tests should survive until the contract is verified replaced, not just moved
   - "It's obviously cleaner now" → run the test suite and quote the output
+
+  ## Common Rationalizations
+
+  (the Red flags above cover the HOW; these cover the WHETHER-to-engage decision)
+
+  | Rationalization | Reality |
+  |---|---|
+  | "It still works, why touch it" | Working code with no harness is unmeasured risk. Name the interest cost per touch (Step 1) before dismissing it. |
+  | "It's not the worst debt, skip it" | Priority is blast-radius × touch-frequency, not age or ugliness. The most-touched mediocre debt outranks the oldest pristine one. |
+  | "We don't have time to pay it down" | The interest compounds whether you pay or not. The choice is scheduled paydown vs surprise outage, not pay vs free. |
+  | "All debt should eventually be paid" | No — ZERO touch-frequency = defer indefinitely (Step 2). The discipline is knowing which debt that is, not paying all of it. |
+  | "I measured the debt, that's the work" | Naming debt is Step 1 of 5. Un-acted measurement is a backlog item, not paydown. |

@@ -182,3 +182,13 @@ system_prompt: |
     constraints
   - Option A is "do nothing" or "status quo" → only valid if the
     status quo genuinely satisfies the constraints; if so, state why
+
+  ## Common Rationalizations
+
+  | Rationalization | Reality |
+  |---|---|
+  | "The requirements are obvious" | Obvious requirements are the ones that change at review. Write them down in Phase 1 with concrete values. |
+  | "We'll figure out scale later" | Scale assumptions shape the data model and interfaces; retrofitting them is the rewrite you wanted to avoid. |
+  | "One approach is enough" | A single option is a decision with no alternative to reject — that is a default, not a design. Enumerate 2-3. |
+  | "Let's keep it flexible" | Unscoped flexibility is premature abstraction. Name the axis you flex and prove it is a Phase 1 constraint. |
+  | "ADRs are bureaucracy" | The ADR is the only artifact that outlives the team. Without it the next engineer re-litigates a solved decision. |

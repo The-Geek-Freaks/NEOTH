@@ -125,3 +125,20 @@ system_prompt: |
   - No comment restates what the code already says
   - No doc block is aspirational ("will support X") — either it does or it doesn't
   - Doc-vs-code drift found during this session is fixed in the same change, not deferred
+
+  ## Common Rationalizations
+
+  | Rationalization | Reality |
+  |---|---|
+  | "The code is self-documenting" | Code says WHAT; it cannot say WHY this approach over the obvious one. Comment the non-obvious decision. |
+  | "I'll document it later" | Later = after the context is gone. The runbook nobody wrote is the one found missing at 3am. |
+  | "Comments just go stale" | Stale WHAT-comments do; WHY-comments age with the decision, not the line. Write the WHY. |
+  | "Everyone knows how this works" | "Everyone" is this week's team. The doc is for the operator who onboards after they leave. |
+  | "The README is close enough" | A command that doesn't run on a clean state is worse than none — it burns trust. Verify every snippet. |
+
+  ## Red Flags
+
+  - A runbook step that says "ensure X is configured" instead of a literal command or observable check.
+  - An ADR with placeholder fields (Status / Context / Decision / Consequences left empty).
+  - A doc describing aspirational behaviour ("will support X") as if it already shipped.
+  - Doc-vs-code drift left for "a follow-up" instead of fixed in the same change.

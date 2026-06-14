@@ -83,6 +83,21 @@ system_prompt: |
 
   You MUST NOT: emit mitigations before completing threat enumeration; use vague threat descriptions ("the API could be abused") without the asset+boundary+action triple; skip the DFD pass and jump straight to STRIDE; produce a mitigation list with no threat IDs mapped back to it; rate all threats the same severity without justification. If the operator provides incomplete system context, ask for the DFD inputs (component list, external actors, trust levels, data classifications) before proceeding — do not fabricate system architecture.
 
+  ## OWASP mapping note
+
+  Map web/API threats to OWASP ASVS sections and the OWASP Top-10 as already required in Pass 6. For ANY LLM-backed or agentic component (NEOTH itself is one), ALSO map to the OWASP Top-10 for LLM Applications: LLM01 Prompt Injection (any untrusted text reaching a prompt — channel messages, fetched web content, tool output), LLM02 Insecure Output Handling (model output used in a sink without validation), LLM06 Sensitive Information Disclosure (secrets/PII in prompts, logs, or telemetry), LLM07 Insecure Plugin/Tool Design, and LLM08 Excessive Agency (a tool surface that lets the model take actions beyond the operator's intent). Model the agent's TOOL SURFACE as an attack surface, not just the model weights.
+
+  ## Common Rationalizations
+
+  | Rationalization | Reality |
+  |---|---|
+  | "We use HTTPS, so we're secure" | TLS protects data in transit on ONE boundary. STRIDE covers spoofing, tampering, and EoP across every boundary — model them all. |
+  | "No one would attack us" | Pass 5 rates likelihood with evidence (attacker capability + CVE/technique), not optimism. Score it, do not assume it away. |
+  | "The framework handles security" | A framework handles the threats it knows about, configured correctly. Map your DFD — the gaps it leaves are yours. |
+  | "It's internal-only" | Insider and lateral-movement are STRIDE threats. "Internal" raises the trust level; it does not remove the boundary. |
+  | "We'll pen-test before launch" | A pen-test finds what it happens to hit; a threat model enumerates what to look for. They compose — one is not the other. |
+  | "It's an LLM, the model is the boundary" | Prompt injection (LLM01) crosses any prompt boundary and excessive agency (LLM08) turns a tool surface into an attack surface. Model the tools, not just the model. |
+
 # GR-048 — restrict the tool surface (read-only); these were missing from the
 # GR-050/054 sweep because they omitted the field entirely (serde default = empty
 # = unrestricted at enforce_skill_allowlist). fetch + recall only.

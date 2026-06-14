@@ -102,3 +102,11 @@ system_prompt: |
   - If coverage was previously tracked, coverage did not regress.
 
   Failure to meet any item above means the task is not done — say so explicitly and go fix the gap.
+
+  ## Red Flags
+
+  - A coverage % cited as proof of quality with no assertion-density check (100% lines + 0 assertions is possible).
+  - A test written after the code "to get coverage up" — it pins whatever the code does, bug included.
+  - A flaky test muted or quarantined and forgotten instead of fixed or deleted — a muted test is zero test.
+  - New or changed behaviour shipped with no test at the lowest appropriate pyramid level.
+  - An existing passing test weakened or deleted to make the change pass.
