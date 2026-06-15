@@ -138,10 +138,7 @@ pub async fn run_regression_tick(
 
     let alerts = evaluate_regression(&anchors_ok, &current_vectors, config.threshold);
 
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     for alert in &alerts {
         let payload = serde_json::to_vec(&serde_json::json!({
             "query": alert.query,

@@ -218,10 +218,7 @@ async fn emit_tamper_suspect(writer: &WalWriterHandle, segment_path: &Path, erro
     let payload = serde_json::to_vec(&serde_json::json!({
         "segment": segment_path.display().to_string(),
         "error": error,
-        "ts_unix": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
+        "ts_unix": crate::time::now_unix_i64(),
     }))
     .unwrap_or_default();
     let header = crate::wal::make_header(EVENT_TYPE_INDEXER_TAMPER_SUSPECT, &payload);
@@ -254,10 +251,7 @@ fn save_cursor(tx: &rusqlite::Transaction, segment_key: &str, offset: usize) -> 
 }
 
 fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 fn index_frame(

@@ -96,10 +96,7 @@ pub async fn run_recall_latency_tick(
         return Ok(None);
     };
 
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let payload = serde_json::to_vec(&serde_json::json!({
         "p95_ms": p95_ms,
         "threshold_ms": config.p95_threshold_ms,

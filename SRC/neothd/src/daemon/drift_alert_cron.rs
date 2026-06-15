@@ -73,10 +73,7 @@ pub async fn run_drift_alert_tick(
         return Ok(None);
     }
 
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let payload = serde_json::to_vec(&serde_json::json!({
         "drift_ratio": report.drift_ratio(),
         "threshold": config.threshold,

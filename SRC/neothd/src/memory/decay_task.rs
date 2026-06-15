@@ -88,10 +88,7 @@ async fn run(
 /// rows (see [`pass_did_work`]). A WAL append failure logs + never fails the
 /// pass.
 async fn emit_consolidation_pass(writer: &WalWriterHandle, report: &consolidate::PassReport) {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&serde_json::json!({
         "ts_unix": ts_unix,
         "hot_decayed": report.hot_decayed,
@@ -162,6 +159,12 @@ pub async fn run_once(
         // EVERY stored event look >7d old → the whole hot tier consolidates
         // + below-floor rows are deleted in one pass (and, with a vault,
         // pre-decay-drafted en masse). Refuse the pass instead.
+        //
+        // GOLD-ARCH-07-EXEMPT: deliberately NOT `crate::time::now_unix_ns_i64()`
+        // — that saturates a bad clock to 0 / i64::MAX, which is exactly the
+        // M-03 hazard above. This pass must FAIL-LOUD on a bad clock, not
+        // saturate, so it keeps its own match. This is the one intentional
+        // `duration_since(UNIX_EPOCH)` holdout in the migrated set.
         let now_ns = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
             Ok(d) => match i64::try_from(d.as_nanos()) {
                 Ok(ns) => ns,

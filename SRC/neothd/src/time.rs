@@ -41,6 +41,17 @@ pub fn now_unix_i64() -> i64 {
         .unwrap_or(0)
 }
 
+/// Nanoseconds since the unix epoch as a signed `i64` (for SQLite / signed
+/// columns that store nanosecond timestamps — e.g. the groundtruth + episode
+/// ledgers). `0` before the epoch; `i64::MAX` past the far-future overflow point
+/// (~year 2262 for i64-nanos) rather than wrapping negative.
+pub fn now_unix_ns_i64() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +68,18 @@ mod tests {
         assert_eq!(i as u64, s, "the i64 + u64 second forms agree");
         // Nanos are seconds * 1e9 within the same call window (allow a 2s skew).
         assert!(ns / 1_000_000_000 >= s - 2 && ns / 1_000_000_000 <= s + 2);
+    }
+
+    #[test]
+    fn ns_i64_matches_ns_u64_within_skew_and_is_positive() {
+        let ns_i = now_unix_ns_i64();
+        let ns_u = now_unix_ns();
+        // On a sane machine both are the same real nanosecond clock (within a
+        // small call-to-call skew) and the i64 form is a real positive value
+        // (the i64-nanos overflow is ~year 2262, far past any test machine).
+        assert!(ns_i > 1_700_000_000_000_000_000, "i64 nanos look real: {ns_i}");
+        let diff = (ns_i as i128 - ns_u as i128).abs();
+        assert!(diff < 2_000_000_000, "i64 + u64 nanos agree within 2s: {diff}");
     }
 
     #[test]

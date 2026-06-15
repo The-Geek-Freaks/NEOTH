@@ -224,10 +224,7 @@ fn evaluate_anomaly(
 /// Emit the `0x6E TOKEN_ANOMALY_DETECTED` WAL frame for a fired alert. Split out
 /// so the emit contract is unit-testable without constructing a multi-day WAL.
 async fn emit_alert(writer: &WalWriterHandle, alert: &TokenAnomalyAlert) -> Result<(), String> {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let new_models: Vec<&str> = alert
         .kinds
         .iter()

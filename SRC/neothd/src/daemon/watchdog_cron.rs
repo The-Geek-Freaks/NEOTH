@@ -307,10 +307,7 @@ async fn emit_watchdog_frame(
 /// Current Unix time in whole seconds (0 on a pre-epoch clock — impossible in
 /// practice; the `unwrap_or(0)` just avoids a panic path).
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 // ---------------------------------------------------------------------------

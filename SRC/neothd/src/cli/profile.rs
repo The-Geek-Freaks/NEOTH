@@ -338,10 +338,7 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             render_redactions(&rows, &args.output)
         }
         ProfileAction::Redact { field, reason } => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
+            let now = crate::time::now_unix_i64();
             let id = crate::profile::redaction::add(
                 &conn,
                 &field,
@@ -370,10 +367,7 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             Ok(())
         }
         ProfileAction::Unredact { id } => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
+            let now = crate::time::now_unix_i64();
             let changed = crate::profile::redaction::revoke(&conn, id, now)?;
             if !changed {
                 anyhow::bail!(
@@ -565,10 +559,7 @@ async fn run_seed_baseline(
     let claim_hashes = current_active_claim_hashes(db_path)?;
     let claim_count = claim_hashes.len();
 
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let snapshot_id = uuid::Uuid::now_v7().to_string();
     let snapshot = crate::profile::baseline_snapshot::BaselineSnapshot::new(
         &snapshot_id,
@@ -759,10 +750,7 @@ pub(crate) fn compute_drift_against_baseline(
 async fn run_drift(db_path: &std::path::Path, sub: DriftSub, output: &OutputFormat) -> Result<()> {
     use crate::profile::baseline_diff::{DriftBaseline, reset_drift_baseline, save_drift_baseline};
     let home = FreedomConfig::default_neoth_home();
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
 
     match sub {
         DriftSub::Baseline => {
@@ -1065,10 +1053,7 @@ fn run_conflicts_resolve(
     keep_extraction_id: &str,
     output: &OutputFormat,
 ) -> Result<()> {
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let superseded = resolve_conflict(conn, field, keep_extraction_id, now_unix)?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -1169,10 +1154,7 @@ async fn run_pending_approve(
     let (writer, _join) =
         crate::wal::writer::spawn(segment_path).context("spawn WAL writer for approve")?;
 
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
 
     // Emit the 0xB6 audit frame BEFORE apply_delta — so a crash mid-
     // apply leaves a clear "operator approved this delta" record
@@ -1244,10 +1226,7 @@ async fn run_pending_decline(
     let segment_path = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
     let (writer, _join) =
         crate::wal::writer::spawn(segment_path).context("spawn WAL writer for decline")?;
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
     let payload = crate::profile::approval_gate::declined_payload(
         extraction_id,
         row.claim_count as usize,
@@ -1469,10 +1448,7 @@ async fn run_pipeline_cli_batch(
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
     let segment = wal_dir.join(format!(
         "profile-run-{}.wal",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        crate::time::now_unix_secs(),
     ));
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer")?;
@@ -1486,10 +1462,7 @@ async fn run_pipeline_cli_batch(
             crate::profile::extension_registry::TypedExtensionRegistry::load().unwrap_or_default()
         }
     };
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
 
     let mut runs: Vec<(i64, crate::profile::PipelineRun)> = Vec::with_capacity(triggers.len());
     for &trigger_event in triggers {

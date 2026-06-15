@@ -77,10 +77,7 @@ async fn emit_worker_died(writer: &WalWriterHandle, worker: &str) {
         worker,
         "MONITOR-02: daemon worker task DIED unexpectedly (panic or early exit)"
     );
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     let payload =
         match serde_json::to_vec(&serde_json::json!({ "worker": worker, "ts_unix": now })) {
             Ok(p) => p,

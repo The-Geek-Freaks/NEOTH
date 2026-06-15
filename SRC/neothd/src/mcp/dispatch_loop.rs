@@ -423,10 +423,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         if let Some(t) = hint_tracker.as_mut() {
             let new_hints = t.load_new_hints(&hint_cwd);
             if !new_hints.is_empty() {
-                let now_unix = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
+                let now_unix = crate::time::now_unix_i64();
                 for h in new_hints {
                     emit_hint_loaded(writer, &h, now_unix).await;
                     hint_blocks.push(h.content);
@@ -579,10 +576,7 @@ async fn compress_tool_results(
 }
 
 fn now_unix_i64() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -607,10 +601,7 @@ async fn dispatch_one(
     // the matched skill isn't allowed to call). Empty/None ⇒ no
     // restriction; the server-level allowlist still runs inside
     // invoke_with_audit afterwards.
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     if let Err(e) = crate::mcp::gate::enforce_skill_allowlist(
         skill_allowlist,
         &call.server,
@@ -695,10 +686,7 @@ async fn emit_risk_gate_wal(
     rule: &str,
 ) {
     let Some(w) = writer else { return };
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&serde_json::json!({
         "server": call.server,
         "tool": call.tool,
@@ -745,10 +733,7 @@ fn check_risk_leases(
     let Ok(store) = LeaseStore::load(&LeaseStore::default_path(&home)) else {
         return (false, false, None, false);
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
 
     let needs_dangerous = risk_needs_dangerous_lease(risk, confirm_high);
     let needs_egress = !risk.egress.is_empty();
@@ -814,10 +799,7 @@ fn consume_risk_leases_at(
     let Ok(mut store) = LeaseStore::load(&path) else {
         return Ok(None);
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
 
     let mut consumed: Option<String> = None;
     if consume_dangerous {
@@ -1195,10 +1177,7 @@ mod tests {
         unsafe { std::env::set_var("NEOTH_HOME", dir.path()) };
 
         // Grant an active `dangerous_command` lease to the operator subject.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::time::now_unix_i64();
         let mut store = LeaseStore::default();
         store.grant(CapabilityLease::new(
             crate::security::risk_gate::RISK_LEASE_SUBJECT,
@@ -1606,10 +1585,7 @@ mod tests {
         use crate::security::risk_gate::RISK_LEASE_SUBJECT;
         let home = tempfile::tempdir().expect("tempdir");
         let path = LeaseStore::default_path(home.path());
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         let mut store = LeaseStore::default();
         store.grant(CapabilityLease::new(
             RISK_LEASE_SUBJECT,
@@ -1641,10 +1617,7 @@ mod tests {
         use crate::security::risk_gate::RISK_LEASE_SUBJECT;
         let home = tempfile::tempdir().expect("tempdir");
         let path = LeaseStore::default_path(home.path());
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         let mut store = LeaseStore::default();
         store.grant(CapabilityLease::new(
             RISK_LEASE_SUBJECT,

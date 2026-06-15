@@ -10,8 +10,6 @@ use clap::Args;
 use rusqlite::params;
 use tracing::info;
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crate::config::FreedomConfig;
 use crate::memory::{embeddings, indexer, store, tiers, views::EpisodeHit};
 use crate::providers::clip_engine;
@@ -251,10 +249,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             .context("build provider for entity extraction")?;
         let db_path = args.db.clone().unwrap_or_else(store::default_path);
         let conn = store::open(&db_path).context("open views.db")?;
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now_unix = crate::time::now_unix_i64();
         let (ents, rels) =
             crate::memory::entities::extract_and_persist(&conn, &text, provider.as_ref(), now_unix)
                 .await?;
@@ -274,10 +269,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     if let Some(event_id) = args.downvote {
         let db_path = args.db.clone().unwrap_or_else(store::default_path);
         let conn = store::open(&db_path).context("open views.db")?;
-        let now_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
+        let now_ns = crate::time::now_unix_ns();
         let outcome = crate::memory::tiers::hebbian_weaken_across_tiers(
             &conn,
             event_id,
@@ -342,10 +334,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     if args.bootstrap_assoc {
         let db_path = args.db.clone().unwrap_or_else(store::default_path);
         let conn = store::open(&db_path).context("open views.db for bootstrap")?;
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now_unix = crate::time::now_unix_i64();
         let created = crate::memory::assoc_graph::bootstrap_co_occurrence(
             &conn,
             crate::memory::assoc_graph::DEFAULT_BOOTSTRAP_WINDOW_NS,
@@ -418,10 +407,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         info!(frames_indexed = indexed, "recall: indexer caught up");
     }
 
-    let now_ns: u64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-        .unwrap_or(0);
+    let now_ns: u64 = crate::time::now_unix_ns();
 
     // K-Perf-3 full (2026-05-22): wrap the 5-tier SQLite query block in
     // `spawn_blocking` so the async runtime worker isn't pinned on
@@ -638,10 +624,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         .collect();
     if episodic_ids.len() >= 2 {
         if let Ok(conn) = store::open(&db_path) {
-            let now_unix = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
+            let now_unix = crate::time::now_unix_i64();
             if let Err(e) =
                 crate::memory::assoc_graph::reinforce_co_access(&conn, &episodic_ids, now_unix)
             {
@@ -1563,10 +1546,7 @@ async fn emit_reinforce_audit_frames(events: &[(i64, ReinforceFrame)]) {
             return;
         }
     };
-    let now_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
     for (event_id, frame) in events {
         let payload = serde_json::to_vec(&serde_json::json!({
             "source": "cli_recall",

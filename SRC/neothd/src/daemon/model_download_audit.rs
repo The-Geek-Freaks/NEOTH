@@ -22,8 +22,6 @@
 //! frame is a nicety, not a correctness invariant. The download itself
 //! is what produces operator-visible bytes on disk.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crate::config::FreedomConfig;
 use crate::daemon::pidfile;
 use crate::wal::events::{EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, EVENT_TYPE_MODEL_DOWNLOAD_START};
@@ -73,10 +71,7 @@ async fn emit_event(event_type: u8, model_id: &str, complete_fields: Option<(&st
         return;
     };
 
-    let ts_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = match complete_fields {
         None => serde_json::to_vec(&serde_json::json!({
             "model_id": model_id,

@@ -28,7 +28,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -184,10 +183,7 @@ pub fn jsonl_file_for_day(home: &Path, day: &str) -> PathBuf {
 /// read; Phase 2 replaces this with LLM-driven clustering +
 /// summarisation while keeping the return shape stable.
 pub fn compose_dream(day: &str, theme_label: &str, events: &[EventRef]) -> Dream {
-    let composed_ts_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let composed_ts_unix = crate::time::now_unix_i64();
     let summary = if events.is_empty() {
         format!("Theme `{theme_label}`: no events in window.")
     } else {
@@ -274,10 +270,7 @@ pub fn seed_with_dreams(
     max_hits: usize,
 ) -> Vec<Dream> {
     let q = query.to_lowercase();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let mut all = Vec::new();
     for back in 0..lookback_days as i64 {
         let ts = now - back * 86_400;
@@ -866,10 +859,7 @@ mod tests {
         let dir = tempdir().unwrap();
         // Write a few dreams for today.
         let day = format_date_utc(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
+            crate::time::now_unix_i64(),
         );
         for (i, label) in ["alpha", "beta", "gamma"].iter().enumerate() {
             let mut d = compose_dream(&day, label, &[]);
@@ -887,10 +877,7 @@ mod tests {
     fn seed_with_dreams_filters_by_substring_in_theme_or_summary() {
         let dir = tempdir().unwrap();
         let day = format_date_utc(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
+            crate::time::now_unix_i64(),
         );
         let mut a = compose_dream(&day, "auth_bug", &[]);
         a.tags.push("debug".into());
@@ -908,10 +895,7 @@ mod tests {
     fn seed_with_dreams_respects_max_hits() {
         let dir = tempdir().unwrap();
         let day = format_date_utc(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
+            crate::time::now_unix_i64(),
         );
         for i in 0..10 {
             let d = compose_dream(&day, &format!("entry_{i}"), &[]);

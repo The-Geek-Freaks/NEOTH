@@ -276,10 +276,7 @@ pub fn audit_offline(text: &str) -> CitationAudit {
 fn current_year_unix() -> u32 {
     // 2026 = epoch_seconds 1735689600. Compute years-since-1970
     // via integer division — accurate to the operator's wall clock.
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let secs = crate::time::now_unix_secs();
     // 1970 + (secs / seconds_per_year). Approximation that's
     // accurate to within ~30 days, which is fine for "is this year
     // implausibly far in the future" heuristics.

@@ -262,10 +262,7 @@ fn import_agent(
         return Ok(());
     }
 
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let mut inserted = 0usize;
     for c in &claims {
         crate::memory::groundtruth::insert(conn, &c.statement, &c.source, &c.scope, now_ns)?;
@@ -343,10 +340,7 @@ async fn import_infra(
         return Ok(());
     }
 
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let mut inserted = 0usize;
     for h in &all_hosts {
         let statement = crate::memory::infra_scan::statement_for_host(h);
@@ -448,10 +442,7 @@ fn import_text(
         return Ok(());
     }
 
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let mut inserted = 0usize;
     for c in &claims {
         crate::memory::groundtruth::insert(
@@ -496,10 +487,7 @@ fn ask(db_path: &std::path::Path, lang: Option<&str>, output: OutputFormat) -> R
             .unwrap_or_else(|| "en".to_string())
     };
     let answers = crate::cli::groundtruth_wizard::run_qa(&bank, &lang_owned)?;
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let n = crate::cli::groundtruth_wizard::persist_answers(
         db_path,
         &bank,
@@ -569,10 +557,7 @@ fn add(
     scope: &str,
     output: OutputFormat,
 ) -> Result<()> {
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let id = groundtruth::insert(
         conn,
         statement,
@@ -597,10 +582,7 @@ fn add(
 }
 
 fn revoke(conn: &rusqlite::Connection, id: i64, output: OutputFormat) -> Result<()> {
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let modified = groundtruth::revoke(conn, id, now_ns)?;
     match (modified, output) {
         (true, OutputFormat::Json | OutputFormat::Jsonl) => {
@@ -645,10 +627,7 @@ async fn contradictions(
     resolved: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let detected = if detect {
         // Use semantic (embedding cosine) subject-similarity when an embed
         // provider is configured + loadable; the scan falls back to deterministic
@@ -692,10 +671,7 @@ async fn contradictions(
 /// GOLD-ADAPT-MEM-02 — `neoth groundtruth resolve-contradiction <id>`: dismiss a
 /// ledger entry (operator judged it a non-conflict).
 fn resolve_contradiction(conn: &rusqlite::Connection, id: i64, output: OutputFormat) -> Result<()> {
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let ok = crate::memory::contradiction::resolve(conn, id, now_ns)?;
     if !ok {
         anyhow::bail!("no pending contradiction ledger row #{id}");

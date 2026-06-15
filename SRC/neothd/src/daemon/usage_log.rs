@@ -21,7 +21,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -127,10 +126,7 @@ pub fn record_now(
     latency_ms: u64,
     ok: bool,
 ) -> std::io::Result<UsageEvent> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let ev = UsageEvent {
         ts_unix: now,
         provider: provider.to_string(),

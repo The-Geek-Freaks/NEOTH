@@ -179,10 +179,7 @@ pub async fn run_resource_watch_tick(
     let Some(alert) = evaluate_pressure(reading, config.vram_threshold_pct) else {
         return Ok(None);
     };
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let payload = serde_json::to_vec(&serde_json::json!({
         "used_mib": alert.used_mib,
         "total_mib": alert.total_mib,

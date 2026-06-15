@@ -249,10 +249,7 @@ async fn run_preset(
     cfg.inference = new_topo;
 
     let path = FreedomConfig::default_path();
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
 
     // Pre-mutation rollback snapshot (mirrors run_set), so a mis-applied preset
     // can be reverted via `neoth rollback apply`.
@@ -423,10 +420,7 @@ async fn run_mode_single(
     };
 
     let path = FreedomConfig::default_path();
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
 
     // Pre-mutation rollback snapshot (same policy gate as `run_set`) so
     // `neoth rollback apply` can restore the prior topology.
@@ -526,10 +520,7 @@ async fn run_set(
     }
 
     let path = FreedomConfig::default_path();
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
 
     // A3 / B-Rollback: snapshot the freedom.yaml BEFORE rewriting it,
     // so `neoth rollback apply` can restore the prior hemisphere
