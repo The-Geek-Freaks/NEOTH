@@ -104,10 +104,7 @@ async fn emit_synthesized(
     prompt: &str,
     output_chars: usize,
 ) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     let payload = synthesized_payload(provider, frame_count, prompt, output_chars, now);
     let header =
         crate::wal::make_header(crate::wal::events::EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED, &payload);

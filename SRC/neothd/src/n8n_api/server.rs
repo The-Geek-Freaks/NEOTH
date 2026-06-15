@@ -22,7 +22,7 @@ use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
@@ -203,10 +203,7 @@ async fn serve(
         .unwrap_or("")
         .to_string();
     let now = Instant::now();
-    let ts_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
 
     // Write the 0x39 audit frame BEFORE any auth/business logic so
     // every attempt is durable — even refused ones.

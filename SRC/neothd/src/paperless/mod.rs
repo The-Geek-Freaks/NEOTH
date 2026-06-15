@@ -38,7 +38,6 @@ pub mod webhook_server;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::security::ingress_sanitizer::Finding;
 use crate::security::paperless_ingest::PaperlessOcrPayload;
@@ -99,10 +98,7 @@ pub fn sync_ocr_to_obsidian(
 /// Render the payload as Obsidian-flavored markdown. Public so a
 /// future GUI panel can show the preview without writing to disk.
 pub fn render_obsidian_md(payload: &PaperlessOcrPayload) -> String {
-    let now_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
     let findings_summary = render_findings_block(&payload.findings);
     let findings_count = payload.findings.len();
     let body_text = payload.body();

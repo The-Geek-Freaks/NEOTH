@@ -27,7 +27,6 @@
 //! (mode 0600 on unix; same DACL grant pattern as the WAL on Windows).
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -124,10 +123,7 @@ const PROMPT_INJECTION_PATTERNS: &[&str] = &[
 /// Caller passes the result to `audit_append` to persist the decision.
 pub fn sanitize(input: &str, channel: &str) -> SanitizeReport {
     let input_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(input.as_bytes()));
-    let ts_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
 
     let mut findings = Vec::new();
 

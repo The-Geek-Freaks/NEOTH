@@ -346,10 +346,7 @@ async fn emit_stt_transcribed(
     audio_bytes: usize,
     output_chars: usize,
 ) {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = match serde_json::to_vec(&serde_json::json!({
         "provider": provider.as_str(),
         "audio_bytes": audio_bytes,

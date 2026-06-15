@@ -96,10 +96,7 @@ static CACHE: OnceLock<RwLock<SelectorCache>> = OnceLock::new();
 static CACHE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 fn total_bytes(hits: &[String]) -> usize {

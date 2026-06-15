@@ -269,10 +269,7 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     .context("delete prior root row")?;
 
     // Insert the new root metadata.
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     tx.execute(
         "INSERT INTO code_map_roots \
          (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped, truncated_at) \

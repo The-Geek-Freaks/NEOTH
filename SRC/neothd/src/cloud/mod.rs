@@ -587,11 +587,7 @@ sources:
         // Pre-fix the LocalFsConnector dumped modified_unix=0. Now it
         // pulls the actual mtime from OpenDAL via jiff::Timestamp.
         // Operators relying on size+mtime dedupe get the real signal.
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now_unix = crate::time::now_unix_i64();
 
         let err = tokio::task::spawn_blocking(move || -> Result<i64> {
             let dir = tempfile::tempdir().unwrap();

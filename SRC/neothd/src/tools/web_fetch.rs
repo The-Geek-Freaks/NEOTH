@@ -193,10 +193,7 @@ async fn fetch_inner(url: &str) -> Result<(String, FetchResult)> {
             && raw.len() <= web_doc_cache::MAX_CACHEABLE_BYTES
             && !web_doc_cache::url_has_credential_params(url)
         {
-            let stored_unix = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
+            let stored_unix = crate::time::now_unix_i64();
             web_doc_cache::store(
                 dir,
                 &web_doc_cache::CachedDoc {

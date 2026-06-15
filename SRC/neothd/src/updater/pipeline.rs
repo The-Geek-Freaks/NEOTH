@@ -15,7 +15,7 @@
 //! them into three impls would duplicate the orchestration loop;
 //! one module + three configurations keeps the shape obvious.
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -50,10 +50,7 @@ pub fn run_updater_pass(
     components: Vec<ComponentSpec>,
 ) -> UpdaterTaskResultPayload {
     let started = Instant::now();
-    let ts_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
 
     let outcomes: Vec<ComponentOutcome> = components
         .into_iter()

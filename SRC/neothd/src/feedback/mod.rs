@@ -41,11 +41,7 @@ pub async fn record_operator_correction(home: &Path, prompt: &str) -> Option<Ton
 }
 
 fn now_unix() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 /// Build the `0xBB` payload. Public-in-crate so a test can assert the shape.

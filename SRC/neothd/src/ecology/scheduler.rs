@@ -163,10 +163,7 @@ pub fn spawn_ecology_cron_loop(
         );
         loop {
             ticker.tick().await;
-            let now_unix = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
+            let now_unix = crate::time::now_unix_i64();
             match run_ecology_tick_once(&home, &wal_dir, &writer, min_streak, now_unix).await {
                 Ok(true) => tracing::info!(
                     "ecology scheduler: low-dissent regime → queued new self-dev proposal(s) — \

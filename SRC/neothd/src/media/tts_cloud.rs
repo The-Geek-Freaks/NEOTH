@@ -272,10 +272,7 @@ async fn emit_tts_synthesized(
     input_text: &str,
     audio_bytes: usize,
 ) {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = match serde_json::to_vec(&serde_json::json!({
         "provider": provider.as_str(),
         "input_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(input_text.as_bytes())),

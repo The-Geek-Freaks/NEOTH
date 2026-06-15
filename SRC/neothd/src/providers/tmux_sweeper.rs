@@ -185,10 +185,7 @@ async fn kill_session_on_socket(name: &str, socket: &TmuxSocket) -> Result<()> {
 }
 
 fn current_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 #[cfg(test)]
