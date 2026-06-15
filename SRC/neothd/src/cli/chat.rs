@@ -1432,6 +1432,10 @@ async fn run_post_reply_pipelines(
     // ── PROVIDER_RESPONSE ─────────────────────────────────────────────────
     let resp_payload = serde_json::to_vec(&serde_json::json!({
         "operator_id": config.operator_id,
+        // GOLD-ADAPT-VIEW-01 — stamp the session so `neoth cost top-sessions`
+        // can attribute this turn's token spend. Additive JSON field: older WAL
+        // readers ignore it; pre-VIEW-01 frames bucket as "(unattributed)".
+        "session_id": current_session_id,
         "provider": provider.name(),
         "model": model_used,
         "response_hash_xxh3": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
