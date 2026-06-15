@@ -30,6 +30,11 @@ const DAY_NS: i64 = 86_400 * 1_000_000_000;
 pub struct PassReport {
     /// Total `idx_episode` rows whose `importance` was decayed.
     pub hot_decayed: usize,
+    /// JV-MEM-04: `idx_episode` rows AUTO-PINNED this pass — a `trust=2`
+    /// (operator-confirmed) episode at `importance >= 0.9` is promoted to
+    /// `pinned=1` so the decay step (which skips pinned rows, NN-MEM-01)
+    /// leaves it permanent instead of slowly eroding below FORGET_FLOOR.
+    pub auto_pinned: usize,
     /// Rows that moved `idx_episode` → `idx_consolidated` (kind='retained').
     pub consolidated: usize,
     /// Rows that fell below FORGET_FLOOR during decay and were removed
@@ -115,6 +120,19 @@ pub fn run_consolidation_pass(
     let hot_decay = Tier::Hot.decay_factor();
     let warm_decay = Tier::Warm.decay_factor();
     let cold_decay = Tier::Cold.decay_factor();
+
+    // JV-MEM-04: auto-pin BEFORE decaying. A `trust=2` (operator-confirmed)
+    // episode at `importance >= 0.9` is promoted to `pinned=1` so the very next
+    // decay step (which skips pinned rows) leaves it untouched — a high-trust,
+    // high-importance memory becomes permanent instead of eroding. Idempotent:
+    // already-pinned rows are excluded, so a steady store auto-pins nothing.
+    report.auto_pinned = tx
+        .execute(
+            "UPDATE idx_episode SET pinned = 1 \
+             WHERE trust = 2 AND importance >= 0.9 AND pinned = 0",
+            [],
+        )
+        .context("auto-pin high-trust high-importance episodes")?;
 
     // NN-MEM-01: `pinned` episodes are decay-immune — skip them so a critical
     // memory can never decay below FORGET_FLOOR and be forgotten.
@@ -475,6 +493,68 @@ mod tests {
             "unpinned importance must decay by the hot factor, got {unpinned}"
         );
         assert!(pinned > unpinned, "the pinned event now outranks the decayed one");
+    }
+
+    #[test]
+    fn auto_pins_high_trust_high_importance_then_decay_skips_it() {
+        // JV-MEM-04: a trust=2 episode at importance>=0.9 is auto-pinned BEFORE
+        // the decay step, so its importance stays put (decay skips pinned rows).
+        let (_dir, mut conn) = open();
+        let now: i64 = 1_700_000_000_000_000_000;
+        insert_episode(&conn, 1, 0, 0.95, now);
+        conn.execute("UPDATE idx_episode SET trust = 2 WHERE event_id = 1", [])
+            .unwrap();
+
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
+
+        assert_eq!(report.auto_pinned, 1, "the high-trust high-importance row is auto-pinned");
+        let (pinned, importance): (i64, f64) = conn
+            .query_row(
+                "SELECT pinned, importance FROM idx_episode WHERE event_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(pinned, 1, "row must be promoted to pinned=1");
+        assert!(
+            (importance - 0.95).abs() < 1e-9,
+            "auto-pinned importance must NOT decay this pass, got {importance}"
+        );
+    }
+
+    #[test]
+    fn does_not_auto_pin_low_trust_or_low_importance() {
+        // JV-MEM-04: the auto-pin needs BOTH trust=2 AND importance>=0.9.
+        let (_dir, mut conn) = open();
+        let now: i64 = 1_700_000_000_000_000_000;
+        insert_episode(&conn, 1, 0, 0.95, now); // trust=1 (default), high imp → no pin
+        insert_episode(&conn, 2, 0, 0.50, now); // low imp
+        conn.execute("UPDATE idx_episode SET trust = 2 WHERE event_id = 2", [])
+            .unwrap();
+
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
+
+        assert_eq!(report.auto_pinned, 0, "neither row qualifies for auto-pin");
+        let pinned = |id: i64| -> i64 {
+            conn.query_row(
+                "SELECT pinned FROM idx_episode WHERE event_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(pinned(1), 0, "high-importance but low-trust must stay unpinned");
+        assert_eq!(pinned(2), 0, "high-trust but low-importance must stay unpinned");
+        // Both decayed normally (not pinned).
+        let importance = |id: i64| -> f64 {
+            conn.query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!((importance(1) - 0.95 * Tier::Hot.decay_factor()).abs() < 1e-9);
     }
 
     #[test]
