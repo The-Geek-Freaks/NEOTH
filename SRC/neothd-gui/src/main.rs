@@ -680,8 +680,14 @@ fn main() -> Result<()> {
     // `neoth hemispheres set` then refresh the bindings so the panel reflects
     // the new wiring immediately.
     let weak_hemi_set = window.as_weak();
-    window.on_hemisphere_set(move |role, provider| {
-        let status = set_hemisphere_via_subprocess(&role, &provider);
+    window.on_hemisphere_set(move |role, provider, model| {
+        // "(provider default)" sentinel (combo row 0) → leave the model unset.
+        let model = if model == "(provider default)" {
+            String::new()
+        } else {
+            model.to_string()
+        };
+        let status = set_hemisphere_via_subprocess(&role, &provider, &model);
         let hemis = fetch_hemispheres_snapshot();
         let weak = weak_hemi_set.clone();
         let _ = slint::invoke_from_event_loop(move || {
@@ -689,6 +695,25 @@ fn main() -> Result<()> {
                 w.set_status_line(status.into());
                 apply_hemispheres(&w, hemis);
             }
+        });
+    });
+
+    // GOLD-GUI-OVERHAUL — operator picked a provider in the rebind row; refresh
+    // the model combo with that provider's options (local GGUF refs / cloud
+    // catalog) off-thread so the VRAM probe never freezes the UI.
+    let weak_hemi_models = window.as_weak();
+    window.on_hemisphere_provider_picked(move |provider| {
+        let weak = weak_hemi_models.clone();
+        let provider = provider.to_string();
+        std::thread::spawn(move || {
+            let models = fetch_hemisphere_model_ids(&provider);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    use slint::{ModelRc, SharedString, VecModel};
+                    let rows: Vec<SharedString> = models.into_iter().map(|s| s.into()).collect();
+                    w.set_hemisphere_model_ids(ModelRc::new(VecModel::from(rows)));
+                }
+            });
         });
     });
 
@@ -2408,26 +2433,87 @@ fn apply_provider_ids(window: &MainWindow, ids: Vec<String>) {
 /// SPEC-06 — rebind a hemisphere role to a provider (`neoth hemispheres set
 /// --role <r> --provider <p>`). The daemon owns the WAL `0x1F HEMISPHERE_REBOUND`
 /// audit + its own validation. Returns an operator-readable status line.
-fn set_hemisphere_via_subprocess(role: &str, provider: &str) -> String {
+fn set_hemisphere_via_subprocess(role: &str, provider: &str, model: &str) -> String {
     let Some(bin) = which_neothd() else {
         return "hemispheres set: neothd binary not found".to_string();
     };
-    match spawn_neothd_plain(&bin)
-        .arg("hemispheres")
+    // GOLD-GUI-OVERHAUL — forward the picked model id (HemisphereSlot.model is a
+    // free-form Option<String>; the CLI already accepts --model). Empty = leave
+    // the role on its provider default.
+    let mut cmd = spawn_neothd_plain(&bin);
+    cmd.arg("hemispheres")
         .arg("set")
         .arg("--role")
         .arg(role)
         .arg("--provider")
-        .arg(provider)
-        .output()
-    {
-        Ok(o) if o.status.success() => format!("{role} → {provider}"),
+        .arg(provider);
+    if !model.is_empty() {
+        cmd.arg("--model").arg(model);
+    }
+    match cmd.output() {
+        Ok(o) if o.status.success() => {
+            if model.is_empty() {
+                format!("{role} → {provider}")
+            } else {
+                format!("{role} → {provider} · {model}")
+            }
+        }
         Ok(o) => format!(
             "hemispheres set failed: {}",
             String::from_utf8_lossy(&o.stderr).trim()
         ),
         Err(e) => format!("hemispheres set could not start: {e}"),
     }
+}
+
+/// GOLD-GUI-OVERHAUL — the per-role model-picker options for a provider. Local
+/// providers (local_qwen/local_ouro) → abliterated-then-standard GGUF refs that
+/// fit this PC's VRAM (`neoth models recommend --class …`, so Alex can SELECT a
+/// fitting local/abliterated model). Cloud providers → the live model catalog
+/// (`neoth catalog list --provider …`). Index 0 is always "(provider default)"
+/// so the operator can leave the model unset. Robust: a subprocess hiccup just
+/// yields the default-only list, never a hard fail.
+fn fetch_hemisphere_model_ids(provider: &str) -> Vec<String> {
+    let mut out = vec!["(provider default)".to_string()];
+    let Some(bin) = which_neothd() else {
+        return out;
+    };
+    if provider == "local_qwen" || provider == "local_ouro" {
+        for class in ["abliterated", "standard"] {
+            if let Ok(o) = spawn_neothd_plain(&bin)
+                .arg("models")
+                .arg("recommend")
+                .arg("--class")
+                .arg(class)
+                .arg("--output")
+                .arg("json")
+                .output()
+            {
+                if o.status.success() {
+                    out.extend(panel_logic::parse_model_recommend_refs(
+                        &String::from_utf8_lossy(&o.stdout),
+                    ));
+                }
+            }
+        }
+    } else if let Ok(o) = spawn_neothd_plain(&bin)
+        .arg("catalog")
+        .arg("list")
+        .arg("--provider")
+        .arg(provider)
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        if o.status.success() {
+            out.extend(panel_logic::parse_catalog_model_ids(
+                &String::from_utf8_lossy(&o.stdout),
+                provider,
+            ));
+        }
+    }
+    out.dedup();
+    out
 }
 
 /// SPEC-05 — activate a preset by name (`neoth preset activate <name>`): sets

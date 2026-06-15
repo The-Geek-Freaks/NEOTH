@@ -444,6 +444,9 @@ export component SettingsView inherits Rectangle {
     in property <string> hemispheres-mode: "";
     // SPEC-06 — implemented provider ids for the per-role rebind picker.
     in property <[string]> provider-ids: [];
+    // GOLD-GUI-OVERHAUL — model-picker options for the rebind row (local GGUF
+    // refs / cloud catalog), refreshed by Rust on provider pick.
+    in property <[string]> hemisphere-model-ids: ["(provider default)"];
     in property <[SkillRow]> skills: [];
     // PF-01-GUI — skills.always_embed_route toggle (freedom.yaml write-back).
     in-out property <bool> skills-always-embed-route: true;
@@ -518,7 +521,10 @@ export component SettingsView inherits Rectangle {
     callback open-chat-clicked;
     // SPEC-06 — operator picked (role, provider) in the Hemispheres rebind
     // control → MainWindow shells `neoth hemispheres set`.
-    callback hemisphere-set-clicked(string, string);
+    callback hemisphere-set-clicked(string, string, string);
+    /// GOLD-GUI-OVERHAUL — operator picked a provider in the rebind row; Rust
+    /// refreshes hemisphere-model-ids with that provider's model options.
+    callback hemisphere-provider-picked(string);
     /// G-12 fix — operator picked a different provider in the
     /// Config tab. Rust persists the change to freedom.yaml + drops
     /// the reload sentinel.
@@ -778,9 +784,11 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
-                // SPEC-06 — rebind a role from the GUI (shells `neoth hemispheres
-                // set --role <r> --provider <p>`). The model id stays a CLI/key
-                // concern — this only swaps the provider adapter for a role.
+                // SPEC-06 + GOLD-GUI-OVERHAUL — rebind a role from the GUI (shells
+                // `neoth hemispheres set --role <r> --provider <p> [--model <m>]`).
+                // Picking a provider populates the model combo with that provider's
+                // options — local GGUF refs (abliterated-first, VRAM-fitting) for
+                // local_qwen/ouro, else the live cloud catalog.
                 Card {
                     VerticalBox {
                         padding: Theme.space-base;
@@ -800,24 +808,43 @@ export component SettingsView inherits Rectangle {
                             color: Theme.text-muted;
                             wrap: word-wrap;
                         }
-                        if root.provider-ids.length > 0: HorizontalLayout {
-                            spacing: Theme.space-base;
-                            role_combo := NeothComboBox {
-                                model: ["left", "right", "cerebellum"];
-                                horizontal-stretch: 1;
+                        if root.provider-ids.length > 0: VerticalLayout {
+                            spacing: Theme.space-tight;
+                            HorizontalLayout {
+                                spacing: Theme.space-base;
+                                role_combo := NeothComboBox {
+                                    model: ["left", "right", "cerebellum"];
+                                    horizontal-stretch: 1;
+                                }
+                                prov_combo := NeothComboBox {
+                                    model: root.provider-ids;
+                                    horizontal-stretch: 1;
+                                    // Picking a provider refreshes the model combo
+                                    // below with that provider's options (local
+                                    // GGUF refs for local_qwen/ouro, else catalog).
+                                    selected(i) => {
+                                        if (i >= 0 && i < root.provider-ids.length) {
+                                            root.hemisphere-provider-picked(root.provider-ids[i]);
+                                        }
+                                    }
+                                }
                             }
-                            prov_combo := NeothComboBox {
-                                model: root.provider-ids;
-                                horizontal-stretch: 1;
-                            }
-                            NeothButton {
-                                label: "Set";
-                                primary: true;
-                                clicked => {
-                                    root.hemisphere-set-clicked(
-                                        role_combo.model[role_combo.current-index],
-                                        prov_combo.model[prov_combo.current-index],
-                                    );
+                            HorizontalLayout {
+                                spacing: Theme.space-base;
+                                model_combo := NeothComboBox {
+                                    model: root.hemisphere-model-ids;
+                                    horizontal-stretch: 1;
+                                }
+                                NeothButton {
+                                    label: "Set";
+                                    primary: true;
+                                    clicked => {
+                                        root.hemisphere-set-clicked(
+                                            role_combo.model[role_combo.current-index],
+                                            prov_combo.model[prov_combo.current-index],
+                                            model_combo.model[model_combo.current-index],
+                                        );
+                                    }
                                 }
                             }
                         }

@@ -227,7 +227,8 @@ export component MainWindow inherits Window {
     callback settings-wizard-rerun-clicked;
     // SPEC-06 — forwarded from the Hemispheres rebind control; Rust shells
     // `neoth hemispheres set --role <r> --provider <p>` + refreshes the panel.
-    callback hemisphere-set(string, string);
+    callback hemisphere-set(string, string, string);
+    callback hemisphere-provider-picked(string);
     // PF-01-GUI — forwarded from the Skills auto-route toggle; Rust writes
     // `skills.always_embed_route` into freedom.yaml + drops the reload sentinel.
     callback skills-always-embed-route-set(bool);
@@ -336,6 +337,9 @@ export component MainWindow inherits Window {
     // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
+    /// GOLD-GUI-OVERHAUL — model-picker options for the rebind row, refreshed by
+    /// Rust when the operator picks a provider (local GGUF refs / cloud catalog).
+    in property <[string]> hemisphere-model-ids: ["(provider default)"];
     in property <[string]> provider-ids: [];
     in property <[SkillRow]> skills: [];
     in-out property <bool> skills-always-embed-route: true;
@@ -1486,6 +1490,7 @@ export component MainWindow inherits Window {
             council-last-debate: root.council-last-debate;
             hemisphere-bindings: root.hemisphere-bindings;
             hemispheres-mode: root.hemispheres-mode;
+            hemisphere-model-ids: root.hemisphere-model-ids;
             provider-ids: root.provider-ids;
             skills: root.skills;
             skills-always-embed-route: root.skills-always-embed-route;
@@ -1503,8 +1508,11 @@ export component MainWindow inherits Window {
             open-chat-clicked => {
                 root.step = WizardStep.chat;
             }
-            hemisphere-set-clicked(role, provider) => {
-                root.hemisphere-set(role, provider);
+            hemisphere-set-clicked(role, provider, model) => {
+                root.hemisphere-set(role, provider, model);
+            }
+            hemisphere-provider-picked(provider) => {
+                root.hemisphere-provider-picked(provider);
             }
             reload-config-clicked => {
                 root.settings-reload-clicked();

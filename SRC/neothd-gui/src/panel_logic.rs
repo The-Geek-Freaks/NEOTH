@@ -1009,10 +1009,8 @@ pub fn parse_provider_ids(json: &str) -> Vec<String> {
 /// LIVE catalog ids without ever hard-failing the GUI on a subprocess hiccup.
 /// Stays model-version-agnostic — surfaces whatever the catalog holds, no
 /// whitelist (a new model id appears the moment `catalog refresh` sees it).
-// MV-01c headless half (50b826c): the Slint model-picker consumer isn't
-// wired yet — only the unit tests call this, so the bin target flags it
-// dead. Exempt until the GUI half lands; remove the allow with that wiring.
-#[allow(dead_code)]
+// MV-01c: wired into the Hemispheres per-role model picker (GOLD-GUI-OVERHAUL)
+// via fetch_hemisphere_model_ids — the cloud-provider half of the combo list.
 pub fn parse_catalog_model_ids(json: &str, provider: &str) -> Vec<String> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
@@ -1029,6 +1027,29 @@ pub fn parse_catalog_model_ids(json: &str, provider: &str) -> Vec<String> {
         .iter()
         .filter(|m| !m.get("deprecated").and_then(|d| d.as_bool()).unwrap_or(false))
         .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .collect()
+}
+
+/// Parse `neoth models recommend --class <c> --output json` (a JSON array of
+/// `{rank, param_b, quant, est_vram_gb, repo, class, pull_ref, …}`) into the
+/// list of `pull_ref` model ids — the local GGUF refs (e.g.
+/// `hf.co/bartowski/Qwen2.5-…-abliterated-GGUF:Q4_K_M`) that fit this PC's VRAM.
+/// These feed the local half of the Hemispheres per-role model picker so the
+/// operator can SELECT a fitting local/abliterated model (GOLD-GUI-OVERHAUL).
+/// PURE + robust: malformed JSON → empty (never hard-fails the GUI).
+pub fn parse_model_recommend_refs(json: &str) -> Vec<String> {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(json)
+    else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|m| {
+            m.get("pull_ref")
+                .or_else(|| m.get("repo"))
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+        })
         .collect()
 }
 
@@ -1064,6 +1085,35 @@ mod tests {
         assert!(parse_catalog_model_ids("not json", "anthropic_api").is_empty());
         assert!(parse_catalog_model_ids(r#"{"providers":{}}"#, "anthropic_api").is_empty());
         assert!(parse_catalog_model_ids(r#"{"providers":{"x":{"models":[{"id":"m"}]}}}"#, "absent").is_empty());
+    }
+
+    // ── local model recommend parser (Hemispheres model picker) ───────────
+    #[test]
+    fn parse_model_recommend_refs_extracts_pull_refs_in_order() {
+        let json = r#"[
+            {"rank":1,"repo":"bartowski/Qwen2.5-Coder-32B-abliterated-GGUF",
+             "pull_ref":"hf.co/bartowski/Qwen2.5-Coder-32B-abliterated-GGUF:Q4_K_M"},
+            {"rank":2,"repo":"mradermacher/Qwen2.5-VL-7B-abliterated-GGUF",
+             "pull_ref":"hf.co/mradermacher/Qwen2.5-VL-7B-abliterated-GGUF:Q8_0"}
+        ]"#;
+        assert_eq!(
+            parse_model_recommend_refs(json),
+            vec![
+                "hf.co/bartowski/Qwen2.5-Coder-32B-abliterated-GGUF:Q4_K_M".to_string(),
+                "hf.co/mradermacher/Qwen2.5-VL-7B-abliterated-GGUF:Q8_0".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_model_recommend_refs_falls_back_to_repo_and_tolerates_garbage() {
+        // pull_ref absent → repo is the fallback id.
+        assert_eq!(
+            parse_model_recommend_refs(r#"[{"repo":"some/Model-GGUF"}]"#),
+            vec!["some/Model-GGUF".to_string()]
+        );
+        assert!(parse_model_recommend_refs("not json").is_empty());
+        assert!(parse_model_recommend_refs(r#"{"not":"an array"}"#).is_empty());
     }
 
     // ── GR-03 trust panel parser ──────────────────────────────────────────
