@@ -136,10 +136,15 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     let mut successful_calls = 0u32;
     let mut failed_calls = 0u32;
     let mut current_text;
-    // GOLD-ADOPT-20 — stuck-loop guard, accumulated across all rounds of this
-    // loop invocation. A blocked call is not dispatched; the LLM sees a notice
-    // and (if every call in a round is blocked) the all-failed termination fires.
-    let mut repetition_guard = crate::mcp::repetition_guard::ToolRepetitionGuard::with_defaults();
+    // GOLD-ADAPT-GOOSE-02 — pluggable pre-dispatch safety chain: the stuck-loop
+    // guard (GOLD-ADOPT-20) + the dangerous-command/egress risk policy
+    // (GOLD-ADOPT-23) run as an ordered inspector chain, accumulated across all
+    // rounds of this loop invocation. A blocked call is not dispatched; the LLM
+    // sees a notice and (if every call in a round is blocked) the all-failed
+    // termination fires. The chain COMPUTES the verdict; the loop acts on it
+    // (the risk-confirm lease lift + WAL emits stay inline below — they are
+    // async + stateful authorization, not a pure inspection).
+    let mut inspectors = crate::mcp::tool_inspection::ToolInspectorChain::with_defaults();
     // GOLD-ADOPT-22 — Goal/Grind tracker: on a clean exit (no tool calls), inject
     // one more nudge instead of stopping, until the goal is checked / the grind
     // is bounded by max_iterations.
@@ -206,38 +211,48 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         let mut iteration_had_success = false;
         let mut tool_result_blocks = Vec::new();
         for call in &extraction.calls {
-            // GOLD-ADOPT-20 — block runaway repetition BEFORE spawning a server.
-            let verdict = repetition_guard.check(call);
-            if verdict.is_blocked() {
+            // GOLD-ADAPT-GOOSE-02 — run the pluggable pre-dispatch inspection
+            // chain (repetition guard GOLD-ADOPT-20, then risk policy
+            // GOLD-ADOPT-23). The chain computes the verdict + surfaces the
+            // dangerous/egress warns; the loop acts on the result below.
+            let inspection = inspectors.inspect(call, security_policy);
+            // GOOSE-02 review (LOW) — compile-time exhaustiveness: adding a new
+            // `InspectorVerdict` / `BlockKind` variant FAILS this match until it
+            // is handled, so a future verdict can never silently fall through to
+            // the `dispatch_one` below. The `if let`s after it do the acting.
+            match &inspection {
+                crate::mcp::tool_inspection::InspectorVerdict::Allow
+                | crate::mcp::tool_inspection::InspectorVerdict::Block {
+                    kind:
+                        crate::mcp::tool_inspection::BlockKind::Repetition(_)
+                        | crate::mcp::tool_inspection::BlockKind::Risk { .. },
+                    ..
+                } => {}
+            }
+            if let crate::mcp::tool_inspection::InspectorVerdict::Block {
+                kind: crate::mcp::tool_inspection::BlockKind::Repetition(verdict),
+                ..
+            } = &inspection
+            {
                 failed_calls += 1;
                 warn!(
                     server = %call.server,
                     tool = %call.tool,
                     "tool-repetition guard blocked a call (stuck-loop protection)"
                 );
-                tool_result_blocks.push(format_guard_block(call, &verdict));
+                tool_result_blocks.push(format_guard_block(call, verdict));
                 continue;
             }
-            // GOLD-ADOPT-23 P0 — scan the call's arguments for outbound egress +
-            // dangerous shell patterns, ALWAYS surface them (tracing warn), then
-            // apply the operator's risk policy as a deny/confirm GATE.
-            let risk = crate::security::inspect_tool_args(&call.arguments);
-            if !risk.is_empty() {
-                for d in &risk.dangerous {
-                    warn!(
-                        server = %call.server, tool = %call.tool,
-                        rule = d.id, severity = d.severity.as_str(),
-                        "dangerous-command pattern in tool call: {}", d.reason
-                    );
-                }
-                for e in &risk.egress {
-                    warn!(
-                        server = %call.server, tool = %call.tool,
-                        kind = %e.kind, domain = %e.domain,
-                        "outbound egress destination in tool call"
-                    );
-                }
-                let mut gate = crate::security::risk_gate::evaluate_tool_risk(&risk, security_policy);
+            // GOLD-ADOPT-23 — risk policy (dangerous-command/egress) tripped: the
+            // operator risk-override LEASE lift + the distinct WAL audit emit stay
+            // here (async + stateful authorization); the inspector already
+            // computed the base gate + surfaced every finding.
+            if let crate::mcp::tool_inspection::InspectorVerdict::Block {
+                kind: crate::mcp::tool_inspection::BlockKind::Risk { risk, gate },
+                ..
+            } = inspection
+            {
+                let mut gate = gate;
                 // GOLD-ADOPT-23 P1 — an active operator risk-override lease
                 // (`neoth lease grant operator dangerous_command|egress --ttl N`)
                 // lifts the block for its TTL window. Checked only on a block

@@ -42,6 +42,7 @@ pub mod sanitizer;
 pub mod smart_approve;
 pub mod smart_loader;
 pub mod tool_call_parser;
+pub mod tool_inspection;
 pub mod transport;
 
 #[allow(unused_imports)]
