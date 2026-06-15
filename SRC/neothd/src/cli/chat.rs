@@ -1967,6 +1967,13 @@ async fn run_post_reply_pipelines(
         {
             eprintln!("{bar}");
         }
+        // GOLD-ADAPT-LOWKEY-05 — ONTOLOGY adversarial self-challenge: flag any
+        // speculative/unsupported claims in the final answer (STDERR, never
+        // stdout). Pure + LLM-free; fires only on suspect absolutisms, so a
+        // well-grounded reply prints nothing extra.
+        if let Some(note) = crate::council::self_challenge::challenge_answer(&response_text).note() {
+            eprintln!("{note}");
+        }
     }
 
     drop(writer);

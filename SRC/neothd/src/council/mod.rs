@@ -46,6 +46,7 @@ pub mod nspace;
 pub mod orchestrator;
 pub mod qa_verdict;
 pub mod quality_score;
+pub mod self_challenge;
 pub mod self_reflect;
 pub mod trigger;
 pub mod types;
