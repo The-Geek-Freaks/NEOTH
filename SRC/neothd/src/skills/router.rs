@@ -791,6 +791,9 @@ mod tests {
             ),
             // Worktree usage skill.
             ("Need to set up a git worktree", "using_git_worktrees"),
+            // GOLD-ADAPT-PT-06/07 — ponytail lazy-dev + over-engineering audit.
+            ("ponytail mode please", "lazy_dev"),
+            ("review for over-engineering in this crate", "lazy_review"),
         ];
 
         for (prompt, expected_id) in cases {

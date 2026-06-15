@@ -412,6 +412,9 @@ mod tests {
             "academic_research",
             // ARCH-03 / QU-06 — three-layer context conductor
             "conductor",
+            // GOLD-ADAPT-PT-06/07 — ponytail lazy-dev + over-engineering audit
+            "lazy_dev",
+            "lazy_review",
         ];
         for id in expected {
             assert!(

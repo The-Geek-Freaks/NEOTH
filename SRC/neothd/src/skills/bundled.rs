@@ -167,6 +167,16 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "improve_codebase_architecture",
         include_str!("../../assets/skills/improve_codebase_architecture/skill.yaml"),
     ),
+    // GOLD-ADAPT-PT-06 (2026-06-15) — ponytail YAGNI ladder as a router-activatable skill.
+    (
+        "lazy_dev",
+        include_str!("../../assets/skills/lazy_dev/skill.yaml"),
+    ),
+    // GOLD-ADAPT-PT-07 (2026-06-15) — over-engineering audit (cross-module / dep level).
+    (
+        "lazy_review",
+        include_str!("../../assets/skills/lazy_review/skill.yaml"),
+    ),
     (
         "lowkey_base",
         include_str!("../../assets/skills/lowkey_base/skill.yaml"),

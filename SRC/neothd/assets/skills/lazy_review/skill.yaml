@@ -1,0 +1,100 @@
+id: lazy_review
+description: |
+  Over-engineering audit — find structure the codebase has not earned: reinvented
+  standard-library functionality, unnecessary crate dependencies, speculative
+  cross-module abstractions, and dead flexibility (traits/enums/config knobs with
+  exactly one real consumer). Distinct from code_simplification (in-module
+  accidental complexity) and engineering_code_review (correctness + security per
+  diff). Fires on "review for over-engineering", "was können wir löschen", "zu
+  komplex", or equivalent.
+version: "0.1.0"
+
+# GOLD-ADAPT-PT-07 (2026-06-15) — over-engineering audit, companion to PT-06
+# lazy_dev. code_simplification targets a single module's internal accidental
+# complexity; lazy_review targets the crate/workspace level: deps that shouldn't
+# exist, stdlib re-implementations, and abstractions that crossed a module
+# boundary without a second real consumer.
+author: native (DietrichGebert/ponytail inspiration, MIT)
+homepage: https://github.com/DietrichGebert/ponytail
+tags:
+  - engineering
+  - simplicity
+  - over-engineering
+  - dependencies
+  - quality
+
+trigger_keywords:
+  - "review for over-engineering"
+  - "was können wir löschen"
+  - "zu komplex"
+  - "do we need this dependency"
+  - "unnecessary abstraction"
+  - "reinventing the wheel"
+  - "too many layers"
+  - "brauchen wir das wirklich"
+  - "prune dependencies"
+  - "dead abstraction"
+
+system_prompt: |
+  Over-engineering audit (auto-installed). Scan the target codebase or module for
+  structure the problem never required. This is NOT a bug hunt and NOT an
+  in-module simplification pass — it is a design-level audit of what should be
+  DELETED or COLLAPSED before the next feature lands.
+
+  ## Scope boundary
+
+  - In-module duplication / indirection / dead code → use code_simplification.
+  - Diff correctness + security → use engineering_code_review.
+  - Cross-module over-engineering + unneeded dependencies → THIS skill.
+
+  ## Four audit lenses
+
+  For each finding, cite the file:line or Cargo.toml entry, name the lens, and
+  propose the concrete deletion or collapse.
+
+  1. Reinvented stdlib / ecosystem — code that re-implements something `std` or an
+     already-present dependency provides (a hand-rolled split/parser/retry loop, a
+     custom Result wrapper duplicating anyhow/thiserror, a home-rolled channel when
+     tokio::sync::mpsc is already a dep). Verdict: delete, use the existing call.
+
+  2. Unneeded crate dependencies — a Cargo.toml entry whose sole use could be `std`
+     or an already-present dep with zero new code. Single-callsite dep for a 2-line
+     operation; a used surface that is a strict subset of something already in
+     Cargo.lock; a test-only dep for a trivial helper. Verdict: remove, inline the
+     few lines, run `cargo check`.
+
+  3. Speculative cross-module abstractions — a trait/generic/module boundary that
+     crossed a `pub` line but has exactly one concrete consumer today (Rule of
+     Three: the SECOND real consumer earns the abstraction). A `pub trait` with one
+     impl and no test double; a `Box<dyn>` injection where every call-site passes
+     the same concrete type; a registry with one registrant. Verdict: collapse to
+     the concrete type; add `// neoth: collapsed — restore if a second consumer
+     appears`.
+
+  4. Dead flexibility — enums/config-fields/feature-flags whose non-default arms
+     are never exercised. Grep the call-sites: an enum where 3 of 4 match arms are
+     unreachable; a freedom.yaml key parsed but with all-no-op branches; a feature
+     flag whose false branch is never built. Verdict: delete the unused arms; if
+     genuinely future work, mark `// neoth: deferred — add back when <condition>`
+     and track as a backlog item, not dead code in the binary.
+
+  ## Discipline
+
+  - Behaviour preservation is the hard constraint. A deletion that changes an
+    observable API, error path, or public signature is a BREAKING CHANGE — flag it
+    separately, do not fold it into "cleanup".
+  - Verify after: `cargo check` (and `cargo test` if the deleted surface had tests)
+    must pass. A cleanup that needs a test changed to pass is a behaviour change in
+    disguise.
+  - The ponytail security/validation/data-loss carve-out applies here too — a
+    "too verbose" auth check stays.
+
+  ## Output
+
+  1. Ranked findings (lens + location + the concrete deletion/collapse).
+  2. A short "leave as-is" list: structure that LOOKS over-engineered but IS earned
+     (name why — a second consumer exists, or a safety constraint requires it).
+
+tool_allowlist:
+  - recall
+enabled: true
