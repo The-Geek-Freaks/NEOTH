@@ -23,6 +23,7 @@ import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow } from "settings.slint";
 import { ChatView, ChatMessage } from "chat.slint";
+import { BuddyDock } from "buddy.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 
 // SPEC-05 — one saved preset for the selector tile.
@@ -253,6 +254,17 @@ export component MainWindow inherits Window {
     in property <string> usage-responses: "";
     in property <string> usage-tokens: "";
     in property <string> usage-note: "";
+
+    // ── Reactive Buddy companion (NEOTH Design System) ────────────────
+    // The living neural-core orb, docked bottom-right, that reflects what
+    // NEOTH is doing right now. Rust drives `buddy-mood` from daemon activity
+    // (idle / thinking / working / memory / audit / alert / success …) and
+    // `buddy-caption` is the short status word under the orb. Defaults keep
+    // the orb gently breathing ("idle") until the daemon reports a state.
+    in property <string> buddy-mood: "idle";
+    in property <string> buddy-caption: "ready";
+    in property <bool> buddy-visible: true;
+    callback buddy-clicked();
 
     /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
     /// preset tile. Rust shells `neothd preset apply <active>`
@@ -1611,5 +1623,16 @@ export component MainWindow inherits Window {
                     ? root.hardware-summary
                     : "NEOTH — Your buddy. Your life.");
         }
+    }
+
+    // ── Docked Buddy overlay — floats bottom-right above all screens ───
+    // Declared last so it sits on top; positioned with explicit x/y.
+    if root.buddy-visible: BuddyDock {
+        mood: root.buddy-mood;
+        caption: root.buddy-caption;
+        orb-size: 88px;
+        x: root.width - self.width - 24px;
+        y: root.height - self.height - 24px;
+        clicked => { root.buddy-clicked(); }
     }
 }

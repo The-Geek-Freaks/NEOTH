@@ -1,0 +1,246 @@
+// NEOTH Buddy — the living neural-core companion orb.
+//
+// Ported from the NEOTH Design System handoff (`design-system/`,
+// components/buddy/Buddy.jsx — "one markup, 28 animated states"). The orb
+// reflects what NEOTH is doing RIGHT NOW: idle breathing, thinking, working,
+// remembering (memory), verifying (audit), hitting a consent boundary (alert),
+// finishing (success). Drive `mood` from app state.
+//
+// Continuous animation uses `animation-tick()` (re-evaluates every frame) with
+// sin/cos — orbiting dots + a breathing core + pulsing halo. A plain ring has
+// rotational symmetry (rotating it shows nothing), so motion lives in the
+// orbiters, the core breath, and opacity pulses.
+
+import { Theme } from "theme.slint";
+
+export component Buddy inherits Rectangle {
+    // ── Public API ───────────────────────────────────────────────────
+    in property <string> mood: "idle";
+    in property <length> orb-size: 120px;
+    in property <bool> show-face: true;
+
+    width: root.orb-size;
+    height: root.orb-size;
+    background: transparent;
+
+    // ── Geometry (the source SVG is a 0..100 viewBox) ────────────────
+    property <length> u: root.orb-size / 100;          // one viewBox unit
+    property <length> cx: root.orb-size / 2;
+    property <length> cy: root.orb-size / 2;
+
+    // ── Mood → hue / orbit period / breath period ────────────────────
+    pure function hue() -> color {
+        return root.mood == "thinking" || root.mood == "searching" || root.mood == "analyzing"
+                || root.mood == "audit" || root.mood == "loading" || root.mood == "connecting"
+                || root.mood == "listening"
+            ? Theme.cyan-500
+            : root.mood == "alert" || root.mood == "consent" || root.mood == "danger"
+                || root.mood == "problem" || root.mood == "error"
+            ? Theme.pink-500
+            : root.mood == "intense" || root.mood == "cracking" || root.mood == "notification"
+            ? Theme.amber-500
+            : Theme.green-500;                          // memory / working / idle / success …
+    }
+    pure function spin() -> duration {
+        return root.mood == "idle" || root.mood == "sleeping" ? 16s
+            : root.mood == "thinking" || root.mood == "audit" ? 6s
+            : root.mood == "working" || root.mood == "success" ? 3s
+            : root.mood == "intense" || root.mood == "cracking" || root.mood == "error" ? 2s
+            : root.mood == "memory" ? 12s
+            : root.mood == "agents" || root.mood == "parallel" ? 4s
+            : 9s;
+    }
+    pure function breath() -> duration {
+        return root.mood == "sleeping" ? 7s
+            : root.mood == "idle" ? 4.4s
+            : root.mood == "working" || root.mood == "intense" || root.mood == "cracking" ? 1.6s
+            : root.mood == "alert" || root.mood == "error" ? 1.1s
+            : root.mood == "success" || root.mood == "excited" ? 1.4s
+            : 2.6s;
+    }
+    pure function is-mood(m: string) -> bool { return root.mood == m; }
+
+    // ── Continuous phases ────────────────────────────────────────────
+    property <angle> orbit: 360deg * mod(animation-tick(), root.spin()) / root.spin();
+    property <float> pulse: 0.5 + 0.5 * sin(360deg * mod(animation-tick(), root.breath()) / root.breath());
+    property <length> ring-r: 44 * root.u;             // orbiter radius
+    property <length> core-r: 17 * root.u;             // core radius
+    property <length> core-scaled: root.core-r * (0.9 + 0.18 * root.pulse);
+
+    // ══ HALO — soft tri-layer glow (no blur on Rectangle → stack alphas)
+    Rectangle {
+        width: 94 * root.u; height: 94 * root.u; x: 3 * root.u; y: 3 * root.u;
+        border-radius: self.width / 2;
+        background: root.hue().with-alpha(0.05 + 0.05 * root.pulse);
+    }
+    Rectangle {
+        width: 74 * root.u; height: 74 * root.u; x: 13 * root.u; y: 13 * root.u;
+        border-radius: self.width / 2;
+        background: root.hue().with-alpha(0.06 + 0.06 * root.pulse);
+    }
+
+    // ══ RINGS — three concentric outlines, breathing opacity ═══════════
+    Rectangle {
+        width: 84 * root.u; height: 84 * root.u; x: 8 * root.u; y: 8 * root.u;
+        border-radius: self.width / 2;
+        border-width: 1.5px; border-color: root.hue().with-alpha(0.18 + 0.12 * root.pulse);
+    }
+    Rectangle {
+        width: 68 * root.u; height: 68 * root.u; x: 16 * root.u; y: 16 * root.u;
+        border-radius: self.width / 2;
+        border-width: 1.5px; border-color: root.hue().with-alpha(0.28 + 0.14 * (1.0 - root.pulse));
+    }
+    Rectangle {
+        width: 52 * root.u; height: 52 * root.u; x: 24 * root.u; y: 24 * root.u;
+        border-radius: self.width / 2;
+        border-width: 1px; border-color: root.hue().with-alpha(0.35);
+    }
+
+    // ══ ORBITERS — three dots circling the rim ═════════════════════════
+    for d[i] in [3.4, 3.0, 2.6]: Rectangle {
+        property <angle> a: root.orbit + (i * 120deg);
+        property <length> dr: d * root.u;
+        width: self.dr * 2; height: self.dr * 2;
+        x: root.cx + (sin(self.a) * root.ring-r) - self.dr;
+        y: root.cy - (cos(self.a) * root.ring-r) - self.dr;
+        border-radius: self.dr;
+        background: root.hue();
+        opacity: 0.55 + 0.45 * root.pulse;
+    }
+
+    // ══ MEMORY INFLOW — particles streaming into the core (mood=memory)
+    if root.is-mood("memory") || root.is-mood("learning"): Rectangle {
+        width: 100%; height: 100%;
+        for p[i] in [0deg, 90deg, 180deg, 270deg]: Rectangle {
+            property <float> t: mod(animation-tick() / 1s + i * 0.3, 1.2) / 1.2;
+            property <length> rr: (30 - 24 * self.t) * root.u;
+            width: 3.2 * root.u; height: 3.2 * root.u; border-radius: self.width / 2;
+            x: root.cx + (sin(p) * self.rr) - self.width / 2;
+            y: root.cy - (cos(p) * self.rr) - self.height / 2;
+            background: root.hue();
+            opacity: self.t;
+        }
+    }
+
+    // ══ CORE — the breathing neural core ═══════════════════════════════
+    Rectangle {
+        width: root.core-scaled * 2; height: root.core-scaled * 2;
+        x: root.cx - root.core-scaled; y: root.cy - root.core-scaled;
+        border-radius: self.width / 2;
+        background: root.hue();
+        // inner highlight (top-left)
+        Rectangle {
+            width: 11 * root.u; height: 11 * root.u;
+            x: parent.width * 0.24; y: parent.height * 0.24;
+            border-radius: self.width / 2;
+            background: Theme.ink-0.with-alpha(0.45);
+        }
+    }
+
+    // ══ FACE — eyes + mouth, in the 0..100 viewBox via Path ════════════
+    if root.show-face && !root.is-mood("sleeping") && !root.is-mood("error"): Rectangle {
+        // eyes
+        Rectangle {
+            x: 42.4 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
+            width: 3.4 * root.u; height: (9 + 3 * root.pulse) * root.u;
+            border-radius: 1.7 * root.u; background: root.hue() == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
+        }
+        Rectangle {
+            x: 54.2 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
+            width: 3.4 * root.u; height: (9 + 3 * root.pulse) * root.u;
+            border-radius: 1.7 * root.u; background: root.hue() == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
+        }
+        // mouth — smile for happy/success/excited, neutral otherwise
+        Path {
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
+            width: 100%; height: 100%;
+            stroke: root.hue() == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
+            stroke-width: 2px;
+            commands: root.is-mood("happy") || root.is-mood("success") || root.is-mood("excited")
+                ? "M44 55 Q50 62 56 55"
+                : "M45 57 L55 57";
+        }
+    }
+
+    // ══ MOOD OVERLAYS ══════════════════════════════════════════════════
+    // thinking — three pulsing dots over the core
+    if root.is-mood("thinking"): Rectangle {
+        for dx[i] in [44, 50, 56]: Rectangle {
+            property <float> ph: 0.5 + 0.5 * sin(360deg * mod(animation-tick() / 0.9s + i * 0.33, 1.0));
+            x: (dx - 1.9) * root.u; y: (50 - 1.9) * root.u;
+            width: 3.8 * root.u; height: 3.8 * root.u; border-radius: self.width / 2;
+            background: Theme.ink-1000; opacity: 0.3 + 0.7 * self.ph;
+        }
+    }
+    // working / analyzing — a scan bar sweeping the core vertically
+    if root.is-mood("working") || root.is-mood("analyzing"): Rectangle {
+        property <float> sweep: mod(animation-tick(), 1.4s) / 1.4s;
+        x: 33 * root.u; y: (40 + 20 * self.sweep) * root.u;
+        width: 34 * root.u; height: 1.6 * root.u; border-radius: 0.8 * root.u;
+        background: Theme.ink-1000; opacity: 0.8;
+    }
+    // success — a check mark
+    if root.is-mood("success"): Path {
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
+        width: 100%; height: 100%;
+        stroke: Theme.text-on-accent; stroke-width: 3px;
+        commands: "M43 50.5 L47.5 55 L57 45";
+    }
+    // alert / consent — a "!" badge top-right
+    if root.is-mood("alert") || root.is-mood("consent") || root.is-mood("problem"): Rectangle {
+        x: 62 * root.u; y: 26 * root.u; width: 12 * root.u; height: 12 * root.u;
+        border-radius: self.width / 2; background: Theme.pink-500;
+        Text { text: "!"; color: Theme.ink-0; font-size: 9 * root.u; font-weight: 700;
+               horizontal-alignment: center; vertical-alignment: center; }
+    }
+    // secure — a small lock arc on the core
+    if root.is-mood("secure") || root.is-mood("connected"): Path {
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
+        width: 100%; height: 100%;
+        stroke: Theme.ink-1000; stroke-width: 2px;
+        commands: "M46 49 v-3.2 a4 4 0 0 1 8 0 v3.2";
+    }
+    // sleeping — z z z
+    if root.is-mood("sleeping"): Text {
+        x: 64 * root.u; y: 22 * root.u; text: "z z z";
+        color: root.hue().with-alpha(0.7); font-size: 11 * root.u; font-italic: true;
+    }
+    // error — an X over the core
+    if root.is-mood("error") || root.is-mood("danger"): Path {
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
+        width: 100%; height: 100%;
+        stroke: Theme.ink-1000; stroke-width: 3px;
+        commands: "M43 43 L57 57 M57 43 L43 57";
+    }
+}
+
+// Docked variant — Buddy pinned bottom-right with a caption chip.
+export component BuddyDock inherits Rectangle {
+    in property <string> mood: "idle";
+    in property <string> caption: "ready";
+    in property <length> orb-size: 96px;
+    callback clicked();
+
+    width: bud.width + 8px;
+    height: bud.height + (root.caption != "" ? cap.height + 6px : 0px);
+
+    bud := Buddy {
+        mood: root.mood; orb-size: root.orb-size;
+        x: (parent.width - self.width) / 2; y: 0;
+        TouchArea { clicked => { root.clicked(); } }
+    }
+    cap := Rectangle {
+        x: (parent.width - self.width) / 2; y: bud.height + 6px;
+        height: root.caption != "" ? lbl.height + 6px : 0px;
+        width: lbl.width + 16px;
+        border-radius: Theme.radius-pill;
+        background: Theme.surface-glass;
+        border-width: 1px; border-color: Theme.border-subtle;
+        lbl := Text {
+            x: 8px; y: 3px;
+            text: root.caption; color: Theme.text-secondary;
+            font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+            letter-spacing: Theme.letter-spacing-tight;
+        }
+    }
+}

@@ -1,133 +1,207 @@
-// NEOTH design tokens — single source of truth for the GUI's visual
-// surface. Source: `docs/superpowers/specs/2026-05-15-neoth-uix-design-system.md`
-// + `docs/superpowers/specs/2026-05-15-neoth-brand-identity.md`.
+// NEOTH design tokens — single source of truth for the GUI's visual surface.
 //
-// Anti-pattern guards (per the spec's "Never use sharp 0px corners" rule
-// and "Speed is important, but majesty is mandatory"):
-//   - Every radius MUST be one of the Theme.radius-* values.
-//   - Every animation MUST use Theme.curve-sovereign + a duration
-//     ≥ Theme.duration-screen-min.
+// Source of truth: the NEOTH Design System handoff bundle (claude.ai/design,
+// 2026-06-15, "NEOTH Design System-handoff"), vendored at `design-system/`.
+// Operator decision 2026-06-15: the bundle's SATURATED neon signal palette is
+// canonical (green=memory #00ff80, pink=consent #ff2a6d, cyan=audit #05d5ff) —
+// it supersedes the earlier desaturated emerald (#3ecf8e) experiment.
+//
+// Design language: neon-on-near-black. Three signal colours carry MEANING
+// everywhere — green = memory (primary/live), pink = consent (boundaries/alert),
+// cyan = audit (proof/info). Type: Space Grotesk (UI + display), Bodoni Moda
+// (NEOTH wordmark only), JetBrains Mono (ids / audit frames / status lines).
+//
+// Anti-pattern guards (kept from the prior spec):
+//   - Every radius MUST be one of the Theme.radius-* values (never 0px).
 //   - Every colour MUST come from this module, never inline hex.
+//   - Glow — not drop-shadow — is the brand's true elevation on dark.
 //
-// Why globals instead of struct returns: Slint globals propagate to every
-// component without import boilerplate at each call site, and the values
-// stay editable from a single file when the spec rotates.
+// Backward-compat: every property name the existing GUI already references is
+// preserved here (only VALUES shift to the canonical neon); the richer
+// signal/semantic/glow/buddy tokens are net-new additions.
 
 export global Theme {
-    // ── Colour palette ───────────────────────────────────────────────
-    // Background: 5%-darker centre per the spec's radial gradient
-    // ("Background with 5% darker center focus"). Slint can't draw a
-    // radial gradient as a window background directly, so we expose
-    // both endpoints and let each screen choose either the flat
-    // `bg-base` (cheap) or layer a Rectangle with the gradient for
-    // hero shots.
-    out property <color> bg-base: #111213;
-    out property <color> bg-center: #0a0b0c;
+    // ══ INK SCALE — near-black canvas the brand lives on ════════════════
+    out property <color> ink-1000: #050505;
+    out property <color> ink-950:  #0a0a0a;
+    out property <color> ink-900:  #0d0d0d;
+    out property <color> ink-850:  #121212;
+    out property <color> ink-800:  #161616;
+    out property <color> ink-700:  #1c1c1c;
+    out property <color> ink-600:  #242424;
+    out property <color> ink-500:  #2e2e2e;
+    out property <color> ink-400:  #3a3a3a;
+    out property <color> ink-300:  #5a5a5a;
+    out property <color> ink-200:  #8a8a8a;
+    out property <color> ink-150:  #aaaaaa;
+    out property <color> ink-100:  #c9c9c9;
+    out property <color> ink-50:   #e6e6e6;
+    out property <color> ink-0:    #ffffff;
 
-    // Card / inset surface — one step lighter than the page background
-    // so secondary containers register without breaking the dark feel.
-    out property <color> bg-card: #1c1d1f;
+    // ══ SIGNAL COLOURS — the three meaning-carrying neons ═══════════════
+    // GREEN = MEMORY (primary / live / accent).
+    out property <color> green-500: #00ff80;
+    out property <color> green-600: #00cc66;
+    out property <color> green-400: #4dffa6;
+    out property <color> green-700: #009950;
+    out property <color> green-glow: #00ff808c;   // rgba(0,255,128,.55)
+    out property <color> green-tint: #00ff801a;   // rgba(0,255,128,.10)
+    // CYAN = AUDIT (proof / info / network).
+    out property <color> cyan-500: #05d5ff;
+    out property <color> cyan-600: #04aacc;
+    out property <color> cyan-400: #5ce4ff;
+    out property <color> cyan-700: #037f99;
+    out property <color> cyan-glow: #05d5ff80;     // rgba(5,213,255,.50)
+    out property <color> cyan-tint: #05d5ff1a;
+    // PINK = CONSENT (boundaries / alert / danger).
+    out property <color> pink-500: #ff2a6d;
+    out property <color> pink-600: #cc2257;
+    out property <color> pink-400: #ff6593;
+    out property <color> pink-700: #991941;
+    out property <color> pink-glow: #ff2a6d80;     // rgba(255,42,109,.50)
+    out property <color> pink-tint: #ff2a6d1a;
+    // AMBER = in-progress / caution (kanban "IN PROGRESS", pending).
+    out property <color> amber-500: #ffb627;
+    out property <color> amber-tint: #ffb6271f;    // rgba(255,182,39,.12)
 
-    // Accent — the "synapse" green from the brand identity SVG.
-    // Used for active states, focus rings, the cursor on inputs, the
-    // "Neural Pulse" ripple. NEVER used for plain prose text.
-    // GUI-overhaul (gap panel wf_8ad7096a): #00ff80 is a neon/retro full-
-    // saturation green that reads harsh on a dark page; #3ecf8e is a modern,
-    // desaturated emerald with the same semantic role. Every component references
-    // this token (incl. the `.with-alpha(…)` softening), so this one change lifts
-    // the whole app without per-component edits.
-    out property <color> accent-green: #3ecf8e;
+    // ══ SEMANTIC SURFACES — elevation on dark ══════════════════════════
+    out property <color> bg-void:   #050505;        // ink-1000 — deepest
+    out property <color> bg-base:   #0d0d0d;        // page background
+    out property <color> bg-center: #0a0a0a;        // 5%-darker radial centre
+    out property <color> bg-sunken: #0a0a0a;
+    out property <color> surface-1: #121212;        // ink-850
+    out property <color> surface-2: #161616;        // ink-800
+    out property <color> surface-3: #1c1c1c;        // ink-700
+    out property <color> bg-card:   #121212;        // card / inset (= surface-1)
+    out property <color> surface-glass: #141414b8;  // rgba(20,20,20,.72)
 
-    // Secondary accent — used sparingly for destructive / warning
-    // states (revoke consent, delete, irreversible operations).
-    out property <color> accent-pink: #ff2a6d;
+    // ══ TEXT HIERARCHY ═════════════════════════════════════════════════
+    out property <color> text-primary:   #ffffff;
+    out property <color> text-secondary: #aaaaaa;   // ink-150
+    out property <color> text-tertiary:  #8a8a8a;   // ink-200
+    out property <color> text-disabled:  #5a5a5a;   // ink-300
+    out property <color> text-inverse:   #0d0d0d;
+    out property <color> text-on-accent: #04130b;
+    out property <color> text-muted:     #aaaaaa;   // back-compat alias
+    out property <color> text-dim:       #909090;   // back-compat (AA-safe caption)
 
-    // GU-02 — amber: in-progress / attention / caution cues (kanban
-    // "IN PROGRESS", pending states). Net-new — does NOT replace green/pink.
-    out property <color> accent-amber: #ffb300;
-    // GU-02 — teal: info / network / cluster + cool data labels.
-    out property <color> accent-teal: #00e5cc;
+    // ══ SEMANTIC ALIASES — meaning, not colour, at the call site ═══════
+    out property <color> accent:        #00ff80;    // = green-500 (memory)
+    out property <color> accent-hover:  #4dffa6;    // = green-400
+    out property <color> accent-press:  #00cc66;    // = green-600
+    out property <color> accent-tint:   #00ff801a;
+    out property <color> accent-glow:   #00ff808c;
+    out property <color> memory:        #00ff80;
+    out property <color> memory-tint:   #00ff801a;
+    out property <color> audit:         #05d5ff;
+    out property <color> audit-tint:    #05d5ff1a;
+    out property <color> consent:       #ff2a6d;
+    out property <color> consent-tint:  #ff2a6d1a;
+    out property <color> warning:       #ffb627;
+    out property <color> warning-tint:  #ffb6271f;
 
-    // Text colours. Pure white for primary, two muted variants for
-    // hierarchy ("light grey" + "darker grey" per the spec's
-    // hierarchy notes).
-    //
-    // Reviewer-3 P1-B contrast fix (2026-05-20): text-dim was #6b6b6b
-    // which produced 3.55:1 / 3.12:1 contrast on bg-base/bg-card at
-    // 12px — failing WCAG AA (4.5:1). Raised to #909090 → 5.42:1 /
-    // 4.71:1, passing AA for all 12px caption usages.
-    out property <color> text-primary: #ffffff;
-    out property <color> text-muted: #aaaaaa;
-    out property <color> text-dim: #909090;
+    // Back-compat accent names the existing components reference. Values now
+    // resolve to the canonical neon (the operator's "bundle is canonical" call).
+    out property <color> accent-green: #00ff80;     // was #3ecf8e (desaturated) → reverted to neon
+    out property <color> accent-pink:  #ff2a6d;
+    out property <color> accent-amber: #ffb627;     // was #ffb300 → bundle amber
+    out property <color> accent-teal:  #05d5ff;     // realigned to canonical audit-cyan
+    out property <color> accent-cyan:  #05d5ff;
 
-    // Border + divider hairlines. Just shy of black so they show
-    // against the card surface but don't fight the content.
-    out property <color> border-subtle: #2a2b2e;
+    // ══ BORDERS / DIVIDERS / FOCUS ═════════════════════════════════════
+    out property <color> border-subtle:  #ffffff0f; // rgba(255,255,255,.06)
+    out property <color> border-default:  #ffffff1a; // .10
+    out property <color> border-strong:  #ffffff29; // .16
+    out property <color> border-accent:  #00ff8066; // rgba(0,255,128,.40)
+    out property <color> divider:        #ffffff12; // .07
+    out property <color> focus-ring:     #00ff808c; // rgba(0,255,128,.55)
+    out property <color> scrim:          #050505a8; // rgba(5,5,5,.66)
 
-    // ── Corner radii — "Noble Curve" rule ────────────────────────────
-    // Spec §1.2: Never use 0px. Three discrete sizes only.
-    out property <length> radius-window: 40px;       // Large containers, modals
-    out property <length> radius-card:   16px;       // Cards, inputs
-    out property <length> radius-button: 8px;        // Action elements
+    // ══ CORNER RADII — "Noble Curve", never 0px ════════════════════════
+    out property <length> radius-xs:   4px;
+    out property <length> radius-sm:   7px;
+    out property <length> radius-md:   11px;
+    out property <length> radius-lg:   16px;
+    out property <length> radius-xl:   22px;
+    out property <length> radius-2xl:  30px;
+    out property <length> radius-pill: 999px;
+    // Back-compat radius names.
+    out property <length> radius-window: 30px;       // large containers / modals (= 2xl)
+    out property <length> radius-card:   16px;       // cards / inputs (= lg)
+    out property <length> radius-button: 8px;        // action elements
 
-    // ── Spacing scale ────────────────────────────────────────────────
-    // Aligned with the spec's "wide / generous" feel — minimum gutters
-    // are 24px so screens never feel cramped on a 1280-wide window.
-    out property <length> space-tight:   8px;
-    out property <length> space-base:    16px;
-    out property <length> space-loose:   24px;
-    out property <length> space-screen:  32px;
+    // ══ SPACING — 4px base grid, generous negative space ═══════════════
+    out property <length> space-1:  4px;
+    out property <length> space-2:  8px;
+    out property <length> space-3:  12px;
+    out property <length> space-4:  16px;
+    out property <length> space-5:  20px;
+    out property <length> space-6:  24px;
+    out property <length> space-7:  32px;
+    out property <length> space-8:  40px;
+    out property <length> space-9:  48px;
+    out property <length> space-10: 64px;
+    // Back-compat spacing names.
+    out property <length> space-tight:  8px;
+    out property <length> space-base:   16px;
+    out property <length> space-loose:  24px;
+    out property <length> space-screen: 32px;
 
-    // ── Typography ───────────────────────────────────────────────────
-    // Font stack per spec §1.3. Slint resolves the first family present
-    // on the host; SF Pro Display ships with macOS, Inter is the
-    // cross-platform fallback, Helvetica Neue covers older Apple
-    // boxes, system-sans is the universal fallback.
-    out property <string> font-display: "SF Pro Display, Inter, Helvetica Neue, sans-serif";
-    out property <string> font-mono:    "JetBrains Mono, SF Mono, Consolas, monospace";
+    // Layout.
+    out property <length> sidebar-w:    248px;
+    out property <length> container-max: 1200px;
 
-    // Weights. Slint accepts numeric weights directly.
-    // Ultra-light is reserved for hero titles + the NEOTH logo
-    // (per the spec's hero SVG: weight 100 at 72px logo size).
+    // ══ TYPOGRAPHY ═════════════════════════════════════════════════════
+    // Space Grotesk for all UI + display; Bodoni Moda for the wordmark only;
+    // JetBrains Mono for machine-truth. Fallbacks resolve on the host.
+    out property <string> font-sans:     "Space Grotesk, Inter, SF Pro Display, system-ui, sans-serif";
+    out property <string> font-display:  "Space Grotesk, Inter, SF Pro Display, system-ui, sans-serif";
+    out property <string> font-wordmark: "Bodoni Moda, Didot, Times New Roman, Georgia, serif";
+    out property <string> font-mono:     "JetBrains Mono, SF Mono, Consolas, monospace";
+
+    // Weights.
     out property <int> weight-ultralight: 100;
     out property <int> weight-light:      300;
     out property <int> weight-regular:    400;
     out property <int> weight-medium:     500;
+    out property <int> weight-semibold:   600;
     out property <int> weight-bold:       700;
 
-    // Font sizes.
-    out property <length> font-size-hero:    72px;   // NEOTH logo
-    out property <length> font-size-h1:      32px;   // Screen titles
-    out property <length> font-size-h2:      20px;   // Section heads
+    // Text sizes (grotesk steps).
+    out property <length> font-size-2xs:     11px;
+    out property <length> font-size-xs:      12px;
+    out property <length> font-size-sm:      13px;
+    out property <length> font-size-base:    15px;
+    out property <length> font-size-md:      17px;
+    out property <length> font-size-lg:      20px;
+    out property <length> font-size-xl:      24px;
+    // Display steps.
+    out property <length> font-size-display-sm: 32px;
+    out property <length> font-size-display-md: 48px;
+    out property <length> font-size-display-lg: 80px;
+    out property <length> font-size-hero:       72px;   // NEOTH wordmark
+    // Back-compat size names.
+    out property <length> font-size-h1:      32px;
+    out property <length> font-size-h2:      20px;
     out property <length> font-size-body:    15px;
     out property <length> font-size-caption: 13px;
 
-    // Letter spacing. Spec calls for +20% on ultra-light hero titles
-    // and +2% on body. Slint expresses this in absolute px at the
-    // current font size; we keep these as the most common shipped
-    // values rather than computing per-glyph.
-    //
-    // Reviewer-3 P2 (2026-05-20): `letter-spacing-tight` + `wide`
-    // tokenise the hardcoded `1px` / `1.5px` / `2px` literals that
-    // were spreading across components.slint, main.slint and chat
-    // .slint. New per-screen styling MUST use a token; the old
-    // hardcoded values are migrated screen-by-screen.
-    out property <length> letter-spacing-hero: 14px;     // ≈ +20% on 72px
-    out property <length> letter-spacing-body: 0.3px;    // ≈ +2% on 15px
-    out property <length> letter-spacing-tight: 1px;     // section headers, button labels
-    out property <length> letter-spacing-wide: 1.5px;    // group labels, EMPHASIS captions
-    out property <length> letter-spacing-extra-wide: 2px; // SETTINGS sidebar header
-    out property <length> letter-spacing-brand-bar: 4px;  // ProgressIndicator NEOTH bar
+    // Letter spacing (absolute px, the shipped values).
+    out property <length> letter-spacing-hero:       14px;   // ≈ +20% on 72px wordmark
+    out property <length> letter-spacing-body:       0.3px;
+    out property <length> letter-spacing-tight:      1px;
+    out property <length> letter-spacing-wide:       1.5px;
+    out property <length> letter-spacing-extra-wide: 2px;
+    out property <length> letter-spacing-brand-bar:  4px;
+    out property <length> letter-spacing-mono-caps:  2.6px;  // ≈ tracking-widest on eyebrows
 
-    // ── Animation ────────────────────────────────────────────────────
+    // ══ MOTION ═════════════════════════════════════════════════════════
     // The "Sovereign Curve" — fast start, long majestic settle.
-    // Slint doesn't accept arbitrary cubic-bezier from a token, so each
-    // animation site MUST hand-write the same curve. This token is a
-    // compile-time grep anchor so audit can verify every animation
-    // honours the spec.
-    //
-    // Canonical declaration: animate <prop> { duration: Theme.duration-screen-min;
-    //                                           easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
-    out property <duration> duration-screen-min: 600ms;
+    // Canonical: animate <p> { duration: ...; easing: cubic-bezier(0.16,1,0.3,1); }
+    out property <duration> duration-fast:       120ms;
     out property <duration> duration-micro:      220ms;
+    out property <duration> duration-base:       220ms;
+    out property <duration> duration-slow:       380ms;
+    out property <duration> duration-screen-min: 600ms;
+    out property <duration> duration-slower:     640ms;
 }
