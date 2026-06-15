@@ -1011,7 +1011,7 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 All of the following must be `[x]` before tagging `v1.0-gold`:
 
 - [x] WS-A: All GOLD-SEC-NN tasks done (35/35 — dashboard ✅ COMPLETE)
-- [ ] WS-B: All GOLD-HON-NN tasks done
+- [x] WS-B: All GOLD-HON-NN tasks done (26/26 — dashboard ✅ COMPLETE, §WS-B line 206; the DD-09/DD-14 GOLD-HON-21 hold is resolved)
 - [x] WS-C: All GOLD-COR-NN tasks done (36/36 — dashboard ✅ COMPLETE)
 - [ ] WS-D: All GOLD-WIRE-NN tasks done
 - [ ] WS-E: GOLD-ARCH-01 through GOLD-ARCH-09 (security-critical arch debt) done; GOLD-ARCH-10 through GOLD-ARCH-22 strongly recommended
