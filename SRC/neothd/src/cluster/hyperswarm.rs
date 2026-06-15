@@ -83,7 +83,7 @@ use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
 use super::wal_sync::GossipState;
-use super::{PeerId, PeerLoad, PeerLoadRegistry};
+use super::{PeerSessionId, PeerLoad, PeerLoadRegistry};
 use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
 
@@ -1445,7 +1445,7 @@ fn record_heartbeat_into_registry(
     registry: &Arc<Mutex<PeerLoadRegistry>>,
 ) {
     let load = PeerLoad {
-        peer: PeerId::new(peer_id),
+        peer: PeerSessionId::new(peer_id),
         tokens_per_sec: body.tokens_per_sec,
         last_observed: Instant::now(),
         healthy: body.healthy,

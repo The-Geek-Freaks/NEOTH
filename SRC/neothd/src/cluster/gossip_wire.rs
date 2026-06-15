@@ -34,24 +34,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::gossip::GossipTag;
-
-/// Stable peer identifier used as the VC key. v0.1 uses the
-/// `peer_pub_key_hex` (64-char lowercase) — same shape as
-/// `cluster::registry::PairedPeer::pub_key_hex`. Newtype keeps the
-/// VC API typesafe so peer_id strings don't get accidentally swapped
-/// for cluster_key strings (different namespace).
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[serde(transparent)]
-pub struct PeerId(pub String);
-
-impl PeerId {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
+use super::PeerPubkey;
 
 /// One peer's logical-time view of the cluster. BTreeMap so serde
 /// + compare iterate in deterministic order — important for the
@@ -59,7 +42,7 @@ impl PeerId {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct VectorClock {
-    pub clocks: BTreeMap<PeerId, u64>,
+    pub clocks: BTreeMap<PeerPubkey, u64>,
 }
 
 /// Strict ordering relation between two vector clocks. Captures
@@ -85,7 +68,7 @@ impl VectorClock {
 
     /// Increment THIS peer's counter — call on every local event
     /// before attaching the VC to an outgoing GossipFrame.
-    pub fn tick(&mut self, self_id: &PeerId) {
+    pub fn tick(&mut self, self_id: &PeerPubkey) {
         *self.clocks.entry(self_id.clone()).or_insert(0) += 1;
     }
 
@@ -106,7 +89,7 @@ impl VectorClock {
     }
 
     /// Read this peer's slot — 0 when the peer is unknown to us.
-    pub fn get(&self, peer: &PeerId) -> u64 {
+    pub fn get(&self, peer: &PeerPubkey) -> u64 {
         self.clocks.get(peer).copied().unwrap_or(0)
     }
 
@@ -115,7 +98,7 @@ impl VectorClock {
         // Walk the union of peer-ids; missing keys count as 0.
         let mut lhs_dominates_any = false;
         let mut rhs_dominates_any = false;
-        let mut peers: std::collections::BTreeSet<&PeerId> = std::collections::BTreeSet::new();
+        let mut peers: std::collections::BTreeSet<&PeerPubkey> = std::collections::BTreeSet::new();
         peers.extend(self.clocks.keys());
         peers.extend(other.clocks.keys());
         for peer in peers {
@@ -151,7 +134,7 @@ pub struct GossipFrame {
     pub vector_clock: VectorClock,
     /// Which peer emitted this frame. Stable identity tied to the
     /// cluster registry (`PairedPeer::pub_key_hex`).
-    pub origin: PeerId,
+    pub origin: PeerPubkey,
     /// Origin's logical sequence — monotonic per-peer, used by the
     /// dedup table to drop replays without re-applying the payload.
     pub event_seq: u64,
@@ -225,8 +208,8 @@ mod tests {
     use super::*;
     use crate::cluster::gossip::{GossipPolicy, ReplayBudget};
 
-    fn pid(s: &str) -> PeerId {
-        PeerId::new(s)
+    fn pid(s: &str) -> PeerPubkey {
+        PeerPubkey::new(s)
     }
 
     fn vc(pairs: &[(&str, u64)]) -> VectorClock {

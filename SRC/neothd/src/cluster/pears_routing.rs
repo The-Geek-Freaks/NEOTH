@@ -26,7 +26,8 @@
 
 use std::collections::BTreeSet;
 
-use super::pears_election::{Election, PeerPubkey};
+use super::pears_election::Election;
+use super::PeerPubkey;
 
 /// Policy describing which peer fields a routed request. Today the
 /// only variant is `SendToOrchestrator`; future variants extend the

@@ -53,7 +53,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use super::pears_election::{Election, PeerPubkey, elect_orchestrator};
+use super::pears_election::{Election, elect_orchestrator};
+use super::PeerPubkey;
 use crate::channels::pears_bridge::{PearsBridge, PostMessageRequest};
 
 /// Watchdog interval — how often the supervisor checks the announcer

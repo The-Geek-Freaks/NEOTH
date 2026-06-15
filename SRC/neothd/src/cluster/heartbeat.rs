@@ -605,9 +605,10 @@ mod tests {
     #[test]
     fn gossip_frame_round_trips_on_the_wire() {
         use super::super::gossip::GossipTag;
-        use super::super::gossip_wire::{GossipFrame, PeerId, VectorClock};
+        use super::super::gossip_wire::{GossipFrame, VectorClock};
+        use super::super::PeerPubkey;
         let mut vc = VectorClock::new();
-        vc.tick(&PeerId::new("node-a"));
+        vc.tick(&PeerPubkey::new("node-a"));
         let frame = WireFrame {
             kind: FrameKind::Gossip,
             sequence: 11,
@@ -615,7 +616,7 @@ mod tests {
             peer_id: "node-a".into(),
             body: FrameBody::Gossip(GossipFrame {
                 vector_clock: vc,
-                origin: PeerId::new("node-a"),
+                origin: PeerPubkey::new("node-a"),
                 event_seq: 3,
                 timestamp_unix: 1_700_000_000,
                 tag: GossipTag::Replicate,
@@ -626,7 +627,7 @@ mod tests {
         match decode_frame(&bytes).unwrap().body {
             FrameBody::Gossip(g) => {
                 assert_eq!(g.event_seq, 3);
-                assert_eq!(g.origin, PeerId::new("node-a"));
+                assert_eq!(g.origin, PeerPubkey::new("node-a"));
                 assert_eq!(g.tag, GossipTag::Replicate);
             }
             other => panic!("expected Gossip, got {other:?}"),

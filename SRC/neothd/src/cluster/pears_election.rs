@@ -32,18 +32,11 @@
 
 use std::collections::BTreeSet;
 
-/// Peer identifier in the cluster. Pears bridges hand out a hex
-/// public-key string when a peer announces itself — that becomes the
-/// `pubkey` field. Newtype wrapping so future swaps (binary key,
-/// PeerId opaque type) don't require call-site rewrites.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PeerPubkey(pub String);
-
-impl PeerPubkey {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
+// Canonical cluster pubkey identity — defined once in `super` (ARCH-21
+// merged the former `pears_election::PeerPubkey` + `gossip_wire::PeerId`
+// into it). Pears bridges hand out a hex public-key string when a peer
+// announces itself; the election uses lowest-pubkey-wins over it.
+use super::PeerPubkey;
 
 /// Election outcome: who fields cluster-wide requests this round.
 /// `None` when the peer set is empty (the operator's own node is the

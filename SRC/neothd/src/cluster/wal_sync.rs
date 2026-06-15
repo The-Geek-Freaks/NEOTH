@@ -29,8 +29,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::gossip::{GossipPolicy, GossipTag, ReplayBudget};
-use super::gossip_wire::{GossipAcceptance, GossipFrame, PeerId, VectorClock};
+use super::gossip_wire::{GossipAcceptance, GossipFrame, VectorClock};
 use super::heartbeat::{FrameBody, FrameKind, WireFrame};
+use super::PeerPubkey;
 use super::peer_streams::PeerStreamRegistry;
 use crate::wal::writer::WalWriterHandle;
 
@@ -128,7 +129,7 @@ pub struct GossipState {
     /// Monotonic per-session outbound sequence.
     next_seq: u64,
     /// Dedup table: origin peer → highest applied event_seq.
-    seen: HashMap<PeerId, u64>,
+    seen: HashMap<PeerPubkey, u64>,
 }
 
 impl GossipState {
@@ -141,7 +142,7 @@ impl GossipState {
     /// is this node's cluster identity (`PairedPeer::pub_key_hex`).
     pub fn build_outbound(
         &mut self,
-        self_id: &PeerId,
+        self_id: &PeerPubkey,
         event_type: u8,
         payload: Vec<u8>,
         timestamp_unix: i64,
@@ -197,7 +198,7 @@ impl GossipState {
     }
 
     /// Highest applied seq for a peer (observability).
-    pub fn last_seen_seq(&self, origin: &PeerId) -> Option<u64> {
+    pub fn last_seen_seq(&self, origin: &PeerPubkey) -> Option<u64> {
         self.seen.get(origin).copied()
     }
 }
@@ -264,7 +265,7 @@ pub fn spawn_gossip_tick(
     tokio::spawn(async move {
         let policy = GossipPolicy::default();
         let mut state = GossipState::new();
-        let self_id = PeerId::new(uuid::Uuid::now_v7().to_string());
+        let self_id = PeerPubkey::new(uuid::Uuid::now_v7().to_string());
         // The WAL dir to re-resolve the ACTIVE segment each tick (a fixed path
         // would go stale after a rollover — review HIGH). The seed path's parent
         // is the segment dir.
@@ -513,8 +514,8 @@ mod tests {
 
     // ── send / receive state ────────────────────────────────────────────────
 
-    fn self_pk() -> PeerId {
-        PeerId::new("aa11")
+    fn self_pk() -> PeerPubkey {
+        PeerPubkey::new("aa11")
     }
 
     #[test]
@@ -539,7 +540,7 @@ mod tests {
     fn accept_inbound_dedups_and_band_rechecks() {
         let p = GossipPolicy::default();
         let mut st = GossipState::new();
-        let peer = PeerId::new("bb22");
+        let peer = PeerPubkey::new("bb22");
         let mut sender_vc = VectorClock::new();
         sender_vc.tick(&peer);
         let frame = GossipFrame {
@@ -594,14 +595,14 @@ mod tests {
         // Local progresses on its own first (under a DISTINCT id, not any
         // frontier peer), so a correct merge leaves the local clock strictly
         // AFTER (not merely Equal to) the peer frontier.
-        let local = PeerId::new("local99");
+        let local = PeerPubkey::new("local99");
         st.vc.tick(&local);
         st.vc.tick(&local);
 
         // A frame from peer-a carrying a multi-node frontier {a:3, b:2, c:1}.
-        let pa = PeerId::new("aa11");
-        let pb = PeerId::new("bb22");
-        let pc = PeerId::new("cc33");
+        let pa = PeerPubkey::new("aa11");
+        let pb = PeerPubkey::new("bb22");
+        let pc = PeerPubkey::new("cc33");
         let mut frontier = VectorClock::new();
         for _ in 0..3 {
             frontier.tick(&pa);

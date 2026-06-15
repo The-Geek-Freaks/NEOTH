@@ -1077,7 +1077,7 @@ fn decision_label(d: &RoutingDecision) -> String {
 /// Empty string returns an empty vec. Used by `neoth cluster plan` so
 /// operators can rehearse the routing decision without a real swarm.
 fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
-    use crate::cluster::PeerId;
+    use crate::cluster::PeerSessionId;
     use std::time::Instant;
     if spec.trim().is_empty() {
         return Ok(Vec::new());
@@ -1096,7 +1096,7 @@ fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
             .parse()
             .map_err(|e| anyhow::anyhow!("peer entry `{entry}` has non-numeric tps: {e}"))?;
         out.push(PeerLoad {
-            peer: PeerId::new(name.trim()),
+            peer: PeerSessionId::new(name.trim()),
             tokens_per_sec: tps,
             last_observed: Instant::now(),
             healthy: true,
@@ -1207,10 +1207,10 @@ mod tests {
 
     #[test]
     fn decision_label_round_trips_known_variants() {
-        use crate::cluster::PeerId;
+        use crate::cluster::PeerSessionId;
         assert_eq!(decision_label(&RoutingDecision::Local), "Local");
         assert_eq!(
-            decision_label(&RoutingDecision::Remote(PeerId::new("p1"))),
+            decision_label(&RoutingDecision::Remote(PeerSessionId::new("p1"))),
             "Remote(p1)"
         );
         assert_eq!(

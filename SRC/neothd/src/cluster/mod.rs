@@ -144,13 +144,46 @@ pub mod pears_federation;
 pub mod pears_peer_discovery;
 pub mod pears_routing;
 
-/// Stable identifier for a peer in the cluster. Format = UUID v7 string.
-/// First peer that brings a freshly-paired cluster online is the genesis;
-/// every join writes its UUID into the local cluster_roles table.
+/// Stable identifier for a peer's *session/role* in the cluster.
+/// Format = UUID v7 string. First peer that brings a freshly-paired
+/// cluster online is the genesis; every join writes its UUID into the
+/// local cluster_roles table.
+///
+/// Deliberately a DISTINCT newtype from [`PeerPubkey`] — a session id is
+/// a UUID, a pubkey is 64-char hex; the type system rejects swapping one
+/// for the other (the swap-prevention invariant ARCH-21 preserves). Pre
+/// ARCH-21 this was named `PeerId`, which collided by name with the
+/// pubkey-shaped `gossip_wire::PeerId`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PeerId(pub String);
+pub struct PeerSessionId(pub String);
 
-impl PeerId {
+impl PeerSessionId {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A peer's cryptographic public key, hex-encoded (64-char lowercase) —
+/// same shape as [`registry::PairedPeer`]'s `pub_key_hex`. The single
+/// canonical pubkey identity across the cluster: it keys the gossip
+/// [`gossip_wire::VectorClock`] AND drives the lowest-pubkey-wins
+/// [`pears_election`]. Pre ARCH-21 this was TWO redundant newtypes
+/// (`gossip_wire::PeerId` + `pears_election::PeerPubkey`).
+///
+/// `#[serde(transparent)]` so it serialises as a bare string — gossip
+/// wire frames are byte-identical to the pre-ARCH-21 `gossip_wire::PeerId`.
+/// Kept a DISTINCT newtype from [`PeerSessionId`] so a UUID session id can
+/// never be swapped for a pubkey.
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(transparent)]
+pub struct PeerPubkey(pub String);
+
+impl PeerPubkey {
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())
     }
@@ -163,7 +196,7 @@ impl PeerId {
 /// dispatcher can route to whoever has the most idle headroom right now.
 #[derive(Clone, Debug)]
 pub struct PeerLoad {
-    pub peer: PeerId,
+    pub peer: PeerSessionId,
     /// Rolling tokens/sec the peer is currently chewing. Higher = busier.
     pub tokens_per_sec: f64,
     /// Last update timestamp. Stale loads (older than ~30s) demote the
@@ -180,7 +213,7 @@ pub struct PeerLoad {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoutingDecision {
     Local,
-    Remote(PeerId),
+    Remote(PeerSessionId),
     /// No peer is healthy enough to take the request and the policy refuses
     /// local execution (e.g. operator pinned a workload to remote-only).
     /// The caller must surface this as an error to the operator.
@@ -316,7 +349,7 @@ mod tests {
         let p = LocalOnly;
         assert_eq!(p.pick_peer(&[]), RoutingDecision::Local);
         let l = PeerLoad {
-            peer: PeerId::new("p1"),
+            peer: PeerSessionId::new("p1"),
             tokens_per_sec: 0.0,
             last_observed: Instant::now(),
             healthy: true,
@@ -329,19 +362,19 @@ mod tests {
         let now = Instant::now();
         let peers = vec![
             PeerLoad {
-                peer: PeerId::new("busy"),
+                peer: PeerSessionId::new("busy"),
                 tokens_per_sec: 100.0,
                 last_observed: now,
                 healthy: true,
             },
             PeerLoad {
-                peer: PeerId::new("idle"),
+                peer: PeerSessionId::new("idle"),
                 tokens_per_sec: 5.0,
                 last_observed: now,
                 healthy: true,
             },
             PeerLoad {
-                peer: PeerId::new("medium"),
+                peer: PeerSessionId::new("medium"),
                 tokens_per_sec: 30.0,
                 last_observed: now,
                 healthy: true,
@@ -350,7 +383,7 @@ mod tests {
         let policy = LeastLoaded::default();
         assert_eq!(
             policy.pick_peer(&peers),
-            RoutingDecision::Remote(PeerId::new("idle"))
+            RoutingDecision::Remote(PeerSessionId::new("idle"))
         );
     }
 
@@ -359,13 +392,13 @@ mod tests {
         let now = Instant::now();
         let peers = vec![
             PeerLoad {
-                peer: PeerId::new("zero"),
+                peer: PeerSessionId::new("zero"),
                 tokens_per_sec: 0.0,
                 last_observed: now,
                 healthy: false,
             },
             PeerLoad {
-                peer: PeerId::new("low"),
+                peer: PeerSessionId::new("low"),
                 tokens_per_sec: 10.0,
                 last_observed: now,
                 healthy: true,
@@ -374,7 +407,7 @@ mod tests {
         let policy = LeastLoaded::default();
         assert_eq!(
             policy.pick_peer(&peers),
-            RoutingDecision::Remote(PeerId::new("low")),
+            RoutingDecision::Remote(PeerSessionId::new("low")),
         );
     }
 
@@ -384,13 +417,13 @@ mod tests {
         let fresh = Instant::now();
         let peers = vec![
             PeerLoad {
-                peer: PeerId::new("stale-idle"),
+                peer: PeerSessionId::new("stale-idle"),
                 tokens_per_sec: 0.0,
                 last_observed: stale,
                 healthy: true,
             },
             PeerLoad {
-                peer: PeerId::new("fresh-medium"),
+                peer: PeerSessionId::new("fresh-medium"),
                 tokens_per_sec: 50.0,
                 last_observed: fresh,
                 healthy: true,
@@ -401,7 +434,7 @@ mod tests {
         };
         assert_eq!(
             policy.pick_peer(&peers),
-            RoutingDecision::Remote(PeerId::new("fresh-medium")),
+            RoutingDecision::Remote(PeerSessionId::new("fresh-medium")),
         );
     }
 
@@ -423,7 +456,7 @@ mod tests {
 
     fn load_at(peer: &str, tps: f64, when: Instant) -> PeerLoad {
         PeerLoad {
-            peer: PeerId::new(peer),
+            peer: PeerSessionId::new(peer),
             tokens_per_sec: tps,
             last_observed: when,
             healthy: true,
@@ -489,5 +522,31 @@ mod tests {
             RoutingDecision::Remote(p) => assert_eq!(p.as_str(), "idle"),
             other => panic!("expected Remote(idle), got {other:?}"),
         }
+    }
+
+    // ARCH-21: the cluster has exactly TWO peer-identity newtypes, kept
+    // DISTINCT so a UUID session id can never be swapped for a pubkey.
+    // The distinctness itself is compiler-enforced (these helpers only
+    // compile because each value reaches the role that accepts its type);
+    // this test documents the invariant + pins the on-wire shape.
+    #[test]
+    fn peer_identity_types_are_distinct_and_pubkey_is_wire_transparent() {
+        fn takes_session(s: &PeerSessionId) -> &str {
+            s.as_str()
+        }
+        fn takes_pubkey(k: &PeerPubkey) -> &str {
+            k.as_str()
+        }
+
+        let sid = PeerSessionId::new("018f-uuid-v7");
+        let pk = PeerPubkey::new("aa11bb22");
+        assert_eq!(takes_session(&sid), "018f-uuid-v7");
+        assert_eq!(takes_pubkey(&pk), "aa11bb22");
+
+        // PeerPubkey is #[serde(transparent)] → a bare string, byte-identical
+        // to the pre-ARCH-21 gossip_wire::PeerId so gossip frames don't break.
+        assert_eq!(serde_json::to_string(&pk).unwrap(), "\"aa11bb22\"");
+        let back: PeerPubkey = serde_json::from_str("\"aa11bb22\"").unwrap();
+        assert_eq!(back, pk);
     }
 }
