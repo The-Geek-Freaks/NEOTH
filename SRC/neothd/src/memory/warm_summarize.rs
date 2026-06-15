@@ -85,6 +85,32 @@ pub fn needs_summary(conn: &Connection, day: &str) -> Result<bool> {
     Ok(retained >= 2)
 }
 
+/// Load ALL `kind='retained'` rows for `day` if a summary is still needed
+/// (≥ 2 retained rows, no existing summary). Returns `None` when the day
+/// should be skipped; `Some(events)` is the complete retained list — not just
+/// the rows migrated this pass, but every retained row for that day across all
+/// prior passes. This is the source that `summarize_day_batch` must receive so
+/// that multi-pass days get a summary covering their full warm-tier history.
+pub fn load_day_for_summary(
+    conn: &Connection,
+    day: &str,
+) -> Result<Option<Vec<(i64, String)>>> {
+    if !needs_summary(conn, day)? {
+        return Ok(None);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(event_id, -id), text \
+         FROM idx_consolidated \
+         WHERE day = ?1 AND kind = 'retained' \
+         ORDER BY id ASC",
+    )?;
+    let rows = stmt
+        .query_map(params![day], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("load retained rows for day summary")?;
+    Ok(Some(rows))
+}
+
 /// Insert a synthesised `kind='summary'` row for `day`. `event_id` is NULL (the
 /// summary is not one source event — `recall::touch_access`'s
 /// `COALESCE(event_id, -id)` handles that), `importance` is a neutral 0.5 so it
@@ -197,5 +223,47 @@ mod tests {
         let events = vec![(1, "did a thing".to_string()), (2, "did another".to_string())];
         let summary = summarize_day_batch(&StubSummarizer, &events).await.unwrap();
         assert_eq!(summary, "Alex shipped Nostr and OP-01.", "trimmed");
+    }
+
+    #[test]
+    fn load_day_for_summary_returns_none_when_already_summarised() {
+        let conn = mem_conn();
+        insert_retained(&conn, "2026-06-15", 1, "a");
+        insert_retained(&conn, "2026-06-15", 2, "b");
+        insert_summary_row(&conn, "2026-06-15", "rollup", 9).unwrap();
+        assert!(
+            load_day_for_summary(&conn, "2026-06-15").unwrap().is_none(),
+            "already has summary → None"
+        );
+    }
+
+    #[test]
+    fn load_day_for_summary_returns_none_when_fewer_than_two_retained() {
+        let conn = mem_conn();
+        insert_retained(&conn, "2026-06-15", 1, "only one");
+        assert!(
+            load_day_for_summary(&conn, "2026-06-15").unwrap().is_none(),
+            "single retained row → None"
+        );
+    }
+
+    #[test]
+    fn load_day_for_summary_returns_all_retained_across_passes() {
+        // The critical multi-pass scenario: rows 1+2 were migrated in pass A,
+        // row 3 in pass B. load_day_for_summary must return all three, not
+        // just the rows the caller happens to pass via days_needing_summary.
+        let conn = mem_conn();
+        insert_retained(&conn, "2026-06-15", 1, "pass-A event one");
+        insert_retained(&conn, "2026-06-15", 2, "pass-A event two");
+        insert_retained(&conn, "2026-06-15", 3, "pass-B event three");
+
+        let events = load_day_for_summary(&conn, "2026-06-15")
+            .unwrap()
+            .expect("three retained rows → Some");
+        assert_eq!(events.len(), 3, "all three retained rows must be loaded");
+        let texts: Vec<&str> = events.iter().map(|(_, t)| t.as_str()).collect();
+        assert!(texts.contains(&"pass-A event one"));
+        assert!(texts.contains(&"pass-A event two"));
+        assert!(texts.contains(&"pass-B event three"));
     }
 }

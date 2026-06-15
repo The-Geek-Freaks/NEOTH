@@ -226,28 +226,39 @@ pub async fn run_once(
 /// write a `kind='summary'` row. The SQLite reads/writes are sync (rusqlite), so
 /// they ride `spawn_blocking`; the provider call is async and runs between them.
 /// Best-effort: a per-day failure is logged + skipped, never propagated.
+///
+/// `days` is the list of (day, events) pairs from the consolidation pass — used
+/// only to know WHICH days to check; the actual text fed to the summarizer is
+/// loaded fresh from `idx_consolidated` by [`warm_summarize::load_day_for_summary`]
+/// so that multi-pass days (where earlier passes already retained rows for the
+/// same calendar day) get a summary covering their complete warm-tier history,
+/// not just the rows migrated in this pass.
 async fn summarize_consolidated_days(
     db_path: &Path,
     provider: &dyn Provider,
     days: &[(String, Vec<(i64, String)>)],
 ) {
-    for (day, events) in days {
-        // Skip a day that already has a summary or has too few rows to bother.
+    for (day, _events_this_pass) in days {
+        // Load the FULL retained set for this day (check + fetch in one open).
+        // Returns None when the day already has a summary or has < 2 rows.
         let db = db_path.to_path_buf();
         let day_c = day.clone();
-        let needs = tokio::task::spawn_blocking(move || {
+        let all_events = match tokio::task::spawn_blocking(move || {
             store::open(&db)
                 .ok()
-                .and_then(|conn| crate::memory::warm_summarize::needs_summary(&conn, &day_c).ok())
-                .unwrap_or(false)
+                .and_then(|conn| {
+                    crate::memory::warm_summarize::load_day_for_summary(&conn, &day_c).ok()
+                })
+                .flatten()
         })
         .await
-        .unwrap_or(false);
-        if !needs {
-            continue;
-        }
+        .unwrap_or(None)
+        {
+            Some(v) => v,
+            None => continue,
+        };
 
-        let summary = match crate::memory::warm_summarize::summarize_day_batch(provider, events).await
+        let summary = match crate::memory::warm_summarize::summarize_day_batch(provider, &all_events).await
         {
             Ok(s) if !s.is_empty() => s,
             Ok(_) => continue,
@@ -259,12 +270,15 @@ async fn summarize_consolidated_days(
 
         let db = db_path.to_path_buf();
         let day_c = day.clone();
-        let now_ns = crate::time::now_unix_ns() as i64;
-        let _ = tokio::task::spawn_blocking(move || -> Result<()> {
+        let now_ns = crate::time::now_unix_i64();
+        if let Err(e) = tokio::task::spawn_blocking(move || -> Result<()> {
             let conn = store::open(&db)?;
             crate::memory::warm_summarize::insert_summary_row(&conn, &day_c, &summary, now_ns)
         })
-        .await;
+        .await
+        {
+            tracing::debug!(error = %e, day = %day, "warm summarize insert failed (non-fatal)");
+        }
     }
 }
 
