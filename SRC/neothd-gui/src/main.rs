@@ -329,6 +329,10 @@ fn main() -> Result<()> {
             return;
         };
 
+        // Buddy reacts: the operator just asked → the orb starts thinking.
+        w.set_buddy_mood("thinking".into());
+        w.set_buddy_caption("thinking…".into());
+
         use slint::{Model, ModelRc, VecModel};
         let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
         let placeholder_idx = rows.len() + 1;
@@ -390,6 +394,9 @@ fn main() -> Result<()> {
                             let weak_live = weak_worker.clone();
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(w) = weak_live.upgrade() {
+                                    // Reply deltas are arriving → the orb is on it.
+                                    w.set_buddy_mood("working".into());
+                                    w.set_buddy_caption("on it".into());
                                     use slint::{Model, ModelRc, VecModel};
                                     let mut rows: Vec<ChatMessage> =
                                         w.get_chat_messages().iter().collect();
@@ -431,6 +438,7 @@ fn main() -> Result<()> {
                     use slint::{Model, ModelRc, VecModel};
                     let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
                     let ts = format_now_hms();
+                    let succeeded = outcome.is_ok();
                     // Chat-feel parity: a successful reply is segmented into
                     // one bubble per paragraph (openhuman cluster feel); an
                     // error stays a single `error`-role bubble.
@@ -472,6 +480,16 @@ fn main() -> Result<()> {
                         rows.extend(replacements);
                     }
                     w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+                    // Buddy reflects the outcome: a win lights it green, a
+                    // failure shows the error face. It holds that state until
+                    // the next message resets it to "thinking".
+                    if succeeded {
+                        w.set_buddy_mood("success".into());
+                        w.set_buddy_caption("done ✓".into());
+                    } else {
+                        w.set_buddy_mood("error".into());
+                        w.set_buddy_caption("error".into());
+                    }
                 }
             });
         });
