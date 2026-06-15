@@ -71,6 +71,7 @@ pub mod store;
 pub mod tiers;
 pub mod transfer_bundle;
 pub mod views;
+pub mod warm_summarize;
 
 /// Escape SQLite `LIKE` wildcards (`\`, `%`, `_`) in an untrusted string
 /// so they match literally. ALWAYS pair the bound value with

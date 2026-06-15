@@ -68,6 +68,13 @@ pub struct PassReport {
     /// REFUSED to run (every count above stays 0) so the corruption is not
     /// amplified; see [`PassReport::integrity_ok`].
     pub integrity_issues: Vec<String>,
+    /// GOLD-FEAT-12 (b): the (day, [(event_id, text)]) groups this pass moved
+    /// into the warm tier. The async consolidation cron
+    /// (`decay_task::run_once`) reads this AFTER the sync pass returns and, when
+    /// a LOCAL provider is configured, rolls each day up into a `kind='summary'`
+    /// row via [`crate::memory::warm_summarize`]. Empty when nothing
+    /// consolidated, so a no-op pass still equals `PassReport::default()`.
+    pub days_needing_summary: Vec<(String, Vec<(i64, String)>)>,
 }
 
 impl PassReport {
@@ -181,6 +188,10 @@ pub fn run_consolidation_pass(
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(select);
 
+    // GOLD-FEAT-12 (b): group the day's consolidated rows so the async cron can
+    // summarize them after this sync pass returns.
+    let mut day_events: std::collections::HashMap<String, Vec<(i64, String)>> =
+        std::collections::HashMap::new();
     for (event_id, ts_ns, text, text_hash, importance, access_count) in rows {
         if importance < FORGET_FLOOR {
             // Below floor → drop without consolidating. Archive MD remains.
@@ -215,7 +226,11 @@ pub fn run_consolidation_pass(
             params![event_id],
         )?;
         report.consolidated += 1;
+        // `day` + `text` are only borrowed by the INSERT above, so move them into
+        // the per-day group for the post-pass summarize step.
+        day_events.entry(day).or_default().push((event_id, text));
     }
+    report.days_needing_summary = day_events.into_iter().collect();
 
     // ── Phase 3: warm → cold promotion / archive ──────────────────────────
     //

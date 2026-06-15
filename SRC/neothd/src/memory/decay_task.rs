@@ -9,13 +9,15 @@
 //! Errors are logged but **never** propagate out — a transient SQLite
 //! error must not crash the daemon. The next tick retries.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use tokio::task::JoinHandle;
 
 use crate::memory::{consolidate, store};
+use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
 
 /// 2 hours. Matches the hippocampus-preprocess.timer cadence pattern.
@@ -33,8 +35,11 @@ pub fn spawn(
     interval: Duration,
     vault: Option<PathBuf>,
     wal_writer: Option<WalWriterHandle>,
+    // GOLD-FEAT-12 (b): the daemon's provider, for warm-tier summarization. When
+    // `None` (or a non-local provider) the pass writes no summary rows.
+    provider: Option<Arc<dyn Provider>>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move { run(db_path, interval, vault, wal_writer).await })
+    tokio::spawn(async move { run(db_path, interval, vault, wal_writer, provider).await })
 }
 
 /// M-04 (Session 24): infinite-loop body never returns Ok(()), so
@@ -48,6 +53,7 @@ async fn run(
     interval: Duration,
     vault: Option<PathBuf>,
     wal_writer: Option<WalWriterHandle>,
+    provider: Option<Arc<dyn Provider>>,
 ) {
     let mut ticker = tokio::time::interval(interval);
     // Skip missed ticks rather than bursting (the codebase-wide default for
@@ -65,7 +71,9 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        if let Err(e) = run_once(&db_path, vault.clone(), wal_writer.as_ref()).await {
+        if let Err(e) =
+            run_once(&db_path, vault.clone(), wal_writer.as_ref(), provider.clone()).await
+        {
             tracing::warn!(
                 db = %db_path.display(),
                 error = %e,
@@ -127,6 +135,7 @@ pub async fn run_once(
     db_path: &std::path::Path,
     vault: Option<PathBuf>,
     wal_writer: Option<&WalWriterHandle>,
+    provider: Option<Arc<dyn Provider>>,
 ) -> Result<consolidate::PassReport> {
     let db = db_path.to_path_buf();
     let report = tokio::task::spawn_blocking(move || -> Result<consolidate::PassReport> {
@@ -193,6 +202,17 @@ pub async fn run_once(
     })
     .await??;
 
+    // GOLD-FEAT-12 (b): roll up the days this pass consolidated into
+    // `kind='summary'` rows. MUST run here (async), NOT inside the consolidation
+    // `spawn_blocking` above — `local_qwen::complete` itself uses `spawn_blocking`,
+    // so a nested `block_on` would deadlock. Local providers only (no cloud
+    // billing for background consolidation); best-effort, never fails the pass.
+    if let Some(p) = provider.as_ref() {
+        if crate::providers::is_local_provider(p.name()) && !report.days_needing_summary.is_empty() {
+            summarize_consolidated_days(db_path, p.as_ref(), &report.days_needing_summary).await;
+        }
+    }
+
     // KF-10: audit the pass when the daemon owns the writer + it touched rows.
     if let Some(w) = wal_writer {
         if pass_did_work(&report) {
@@ -200,6 +220,52 @@ pub async fn run_once(
         }
     }
     Ok(report)
+}
+
+/// GOLD-FEAT-12 (b) — summarize each consolidated day via the local provider and
+/// write a `kind='summary'` row. The SQLite reads/writes are sync (rusqlite), so
+/// they ride `spawn_blocking`; the provider call is async and runs between them.
+/// Best-effort: a per-day failure is logged + skipped, never propagated.
+async fn summarize_consolidated_days(
+    db_path: &Path,
+    provider: &dyn Provider,
+    days: &[(String, Vec<(i64, String)>)],
+) {
+    for (day, events) in days {
+        // Skip a day that already has a summary or has too few rows to bother.
+        let db = db_path.to_path_buf();
+        let day_c = day.clone();
+        let needs = tokio::task::spawn_blocking(move || {
+            store::open(&db)
+                .ok()
+                .and_then(|conn| crate::memory::warm_summarize::needs_summary(&conn, &day_c).ok())
+                .unwrap_or(false)
+        })
+        .await
+        .unwrap_or(false);
+        if !needs {
+            continue;
+        }
+
+        let summary = match crate::memory::warm_summarize::summarize_day_batch(provider, events).await
+        {
+            Ok(s) if !s.is_empty() => s,
+            Ok(_) => continue,
+            Err(e) => {
+                tracing::debug!(error = %e, day = %day, "warm summarize failed (non-fatal)");
+                continue;
+            }
+        };
+
+        let db = db_path.to_path_buf();
+        let day_c = day.clone();
+        let now_ns = crate::time::now_unix_ns() as i64;
+        let _ = tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = store::open(&db)?;
+            crate::memory::warm_summarize::insert_summary_row(&conn, &day_c, &summary, now_ns)
+        })
+        .await;
+    }
 }
 
 #[cfg(test)]
@@ -211,7 +277,7 @@ mod tests {
     async fn run_once_returns_a_pass_report_against_empty_db() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("v.db");
-        let report = run_once(&db, None, None).await.expect("run once");
+        let report = run_once(&db, None, None, None).await.expect("run once");
         // Empty db: nothing to decay, nothing to promote, nothing to forget.
         assert_eq!(report.hot_decayed, 0);
         assert_eq!(report.hot_archived, 0);
@@ -224,7 +290,7 @@ mod tests {
         let db = dir.path().join("v.db");
         // 10ms interval — task ticks fast enough to be in `interval.tick()`
         // when we abort.
-        let task = spawn(db, Duration::from_millis(10), None, None);
+        let task = spawn(db, Duration::from_millis(10), None, None, None);
         // Give it a moment to enter the loop.
         tokio::time::sleep(Duration::from_millis(25)).await;
         task.abort();
@@ -278,7 +344,7 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
 
-        let report = run_once(&db, None, Some(&writer)).await.unwrap();
+        let report = run_once(&db, None, Some(&writer), None).await.unwrap();
         assert!(report.hot_decayed >= 1, "decay must touch the seeded row");
 
         drop(writer);
@@ -299,7 +365,7 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
 
-        let report = run_once(&db, None, Some(&writer)).await.unwrap();
+        let report = run_once(&db, None, Some(&writer), None).await.unwrap();
         assert_eq!(report.hot_decayed, 0);
 
         drop(writer);

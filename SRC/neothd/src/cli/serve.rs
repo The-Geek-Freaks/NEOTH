@@ -574,6 +574,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         // KF-10: the daemon owns the WAL writer, so each pass that touches rows
         // emits a `0x94 CONSOLIDATION_PASS` audit frame.
         Some(writer.clone()),
+        // GOLD-FEAT-12 (b): pass the daemon provider so a LOCAL one can roll each
+        // consolidated day up into a `kind='summary'` row (the pass's
+        // is_local_provider guard skips cloud providers — no background billing).
+        shared_provider.clone(),
     ));
     info!(
         interval_secs = crate::memory::decay_task::DEFAULT_INTERVAL.as_secs(),
