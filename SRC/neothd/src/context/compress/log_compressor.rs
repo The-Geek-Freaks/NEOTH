@@ -31,9 +31,19 @@ const CONFIDENCE: f32 = 0.8;
 
 // ─── Line-importance heuristic (regex, dep-free) ───────────────────────
 
-/// Errors + fatals + panics + stack frames — always kept.
+// neoth: line classification stays a 3-regex heuristic. headroom replaces this
+// with one aho-corasick automaton (O(n+m) vs O(3n)) — but at NEOTH's
+// log-compression scale (occasional build-output runs, not a hot loop) three
+// compiled regexes are already fast enough, so the AC rewrite (GOLD-ADAPT-HR-03b,
+// aho-corasick is already in Cargo.lock) is deferred until log compression ever
+// shows on a profile. Upgrade path: swap the three statics for one AhoCorasick +
+// a word-boundary post-filter, keeping line_importance's signature.
+
+/// Errors + fatals + panics + stack frames — always kept. GOLD-ADAPT-HR-03 added
+/// ABORT/TIMEOUT/DENIED/REJECTED (operator-facing failure words that headroom's
+/// keyword set carries but NEOTH's did not).
 static HIGH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(\b(ERROR|FAIL|FAILED|FATAL|CRITICAL|PANIC|EXCEPTION|ASSERT)\b|Traceback \(most recent call last\)|^\s*at\s+[\w.$]+\()").unwrap()
+    Regex::new(r"(?i)(\b(ERROR|FAIL|FAILED|FATAL|CRITICAL|PANIC|EXCEPTION|ASSERT|ABORT|TIMEOUT|DENIED|REJECTED)\b|Traceback \(most recent call last\)|^\s*at\s+[\w.$]+\()").unwrap()
 });
 /// Warnings — kept.
 static WARN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(WARN|WARNING|DEPRECAT)").unwrap());
@@ -51,6 +61,66 @@ pub fn line_importance(line: &str) -> f32 {
         0.2
     } else {
         0.5 // unclassified — neutral; kept only via head/tail window
+    }
+}
+
+/// GOLD-ADAPT-HR-03a — the dedup key for a warning line: the line with each run
+/// of digits collapsed to `#`, so "disk usage high at 5mb" and "…7mb" share a key
+/// (same template, different value) but "disk full" and "network down" do not.
+/// A prefix-before-colon key would over-collapse — every "WARNING: …" line shares
+/// the prefix "WARNING" — so the template is keyed on the whole normalised line.
+fn warn_key(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_digits = false;
+    for c in line.chars() {
+        if c.is_ascii_digit() {
+            if !in_digits {
+                out.push('#');
+            }
+            in_digits = true;
+        } else {
+            out.push(c);
+            in_digits = false;
+        }
+    }
+    out
+}
+
+/// GOLD-ADAPT-HR-02 — keep multi-line stack traces WHOLE. A Python traceback's
+/// frame lines (`  File "...", line N`) and its trailing `ExceptionType: message`
+/// line don't individually match the error keywords, so the base keep-mask would
+/// strip a trace down to just its "Traceback (most recent call last)" header.
+/// This post-pass keeps, for each opener, the contiguous continuation block so
+/// the model sees the whole trace instead of a decapitated one. It runs after the
+/// keep-mask, so the trace survives regardless of the `max_kept_priority` cap.
+fn extend_trace_blocks(lines: &[&str], keep: &mut [bool]) {
+    let n = lines.len();
+    for i in 0..n {
+        // Python: a Traceback header pulls in its indented frame block + the
+        // trailing (non-indented) `ExceptionType: message` line that closes it.
+        if lines[i].contains("Traceback (most recent call last)") {
+            keep[i] = true;
+            let mut j = i + 1;
+            while j < n && (lines[j].is_empty() || lines[j].starts_with([' ', '\t'])) {
+                keep[j] = true;
+                j += 1;
+            }
+            if j < n {
+                keep[j] = true; // the exception line closing the trace
+            }
+        }
+        // JS / Java: an `at <frame>(` line is part of a stack — keep it, plus the
+        // error header directly above the first frame of the run.
+        let t = lines[i].trim_start();
+        if t.starts_with("at ") && t.contains('(') {
+            keep[i] = true;
+            if i > 0 && !keep[i - 1] {
+                let prev = lines[i - 1].trim_start();
+                if !(prev.starts_with("at ") && prev.contains('(')) {
+                    keep[i - 1] = true;
+                }
+            }
+        }
     }
 }
 
@@ -76,6 +146,11 @@ pub struct LogOffloadConfig {
     /// Verbatim head/tail context lines always kept (the log's start/end
     /// frame the errors in between).
     pub head_tail: usize,
+    /// GOLD-ADAPT-HR-03a: cap on distinct WARNING lines kept. Warnings are
+    /// deduplicated on their message prefix (text before the first `:`/`=`), so
+    /// 50× "warning: unused var X" (different X) collapse to one. Beyond this
+    /// many DISTINCT warning prefixes the rest are dropped to CCR.
+    pub max_distinct_warnings: usize,
 }
 
 impl Default for LogOffloadConfig {
@@ -88,6 +163,7 @@ impl Default for LogOffloadConfig {
             priority_dilution_weight: 0.5,
             max_kept_priority: 50,
             head_tail: 3,
+            max_distinct_warnings: 10,
         }
     }
 }
@@ -184,6 +260,34 @@ impl OffloadTransform for LogOffload {
             }
         }
 
+        // GOLD-ADAPT-HR-02: keep multi-line stack traces whole (Python frame
+        // blocks + JS/Java `at` runs) so a trace survives un-decapitated.
+        extend_trace_blocks(&lines, &mut keep);
+
+        // GOLD-ADAPT-HR-03a: collapse repeated warnings. A log with 50× the same
+        // warning (different trailing value) keeps all 50 today; dedup on the
+        // message prefix + cap the distinct count.
+        {
+            let mut warn_seen: HashSet<String> = HashSet::new();
+            for i in 0..n {
+                if !keep[i] {
+                    continue;
+                }
+                let s = line_importance(lines[i]);
+                if !(0.55..0.75).contains(&s) {
+                    continue; // only WARN-band lines (0.6) are deduped
+                }
+                let key = warn_key(lines[i]);
+                if warn_seen.contains(&key) {
+                    keep[i] = false; // duplicate warning template
+                } else if warn_seen.len() >= self.config.max_distinct_warnings {
+                    keep[i] = false; // beyond the distinct-warning cap
+                } else {
+                    warn_seen.insert(key);
+                }
+            }
+        }
+
         // HR-07 safety: never drop a line inside a code fence or carrying a
         // tool-call / XML structural tag — that would dangle the boundary.
         if has_protected_regions(content) {
@@ -253,6 +357,23 @@ mod tests {
         assert_eq!(line_importance("plain unclassified line"), 0.5);
         // High beats a co-occurring INFO token.
         assert!(line_importance("INFO: ERROR recovered") >= 0.9);
+    }
+
+    #[test]
+    fn importance_new_high_keywords_and_token_stays_neutral() {
+        // GOLD-ADAPT-HR-03: failure words headroom carries that NEOTH lacked.
+        assert!(line_importance("process abort due to OOM") >= 0.9);
+        assert!(line_importance("request timeout after 30s") >= 0.9);
+        assert!(line_importance("auth rejected by server") >= 0.9);
+        assert!(line_importance("connection denied by peer") >= 0.9);
+        // "token" is NOT a priority word — an LLM token-count line stays neutral.
+        assert_eq!(line_importance("token count: 4096"), 0.5);
+    }
+
+    #[test]
+    fn warn_key_collapses_digits_but_keeps_distinct_templates() {
+        assert_eq!(warn_key("disk high at 5mb"), warn_key("disk high at 17mb"));
+        assert_ne!(warn_key("disk full"), warn_key("network down"));
     }
 
     #[test]
@@ -374,5 +495,82 @@ mod tests {
         } else {
             assert_eq!(store.len(), 0);
         }
+    }
+
+    #[test]
+    fn python_traceback_kept_whole_not_decapitated() {
+        // GOLD-ADAPT-HR-02: the frame lines + exception line don't match the
+        // error keywords, but the whole trace must survive, not just its header.
+        let mut log = String::new();
+        for i in 0..40 {
+            log.push_str(&format!("INFO heartbeat {i}\n"));
+        }
+        log.push_str("Traceback (most recent call last):\n");
+        log.push_str("  File \"a.py\", line 10, in foo\n");
+        log.push_str("    bar()\n");
+        log.push_str("  File \"b.py\", line 5, in bar\n");
+        log.push_str("    raise ValueError(\"oops\")\n");
+        log.push_str("ValueError: oops\n");
+        for i in 0..40 {
+            log.push_str(&format!("INFO heartbeat {}\n", 40 + i));
+        }
+        let store = InMemoryCcrStore::new();
+        let r = offload()
+            .apply(&log, &CompressionContext::default(), &store)
+            .expect("compresses");
+        assert!(r.output.contains("Traceback (most recent call last)"), "header");
+        assert!(r.output.contains("File \"a.py\""), "frame a.py missing");
+        assert!(r.output.contains("File \"b.py\""), "frame b.py missing");
+        assert!(r.output.contains("ValueError: oops"), "exception line missing");
+        assert!(r.bytes_saved > 0);
+    }
+
+    #[test]
+    fn js_at_frames_kept_with_their_header() {
+        let mut log = String::new();
+        for i in 0..40 {
+            log.push_str(&format!("INFO heartbeat {i}\n"));
+        }
+        log.push_str("TypeError: Cannot read property 'x' of null\n");
+        log.push_str("    at Object.foo (app.js:10:5)\n");
+        log.push_str("    at Module.bar (lib.js:42:3)\n");
+        for i in 0..40 {
+            log.push_str(&format!("INFO heartbeat {}\n", 40 + i));
+        }
+        let store = InMemoryCcrStore::new();
+        let r = offload()
+            .apply(&log, &CompressionContext::default(), &store)
+            .expect("compresses");
+        assert!(r.output.contains("at Object.foo"));
+        assert!(r.output.contains("at Module.bar"));
+        assert!(
+            r.output.contains("TypeError: Cannot read property"),
+            "the error header above the frames must survive"
+        );
+    }
+
+    #[test]
+    fn repeated_warnings_dedup_to_one_template() {
+        // GOLD-ADAPT-HR-03a: 50 warnings sharing a template collapse to one.
+        let mut log = String::new();
+        for i in 0..30 {
+            log.push_str(&format!("INFO heartbeat {i}\n"));
+        }
+        for i in 0..50 {
+            log.push_str(&format!("WARNING disk usage high at {i}mb\n"));
+        }
+        for i in 0..30 {
+            log.push_str(&format!("INFO heartbeat {}\n", 30 + i));
+        }
+        let store = InMemoryCcrStore::new();
+        let r = offload()
+            .apply(&log, &CompressionContext::default(), &store)
+            .expect("compresses");
+        let kept = r
+            .output
+            .lines()
+            .filter(|l| l.starts_with("WARNING disk usage high"))
+            .count();
+        assert_eq!(kept, 1, "50 same-template warnings dedup to 1, got {kept}");
     }
 }
