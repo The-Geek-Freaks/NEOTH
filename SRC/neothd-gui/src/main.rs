@@ -1287,9 +1287,38 @@ struct MinimalFreedomYaml {
     cluster: Option<ClusterYamlBlock>,
 }
 
-#[derive(Serialize, Deserialize)]
+/// Minimal mirror of the on-disk `cluster:` block.
+///
+/// The daemon's `ClusterConfig` (config/mod.rs) has the shape:
+///   cluster:
+///     name: null | string
+///     enabled: bool
+///
+/// The GUI wizard writes a *different* shape when the operator disables
+/// mDNS discovery:
+///   cluster:
+///     mdns:
+///       enabled: false
+///
+/// Both shapes must round-trip through `MinimalFreedomYaml` without
+/// a parse error.  All fields carry `#[serde(default)]` so that any
+/// combination of present/absent keys deserialises cleanly.
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
 struct ClusterYamlBlock {
-    mdns: ClusterMdnsYamlBlock,
+    /// Daemon-written field: `cluster.name`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// Daemon-written field: `cluster.enabled`.
+    #[serde(skip_serializing_if = "is_false")]
+    enabled: bool,
+    /// GUI-written sub-block: `cluster.mdns.enabled`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mdns: Option<ClusterMdnsYamlBlock>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1345,7 +1374,8 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     let cluster = state
         .cluster_discovery_disabled
         .then_some(ClusterYamlBlock {
-            mdns: ClusterMdnsYamlBlock { enabled: false },
+            mdns: Some(ClusterMdnsYamlBlock { enabled: false }),
+            ..Default::default()
         });
     let yaml = MinimalFreedomYaml {
         operator_id: state.operator_id.clone(),
@@ -3850,6 +3880,68 @@ mod tests {
         let body = std::fs::read_to_string(&freedom).unwrap();
         assert!(body.contains("- cli"));
         assert!(body.contains("- telegram"));
+    }
+
+    /// Regression test for the M-1 parse failure:
+    /// The real operator freedom.yaml written by neothd has
+    ///   cluster:
+    ///     name: null
+    ///     enabled: false
+    /// which is the daemon's ClusterConfig shape — NOT the GUI's
+    /// `mdns: { enabled: false }` sub-block shape.  The old
+    /// ClusterYamlBlock required a `mdns:` key and had no
+    /// `#[serde(default)]`, so serde_yaml returned
+    /// "missing field `mdns`" and read_freedom_yaml failed,
+    /// causing the Done summary to show defaults instead of
+    /// the operator's real values.
+    #[test]
+    fn read_freedom_yaml_parses_daemon_written_cluster_block() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        // Exact shape that neothd writes (ClusterConfig with name+enabled,
+        // no mdns sub-block).
+        std::fs::write(
+            &path,
+            "operator_id: testop\n\
+             provider_kind: claude_cli\n\
+             autonomy: full\n\
+             channels:\n- cli\n\
+             cluster:\n  name: null\n  enabled: false\n",
+        )
+        .unwrap();
+        let cfg = read_freedom_yaml(&path)
+            .expect("must parse daemon-written cluster block without error");
+        assert_eq!(cfg.operator_id, "testop");
+        assert_eq!(cfg.provider_kind, "claude_cli");
+        assert_eq!(cfg.autonomy, "full");
+        assert!(cfg.channels.iter().any(|c| c == "cli"));
+        // cluster is present but carries only daemon fields — must not panic
+        assert!(cfg.cluster.is_some());
+    }
+
+    /// Also verify the full real-world shape (many extra top-level fields)
+    /// does not trip the parse.
+    #[test]
+    fn read_freedom_yaml_parses_fully_expanded_real_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: n\n\
+             provider_kind: claude_cli\n\
+             autonomy: full\n\
+             channels:\n- cli\n\
+             cluster:\n  name: null\n  enabled: false\n\
+             inference:\n  mode: single\n\
+             council:\n  selection_mode: legacy_majority\n\
+             skills:\n  disabled_for_eval_sessions: false\n\
+             security:\n  dangerous_commands: deny\n",
+        )
+        .unwrap();
+        let cfg = read_freedom_yaml(&path)
+            .expect("fully-expanded freedom.yaml must parse");
+        assert_eq!(cfg.operator_id, "n");
+        assert_eq!(cfg.autonomy, "full");
     }
 
     #[test]
