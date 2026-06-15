@@ -3565,12 +3565,41 @@ fn recall_lanes_for_block(
     const RECALL_BLOCK_LIMIT: usize = 5;
     let conn = crate::memory::store::open(db_path).ok()?;
     let plan = crate::memory::region_router::route_query(prompt);
-    let output = crate::cli::recall::query_three_lanes(&conn, &plan, prompt, RECALL_BLOCK_LIMIT);
+    let mut output = crate::cli::recall::query_three_lanes(&conn, &plan, prompt, RECALL_BLOCK_LIMIT);
+    // GOLD-FEAT-12 D-block dedup: drop episodes whose text already appears as a
+    // canonical fact (or an earlier episode) before the block is rendered.
+    dedup_recall_lanes(&mut output);
     if output.is_empty() {
         None
     } else {
         Some(output)
     }
+}
+
+/// GOLD-FEAT-12 D-block dedup — the canonical and episode recall lanes are
+/// queried from different tables independently, so an operator-asserted fact
+/// that was ALSO captured as an episode (or a near-repeat episode) renders
+/// twice in Block::D, spending prompt budget on a duplicate. Drop an episode
+/// whose normalized text collides (xxh3) with a canonical fact or an
+/// earlier-kept episode. Canonical facts are highest-trust → kept whole;
+/// contradictions (a distinct pair+confidence shape) are left untouched. The
+/// lanes' own `text_hash` fields are deliberately NOT reused: they hash
+/// different inputs per lane (bare statement vs WAL payload envelope), so they
+/// cannot be compared across lanes.
+fn dedup_recall_lanes(out: &mut crate::cli::recall::RecallOutput) {
+    let mut seen: std::collections::HashSet<u64> =
+        out.canonical.iter().map(|h| recall_dedup_key(&h.text)).collect();
+    out.episodes.retain(|h| seen.insert(recall_dedup_key(&h.text)));
+}
+
+/// Normalized xxh3 dedup key: trim + collapse internal whitespace + lowercase,
+/// so "Alex  is the  Operator." and "alex is the operator." hash identically.
+/// Punctuation stays significant (conservative — never over-collapses two
+/// genuinely distinct memories). Hashes the FULL text, pre snippet-truncation,
+/// so two long memories that differ only past the 240-char cut stay distinct.
+fn recall_dedup_key(text: &str) -> u64 {
+    let norm = text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    xxhash_rust::xxh3::xxh3_64(norm.as_bytes())
 }
 
 /// Length-bound + newline-flatten one recall statement so one item = one compact
@@ -6582,6 +6611,65 @@ mod tests {
             !out.contains("Flagged contradictions"),
             "empty contradiction lane → no heading: {out}"
         );
+    }
+
+    /// One EpisodeHit carrying just `text` — the other fields are inert for the
+    /// dedup path (which keys purely on normalized text).
+    fn ep(text: &str) -> crate::memory::views::EpisodeHit {
+        crate::memory::views::EpisodeHit {
+            event_id: 0,
+            event_type: 0,
+            ts_ns: 0,
+            text: text.to_string(),
+            text_hash: String::new(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "hot".into(),
+            importance: None,
+            access_count: 0,
+            trust: 1,
+        }
+    }
+
+    #[test]
+    fn recall_dedup_key_normalizes_case_and_whitespace() {
+        // Case + internal-whitespace variants collapse to one key…
+        assert_eq!(
+            recall_dedup_key("Alex  is\tthe Operator."),
+            recall_dedup_key("alex is the operator.")
+        );
+        // …but distinct text and punctuation differences stay distinct
+        // (conservative — never over-collapses two genuine memories).
+        assert_ne!(recall_dedup_key("fact one"), recall_dedup_key("fact two"));
+        assert_ne!(recall_dedup_key("done"), recall_dedup_key("done."));
+    }
+
+    #[test]
+    fn dedup_recall_lanes_drops_episode_matching_canonical_or_prior_episode() {
+        let mut out = crate::cli::recall::RecallOutput {
+            canonical: vec![ep("Alex is the operator.")],
+            episodes: vec![
+                ep("alex  is the   operator."),   // case/ws variant of canonical → dropped
+                ep("Distinct episode about Rust."), // kept
+                ep("distinct episode about rust."), // case variant of prior episode → dropped
+            ],
+            contradictions: vec![crate::cli::recall::ContradictionLine {
+                // same text as a canonical fact, but contradictions are untouched
+                statement_a: "Alex is the operator.".into(),
+                statement_b: "Bob is the operator.".into(),
+                confidence: 0.9,
+            }],
+        };
+        dedup_recall_lanes(&mut out);
+        assert_eq!(out.canonical.len(), 1, "canonical lane is never pruned");
+        assert_eq!(
+            out.episodes.len(),
+            1,
+            "the canonical-dup and the intra-lane dup are both dropped"
+        );
+        assert_eq!(out.episodes[0].text, "Distinct episode about Rust.");
+        assert_eq!(out.contradictions.len(), 1, "contradiction lane is untouched");
     }
 
     // ── GOLD-ADAPT-MEM-12 — session-guidance block ───────────────────────
