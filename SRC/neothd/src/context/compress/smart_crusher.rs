@@ -351,7 +351,7 @@ fn detect_outliers(items: &[Value]) -> BTreeSet<usize> {
             continue;
         }
         let mut sorted: Vec<(&String, usize)> = val_counts.iter().map(|(k, &c)| (k, c)).collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
         let target = (present as f64 * 0.80).ceil() as usize;
         let mut covered = 0usize;
         let mut top: BTreeSet<&String> = BTreeSet::new();
