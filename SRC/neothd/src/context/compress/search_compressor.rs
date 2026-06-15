@@ -15,9 +15,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
-use std::sync::LazyLock;
-
-use regex::Regex;
 
 use crate::context::compress::ccr::{compute_key, marker_for, CcrStore};
 use crate::context::compress::content_detector::ContentType;
@@ -28,9 +25,44 @@ use crate::context::compress::transform::{
 const NAME: &str = "search_offload";
 const CONFIDENCE: f32 = 0.8;
 
-/// `path:line:` (grep -n style) at the start of a line — the same grammar the
-/// content detector uses to recognise search output.
-static SEARCH_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([^\s:]+):\d+:").unwrap());
+/// Parse a `path:line:` (grep -n style) hit, returning the path slice — the same
+/// grammar the content detector uses to recognise search output. **Windows-aware
+/// (GOLD-ADAPT-HR-01):** a leading drive prefix (`C:\…` / `C:/…`) is not mistaken
+/// for the `:line:` delimiter. The old `^([^\s:]+):\d+:` regex matched only `C`
+/// then failed on the backslash, so on NEOTH's own Windows build platform every
+/// drive-rooted grep hit fell through unrecognised and search output was never
+/// thinned. Returns `None` for non-hit lines (ripgrep summaries, blank
+/// separators, timestamped log lines) so they pass through verbatim.
+fn parse_line_path(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    // Skip a Windows drive prefix so its colon isn't read as the line marker.
+    let scan_from = if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+    {
+        3
+    } else {
+        0
+    };
+    // The path runs to the FIRST colon at/after scan_from; that colon must open a
+    // `:<digits>:` line-number marker (matching the original grammar).
+    let colon = scan_from + bytes[scan_from..].iter().position(|&b| b == b':')?;
+    let num_start = colon + 1;
+    let num_end = num_start
+        + bytes[num_start..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+    if num_end == num_start || bytes.get(num_end) != Some(&b':') {
+        return None;
+    }
+    let path = &line[..colon];
+    if path.is_empty() || path.bytes().any(|b| b.is_ascii_whitespace()) {
+        return None;
+    }
+    Some(path)
+}
 
 /// Tunables for [`SearchOffload`]. Code-level defaults; not freedom.yaml.
 #[derive(Debug, Clone, Copy)]
@@ -78,11 +110,7 @@ struct Match<'a> {
 fn parse_matches(content: &str) -> Vec<Match<'_>> {
     content
         .lines()
-        .filter_map(|line| {
-            SEARCH_LINE_RE
-                .captures(line)
-                .map(|c| Match { file: c.get(1).unwrap().as_str(), line })
-        })
+        .filter_map(|line| parse_line_path(line).map(|file| Match { file, line }))
         .collect()
 }
 
@@ -249,6 +277,41 @@ mod tests {
     fn name_and_applies_to() {
         assert_eq!(offload().name(), "search_offload");
         assert_eq!(offload().applies_to(), &[ContentType::SearchResults]);
+    }
+
+    #[test]
+    fn parse_line_path_handles_windows_paths_and_rejects_noise() {
+        // GOLD-ADAPT-HR-01: the regression — a Windows drive path must parse.
+        assert_eq!(
+            parse_line_path("C:\\repo\\src\\main.rs:42: fn main() {"),
+            Some("C:\\repo\\src\\main.rs"),
+            "Windows drive path was dropped before HR-01"
+        );
+        assert_eq!(parse_line_path("D:/a/b.rs:7:x"), Some("D:/a/b.rs"), "forward-slash drive too");
+        // Unix paths still parse (no regression).
+        assert_eq!(parse_line_path("src/utils.py:42:def foo"), Some("src/utils.py"));
+        assert_eq!(parse_line_path("/home/x/f.rs:1: y"), Some("/home/x/f.rs"));
+        // Non-hits pass through (None): summary, blank, a timestamped log line that
+        // must NOT be mistaken for a `path:line:` hit, and a missing line number.
+        assert_eq!(parse_line_path("12 matches across 3 files"), None);
+        assert_eq!(parse_line_path(""), None);
+        assert_eq!(parse_line_path("WARNING at 12:34: disk full"), None, "spaced prefix is not a path");
+        assert_eq!(parse_line_path("nolinenum.py:foo"), None, "missing line number");
+    }
+
+    #[test]
+    fn windows_path_cluster_thins_after_hr01() {
+        // The whole offload now works on Windows-path search output (a no-op before).
+        let input: String = (0..40)
+            .map(|i| format!("C:\\repo\\src\\big.rs:{}:def fn_{i}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let store = InMemoryCcrStore::new();
+        let r = offload()
+            .apply(&input, &CompressionContext::default(), &store)
+            .expect("Windows-path search output must now thin");
+        assert!(r.bytes_saved > 0);
+        assert!(r.output.contains("more matches in C:\\repo\\src\\big.rs"));
     }
 
     #[test]
