@@ -19,6 +19,7 @@
 //! real diffs. NEOTH uses its SHA-256 CCR key (no `md5` dep, unlike upstream)
 //! and a lean line-walker (no 1600-line unified-diff parser).
 
+use std::collections::BTreeSet;
 use std::fmt::Write;
 
 use crate::context::compress::ccr::{compute_key, marker_for, CcrStore};
@@ -43,6 +44,11 @@ pub struct DiffCompressorConfig {
     pub context_lines: usize,
     /// After this many changed files, the rest are summarised as a count.
     pub max_files: usize,
+    /// GOLD-ADAPT-HR-08: when ONE file carries more than this many `@@` hunks,
+    /// keep the first + last + the top relevance-scored middle hunks; the rest go
+    /// to CCR. Relevance = change density + overlap with the operator's query +
+    /// priority patterns (auth/security/error/…).
+    pub max_hunks_per_file: usize,
 }
 
 impl Default for DiffCompressorConfig {
@@ -62,6 +68,7 @@ impl Default for DiffCompressorConfig {
             drop_whitespace_only_hunks: true,
             context_lines: 3,
             max_files: 20,
+            max_hunks_per_file: 8,
         }
     }
 }
@@ -123,7 +130,7 @@ impl OffloadTransform for DiffCompressor {
     fn apply(
         &self,
         content: &str,
-        _ctx: &CompressionContext,
+        ctx: &CompressionContext,
         store: &dyn CcrStore,
     ) -> Result<OffloadOutput, TransformError> {
         let segments = parse_segments(content);
@@ -134,6 +141,16 @@ impl OffloadTransform for DiffCompressor {
         // Key first; only write to the store once savings are confirmed.
         let key = compute_key(content.as_bytes());
         let marker = marker_for(&key);
+
+        // GOLD-ADAPT-HR-08: query words for hunk relevance scoring (>=3 chars,
+        // lowercased). Empty when no query is set — scoring then leans on change
+        // density + priority patterns.
+        let query_words: Vec<String> = ctx
+            .query
+            .split_whitespace()
+            .filter(|w| w.len() >= 3)
+            .map(|w| w.to_ascii_lowercase())
+            .collect();
 
         let mut out = String::with_capacity(content.len());
         out.push_str(&leading_pre_diff_lines(content));
@@ -165,9 +182,33 @@ impl OffloadTransform for DiffCompressor {
                 );
                 changed = true;
             } else {
-                let trimmed = trim_context(&seg.body_lines, self.config.context_lines, &marker);
-                changed |= trimmed.trimmed_any;
-                out.push_str(&trimmed.body);
+                // GOLD-ADAPT-HR-08: on a many-hunk file, keep the first + last +
+                // top relevance-scored middle hunks; trim context within each kept
+                // hunk as before. A file at/under the cap takes the unchanged path.
+                let hunks = split_into_hunks(&seg.body_lines);
+                if hunks.len() <= self.config.max_hunks_per_file {
+                    let trimmed = trim_context(&seg.body_lines, self.config.context_lines, &marker);
+                    changed |= trimmed.trimmed_any;
+                    out.push_str(&trimmed.body);
+                } else {
+                    let keep = select_hunks(&hunks, &query_words, self.config.max_hunks_per_file);
+                    let mut last_dropped = false;
+                    for (hi, hunk) in hunks.iter().enumerate() {
+                        if keep.contains(&hi) {
+                            let trimmed = trim_context(hunk, self.config.context_lines, &marker);
+                            changed |= trimmed.trimmed_any;
+                            out.push_str(&trimmed.body);
+                            last_dropped = false;
+                        } else if !last_dropped {
+                            let _ = writeln!(
+                                out,
+                                "[… less-relevant hunks dropped — retrieve {marker} …]"
+                            );
+                            changed = true;
+                            last_dropped = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -205,6 +246,65 @@ impl DiffCompressor {
         }
         false
     }
+}
+
+// ─── GOLD-ADAPT-HR-08 — hunk relevance scoring ─────────────────────────
+
+/// Patterns that lift a hunk's relevance independent of the query.
+const PRIORITY_PATTERNS: &[&str] = &[
+    "test", "error", "auth", "security", "token", "permission", "panic", "unsafe", "secret",
+    "crypt", "admin", "fix",
+];
+
+/// Split a file segment's flat body into per-`@@`-hunk slices; each returned
+/// slice starts at an `@@` header (any lines before the first `@@` form the
+/// leading slice).
+fn split_into_hunks<'a, 'b>(body: &'b [&'a str]) -> Vec<&'b [&'a str]> {
+    let mut out: Vec<&'b [&'a str]> = Vec::new();
+    let mut start = 0usize;
+    for (i, line) in body.iter().enumerate() {
+        if i > start && line.starts_with("@@") {
+            out.push(&body[start..i]);
+            start = i;
+        }
+    }
+    if start < body.len() {
+        out.push(&body[start..]);
+    }
+    out
+}
+
+/// Relevance of one hunk: change density (capped) + query-word overlap +
+/// priority-pattern boost. Higher = more worth keeping.
+fn hunk_score(hunk: &[&str], query_words: &[String]) -> f32 {
+    let changes = hunk.iter().filter(|l| is_change_line(l)).count();
+    let change_density = (changes as f32 * 3.0).min(30.0) / 100.0;
+    let joined = hunk.iter().map(|l| l.to_ascii_lowercase()).collect::<Vec<_>>().join("\n");
+    let query_overlap =
+        query_words.iter().filter(|w| joined.contains(w.as_str())).count() as f32 * 0.2;
+    let pattern_boost = if PRIORITY_PATTERNS.iter().any(|p| joined.contains(p)) {
+        0.3
+    } else {
+        0.0
+    };
+    change_density + query_overlap + pattern_boost
+}
+
+/// Hunk indices to keep when a file exceeds the cap: always the first + last,
+/// then the highest-scored middle hunks up to `cap`.
+fn select_hunks(hunks: &[&[&str]], query_words: &[String], cap: usize) -> BTreeSet<usize> {
+    let n = hunks.len();
+    let mut keep: BTreeSet<usize> = BTreeSet::new();
+    keep.insert(0);
+    keep.insert(n - 1);
+    let mid_slots = cap.saturating_sub(keep.len());
+    let mut scored: Vec<(usize, f32)> =
+        (1..n - 1).map(|i| (i, hunk_score(hunks[i], query_words))).collect();
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    for (i, _) in scored.into_iter().take(mid_slots) {
+        keep.insert(i);
+    }
+    keep
 }
 
 // ─── Diff parsing (lean line-walker, no regex) ─────────────────────────
@@ -402,6 +502,65 @@ mod tests {
     fn name_and_applies_to() {
         assert_eq!(offload().name(), "diff_compressor");
         assert_eq!(offload().applies_to(), &[ContentType::GitDiff]);
+    }
+
+    /// One file with `hunks` `@@` blocks; the indices in `auth_at` carry an
+    /// auth-token change, the rest are generic.
+    fn many_hunk_diff(hunks: usize, auth_at: &[usize]) -> String {
+        let mut s = String::from("diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n");
+        for i in 0..hunks {
+            s.push_str(&format!("@@ -{},2 +{},2 @@\n", i * 10 + 1, i * 10 + 1));
+            if auth_at.contains(&i) {
+                s.push_str("-let old_auth_token = 0;\n+let new_auth_token = 1;\n");
+            } else {
+                s.push_str(&format!("-let old_{i} = 0;\n+let new_{i} = 1;\n"));
+            }
+        }
+        s
+    }
+
+    #[test]
+    fn split_into_hunks_splits_at_headers() {
+        let body = vec!["@@ -1 +1 @@", "-a", "+b", "@@ -5 +5 @@", "-c", "+d"];
+        let hunks = split_into_hunks(&body);
+        assert_eq!(hunks.len(), 2);
+        assert!(hunks[0][0].starts_with("@@ -1"));
+        assert!(hunks[1][0].starts_with("@@ -5"));
+    }
+
+    #[test]
+    fn hunk_score_lifts_priority_and_query_hunks() {
+        let auth = ["@@ -1,2 +1,2 @@", "-validate_permission(user)", "+check_permission(user, role)"];
+        let generic = ["@@ -1,2 +1,2 @@", "-let x = 1;", "+let x = 2;"];
+        // The priority pattern ("permission") lifts the auth hunk with no query.
+        assert!(hunk_score(&auth, &[]) > hunk_score(&generic, &[]));
+        // A matching query word lifts a hunk too.
+        let render = ["@@ -1,2 +1,2 @@", "-render_old()", "+render_new()"];
+        let q = vec!["render".to_string()];
+        assert!(hunk_score(&render, &q) > hunk_score(&render, &[]));
+    }
+
+    #[test]
+    fn many_hunk_file_keeps_relevant_hunks_drops_rest() {
+        // GOLD-ADAPT-HR-08: 20 hunks in one file, 2 carry "auth". With an auth
+        // query, the auth hunks survive and the generic bulk drops.
+        let diff = many_hunk_diff(20, &[7, 13]);
+        let cfg = DiffCompressorConfig {
+            max_hunks_per_file: 6,
+            min_lines: 5,
+            ..Default::default()
+        };
+        let dc = DiffCompressor::new(cfg);
+        let store = InMemoryCcrStore::new();
+        let ctx = CompressionContext::with_query("check the auth token flow");
+        let r = dc.apply(&diff, &ctx, &store).expect("compresses");
+        assert!(r.output.contains("auth_token"), "auth hunks must survive");
+        assert!(
+            r.output.contains("less-relevant hunks dropped"),
+            "generic hunks must drop: {}",
+            r.output
+        );
+        assert!(r.bytes_saved > 0);
     }
 
     #[test]
