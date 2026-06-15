@@ -32,6 +32,23 @@
 //!   - Cheap to consume from any future adapter (channel adapter
 //!     tails the file + sends each new line; tail-cursor is the
 //!     adapter's local state).
+//!
+//! ## Delivery semantics — at-most-once via inflight claim files
+//!
+//! Before attempting a channel send the tick writes an atomic claim
+//! file to `~/.neoth/proactive_inflight/<sha256(dedup_key)>.claimed`.
+//! The batch's claim files are deleted only AFTER the post-send queue
+//! save is durable (deleting per-item would let an already-sent earlier
+//! item in the same batch re-drain before the save → a double-fire). On
+//! the NEXT tick [`evict_inflight_claimed`] scans for surviving claim
+//! files; each one represents a send whose outcome is unknown (daemon
+//! crashed before the save). Those items are evicted from the queue
+//! without resending and recorded in the sidecar as `crash_recovered`.
+//! This replaces the earlier at-least-once contract: a duplicate nudge
+//! is no longer preferred over a silent loss; the `crash_recovered`
+//! sidecar entry makes the event operator-visible. `is_failure` items
+//! (critical alerts) follow the same path — `was_failure: true` in
+//! the `crash_recovered` entry lets the operator act.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -59,8 +76,15 @@ pub const PROACTIVE_PER_TICK_CAP: usize = 3;
 
 /// JSONL sidecar filename inside `~/.neoth/`. Operators tail this
 /// to see delivered items; future channel adapters subscribe to
-/// the same file for at-least-once delivery semantics.
+/// the same file for at-most-once delivery semantics.
 pub const PROACTIVE_DELIVERED_SIDECAR: &str = "proactive_delivered.jsonl";
+
+/// Sub-directory inside `~/.neoth/` that holds in-flight claim files.
+/// Each file is named `<sha256hex(dedup_key)>.claimed` and is written
+/// atomically BEFORE a channel send attempt; deleted after any
+/// non-crash outcome. Surviving files on the next tick indicate a
+/// crash mid-send and are handled by [`evict_inflight_claimed`].
+pub const PROACTIVE_INFLIGHT_DIR: &str = "proactive_inflight";
 
 /// One drain tick: load the queue, pop up to cap items, append
 /// each to the sidecar, save the post-drain queue.
@@ -269,13 +293,176 @@ fn recipient_hash(recipient: &str) -> String {
     out.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// SHA-256 hex of `dedup_key` — used as the claim filename so that
+/// keys containing filesystem-hostile characters (slashes, null bytes,
+/// colons on Windows) never reach the filesystem.  Same hash function
+/// as `recipient_hash`; kept separate for readability.
+fn claim_filename(dedup_key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(dedup_key.as_bytes());
+    let out = hasher.finalize();
+    format!("{}.claimed", out.iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// Write an atomic claim file for `item` BEFORE the channel send.
+///
+/// The file path is `home/PROACTIVE_INFLIGHT_DIR/<sha256(dedup_key)>.claimed`.
+/// Content is the item JSON (enough to reconstruct `dedup_key`,
+/// `is_failure`, `body`, `source` for the `crash_recovered` sidecar
+/// entry if the daemon crashes before this file is deleted).
+///
+/// Uses [`crate::util::atomic_write::atomic_write`] (tmp+fsync+rename)
+/// so a crash mid-write leaves a `.pid.tmp` orphan, NOT a partial
+/// `.claimed` file.  The eviction scan only reads `*.claimed` files,
+/// so orphan temps are harmlessly ignored.
+fn write_inflight_claim(home: &Path, item: &crate::proactive::ProactiveItem) -> std::io::Result<()> {
+    let dir = home.join(PROACTIVE_INFLIGHT_DIR);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(claim_filename(&item.dedup_key));
+    let bytes = serde_json::to_vec(item)
+        .map_err(|e| std::io::Error::other(format!("claim serialise: {e}")))?;
+    crate::util::atomic_write::atomic_write(&path, &bytes)
+}
+
+/// Delete the claim file for `dedup_key` after a non-crash outcome
+/// (success, transport error, suppressed — anything except a process
+/// crash). Missing file is not an error (idempotent).
+fn delete_inflight_claim(home: &Path, dedup_key: &str) {
+    let path = home.join(PROACTIVE_INFLIGHT_DIR).join(claim_filename(dedup_key));
+    // Best-effort: a delete failure here means the next tick's eviction
+    // will pick it up as crash_recovered, which is slightly wrong but
+    // safe (the item was already removed from the queue by the completed
+    // drain, so there is no double-send risk — the eviction's
+    // remove_by_key call is a no-op on an already-absent key).
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Scan `home/PROACTIVE_INFLIGHT_DIR/*.claimed` for leftover claim
+/// files from a crashed tick.  For each surviving file:
+///   1. Parse the stored `ProactiveItem` to recover `dedup_key`,
+///      `is_failure`, `body`, `source`.
+///   2. Call `queue.remove_by_key` to evict it WITHOUT resending
+///      (the queue file on disk still has the item because the crash
+///      happened before `save_to`).
+///   3. Append a `crash_recovered` line to the sidecar so the
+///      operator can see the event (with `was_failure` for critical
+///      alerts).
+///   4. Delete the claim file.
+///
+/// Must be called BEFORE `queue.drain()` so the evicted keys are
+/// gone before the drain produces the next batch.
+fn evict_inflight_claimed(
+    home: &Path,
+    queue: &mut crate::proactive::ProactiveQueue,
+    sidecar_path: &Path,
+    now_unix: i64,
+) {
+    let dir = home.join(PROACTIVE_INFLIGHT_DIR);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return, // Dir missing → nothing to evict.
+    };
+    use std::io::Write;
+    let mut f_opt: Option<std::fs::File> = None;
+    let mut sidecar_failed = false;
+
+    for entry in entries.flatten() {
+        let fname = entry.file_name();
+        let name = fname.to_string_lossy();
+        if !name.ends_with(".claimed") {
+            continue; // skip .pid.tmp orphans
+        }
+        let claim_path = entry.path();
+        let bytes = match std::fs::read(&claim_path) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(path = %claim_path.display(), error = %e, "evict: could not read claim file; skipping");
+                continue;
+            }
+        };
+        let item: crate::proactive::ProactiveItem = match serde_json::from_slice(&bytes) {
+            Ok(i) => i,
+            Err(e) => {
+                warn!(path = %claim_path.display(), error = %e, "evict: claim file not valid JSON; deleting orphan");
+                let _ = std::fs::remove_file(&claim_path);
+                continue;
+            }
+        };
+        // Evict from the in-memory queue (no-op if already absent).
+        queue.remove_by_key(&item.dedup_key);
+        // Append crash_recovered sidecar line.
+        let line = serde_json::to_string(&serde_json::json!({
+            "delivered_at_unix": now_unix,
+            "status": "crash_recovered",
+            "was_failure": item.is_failure,
+            "dedup_key": item.dedup_key,
+            "source": item.source,
+            "body": item.body,
+            "item": &item,
+        }))
+        .unwrap_or_default();
+        // Lazy-open the sidecar once, on the first crash_recovered entry. If
+        // it can't be opened, warn once and keep evicting WITHOUT a sidecar
+        // line — losing one audit line is far better than aborting recovery
+        // or writing to a discarded sink.
+        if f_opt.is_none() && !sidecar_failed {
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(sidecar_path)
+            {
+                Ok(f) => f_opt = Some(f),
+                Err(e) => {
+                    sidecar_failed = true;
+                    warn!(error = %e, "evict: could not open sidecar; crash_recovered entries not logged this tick");
+                }
+            }
+        }
+        if let Some(f) = f_opt.as_mut() {
+            if let Err(e) = writeln!(f, "{line}") {
+                warn!(error = %e, dedup_key = %item.dedup_key, "evict: sidecar write failed for crash_recovered");
+            }
+        }
+        // Delete the claim file — done regardless of sidecar write outcome.
+        if let Err(e) = std::fs::remove_file(&claim_path) {
+            warn!(path = %claim_path.display(), error = %e, "evict: could not delete claim file");
+        }
+        info!(
+            dedup_key = %item.dedup_key,
+            is_failure = item.is_failure,
+            "proactive evict: crash_recovered — item evicted without resend"
+        );
+    }
+    // Flush if we opened the file.
+    if let Some(mut f) = f_opt {
+        let _ = f.flush();
+    }
+}
+
 /// G-01 delivery tick — drains the queue + ACTUALLY SENDS each item to the
 /// operator's channel (the slice the consumer-half sidecar left open),
 /// then records the outcome. Async because `Channel::send_proactive` is
-/// async. Ordering is deliberate for at-least-once delivery: the queue is
-/// saved LAST, so a crash mid-send re-drains the item next tick (the
-/// `dedup_key` bounds duplicate harm); a duplicate proactive nudge is far
-/// less bad than a silently-lost one.
+/// async.
+///
+/// ## At-most-once delivery contract
+///
+/// The tick, for the whole drained batch:
+///   1. Writes an atomic claim file BEFORE each live send
+///      (`~/.neoth/proactive_inflight/<sha256(dedup_key)>.claimed`).
+///   2. Attempts every channel send + records each outcome.
+///   3. Saves the queue LAST (drained items removed → no re-drain).
+///   4. ONLY THEN deletes the batch's claim files.
+///
+/// A crash anytime before step 3 leaves the in-flight claim files on
+/// disk. On the next tick [`evict_inflight_claimed`] runs BEFORE
+/// `drain()`, finds the surviving files, evicts those keys from the
+/// queue (no resend), and records a `crash_recovered` entry in the
+/// sidecar. Deleting claims only AFTER the save (not per-item) is what
+/// makes the guarantee hold for a MULTI-item batch — a per-item delete
+/// would let an already-sent earlier item re-drain (queue not yet
+/// saved). The operator sees the event; `is_failure` items carry
+/// `was_failure: true` so critical alerts are never silently lost.
 ///
 /// Returns the number of items LIVE-DELIVERED (status `delivered`).
 pub async fn run_proactive_delivery_tick(
@@ -292,6 +479,12 @@ pub async fn run_proactive_delivery_tick(
     }
     let mut queue =
         ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
+
+    // Evict any surviving claim files from a previous crashed tick BEFORE
+    // draining — so those keys are gone and cannot be re-drained.
+    let sidecar_path = home.join(PROACTIVE_DELIVERED_SIDECAR);
+    evict_inflight_claimed(home, &mut queue, &sidecar_path, now_unix);
+
     if queue.is_empty() {
         return Ok(0);
     }
@@ -313,6 +506,11 @@ pub async fn run_proactive_delivery_tick(
     let mut records: Vec<(crate::proactive::ProactiveItem, ProactiveStatus)> =
         Vec::with_capacity(drained.len());
     let mut delivered = 0usize;
+    // CLAW-01: dedup_keys whose claim file was written this tick. Claims are
+    // deleted ONLY after the queue save (see the save tail) so the WHOLE batch
+    // stays crash-protected — deleting per-item mid-loop would let an
+    // already-sent earlier item re-drain (queue not yet saved) → double-fire.
+    let mut claimed_keys: Vec<String> = Vec::new();
 
     for item in drained {
         // GOLD-FEAT-13 — route by the item's `source` (per-purpose), falling
@@ -320,8 +518,35 @@ pub async fn run_proactive_delivery_tick(
         let target_channel = routing
             .resolve_channel(&item.source, item.is_failure)
             .unwrap_or_else(|| item.channel.clone());
-        let (status, recipient) =
-            match plan_delivery(&target_channel, autonomy, config, &routing, &credentials) {
+
+        let route = plan_delivery(&target_channel, autonomy, config, &routing, &credentials);
+
+        // At-most-once guard: write the claim file BEFORE any live send.
+        // Suppressed + SidecarOnly never touch the network, so no claim
+        // file is needed for them.
+        let needs_claim = matches!(
+            route,
+            DeliveryRoute::Telegram { .. }
+                | DeliveryRoute::Slack { .. }
+                | DeliveryRoute::Discord { .. }
+                | DeliveryRoute::WhatsApp { .. }
+        );
+        if needs_claim {
+            match write_inflight_claim(home, &item) {
+                // Track the key so its claim is deleted AFTER the queue save.
+                Ok(()) => claimed_keys.push(item.dedup_key.clone()),
+                // A claim-write failure is non-fatal: fall back to the old
+                // at-least-once behaviour for this ONE item rather than
+                // dropping it silently. Log prominently for the operator.
+                Err(e) => warn!(
+                    dedup_key = %item.dedup_key,
+                    error = %e,
+                    "proactive: inflight claim write failed; proceeding without at-most-once guard"
+                ),
+            }
+        }
+
+        let (status, recipient) = match route {
             DeliveryRoute::Suppressed => (ProactiveStatus::Suppressed, String::new()),
             DeliveryRoute::SidecarOnly => (ProactiveStatus::SidecarOnly, String::new()),
             DeliveryRoute::Telegram { chat_id } => {
@@ -472,14 +697,25 @@ pub async fn run_proactive_delivery_tick(
         records.push((item, status));
     }
 
-    let sidecar_path = home.join(PROACTIVE_DELIVERED_SIDECAR);
     append_delivery_records(&sidecar_path, &records, now_unix)
         .map_err(|e| format!("sidecar append failed: {e}"))?;
 
-    // Saved LAST — at-least-once across a mid-send crash.
+    // Saved LAST — at-most-once across a mid-send crash (claim files
+    // handle the crash window; this save removes items from the queue
+    // file so they don't re-drain on the next tick).
     queue
         .save_to(&queue_path)
         .map_err(|e| format!("queue save after delivery failed: {e}"))?;
+
+    // CLAW-01: claims are deleted ONLY now — after the queue save is durable.
+    // A crash before the save leaves EVERY in-flight claim on disk, so the
+    // next tick's `evict_inflight_claimed` drops the WHOLE batch (no resend).
+    // (A crash in the tiny window between this save and the deletes below
+    // just leaves stale claims → the next tick records a harmless
+    // `crash_recovered` for already-delivered items; safe, never a resend.)
+    for key in &claimed_keys {
+        delete_inflight_claim(home, key);
+    }
     Ok(delivered)
 }
 
@@ -902,5 +1138,257 @@ mod tests {
         );
         // The raw recipient id must NOT appear in the audit hash.
         assert!(!a.contains("123456"));
+    }
+
+    // ── Inflight claim-file guard (at-most-once delivery) ─────────────────
+
+    fn failure_item(key: &str) -> ProactiveItem {
+        ProactiveItem {
+            is_failure: true,
+            ..item(key, 100, 0)
+        }
+    }
+
+    /// `claim_filename` is deterministic and produces a `.claimed` suffix,
+    /// with no raw key material in the filename.
+    #[test]
+    fn claim_filename_is_deterministic_and_opaque() {
+        let a = claim_filename("my/special:key");
+        let b = claim_filename("my/special:key");
+        let c = claim_filename("other/key");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert!(a.ends_with(".claimed"), "must end with .claimed");
+        // The raw key must not appear in the filename (filesystem-safety).
+        assert!(!a.contains("my") && !a.contains("special") && !a.contains("key"));
+    }
+
+    /// `write_inflight_claim` creates a `.claimed` file; `delete_inflight_claim`
+    /// removes it; a second delete is a no-op (idempotent).
+    #[test]
+    fn write_and_delete_claim_file_lifecycle() {
+        let tmp = TempDir::new().unwrap();
+        let it = item("k1", 50, 0);
+        write_inflight_claim(tmp.path(), &it).unwrap();
+        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
+        let claimed: Vec<_> = std::fs::read_dir(&inflight_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
+            .collect();
+        assert_eq!(claimed.len(), 1, "one .claimed file should exist after write");
+        // Content round-trips to the original item.
+        let bytes = std::fs::read(claimed[0].path()).unwrap();
+        let parsed: ProactiveItem = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.dedup_key, "k1");
+
+        delete_inflight_claim(tmp.path(), "k1");
+        let remaining: Vec<_> = std::fs::read_dir(&inflight_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
+            .collect();
+        assert!(remaining.is_empty(), "claim file must be gone after delete");
+
+        // Second delete is a no-op (no panic).
+        delete_inflight_claim(tmp.path(), "k1");
+    }
+
+    /// A surviving claim file is evicted by `evict_inflight_claimed`:
+    /// the item is removed from the queue and a `crash_recovered` entry
+    /// appears in the sidecar.
+    #[test]
+    fn evict_inflight_claimed_removes_item_and_records_crash_recovered() {
+        let tmp = TempDir::new().unwrap();
+        let it = item("crash-item", 50, 0);
+        // Simulate: claim file written but daemon crashed before delete.
+        write_inflight_claim(tmp.path(), &it).unwrap();
+
+        // Build a queue that still has the item on disk (crash prevented save).
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(it.clone());
+
+        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
+        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_000);
+
+        // Queue must be empty — item was evicted.
+        assert!(queue.is_empty(), "evicted item must be absent from queue");
+
+        // Claim file must be deleted.
+        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
+        let remaining: Vec<_> = std::fs::read_dir(&inflight_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
+            .collect();
+        assert!(remaining.is_empty(), "claim file must be cleaned up by eviction");
+
+        // Sidecar must have a crash_recovered entry.
+        let body = std::fs::read_to_string(&sidecar).unwrap();
+        let v: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+        assert_eq!(v["status"], "crash_recovered");
+        assert_eq!(v["dedup_key"], "crash-item");
+        assert_eq!(v["was_failure"], false);
+    }
+
+    /// A `crash_recovered` entry for an `is_failure` item carries
+    /// `was_failure: true` so the operator can distinguish critical alerts.
+    #[test]
+    fn evict_inflight_claimed_carries_was_failure_for_critical_alerts() {
+        let tmp = TempDir::new().unwrap();
+        let it = failure_item("critical-alert");
+        write_inflight_claim(tmp.path(), &it).unwrap();
+
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(it.clone());
+
+        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
+        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_001);
+
+        let body = std::fs::read_to_string(&sidecar).unwrap();
+        let v: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+        assert_eq!(v["status"], "crash_recovered");
+        assert_eq!(v["was_failure"], true, "is_failure item must set was_failure=true");
+        assert_eq!(v["dedup_key"], "critical-alert");
+    }
+
+    /// A claim file without a matching queue entry is still cleaned up
+    /// without panicking (idempotent eviction — `remove_by_key` is a no-op).
+    #[test]
+    fn evict_inflight_claimed_handles_already_absent_queue_entry() {
+        let tmp = TempDir::new().unwrap();
+        let it = item("already-gone", 50, 0);
+        write_inflight_claim(tmp.path(), &it).unwrap();
+
+        // Queue is empty — item was already removed (e.g., save succeeded
+        // but claim delete crashed).
+        let mut queue = ProactiveQueue::new();
+        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
+        // Must not panic; still records crash_recovered + deletes file.
+        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_002);
+
+        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
+        let remaining: Vec<_> = std::fs::read_dir(&inflight_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
+            .collect();
+        assert!(remaining.is_empty());
+        // Sidecar entry is present even though queue was already clean.
+        let body = std::fs::read_to_string(&sidecar).unwrap();
+        assert!(body.contains("crash_recovered"));
+    }
+
+    /// `evict_inflight_claimed` on a missing inflight dir returns without
+    /// error (common on a clean first-boot).
+    #[test]
+    fn evict_inflight_claimed_missing_dir_is_noop() {
+        let tmp = TempDir::new().unwrap();
+        let mut queue = ProactiveQueue::new();
+        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
+        // No inflight dir — must return silently.
+        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 0);
+        assert!(!sidecar.exists(), "no sidecar entry on empty eviction");
+    }
+
+    /// Eviction runs BEFORE drain, so a claim file written by a previous
+    /// crashed tick prevents re-drain of the same item.
+    #[test]
+    fn evict_runs_before_drain_in_drain_tick_ordering() {
+        // This test validates the ordering contract by calling eviction
+        // manually then drain, mimicking what run_proactive_delivery_tick does.
+        let tmp = TempDir::new().unwrap();
+
+        // Two items: "was-in-flight" has a surviving claim, "new-item" does not.
+        let in_flight = item("was-in-flight", 100, 0);
+        let new_it = item("new-item", 50, 0);
+
+        write_inflight_claim(tmp.path(), &in_flight).unwrap();
+
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(in_flight.clone());
+        queue.enqueue(new_it.clone());
+
+        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
+        // Step 1: evict (before drain).
+        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_003);
+
+        // "was-in-flight" must be gone; "new-item" must remain.
+        assert_eq!(queue.peek().len(), 1);
+        assert_eq!(queue.peek()[0].dedup_key, "new-item");
+
+        // Step 2: drain — only "new-item" drains.
+        let drained = queue.drain(1_700_000_003, 10);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].dedup_key, "new-item");
+
+        // Sidecar has crash_recovered for "was-in-flight" only.
+        let body = std::fs::read_to_string(&sidecar).unwrap();
+        assert!(body.contains("crash_recovered"));
+        assert!(body.contains("was-in-flight"));
+        assert!(!body.contains("new-item"));
+    }
+
+    /// `.tmp` orphan files in the inflight dir are ignored by eviction.
+    #[test]
+    fn evict_ignores_tmp_orphans_in_inflight_dir() {
+        let tmp = TempDir::new().unwrap();
+        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
+        std::fs::create_dir_all(&inflight_dir).unwrap();
+        // Write a .pid.tmp orphan (atomic_write intermediate).
+        std::fs::write(inflight_dir.join("abc.12345.tmp"), b"garbage").unwrap();
+
+        let mut queue = ProactiveQueue::new();
+        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
+        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 0);
+
+        // No crash_recovered entry; orphan is untouched (eviction only reads *.claimed).
+        assert!(!sidecar.exists());
+        assert!(inflight_dir.join("abc.12345.tmp").exists(), "orphan must be left alone");
+    }
+
+    /// CLAW-01 regression: when a MULTI-item batch crashes before the queue
+    /// save, ALL its claim files survive together → eviction drops the WHOLE
+    /// batch (no item re-drains, none is re-sent). This is the scenario the
+    /// old per-item-delete broke: it deleted earlier items' claims mid-loop,
+    /// so on crash only the last item's claim survived and the already-sent
+    /// earlier items re-drained → double-fire. The fix (delete claims only
+    /// after the save) keeps every claim present until durability, which this
+    /// models by writing all three claims before the simulated crash.
+    #[test]
+    fn evict_drops_an_entire_multi_item_batch_no_resend() {
+        let tmp = TempDir::new().unwrap();
+        let a = item("batch-a", 100, 0);
+        let b = item("batch-b", 90, 0);
+        let c = item("batch-c", 80, 0);
+        // All three claims written (sends attempted), then crash before save.
+        write_inflight_claim(tmp.path(), &a).unwrap();
+        write_inflight_claim(tmp.path(), &b).unwrap();
+        write_inflight_claim(tmp.path(), &c).unwrap();
+
+        // Queue still has all three (save never happened).
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(a);
+        queue.enqueue(b);
+        queue.enqueue(c);
+
+        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
+        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_010);
+
+        // Whole batch evicted — nothing left to re-drain.
+        assert!(queue.is_empty(), "entire batch must be evicted (no re-send)");
+        // All claim files cleaned up.
+        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
+        let remaining = std::fs::read_dir(&inflight_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
+            .count();
+        assert_eq!(remaining, 0, "all claim files cleaned up");
+        // Three crash_recovered lines (one per batch item).
+        let body = std::fs::read_to_string(&sidecar).unwrap();
+        let recovered = body.lines().filter(|l| l.contains("crash_recovered")).count();
+        assert_eq!(recovered, 3, "one crash_recovered per batch item");
+        assert!(body.contains("batch-a") && body.contains("batch-b") && body.contains("batch-c"));
     }
 }
