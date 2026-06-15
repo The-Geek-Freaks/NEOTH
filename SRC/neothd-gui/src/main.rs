@@ -826,6 +826,83 @@ fn main() -> Result<()> {
         });
     });
 
+    // GUI-overhaul feature parity — Memory "forget a topic". Preview runs the
+    // dry-run (`neoth memory --forget <topic>`, no --confirm) and reports the
+    // would-wipe summary; it mutates nothing.
+    let weak_mem_preview = window.as_weak();
+    window.on_memory_forget_preview(move |topic| {
+        let weak = weak_mem_preview.clone();
+        let topic = topic.to_string();
+        std::thread::spawn(move || {
+            let msg = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("memory")
+                    .arg("--forget")
+                    .arg(&topic)
+                    .output()
+                    .ok()
+            }) {
+                Some(o) if o.status.success() => {
+                    let line = String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .map(str::trim)
+                        .rfind(|l| !l.is_empty())
+                        .unwrap_or("(no matches)")
+                        .to_string();
+                    format!("Preview \"{topic}\": {line}")
+                }
+                Some(o) => format!(
+                    "Forget preview failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                        .lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty())
+                        .unwrap_or("(no detail)")
+                ),
+                None => "memory: neothd binary not on PATH".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(msg.into());
+                }
+            });
+        });
+    });
+
+    // GUI-overhaul feature parity — Memory "forget a topic", permanent. Runs the
+    // wipe (`neoth memory --forget <topic> --confirm`), then re-reads the memory
+    // snapshot so the blocks list reflects the change.
+    let weak_mem_confirm = window.as_weak();
+    window.on_memory_forget_confirm(move |topic| {
+        let weak = weak_mem_confirm.clone();
+        let topic = topic.to_string();
+        std::thread::spawn(move || {
+            let ok = which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("memory")
+                        .arg("--forget")
+                        .arg(&topic)
+                        .arg("--confirm")
+                        .output()
+                        .ok()
+                })
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let memory = fetch_memory_snapshot();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    apply_memory(&w, memory);
+                    w.set_status_line(if ok {
+                        format!("Forgot \"{topic}\" — memory wiped.").into()
+                    } else {
+                        format!("Forget \"{topic}\" failed (is neothd on PATH?).").into()
+                    });
+                }
+            });
+        });
+    });
+
     // GUI-overhaul (gap panel wf_8ad7096a) — feature parity: enable/disable a
     // skill from the GUI Skills tab. Shells `neoth skills --enable/--disable <id>`
     // off the UI thread, then re-fetches + applies the list so the new state

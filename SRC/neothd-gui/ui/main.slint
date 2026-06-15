@@ -364,6 +364,8 @@ export component MainWindow inherits Window {
     callback channels-refresh-clicked;
     callback channel-test(string);
     callback channel-remove(string);
+    callback memory-forget-preview(string);
+    callback memory-forget-confirm(string);
     callback skill-toggle(string, bool);
     callback plugin-toggle(string, bool);
     callback autonomy-set(string);
@@ -1527,6 +1529,8 @@ export component MainWindow inherits Window {
             }
             channel-test-clicked(name) => { root.channel-test(name); }
             channel-remove-clicked(name) => { root.channel-remove(name); }
+            memory-forget-preview-clicked(t) => { root.memory-forget-preview(t); }
+            memory-forget-confirm-clicked(t) => { root.memory-forget-confirm(t); }
             // Step 5 (2026-05-20): selected-task + detail-pane wiring.
             kanban-selected-task-id <=> root.kanban-selected-task-id;
             kanban-selected-title: root.kanban-selected-title;

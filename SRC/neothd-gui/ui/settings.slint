@@ -571,6 +571,10 @@ export component SettingsView inherits Rectangle {
     /// for a channel. Rust shells `neoth channel test|remove <name>`.
     callback channel-test-clicked(string);
     callback channel-remove-clicked(string);
+    /// GUI-overhaul feature parity — Memory forget. Preview is a dry run
+    /// (`neoth memory --forget <t>`); confirm wipes (`… --forget <t> --confirm`).
+    callback memory-forget-preview-clicked(string);
+    callback memory-forget-confirm-clicked(string);
     /// GUI-overhaul feature parity — operator toggled a skill's enable state.
     /// Args: (skill-id, enabled). Rust shells `neoth skills --enable/--disable`.
     callback skill-toggle-clicked(string, bool);
@@ -1110,6 +1114,78 @@ export component SettingsView inherits Rectangle {
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
+                // GUI-overhaul feature parity — forget a topic from the GUI (was
+                // "inspect or erase via the CLI" only). Preview is a dry-run; the
+                // permanent wipe (`neoth memory --forget <t> --confirm`) is gated
+                // behind an inline confirm because it is irreversible.
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        property <bool> forget-confirming: false;
+                        Text {
+                            text: "FORGET A TOPIC";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: "GDPR wipe — removes matching episodes from hot/warm/long-term memory, embeddings + ground-truth. Preview is a dry run; the wipe is permanent.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        forget_input := NeothLineEdit {
+                            placeholder-text: "topic / keyword to forget";
+                        }
+                        if !forget-confirming: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            NeothButton {
+                                label: "Preview matches";
+                                primary: false;
+                                clicked => {
+                                    if (forget_input.text != "") {
+                                        root.memory-forget-preview-clicked(forget_input.text);
+                                    }
+                                }
+                            }
+                            NeothButton {
+                                label: "Forget…";
+                                primary: false;
+                                clicked => {
+                                    if (forget_input.text != "") {
+                                        forget-confirming = true;
+                                    }
+                                }
+                            }
+                        }
+                        if forget-confirming: Text {
+                            text: "⚠ Permanently wipe everything matching \"" + forget_input.text + "\"? This cannot be undone.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
+                            wrap: word-wrap;
+                        }
+                        if forget-confirming: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            NeothButton {
+                                label: "Wipe permanently";
+                                clicked => {
+                                    forget-confirming = false;
+                                    root.memory-forget-confirm-clicked(forget_input.text);
+                                }
+                            }
+                            NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                clicked => { forget-confirming = false; }
                             }
                         }
                     }
