@@ -2287,8 +2287,16 @@ fn fetch_provider_ids() -> Vec<String> {
 /// SPEC-06 — push the provider-id picker options onto the MainWindow. UI-thread.
 fn apply_provider_ids(window: &MainWindow, ids: Vec<String>) {
     use slint::{ModelRc, VecModel};
+    // GUI-improve (gap panel wf_641e1173) — compute the Config combo's selected
+    // row = position of the operator's current provider in the LIVE list, so a
+    // provider absent from the old hardcoded combo list no longer silently shows
+    // as row 0 (claude_cli). `provider-choice` is set from freedom.yaml at
+    // startup (line 241) before this runs.
+    let current = window.get_provider_choice().to_string();
+    let idx = ids.iter().position(|p| p == &current).unwrap_or(0) as i32;
     let rows: Vec<slint::SharedString> = ids.into_iter().map(|s| s.into()).collect();
     window.set_provider_ids(ModelRc::new(VecModel::from(rows)));
+    window.set_provider_choice_index(idx);
 }
 
 /// SPEC-06 — rebind a hemisphere role to a provider (`neoth hemispheres set

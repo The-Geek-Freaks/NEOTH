@@ -104,6 +104,9 @@ export component MainWindow inherits Window {
     in-out property <bool> license-accepted: false;
     in-out property <string> operator-id: "";
     in-out property <string> provider-choice: "claude_cli";
+    /// GUI-improve — index of provider-choice within provider-ids; Rust sets it
+    /// in apply_provider_ids so the Config combo shows the right selected row.
+    in-out property <int> provider-choice-index: 0;
     in-out property <string> autonomy-choice: "standard";
 
     // GU-03 — persona-adaptive settings-panel visibility. Rust sets these on
@@ -1438,6 +1441,7 @@ export component MainWindow inherits Window {
         if root.step == WizardStep.settings: SettingsView {
             autonomy-current: root.autonomy-choice;
             provider-current: root.provider-choice;
+            provider-current-index: root.provider-choice-index;
             // GU-03 panel-visibility flows MainWindow → SettingsView.
             show-hemispheres: root.settings-show-hemispheres;
             show-channels: root.settings-show-channels;

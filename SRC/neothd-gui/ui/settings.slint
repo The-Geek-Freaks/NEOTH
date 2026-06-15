@@ -395,6 +395,11 @@ export component SettingsView inherits Rectangle {
     in property <string> usage-tokens: "";
     in property <string> usage-note: "";
     in-out property <string> provider-current: "claude_cli";
+    /// GUI-improve — the Config ACTIVE PROVIDER combo's selected row index. Rust
+    /// computes it (position of provider-current in the live provider-ids list)
+    /// so the combo never silently falls back to row 0 for a provider missing
+    /// from a stale hardcoded list.
+    in-out property <int> provider-current-index: 0;
 
     // GR-10 — Safety Rails (from `neoth security safe-mode --json`), rendered in
     // the Privacy tab. Rust populates these on startup; `engaged` rails are the
@@ -2057,36 +2062,19 @@ export component SettingsView inherits Rectangle {
                             color: Theme.accent-green;
                         }
                         NeothComboBox {
-                            model: [
-                                "claude_cli",
-                                "openai_api",
-                                "openai_compat",
-                                "gemini_api",
-                                "local_qwen",
-                                "local_ouro",
-                                "hermes",
-                                "openclaw",
-                            ];
-                            current-index:
-                                root.provider-current == "claude_cli"    ? 0 :
-                                root.provider-current == "openai_api"    ? 1 :
-                                root.provider-current == "openai_compat" ? 2 :
-                                root.provider-current == "gemini_api"    ? 3 :
-                                root.provider-current == "local_qwen"    ? 4 :
-                                root.provider-current == "local_ouro"    ? 5 :
-                                root.provider-current == "hermes"        ? 6 :
-                                root.provider-current == "openclaw"      ? 7 :
-                                                                            0;
+                            // GUI-improve — the LIVE implemented-provider list
+                            // (Rust sets provider-ids from `neoth provider list`),
+                            // not a hardcoded subset that silently dropped new
+                            // providers (anthropic_api / codex / antigravity / …)
+                            // and forced an unknown provider to row 0 = claude_cli.
+                            model: root.provider-ids;
+                            current-index: root.provider-current-index;
                             selected(i) => {
-                                if (i == 0) { root.provider-current = "claude_cli"; }
-                                if (i == 1) { root.provider-current = "openai_api"; }
-                                if (i == 2) { root.provider-current = "openai_compat"; }
-                                if (i == 3) { root.provider-current = "gemini_api"; }
-                                if (i == 4) { root.provider-current = "local_qwen"; }
-                                if (i == 5) { root.provider-current = "local_ouro"; }
-                                if (i == 6) { root.provider-current = "hermes"; }
-                                if (i == 7) { root.provider-current = "openclaw"; }
-                                root.provider-changed(root.provider-current);
+                                if (i >= 0 && i < root.provider-ids.length) {
+                                    root.provider-current-index = i;
+                                    root.provider-current = root.provider-ids[i];
+                                    root.provider-changed(root.provider-ids[i]);
+                                }
                             }
                         }
 
