@@ -78,8 +78,11 @@ export component MainWindow inherits Window {
         root.step == WizardStep.chat     ? "NEOTH — Chat" :
         root.step == WizardStep.settings ? "NEOTH — Settings" :
                                             "NEOTH — Setup";
-    preferred-width: 1100px;
-    preferred-height: 720px;
+    // GUI-overhaul: open at a comfortably large default (was 1100×720, which
+    // felt cramped — Alex wants to scale up, e.g. tall chat windows). Freely
+    // resizable up from min-*; no max so portrait sizes like 1080×1920 work.
+    preferred-width: 1280px;
+    preferred-height: 880px;
     min-width: 820px;
     min-height: 600px;
 

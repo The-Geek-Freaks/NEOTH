@@ -3589,13 +3589,37 @@ fn probe_hardware_via_subprocess() -> String {
         .arg("table")
         .output();
     match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        Ok(out) if out.status.success() => {
+            shape_hardware_footer(&String::from_utf8_lossy(&out.stdout))
+        }
         Ok(out) => format!(
-            "Hardware probe failed (exit {}):\n{}",
+            "Hardware probe failed (exit {}): {}",
             out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
+            String::from_utf8_lossy(&out.stderr)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         Err(e) => format!("Hardware probe could not start: {e}"),
+    }
+}
+
+/// Collapse the multi-line `neoth hardware --output table` probe into a single
+/// footer line. The FooterBar is one 36px row — the full table (10+ lines)
+/// spilled past it and was clipped by the window edge. Keep only the operator-
+/// relevant fields, whitespace-collapsed, joined with " · ".
+fn shape_hardware_footer(table: &str) -> String {
+    const KEEP: [&str; 5] = ["CPU:", "RAM:", "Accelerator:", "GPU VRAM:", "Disk:"];
+    let parts: Vec<String> = table
+        .lines()
+        .map(str::trim)
+        .filter(|line| KEEP.iter().any(|k| line.starts_with(k)))
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    if parts.is_empty() {
+        "NEOTH — Your buddy. Your life.".to_string()
+    } else {
+        parts.join("   ·   ")
     }
 }
 

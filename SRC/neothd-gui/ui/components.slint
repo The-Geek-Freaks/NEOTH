@@ -568,6 +568,10 @@ export component FooterBar inherits Rectangle {
 
     height: 36px;
     background: Theme.bg-base;
+    // GUI-overhaul: the footer is one 36px row. Clip defends the layout so a
+    // long / accidentally multi-line status can never spill past the bar and
+    // get cut off by the window edge (the "footer abgeschnitten" bug).
+    clip: true;
 
     Rectangle {
         x: Theme.space-screen;
