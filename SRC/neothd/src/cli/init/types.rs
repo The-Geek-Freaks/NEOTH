@@ -254,6 +254,14 @@ pub struct InitArgs {
     #[arg(long, value_name = "MODE")]
     pub inference_mode: Option<String>,
 
+    /// GOLD-FEAT-01b — one-click zero-friction onboarding. Applies the
+    /// maximally-permissive preset (Full autonomy + single-provider
+    /// inference + every bundled skill active), overriding the per-step
+    /// autonomy/topology picks. Opt-in; interactive runs are also offered
+    /// it as a y/n confirm.
+    #[arg(long)]
+    pub zero_friction: bool,
+
     /// Accelerator override (D14b).
     /// `cuda | metal | openvino | cpu`. Defaults to the auto-detected
     /// best fit; this flag bypasses detection.

@@ -119,6 +119,10 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step7d_supervisor(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
+    // GOLD-FEAT-01b — the zero-friction one-click preset is the FINAL word:
+    // applied after every per-step pick so `--zero-friction` (or the y/n
+    // confirm) cleanly overrides autonomy + topology before the summary.
+    step_zero_friction(&args, interactive, &mut state)?;
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {

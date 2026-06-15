@@ -498,3 +498,124 @@ pub(crate) fn try_inline_consent_grant(
 ) -> bool {
     false
 }
+
+/// GOLD-FEAT-01b — offer + apply the zero-friction onboarding preset.
+///
+/// The maximally-permissive one-click set: **Full autonomy**, **single-provider
+/// inference** (one provider drives all three hemispheres), and **every bundled
+/// skill active**. Opt-in via `--zero-friction` (non-interactive) or a y/n
+/// confirm (interactive). Applied LAST in the wizard so it deliberately
+/// overrides the per-step autonomy/topology picks — the "give me everything"
+/// escape hatch for non-technical operators.
+///
+/// The two fields written here are the `WizardState` twins of what
+/// [`crate::wizard::zero_friction::apply_zero_friction`] sets on a
+/// `FreedomConfig`; the third (skills eval-suppression OFF) needs no write
+/// because `WizardState` serializes no `skills:` block, so the daemon's
+/// `SkillsConfig::default()` already yields the all-skills-active state. The
+/// `zero_friction_state_matches_freedom_preset` test pins this twin against the
+/// canonical fn so the two cannot drift.
+pub(crate) fn step_zero_friction(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    use crate::config::inference::TopologyMode;
+    use crate::permissions::AutonomyLevel;
+
+    debug!("wizard step 0b: zero-friction preset");
+
+    let want = if args.zero_friction {
+        true
+    } else if interactive {
+        offer_zero_friction_interactive()?
+    } else {
+        false
+    };
+
+    if want {
+        state.autonomy = AutonomyLevel::Full;
+        state.inference.mode = TopologyMode::Single;
+        info!("GOLD-FEAT-01b zero-friction preset applied: Full autonomy + single-provider + all-skills-active");
+        if interactive {
+            println!(
+                "  ⚡ Zero-friction preset applied: Full autonomy, single provider, all skills active."
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "wizard")]
+fn offer_zero_friction_interactive() -> Result<bool> {
+    dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt(
+            "One-click zero-friction setup? Full autonomy (NEOTH acts without asking), one \
+             provider for everything, and all skills active. You can change any of this later \
+             via `neoth autonomy` / `neoth hemispheres`.",
+        )
+        .default(false)
+        .interact()
+        .context("zero-friction confirm")
+}
+
+#[cfg(not(feature = "wizard"))]
+fn offer_zero_friction_interactive() -> Result<bool> {
+    Ok(false)
+}
+
+#[cfg(test)]
+mod zero_friction_tests {
+    use super::*;
+
+    fn args_with_zero_friction(on: bool) -> InitArgs {
+        let mut a = InitArgs::default();
+        a.zero_friction = on;
+        a
+    }
+
+    #[test]
+    fn step_zero_friction_flag_sets_full_autonomy_and_single_provider() {
+        let mut state = WizardState::default();
+        state.autonomy = crate::permissions::AutonomyLevel::Strict;
+        state.inference.mode = crate::config::inference::TopologyMode::Triplet;
+
+        step_zero_friction(&args_with_zero_friction(true), false, &mut state).expect("applies");
+
+        assert_eq!(state.autonomy, crate::permissions::AutonomyLevel::Full);
+        assert!(matches!(
+            state.inference.mode,
+            crate::config::inference::TopologyMode::Single
+        ));
+    }
+
+    #[test]
+    fn step_zero_friction_off_is_a_noop() {
+        let mut state = WizardState::default();
+        state.autonomy = crate::permissions::AutonomyLevel::Standard;
+        let before = state.autonomy;
+
+        // Flag off + non-interactive → no change.
+        step_zero_friction(&args_with_zero_friction(false), false, &mut state).expect("noop");
+
+        assert_eq!(state.autonomy, before);
+    }
+
+    #[test]
+    fn zero_friction_state_matches_freedom_preset() {
+        // Drift guard: the WizardState twin must agree with the canonical
+        // FreedomConfig preset on the two fields WizardState carries.
+        let mut state = WizardState::default();
+        step_zero_friction(&args_with_zero_friction(true), false, &mut state).expect("applies");
+
+        let preset =
+            crate::wizard::zero_friction::apply_zero_friction(crate::config::FreedomConfig::default());
+
+        assert_eq!(state.autonomy, preset.autonomy, "autonomy twin must match");
+        assert!(
+            matches!(state.inference.mode, crate::config::inference::TopologyMode::Single)
+                && matches!(preset.inference.mode, crate::config::inference::TopologyMode::Single),
+            "inference.mode twin must match"
+        );
+    }
+}
