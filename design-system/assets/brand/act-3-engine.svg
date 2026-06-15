@@ -1,0 +1,41 @@
+<svg width="1400" height="260" viewBox="0 0 1400 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Act III - The Engine</title>
+  <desc id="desc">NEOTH engine section banner: Rust runtime, memory, council, plugins, private mesh.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="46%" r="82%">
+      <stop offset="0" stop-color="#1a1a1a"></stop>
+      <stop offset=".62" stop-color="#0d0d0d"></stop>
+      <stop offset="1" stop-color="#050505"></stop>
+    </radialGradient>
+    <linearGradient id="line" x1="130" y1="0" x2="1270" y2="0">
+      <stop offset="0" stop-color="#05d5ff" stop-opacity="0"></stop>
+      <stop offset=".5" stop-color="#05d5ff" stop-opacity=".9"></stop>
+      <stop offset="1" stop-color="#05d5ff" stop-opacity="0"></stop>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-80%" width="160%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"></feGaussianBlur>
+      <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+    </filter>
+    
+  </defs>
+
+  <rect width="1400" height="260" rx="40" fill="url(#bg)"></rect>
+  <rect x="1" y="1" width="1398" height="258" rx="39" stroke="white" stroke-opacity=".08"></rect>
+  <path d="M150 150 C 350 80, 520 220, 700 150 C 880 80, 1050 220, 1250 150" stroke="url(#line)" stroke-width="2" fill="none" filter="url(#glow)">
+    
+  </path>
+
+  <text x="92" y="74" fill="#05d5ff" class="mono" font-size="11" letter-spacing="6">ACT III / ENGINE</text>
+  <text x="92" y="143" fill="white" class="sans" font-size="58" font-weight="100" letter-spacing="14">THE ENGINE</text>
+  <text x="96" y="182" fill="#9a9a9a" class="sans" font-size="15" letter-spacing="5">RUST CORE. THREE ROLES. SIX MEMORY LAYERS.</text>
+
+  <g transform="translate(1120 70)" stroke="#05d5ff" stroke-opacity=".72" filter="url(#glow)">
+    <path d="M70 0 L126 32 V96 L70 128 L14 96 V32 Z" fill="#05d5ff" fill-opacity=".03"></path>
+    <path d="M70 0 V64 M14 32 L70 64 L126 32 M70 64 V128"></path>
+    <circle cx="70" cy="64" r="5" fill="#05d5ff" stroke="none">
+      
+    </circle>
+  </g>
+
+  <text x="1300" y="222" text-anchor="end" fill="#555" class="mono" font-size="10" letter-spacing="4">COUNCIL / PLUGINS / PRIVATE MESH</text>
+</svg>
