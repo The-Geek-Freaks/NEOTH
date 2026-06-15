@@ -90,6 +90,10 @@ pub struct ChannelCredsView {
     pub twitch_username: bool,
     /// GOLD-FEAT-10 — Twitch OAuth token present.
     pub twitch_oauth: bool,
+    /// GOLD-FEAT-10 — Nostr identity secret key present.
+    pub nostr_key: bool,
+    /// GOLD-FEAT-10 — Nostr relay list present.
+    pub nostr_relays: bool,
 }
 
 impl ChannelCredsView {
@@ -126,12 +130,14 @@ impl ChannelCredsView {
             mattermost_token: creds.mattermost_token.is_some(),
             twitch_username: creds.twitch_username.is_some(),
             twitch_oauth: creds.twitch_oauth_token.is_some(),
+            nostr_key: creds.nostr_secret_key.is_some(),
+            nostr_relays: creds.nostr_relays.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 12] = [
+pub const ALL_CHANNELS: [ChannelKind; 13] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -144,6 +150,7 @@ pub const ALL_CHANNELS: [ChannelKind; 12] = [
     ChannelKind::Irc,
     ChannelKind::Mattermost,
     ChannelKind::Twitch,
+    ChannelKind::Nostr,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -283,6 +290,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             _ => (
                 ProbeStatus::Error,
                 "Twitch needs BOTH twitch_username AND twitch_oauth_token",
+            ),
+        },
+        ChannelKind::Nostr => match (v.nostr_key, v.nostr_relays) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "nostr_secret_key + nostr_relays configured — NEOTH connects to the relays for NIP-17 DMs (no public URL); requires a `nostr-channel` feature build to start",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no nostr config"),
+            _ => (
+                ProbeStatus::Error,
+                "Nostr needs BOTH nostr_secret_key AND nostr_relays",
             ),
         },
     };

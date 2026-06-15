@@ -140,6 +140,12 @@ pub struct Credentials {
     pub twitch_oauth_token: Option<SecretString>,
     /// GOLD-FEAT-10 — comma-separated Twitch channels to join (e.g. `#mychannel`).
     pub twitch_channels: Option<String>,
+    /// GOLD-FEAT-10 — Nostr identity secret key (`nsec1…` bech32 or 64-char hex).
+    /// NEOTH signs + decrypts NIP-17 DMs with it. Secret (mlock+zeroize).
+    pub nostr_secret_key: Option<SecretString>,
+    /// GOLD-FEAT-10 — comma-separated Nostr relay WSS URLs the adapter connects
+    /// to (e.g. `wss://relay.damus.io,wss://nos.lol`). Not a secret.
+    pub nostr_relays: Option<String>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -296,6 +302,8 @@ impl Credentials {
             twitch_username,
             twitch_oauth_token,
             twitch_channels,
+            nostr_secret_key,
+            nostr_relays,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -345,6 +353,8 @@ impl Credentials {
             && twitch_username.is_none()
             && twitch_oauth_token.is_none()
             && twitch_channels.is_none()
+            && nostr_secret_key.is_none()
+            && nostr_relays.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

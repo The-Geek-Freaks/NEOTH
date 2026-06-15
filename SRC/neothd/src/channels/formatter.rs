@@ -111,6 +111,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Irc => Some(Box::new(IrcFormatter)),
         ChannelKind::Mattermost => Some(Box::new(MattermostFormatter)),
         ChannelKind::Twitch => Some(Box::new(TwitchFormatter)),
+        ChannelKind::Nostr => Some(Box::new(NostrFormatter)),
     }
 }
 
@@ -530,6 +531,44 @@ impl Formatter for IrcFormatter {
             rendered.push_str("```");
         }
         split_into_messages(&rendered, IRC_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
+    }
+}
+
+// ── Nostr (plain text) ───────────────────────────────────────────────
+
+/// GOLD-FEAT-10 — Nostr plain-text formatter. Nostr event content is free-form
+/// text (no universal markdown renderer across clients), so this passes the
+/// canonical text through verbatim and appends code blocks as literal
+/// triple-backtick fences. Splits at 8000 chars (matches
+/// `nostr_api::NOSTR_MAX_TEXT_CHARS`) to stay under typical relay event-size
+/// limits.
+pub struct NostrFormatter;
+
+const NOSTR_MAX_CHARS: usize = 8_000;
+
+impl Formatter for NostrFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Nostr
+    }
+    fn max_chars_per_message(&self) -> usize {
+        NOSTR_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        let mut rendered = String::new();
+        rendered.push_str(&reply.text);
+        for cb in &reply.code_blocks {
+            rendered.push_str("\n```");
+            if !cb.lang.is_empty() {
+                rendered.push_str(&cb.lang);
+            }
+            rendered.push('\n');
+            rendered.push_str(&cb.body);
+            if !cb.body.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered.push_str("```");
+        }
+        split_into_messages(&rendered, NOSTR_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
     }
 }
 

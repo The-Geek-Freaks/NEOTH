@@ -1668,6 +1668,49 @@ pub(crate) fn spawn_channel_adapters(
         }
     }
 
+    // GOLD-FEAT-10 — Nostr inbound via `nostr-sdk` (WSS relays; NEOTH dials OUT,
+    // no public URL). Compiled only in `--features nostr-channel` builds. Starts
+    // when nostr_secret_key + nostr_relays + a provider are all present.
+    #[cfg(feature = "nostr-channel")]
+    {
+        match (
+            creds.nostr_secret_key.clone(),
+            creds.nostr_relays.clone(),
+            shared_provider.as_ref(),
+        ) {
+            (Some(secret_key), Some(relays), Some(provider)) => {
+                let channel = crate::channels::nostr::NostrChannel::new(secret_key, relays);
+                let handler: PipelineHandler = build_channel_handler(
+                    provider.clone(),
+                    config,
+                    writer,
+                    provider_meter,
+                    rate_limiter,
+                    segment_path,
+                    shared_views_conn,
+                    reload_controller,
+                );
+                spawn_channel_run(channel, handler, "Nostr", channel_tasks);
+                info!(
+                    channel = "nostr",
+                    status = "LIVE",
+                    "channel: spawned (nostr relay receive loop)"
+                );
+            }
+            (Some(_), Some(_), None) => warn!(
+                channel = "nostr",
+                status = "CONFIGURED-NOT-STARTED",
+                "Nostr configured but provider unavailable; channel not started"
+            ),
+            (Some(_), None, _) | (None, Some(_), _) => warn!(
+                channel = "nostr",
+                status = "CONFIGURED-NOT-STARTED",
+                "Nostr needs BOTH nostr_secret_key and nostr_relays; only one supplied — not started"
+            ),
+            (None, None, _) => {}
+        }
+    }
+
     // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
     // verify-token + app-secret + provider are all present. Listens on
     // 127.0.0.1:<whatsapp_webhook_port> (default 8443).

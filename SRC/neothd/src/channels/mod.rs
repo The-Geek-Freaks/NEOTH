@@ -56,6 +56,12 @@ pub mod matrix_client;
 pub mod irc_api;
 #[cfg(feature = "irc-channel")]
 pub mod irc;
+/// GOLD-FEAT-10 — Nostr: the pure rumor→`InboundMessage` mapping + outbound
+/// chunker stay always-compiled (`nostr_api`); the relay adapter (`nostr`) is
+/// behind the `nostr-channel` feature (heavy `nostr-sdk` tree).
+pub mod nostr_api;
+#[cfg(feature = "nostr-channel")]
+pub mod nostr;
 /// GOLD-FEAT-10 — Mattermost (self-hosted, Slack-style team chat). WebSocket
 /// receive + REST send over the always-present `tokio-tungstenite` + `reqwest`
 /// deps — no new crate, no feature gate. NEOTH dials OUT, so no public URL.
@@ -128,6 +134,11 @@ pub enum ChannelKind {
     /// adapter (`IrcChannel::for_twitch`) behind the `irc-channel` feature; this
     /// variant + its formatter/probe row stay compiled in every build.
     Twitch,
+    /// GOLD-FEAT-10 — Nostr (decentralized relays, keypair identity). NIP-17
+    /// gift-wrapped encrypted DMs via `nostr-sdk`. The adapter module is behind
+    /// the `nostr-channel` feature; this variant + its formatter/probe row + the
+    /// pure `nostr_api` mapping stay compiled in every build.
+    Nostr,
 }
 
 impl ChannelKind {
@@ -145,6 +156,7 @@ impl ChannelKind {
             ChannelKind::Irc => "irc",
             ChannelKind::Mattermost => "mattermost",
             ChannelKind::Twitch => "twitch",
+            ChannelKind::Nostr => "nostr",
         }
     }
 }

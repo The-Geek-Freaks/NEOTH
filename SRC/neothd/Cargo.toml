@@ -137,11 +137,22 @@ matrix-channel = ["dep:matrix-sdk"]
 # probe row + the pure `irc_api` mapping stay compiled in every build (they
 # carry no `irc` dependency); only the connection adapter needs the feature.
 irc-channel = ["dep:irc"]
+# GOLD-FEAT-10 — Nostr channel via `nostr-sdk` (WSS relays, keypair identity,
+# NIP-17 gift-wrapped encrypted DMs). Off by default — heavy crate tree
+# (secp256k1 + tungstenite + the NIP modules). The `ChannelKind::Nostr` variant
+# + `NostrFormatter` + the probe row + the pure `nostr_api` mapping stay compiled
+# in every build (they carry no `nostr-sdk` dependency); only the relay adapter
+# needs the feature.
+nostr-channel = ["dep:nostr-sdk"]
 
 [dependencies]
 # GOLD-FEAT-10 — IRC channel (optional, behind `irc-channel`). Tokio-native,
 # owns the IRC wire protocol + PING/PONG + reconnect. rustls TLS (no system lib).
 irc = { version = "1", default-features = false, features = ["tls-rust"], optional = true }
+# GOLD-FEAT-10 — Nostr channel (optional, behind `nostr-channel`). The `nip59`
+# feature pulls the gift-wrap + NIP-44 encryption that NIP-17 private DMs need;
+# default features keep the tokio relay-pool + rustls WSS transport.
+nostr-sdk = { version = "0.44", features = ["nip59"], optional = true }
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
 serde              = { version = "1", features = ["derive"] }
