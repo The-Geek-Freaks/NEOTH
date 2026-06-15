@@ -151,7 +151,20 @@ impl OffloadTransform for SmartCrusher {
         if n < self.config.min_rows {
             return Err(TransformError::skipped(CRUSHER_NAME, "below min_rows"));
         }
-        let keep_idx = self.select_indices(n);
+        // GOLD-ADAPT-HR-04 — size the sample to the array's diversity (a uniform
+        // array keeps the floor; a diverse one keeps up to max_keep).
+        let cap = optimal_k(
+            &arr,
+            self.config.head_rows + self.config.tail_rows,
+            self.config.max_keep,
+        );
+        let mut keep_set: BTreeSet<usize> =
+            self.select_indices_capped(n, cap).into_iter().collect();
+        // GOLD-ADAPT-HR-05 — pin structural outliers (a rare field or a rare
+        // categorical value) outside the drop budget so a lone error row is never
+        // sampled away.
+        keep_set.extend(detect_outliers(&arr));
+        let keep_idx: Vec<usize> = keep_set.into_iter().collect();
         if keep_idx.len() >= n {
             return Err(TransformError::skipped(CRUSHER_NAME, "nothing to drop"));
         }
@@ -206,8 +219,16 @@ impl OffloadTransform for SmartCrusher {
 }
 
 impl SmartCrusher {
-    /// Sorted, de-duplicated indices to keep: head + strided middle + tail.
+    /// Sorted, de-duplicated indices to keep: head + strided middle + tail,
+    /// capped at `max_keep`. Used by `estimate_bloat` (the fixed-cap estimate).
     fn select_indices(&self, n: usize) -> Vec<usize> {
+        self.select_indices_capped(n, self.config.max_keep)
+    }
+
+    /// As [`select_indices`] but with an explicit keep cap, so `apply` can pass
+    /// the GOLD-ADAPT-HR-04 adaptive count instead of the fixed `max_keep`.
+    fn select_indices_capped(&self, n: usize, cap: usize) -> Vec<usize> {
+        let cap = cap.max(1);
         let mut set: BTreeSet<usize> = BTreeSet::new();
         let head = self.config.head_rows.min(n);
         for i in 0..head {
@@ -216,21 +237,140 @@ impl SmartCrusher {
         for i in n.saturating_sub(self.config.tail_rows)..n {
             set.insert(i);
         }
-        // Fill the middle with an even stride up to max_keep.
+        // Fill the middle with an even stride up to the cap.
         let mid_lo = self.config.head_rows.min(n);
         let mid_hi = n.saturating_sub(self.config.tail_rows);
-        if mid_hi > mid_lo && set.len() < self.config.max_keep {
-            let remaining = self.config.max_keep - set.len();
+        if mid_hi > mid_lo && set.len() < cap {
+            let remaining = cap - set.len();
             let span = mid_hi - mid_lo;
             let step = (span / (remaining + 1)).max(1);
             let mut i = mid_lo;
-            while i < mid_hi && set.len() < self.config.max_keep {
+            while i < mid_hi && set.len() < cap {
                 set.insert(i);
                 i += step;
             }
         }
         set.into_iter().collect()
     }
+}
+
+/// GOLD-ADAPT-HR-04 — adaptive keep-count. A near-uniform array (rows differing
+/// only in ids/numbers) needs far fewer kept rows than a diverse one. Key each
+/// row with its digit runs collapsed to `#` (so `{"id":5,…}` and `{"id":7,…}`
+/// share a template) and size the sample by the distinct-template count, clamped
+/// to `[min_k, max_k]`.
+//
+// neoth: distinct-template count is the simple proxy for headroom's Kneedle
+// saturation-curve compute_optimal_k (bigram-coverage knee + zlib-ratio
+// validation, ~150 LOC). It captures the dominant case — id-varying homogeneous
+// rows collapse to one template → keep the floor. Upgrade path: the bigram-Kneedle
+// if a profile shows partially-redundant arrays leaving savings on the table.
+fn optimal_k(rows: &[Value], min_k: usize, max_k: usize) -> usize {
+    let mut templates: BTreeSet<String> = BTreeSet::new();
+    for v in rows {
+        templates.insert(digit_template(&serde_json::to_string(v).unwrap_or_default()));
+        if templates.len() >= max_k {
+            break; // already at the cap — counting further can't raise k
+        }
+    }
+    templates.len().clamp(min_k, max_k)
+}
+
+/// A string with each run of ASCII digits collapsed to a single `#`.
+fn digit_template(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_digits = false;
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            if !in_digits {
+                out.push('#');
+            }
+            in_digits = true;
+        } else {
+            out.push(c);
+            in_digits = false;
+        }
+    }
+    out
+}
+
+/// GOLD-ADAPT-HR-05 — indices of rows that must survive the drop regardless of
+/// position. The strided sampler would discard the one `status:error` row at
+/// index 37 of a 100-row array; this pins two classes of structural outlier:
+///   1. rows carrying a RARE field (present in < 20 % of object rows), and
+///   2. rows whose value of a low-cardinality field falls OUTSIDE that field's
+///      Pareto 80 % cover (a rare categorical value).
+fn detect_outliers(items: &[Value]) -> BTreeSet<usize> {
+    use std::collections::HashMap;
+    let mut must_keep: BTreeSet<usize> = BTreeSet::new();
+    let objs: Vec<(usize, &serde_json::Map<String, Value>)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| v.as_object().map(|o| (i, o)))
+        .collect();
+    let n = objs.len();
+    if n == 0 {
+        return must_keep;
+    }
+    let rare_field_floor = (n as f64 * 0.20).ceil() as usize;
+
+    // Field frequency across object rows.
+    let mut field_count: HashMap<&str, usize> = HashMap::new();
+    for (_, obj) in &objs {
+        for k in obj.keys() {
+            *field_count.entry(k.as_str()).or_insert(0) += 1;
+        }
+    }
+
+    // Pass 1: a row with any rare field is a structural outlier.
+    for (idx, obj) in &objs {
+        if obj
+            .keys()
+            .any(|k| field_count.get(k.as_str()).copied().unwrap_or(0) < rare_field_floor)
+        {
+            must_keep.insert(*idx);
+        }
+    }
+
+    // Pass 2: rare categorical values (Pareto 80 % cover) of low-cardinality fields.
+    for (field, &present) in &field_count {
+        if present == 0 {
+            continue;
+        }
+        let mut val_counts: HashMap<String, usize> = HashMap::new();
+        for (_, obj) in &objs {
+            if let Some(v) = obj.get(*field) {
+                *val_counts.entry(v.to_string()).or_insert(0) += 1;
+            }
+        }
+        // Only genuinely categorical fields get the Pareto treatment: skip a
+        // field with too many distinct values OR one where values barely repeat
+        // (e.g. an `id` field where every value is unique is NOT categorical, so
+        // its rare "tail" must not be mistaken for outliers).
+        if val_counts.len() > 50 || val_counts.len() * 2 > present {
+            continue;
+        }
+        let mut sorted: Vec<(&String, usize)> = val_counts.iter().map(|(k, &c)| (k, c)).collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let target = (present as f64 * 0.80).ceil() as usize;
+        let mut covered = 0usize;
+        let mut top: BTreeSet<&String> = BTreeSet::new();
+        for (val, cnt) in &sorted {
+            top.insert(val);
+            covered += cnt;
+            if covered >= target {
+                break;
+            }
+        }
+        for (idx, obj) in &objs {
+            if let Some(v) = obj.get(*field) {
+                if !top.contains(&v.to_string()) {
+                    must_keep.insert(*idx);
+                }
+            }
+        }
+    }
+    must_keep
 }
 
 #[cfg(test)]
@@ -351,5 +491,62 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(idx, sorted);
+    }
+
+    #[test]
+    fn optimal_k_uniform_array_keeps_the_floor() {
+        // 100 rows differing only in numbers → one template → keep the floor.
+        let rows: Vec<Value> = (0..100)
+            .map(|i| serde_json::json!({"id": i, "status": "ok"}))
+            .collect();
+        assert_eq!(optimal_k(&rows, 7, 20), 7);
+    }
+
+    #[test]
+    fn optimal_k_distinct_content_keeps_more_than_floor() {
+        let colors = [
+            "red", "green", "blue", "cyan", "magenta", "yellow", "black", "white", "gray", "pink",
+            "orange", "purple",
+        ];
+        let rows: Vec<Value> = colors.iter().map(|c| serde_json::json!({"color": c})).collect();
+        // 12 distinct templates → clamp(12, [3,20]) = 12 (above the floor).
+        assert_eq!(optimal_k(&rows, 3, 20), 12);
+    }
+
+    #[test]
+    fn detect_outliers_pins_rare_categorical_value() {
+        // 99 status=ok, 1 status=error → the error row is a must-keep outlier;
+        // the `id` field (every value unique) must NOT be treated as categorical.
+        let mut rows: Vec<Value> =
+            (0..100).map(|i| serde_json::json!({"id": i, "status": "ok"})).collect();
+        rows[37] = serde_json::json!({"id": 37, "status": "error"});
+        let outliers = detect_outliers(&rows);
+        assert!(outliers.contains(&37), "rare status=error row pinned");
+        assert_eq!(outliers.len(), 1, "the unique-id field must not over-flag the tail");
+    }
+
+    #[test]
+    fn detect_outliers_pins_rare_field() {
+        let mut rows: Vec<Value> = (0..10).map(|i| serde_json::json!({"id": i})).collect();
+        rows.push(serde_json::json!({"id": 10, "trace": "boom"}));
+        assert!(detect_outliers(&rows).contains(&10));
+    }
+
+    #[test]
+    fn crush_keeps_the_rare_error_row_end_to_end() {
+        // The strided sampler alone would drop index 37; HR-05 pins it.
+        let mut items: Vec<String> =
+            (0..100).map(|i| format!(r#"{{"id":{i},"status":"ok"}}"#)).collect();
+        items[37] = r#"{"id":37,"status":"error"}"#.to_string();
+        let input = format!("[{}]", items.join(","));
+        let store = InMemoryCcrStore::new();
+        let r = crusher()
+            .apply(&input, &CompressionContext::default(), &store)
+            .expect("crushes");
+        assert!(
+            r.output.contains(r#""status":"error""#),
+            "the rare error row must survive: {}",
+            r.output
+        );
     }
 }
