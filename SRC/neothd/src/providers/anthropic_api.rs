@@ -103,11 +103,19 @@ impl Provider for AnthropicAdapter {
                 .unwrap_or_else(|| self.default_model.clone());
 
             // Anthropic: `system` is a TOP-LEVEL field, NOT a messages[]
-            // entry; messages carry only user/assistant turns.
+            // entry; messages carry only user/assistant turns. FEAT-12 — the
+            // system prompt is sent as a content-block ARRAY (not a bare
+            // string) so the stable persona/tools prefix carries a
+            // `cache_control` breakpoint: Anthropic caches that prefix for
+            // ~5 min and re-reads it at ~10% input cost on the next turn.
             let body = MessagesRequest {
                 model: model.clone(),
                 max_tokens: self.max_tokens,
-                system: req.system.clone().filter(|s| !s.is_empty()),
+                system: req
+                    .system
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| vec![SystemBlock::cached(s)]),
                 messages: vec![AnthropicMessage {
                     role: "user",
                     content: req.prompt.clone(),
@@ -209,10 +217,55 @@ impl Provider for AnthropicAdapter {
 struct MessagesRequest {
     model: String,
     max_tokens: u32,
-    /// Top-level system prompt; omitted entirely when absent/empty.
+    /// Top-level system prompt as a content-block array (FEAT-12) so the
+    /// prefix can carry a `cache_control` breakpoint; omitted entirely when
+    /// absent/empty.
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<Vec<SystemBlock>>,
     messages: Vec<AnthropicMessage>,
+}
+
+/// One `system[]` content block. A bare text block is the whole system
+/// prompt today; the optional `cache_control` marks a prompt-cache
+/// breakpoint at this block.
+#[derive(Serialize)]
+struct SystemBlock {
+    #[serde(rename = "type")]
+    block_type: &'static str,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+impl SystemBlock {
+    /// A text block marked as an ephemeral (5-min) prompt-cache breakpoint.
+    /// Anthropic only caches a prefix that meets the model's minimum
+    /// cacheable length; a shorter system prompt carries the marker
+    /// harmlessly (ignored, no write premium), so marking is unconditional.
+    fn cached(text: &str) -> Self {
+        Self {
+            block_type: "text",
+            text: text.to_string(),
+            cache_control: Some(CacheControl::ephemeral()),
+        }
+    }
+}
+
+/// `cache_control: {"type": "ephemeral"}` — a 5-min cache breakpoint. GA on
+/// the stable `/v1/messages` endpoint (no `anthropic-beta` header). `ttl` is
+/// omitted (defaults to 5m); the 1h TTL would require an extra beta opt-in.
+#[derive(Serialize)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    cache_type: &'static str,
+}
+
+impl CacheControl {
+    fn ephemeral() -> Self {
+        Self {
+            cache_type: "ephemeral",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -264,6 +317,28 @@ mod tests {
         assert_eq!(a.max_tokens, DEFAULT_MAX_TOKENS);
     }
 
+    #[test]
+    fn system_serializes_as_cached_text_block_array() {
+        // FEAT-12 acceptance: the system prompt rides as a content-block
+        // ARRAY with an ephemeral `cache_control` breakpoint, not a bare
+        // string — that's what lets Anthropic cache the stable prefix.
+        let body = MessagesRequest {
+            model: "m".into(),
+            max_tokens: 16,
+            system: Some(vec![SystemBlock::cached("persona")]),
+            messages: vec![AnthropicMessage {
+                role: "user",
+                content: "hi".into(),
+            }],
+        };
+        let v = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(v["system"][0]["type"], "text");
+        assert_eq!(v["system"][0]["text"], "persona");
+        assert_eq!(v["system"][0]["cache_control"]["type"], "ephemeral");
+        // ttl omitted → default 5m; the 1h TTL would need an extra beta header.
+        assert!(v["system"][0]["cache_control"].get("ttl").is_none());
+    }
+
     fn build_adapter_against(server_uri: &str) -> AnthropicAdapter {
         AnthropicAdapter::build(
             server_uri.to_string(),
@@ -309,15 +384,20 @@ mod tests {
     #[tokio::test]
     async fn mock_request_has_system_top_level_max_tokens_and_user_message() {
         // Pins the Anthropic-specific envelope: system is a TOP-LEVEL field
-        // (not in messages[]), max_tokens is present, the prompt is a single
-        // user message, model comes from the per-request override.
+        // (not in messages[]), sent as a content-block ARRAY carrying the
+        // FEAT-12 cache_control breakpoint; max_tokens is present, the prompt
+        // is a single user message, model comes from the per-request override.
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/messages"))
             .and(body_json(serde_json::json!({
                 "model": "claude-override",
                 "max_tokens": DEFAULT_MAX_TOKENS,
-                "system": "you are NEOTH",
+                "system": [ {
+                    "type": "text",
+                    "text": "you are NEOTH",
+                    "cache_control": { "type": "ephemeral" }
+                } ],
                 "messages": [ { "role": "user", "content": "ping" } ],
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
