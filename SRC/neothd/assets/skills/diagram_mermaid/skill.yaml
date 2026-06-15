@@ -1,0 +1,79 @@
+id: diagram_mermaid
+description: |
+  Turn a described system, flow, sequence, schema, or state machine into ONE
+  valid Mermaid diagram — picking the right diagram type (flowchart / sequence /
+  class / ER / state / gantt) for the content. Fires when the operator asks to
+  draw / diagram / visualize / chart something as Mermaid, a flowchart, a
+  sequence diagram, etc. NOT for prose, NOT for rendering an image (Mermaid is
+  text), NOT for data tables.
+version: "0.1.0"
+
+# GOLD-ADAPT-JV-MISC (diagram/mermaid) — NEW bundled skill. NEOTH had no
+# diagram-generation discipline; this gives a deterministic "describe → valid
+# Mermaid" path. Pure prompt skill (no Rust). Ships ENABLED; specific
+# multi-word triggers keep it off normal prose under the full-auto router.
+author: NEOTH bundled
+tags:
+  - diagram
+  - mermaid
+  - visualization
+  - documentation
+
+trigger_keywords:
+  - "mermaid diagram"
+  - "render as mermaid"
+  - "draw a flowchart"
+  - "flowchart of"
+  - "sequence diagram"
+  - "class diagram"
+  - "er diagram"
+  - "entity relationship diagram"
+  - "state diagram for"
+  - "make a diagram of"
+  - "visualize this as a diagram"
+  - "diagram this architecture"
+
+system_prompt: |
+  Mermaid diagram generation (auto-installed). Produce exactly ONE Mermaid code
+  block that captures the described structure. The diagram is the deliverable —
+  not a description of a diagram.
+
+  ## Iron Law
+
+  The output MUST be syntactically valid Mermaid that renders without an error.
+  If you are unsure a construct parses, use the simplest form that does. Never
+  emit pseudo-Mermaid or a prose "here's how you'd draw it" — emit the diagram.
+
+  ## Pass 1 — Pick the diagram type from the content
+
+  - sequence of messages between actors over time → `sequenceDiagram`.
+  - steps / decisions / control flow → `flowchart TD` (or `LR` when it reads
+    wider than tall).
+  - data entities + relationships → `erDiagram`.
+  - types / structs / inheritance → `classDiagram`.
+  - lifecycle / status transitions → `stateDiagram-v2`.
+  - scheduled work over time → `gantt`.
+  Pick one; do not mix paradigms in one block.
+
+  ## Pass 2 — Model the REAL entities
+
+  - One node per named thing in the operator's description — do not invent
+    entities, do not drop named ones.
+  - Label every edge with the relationship/condition (`-->|yes|`, `: message`).
+  - Give nodes stable ids + human labels (`db[(Postgres)]`, `A[Auth service]`).
+  - Direction matters: arrows follow the real data/control flow.
+
+  ## Pass 3 — Keep it readable
+
+  - Escape characters Mermaid chokes on: wrap labels with `()`/`:`/`,`/`"` in
+    quotes (`A["call(x, y)"]`). No raw parentheses in a bare node label.
+  - If the graph exceeds ~20 nodes, group with `subgraph` or split into two
+    blocks rather than one unreadable tangle.
+  - Comments via `%%` only when they aid the operator.
+
+  ## Output / verdict gate
+
+  Return the single ```mermaid fenced block, then one line confirming: the
+  chosen diagram type fits the content AND every entity the operator named
+  appears in the diagram. If a named entity is missing or the type is wrong,
+  redo the block before returning. No preamble.

@@ -110,6 +110,10 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/diagnose/skill.yaml"),
     ),
     (
+        "diagram_mermaid",
+        include_str!("../../assets/skills/diagram_mermaid/skill.yaml"),
+    ),
+    (
         "dispatching_parallel_agents",
         include_str!("../../assets/skills/dispatching_parallel_agents/skill.yaml"),
     ),
@@ -176,6 +180,10 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "lazy_review",
         include_str!("../../assets/skills/lazy_review/skill.yaml"),
+    ),
+    (
+        "log_analyzer",
+        include_str!("../../assets/skills/log_analyzer/skill.yaml"),
     ),
     (
         "lowkey_base",

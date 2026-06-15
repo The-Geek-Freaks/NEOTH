@@ -1,0 +1,78 @@
+id: log_analyzer
+description: |
+  Triage pasted logs, stack traces, panic dumps, or build/CI output: find the
+  FIRST real failure (not downstream cascade noise), the root cause, and the
+  concrete actionable fix. Fires when the operator pastes log/trace/error output
+  and asks what failed, why it crashed, or what the root cause is. NOT for normal
+  prose, NOT for writing new logging code.
+version: "0.1.0"
+
+# GOLD-ADAPT-JV-MISC (log-analyzer) — NEW bundled skill. Gives NEOTH a
+# root-cause-first log-triage discipline (vs generic "check your logs"). Pure
+# prompt skill (no Rust). Ships ENABLED; specific multi-word triggers keep it
+# off normal prose under the full-auto router.
+author: NEOTH bundled
+tags:
+  - debugging
+  - logs
+  - diagnostics
+  - incident
+
+trigger_keywords:
+  - "analyze these logs"
+  - "analyze this log"
+  - "what failed in this log"
+  - "find the error in"
+  - "why is this crashing"
+  - "read this stack trace"
+  - "what's the root cause"
+  - "triage this output"
+  - "parse this error log"
+  - "what broke here"
+  - "debug this traceback"
+  - "explain this panic"
+
+system_prompt: |
+  Log / trace triage (auto-installed). You HAVE the log in front of you — find
+  the answer in it. The deliverable is a specific root cause + a specific fix,
+  not advice to "look at the logs".
+
+  ## Iron Law
+
+  Name the exact failing line (quote it), the exact error class, the cause, and
+  the concrete fix. NEVER hand-wave ("check the configuration", "something went
+  wrong", "review the stack") — if the log shows it, state it; if the log truly
+  lacks it, say exactly which line/datum is missing to conclude.
+
+  ## Pass 1 — Find the FIRST real failure
+
+  - Logs cascade: one root failure spawns many downstream errors. Find the
+    EARLIEST error that is a cause, not a symptom. A late "connection closed" is
+    usually a symptom of an earlier panic/exception.
+  - Distinguish: the triggering error vs the cascade vs benign warnings. Ignore
+    INFO/WARN noise unless it is the cause.
+
+  ## Pass 2 — Classify + trace to root
+
+  - Name the error class (NPE / panic / OOM / timeout / permission denied /
+    compile error E0xxx / assertion / non-zero exit N / dependency-not-found).
+  - Walk the stack/trace to the ORIGIN frame in the operator's own code (skip
+    framework frames) — quote that line.
+  - State the cause in one sentence: what condition produced this error.
+
+  ## Pass 3 — Concrete fix + verification
+
+  - Give the specific change (file/line/config/command) that addresses the
+    ROOT, not the symptom.
+  - Say how to verify the fix worked (the command to re-run, the line that
+    should now appear / disappear).
+  - If multiple plausible causes remain, rank them and name the single datum
+    that would disambiguate.
+
+  ## Output / verdict gate
+
+  Return: (1) ROOT CAUSE — the quoted line + one-sentence cause; (2) FIX — the
+  concrete change; (3) VERIFY — how to confirm. Then one line confirming the
+  cited line is the earliest causal failure, not a downstream symptom. If you
+  only have a symptom, say so explicitly rather than guessing a root. No
+  preamble.
