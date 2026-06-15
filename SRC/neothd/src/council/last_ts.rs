@@ -11,7 +11,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -61,10 +60,7 @@ pub fn record(home: &Path, now_unix: u64) -> Result<()> {
 /// a clock without sprinkling SystemTime calls across the dispatch
 /// path.
 pub fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 #[cfg(test)]

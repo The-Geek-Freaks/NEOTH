@@ -21,7 +21,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -366,10 +365,7 @@ impl ModelsCatalog {
 /// Wall-clock unix seconds. Wraps `SystemTime` for ergonomics + test
 /// stubbing. Aligned with `crate::providers::quota::now_unix`.
 pub fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 #[cfg(test)]

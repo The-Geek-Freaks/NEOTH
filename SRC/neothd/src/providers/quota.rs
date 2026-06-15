@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -291,10 +291,7 @@ fn roll_daily_counter(state: &mut ProviderQuotaState, now_unix: u64) {
 /// Current wall-clock Unix seconds. Wraps `SystemTime` so callers can stub
 /// it in tests via `now_unix_or(fixture)`.
 pub fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 #[cfg(test)]

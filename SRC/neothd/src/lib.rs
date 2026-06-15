@@ -143,6 +143,8 @@ pub mod skills;
 pub mod slash;
 pub mod sub_agents;
 pub mod telemetry;
+/// GOLD-ARCH-07 — canonical overflow-defined unix-time helpers.
+pub mod time;
 /// Round-3 v0.4 ARCH-04 — block-layer prompt token-cap enforcement
 /// + graceful degradation policy (D oldest 50% → C lowest-importance
 /// 50% → Conductor truncation; never touches A/B/E). Returns the

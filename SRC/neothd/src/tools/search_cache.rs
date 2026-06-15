@@ -189,10 +189,7 @@ impl SearchCache {
 /// practice). Used by the production `search_cached` wrapper; tests pass an
 /// explicit `now_secs` instead.
 pub fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 /// Best-effort mtime read for tests + the cap policy.

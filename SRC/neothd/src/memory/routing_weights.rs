@@ -36,7 +36,6 @@
 //!   `(topic, role)` decays back toward the neutral prior.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -269,10 +268,7 @@ fn apply_decay(success_count: f32, anchor_unix: u64, now_unix: u64) -> f32 {
 /// Wall-clock unix seconds. Wraps `SystemTime` so tests can stub via
 /// the `now_unix` parameter on the per-fn API.
 pub fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 #[cfg(test)]

@@ -3,7 +3,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -233,10 +232,7 @@ pub fn build_draft(
 
 /// Convenience: current wall-clock unix seconds.
 pub fn now_unix_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 /// Filesystem-safe id check — same rule as PL-02 doc_id.
