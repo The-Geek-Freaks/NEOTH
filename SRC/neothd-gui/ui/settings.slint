@@ -8,7 +8,7 @@
 // so the daemon picks up changes within 2s without an explicit
 // "Apply" button.
 
-import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit } from "components.slint";
 
@@ -118,7 +118,7 @@ component TabButton inherits Rectangle {
     in property <bool> active: false;
     callback clicked();
 
-    height: 44px;
+    height: 36px;
     background: root.active ? Theme.bg-card : transparent;
     border-radius: Theme.radius-button;
 
@@ -129,9 +129,9 @@ component TabButton inherits Rectangle {
 
     Rectangle {
         x: 0;
-        y: 8px;
+        y: 6px;
         width: 3px;
-        height: parent.height - 16px;
+        height: parent.height - 12px;
         background: root.active ? Theme.accent-green : transparent;
         border-radius: 2px;
     }
@@ -570,7 +570,9 @@ export component SettingsView inherits Rectangle {
             background: Theme.bg-base;
             VerticalLayout {
                 padding: Theme.space-base;
-                spacing: Theme.space-tight;
+                // GUI-overhaul — tighter nav: items were 8px apart + 44px tall
+                // (felt spread out). 4px gap + 36px TabButton height densifies it.
+                spacing: 4px;
 
                 // G-5 fix: "← Chat" lives at the top of the sidebar so
                 // the operator always has an obvious exit. Mirrors the
@@ -648,13 +650,22 @@ export component SettingsView inherits Rectangle {
             border-color: Theme.border-subtle;
             border-width: 1px;
             border-radius: Theme.radius-card;
+            clip: true;
 
+            // GUI-overhaul (gap panel wf_8ad7096a) — every tab body now SCROLLS
+            // (vertical) so long tabs (Privacy rails / 118 Skills / Cluster) no
+            // longer overflow the window + cut off the footer. The inner
+            // VerticalLayout is pinned to the viewport width so content wraps
+            // inside the margins instead of running off the right edge.
+            ScrollView {
+            VerticalLayout {
+            width: parent.visible-width;
             // G-17 fix: replace internal "Pick #N" sprint labels with
             // operator-readable release identifiers. Internal tracking
             // belongs in PROGRESS.md, not in the settings UI.
             if root.active == SettingsTab.chat: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Chat";
                     subtitle: "Your day-to-day conversation surface — composer, scrollback, channel sidebar — lives in the main Chat view (it is the primary surface, not a settings sub-panel). Open it here.";
@@ -698,8 +709,8 @@ export component SettingsView inherits Rectangle {
             }
 
             if root.active == SettingsTab.hemispheres: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Hemispheres";
                     subtitle: "NEOTH thinks across three roles: Left (fast, analytic), Right (deep, creative), Cerebellum (the orchestrator). Bind a provider to each via the CLI; this shows the live binding.";
@@ -806,8 +817,8 @@ export component SettingsView inherits Rectangle {
             }
 
             if root.active == SettingsTab.channels: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Channels";
                     subtitle: "Messaging surfaces NEOTH can reach. Connect/disconnect via the CLI; this shows which have credentials configured — the secrets themselves never leave ~/.neoth/credentials.yaml.";
@@ -846,8 +857,8 @@ export component SettingsView inherits Rectangle {
             }
 
             if root.active == SettingsTab.skills: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Skills";
                     subtitle: "Skill packs teach NEOTH about a domain — each loads automatically when its trigger words appear. Manage them via the CLI; this lists the installed set.";
@@ -923,8 +934,8 @@ export component SettingsView inherits Rectangle {
             }
 
             if root.active == SettingsTab.plugins: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Plugins";
                     subtitle: "Sandboxed WebAssembly plugins. Drop a .wasm into ~/.neoth/plugins/ and enable via the CLI; this lists the discovered set + activation state.";
@@ -974,8 +985,8 @@ export component SettingsView inherits Rectangle {
             }
 
             if root.active == SettingsTab.memory: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Memory";
                     subtitle: "What NEOTH loads as context — global/project/rule files + the memory tier. Sizes only; inspect or erase content via the CLI.";
@@ -1026,8 +1037,8 @@ export component SettingsView inherits Rectangle {
             }
 
             if root.active == SettingsTab.privacy: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Privacy";
                     subtitle: "Outbound-LLM consent state + autonomy level. Cloud providers only run after explicit consent (V03-08).";
@@ -1318,8 +1329,8 @@ export component SettingsView inherits Rectangle {
             // freedom.yaml by hand. CLI parity: `neoth cluster
             // enable` / `disable`.
             if root.active == SettingsTab.cluster: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Cluster";
                     subtitle: "Auto-discover other NEOTH instances on your network and connect them into one team — shared memory, shared chat, shared task board. Uses lightweight mDNS broadcasts (same tech as AirPlay and Chromecast).";
@@ -1561,8 +1572,8 @@ export component SettingsView inherits Rectangle {
             }
 
             if root.active == SettingsTab.code-sessions: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Code Sessions";
                     subtitle: "Hermes-style autonomous coding workflow. Decompose a prompt with Cerebellum, dispatch tasks to Left (fast) + Right (deep) hemispheres, watch the kanban board fill.";
@@ -1976,8 +1987,8 @@ export component SettingsView inherits Rectangle {
             // `provider-changed` callback; Rust mutates freedom.yaml
             // + drops the reload sentinel automatically.
             if root.active == SettingsTab.config: VerticalBox {
-                padding: Theme.space-loose;
-                spacing: Theme.space-loose;
+                padding: Theme.space-base;
+                spacing: Theme.space-base;
                 PanelHeader {
                     title: "Config";
                     subtitle: "Change the LLM provider, force a config reload, or restart the setup wizard. Every choice writes back to ~/.neoth/freedom.yaml — no manual YAML editing required.";
@@ -2105,6 +2116,8 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
+            }
+            }
             }
         }
     }

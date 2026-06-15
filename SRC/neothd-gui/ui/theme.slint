@@ -21,17 +21,22 @@ export global Theme {
     // both endpoints and let each screen choose either the flat
     // `bg-base` (cheap) or layer a Rectangle with the gradient for
     // hero shots.
-    out property <color> bg-base: #1a1a1a;
-    out property <color> bg-center: #0d0d0d;
+    out property <color> bg-base: #111213;
+    out property <color> bg-center: #0a0b0c;
 
     // Card / inset surface — one step lighter than the page background
     // so secondary containers register without breaking the dark feel.
-    out property <color> bg-card: #242424;
+    out property <color> bg-card: #1c1d1f;
 
     // Accent — the "synapse" green from the brand identity SVG.
     // Used for active states, focus rings, the cursor on inputs, the
     // "Neural Pulse" ripple. NEVER used for plain prose text.
-    out property <color> accent-green: #00ff80;
+    // GUI-overhaul (gap panel wf_8ad7096a): #00ff80 is a neon/retro full-
+    // saturation green that reads harsh on a dark page; #3ecf8e is a modern,
+    // desaturated emerald with the same semantic role. Every component references
+    // this token (incl. the `.with-alpha(…)` softening), so this one change lifts
+    // the whole app without per-component edits.
+    out property <color> accent-green: #3ecf8e;
 
     // Secondary accent — used sparingly for destructive / warning
     // states (revoke consent, delete, irreversible operations).
@@ -57,7 +62,7 @@ export global Theme {
 
     // Border + divider hairlines. Just shy of black so they show
     // against the card surface but don't fight the content.
-    out property <color> border-subtle: #2f2f2f;
+    out property <color> border-subtle: #2a2b2e;
 
     // ── Corner radii — "Noble Curve" rule ────────────────────────────
     // Spec §1.2: Never use 0px. Three discrete sizes only.
@@ -95,7 +100,7 @@ export global Theme {
     out property <length> font-size-h1:      32px;   // Screen titles
     out property <length> font-size-h2:      20px;   // Section heads
     out property <length> font-size-body:    15px;
-    out property <length> font-size-caption: 12px;
+    out property <length> font-size-caption: 13px;
 
     // Letter spacing. Spec calls for +20% on ultra-light hero titles
     // and +2% on body. Slint expresses this in absolute px at the
