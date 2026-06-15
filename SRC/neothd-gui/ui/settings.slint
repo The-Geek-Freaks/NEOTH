@@ -561,6 +561,9 @@ export component SettingsView inherits Rectangle {
     /// because the ⚙ icon lives in the Chat sidebar (not visible
     /// from Settings).
     callback back-clicked;
+    /// GUI-overhaul feature parity — operator toggled a skill's enable state.
+    /// Args: (skill-id, enabled). Rust shells `neoth skills --enable/--disable`.
+    callback skill-toggle-clicked(string, bool);
 
     background: Theme.bg-base;
 
@@ -907,11 +910,12 @@ export component SettingsView inherits Rectangle {
                             spacing: 2px;
                             HorizontalLayout {
                                 spacing: Theme.space-base;
-                                Text {
-                                    text: s.enabled ? "on" : "off";
-                                    font-family: Theme.font-mono;
-                                    font-size: Theme.font-size-caption;
-                                    color: s.enabled ? Theme.accent-green : Theme.text-muted;
+                                // GUI-overhaul — feature parity: enable/disable a
+                                // skill from the GUI (was a read-only on/off label).
+                                // Fires `neoth skills --enable/--disable <id>`.
+                                NeothCheckBox {
+                                    checked: s.enabled;
+                                    toggled(v) => { root.skill-toggle-clicked(s.id, v); }
                                 }
                                 Text {
                                     text: s.id;

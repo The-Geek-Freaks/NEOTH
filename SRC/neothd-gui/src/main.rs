@@ -725,6 +725,42 @@ fn main() -> Result<()> {
         }
     });
 
+    // GUI-overhaul (gap panel wf_8ad7096a) — feature parity: enable/disable a
+    // skill from the GUI Skills tab. Shells `neoth skills --enable/--disable <id>`
+    // off the UI thread, then re-fetches + applies the list so the new state
+    // shows + reports a status line.
+    let weak_skill_toggle = window.as_weak();
+    window.on_skill_toggle(move |id, enabled| {
+        let weak = weak_skill_toggle.clone();
+        let id = id.to_string();
+        std::thread::spawn(move || {
+            let flag = if enabled { "--enable" } else { "--disable" };
+            let ok = which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("skills")
+                        .arg(flag)
+                        .arg(&id)
+                        .output()
+                        .ok()
+                })
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let skills = fetch_skills();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    apply_skills(&w, skills);
+                    let verb = if enabled { "enabled" } else { "disabled" };
+                    w.set_status_line(if ok {
+                        format!("Skill {id} {verb}.").into()
+                    } else {
+                        format!("Skill {verb} failed for {id} (is neothd on PATH?).").into()
+                    });
+                }
+            });
+        });
+    });
+
     // Pick #8 step 4 — pseudo-live-tail via 2-second poll (2026-05-20).
     // A real WAL-file-watcher (notify crate + WAL frame parser) lands
     // when the dispatcher (Pick #6) starts mutating the board mid-run.

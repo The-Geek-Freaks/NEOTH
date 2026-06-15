@@ -355,6 +355,7 @@ export component MainWindow inherits Window {
     /// re-fetches via subprocess + updates the seven properties above.
     callback kanban-refresh-clicked;
     callback channels-refresh-clicked;
+    callback skill-toggle(string, bool);
     /// Step 5 (2026-05-20): operator clicked a task card.
     callback kanban-task-selected(string);
     /// Step 6 (2026-05-20): operator clicked an action button in the
@@ -1484,6 +1485,7 @@ export component MainWindow inherits Window {
             skills: root.skills;
             skills-always-embed-route: root.skills-always-embed-route;
             skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
+            skill-toggle-clicked(id, en) => { root.skill-toggle(id, en); }
             channels: root.channels;
             plugins: root.plugins;
             memory-blocks: root.memory-blocks;
