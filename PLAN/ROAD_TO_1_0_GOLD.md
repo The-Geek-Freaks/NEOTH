@@ -203,7 +203,7 @@ External/unauthenticated exploits first, then operator-data-loss, then defense-i
 
 ---
 
-## WS-B — Honesty / Truth-in-Advertising (GOLD-HON-NN)
+## WS-B — Honesty / Truth-in-Advertising (GOLD-HON-NN) — ✅ COMPLETE (26/26, 2026-06-15)
 
 Doc/claim ≠ code fixes AND wiring the truthful behavior.
 
