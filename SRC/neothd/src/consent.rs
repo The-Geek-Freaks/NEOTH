@@ -17,7 +17,6 @@
 use std::fs;
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 
@@ -319,11 +318,7 @@ pub fn ensure_granted_or_prompt(home: &Path, kind: ProviderKind) -> Result<()> {
 }
 
 fn unix_ts_string() -> String {
-    let secs = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    secs.to_string()
+    crate::time::now_unix_secs().to_string()
 }
 
 /// A-2 (Session 13) — enumerate every distinct cloud `ProviderKind` the

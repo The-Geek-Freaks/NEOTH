@@ -9,7 +9,6 @@
 //! Day-5c. For now: pipe in a prompt, get an answer, durably logged.
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -582,10 +581,7 @@ async fn enforce_preflight(
         "input_tokens": predicted_cost.input_tokens,
         "output_tokens_est": predicted_cost.output_tokens_est,
         "total_eur": predicted_cost.total_eur,
-        "ts_unix": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        "ts_unix": crate::time::now_unix_secs(),
     }))
     .unwrap_or_default();
     if !est_payload.is_empty() {
@@ -2519,10 +2515,7 @@ fn sanitize_session_title(raw: &str) -> String {
 /// process pid with the nanosecond timestamp.
 fn rand_u64_for_trace() -> u64 {
     let pid = std::process::id() as u64;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
+    let nanos = crate::time::now_unix_ns();
     pid.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(nanos)
 }
 
@@ -4728,10 +4721,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
 }
 
 fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 /// UX-02 — render the "memory is working" line from a total memory

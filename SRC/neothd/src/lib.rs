@@ -331,10 +331,7 @@ pub fn install_panic_handler() {
         } else {
             "<non-string panic payload>".to_string()
         };
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let ts = crate::time::now_unix_secs();
         let line = format!(
             "[neoth panic] ts_unix={ts} at {location}: {payload} (version={})\n",
             env!("CARGO_PKG_VERSION"),

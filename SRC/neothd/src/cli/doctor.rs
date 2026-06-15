@@ -584,10 +584,7 @@ mod tests {
     #[test]
     fn cluster_registry_pass_when_fresh() {
         let dir = tempdir().unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         let peer = crate::cluster::registry::PairedPeer {
             pub_key_hex: "ab".repeat(32),
             instance_label: "laptop".into(),
@@ -607,10 +604,7 @@ mod tests {
     #[test]
     fn cluster_registry_warns_on_stale() {
         let dir = tempdir().unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         let peer = crate::cluster::registry::PairedPeer {
             pub_key_hex: "ab".repeat(32),
             instance_label: "old-laptop".into(),
@@ -735,10 +729,7 @@ mod tests {
     fn provider_flapping_pass_when_below_threshold() {
         use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         // 10 calls, only 1 error → 10% error rate (below 20% threshold).
         for i in 0..10 {
             append(
@@ -764,10 +755,7 @@ mod tests {
     fn provider_flapping_warns_when_above_threshold() {
         use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         // 10 calls, 5 errors → 50% error rate.
         for i in 0..10 {
             append(
@@ -803,10 +791,7 @@ mod tests {
     fn provider_flapping_skips_low_sample_providers() {
         use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         // Only 2 calls with 100% error rate — under min sample size.
         for _ in 0..2 {
             append(
@@ -861,10 +846,7 @@ mod tests {
             "council:\n  daily_usd_cap: 1.0\n",
         )
         .unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         append(
             dir.path(),
             &UsageEvent {
@@ -893,10 +875,7 @@ mod tests {
             "council:\n  daily_usd_cap: 2.0\n",
         )
         .unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         // $1.70 of $2 cap = 85% → Warn (below cap, above 80%).
         append(
             dir.path(),

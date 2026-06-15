@@ -769,10 +769,7 @@ fn run_wal_export(
     sign: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns();
     let now_unix = (now_ns / 1_000_000_000) as i64;
     let (start_ns, end_ns) = parse_window(window, now_ns)?;
 
@@ -1040,10 +1037,7 @@ mod tests {
 
     fn write_segment(dir: &std::path::Path, seq: u64, frames: usize) -> PathBuf {
         let path = dir.join(format!("{:06}.wal", seq));
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
+        let now = crate::time::now_unix_ns();
         let mut bytes: Vec<u8> = Vec::new();
         let sh = SegmentHeader::new(0, seq, 0, now, [0u8; 16]);
         bytes.extend_from_slice(&sh.to_le_bytes());
