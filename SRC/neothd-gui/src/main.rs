@@ -761,6 +761,76 @@ fn main() -> Result<()> {
         });
     });
 
+    // GUI-overhaul feature parity — enable/disable a plugin from the GUI Plugins
+    // tab. Shells `neoth plugin enable/disable <id>` off the UI thread (mutates
+    // freedom.yaml::plugins.wasm.activations.<id>), then re-fetches the list.
+    let weak_plugin_toggle = window.as_weak();
+    window.on_plugin_toggle(move |id, enabled| {
+        let weak = weak_plugin_toggle.clone();
+        let id = id.to_string();
+        std::thread::spawn(move || {
+            let action = if enabled { "enable" } else { "disable" };
+            let ok = which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("plugin")
+                        .arg(action)
+                        .arg(&id)
+                        .output()
+                        .ok()
+                })
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let plugins = fetch_plugins();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    apply_plugins(&w, plugins);
+                    let verb = if enabled { "enabled" } else { "disabled" };
+                    w.set_status_line(if ok {
+                        format!("Plugin {id} {verb}.").into()
+                    } else {
+                        format!("Plugin {verb} failed for {id} (is neothd on PATH?).").into()
+                    });
+                }
+            });
+        });
+    });
+
+    // GUI-overhaul feature parity — set the autonomy level from the Privacy combo.
+    // Shells `neoth autonomy set <level>` (mutates freedom.yaml::autonomy + emits
+    // a WAL audit frame). On success, mirror the new level into autonomy-choice so
+    // the combo + every autonomy-derived display update without a reload.
+    let weak_autonomy_set = window.as_weak();
+    window.on_autonomy_set(move |level| {
+        let weak = weak_autonomy_set.clone();
+        let level = level.to_string();
+        std::thread::spawn(move || {
+            let ok = which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("autonomy")
+                        .arg("set")
+                        .arg(&level)
+                        .output()
+                        .ok()
+                })
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    if ok {
+                        w.set_autonomy_choice(level.clone().into());
+                        w.set_status_line(format!("Autonomy set to {level}.").into());
+                    } else {
+                        w.set_status_line(
+                            format!("Autonomy set to {level} failed (is neothd on PATH?).").into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+
     // Pick #8 step 4 — pseudo-live-tail via 2-second poll (2026-05-20).
     // A real WAL-file-watcher (notify crate + WAL frame parser) lands
     // when the dispatcher (Pick #6) starts mutating the board mid-run.

@@ -356,6 +356,8 @@ export component MainWindow inherits Window {
     callback kanban-refresh-clicked;
     callback channels-refresh-clicked;
     callback skill-toggle(string, bool);
+    callback plugin-toggle(string, bool);
+    callback autonomy-set(string);
     /// Step 5 (2026-05-20): operator clicked a task card.
     callback kanban-task-selected(string);
     /// Step 6 (2026-05-20): operator clicked an action button in the
@@ -1486,6 +1488,8 @@ export component MainWindow inherits Window {
             skills-always-embed-route: root.skills-always-embed-route;
             skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
             skill-toggle-clicked(id, en) => { root.skill-toggle(id, en); }
+            plugin-toggle-clicked(id, en) => { root.plugin-toggle(id, en); }
+            autonomy-set-clicked(level) => { root.autonomy-set(level); }
             channels: root.channels;
             plugins: root.plugins;
             memory-blocks: root.memory-blocks;

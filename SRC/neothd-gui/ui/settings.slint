@@ -564,6 +564,12 @@ export component SettingsView inherits Rectangle {
     /// GUI-overhaul feature parity — operator toggled a skill's enable state.
     /// Args: (skill-id, enabled). Rust shells `neoth skills --enable/--disable`.
     callback skill-toggle-clicked(string, bool);
+    /// GUI-overhaul feature parity — operator toggled a plugin's enable state.
+    /// Args: (plugin-id, enabled). Rust shells `neoth plugin enable/disable`.
+    callback plugin-toggle-clicked(string, bool);
+    /// GUI-overhaul feature parity — operator picked an autonomy level from the
+    /// Privacy combo. Arg: level string. Rust shells `neoth autonomy set <level>`.
+    callback autonomy-set-clicked(string);
 
     background: Theme.bg-base;
 
@@ -964,11 +970,12 @@ export component SettingsView inherits Rectangle {
                         }
                         for p in root.plugins: HorizontalLayout {
                             spacing: Theme.space-base;
-                            Text {
-                                text: p.activation;
-                                font-family: Theme.font-mono;
-                                font-size: Theme.font-size-caption;
-                                color: p.activation == "enabled" ? Theme.accent-green : Theme.text-muted;
+                            // GUI-overhaul feature parity: enable/disable a plugin
+                            // from the GUI (was a read-only activation label).
+                            // Fires `neoth plugin enable/disable <id>`.
+                            NeothCheckBox {
+                                checked: p.activation == "enabled";
+                                toggled(v) => { root.plugin-toggle-clicked(p.id, v); }
                             }
                             Text {
                                 text: p.id;
@@ -978,10 +985,10 @@ export component SettingsView inherits Rectangle {
                                 horizontal-stretch: 1;
                             }
                             Text {
-                                text: p.name;
-                                font-family: Theme.font-display;
+                                text: p.activation;
+                                font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
-                                color: Theme.text-muted;
+                                color: p.activation == "enabled" ? Theme.accent-green : Theme.text-muted;
                             }
                         }
                     }
@@ -1060,14 +1067,43 @@ export component SettingsView inherits Rectangle {
                             letter-spacing: Theme.letter-spacing-tight;
                             color: Theme.accent-green;
                         }
+                        // True current level (source of truth — always reflects
+                        // freedom.yaml, even when the combo below is mid-select).
                         Text {
                             text: root.autonomy-current;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;
                         }
+                        // GUI-overhaul feature parity: pick the autonomy level
+                        // directly (was a read-only label that said "switch via the
+                        // CLI"). strict/standard/elevated/custom write freedom.yaml
+                        // immediately via `neoth autonomy set <level>`. "full" is the
+                        // guarded sudomode level — a plain `autonomy set full` is
+                        // TTY-fail-closed, so selecting it routes to the two-step
+                        // confirm below (which invokes the CLI with --gui-confirmed).
+                        NeothComboBox {
+                            model: ["strict", "standard", "elevated", "full", "custom"];
+                            current-index: root.autonomy-current == "strict" ? 0
+                                : root.autonomy-current == "standard" ? 1
+                                : root.autonomy-current == "elevated" ? 2
+                                : root.autonomy-current == "full" ? 3
+                                : root.autonomy-current == "custom" ? 4
+                                : 1;
+                            selected(i) => {
+                                if (i == 3) {
+                                    root.full-auto-pending = true;
+                                } else {
+                                    root.autonomy-set-clicked(
+                                        i == 0 ? "strict"
+                                        : i == 1 ? "standard"
+                                        : i == 2 ? "elevated"
+                                        : "custom");
+                                }
+                            }
+                        }
                         Text {
-                            text: "Five levels: strict / standard / elevated / full / custom. Switch via the CLI: /autonomy <level>. Slider UI lands in the autonomy-ui Pick.";
+                            text: "strict / standard / elevated / custom apply immediately. \"full\" (sudomode) needs the confirm below. Writes freedom.yaml::autonomy + a WAL audit frame.";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
