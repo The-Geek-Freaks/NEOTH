@@ -505,7 +505,10 @@ export component NeothLineEdit inherits Rectangle {
     callback edited(string);
 
     height: 44px;
-    background: Theme.bg-card;
+    // GUI-overhaul: fields mostly sit inside Cards (also bg-card), where a
+    // bg-card field was invisible. bg-base reads as a recessed input box that
+    // delineates clearly against the card surface.
+    background: Theme.bg-base;
     border-radius: Theme.radius-button;
     border-width: 1px;
     border-color:
@@ -526,7 +529,13 @@ export component NeothLineEdit inherits Rectangle {
         Rectangle {
             // Stacked layer: placeholder shows behind the TextInput
             // when text is empty + the field is not focused.
+            // GUI-overhaul: Slint centers non-layout children, so without an
+            // explicit full width these left-aligned to nothing and the
+            // placeholder/caret rendered mid-field. Pin both to parent.width so
+            // horizontal-alignment:left actually takes effect.
             if root.text == "" && !input.has-focus: Text {
+                x: 0;
+                width: parent.width;
                 text: root.placeholder-text;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-body;
@@ -536,6 +545,8 @@ export component NeothLineEdit inherits Rectangle {
             }
 
             input := TextInput {
+                x: 0;
+                width: parent.width;
                 text <=> root.text;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-body;

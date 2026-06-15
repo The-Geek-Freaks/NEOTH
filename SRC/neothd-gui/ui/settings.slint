@@ -683,6 +683,11 @@ export component SettingsView inherits Rectangle {
             ScrollView {
             VerticalLayout {
             width: parent.visible-width;
+            // GUI-overhaul: pack the active tab at the top at its natural height.
+            // Without this the layout stretched the single visible tab to fill the
+            // whole viewport, spreading cards + fields apart with huge gaps
+            // ("nicht aligned / spread out"). Extra space now stays below.
+            alignment: start;
             // G-17 fix: replace internal "Pick #N" sprint labels with
             // operator-readable release identifiers. Internal tracking
             // belongs in PROGRESS.md, not in the settings UI.
@@ -993,6 +998,11 @@ export component SettingsView inherits Rectangle {
                                 // skill from the GUI (was a read-only on/off label).
                                 // Fires `neoth skills --enable/--disable <id>`.
                                 NeothCheckBox {
+                                    // Bare (label-less) checkbox: pin to the box
+                                    // width so it doesn't stretch and shove the id
+                                    // to mid-row (NeothCheckBox inherits Rectangle,
+                                    // which fills by default).
+                                    width: 28px;
                                     checked: s.enabled;
                                     toggled(v) => { root.skill-toggle-clicked(s.id, v); }
                                 }
@@ -1047,6 +1057,7 @@ export component SettingsView inherits Rectangle {
                             // from the GUI (was a read-only activation label).
                             // Fires `neoth plugin enable/disable <id>`.
                             NeothCheckBox {
+                                width: 28px;
                                 checked: p.activation == "enabled";
                                 toggled(v) => { root.plugin-toggle-clicked(p.id, v); }
                             }
@@ -1142,8 +1153,11 @@ export component SettingsView inherits Rectangle {
                             color: Theme.text-muted;
                             wrap: word-wrap;
                         }
-                        forget_input := NeothLineEdit {
-                            placeholder-text: "topic / keyword to forget";
+                        HorizontalLayout {
+                            forget_input := NeothLineEdit {
+                                placeholder-text: "topic / keyword to forget";
+                                horizontal-stretch: 1;
+                            }
                         }
                         if !forget-confirming: HorizontalLayout {
                             spacing: Theme.space-base;
