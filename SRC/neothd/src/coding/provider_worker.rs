@@ -195,14 +195,33 @@ pub fn patch_path_for(patch_root: &std::path::Path, task: &KanbanTask) -> PathBu
 /// (Direct mode, or an unparseable Stage-1 reply) leaves the prompt
 /// plain.
 fn build_task_prompt(task: &KanbanTask, tool_hint: Option<ToolCategory>) -> String {
+    // GOLD-ADAPT-PT-01..05 — ponytail "lazy senior dev" restraint, ported as
+    // prompt text (no external dependency; benchmarked at 34% of caveman's LOC,
+    // ~2x faster, identical security-probe scores). The ladder is checked BEFORE
+    // any code is written so the worker reaches for the smallest solution and
+    // marks deliberate shortcuts instead of silently over- or under-building.
+    const LAZY_RULES: &str = "Before writing code, stop at the first rung that applies:\n\
+        1. Does this need building at all? If speculative, skip it and say so.\n\
+        2. Does the standard library do it? Use it.\n\
+        3. Does a native platform feature cover it? Use it.\n\
+        4. Does an already-present dependency solve it? Use it.\n\
+        5. Can it be one line? Make it one line.\n\
+        6. Only then: write the minimum code that works.\n\
+        No unrequested abstractions, no avoidable dependencies; prefer deletion over \
+        addition, boring over clever, the fewest files. NEVER cut security, input \
+        validation at trust boundaries, or data-loss handling — those are not optional. \
+        Mark a deliberate shortcut with a `// neoth:` comment naming the ceiling and the \
+        upgrade path. Non-trivial logic (a branch, loop, parser, or money/security path) \
+        ships ONE runnable check — the smallest thing that fails if it breaks; no \
+        frameworks or fixtures unless asked, and a trivial one-liner needs no test.";
     let role_hint = match task.hemisphere {
         crate::coding::types::Hemisphere::Left => {
             "You are a fast, focused engineer. Make the smallest change \
-             that solves the task. Always include tests."
+             that solves the task."
         }
         crate::coding::types::Hemisphere::Right => {
             "You are a senior engineer. Think through the design \
-             implications, then make the change. Always include tests."
+             implications, then make the change."
         }
         crate::coding::types::Hemisphere::Cerebellum => {
             "You are an orchestrator. Decompose ambiguous tasks; \
@@ -210,11 +229,13 @@ fn build_task_prompt(task: &KanbanTask, tool_hint: Option<ToolCategory>) -> Stri
         }
         crate::coding::types::Hemisphere::Unassigned => {
             "You are an engineer. Decide the appropriate scope, then \
-             make the change. Always include tests."
+             make the change."
         }
     };
-    let mut out = String::with_capacity(512);
+    let mut out = String::with_capacity(1024);
     out.push_str(role_hint);
+    out.push_str("\n\n");
+    out.push_str(LAZY_RULES);
     if let Some(cat) = tool_hint {
         // GOLD-WIRE-01 Stage-2 priming: focus the small model on the
         // category it picked in Stage 1.
@@ -242,6 +263,10 @@ fn build_task_prompt(task: &KanbanTask, tool_hint: Option<ToolCategory>) -> Stri
     out.push_str("\nRespond in two parts:\n");
     out.push_str("1. A unified-diff patch in a ```diff fenced block.\n");
     out.push_str("2. A one-line summary on a line that starts with `SUMMARY:`.\n");
+    out.push_str(
+        "Code first; keep any prose to at most 3 short lines (what you skipped and \
+         when to add it). If the explanation is longer than the code, delete it.\n",
+    );
     out.push_str(
         "\nIf the task does not require a code change, omit the diff block \
                   and write `SUMMARY: no change required — <reason>` on its own line.\n",
@@ -387,6 +412,23 @@ mod tests {
         t.hemisphere = Hemisphere::Cerebellum;
         let c = build_task_prompt(&t, None);
         assert!(c.contains("orchestrator"), "cerebellum role hint missing");
+    }
+
+    #[test]
+    fn build_prompt_injects_lazy_restraint_rules_and_carveout() {
+        // GOLD-ADAPT-PT-01..05: the ponytail YAGNI ladder + carve-outs ship in
+        // every task prompt, replacing the blunt "Always include tests."
+        let p = build_task_prompt(&sample_task(), None);
+        assert!(p.contains("stop at the first rung"), "YAGNI ladder missing");
+        assert!(p.contains("Does the standard library do it"), "stdlib rung missing");
+        assert!(p.contains("// neoth:"), "ceiling-comment convention missing");
+        assert!(p.contains("ONE runnable check"), "lazy-check rule missing");
+        assert!(
+            p.contains("NEVER cut security"),
+            "security carve-out missing — the lazy ladder must not undercut security"
+        );
+        assert!(!p.contains("Always include tests"), "the blunt always-test rule should be gone");
+        assert!(p.contains("at most 3 short lines"), "prose budget missing");
     }
 
     #[test]
