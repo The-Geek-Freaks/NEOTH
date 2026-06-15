@@ -863,37 +863,42 @@ pub struct ChannelStatus {
 /// emits ONLY the boolean — token values never leave this function. A malformed
 /// file yields "all disconnected" (never panics, never partial-leaks).
 pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
+    // One row per messaging surface in the canonical `channels::ChannelKind`
+    // (the WhatsApp Business/Baileys pair collapses to one "whatsapp" row; the
+    // non-messaging `pears_bearer_token` transport is not a reachable channel).
+    // Only the PRESENCE of each channel's representative credential is derived —
+    // the field is read into an `Option<String>` solely to test emptiness and
+    // the value never leaves this function.
     #[derive(serde::Deserialize, Default)]
     struct MinimalCreds {
         telegram_token: Option<String>,
         whatsapp_token: Option<String>,
         slack_bot_token: Option<String>,
+        discord_bot_token: Option<String>,
+        signal_phone_number: Option<String>,
+        matrix_access_token: Option<String>,
+        matrix_password: Option<String>,
+        line_channel_access_token: Option<String>,
+        irc_server: Option<String>,
+        mattermost_token: Option<String>,
+        twitch_oauth_token: Option<String>,
         keet_seed_phrase: Option<String>,
-        pears_bearer_token: Option<String>,
     }
     let creds: MinimalCreds = serde_yaml::from_str(yaml).unwrap_or_default();
     let present = |o: &Option<String>| o.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let row = |name: &str, connected: bool| ChannelStatus { name: name.into(), connected };
     vec![
-        ChannelStatus {
-            name: "telegram".into(),
-            connected: present(&creds.telegram_token),
-        },
-        ChannelStatus {
-            name: "whatsapp".into(),
-            connected: present(&creds.whatsapp_token),
-        },
-        ChannelStatus {
-            name: "slack".into(),
-            connected: present(&creds.slack_bot_token),
-        },
-        ChannelStatus {
-            name: "keet".into(),
-            connected: present(&creds.keet_seed_phrase),
-        },
-        ChannelStatus {
-            name: "pears".into(),
-            connected: present(&creds.pears_bearer_token),
-        },
+        row("telegram", present(&creds.telegram_token)),
+        row("whatsapp", present(&creds.whatsapp_token)),
+        row("slack", present(&creds.slack_bot_token)),
+        row("discord", present(&creds.discord_bot_token)),
+        row("signal", present(&creds.signal_phone_number)),
+        row("matrix", present(&creds.matrix_access_token) || present(&creds.matrix_password)),
+        row("line", present(&creds.line_channel_access_token)),
+        row("irc", present(&creds.irc_server)),
+        row("mattermost", present(&creds.mattermost_token)),
+        row("twitch", present(&creds.twitch_oauth_token)),
+        row("keet", present(&creds.keet_seed_phrase)),
     ]
 }
 
@@ -1588,15 +1593,21 @@ mod tests {
 
     #[test]
     fn channel_status_reads_presence_not_values() {
-        let yaml = "telegram_token: \"123:abc\"\nslack_bot_token: \"xoxb-x\"\n";
+        let yaml = "telegram_token: \"123:abc\"\nslack_bot_token: \"xoxb-x\"\nirc_server: \"irc.libera.chat\"\n";
         let rows = channel_status_from_credentials_yaml(yaml);
         let by = |n: &str| rows.iter().find(|c| c.name == n).unwrap().connected;
         assert!(by("telegram"));
         assert!(by("slack"));
+        assert!(by("irc"), "irc_server presence -> connected");
         assert!(!by("whatsapp"), "absent -> disconnected");
         assert!(!by("keet"));
+        // Every canonical messaging ChannelKind has a row (whatsapp collapsed).
+        for ch in ["telegram", "whatsapp", "slack", "discord", "signal", "matrix",
+                   "line", "irc", "mattermost", "twitch", "keet"] {
+            assert!(rows.iter().any(|c| c.name == ch), "missing channel row: {ch}");
+        }
         // The connected bool is all that's exposed — no token value in the struct.
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 11);
     }
 
     #[test]
@@ -1613,7 +1624,7 @@ mod tests {
     fn read_channel_status_missing_file_is_all_off() {
         let dir = tempfile::tempdir().unwrap();
         let rows = read_channel_status(dir.path());
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 11);
         assert!(rows.iter().all(|c| !c.connected));
     }
 
