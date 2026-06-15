@@ -36,11 +36,23 @@ pub fn build_summary_prompt(events: &[(i64, String)]) -> String {
         if t.is_empty() {
             continue;
         }
-        if body.len() + t.len() + 1 > MAX_SUMMARY_INPUT_CHARS {
+        // Stop once we already have content AND the next event would overflow —
+        // but ALWAYS admit the first non-empty event (char-truncated if it alone
+        // exceeds the cap) so a single very long retained row never yields an
+        // empty prompt → a vacuous/hallucinated summary.
+        if !body.is_empty() && body.len() + t.len() + 1 > MAX_SUMMARY_INPUT_CHARS {
             break;
         }
-        body.push_str(t);
+        if t.chars().count() > MAX_SUMMARY_INPUT_CHARS {
+            // char boundary safe (never splits a UTF-8 sequence).
+            body.extend(t.chars().take(MAX_SUMMARY_INPUT_CHARS));
+        } else {
+            body.push_str(t);
+        }
         body.push('\n');
+        if body.len() >= MAX_SUMMARY_INPUT_CHARS {
+            break;
+        }
     }
     format!(
         "Summarize the following memory events from a single day in 2-3 sentences. \
@@ -124,6 +136,30 @@ pub fn insert_summary_row(conn: &Connection, day: &str, summary: &str, now_ns: i
         params![day, summary, text_hash, 0.5_f64, now_ns],
     )?;
     Ok(())
+}
+
+/// Insert a `kind='summary'` row for `day` ONLY if one is still needed, ATOMICALLY.
+/// Closes a check-then-insert TOCTOU: the `needs_summary` re-check and the INSERT
+/// run inside one `IMMEDIATE` write transaction, so two decay passes racing on the
+/// same day (the 2h cron + a `neoth memory --decay` CLI, or two daemon instances
+/// sharing the SQLite WAL) can never both write a summary — the loser's re-check
+/// sees the winner's row and skips. (`idx_consolidated` has no `UNIQUE(day)` for
+/// summaries, so the txn re-check is the dedup, not a constraint — no schema bump.)
+/// Returns `true` when a row was inserted, `false` when a concurrent pass already
+/// wrote it.
+pub fn insert_summary_if_absent(
+    conn: &mut Connection,
+    day: &str,
+    summary: &str,
+    now_ns: i64,
+) -> Result<bool> {
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if !needs_summary(&tx, day)? {
+        return Ok(false); // lost the race / no longer qualifies — tx rolls back on drop
+    }
+    insert_summary_row(&tx, day, summary, now_ns)?;
+    tx.commit()?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -223,6 +259,40 @@ mod tests {
         let events = vec![(1, "did a thing".to_string()), (2, "did another".to_string())];
         let summary = summarize_day_batch(&StubSummarizer, &events).await.unwrap();
         assert_eq!(summary, "Alex shipped Nostr and OP-01.", "trimmed");
+    }
+
+    #[test]
+    fn prompt_is_never_empty_when_first_event_exceeds_the_cap() {
+        // A single retained row longer than the cap must still seed the prompt
+        // (truncated) — an empty body would make the LLM summarize nothing.
+        let huge = "x".repeat(MAX_SUMMARY_INPUT_CHARS + 500);
+        let p = build_summary_prompt(&[(1, huge)]);
+        let body = p.split("\n\n").nth(1).unwrap_or("");
+        assert!(!body.trim().is_empty(), "long first event must seed a non-empty body");
+        assert!(body.chars().count() <= MAX_SUMMARY_INPUT_CHARS + 1, "and stay capped");
+    }
+
+    #[test]
+    fn insert_summary_if_absent_writes_once_then_skips_a_racing_insert() {
+        let mut conn = mem_conn();
+        insert_retained(&conn, "2026-06-15", 1, "a");
+        insert_retained(&conn, "2026-06-15", 2, "b");
+        assert!(
+            insert_summary_if_absent(&mut conn, "2026-06-15", "first", 1).unwrap(),
+            "first attempt inserts"
+        );
+        assert!(
+            !insert_summary_if_absent(&mut conn, "2026-06-15", "second", 2).unwrap(),
+            "the re-check inside the txn skips the duplicate"
+        );
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_consolidated WHERE kind='summary'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "exactly one summary row despite two attempts");
     }
 
     #[test]

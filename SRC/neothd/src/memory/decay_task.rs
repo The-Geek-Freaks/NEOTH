@@ -271,13 +271,28 @@ async fn summarize_consolidated_days(
         let db = db_path.to_path_buf();
         let day_c = day.clone();
         let now_ns = crate::time::now_unix_i64();
-        if let Err(e) = tokio::task::spawn_blocking(move || -> Result<()> {
-            let conn = store::open(&db)?;
-            crate::memory::warm_summarize::insert_summary_row(&conn, &day_c, &summary, now_ns)
+        // Atomic check+insert under an IMMEDIATE txn so a concurrent pass can't
+        // double-write this day's summary. Both error layers are handled — the
+        // task JoinError AND the inner SQLite Result (the inner one was silently
+        // swallowed before).
+        match tokio::task::spawn_blocking(move || -> Result<bool> {
+            let mut conn = store::open(&db)?;
+            crate::memory::warm_summarize::insert_summary_if_absent(
+                &mut conn, &day_c, &summary, now_ns,
+            )
         })
         .await
         {
-            tracing::debug!(error = %e, day = %day, "warm summarize insert failed (non-fatal)");
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => {
+                tracing::debug!(day = %day, "warm summary already present (raced) — skipped")
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(error = %e, day = %day, "warm summarize insert failed (non-fatal)")
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, day = %day, "warm summarize insert task panicked")
+            }
         }
     }
 }

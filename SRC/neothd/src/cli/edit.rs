@@ -75,6 +75,12 @@ pub fn hashline_diff(old: &str, new: &str) -> String {
 /// changed line's content-hash anchor against `base` (a drifted base is an
 /// error, not a silent mis-apply), then writes the changed lines and sizes the
 /// result to the header's recorded length.
+///
+/// Operates on `\n`-normalized text: the diff is parsed with `.lines()`, so a
+/// CRLF-saved diff is tolerated but a content line's own trailing `\r` is
+/// normalized to LF on apply (a diff file cannot distinguish a source `\r` from
+/// its own CRLF endings). Source code — the intended input — is overwhelmingly
+/// consistent-line-ending, so this normalization is benign.
 pub fn apply_hashline_diff(base: &str, diff: &str) -> Result<String> {
     let base_lines: Vec<&str> = base.split('\n').collect();
     let mut lines = diff.lines();
@@ -85,6 +91,12 @@ pub fn apply_hashline_diff(base: &str, diff: &str) -> Result<String> {
         .and_then(|s| s.strip_prefix("lines="))
         .and_then(|s| s.trim().parse().ok())
         .with_context(|| format!("malformed hashline header: {header:?}"))?;
+    // Cap before the size-hint-exact `(0..target_len).collect()` pre-allocates —
+    // a crafted `lines=999999999` header would otherwise demand tens of GiB.
+    const MAX_HASHLINE_LINES: usize = 1_000_000;
+    if target_len > MAX_HASHLINE_LINES {
+        bail!("hashline lines={target_len} exceeds the {MAX_HASHLINE_LINES}-line cap");
+    }
     // Start from base, resized to the target length (pad with "" / truncate).
     let mut result: Vec<String> = (0..target_len)
         .map(|i| base_lines.get(i).copied().unwrap_or("").to_string())
@@ -219,6 +231,13 @@ mod tests {
     fn apply_rejects_a_malformed_header() {
         let err = apply_hashline_diff("base", "not a hashline header\n@@ x +0: y").unwrap_err();
         assert!(err.to_string().contains("malformed hashline header"), "got: {err}");
+    }
+
+    #[test]
+    fn apply_rejects_an_absurd_lines_header_before_allocating() {
+        // A crafted `lines=` must be capped, not turned into a multi-GiB Vec.
+        let err = apply_hashline_diff("base", "## hashline v1 lines=999999999\n").unwrap_err();
+        assert!(err.to_string().contains("exceeds"), "got: {err}");
     }
 
     #[test]
