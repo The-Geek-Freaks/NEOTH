@@ -712,6 +712,19 @@ fn main() -> Result<()> {
         });
     });
 
+    // GUI-improve (gap panel wf_641e1173) — re-read credentials.yaml on demand
+    // so a CLI `neoth connect/disconnect` reflects without a GUI restart.
+    // `read_channel_status` is a pure file read, so it runs inline on the UI
+    // thread (no subprocess / no worker needed).
+    let weak_channels_refresh = window.as_weak();
+    window.on_channels_refresh_clicked(move || {
+        let channels = panel_logic::read_channel_status(&default_neoth_home());
+        if let Some(w) = weak_channels_refresh.upgrade() {
+            apply_channels(&w, channels);
+            w.set_status_line("Channels refreshed from credentials.yaml.".into());
+        }
+    });
+
     // Pick #8 step 4 — pseudo-live-tail via 2-second poll (2026-05-20).
     // A real WAL-file-watcher (notify crate + WAL frame parser) lands
     // when the dispatcher (Pick #6) starts mutating the board mid-run.
@@ -1845,6 +1858,12 @@ fn apply_trust(window: &MainWindow, snap: panel_logic::TrustSnapshot) {
     // toggling it applies the full preset via the CLI). Compare before the
     // `.into()` below consumes the string.
     window.set_full_auto_active(snap.autonomy_level == "full");
+    // GUI-improve (gap panel wf_641e1173): keep the Privacy tab's top "Current
+    // autonomy" card a LIVE mirror of the trust snapshot. It was a one-shot
+    // freedom.yaml read at startup, so a CLI `/autonomy` change left it stale
+    // while the TRUST card below showed the new value — two contradictory
+    // autonomy strings on one surface.
+    window.set_autonomy_choice(snap.autonomy_level.clone().into());
     window.set_trust_autonomy_level(snap.autonomy_level.into());
     window.set_trust_autonomy_behavior(snap.autonomy_behavior.into());
     window.set_trust_privacy(to_rows(snap.privacy));

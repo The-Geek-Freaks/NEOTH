@@ -351,6 +351,7 @@ export component MainWindow inherits Window {
     /// Operator clicked Refresh on the Code Sessions tab. Rust
     /// re-fetches via subprocess + updates the seven properties above.
     callback kanban-refresh-clicked;
+    callback channels-refresh-clicked;
     /// Step 5 (2026-05-20): operator clicked a task card.
     callback kanban-task-selected(string);
     /// Step 6 (2026-05-20): operator clicked an action button in the
@@ -1497,6 +1498,9 @@ export component MainWindow inherits Window {
             }
             kanban-refresh-clicked => {
                 root.kanban-refresh-clicked();
+            }
+            channels-refresh-clicked => {
+                root.channels-refresh-clicked();
             }
             // Step 5 (2026-05-20): selected-task + detail-pane wiring.
             kanban-selected-task-id <=> root.kanban-selected-task-id;

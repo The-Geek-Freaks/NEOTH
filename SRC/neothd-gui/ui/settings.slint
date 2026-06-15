@@ -523,6 +523,10 @@ export component SettingsView inherits Rectangle {
     /// properties. Live-tail (Pick #8 step 4) will replace this with
     /// a WAL-driven push.
     callback kanban-refresh-clicked;
+    /// GUI-improve — operator clicked "Refresh" on the Channels tab. Rust
+    /// re-reads ~/.neoth/credentials.yaml (a pure file read) + re-applies the
+    /// channel rows, so a CLI connect/disconnect shows without a GUI restart.
+    callback channels-refresh-clicked;
     /// Step 5 (2026-05-20): operator clicked a KanbanTaskCard. Rust
     /// looks up the full task detail (title/status/hemisphere/desc)
     /// + sets the 4 `kanban-selected-*` properties so the detail pane
@@ -803,6 +807,14 @@ export component SettingsView inherits Rectangle {
                     title: "Channels";
                     subtitle: "Messaging surfaces NEOTH can reach. Connect/disconnect via the CLI; this shows which have credentials configured — the secrets themselves never leave ~/.neoth/credentials.yaml.";
                     mirrors-slash: "/connect <channel>   |   /disconnect <channel>";
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    NeothButton {
+                        label: "Refresh";
+                        primary: false;
+                        clicked => { root.channels-refresh-clicked(); }
+                    }
                 }
                 Card {
                     VerticalBox {
