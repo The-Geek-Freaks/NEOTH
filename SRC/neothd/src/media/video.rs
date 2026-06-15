@@ -107,10 +107,7 @@ pub(crate) async fn extract_thumbnail(asset: &Asset) -> Result<Vec<u8>, Extracti
     match asset {
         Asset::Path { path, .. } => run_ffmpeg_thumbnail(path).await,
         Asset::Bytes { data, .. } => {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
+            let nanos = crate::time::now_unix_ns_u128();
             let pid = std::process::id();
             let mut tmp_path = std::env::temp_dir();
             tmp_path.push(format!("neoth-thumb-{pid}-{nanos}.bin"));
@@ -169,10 +166,7 @@ async fn extract_audio_track(asset: &Asset) -> Result<Vec<u8>, ExtractionError> 
             // ffmpeg needs a seekable source for many video containers.
             // Hand-roll a temp file (tempfile crate is dev-only); the
             // unique-suffix construction avoids parallel-test collisions.
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
+            let nanos = crate::time::now_unix_ns_u128();
             let pid = std::process::id();
             let mut tmp_path = std::env::temp_dir();
             tmp_path.push(format!("neoth-video-{pid}-{nanos}.bin"));

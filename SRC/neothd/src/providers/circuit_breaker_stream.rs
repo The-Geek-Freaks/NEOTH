@@ -151,10 +151,7 @@ mod tests {
         format!(
             "gr04stream-{}-{}",
             suffix,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            crate::time::now_unix_ns_u128()
         )
     }
 

@@ -52,6 +52,35 @@ pub fn now_unix_ns_i64() -> i64 {
         .unwrap_or(0)
 }
 
+/// Milliseconds since the unix epoch, clamped into a `u64` (it does not overflow
+/// until ~year 584 942 417). `0` if the clock is before the epoch.
+pub fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
+/// Milliseconds since the unix epoch as a `u128` (the native `Duration::as_millis`
+/// width — never overflows). `0` if the clock is before the epoch. For callers
+/// that already thread a `u128` millis value (e.g. backup-path naming).
+pub fn now_unix_ms_u128() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+/// Nanoseconds since the unix epoch as a `u128` (the native `Duration::as_nanos`
+/// width — never overflows). `0` if the clock is before the epoch. For callers
+/// that want full-width nanos (e.g. unique temp-file / probe suffixes).
+pub fn now_unix_ns_u128() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +116,20 @@ mod tests {
         let a = now_unix_ns();
         let b = now_unix_ns();
         assert!(b >= a, "nanos do not go backwards within a process");
+    }
+
+    #[test]
+    fn ms_and_u128_forms_agree_with_seconds() {
+        let s = now_unix_secs();
+        let ms = now_unix_ms();
+        let ms128 = now_unix_ms_u128();
+        let ns128 = now_unix_ns_u128();
+        // ms / 1000 == seconds within a 2s call-window skew.
+        assert!(ms / 1000 >= s - 2 && ms / 1000 <= s + 2, "ms u64 tracks secs: {ms}");
+        assert!(ms128 / 1000 >= (s as u128) - 2, "ms u128 tracks secs: {ms128}");
+        assert!(ns128 / 1_000_000_000 >= (s as u128) - 2, "ns u128 tracks secs: {ns128}");
+        // The u64 and u128 millis forms are the same clock within skew.
+        let diff = (ms128 as i128 - ms as i128).abs();
+        assert!(diff < 2000, "ms u64 + u128 forms agree within 2s: {diff}");
     }
 }

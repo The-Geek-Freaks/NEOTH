@@ -433,10 +433,7 @@ pub mod persist {
     /// decides whether to warn-and-continue on error.
     pub fn snapshot_to_disk(home: &Path, registry: &BreakerRegistry) -> std::io::Result<usize> {
         fs::create_dir_all(dir(home))?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::time::now_unix_i64();
         let snaps = registry.snapshot_all();
         // Only persist providers that have non-zero failure
         // history — saves disk + keeps the restore noise-free.
@@ -786,14 +783,10 @@ mod tests {
 
     #[test]
     fn persist_skips_stale_rows() {
-        use std::time::{SystemTime, UNIX_EPOCH};
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
         // Write a row with last_seen_ts_unix in the deep past.
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::time::now_unix_i64();
         let stale_row = BreakerPersistedRow {
             provider_id: "stale_provider".into(),
             consecutive_failures: 99,
@@ -863,10 +856,7 @@ mod tests {
         format!(
             "gr04-test-{}-{}",
             suffix,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            crate::time::now_unix_ns_u128()
         )
     }
 

@@ -489,10 +489,7 @@ fn write_test_log(
          ## stderr ({} bytes)\n\n\
          {stderr_red}\n",
         worktree.display(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0),
+        crate::time::now_unix_ms_u128(),
         stdout.len(),
         stderr.len(),
     );

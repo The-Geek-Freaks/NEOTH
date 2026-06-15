@@ -513,10 +513,7 @@ fn binary_filename_for_host(binary: &str) -> String {
 /// `new_path` lives on the same volume as `target_path`
 /// (e.g. by using a tempdir under the target's parent).
 pub fn atomic_replace_binary(new_path: &Path, target_path: &Path) -> Result<PathBuf> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+    let now_ms = crate::time::now_unix_ms_u128();
     let bak_path = backup_path_for(target_path, now_ms);
     if target_path.exists() {
         std::fs::rename(target_path, &bak_path).with_context(|| {

@@ -94,10 +94,7 @@ impl FrameDecoder for FfmpegFrameDecoder {
                 // ffmpeg needs a seekable source — hand-roll a temp file (mirror
                 // video.rs; the tempfile crate is dev-only). Unique suffix avoids
                 // parallel collisions.
-                let nanos = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
+                let nanos = crate::time::now_unix_ns_u128();
                 let pid = std::process::id();
                 let mut tmp_path = std::env::temp_dir();
                 tmp_path.push(format!("neoth-framedec-{pid}-{nanos}.bin"));
