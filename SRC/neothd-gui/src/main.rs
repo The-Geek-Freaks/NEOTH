@@ -750,6 +750,82 @@ fn main() -> Result<()> {
         }
     });
 
+    // GUI-overhaul feature parity — live connectivity test for a channel
+    // (`neoth channel test <name>`, read-only). Off-thread; the daemon's check
+    // result (or error) is shaped into the footer status line.
+    let weak_channel_test = window.as_weak();
+    window.on_channel_test(move |name| {
+        let weak = weak_channel_test.clone();
+        let name = name.to_string();
+        std::thread::spawn(move || {
+            let msg = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("channel")
+                    .arg("test")
+                    .arg(&name)
+                    .output()
+                    .ok()
+            }) {
+                Some(o) if o.status.success() => {
+                    let line = String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .map(str::trim)
+                        .rfind(|l| !l.is_empty())
+                        .unwrap_or("ok")
+                        .to_string();
+                    format!("{name}: {line}")
+                }
+                Some(o) => format!(
+                    "{name} test failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                        .lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty())
+                        .unwrap_or("(no detail)")
+                ),
+                None => format!("{name}: neothd binary not on PATH"),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(msg.into());
+                }
+            });
+        });
+    });
+
+    // GUI-overhaul feature parity — remove a channel's credential
+    // (`neoth channel remove <name>`), then re-read credentials.yaml so the row
+    // flips to disconnected. Gated behind an inline confirm in the UI.
+    let weak_channel_remove = window.as_weak();
+    window.on_channel_remove(move |name| {
+        let weak = weak_channel_remove.clone();
+        let name = name.to_string();
+        std::thread::spawn(move || {
+            let ok = which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("channel")
+                        .arg("remove")
+                        .arg(&name)
+                        .output()
+                        .ok()
+                })
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let channels = panel_logic::read_channel_status(&default_neoth_home());
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    apply_channels(&w, channels);
+                    w.set_status_line(if ok {
+                        format!("Channel {name} credential removed.").into()
+                    } else {
+                        format!("Channel {name} remove failed (is neothd on PATH?).").into()
+                    });
+                }
+            });
+        });
+    });
+
     // GUI-overhaul (gap panel wf_8ad7096a) — feature parity: enable/disable a
     // skill from the GUI Skills tab. Shells `neoth skills --enable/--disable <id>`
     // off the UI thread, then re-fetches + applies the list so the new state

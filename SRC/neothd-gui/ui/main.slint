@@ -362,6 +362,8 @@ export component MainWindow inherits Window {
     /// re-fetches via subprocess + updates the seven properties above.
     callback kanban-refresh-clicked;
     callback channels-refresh-clicked;
+    callback channel-test(string);
+    callback channel-remove(string);
     callback skill-toggle(string, bool);
     callback plugin-toggle(string, bool);
     callback autonomy-set(string);
@@ -1523,6 +1525,8 @@ export component MainWindow inherits Window {
             channels-refresh-clicked => {
                 root.channels-refresh-clicked();
             }
+            channel-test-clicked(name) => { root.channel-test(name); }
+            channel-remove-clicked(name) => { root.channel-remove(name); }
             // Step 5 (2026-05-20): selected-task + detail-pane wiring.
             kanban-selected-task-id <=> root.kanban-selected-task-id;
             kanban-selected-title: root.kanban-selected-title;
@@ -1591,12 +1595,17 @@ export component MainWindow inherits Window {
     }
 
         FooterBar {
-            // Hardware probe stays visible on every screen so the
-            // operator can verify the daemon detected their box
-            // correctly without bouncing back to welcome.
-            status: root.hardware-summary != ""
-                ? root.hardware-summary
-                : "NEOTH — Your buddy. Your life.";
+            // GUI-overhaul: the footer is the single status surface for EVERY
+            // screen. status-line (set by Settings actions — skill/plugin/autonomy
+            // toggles, channel tests, hemisphere rebinds, memory ops) takes
+            // priority so the operator gets visible confirmation there too — it
+            // was previously only rendered on the wizard's Done step, so Settings
+            // actions silently gave no feedback. Falls back to the hardware probe.
+            status: root.status-line != ""
+                ? root.status-line
+                : (root.hardware-summary != ""
+                    ? root.hardware-summary
+                    : "NEOTH — Your buddy. Your life.");
         }
     }
 }

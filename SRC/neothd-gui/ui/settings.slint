@@ -567,6 +567,10 @@ export component SettingsView inherits Rectangle {
     /// because the ⚙ icon lives in the Chat sidebar (not visible
     /// from Settings).
     callback back-clicked;
+    /// GUI-overhaul feature parity — live connectivity test / credential removal
+    /// for a channel. Rust shells `neoth channel test|remove <name>`.
+    callback channel-test-clicked(string);
+    callback channel-remove-clicked(string);
     /// GUI-overhaul feature parity — operator toggled a skill's enable state.
     /// Args: (skill-id, enabled). Rust shells `neoth skills --enable/--disable`.
     callback skill-toggle-clicked(string, bool);
@@ -874,11 +878,14 @@ export component SettingsView inherits Rectangle {
                         spacing: Theme.space-tight;
                         for c in root.channels: HorizontalLayout {
                             spacing: Theme.space-base;
+                            // Per-row confirm state (each for-instance gets its own).
+                            property <bool> confirming: false;
                             Text {
                                 text: c.connected ? "connected" : "—";
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: c.connected ? Theme.accent-green : Theme.text-muted;
+                                vertical-alignment: center;
                             }
                             Text {
                                 text: c.name;
@@ -886,6 +893,41 @@ export component SettingsView inherits Rectangle {
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
                                 horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+                            // GUI-overhaul feature parity — live-test or remove a
+                            // connected channel (was a read-only status row). Test
+                            // is a safe connectivity check; Remove deletes the
+                            // credential, so it takes an inline confirm.
+                            if c.connected && !confirming: NeothButton {
+                                label: "Test";
+                                primary: false;
+                                clicked => { root.channel-test-clicked(c.name); }
+                            }
+                            if c.connected && !confirming: NeothButton {
+                                label: "Remove";
+                                primary: false;
+                                clicked => { confirming = true; }
+                            }
+                            if confirming: Text {
+                                text: "Remove " + c.name + " credential?";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.accent-amber;
+                                vertical-alignment: center;
+                            }
+                            if confirming: NeothButton {
+                                label: "Confirm";
+                                primary: false;
+                                clicked => {
+                                    confirming = false;
+                                    root.channel-remove-clicked(c.name);
+                                }
+                            }
+                            if confirming: NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                clicked => { confirming = false; }
                             }
                         }
                     }
