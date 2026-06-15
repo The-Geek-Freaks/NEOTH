@@ -34,6 +34,7 @@ pub mod council;
 pub mod ctx;
 pub mod docgen;
 pub mod doctor;
+pub mod edit;
 pub mod dreaming_task;
 pub mod events;
 pub mod export;
@@ -224,6 +225,10 @@ pub enum Commands {
     /// (add `--egress` to also lift an egress block).
     #[command(name = "risk-confirm")]
     RiskConfirm(risk_confirm::RiskConfirmArgs),
+
+    /// GOLD-PROG-09 — diff/apply files in the compact content-hash "hashline"
+    /// format (`neoth edit <base> --new <file> --hashline` / `--apply <diff>`).
+    Edit(edit::EditArgs),
 
     /// Search the SQLite recall views for matching text.
     /// Runs the indexer once before querying.
@@ -953,6 +958,17 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::FactCheck(mut args) => {
             args.output = global_output;
             fact_check::run_fact_check(args)?;
+        }
+        Commands::Edit(args) => {
+            // The freedom.yaml::tokens.hashline_edits default applies when
+            // `--hashline` is not passed explicitly; a missing config falls back
+            // to off so `neoth edit` works on a fresh checkout.
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            let hashline_default =
+                crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+                    .map(|c| c.tokens.hashline_edits)
+                    .unwrap_or(false);
+            edit::run(args, hashline_default)?;
         }
         Commands::Recall(mut args) => {
             args.output = global_output;

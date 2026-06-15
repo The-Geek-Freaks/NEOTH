@@ -3254,12 +3254,18 @@ pub struct TokensConfig {
     /// `tokens::budget::enforce_budget` degradation policy fires.
     #[serde(default = "TokensConfig::default_max_per_request")]
     pub max_per_request: u32,
+    /// GOLD-PROG-09 (OP-01) — when true, `neoth edit` emits the compact
+    /// content-hash "hashline" diff by default (without the explicit
+    /// `--hashline` flag). Off by default.
+    #[serde(default)]
+    pub hashline_edits: bool,
 }
 
 impl Default for TokensConfig {
     fn default() -> Self {
         Self {
             max_per_request: Self::default_max_per_request(),
+            hashline_edits: false,
         }
     }
 }

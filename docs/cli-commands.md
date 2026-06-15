@@ -373,9 +373,15 @@ Show consent state for a single provider
 
 Estimate the cost of a provider call BEFORE dispatching it (C-14)
 
-- `<PROMPT>` — Prompt text to estimate. Use `-` to read from stdin
+- `<PROMPT>` — Prompt text to estimate. Use `-` to read from stdin. (estimate surface)
 - `--provider <NAME>` — Override the active provider for the estimate. Defaults to `freedom.yaml::provider_kind`
 - `--model <MODEL>` — Override the active model for the estimate. Defaults to `freedom.yaml::provider_model`
+
+### `neoth cost top-sessions`
+
+GOLD-ADAPT-VIEW-01 — rank past sessions by total LLM token spend (scanned from the WAL `0x21 PROVIDER_RESPONSE` audit frames)
+
+- `--limit <LIMIT>` — How many sessions to show (highest spend first)
 
 ## `neoth council`
 
@@ -543,6 +549,15 @@ F4-01 — council winner-chain: the measured win-distribution over the `0x63` wi
 
 - `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
 - `--top <TOP>` — Show only the top-N winning voices. Default: all
+
+## `neoth edit`
+
+GOLD-PROG-09 — diff/apply files in the compact content-hash "hashline" format (`neoth edit <base> --new <file> --hashline` / `--apply <diff>`)
+
+- `<BASE>` — The base / original file
+- `--new <NEW>` — Produce a diff FROM `base` TO this file (prints the diff to stdout)
+- `--apply <APPLY>` — Apply this hashline diff file to `base` and print the reconstructed file
+- `--hashline <HASHLINE>` — Emit the diff in the compact content-hash "hashline" format. Defaults to `freedom.yaml::tokens.hashline_edits` when this flag is absent
 
 ## `neoth email`
 
@@ -956,6 +971,7 @@ Interactive onboarding wizard. Sets up ~/.neoth/ config
 - `--telegram-user-id <USER_ID>` — Restrict Telegram bot to a single user ID
 - `--autonomy <LEVEL>` — Autonomy level non-interactive override (Phase 28b R-23). `strict | standard | elevated | full | custom`. Defaults to `standard` when the wizard runs without a TTY
 - `--inference-mode <MODE>` — Inference topology non-interactive override (D14b). `single | triplet | custom`. Defaults to `single` when the wizard runs without a TTY
+- `--zero-friction <ZERO_FRICTION>` — GOLD-FEAT-01b — one-click zero-friction onboarding. Applies the maximally-permissive preset (Full autonomy + single-provider inference + every bundled skill active), overriding the per-step autonomy/topology picks. Opt-in; interactive runs are also offered it as a y/n confirm
 - `--accelerator-override <ACCEL>` — Accelerator override (D14b). `cuda | metal | openvino | cpu`. Defaults to the auto-detected best fit; this flag bypasses detection
 - `--embedding-provider <PROVIDER>` — Embedding-provider non-interactive override (D14b). `local_qwen | openai_api | anthropic_api | gemini_api`
 - `--council-depth <N>` — E-2 Phase 4 (Session 14 Pick #23) — operator-pinned council recursion depth. `0`/`1` = flat (default). `2` = 3×3 = 9 leaf calls per user message. `3` = 27 leaf calls. `4` = 81 leaf calls (the `MAX_HEMISPHERE_COUNCIL_DEPTH` cap). Values above 4 clamp silently. Operators raising this above 1 in non- interactive mode get a one-line stderr warning instead of the interactive confirm screen — there's no terminal to draw it on
