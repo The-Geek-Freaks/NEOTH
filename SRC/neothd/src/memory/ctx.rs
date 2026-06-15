@@ -12,7 +12,6 @@
 //! Public surface mirrors the ctx-mode tool names so future migration to a
 //! WASM-hosted MCP plugin is mechanical.
 
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
@@ -563,10 +562,7 @@ pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
 }
 
 fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 // Required for `.optional()` on rusqlite query_row.

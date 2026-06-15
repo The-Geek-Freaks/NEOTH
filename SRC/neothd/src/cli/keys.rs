@@ -109,10 +109,7 @@ fn show(path: &std::path::Path, output: OutputFormat) -> Result<()> {
 }
 
 fn rotate(path: &std::path::Path, dry_run: bool, output: OutputFormat) -> Result<()> {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts = crate::time::now_unix_secs();
     let archive_path = path.with_extension(format!("key.{ts}.archive"));
 
     if dry_run {

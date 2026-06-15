@@ -75,17 +75,11 @@ pub fn extract_action_items(text: &str) -> Vec<String> {
 }
 
 fn now_ns() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
+    crate::time::now_unix_ns_i64()
 }
 
 fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 /// Process ONE transcript chunk through the OM-01 pipeline. SYNC (the WAL frame

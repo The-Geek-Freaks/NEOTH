@@ -72,10 +72,7 @@ async fn run_apply(home: &Path, name: &str) -> Result<()> {
 
     // P1 — durable record: WHICH preset, WHICH field NAMES changed (never the
     // values), from WHICH surface. One-shot-writer-or-audit-RPC path.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&serde_json::json!({
         "name": name,
         "fields_changed": report.fields_changed,

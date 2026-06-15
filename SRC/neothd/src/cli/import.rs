@@ -123,10 +123,7 @@ fn import_session(
         return Ok(());
     }
 
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
     let mut inserted = 0usize;
     for c in &claims {
         groundtruth::insert(conn, &c.statement, &c.source, &c.scope, now_ns)?;

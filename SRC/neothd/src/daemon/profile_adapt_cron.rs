@@ -99,10 +99,7 @@ async fn run_feedback_consumer(
     wal_dir: &std::path::Path,
     writer: &WalWriterHandle,
 ) -> usize {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let summary =
         crate::feedback::consume::aggregate_recent_feedback(wal_dir, FEEDBACK_WINDOW_SECS, now);
     let Some(proposal) = crate::feedback::consume::propose_from_feedback(&summary) else {
@@ -247,10 +244,7 @@ mod tests {
         let wal_dir = tempfile::tempdir().unwrap();
         let seg = wal_dir.path().join("fb-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = crate::time::now_unix_i64();
         for i in 0..(crate::feedback::consume::HIGH_AT + 1) {
             let payload = serde_json::to_vec(&serde_json::json!({
                 "sentiment_score": -0.8,

@@ -164,10 +164,7 @@ async fn run_call(
         .map(|c| c.autonomy)
         .unwrap_or(crate::permissions::AutonomyLevel::Standard);
     let mut client = McpClient::spawn(cfg).await?;
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     // `neoth mcp call` is an explicit operator one-shot — no SmartApprove
     // (the operator is invoking the tool deliberately), so pass `None`.
     let result = match invoke_with_audit(

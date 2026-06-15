@@ -438,10 +438,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     // Real run. Open a dedicated WAL segment under the operator's
     // WAL dir so the TOMBSTONE_REQUESTED audit frame lands in the
     // canonical audit log alongside other operator-state events.
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let wal_dir = crate::config::FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
     let segment = wal_dir.join(format!("memory-forget-{}.wal", now_unix));
@@ -743,10 +740,7 @@ async fn run_memory_dimension(args: &MemoryArgs) -> Result<()> {
 fn run_memory_people(args: &MemoryArgs) -> Result<()> {
     use crate::memory::people;
     let home = FreedomConfig::default_neoth_home();
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
     let ranked = people::top_people(&home, args.limit, now_unix);
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {

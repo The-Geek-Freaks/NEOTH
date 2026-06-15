@@ -233,11 +233,7 @@ impl Gate {
     /// [`Self::check`] so lease expiry is enforced at the moment the action
     /// is decided, not at snapshot construction.
     fn now_unix() -> i64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
+        crate::time::now_unix_i64()
     }
 
     /// Resolve `action` under the configured level + confirm strategy.
@@ -417,10 +413,7 @@ async fn audit(
         "reason": reason,
         "subject": subject,
         "lease_id": lease_id,
-        "ts_ns": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-            .unwrap_or(0),
+        "ts_ns": crate::time::now_unix_ns(),
     }))?;
     let header = crate::wal::HeaderBuilder::new(event_type, &payload)
         .flags(crate::wal::EventFlags::SYNTHETIC)

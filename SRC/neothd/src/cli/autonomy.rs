@@ -203,10 +203,7 @@ async fn emit_sudomode_preset_applied(
     let payload = serde_json::to_vec(&serde_json::json!({
         "previous": previous.as_str(),
         "source": "cli",
-        "ts_unix": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        "ts_unix": crate::time::now_unix_secs(),
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
     let event_type = crate::wal::events::EVENT_TYPE_SUDOMODE_PRESET_APPLIED;

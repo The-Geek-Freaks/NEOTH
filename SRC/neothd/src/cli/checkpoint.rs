@@ -213,10 +213,7 @@ fn run_save(
         "no PRE_MUTATION_SNAPSHOT (0xF2) frame found — run a mutation first \
          (e.g. `neoth config set ...`) to create one, then checkpoint it",
     )?;
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
 
     index.retain(|e| e.label != label); // force-overwrite drops the old entry
     let entry = CheckpointEntry {

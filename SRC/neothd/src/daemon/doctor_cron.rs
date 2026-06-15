@@ -284,10 +284,7 @@ impl SidecarNotificationSink {
 impl DoctorNotificationSink for SidecarNotificationSink {
     async fn notify(&self, body: String) -> Result<(), String> {
         std::fs::create_dir_all(&self.dir).map_err(|e| format!("mkdir: {e}"))?;
-        let ts_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let ts_unix = crate::time::now_unix_i64();
         let final_path = self.record_path(ts_unix);
         let tmp_path = final_path.with_extension("json.tmp");
         let payload = serde_json::json!({
@@ -316,10 +313,7 @@ pub async fn run_doctor_tick(
     writer: &crate::wal::writer::WalWriterHandle,
     sink: &dyn DoctorNotificationSink,
 ) -> Result<DoctorCronReport, String> {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     // run_all_checks is sync and blocks (check_stuck_claude_processes
     // sleeps 200ms; several checks do file/registry IO) — run it on the
     // blocking pool so the daemon's reactor keeps ticking.

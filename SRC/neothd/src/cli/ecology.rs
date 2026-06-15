@@ -194,10 +194,7 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
 fn run_channel_weights(home: Option<PathBuf>, output: OutputFormat) {
     use std::collections::BTreeMap;
     let home = home.unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     let weights = crate::memory::channel_weights::load_channel_weights(&home);
 
     // Aggregate per channel: topic-row count + the strongest decayed weight.

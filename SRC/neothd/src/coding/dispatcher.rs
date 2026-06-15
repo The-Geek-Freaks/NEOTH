@@ -1012,10 +1012,7 @@ fn emit_worker_died_wal(
 }
 
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 fn apply_outcome(conn: &Connection, task: &KanbanTask, outcome: &WorkerOutcome) -> Result<()> {
@@ -1257,10 +1254,7 @@ fn handle_retryable_failure(
 }
 
 fn now_unix_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+    crate::time::now_unix_ns()
 }
 
 /// QU-05 — true when the operator's test command is a `cargo check`

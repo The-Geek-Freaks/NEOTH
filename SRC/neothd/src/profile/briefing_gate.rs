@@ -25,7 +25,6 @@
 //! `briefing_policy`, I/O tests here.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
@@ -111,10 +110,7 @@ pub fn should_emit_for_briefing_now(
     current_hour: u8,
     policy: &BriefingPolicy,
 ) -> EmitVerdict {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     should_emit_for_briefing(home, now, current_hour, policy)
 }
 

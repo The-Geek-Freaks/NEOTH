@@ -650,10 +650,7 @@ async fn emit_hmac_key_rotated(home: &std::path::Path, new_key: &[u8], replaced:
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     // Sign the rotation boundary with the operator's ed25519 key (same key +
     // 0600/DPAPI protection as redaction-marker signing, under <home>/wal).
     // `neoth verify --since-rotation` only treats a 0xD9 frame as a boundary when

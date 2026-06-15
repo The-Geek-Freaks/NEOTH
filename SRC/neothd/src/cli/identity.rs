@@ -141,10 +141,7 @@ async fn emit_identity_merged(
     victim: &str,
     aliases: &[identity_store::Alias],
 ) -> Result<()> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     let alias_json: Vec<_> = aliases
         .iter()
         .map(|a| {

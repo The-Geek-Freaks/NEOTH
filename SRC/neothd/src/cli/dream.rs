@@ -12,7 +12,7 @@
 //! no daemon owns the WAL writer (a live daemon's nightly pass is the primary
 //! path; a one-shot writer would race the daemon's segment).
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -108,10 +108,7 @@ fn emit_dream_composed(report: &PassReport) {
             return;
         }
     };
-    let now_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
     // Shared payload builder — identical shape to the daemon cron's 0xF4
     // frame (only the emit mechanism + provenance flag differ).
     let payload = dream_composed_payload(report, now_unix);

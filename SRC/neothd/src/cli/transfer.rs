@@ -17,7 +17,6 @@
 //! half via `neoth identity pubkey`.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -497,17 +496,11 @@ fn render_export(dest: &str, events: usize, bytes: usize, out: Option<&Path>, ou
 }
 
 fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 fn now_ns() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_ns_i64()
 }
 
 #[cfg(test)]

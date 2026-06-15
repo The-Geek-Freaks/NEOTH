@@ -48,10 +48,7 @@ pub async fn run_reload(args: ReloadArgs) -> Result<()> {
     // Write a small payload — wall-clock ts so the daemon can log
     // "reload requested at T, applied at T+Δ" if it wants. Content
     // isn't load-bearing; the file's mere existence is the signal.
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts = crate::time::now_unix_secs();
     std::fs::create_dir_all(&home)
         .with_context(|| format!("create {} for sentinel", home.display()))?;
     std::fs::write(&sentinel, format!("ts_unix={ts}\n"))

@@ -194,10 +194,7 @@ pub fn clear_checkpoint(neoth_dir: &Path) -> Result<()> {
 }
 
 fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 #[cfg(test)]

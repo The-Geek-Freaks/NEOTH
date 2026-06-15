@@ -459,10 +459,7 @@ fn apply_plan_channel_send(
     }
 
     let original_text = render_channel_before_state(before);
-    let now_unix: i64 = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_unix: i64 = crate::time::now_unix_i64();
     let age_secs: u64 = (now_unix - snap.ts_unix).max(0) as u64;
 
     let summary: String;
@@ -1379,10 +1376,7 @@ mod tests {
     #[test]
     fn apply_plan_channel_send_telegram_within_47h_uses_delete_message() {
         // ts_unix near "now" so age stays under the 47h gate.
-        let now: i64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now: i64 = crate::time::now_unix_i64();
         let snap = crate::wal::snapshot::PreMutationSnapshot::new(
             MutationKind::ChannelSend,
             "telegram:-100123:42",
@@ -1401,10 +1395,7 @@ mod tests {
     #[test]
     fn apply_plan_channel_send_telegram_past_47h_uses_edit_message() {
         // 48h in the past → past the delete window.
-        let now: i64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now: i64 = crate::time::now_unix_i64();
         let snap = crate::wal::snapshot::PreMutationSnapshot::new(
             MutationKind::ChannelSend,
             "telegram:-100123:42",

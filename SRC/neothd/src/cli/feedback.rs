@@ -47,10 +47,7 @@ async fn run_summary(window: &str, output: &OutputFormat) -> Result<()> {
         .unwrap_or(7 * 24 * 3600);
     let home = FreedomConfig::default_neoth_home();
     let wal_dir = home.join("wal");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let summary = aggregate_recent_feedback(&wal_dir, window_secs, now);
     let pressure = summary.pressure();
 

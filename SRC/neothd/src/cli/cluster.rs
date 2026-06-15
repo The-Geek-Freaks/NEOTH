@@ -599,10 +599,7 @@ pub fn render_topology_table(rows: &[TopologyRow]) -> String {
 }
 
 fn topology_now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::time::now_unix_i64()
 }
 
 fn run_topology(output: &OutputFormat) -> Result<()> {
@@ -693,10 +690,7 @@ fn run_confirm(
         ),
     };
     let home = FreedomConfig::default_neoth_home();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let hostname_norm = hostname.map(|h| h.trim()).unwrap_or("").to_string();
     let peer = crate::cluster::registry::PairedPeer {
         pub_key_hex: pub_key_norm.clone(),

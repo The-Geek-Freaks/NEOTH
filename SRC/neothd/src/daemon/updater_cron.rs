@@ -91,10 +91,7 @@ where
     // started even when the result frame is lost to a daemon kill.
     let fired_payload = serde_json::json!({
         "task_kind": task_kind.as_str(),
-        "ts_unix": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        "ts_unix": crate::time::now_unix_secs(),
     });
     let fired_body = serde_json::to_vec(&fired_payload).map_err(|e| format!("serde fired: {e}"))?;
     let fired_header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_FIRED, &fired_body)
@@ -184,10 +181,7 @@ pub fn spawn_updater_cron_loop(
             // builder, not pre-built specs).
             let fired_payload = serde_json::json!({
                 "task_kind": task_kind.as_str(),
-                "ts_unix": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
+                "ts_unix": crate::time::now_unix_secs(),
             });
             let fired_body = match serde_json::to_vec(&fired_payload) {
                 Ok(b) => b,

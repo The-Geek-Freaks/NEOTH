@@ -382,10 +382,7 @@ pub(crate) fn gate_external_task_write(
 /// never credentials. Delegates the daemon-forward-or-one-shot delivery to the
 /// shared [`emit_oneshot_audit`].
 pub(crate) async fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str>) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&serde_json::json!({
         "provider": provider,
         "action": action,

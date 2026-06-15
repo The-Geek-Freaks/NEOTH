@@ -134,10 +134,7 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
                 let sources = crate::wiki::discover_sources(&source_dir)?;
                 let conn = crate::memory::store::open(&crate::memory::store::default_path())
                     .context("open views.db for self-wiki ground-truth ingest")?;
-                let now_ns = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as i64)
-                    .unwrap_or(0);
+                let now_ns = crate::time::now_unix_ns_i64();
                 let ist = crate::wiki::ingest_sources(&conn, &sources, now_ns)?;
                 println!(
                     "self-wiki ingest: {} ground-truth pointer(s) inserted, {} prior revoked (scope {})",

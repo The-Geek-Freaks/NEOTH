@@ -345,10 +345,7 @@ pub async fn run_monitor_tick(
     crash: Option<CrashLogResult>,
     channel: ChannelSilenceResult,
 ) -> Result<(bool, bool, bool), String> {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
 
     let mut wal_alerted = false;
     let mut crash_alerted = false;
@@ -446,10 +443,7 @@ pub async fn run_monitor_tick_live(
     crash_log_offset: &mut u64,
     emit_state: &mut MonitorEmitState,
 ) -> Result<(bool, bool, bool), String> {
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
 
     // WAL CRC scan
     let mut wal_scan =

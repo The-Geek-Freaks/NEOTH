@@ -1013,10 +1013,7 @@ fn scan_segment_bytes(bytes: &[u8], out: &mut Vec<FeedEntry>) {
 }
 
 fn now_unix_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+    crate::time::now_unix_ns()
 }
 
 /// HH:MM:SS UTC — same format the feed parser uses for its lines, so
@@ -1172,10 +1169,7 @@ mod tests {
         // watch before any session has been opened).
         let missing = std::env::temp_dir().join(format!(
             "neoth-kanban-missing-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            crate::time::now_unix_ns_u128()
         ));
         let entries = scan_wal_dir_for_kanban_feed(&missing, 100).unwrap();
         assert!(entries.is_empty());

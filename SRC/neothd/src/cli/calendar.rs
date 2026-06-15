@@ -197,10 +197,7 @@ fn render_msg(output: OutputFormat, msg: &str) {
 
 /// Current unix seconds (0 on a pre-epoch clock — only used as an audit ts).
 fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 /// `0xCA CALENDAR_WRITE` audit payload. Metadata only — the title is HASHED

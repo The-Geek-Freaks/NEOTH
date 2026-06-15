@@ -607,10 +607,7 @@ fn validate_apply_has_dispatch_path(apply: bool, dispatch: bool, run_pending: bo
 }
 
 fn now_unix_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+    crate::time::now_unix_ns()
 }
 
 #[cfg(test)]

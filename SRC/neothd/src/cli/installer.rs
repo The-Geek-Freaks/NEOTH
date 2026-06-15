@@ -98,10 +98,7 @@ async fn run_apply(pkg: &str, yes: bool, verbose: bool) -> Result<()> {
     // so the daemon's next boot can pick it up + emit the
     // `0x12 INSTALLER_RAN` WAL frame. At-least-once semantics
     // mirror the credential-import + cluster-audit ingesters.
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = build_installer_ran_payload(
         pkg,
         "", // version unknown at execute time; the daemon's

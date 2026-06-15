@@ -148,10 +148,7 @@ pub(crate) fn check_cluster_registry(home: &Path) -> CheckOutcome {
         };
     }
     const STALE_AFTER_SECS: i64 = 14 * 86_400;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let mut stale = Vec::new();
     for p in &reg.peers {
         if now - p.last_seen_unix > STALE_AFTER_SECS {

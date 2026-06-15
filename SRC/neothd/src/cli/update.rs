@@ -286,10 +286,7 @@ fn maybe_request_restart() {
 }
 
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 /// Emit the `0xD2 SELF_UPDATE_APPLIED` audit frame after a successful

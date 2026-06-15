@@ -186,10 +186,7 @@ pub(crate) fn dream_composed_payload(report: &PassReport, ts_unix: u64) -> Vec<u
 /// is a daemon-derived frame, matching the regression / recall-latency
 /// cron convention). A WAL append failure logs + never fails the pass.
 async fn emit_dream_composed_daemon(writer: &WalWriterHandle, report: &PassReport) {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = dream_composed_payload(report, ts_unix);
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_DREAM_COMPOSED, &payload)
@@ -351,10 +348,7 @@ fn gather_window_events(home: &Path, window: Duration, max_events: usize) -> Res
         return Ok(Vec::new());
     }
     let conn = Connection::open(&db_path)?;
-    let now_ns: i64 = (std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)) as i64;
+    let now_ns: i64 = (crate::time::now_unix_ns_u128()) as i64;
     let window_ns = window.as_nanos() as i64;
     let cutoff_ns = now_ns - window_ns;
     let mut stmt = conn.prepare(
@@ -382,10 +376,7 @@ fn gather_window_events(home: &Path, window: Duration, max_events: usize) -> Res
 /// Return today's UTC date (`YYYY-MM-DD`). Same Howard-Hinnant
 /// civil-from-days conversion used elsewhere in the codebase.
 fn today_utc_date() -> String {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let days = ts_unix.div_euclid(86_400);
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -425,10 +416,7 @@ mod tests {
     }
 
     fn now_ns() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0)
+        crate::time::now_unix_ns_i64()
     }
 
     struct AlwaysWeatherEmbed;

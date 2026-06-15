@@ -175,10 +175,7 @@ pub async fn run(mut args: MonitorArgs) -> Result<()> {
     let wal_dir = home.join("wal");
     let crash_log = home.join("crash.log");
 
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let cutoff = now_unix - (args.hours as i64 * 3600);
 
     // Collect summaries for the three HO-07 alert event types.

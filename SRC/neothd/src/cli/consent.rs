@@ -93,10 +93,7 @@ async fn emit_consent_change(
     daemon_live: bool,
     home: &std::path::Path,
 ) {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&json!({
         "provider": consent::slug(provider),
         "source": "cli",

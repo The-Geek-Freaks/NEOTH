@@ -223,10 +223,7 @@ pub(crate) const FLAPPING_THRESHOLD_PCT: f64 = 20.0;
 pub(crate) const FLAPPING_MIN_SAMPLES: u64 = 5;
 
 pub(crate) fn check_provider_flapping(home: &Path) -> CheckOutcome {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let since = now - 86_400;
     let roll = crate::daemon::usage_log::aggregate(home, since, now);
     // Look for providers whose names suggest channel egress. We
@@ -335,10 +332,7 @@ pub(crate) fn check_circuit_breakers(_home: &Path) -> CheckOutcome {
 /// install) or when cost is below the cap. The cap defaults to
 /// `freedom.yaml::council.daily_usd_cap` (typical value $5).
 pub(crate) fn check_usage_today(home: &Path) -> CheckOutcome {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let since = now - 86_400;
     let roll = crate::daemon::usage_log::aggregate(home, since, now);
     if roll.total_call_count == 0 {

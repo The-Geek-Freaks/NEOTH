@@ -434,10 +434,7 @@ struct ListRow {
 /// Seconds since the unix epoch (saturating to 0 on a clock fault) for
 /// the HF-01 model-download audit payloads.
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {

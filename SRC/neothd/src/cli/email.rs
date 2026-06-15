@@ -432,10 +432,7 @@ async fn fetch_and_triage(
     // P1c — record the processed messages as seen so the next fetch skips them.
     // After triage + audit, so a crash mid-run doesn't mark un-triaged mail.
     if let Some(conn) = &seen_conn {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::time::now_unix_i64();
         for e in &emails {
             let _ = crate::email::seen_store::mark_seen(conn, e.dedup_key(), Some(&e.uid), now);
         }
@@ -510,10 +507,7 @@ async fn emit_email_audit_batch(triaged: &[crate::email::inbound::InboundTriage]
     if triaged.is_empty() {
         return;
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
 
     // (event_type, payload) frames for the whole batch.
     let mut frames: Vec<(u8, Vec<u8>)> = Vec::new();
