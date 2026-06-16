@@ -1523,10 +1523,12 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 TopBar { kicker: "NEOTH · SOVEREIGN"; title: root.shell-title; }
 
-                SettingsView {
-                    visible: root.nav-active != "chat"
+                // `if` (not `visible:`) so a hidden SettingsView is removed from
+                // the layout tree entirely — a `visible:false` element still
+                // reserves its stretch space and would squash the active tab.
+                if (root.nav-active != "chat"
                         && root.nav-active != "agents" && root.nav-active != "automation"
-                        && root.nav-active != "resources" && root.nav-active != "doctor";
+                        && root.nav-active != "resources" && root.nav-active != "doctor"): SettingsView {
                     active: root.nav-active == "memory" ? SettingsTab.memory
                         : root.nav-active == "hemispheres" ? SettingsTab.hemispheres
                         : root.nav-active == "channels" ? SettingsTab.channels
