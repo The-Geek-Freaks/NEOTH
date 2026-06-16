@@ -100,6 +100,7 @@ pub mod quota;
 pub mod goal;
 pub mod recall;
 pub mod recipe;
+pub mod recon;
 pub mod reflect;
 pub mod review;
 pub mod recall_score;
@@ -358,6 +359,10 @@ pub enum Commands {
     /// Self-reflection surfaces. `reflect tech-news` scans trending Hacker
     /// News topics and flags the ones your skills + memory don't cover yet.
     Reflect(reflect::ReflectArgs),
+
+    /// Operator recon (authorized engagements) over ProjectDiscovery's uncover
+    /// (exposed-host discovery) + tlsx (TLS/cert intel). Gated by autonomy.
+    Recon(recon::ReconArgs),
 
     /// Fire a scheduled job NOW, out of band of the daemon scheduler:
     /// `cron run <id>` loads jobs.yaml, runs the job through the configured
@@ -1060,6 +1065,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Reflect(args) => {
             reflect::run_reflect(args, global_output).await?;
+        }
+        Commands::Recon(args) => {
+            recon::run_recon(args, global_output).await?;
         }
         Commands::Credential(args) => {
             credential::run_credential(args, global_output)?;

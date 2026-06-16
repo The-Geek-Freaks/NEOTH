@@ -87,8 +87,10 @@ fuzz/artifacts/
 # violate the upstream licenses AND blow up GitHub's repo size limits.
 QUELLEN/
 # RECON/ contains operator-private recon dumps (jarvis_live_recon_*.txt,
-# OpenClaw upstream audits). Not for public consumption.
-RECON/
+# OpenClaw upstream audits). Not for public consumption. Anchored to the repo
+# root so it never shadows the `src/recon/` source module on case-insensitive
+# filesystems (Windows/macOS).
+/RECON/
 # REVIEWS/ holds raw third-party security reviews + the _gold_audit exploit-detail
 # dumps + Gold-feature research files. Publishing them = an attack map against the
 # live beta. The distilled, public-safe plan lives in PLAN/ROAD_TO_1_0_GOLD.md.

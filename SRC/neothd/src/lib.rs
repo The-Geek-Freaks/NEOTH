@@ -138,6 +138,7 @@ pub mod providers;
 pub mod recall;
 pub mod recipes;
 pub mod recovery;
+pub mod recon;
 pub mod reflection;
 pub mod secret;
 pub mod security;
