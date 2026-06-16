@@ -17,9 +17,11 @@
 //! instance) — tracked, not built here.
 //!
 //! Both tools are GATED (refused under Strict autonomy — NEOTH does nothing
-//! external there) and every invocation is audit-logged. Args are passed as an
-//! explicit argv (never a shell line) and validated so an operator/LLM-supplied
-//! value can't smuggle a CLI flag.
+//! external there) and every invocation is WAL-audited via `0xF6 RECON_RUN`
+//! (forwarded to the live daemon over audit-RPC, else a one-shot frame — the
+//! same audit level as the MCP/computer-use tool band; the raw query/targets
+//! are hashed, never logged). Args are passed as an explicit argv (never a shell
+//! line) and validated so an operator/LLM-supplied value can't smuggle a CLI flag.
 
 pub mod tlsx;
 pub mod uncover;
@@ -64,9 +66,10 @@ pub fn validate_arg(kind: &str, v: &str) -> Result<()> {
     Ok(())
 }
 
-/// Audit a recon invocation. Structured tracing only for now — a dedicated WAL
-/// event (`RECON_RUN`) touches the hot `wal/events.rs` lane and is a coordinated
-/// follow-up; this keeps the egress visible in the operator log meanwhile.
+/// Tracing breadcrumb for a recon invocation (live operator log). The durable
+/// audit anchor is the `0xF6 RECON_RUN` WAL frame emitted by `cli::recon`
+/// (daemon-forwarded over audit-RPC, else one-shot) — same level as the MCP
+/// tool band. This is the human-readable complement, not the audit of record.
 pub fn audit(tool: &str, summary: &str, results: usize) {
     tracing::info!(tool, summary, results, "recon: tool invoked");
 }

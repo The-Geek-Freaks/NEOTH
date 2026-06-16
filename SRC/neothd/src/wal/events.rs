@@ -1996,6 +1996,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
     ("dream_composed", EVENT_TYPE_DREAM_COMPOSED),
     ("memory_transfer_exported", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
+    ("recon_run", EVENT_TYPE_RECON_RUN),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
@@ -2121,6 +2122,18 @@ pub const EVENT_TYPE_DREAM_COMPOSED: u8 = 0xF4;
 /// Payload (JSON): `{dest_pubkey_b64, bundle_bytes, events_exported, window,
 /// ts_unix}`.
 pub const EVENT_TYPE_MEMORY_TRANSFER_EXPORTED: u8 = 0xF5;
+
+/// `0xF6 RECON_RUN` — the operator ran a gated recon tool (`neoth recon
+/// uncover` / `tlsx`) for an authorized engagement. Records THAT recon ran +
+/// which tool, a hash of the args (NEVER the raw query / target hosts — those
+/// could be a Shodan dork or a victim list), the result count, and the autonomy
+/// level it ran under. Brings recon to the same audit level as the MCP tool
+/// band (`0xC0`): one-shot CLI runs forward this frame to the live daemon over
+/// the audit-RPC channel, or write it directly when no daemon owns the WAL.
+///
+/// Payload (JSON): `{tool, args_hash, result_count, autonomy_level,
+/// operator_id, ts_unix}`.
+pub const EVENT_TYPE_RECON_RUN: u8 = 0xF6;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2492,6 +2505,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_REDACTION_MARKER < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_DREAM_COMPOSED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_MEMORY_TRANSFER_EXPORTED < 0xF0) as usize];
+    let _ = [(); 1][(EVENT_TYPE_RECON_RUN < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -2805,6 +2819,7 @@ mod tests {
             ("REDACTION_MARKER", EVENT_TYPE_REDACTION_MARKER),
             ("DREAM_COMPOSED", EVENT_TYPE_DREAM_COMPOSED),
             ("MEMORY_TRANSFER_EXPORTED", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
+            ("RECON_RUN", EVENT_TYPE_RECON_RUN),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {

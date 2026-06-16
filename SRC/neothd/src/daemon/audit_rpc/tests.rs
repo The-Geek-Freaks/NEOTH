@@ -33,7 +33,7 @@ async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 30);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 31);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(is_allowed_client_event(c), "{c:#x} (autonomy) must be allowed");
@@ -58,6 +58,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     for c in [0x2Cu8, 0x2D, 0x30, 0x31, 0x3D, 0x3E, 0x9B, 0xC8, 0xD2, 0xD7, 0xD8, 0xD9, 0xF5] {
         assert!(is_allowed_client_event(c), "{c:#x} (one-shot) must be allowed");
     }
+    // recon (`neoth recon uncover/tlsx`) forwards its RECON_RUN audit.
+    assert!(is_allowed_client_event(0xF6), "0xF6 (recon_run) must be allowed");
     // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
     // autonomy codes must NOT bleed into the neighbouring 0xA0/0xA1/0xA4.
     for c in [0x10u8, 0x15, 0xA0, 0xA1, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {

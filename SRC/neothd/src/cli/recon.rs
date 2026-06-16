@@ -52,26 +52,33 @@ pub async fn run_recon(args: ReconArgs, output: OutputFormat) -> Result<()> {
             engine,
             limit,
         } => {
-            gate()?;
+            let autonomy = gate()?;
+            let home = FreedomConfig::default_neoth_home();
             let results = uncover::run(&query, &engine, limit).await?;
             recon::audit(
                 "uncover",
                 &format!("q={query:?} engines={engine:?}"),
                 results.len(),
             );
+            let args_hash = hash_args(&format!("q={query}|e={}", engine.join(",")));
+            emit_recon_run(&home, "uncover", &args_hash, results.len(), autonomy).await;
             emit_uncover(&results, output)
         }
         ReconAction::Tlsx { host, port } => {
-            gate()?;
+            let autonomy = gate()?;
+            let home = FreedomConfig::default_neoth_home();
             let results = tlsx::run(&host, &port).await?;
             recon::audit("tlsx", &format!("hosts={host:?}"), results.len());
+            let args_hash = hash_args(&format!("u={}|p={}", host.join(","), port.join(",")));
+            emit_recon_run(&home, "tlsx", &args_hash, results.len(), autonomy).await;
             emit_tlsx(&results, output)
         }
     }
 }
 
 /// Recon is an external/active capability — refused under Strict autonomy.
-fn gate() -> Result<()> {
+/// Returns the live autonomy level so the caller can stamp it into the audit.
+fn gate() -> Result<AutonomyLevel> {
     let autonomy = FreedomConfig::load_from_default_path()
         .map(|c| c.autonomy)
         .unwrap_or_default();
@@ -80,7 +87,64 @@ fn gate() -> Result<()> {
             "recon is refused under Strict autonomy — raise it (`neoth autonomy set standard`) to allow external recon"
         );
     }
-    Ok(())
+    Ok(autonomy)
+}
+
+/// Stable hex hash of a recon invocation's args. The raw query / target hosts
+/// are NEVER written to the WAL (a Shodan dork or victim list is sensitive) —
+/// only this fingerprint, so a reader can correlate runs without leaking intent.
+fn hash_args(s: &str) -> String {
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(s.as_bytes()))
+}
+
+/// Audit a recon run to the WAL at the MCP/computer-use level: forward
+/// `RECON_RUN` to the live daemon over the audit-RPC channel (it owns the single
+/// WAL writer), or append a one-shot frame directly when no daemon is running.
+/// Best-effort — an audit gap never fails the recon command.
+async fn emit_recon_run(
+    home: &std::path::Path,
+    tool: &str,
+    args_hash: &str,
+    result_count: usize,
+    autonomy: AutonomyLevel,
+) {
+    let operator_id = FreedomConfig::load_from_default_path()
+        .ok()
+        .and_then(|c| c.operator_id);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "tool": tool,
+        "args_hash": args_hash,
+        "result_count": result_count,
+        "autonomy_level": autonomy.as_str(),
+        "operator_id": operator_id,
+        "ts_unix": crate::time::now_unix_secs(),
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    let event_type = crate::wal::events::EVENT_TYPE_RECON_RUN;
+
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+        Ok(Some(_))
+    );
+    if daemon_live {
+        if let Err(e) =
+            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
+        {
+            tracing::debug!(error = %e, "recon RECON_RUN audit forward failed (best-effort)");
+        }
+    } else {
+        let segment = home.join("wal").join("000001.wal");
+        if let Some(parent) = segment.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok((writer, join)) = crate::wal::spawn(segment) {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            let _ = writer.append(header, payload).await;
+            drop(writer);
+            let _ = join.await;
+        }
+    }
 }
 
 fn emit_uncover(results: &[uncover::UncoverResult], output: OutputFormat) -> Result<()> {
