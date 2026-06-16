@@ -25,13 +25,18 @@ pub enum ComputerUseAction {
     Disable,
     /// Print the cua-driver install command for this platform.
     Install,
+    /// Runtime proof + allowlist drift check: installed version, the LIVE
+    /// advertised tools (real MCP handshake + `tools/list`), the pinned
+    /// allowlist, and a missing/extra diff.
+    Doctor,
 }
 
-pub fn run_computer_use(args: ComputerUseArgs, output: OutputFormat) -> Result<()> {
+pub async fn run_computer_use(args: ComputerUseArgs, output: OutputFormat) -> Result<()> {
     match args.action {
         ComputerUseAction::Status => status(output),
         ComputerUseAction::Enable => set_enabled(true, output),
         ComputerUseAction::Disable => set_enabled(false, output),
+        ComputerUseAction::Doctor => doctor(output).await,
         ComputerUseAction::Install => {
             let cmd = cu::install_command();
             let json = matches!(output, OutputFormat::Json | OutputFormat::Jsonl);
@@ -134,6 +139,80 @@ fn set_enabled(on: bool, output: OutputFormat) -> Result<()> {
         );
     } else if on {
         println!("The agent now has computer-use tools (autonomy-gated + WAL-audited).");
+    }
+    Ok(())
+}
+
+/// Runtime proof + allowlist-drift check: installed version, the LIVE advertised
+/// tools via a real MCP handshake + `tools/list`, the pinned allowlist, and the
+/// missing/extra diff (catches a cua-driver upgrade that renamed tools).
+async fn doctor(output: OutputFormat) -> Result<()> {
+    let installed = cu::is_installed();
+    let version = cu::cua_driver_version();
+    let allowed: Vec<String> = cu::COMPUTER_USE_TOOLS.iter().map(|s| s.to_string()).collect();
+
+    // The runtime proof: spawn cua-driver, do the MCP initialize handshake, and
+    // read its real `tools/list`. None when not installed / handshake fails.
+    let mut advertised: Option<Vec<String>> = None;
+    let mut probe_error: Option<String> = None;
+    if installed {
+        match crate::mcp::client::McpClient::spawn(&cu::cua_driver_server()).await {
+            Ok(mut client) => match client.list_tools().await {
+                Ok(tools) => advertised = Some(tools.into_iter().map(|t| t.name).collect()),
+                Err(e) => probe_error = Some(format!("tools/list failed: {e}")),
+            },
+            Err(e) => probe_error = Some(format!("MCP handshake failed: {e}")),
+        }
+    }
+
+    let (missing, extra): (Vec<String>, Vec<String>) = match &advertised {
+        Some(adv) => (
+            allowed.iter().filter(|a| !adv.contains(a)).cloned().collect(),
+            adv.iter().filter(|a| !allowed.contains(a)).cloned().collect(),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!(
+            "{}",
+            serde_json::json!({
+                "installed": installed, "version": version,
+                "advertised": advertised, "allowed": allowed,
+                "missing": missing, "extra": extra, "probe_error": probe_error,
+            })
+        );
+        return Ok(());
+    }
+
+    println!("NEOTH computer-use doctor (cua-driver)");
+    println!("  installed : {}", if installed { "yes" } else { "NO" });
+    println!("  version   : {}", version.as_deref().unwrap_or("—"));
+    match &advertised {
+        Some(adv) => println!("  advertised: {} tools — {}", adv.len(), adv.join(", ")),
+        None => println!(
+            "  advertised: — (no live handshake{})",
+            probe_error
+                .as_ref()
+                .map(|e| format!(": {e}"))
+                .unwrap_or_default()
+        ),
+    }
+    println!("  allowed   : {} tools — {}", allowed.len(), allowed.join(", "));
+    if !missing.is_empty() {
+        println!(
+            "  ⚠ MISSING : pinned but NOT advertised — {} (driver upgrade may have renamed them; re-pin)",
+            missing.join(", ")
+        );
+    }
+    if !extra.is_empty() {
+        println!(
+            "  ⚠ EXTRA   : advertised but NOT allowed (blocked by the allowlist) — {}",
+            extra.join(", ")
+        );
+    }
+    if advertised.is_some() && missing.is_empty() && extra.is_empty() {
+        println!("  ✓ allowlist matches the advertised tools exactly.");
     }
     Ok(())
 }

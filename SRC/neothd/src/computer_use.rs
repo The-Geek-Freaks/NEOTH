@@ -67,6 +67,24 @@ pub fn install_command() -> &'static str {
     }
 }
 
+/// Installed cua-driver version (first line of `cua-driver --version`), or
+/// `None` if it isn't on PATH / the probe fails. Used by `computer-use doctor`
+/// to detect a driver upgrade that may have changed the tool set.
+pub fn cua_driver_version() -> Option<String> {
+    let out = std::process::Command::new("cua-driver")
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(|l| l.to_string())
+}
+
 /// Is `cua-driver` on `PATH`? Pure PATH scan — no subprocess.
 pub fn is_installed() -> bool {
     let exe = if cfg!(target_os = "windows") {

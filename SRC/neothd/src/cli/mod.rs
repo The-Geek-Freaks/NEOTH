@@ -1040,7 +1040,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             n8n::run_n8n(args, global_output)?;
         }
         Commands::ComputerUse(args) => {
-            computer_use::run_computer_use(args, global_output)?;
+            computer_use::run_computer_use(args, global_output).await?;
         }
         Commands::Okf(args) => {
             okf::run_okf(args, global_output)?;
