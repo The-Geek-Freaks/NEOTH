@@ -48,6 +48,27 @@ impl SelfImproveConfig {
         crate::util::atomic_write::atomic_write(&Self::path(home), yaml.as_bytes())?;
         Ok(())
     }
+
+    /// Resolve the effective switch for a given daemon autonomy level.
+    /// `Full` autonomy implies self-improvement runs automatically (the nightly
+    /// sleep cycle STAGES proposals) — "skillopt improve auto on in full-auto
+    /// mode" — UNLESS the operator has made an explicit choice (`asked`), which
+    /// always wins. Below `Full`, the stored config is authoritative.
+    ///
+    /// This NEVER weakens the review-then-adopt gate: `auto` only stages
+    /// proposals; adopting one still requires an explicit `neoth self-improve
+    /// accept`. There is no auto-accept path at any autonomy level.
+    pub fn effective(self, autonomy: crate::permissions::AutonomyLevel) -> Self {
+        if autonomy == crate::permissions::AutonomyLevel::Full && !self.asked {
+            Self {
+                enabled: true,
+                auto: true,
+                asked: self.asked,
+            }
+        } else {
+            self
+        }
+    }
 }
 
 /// One recorded self-improvement attempt — the "what improved" surface.
@@ -279,6 +300,31 @@ mod tests {
         cfg.save(&tmp).unwrap();
         assert_eq!(SelfImproveConfig::load(&tmp), cfg);
         let _ = std::fs::remove_file(SelfImproveConfig::path(&tmp));
+    }
+
+    #[test]
+    fn effective_full_auto_implies_on_unless_operator_chose() {
+        use crate::permissions::AutonomyLevel as A;
+        // Fresh config (never asked): Full autonomy turns it on automatically.
+        let fresh = SelfImproveConfig::default();
+        let eff = fresh.effective(A::Full);
+        assert!(eff.enabled && eff.auto, "full-auto implies self-improve auto-on");
+        // Below Full, a fresh config stays off (no implicit enabling).
+        for lvl in [A::Strict, A::Standard, A::Elevated] {
+            let e = SelfImproveConfig::default().effective(lvl);
+            assert!(!e.enabled && !e.auto, "{lvl:?} must not auto-enable");
+        }
+        // Operator explicitly disabled it (asked=true) → Full must respect that.
+        let opted_off = SelfImproveConfig {
+            enabled: false,
+            auto: false,
+            asked: true,
+        };
+        let e = opted_off.effective(A::Full);
+        assert!(
+            !e.enabled && !e.auto,
+            "explicit operator choice wins over the full-auto default"
+        );
     }
 
     #[test]

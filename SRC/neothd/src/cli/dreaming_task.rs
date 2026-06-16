@@ -132,6 +132,80 @@ async fn run(
                 warn!(error = %e, "dreaming pass failed (will retry next tick)");
             }
         }
+        // Slice C — nightly auto self-improve. In full-auto mode (or when the
+        // operator explicitly enabled `auto`) stage a SkillOpt proposal so
+        // improvements accrue without a manual `neoth self-improve run`. NEVER
+        // auto-accepts: the review-then-adopt gate still requires an explicit
+        // `accept`. Daemon-cron only — `neoth dream now` calls run_one_pass
+        // directly and never triggers this. Best-effort: any miss logs + skips.
+        self_improve_auto_pass(&home).await;
+    }
+}
+
+/// Nightly auto self-improve pass (Slice C). Gated by the EFFECTIVE
+/// self-improve switch (full-auto implies on, an explicit operator choice
+/// wins) AND SkillOpt being installed. Stages one proposal for the default
+/// persona's `skill.md`; the operator still must `neoth self-improve accept`
+/// it. Runs the (blocking, possibly slow) engine off the async runtime.
+async fn self_improve_auto_pass(home: &Path) {
+    let home = home.to_path_buf();
+    if let Err(e) =
+        tokio::task::spawn_blocking(move || self_improve_auto_pass_blocking(&home)).await
+    {
+        warn!(error = %e, "self-improve auto-pass task join failed");
+    }
+}
+
+fn self_improve_auto_pass_blocking(home: &Path) {
+    use crate::self_improve as si;
+    let autonomy = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.autonomy)
+        .unwrap_or_default();
+    let cfg = si::SelfImproveConfig::load(home).effective(autonomy);
+    if !cfg.auto || !si::is_installed() {
+        return; // not in auto mode, or engine absent → nothing to do
+    }
+    let persona = "default";
+    // Don't pile up: if a proposal for this persona is already awaiting review,
+    // skip this tick (and skip spawning the engine entirely).
+    if si::load_proposals(home)
+        .iter()
+        .any(|p| p.skill == persona && p.status == si::ProposalStatus::Pending)
+    {
+        return;
+    }
+    let skill_path = crate::skills::installer::default_skills_dir()
+        .join(persona)
+        .join("skill.md");
+    let before = std::fs::read_to_string(&skill_path).unwrap_or_default();
+    let after = match si::skillopt_command(persona).output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+        Err(e) => {
+            warn!(error = %e, "self-improve auto-pass: SkillOpt run failed");
+            return;
+        }
+    };
+    if after.trim().is_empty() || after == before {
+        return; // engine proposed nothing new → don't stage a no-op
+    }
+    let now = crate::time::now_unix_i64();
+    let id = format!("p{now}");
+    match si::stage_proposal(
+        home,
+        si::Proposal {
+            id: id.clone(),
+            skill: persona.to_string(),
+            skill_path: skill_path.display().to_string(),
+            before,
+            after,
+            summary: format!("nightly SkillOpt proposal for {persona}"),
+            status: si::ProposalStatus::Pending,
+            at_unix: now,
+            backup: None,
+        },
+    ) {
+        Ok(_) => info!(proposal = %id, "self-improve auto-pass staged a proposal for review"),
+        Err(e) => warn!(error = %e, "self-improve auto-pass: stage_proposal failed"),
     }
 }
 

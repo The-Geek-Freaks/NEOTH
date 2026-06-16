@@ -58,8 +58,13 @@ pub enum SelfImproveAction {
 
 pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
+    // Full autonomy implies self-improve auto-on (unless the operator chose
+    // otherwise) — resolve the live level so `status` + `run` reflect it.
+    let autonomy = FreedomConfig::load_from_default_path()
+        .map(|c| c.autonomy)
+        .unwrap_or_default();
     match args.action {
-        SelfImproveAction::Status => status(&home, output),
+        SelfImproveAction::Status => status(&home, autonomy, output),
         SelfImproveAction::Enable { auto } => {
             let mut cfg = si::SelfImproveConfig::load(&home);
             cfg.enabled = true;
@@ -90,7 +95,7 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
             skill,
             from,
             dry_run,
-        } => run_pass(&home, &persona, skill, from, dry_run, output),
+        } => run_pass(&home, autonomy, &persona, skill, from, dry_run, output),
         SelfImproveAction::Review => review(&home, output),
         SelfImproveAction::Accept { id } => {
             si::accept_proposal(&home, &id)?;
@@ -106,8 +111,16 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
     }
 }
 
-fn status(home: &std::path::Path, output: OutputFormat) -> Result<()> {
-    let cfg = si::SelfImproveConfig::load(home);
+fn status(
+    home: &std::path::Path,
+    autonomy: crate::permissions::AutonomyLevel,
+    output: OutputFormat,
+) -> Result<()> {
+    let stored = si::SelfImproveConfig::load(home);
+    let (stored_enabled, stored_auto) = (stored.enabled, stored.auto);
+    let cfg = stored.effective(autonomy);
+    // Full-auto turned it on implicitly (operator never set it explicitly).
+    let implied = cfg.enabled && !stored_enabled;
     let installed = si::is_installed();
     let last = si::last_record(home);
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
@@ -115,6 +128,8 @@ fn status(home: &std::path::Path, output: OutputFormat) -> Result<()> {
             "{}",
             serde_json::json!({
                 "enabled": cfg.enabled, "auto": cfg.auto, "asked": cfg.asked,
+                "stored_enabled": stored_enabled, "stored_auto": stored_auto,
+                "implied_by_full_auto": implied, "autonomy": autonomy.as_str(),
                 "skillopt_installed": installed, "last": last,
             })
         );
@@ -122,12 +137,13 @@ fn status(home: &std::path::Path, output: OutputFormat) -> Result<()> {
     }
     println!("NEOTH self-improvement (SkillOpt)");
     println!(
-        "  switch    : {}",
+        "  switch    : {}{}",
         if cfg.enabled {
             if cfg.auto { "ENABLED (nightly auto)" } else { "ENABLED (manual)" }
         } else {
             "off — `neoth self-improve enable`"
-        }
+        },
+        if implied { " — implied by full-auto mode" } else { "" }
     );
     println!(
         "  SkillOpt  : {}",
@@ -147,15 +163,16 @@ fn status(home: &std::path::Path, output: OutputFormat) -> Result<()> {
 
 fn run_pass(
     home: &std::path::Path,
+    autonomy: crate::permissions::AutonomyLevel,
     persona: &str,
     skill: Option<std::path::PathBuf>,
     from: Option<std::path::PathBuf>,
     dry_run: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    let cfg = si::SelfImproveConfig::load(home);
+    let cfg = si::SelfImproveConfig::load(home).effective(autonomy);
     if !cfg.enabled && !dry_run {
-        println!("self-improvement is disabled — enable it first: `neoth self-improve enable`");
+        println!("self-improvement is disabled — enable it first: `neoth self-improve enable` (or set full-auto mode)");
         return Ok(());
     }
     // Resolve the production skill file (explicit, else <skills>/<persona>/skill.md).
