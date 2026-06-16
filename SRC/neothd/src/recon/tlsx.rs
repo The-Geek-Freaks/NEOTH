@@ -51,6 +51,14 @@ pub fn build_args(hosts: &[String], ports: &[String]) -> Result<Vec<String>> {
     }
     for h in hosts {
         super::validate_arg("host", h)?;
+        // Hosts are joined with ',' into one -u value; an embedded comma in a
+        // single host would smuggle EXTRA scan targets past validation. Multiple
+        // hosts must come as separate Vec elements, never one comma-joined value.
+        if h.contains(',') {
+            anyhow::bail!(
+                "recon tlsx: host {h:?} must not contain ',' (pass multiple hosts as separate values)"
+            );
+        }
     }
     for p in ports {
         super::validate_arg("port", p)?;
@@ -122,6 +130,8 @@ mod tests {
         assert!(build_args(&[], &[]).is_err());
         // flag-injection host rejected
         assert!(build_args(&["-config /etc/x".into()], &[]).is_err());
+        // comma-injection host rejected (would smuggle extra scan targets)
+        assert!(build_args(&["a.com,evil.com".into()], &[]).is_err());
         // non-numeric port rejected
         assert!(build_args(&["a.com".into()], &["https".into()]).is_err());
     }

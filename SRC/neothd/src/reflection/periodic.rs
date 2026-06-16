@@ -227,9 +227,6 @@ pub fn sync_to_obsidian(
     kind: PeriodKind,
     tag: &str,
 ) -> std::io::Result<PeriodSyncOutcome> {
-    use std::fs::{self, OpenOptions};
-    use std::io::Write;
-
     let reflections = load_for_tag(neoth_home, kind, tag);
     let dest_dir = vault_root.join(subdir).join(kind.vault_subdir());
     let target_path = dest_dir.join(format!("{tag}.md"));
@@ -250,21 +247,10 @@ pub fn sync_to_obsidian(
         .collect::<Vec<_>>()
         .join("\n---\n\n");
 
-    fs::create_dir_all(&dest_dir)?;
-    let tmp_path = dest_dir.join(format!("{tag}.md.tmp"));
-    {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        f.write_all(body.as_bytes())?;
-        f.flush()?;
-    }
-    if target_path.exists() {
-        fs::remove_file(&target_path)?;
-    }
-    fs::rename(&tmp_path, &target_path)?;
+    // Canonical crash-safe write: temp + fsync + atomic rename-replace (std
+    // rename is atomic-replace on Windows too — no remove-then-rename gap, which
+    // is the bug the hand-rolled pattern had). Creates the parent dir.
+    crate::util::atomic_write::atomic_write(&target_path, body.as_bytes())?;
 
     Ok(PeriodSyncOutcome {
         tag: tag.to_string(),

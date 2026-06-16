@@ -355,9 +355,6 @@ pub fn sync_reflections_to_obsidian(
     subdir: &str,
     iso_week_tag: &str,
 ) -> std::io::Result<ReflectionSyncOutcome> {
-    use std::fs::{self, OpenOptions};
-    use std::io::Write;
-
     let reflections = load_reflections_for_week(neoth_home, iso_week_tag);
     let dest_dir = vault_root.join(subdir).join("Reflections");
     let target_path = dest_dir.join(format!("{iso_week_tag}.md"));
@@ -378,22 +375,10 @@ pub fn sync_reflections_to_obsidian(
         .collect::<Vec<_>>()
         .join("\n---\n\n");
 
-    fs::create_dir_all(&dest_dir)?;
-    let tmp_path = dest_dir.join(format!("{iso_week_tag}.md.tmp"));
-    {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        f.write_all(body.as_bytes())?;
-        f.flush()?;
-    }
-    // Windows: rename over existing file fails — remove first.
-    if target_path.exists() {
-        fs::remove_file(&target_path)?;
-    }
-    fs::rename(&tmp_path, &target_path)?;
+    // Canonical crash-safe write: temp + fsync + atomic rename-replace (std
+    // rename is atomic-replace on Windows too — the prior remove-then-rename
+    // opened a window where a reader saw no file; GOLD-ARCH-09).
+    crate::util::atomic_write::atomic_write(&target_path, body.as_bytes())?;
 
     Ok(ReflectionSyncOutcome {
         iso_week_tag: iso_week_tag.to_string(),
