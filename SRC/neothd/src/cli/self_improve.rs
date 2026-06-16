@@ -2,7 +2,7 @@
 //! switch (ask-first), run a consolidation pass, and show what improved. See
 //! `crate::self_improve`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -26,10 +26,31 @@ pub enum SelfImproveAction {
     },
     /// Turn self-improvement off (keeps the ledger).
     Disable,
-    /// Run one SkillOpt consolidation pass now (records what improved).
+    /// Run one SkillOpt consolidation pass — STAGES a proposal for review
+    /// (never writes a skill file directly). `--dry-run` only prints the diff.
     Run {
         #[arg(long, default_value = "default")]
         persona: String,
+        /// The production skill file SkillOpt should improve.
+        #[arg(long, value_name = "PATH")]
+        skill: Option<std::path::PathBuf>,
+        /// Use this file as the proposed content instead of running SkillOpt
+        /// (lets the workflow be driven without the engine installed).
+        #[arg(long, value_name = "PATH")]
+        from: Option<std::path::PathBuf>,
+        /// Only show the diff; don't stage a proposal.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List staged proposals + their diffs (review before adopting).
+    Review,
+    /// Adopt a proposal into its skill file (backs up the replaced content).
+    Accept {
+        id: String,
+    },
+    /// Restore a previously accepted proposal's backup (undo the change).
+    Rollback {
+        id: String,
     },
     /// Print the improvement ledger (what changed, when, accepted or not).
     Log,
@@ -64,7 +85,23 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
             println!("self-improvement disabled.");
             Ok(())
         }
-        SelfImproveAction::Run { persona } => run_pass(&home, &persona, output),
+        SelfImproveAction::Run {
+            persona,
+            skill,
+            from,
+            dry_run,
+        } => run_pass(&home, &persona, skill, from, dry_run, output),
+        SelfImproveAction::Review => review(&home, output),
+        SelfImproveAction::Accept { id } => {
+            si::accept_proposal(&home, &id)?;
+            println!("✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo).");
+            Ok(())
+        }
+        SelfImproveAction::Rollback { id } => {
+            si::rollback_proposal(&home, &id)?;
+            println!("✓ proposal {id} rolled back — skill file restored.");
+            Ok(())
+        }
         SelfImproveAction::Log => log(&home, output),
     }
 }
@@ -108,50 +145,106 @@ fn status(home: &std::path::Path, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_pass(home: &std::path::Path, persona: &str, output: OutputFormat) -> Result<()> {
+fn run_pass(
+    home: &std::path::Path,
+    persona: &str,
+    skill: Option<std::path::PathBuf>,
+    from: Option<std::path::PathBuf>,
+    dry_run: bool,
+    output: OutputFormat,
+) -> Result<()> {
     let cfg = si::SelfImproveConfig::load(home);
-    if !cfg.enabled {
+    if !cfg.enabled && !dry_run {
         println!("self-improvement is disabled — enable it first: `neoth self-improve enable`");
         return Ok(());
     }
-    if !si::is_installed() {
-        println!("SkillOpt is not installed — `{}`", si::SKILLOPT_INSTALL);
+    // Resolve the production skill file (explicit, else <skills>/<persona>/skill.md).
+    let skill_path = skill.unwrap_or_else(|| {
+        crate::skills::installer::default_skills_dir()
+            .join(persona)
+            .join("skill.md")
+    });
+    let before = std::fs::read_to_string(&skill_path).unwrap_or_default();
+
+    // Proposed content: an explicit file, else SkillOpt's output.
+    let after = if let Some(from) = from {
+        std::fs::read_to_string(&from).with_context(|| format!("read {}", from.display()))?
+    } else if si::is_installed() {
+        println!("running SkillOpt for `{persona}` (this can take a while)…");
+        match si::skillopt_command(persona).output() {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+            Err(e) => {
+                println!("SkillOpt run failed: {e}");
+                return Ok(());
+            }
+        }
+    } else {
+        println!(
+            "SkillOpt not installed — `{}` (or stage a proposal with --from <file>)",
+            si::SKILLOPT_INSTALL
+        );
+        return Ok(());
+    };
+
+    let diff = si::line_diff(&before, &after);
+    if dry_run {
+        println!("── DRY RUN (nothing staged, skill file untouched) ──\nskill: {}\n\n{diff}", skill_path.display());
         return Ok(());
     }
-    println!("running SkillOpt consolidation for persona `{persona}` (this can take a while)…");
-    let out = si::skillopt_command(persona).output();
-    let (accepted, summary) = match &out {
-        Ok(o) => {
-            let s = String::from_utf8_lossy(&o.stdout);
-            let tail = s
-                .lines()
-                .map(str::trim)
-                .rev()
-                .find(|l| !l.is_empty())
-                .unwrap_or("completed")
-                .to_string();
-            (o.status.success(), tail)
-        }
-        Err(e) => (false, format!("run failed: {e}")),
-    };
-    let rec = si::ImproveRecord {
-        skill: persona.to_string(),
-        accepted,
-        score_before: 0.0,
-        score_after: 0.0,
-        summary: summary.clone(),
-        at_unix: crate::time::now_unix_i64(),
-    };
-    si::append_record(home, rec)?;
+
+    let now = crate::time::now_unix_i64();
+    let id = format!("p{now}");
+    si::stage_proposal(
+        home,
+        si::Proposal {
+            id: id.clone(),
+            skill: persona.to_string(),
+            skill_path: skill_path.display().to_string(),
+            before,
+            after,
+            summary: format!("SkillOpt proposal for {persona}"),
+            status: si::ProposalStatus::Pending,
+            at_unix: now,
+            backup: None,
+        },
+    )?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
-        println!(
-            "{}",
-            serde_json::json!({ "accepted": accepted, "summary": summary, "persona": persona })
-        );
-    } else if accepted {
-        println!("✓ improvement kept: {summary}");
+        println!("{}", serde_json::json!({ "staged": id, "skill": skill_path.display().to_string() }));
     } else {
-        println!("no improvement passed the held-out gate this run: {summary}");
+        println!(
+            "staged proposal {id} (skill file UNCHANGED). Review: `neoth self-improve review` · adopt: `neoth self-improve accept {id}`"
+        );
+    }
+    Ok(())
+}
+
+fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
+    let props = si::load_proposals(home);
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!("{}", serde_json::to_string_pretty(&props)?);
+        return Ok(());
+    }
+    if props.is_empty() {
+        println!("no proposals staged. Run `neoth self-improve run` to stage one.");
+        return Ok(());
+    }
+    let pending = props
+        .iter()
+        .filter(|p| p.status == si::ProposalStatus::Pending)
+        .count();
+    println!("Self-improvement proposals ({} total, {pending} pending):", props.len());
+    for p in props.iter().rev().take(10) {
+        println!(
+            "\n  [{}] {} — {:?} — {}",
+            p.id, p.skill, p.status, p.summary
+        );
+        if p.status == si::ProposalStatus::Pending {
+            let diff = si::line_diff(&p.before, &p.after);
+            for l in diff.lines().take(24) {
+                println!("    {l}");
+            }
+            println!("    → `neoth self-improve accept {}`", p.id);
+        }
     }
     Ok(())
 }

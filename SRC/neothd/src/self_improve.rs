@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// The auto-improve switch + ask-state, in `<home>/self_improve.yaml` (separate
@@ -91,6 +91,138 @@ pub fn append_record(home: &Path, rec: ImproveRecord) -> Result<()> {
 /// The most recent improvement attempt, if any.
 pub fn last_record(home: &Path) -> Option<ImproveRecord> {
     load_ledger(home).into_iter().next_back()
+}
+
+// ── Review-then-adopt: staged proposals ─────────────────────────────────────
+// SkillOpt NEVER writes to a production skill file. Every run STAGES a proposal;
+// only an explicit `accept` writes it (after backing up the replaced content),
+// and `rollback` restores that backup. This is the hard gate: no skill changes
+// without operator approval, and any change is reversible.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalStatus {
+    Pending,
+    Accepted,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Proposal {
+    pub id: String,
+    pub skill: String,
+    /// Absolute path to the production skill file the `after` content targets.
+    pub skill_path: String,
+    /// Skill content at stage time (the diff baseline).
+    pub before: String,
+    /// SkillOpt's proposed content.
+    pub after: String,
+    pub summary: String,
+    pub status: ProposalStatus,
+    pub at_unix: i64,
+    /// The content `accept` replaced (set on accept), so `rollback` is exact.
+    #[serde(default)]
+    pub backup: Option<String>,
+}
+
+pub fn proposals_path(home: &Path) -> PathBuf {
+    home.join("self_improve_proposals.json")
+}
+
+pub fn load_proposals(home: &Path) -> Vec<Proposal> {
+    std::fs::read_to_string(proposals_path(home))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_proposals(home: &Path, props: &[Proposal]) -> Result<()> {
+    let json = serde_json::to_string_pretty(props)?;
+    crate::util::atomic_write::atomic_write(&proposals_path(home), json.as_bytes())?;
+    Ok(())
+}
+
+/// Stage a proposal (status Pending). Returns its id.
+pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
+    p.status = ProposalStatus::Pending;
+    let id = p.id.clone();
+    let mut all = load_proposals(home);
+    all.push(p);
+    save_proposals(home, &all)?;
+    Ok(id)
+}
+
+/// Accept a pending proposal: back up the CURRENT skill file content, then write
+/// the proposed `after`. Returns an error if the id is unknown / not pending.
+/// This is the ONLY path that writes a production skill file.
+pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
+    let mut all = load_proposals(home);
+    let p = all
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
+    if p.status != ProposalStatus::Pending {
+        anyhow::bail!("proposal `{id}` is {:?}, not pending", p.status);
+    }
+    let path = Path::new(&p.skill_path);
+    // Back up the exact content we're about to replace (may differ from `before`
+    // if the file changed since staging) so rollback is precise.
+    let current = std::fs::read_to_string(path).unwrap_or_default();
+    p.backup = Some(current);
+    crate::util::atomic_write::atomic_write(path, p.after.as_bytes())
+        .with_context(|| format!("write skill {}", path.display()))?;
+    p.status = ProposalStatus::Accepted;
+    save_proposals(home, &all)?;
+    Ok(())
+}
+
+/// Roll back an accepted proposal: restore the backed-up content to the skill.
+pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
+    let mut all = load_proposals(home);
+    let p = all
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
+    if p.status != ProposalStatus::Accepted {
+        anyhow::bail!("proposal `{id}` is {:?}, not accepted — nothing to roll back", p.status);
+    }
+    let backup = p
+        .backup
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("proposal `{id}` has no backup"))?;
+    let path = Path::new(&p.skill_path);
+    crate::util::atomic_write::atomic_write(path, backup.as_bytes())
+        .with_context(|| format!("restore skill {}", path.display()))?;
+    p.status = ProposalStatus::RolledBack;
+    save_proposals(home, &all)?;
+    Ok(())
+}
+
+/// Minimal line diff (`+`/`-`/` `) for review display — no external dep. Shows
+/// removed-then-added per changed run; unchanged lines are context-elided to a
+/// count when long.
+pub fn line_diff(before: &str, after: &str) -> String {
+    let a: Vec<&str> = before.lines().collect();
+    let b: Vec<&str> = after.lines().collect();
+    let mut out = String::new();
+    // Simple LCS-free diff: walk both, emit removals for a-lines not in b and
+    // additions for b-lines not in a (set-based — good enough for review).
+    let bset: std::collections::HashSet<&str> = b.iter().copied().collect();
+    let aset: std::collections::HashSet<&str> = a.iter().copied().collect();
+    for line in &a {
+        if !bset.contains(line) {
+            out.push_str(&format!("- {line}\n"));
+        }
+    }
+    for line in &b {
+        if !aset.contains(line) {
+            out.push_str(&format!("+ {line}\n"));
+        }
+    }
+    if out.is_empty() {
+        out.push_str("(no line changes)\n");
+    }
+    out
 }
 
 pub const SKILLOPT_INSTALL: &str = "pip install skillopt";
@@ -176,5 +308,56 @@ mod tests {
     #[test]
     fn install_hint_is_pip() {
         assert!(SKILLOPT_INSTALL.contains("skillopt"));
+    }
+
+    #[test]
+    fn accept_writes_skill_and_rollback_restores_it() {
+        let tmp = std::env::temp_dir().join("neoth_si_accept_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill.md");
+        std::fs::write(&skill, "ORIGINAL skill").unwrap();
+
+        let id = stage_proposal(
+            &tmp,
+            Proposal {
+                id: "p1".into(),
+                skill: "coding".into(),
+                skill_path: skill.display().to_string(),
+                before: "ORIGINAL skill".into(),
+                after: "IMPROVED skill".into(),
+                summary: "tighten".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 1,
+                backup: None,
+            },
+        )
+        .unwrap();
+
+        // staging must NOT touch the production file
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "ORIGINAL skill");
+
+        // accept writes the improvement + records a backup
+        accept_proposal(&tmp, &id).unwrap();
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "IMPROVED skill");
+
+        // double-accept is rejected
+        assert!(accept_proposal(&tmp, &id).is_err());
+
+        // rollback restores the exact replaced content
+        rollback_proposal(&tmp, &id).unwrap();
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "ORIGINAL skill");
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
+    }
+
+    #[test]
+    fn line_diff_shows_changes() {
+        let d = line_diff("a\nb\nc", "a\nB\nc");
+        assert!(d.contains("- b"));
+        assert!(d.contains("+ B"));
+        assert!(!d.contains("(no line changes)"));
+        assert!(line_diff("same", "same").contains("(no line changes)"));
     }
 }
