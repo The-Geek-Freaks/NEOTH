@@ -151,6 +151,27 @@ pub fn get_entity(conn: &Connection, name: &str) -> Result<Option<Entity>> {
     .context("get entity")
 }
 
+/// Every entity in the index, most-corroborated first. Backs the OKF knowledge
+/// export (`cli::okf`) — one concept document per entity.
+pub fn list_all(conn: &Connection) -> Result<Vec<Entity>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, entity_type, source_count, attributes \
+         FROM idx_entities ORDER BY source_count DESC, name ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Entity {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                entity_type: r.get(2)?,
+                source_count: r.get(3)?,
+                attributes: r.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 /// Insert (or reinforce) a directed relation `src --relation--> dst`. A repeat
 /// of the same triple bumps its `weight` (co-occurrence reinforcement).
 pub fn insert_relation(

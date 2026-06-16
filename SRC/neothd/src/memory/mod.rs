@@ -41,6 +41,9 @@ pub mod contradiction;
 /// (episodes). Co-recalled memories reinforce a symmetric weighted link;
 /// `neoth recall --assoc <event_id>` queries the 1-hop neighbourhood.
 pub mod assoc_graph;
+/// Open Knowledge Format (OKF) renderer — export knowledge as Obsidian-native
+/// markdown concept docs (see `cli::okf`).
+pub mod okf;
 /// GOLD-FEAT-07 — LOWKEY moral-core loader (operator behavioural directives
 /// injected at enrichment position 0). `neoth moral-core {list,preview,doctor}`.
 pub mod moral_core;

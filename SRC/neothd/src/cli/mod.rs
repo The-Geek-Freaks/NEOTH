@@ -61,6 +61,7 @@ pub mod identity;
 pub mod transfer;
 pub mod gui;
 pub mod n8n;
+pub mod okf;
 pub mod gui_stream;
 pub mod hardware;
 pub mod hemispheres;
@@ -344,6 +345,9 @@ pub enum Commands {
     /// wired as a gated MCP server): status / enable / disable / install.
     #[command(name = "computer-use")]
     ComputerUse(computer_use::ComputerUseArgs),
+    /// Export NEOTH's knowledge as an Open Knowledge Format (OKF) bundle —
+    /// interconnected Obsidian-native markdown concept docs.
+    Okf(okf::OkfArgs),
 
     /// Fire a scheduled job NOW, out of band of the daemon scheduler:
     /// `cron run <id>` loads jobs.yaml, runs the job through the configured
@@ -1037,6 +1041,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::ComputerUse(args) => {
             computer_use::run_computer_use(args, global_output)?;
+        }
+        Commands::Okf(args) => {
+            okf::run_okf(args, global_output)?;
         }
         Commands::Credential(args) => {
             credential::run_credential(args, global_output)?;
