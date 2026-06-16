@@ -1959,7 +1959,13 @@ Scan trending Hacker News stories and show which topics your installed skills + 
 
 ### `neoth reflect topics`
 
-Show the current per-operator ignore + pin lists
+Show the current per-operator ignore + pin lists + weekly-refresh state
+
+### `neoth reflect weekly`
+
+Turn the weekly auto-refresh on (daemon enqueues a tech-currency reflection once a week). `--off` turns it back off
+
+- `--off <OFF>`
 
 ## `neoth refusal`
 

@@ -95,6 +95,74 @@ pub fn run_reflection_tick_once(home: &std::path::Path, now_unix: i64) -> Result
     Ok(enqueued)
 }
 
+/// Weekly tech-currency refresh (OPT-IN). Once per ISO week — gated by a marker
+/// file so the daily cron tick never refetches — it pulls trending Hacker News
+/// topics, computes the gap vs the operator's skills/memory + ignore/pin lists,
+/// and enqueues a reflection. OFF by default
+/// (`reflect_topics.yaml::weekly_refresh`, set via `neoth reflect weekly`) and
+/// refused under Strict autonomy. This is the ONLY network egress in the
+/// reflection cron; the offline G-01-mini weekly reflection stays free +
+/// quota-safe. Returns `Ok(true)` when a fresh item was enqueued.
+async fn run_tech_currency_tick_once(home: &std::path::Path, now_unix: i64) -> Result<bool, String> {
+    use crate::cli::reflect::{ReflectTopics, collect_covered};
+    use crate::proactive::ProactiveQueue;
+    use crate::sources::hackernews::{
+        GapFilter, build_tech_currency_item, tech_currency_gaps, top_stories,
+    };
+
+    let cfg = ReflectTopics::load(home);
+    if !cfg.weekly_refresh {
+        return Ok(false); // opt-in; off by default (no network unless enabled)
+    }
+    let autonomy = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.autonomy)
+        .unwrap_or_default();
+    if autonomy == crate::permissions::AutonomyLevel::Strict {
+        return Ok(false); // no external egress under Strict autonomy
+    }
+    // Once per ISO week: the marker makes the daily tick idempotent WITHOUT a
+    // redundant HN fetch (queue dedup is a second safety net).
+    let week = iso_week_tag_from_unix(now_unix);
+    let marker = home.join("reflections").join("tech-currency-week.txt");
+    if std::fs::read_to_string(&marker)
+        .ok()
+        .map(|s| s.trim() == week)
+        .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+
+    let stories = top_stories(50)
+        .await
+        .map_err(|e| format!("HN fetch failed: {e}"))?;
+    let filter = GapFilter {
+        covered: collect_covered(home),
+        ignore: cfg.ignore,
+        pin: cfg.pin,
+    };
+    let gaps = tech_currency_gaps(&stories, &filter, 7);
+
+    // Mark the week done even when there are no gaps, so we don't refetch HN
+    // every night for an empty result.
+    if let Some(parent) = marker.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&marker, &week);
+
+    let item = match build_tech_currency_item(&week, &gaps, now_unix) {
+        Some(i) => i,
+        None => return Ok(false), // no gaps → no vacuous nudge
+    };
+    let queue_path = home.join("proactive_queue.json");
+    let mut queue =
+        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
+    let enqueued = queue.enqueue(item);
+    queue
+        .save_to(&queue_path)
+        .map_err(|e| format!("queue save failed: {e}"))?;
+    Ok(enqueued)
+}
+
 /// Spawn the reflection cron loop. Matches the doctor_cron /
 /// updater_cron pattern in `daemon/`: returns a `JoinHandle<()>`
 /// the daemon's shutdown path can `.abort()` on signal.
@@ -128,6 +196,18 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
                 }
                 Err(e) => {
                     warn!(error = %e, "reflection cron tick failed; will retry next interval")
+                }
+            }
+            // Opt-in weekly tech-currency refresh (network; idempotent per ISO
+            // week). A failure here NEVER aborts the loop or the offline tick.
+            match run_tech_currency_tick_once(&home, now_unix).await {
+                Ok(true) => info!(
+                    "reflection cron: weekly tech-currency reflection enqueued (ISO week {})",
+                    iso_week_tag_from_unix(now_unix)
+                ),
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(error = %e, "tech-currency tick failed; will retry next interval")
                 }
             }
         }
@@ -171,6 +251,20 @@ mod tests {
             iso_week_tag_from_unix(ts_a),
             iso_week_tag_from_unix(ts_b),
             "two-week gap must produce distinct ISO week tags"
+        );
+    }
+
+    #[tokio::test]
+    async fn tech_currency_tick_is_noop_when_weekly_refresh_disabled() {
+        // Default reflect_topics.yaml (absent) → weekly_refresh = false → the
+        // tick returns Ok(false) BEFORE any network call. Hermetic: no HN fetch,
+        // no marker written.
+        let tmp = TempDir::new().unwrap();
+        let r = run_tech_currency_tick_once(tmp.path(), 1_767_225_600).await;
+        assert_eq!(r, Ok(false), "disabled weekly refresh is a clean no-op");
+        assert!(
+            !tmp.path().join("reflections/tech-currency-week.txt").exists(),
+            "no marker is written when the feature is off"
         );
     }
 

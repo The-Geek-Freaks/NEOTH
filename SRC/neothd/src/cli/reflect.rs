@@ -37,11 +37,17 @@ pub enum ReflectAction {
     Pin { term: String },
     /// Remove a topic from BOTH the ignore and pin lists.
     Forget { term: String },
-    /// Show the current per-operator ignore + pin lists.
+    /// Turn the weekly auto-refresh on (daemon enqueues a tech-currency
+    /// reflection once a week). `--off` turns it back off.
+    Weekly {
+        #[arg(long)]
+        off: bool,
+    },
+    /// Show the current per-operator ignore + pin lists + weekly-refresh state.
     Topics,
 }
 
-/// Per-operator tuning lists for the tech-currency gap pass. Stored in its own
+/// Per-operator tuning for the tech-currency gap pass. Stored in its own
 /// `<home>/reflect_topics.yaml` (never touches freedom.yaml).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReflectTopics {
@@ -49,19 +55,24 @@ pub struct ReflectTopics {
     pub ignore: Vec<String>,
     #[serde(default)]
     pub pin: Vec<String>,
+    /// Opt-in: the daemon refreshes the tech-currency reflection once a week
+    /// (enqueues it for the operator). Off by default — when on it does a weekly
+    /// network fetch to Hacker News; see `crate::daemon::reflection_cron`.
+    #[serde(default)]
+    pub weekly_refresh: bool,
 }
 
 impl ReflectTopics {
-    fn path(home: &std::path::Path) -> std::path::PathBuf {
+    pub fn path(home: &std::path::Path) -> std::path::PathBuf {
         home.join("reflect_topics.yaml")
     }
-    fn load(home: &std::path::Path) -> Self {
+    pub fn load(home: &std::path::Path) -> Self {
         std::fs::read_to_string(Self::path(home))
             .ok()
             .and_then(|s| serde_yaml::from_str(&s).ok())
             .unwrap_or_default()
     }
-    fn save(&self, home: &std::path::Path) -> Result<()> {
+    pub fn save(&self, home: &std::path::Path) -> Result<()> {
         let yaml = serde_yaml::to_string(self)?;
         crate::util::atomic_write::atomic_write(&Self::path(home), yaml.as_bytes())?;
         Ok(())
@@ -75,8 +86,25 @@ pub async fn run_reflect(args: ReflectArgs, output: OutputFormat) -> Result<()> 
         ReflectAction::Ignore { term } => add_topic(&home, &term, true, output),
         ReflectAction::Pin { term } => add_topic(&home, &term, false, output),
         ReflectAction::Forget { term } => forget_topic(&home, &term, output),
+        ReflectAction::Weekly { off } => set_weekly(&home, !off, output),
         ReflectAction::Topics => show_topics(&home, output),
     }
+}
+
+fn set_weekly(home: &std::path::Path, on: bool, output: OutputFormat) -> Result<()> {
+    let mut topics = ReflectTopics::load(home);
+    topics.weekly_refresh = on;
+    topics.save(home)?;
+    emit_topics(
+        &topics,
+        output,
+        if on {
+            "weekly tech-currency refresh ENABLED (daemon enqueues it once a week)"
+        } else {
+            "weekly tech-currency refresh disabled"
+        },
+    );
+    Ok(())
 }
 
 async fn tech_news(
@@ -90,7 +118,7 @@ async fn tech_news(
         .context("fetch Hacker News top stories")?;
     let topics = ReflectTopics::load(home);
     let filter = GapFilter {
-        covered: collect_covered(),
+        covered: collect_covered(home),
         ignore: topics.ignore.clone(),
         pin: topics.pin.clone(),
     };
@@ -166,7 +194,10 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         println!(
             "{}",
-            serde_json::json!({ "ignore": topics.ignore, "pin": topics.pin })
+            serde_json::json!({
+                "ignore": topics.ignore, "pin": topics.pin,
+                "weekly_refresh": topics.weekly_refresh,
+            })
         );
         return;
     }
@@ -179,12 +210,17 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
         "  pin   : {}",
         if topics.pin.is_empty() { "—".to_string() } else { topics.pin.join(", ") }
     );
+    println!(
+        "  weekly: {}",
+        if topics.weekly_refresh { "on" } else { "off — `neoth reflect weekly`" }
+    );
 }
 
 /// The operator's "covered" surface: installed skill dir-names + manifest ids +
-/// the top recent conversation topics. Best-effort — a missing skills dir or
-/// `views.db` just yields fewer covered terms (more gaps surface, never panics).
-fn collect_covered() -> Vec<String> {
+/// the top recent conversation topics from `<home>/views.db`. Best-effort — a
+/// missing skills dir or views.db just yields fewer covered terms (more gaps
+/// surface, never panics). Shared by the CLI + the weekly cron refresh.
+pub fn collect_covered(home: &std::path::Path) -> Vec<String> {
     let mut covered = Vec::new();
     let skills_dir = crate::skills::installer::default_skills_dir();
     for e in crate::skills::installer::list_installed(&skills_dir) {
@@ -193,7 +229,7 @@ fn collect_covered() -> Vec<String> {
             covered.push(id);
         }
     }
-    if let Ok(conn) = store::open(&store::default_path()) {
+    if let Ok(conn) = store::open(&home.join("views.db")) {
         let now_ns = crate::time::now_unix_ns_i64();
         if let Ok(topics) = crate::reflection::top_topics_last_7_days(&conn, now_ns, 20) {
             covered.extend(topics);
