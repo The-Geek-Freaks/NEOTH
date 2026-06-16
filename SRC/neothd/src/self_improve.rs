@@ -120,15 +120,16 @@ pub fn last_record(home: &Path) -> Option<ImproveRecord> {
 // and `rollback` restores that backup. This is the hard gate: no skill changes
 // without operator approval, and any change is reversible.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalStatus {
+    #[default]
     Pending,
     Accepted,
     RolledBack,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Proposal {
     pub id: String,
     pub skill: String,
@@ -144,6 +145,22 @@ pub struct Proposal {
     /// The content `accept` replaced (set on accept), so `rollback` is exact.
     #[serde(default)]
     pub backup: Option<String>,
+    // ── Quality score: WHY this improves, not just the diff ──────────────────
+    /// Held-out gate score before / after the edit (0.0 when the engine didn't
+    /// report one — e.g. an operator-supplied `--from` proposal).
+    #[serde(default)]
+    pub score_before: f64,
+    #[serde(default)]
+    pub score_after: f64,
+    /// One-line summary of the held-out evaluation the engine ran.
+    #[serde(default)]
+    pub heldout_eval_summary: String,
+    /// Why the engine (or operator) believes this edit is an improvement.
+    #[serde(default)]
+    pub why_this_improves: String,
+    /// Known risks / caveats of adopting this edit (operator-facing).
+    #[serde(default)]
+    pub risk_notes: String,
 }
 
 pub fn proposals_path(home: &Path) -> PathBuf {
@@ -281,13 +298,40 @@ pub fn prepare_upstream_pr(home: &Path, id: &str) -> Result<PreparedPr> {
     let branch = format!("skillopt/{}-{}", p.skill, id);
     let title = format!("skill({}): SkillOpt improvement", p.skill);
     let diff = line_diff(&p.before, &p.after);
+
+    // The justification block — scores + held-out eval + rationale + risks —
+    // so a reviewer sees WHY, not just the diff.
+    let mut quality = String::new();
+    if p.score_before != 0.0 || p.score_after != 0.0 {
+        let delta = p.score_after - p.score_before;
+        quality.push_str(&format!(
+            "- **Held-out score:** {:.3} → {:.3} ({:+.3})\n",
+            p.score_before, p.score_after, delta
+        ));
+    }
+    if !p.heldout_eval_summary.is_empty() {
+        quality.push_str(&format!("- **Eval:** {}\n", p.heldout_eval_summary));
+    }
+    if !p.why_this_improves.is_empty() {
+        quality.push_str(&format!("- **Why this improves:** {}\n", p.why_this_improves));
+    }
+    if !p.risk_notes.is_empty() {
+        quality.push_str(&format!("- **Risks:** {}\n", p.risk_notes));
+    }
+    let quality_section = if quality.is_empty() {
+        String::new()
+    } else {
+        format!("\n## Quality\n\n{quality}")
+    };
+
     let body = format!(
         "# {title}\n\n{summary}\n\nSkillOpt staged this improvement to the bundled `{skill}` \
          skill, the operator adopted it locally (review-then-adopt), then chose to contribute it \
-         upstream.\n\n## Diff\n\n```diff\n{diff}```\n",
+         upstream.\n{quality_section}\n## Diff\n\n```diff\n{diff}```\n",
         title = title,
         summary = p.summary,
         skill = p.skill,
+        quality_section = quality_section,
         diff = diff,
     );
     crate::util::atomic_write::atomic_write(&dir.join("PR.md"), body.as_bytes())?;
@@ -370,6 +414,55 @@ pub fn line_diff(before: &str, after: &str) -> String {
         out.push_str("(no line changes)\n");
     }
     out
+}
+
+/// Quality metadata for a staged proposal — the "why", not just the diff.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProposalQuality {
+    pub score_before: f64,
+    pub score_after: f64,
+    pub heldout_eval_summary: String,
+    pub why_this_improves: String,
+    pub risk_notes: String,
+}
+
+/// Split a SkillOpt run's stdout into `(proposed_content, quality)`. NEOTH's
+/// ingestion contract: if stdout is a JSON object carrying a `skill` (or
+/// `content`) string, it's a STRUCTURED report — pull the content plus the
+/// quality fields (`score_before` / `score_after` / `heldout_eval_summary` /
+/// `why_this_improves` / `risk_notes`). Otherwise the whole stdout IS the
+/// proposed content and quality is empty (a thin adapter can map SkillOpt's
+/// native output to the envelope; plain-text still works unchanged).
+pub fn parse_proposal_output(stdout: &str) -> (String, ProposalQuality) {
+    let trimmed = stdout.trim_start();
+    if trimmed.starts_with('{') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(content) = v
+                .get("skill")
+                .or_else(|| v.get("content"))
+                .and_then(|s| s.as_str())
+            {
+                let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+                let s = |k: &str| {
+                    v.get(k)
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                return (
+                    content.to_string(),
+                    ProposalQuality {
+                        score_before: f("score_before"),
+                        score_after: f("score_after"),
+                        heldout_eval_summary: s("heldout_eval_summary"),
+                        why_this_improves: s("why_this_improves"),
+                        risk_notes: s("risk_notes"),
+                    },
+                );
+            }
+        }
+    }
+    (stdout.to_string(), ProposalQuality::default())
 }
 
 pub const SKILLOPT_INSTALL: &str = "pip install skillopt";
@@ -502,6 +595,7 @@ mod tests {
                 status: ProposalStatus::Pending,
                 at_unix: 1,
                 backup: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -546,6 +640,7 @@ mod tests {
                 status: ProposalStatus::Pending,
                 at_unix: 1,
                 backup: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -582,6 +677,7 @@ mod tests {
                 status: ProposalStatus::Pending,
                 at_unix: 2,
                 backup: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -590,6 +686,31 @@ mod tests {
 
         let _ = std::fs::remove_file(proposals_path(&tmp));
         let _ = std::fs::remove_dir_all(tmp.join("self_improve_prs"));
+    }
+
+    #[test]
+    fn parse_proposal_output_structured_vs_plain() {
+        // Plain text → the whole thing is the content; no quality.
+        let (c, q) = parse_proposal_output("just the new skill body");
+        assert_eq!(c, "just the new skill body");
+        assert_eq!(q, ProposalQuality::default());
+
+        // Structured envelope → content + quality extracted.
+        let json = r#"{"skill":"NEW BODY","score_before":0.4,"score_after":0.72,
+            "heldout_eval_summary":"+8/10 held-out","why_this_improves":"tighter planning",
+            "risk_notes":"none observed"}"#;
+        let (c, q) = parse_proposal_output(json);
+        assert_eq!(c, "NEW BODY");
+        assert!((q.score_before - 0.4).abs() < 1e-9);
+        assert!((q.score_after - 0.72).abs() < 1e-9);
+        assert_eq!(q.heldout_eval_summary, "+8/10 held-out");
+        assert_eq!(q.why_this_improves, "tighter planning");
+        assert_eq!(q.risk_notes, "none observed");
+
+        // A JSON object WITHOUT a skill/content key → treated as plain content.
+        let (c, q) = parse_proposal_output(r#"{"unrelated":true}"#);
+        assert_eq!(c, r#"{"unrelated":true}"#);
+        assert_eq!(q, ProposalQuality::default());
     }
 
     #[test]

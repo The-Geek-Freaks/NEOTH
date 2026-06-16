@@ -38,6 +38,12 @@ pub enum SelfImproveAction {
         /// (lets the workflow be driven without the engine installed).
         #[arg(long, value_name = "PATH")]
         from: Option<std::path::PathBuf>,
+        /// Operator/engine rationale: why this edit is an improvement.
+        #[arg(long, value_name = "TEXT")]
+        why: Option<String>,
+        /// Operator/engine note: known risks or caveats of adopting it.
+        #[arg(long, value_name = "TEXT")]
+        risk: Option<String>,
         /// Only show the diff; don't stage a proposal.
         #[arg(long)]
         dry_run: bool,
@@ -103,8 +109,10 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
             persona,
             skill,
             from,
+            why,
+            risk,
             dry_run,
-        } => run_pass(&home, autonomy, &persona, skill, from, dry_run, output),
+        } => run_pass(&home, autonomy, &persona, skill, from, why, risk, dry_run, output),
         SelfImproveAction::Review => review(&home, output),
         SelfImproveAction::Accept { id } => {
             si::accept_proposal(&home, &id)?;
@@ -172,12 +180,15 @@ fn status(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_pass(
     home: &std::path::Path,
     autonomy: crate::permissions::AutonomyLevel,
     persona: &str,
     skill: Option<std::path::PathBuf>,
     from: Option<std::path::PathBuf>,
+    why: Option<String>,
+    risk: Option<String>,
     dry_run: bool,
     output: OutputFormat,
 ) -> Result<()> {
@@ -194,13 +205,17 @@ fn run_pass(
     });
     let before = std::fs::read_to_string(&skill_path).unwrap_or_default();
 
-    // Proposed content: an explicit file, else SkillOpt's output.
-    let after = if let Some(from) = from {
-        std::fs::read_to_string(&from).with_context(|| format!("read {}", from.display()))?
+    // Proposed content + quality. `--from` is operator-supplied (no engine
+    // eval); the engine path may emit a structured envelope (content + scores +
+    // rationale), else its stdout is treated as plain content.
+    let (after, mut quality) = if let Some(from) = from {
+        let content =
+            std::fs::read_to_string(&from).with_context(|| format!("read {}", from.display()))?;
+        (content, si::ProposalQuality::default())
     } else if si::is_installed() {
         println!("running SkillOpt for `{persona}` (this can take a while)…");
         match si::skillopt_command(persona).output() {
-            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+            Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
             Err(e) => {
                 println!("SkillOpt run failed: {e}");
                 return Ok(());
@@ -213,10 +228,27 @@ fn run_pass(
         );
         return Ok(());
     };
+    // Operator-supplied rationale overrides whatever the engine reported.
+    if let Some(w) = why {
+        quality.why_this_improves = w;
+    }
+    if let Some(r) = risk {
+        quality.risk_notes = r;
+    }
 
     let diff = si::line_diff(&before, &after);
     if dry_run {
-        println!("── DRY RUN (nothing staged, skill file untouched) ──\nskill: {}\n\n{diff}", skill_path.display());
+        println!(
+            "── DRY RUN (nothing staged, skill file untouched) ──\nskill: {}\n{}{diff}",
+            skill_path.display(),
+            quality_lines(
+                quality.score_before,
+                quality.score_after,
+                &quality.heldout_eval_summary,
+                &quality.why_this_improves,
+                &quality.risk_notes,
+            )
+        );
         return Ok(());
     }
 
@@ -234,6 +266,11 @@ fn run_pass(
             status: si::ProposalStatus::Pending,
             at_unix: now,
             backup: None,
+            score_before: quality.score_before,
+            score_after: quality.score_after,
+            heldout_eval_summary: quality.heldout_eval_summary,
+            why_this_improves: quality.why_this_improves,
+            risk_notes: quality.risk_notes,
         },
     )?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
@@ -267,6 +304,15 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
             p.id, p.skill, p.status, p.summary
         );
         if p.status == si::ProposalStatus::Pending {
+            // The "why", not just the diff — the quality score block.
+            let q = quality_lines(
+                p.score_before,
+                p.score_after,
+                &p.heldout_eval_summary,
+                &p.why_this_improves,
+                &p.risk_notes,
+            );
+            print!("{q}");
             let diff = si::line_diff(&p.before, &p.after);
             for l in diff.lines().take(24) {
                 println!("    {l}");
@@ -275,6 +321,40 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Render the quality-score block (indented, trailing newline) for a proposal —
+/// scores, held-out eval, why-it-improves, risks. Empty string when nothing was
+/// reported (operator-supplied `--from` proposal with no rationale), so the
+/// review/dry-run output stays clean.
+fn quality_lines(
+    score_before: f64,
+    score_after: f64,
+    heldout: &str,
+    why: &str,
+    risk: &str,
+) -> String {
+    let has_score = score_before != 0.0 || score_after != 0.0;
+    if !has_score && heldout.is_empty() && why.is_empty() && risk.is_empty() {
+        return String::new();
+    }
+    let mut s = String::new();
+    if has_score {
+        let delta = score_after - score_before;
+        s.push_str(&format!(
+            "    score : {score_before:.3} → {score_after:.3} ({delta:+.3})\n"
+        ));
+    }
+    if !heldout.is_empty() {
+        s.push_str(&format!("    eval  : {heldout}\n"));
+    }
+    if !why.is_empty() {
+        s.push_str(&format!("    why   : {why}\n"));
+    }
+    if !risk.is_empty() {
+        s.push_str(&format!("    risk  : {risk}\n"));
+    }
+    s
 }
 
 /// After adopting a proposal, if its skill is one NEOTH SHIPS (bundled), offer
