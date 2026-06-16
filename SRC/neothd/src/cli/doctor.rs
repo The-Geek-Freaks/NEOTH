@@ -37,6 +37,7 @@ const DOMAIN_CHECKS: &[&[CheckFn]] = &[
     checks::integrations::CHECKS,
     checks::providers::CHECKS,
     checks::cluster::CHECKS,
+    checks::capabilities::CHECKS,
 ];
 
 const DOMAIN_DOCS: &[&[CheckDoc]] = &[
@@ -46,6 +47,7 @@ const DOMAIN_DOCS: &[&[CheckDoc]] = &[
     checks::integrations::DOCS,
     checks::providers::DOCS,
     checks::cluster::DOCS,
+    checks::capabilities::DOCS,
 ];
 
 /// Every check's runbook doc, across all domains (the `--explain` /
@@ -383,8 +385,10 @@ mod tests {
         // 28 in Session 28c for `local_qwen weights` (SPEC-04);
         // 29 in Session 28c for `n8n_api_token` (SC-08);
         // 30 in Session 44 for `stuck claude processes` (GOLD-WIRE-05);
-        // 31 in Session 44 for `vector index snapshot` (GOLD-WIRE-07).
-        assert_eq!(all_check_docs().count(), 31);
+        // 31 in Session 44 for `vector index snapshot` (GOLD-WIRE-07);
+        // 36 for the capability-readiness domain (computer-use, okf export,
+        // iroh transport, mcp servers, wal audit) — the integration proof.
+        assert_eq!(all_check_docs().count(), 36);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1113,8 +1117,9 @@ mod tests {
         // (Session 28c, SPEC-10) + local_qwen weights (Session 28c, SPEC-04)
         // + n8n_api_token (Session 28c, SC-08) + stuck claude processes
         // (Session 44, GOLD-WIRE-05) + vector index snapshot (Session 44,
-        // GOLD-WIRE-07).
-        assert_eq!(outs.len(), 31);
+        // GOLD-WIRE-07) + the 5 capability-readiness checks (computer-use,
+        // okf export, iroh transport, mcp servers, wal audit).
+        assert_eq!(outs.len(), 36);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

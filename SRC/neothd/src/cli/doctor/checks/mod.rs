@@ -4,6 +4,7 @@
 //! check means editing exactly one domain file (the check fn + its
 //! registration there).
 
+pub(crate) mod capabilities;
 pub(crate) mod cluster;
 pub(crate) mod config;
 pub(crate) mod integrations;
