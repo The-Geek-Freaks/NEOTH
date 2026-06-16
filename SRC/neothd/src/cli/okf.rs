@@ -89,8 +89,9 @@ fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) ->
         }
     }
 
-    // entities/ → the entity index (name + type; relations are a follow-on).
+    // entities/ → the entity index (name + type) + their `## Related` links → relations.
     let mut entities = 0usize;
+    let mut relations = 0usize;
     for path in md_files(&bundle.join("entities")) {
         let Ok(content) = std::fs::read_to_string(&path) else {
             skipped += 1;
@@ -112,7 +113,29 @@ fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) ->
             &attrs,
             now_unix,
         ) {
-            Ok(_) => entities += 1,
+            Ok(src_id) => {
+                entities += 1;
+                // Rebuild relations from the `## Related` links (label = "Name — relation").
+                for (label, _href) in crate::memory::okf::parse_related_links(&doc.body) {
+                    let (dst_name, rel) = match label.split_once(" — ") {
+                        Some((n, r)) => (n.trim().to_string(), r.trim().to_string()),
+                        None => (label.trim().to_string(), "related".to_string()),
+                    };
+                    if dst_name.is_empty() {
+                        continue;
+                    }
+                    let empty = std::collections::BTreeMap::new();
+                    if let Ok(dst_id) = crate::memory::entities::resolve_or_create_entity_with_attrs(
+                        &conn, &dst_name, "entity", &empty, now_unix,
+                    ) {
+                        if crate::memory::entities::insert_relation(&conn, src_id, dst_id, &rel, 1.0)
+                            .is_ok()
+                        {
+                            relations += 1;
+                        }
+                    }
+                }
+            }
             Err(_) => skipped += 1,
         }
     }
@@ -120,11 +143,11 @@ fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) ->
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         println!(
             "{}",
-            serde_json::json!({ "ok": true, "facts": facts, "entities": entities, "skipped": skipped, "bundle": bundle.display().to_string() })
+            serde_json::json!({ "ok": true, "facts": facts, "entities": entities, "relations": relations, "skipped": skipped, "bundle": bundle.display().to_string() })
         );
     } else {
         println!(
-            "OKF import: {facts} facts + {entities} entities ingested ({skipped} skipped) from {}",
+            "OKF import: {facts} facts + {entities} entities + {relations} relations ingested ({skipped} skipped) from {}",
             bundle.display()
         );
     }

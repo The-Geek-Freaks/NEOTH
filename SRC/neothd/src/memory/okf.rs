@@ -161,6 +161,27 @@ pub fn parse(content: &str) -> Option<ParsedOkf> {
     })
 }
 
+/// Extract the `## Related` markdown links from a concept body — `(label, href)`
+/// per `- [label](href)` line. Used by `neoth okf import` to rebuild relations.
+pub fn parse_related_links(body: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let l = line.trim();
+        let Some(rest) = l.strip_prefix("- [") else {
+            continue;
+        };
+        let Some(close) = rest.find("](") else {
+            continue;
+        };
+        let label = rest[..close].to_string();
+        let after = &rest[close + 2..];
+        if let Some(end) = after.find(')') {
+            out.push((label, after[..end].to_string()));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +246,15 @@ mod tests {
         assert_eq!(p.description.as_deref(), Some("one-sentence summary"));
         assert_eq!(p.tags, vec!["operator".to_string(), "verified".to_string()]);
         assert!(p.body.contains("Some body text."));
+    }
+
+    #[test]
+    fn parse_related_links_extracts_pairs() {
+        let body = "# X\n\n## Related\n\n- [Bob — knows](bob.md)\n- [Berlin — lives_in](berlin.md)\nnot a link\n";
+        let links = parse_related_links(body);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0], ("Bob — knows".to_string(), "bob.md".to_string()));
+        assert_eq!(links[1].0, "Berlin — lives_in");
     }
 
     #[test]
