@@ -959,10 +959,55 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // transport actually comes up), aborted on shutdown alongside the swarm.
     #[cfg(feature = "cluster")]
     let mut cluster_gossip_task: Option<tokio::task::JoinHandle<()>> = None;
+
+    // iroh live-carrier: when `cluster.transport=iroh` (+ the `cluster-iroh`
+    // build feature) AND clustering is configured, bring up the iroh QUIC
+    // receiver wired through `gossip_handler` — the SAME `accept_inbound`
+    // security stack (frame-acceptance / replay-dedup / DoNotGossip band) the
+    // peeroxide loop uses, so the flip preserves every cluster guarantee. The
+    // inbound + node-identity path is live over iroh; outbound broadcast + iroh
+    // peer-discovery is the next step. When iroh is active the peeroxide swarm
+    // is bypassed. The handle lives for the daemon lifetime (Router shuts down
+    // on drop at `run_serve` exit).
+    #[cfg(feature = "cluster-iroh")]
+    let iroh_transport_handle: Option<crate::cluster::iroh_transport::IrohTransport> =
+        if crate::cluster::policy::load_transport_from_freedom(
+            &crate::config::FreedomConfig::default_path(),
+        ) == crate::cluster::policy::ClusterTransport::Iroh
+            && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_some()
+        {
+            let gs = std::sync::Arc::new(std::sync::Mutex::new(
+                crate::cluster::wal_sync::GossipState::new(),
+            ));
+            match crate::cluster::iroh_transport::IrohTransport::bind(
+                crate::cluster::iroh_transport::gossip_handler(gs),
+            )
+            .await
+            {
+                Ok(t) => {
+                    info!(
+                        node = %t.node_id(),
+                        "cluster: iroh transport ACTIVE (dial-by-key; gossip_handler intake) — peeroxide bypassed"
+                    );
+                    Some(t)
+                }
+                Err(e) => {
+                    warn!(error = %e, "cluster: iroh transport failed to start; using peeroxide");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+    #[cfg(feature = "cluster-iroh")]
+    let iroh_active = iroh_transport_handle.is_some();
+    #[cfg(all(feature = "cluster", not(feature = "cluster-iroh")))]
+    let iroh_active = false;
+
     #[cfg(feature = "cluster")]
     let cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle> =
         match crate::cluster::identity::cluster_transport_activation(&config, &creds) {
-            Some(identity) => {
+            Some(identity) if !iroh_active => {
                 let registry = std::sync::Arc::new(std::sync::Mutex::new(
                     crate::cluster::PeerLoadRegistry::new(),
                 ));
@@ -1018,6 +1063,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     }
                 }
             }
+            // iroh is the active carrier → skip the peeroxide swarm.
+            Some(_) => None,
             None => {
                 // Default path: gate closed (enabled=false OR identity
                 // incomplete). Emit a one-line diagnostic only when the
