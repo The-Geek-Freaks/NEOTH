@@ -100,6 +100,7 @@ pub mod quota;
 pub mod goal;
 pub mod recall;
 pub mod recipe;
+pub mod reflect;
 pub mod review;
 pub mod recall_score;
 pub mod recover;
@@ -353,6 +354,10 @@ pub enum Commands {
     /// Export NEOTH's knowledge as an Open Knowledge Format (OKF) bundle —
     /// interconnected Obsidian-native markdown concept docs.
     Okf(okf::OkfArgs),
+
+    /// Self-reflection surfaces. `reflect tech-news` scans trending Hacker
+    /// News topics and flags the ones your skills + memory don't cover yet.
+    Reflect(reflect::ReflectArgs),
 
     /// Fire a scheduled job NOW, out of band of the daemon scheduler:
     /// `cron run <id>` loads jobs.yaml, runs the job through the configured
@@ -1052,6 +1057,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Okf(args) => {
             okf::run_okf(args, global_output)?;
+        }
+        Commands::Reflect(args) => {
+            reflect::run_reflect(args, global_output).await?;
         }
         Commands::Credential(args) => {
             credential::run_credential(args, global_output)?;

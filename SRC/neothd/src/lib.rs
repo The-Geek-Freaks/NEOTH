@@ -143,6 +143,7 @@ pub mod secret;
 pub mod security;
 pub mod skills;
 pub mod slash;
+pub mod sources;
 pub mod sub_agents;
 pub mod telemetry;
 /// GOLD-ARCH-07 — canonical overflow-defined unix-time helpers.
