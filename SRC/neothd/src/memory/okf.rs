@@ -3,21 +3,24 @@
 //!
 //! Format per the OKF v0.1 spec (GoogleCloudPlatform/knowledge-catalog/okf):
 //! each concept is a UTF-8 markdown file with a YAML frontmatter block whose
-//! one REQUIRED field is `type`; relations are plain markdown links so
-//! Obsidian's graph view, an LLM loading files into context, or any catalog
-//! tool can all consume the bundle. We adopt the FORMAT only — NOT the cloud
+//! one REQUIRED field is `type`. Relations are emitted BOTH as machine-readable
+//! `relations:` frontmatter edges (robust roundtrip on import) AND as `## Related`
+//! markdown links, so Obsidian's graph view, an LLM loading files into context,
+//! or any catalog tool can all consume the bundle. We adopt the FORMAT only — NOT the cloud
 //! reference agent (Google ADK / Gemini / BigQuery), which is against NEOTH's
 //! local-first / self-contained rule.
 //!
 //! This module is the pure renderer; `cli::okf` walks NEOTH's knowledge
 //! (entities + their relations, ground-truth facts) and emits the bundle.
 
-/// A relation to another concept, rendered as a markdown link under `## Related`.
-/// `href` is the link target relative to THIS concept's file (e.g. `bob.md` for
-/// a sibling, `../facts/3.md` across directories).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OkfLink {
-    pub label: String,
+/// A typed relation edge to another concept. Rendered BOTH as machine-readable
+/// `relations:` frontmatter (robust roundtrip) AND as a `## Related` markdown
+/// link (Obsidian graph). `href` is the target relative to THIS concept's file
+/// (e.g. `bob.md` for a sibling).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OkfRelation {
+    pub target: String,
+    pub relation: String,
     pub href: String,
 }
 
@@ -31,7 +34,8 @@ pub struct OkfConcept {
     pub tags: Vec<String>,
     /// Markdown body (after the frontmatter). May be empty.
     pub body: String,
-    pub links: Vec<OkfLink>,
+    /// Typed relation edges → frontmatter `relations:` + body `## Related` links.
+    pub relations: Vec<OkfRelation>,
 }
 
 impl OkfConcept {
@@ -57,6 +61,19 @@ impl OkfConcept {
                 .join(", ");
             s.push_str(&format!("tags: [{tags}]\n"));
         }
+        // Machine-readable relation edges (robust roundtrip; survives manual
+        // edits to the body markdown links).
+        if !self.relations.is_empty() {
+            s.push_str("relations:\n");
+            for r in &self.relations {
+                s.push_str(&format!(
+                    "  - target: {}\n    relation: {}\n    href: {}\n",
+                    yaml_scalar(&r.target),
+                    yaml_scalar(&r.relation),
+                    yaml_scalar(&r.href)
+                ));
+            }
+        }
         s.push_str("---\n\n");
 
         if !self.title.is_empty() {
@@ -67,10 +84,10 @@ impl OkfConcept {
             s.push_str(body);
             s.push_str("\n\n");
         }
-        if !self.links.is_empty() {
+        if !self.relations.is_empty() {
             s.push_str("## Related\n\n");
-            for l in &self.links {
-                s.push_str(&format!("- [{}]({})\n", l.label, l.href));
+            for r in &self.relations {
+                s.push_str(&format!("- [{} — {}]({})\n", r.target, r.relation, r.href));
             }
             s.push('\n');
         }
@@ -116,6 +133,9 @@ pub struct ParsedOkf {
     pub description: Option<String>,
     pub tags: Vec<String>,
     pub body: String,
+    /// Machine-readable relation edges from frontmatter `relations:` (robust;
+    /// preferred over body-link parsing on import).
+    pub relations: Vec<OkfRelation>,
 }
 
 /// Parse an OKF concept `.md` (YAML frontmatter delimited by `---`, then body).
@@ -152,12 +172,17 @@ pub fn parse(content: &str) -> Option<ParsedOkf> {
                 .collect()
         })
         .unwrap_or_default();
+    let relations = val
+        .get("relations")
+        .and_then(|v| serde_yaml::from_value::<Vec<OkfRelation>>(v.clone()).ok())
+        .unwrap_or_default();
     Some(ParsedOkf {
         concept_type,
         title,
         description,
         tags,
         body,
+        relations,
     })
 }
 
@@ -194,16 +219,24 @@ mod tests {
             description: Some("The operator.".into()),
             tags: vec!["person".into(), "operator".into()],
             body: "Solo dev, security researcher.".into(),
-            links: vec![OkfLink { label: "Berlin".into(), href: "berlin.md".into() }],
+            relations: vec![OkfRelation {
+                target: "Berlin".into(),
+                relation: "lives_in".into(),
+                href: "berlin.md".into(),
+            }],
         };
         let md = c.render();
         assert!(md.starts_with("---\ntype: \"entity\"\n"));
         assert!(md.contains("title: \"Alex\""));
         assert!(md.contains("description: \"The operator.\""));
         assert!(md.contains("tags: [\"person\", \"operator\"]"));
+        // machine-readable frontmatter edge
+        assert!(md.contains("relations:\n  - target: \"Berlin\""));
+        assert!(md.contains("relation: \"lives_in\""));
         assert!(md.contains("# Alex"));
         assert!(md.contains("Solo dev, security researcher."));
-        assert!(md.contains("## Related\n\n- [Berlin](berlin.md)"));
+        // + Obsidian markdown link
+        assert!(md.contains("## Related\n\n- [Berlin — lives_in](berlin.md)"));
     }
 
     #[test]
@@ -214,7 +247,7 @@ mod tests {
             description: Some("role: \"engineer\" # note".into()),
             tags: vec![],
             body: String::new(),
-            links: vec![],
+            relations: vec![],
         };
         let md = c.render();
         // The colon/hash/quotes are inside a quoted scalar → still valid YAML.
@@ -238,7 +271,7 @@ mod tests {
             description: Some("one-sentence summary".into()),
             tags: vec!["operator".into(), "verified".into()],
             body: "Some body text.".into(),
-            links: vec![],
+            relations: vec![],
         };
         let p = parse(&c.render()).expect("parse own render");
         assert_eq!(p.concept_type, "fact");
@@ -246,6 +279,30 @@ mod tests {
         assert_eq!(p.description.as_deref(), Some("one-sentence summary"));
         assert_eq!(p.tags, vec!["operator".to_string(), "verified".to_string()]);
         assert!(p.body.contains("Some body text."));
+    }
+
+    #[test]
+    fn relations_roundtrip_through_frontmatter() {
+        // A target whose name itself contains " — " (the body-link separator):
+        // the machine-readable frontmatter must survive it intact, where the
+        // markdown-link fallback parser would split on the wrong dash.
+        let c = OkfConcept {
+            concept_type: "entity".into(),
+            title: "Alex".into(),
+            description: None,
+            tags: vec![],
+            body: "operator".into(),
+            relations: vec![OkfRelation {
+                target: "Bob — the builder".into(),
+                relation: "knows".into(),
+                href: "bob-the-builder.md".into(),
+            }],
+        };
+        let p = parse(&c.render()).expect("parse own render");
+        assert_eq!(p.relations.len(), 1);
+        assert_eq!(p.relations[0].target, "Bob — the builder");
+        assert_eq!(p.relations[0].relation, "knows");
+        assert_eq!(p.relations[0].href, "bob-the-builder.md");
     }
 
     #[test]

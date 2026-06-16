@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::memory::okf::{OkfConcept, OkfLink, slug};
+use crate::memory::okf::{OkfConcept, OkfRelation, slug};
 use crate::memory::{entities, groundtruth, store};
 
 #[derive(Args, Debug, Clone)]
@@ -115,12 +115,25 @@ fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) ->
         ) {
             Ok(src_id) => {
                 entities += 1;
-                // Rebuild relations from the `## Related` links (label = "Name — relation").
-                for (label, _href) in crate::memory::okf::parse_related_links(&doc.body) {
-                    let (dst_name, rel) = match label.split_once(" — ") {
-                        Some((n, r)) => (n.trim().to_string(), r.trim().to_string()),
-                        None => (label.trim().to_string(), "related".to_string()),
-                    };
+                // Prefer the machine-readable `relations:` frontmatter (robust:
+                // survives a hand-edited body or a name containing " — "). Fall
+                // back to parsing the `## Related` markdown links only when the
+                // frontmatter carries none (e.g. an externally authored doc).
+                let edges: Vec<(String, String)> = if !doc.relations.is_empty() {
+                    doc.relations
+                        .iter()
+                        .map(|r| (r.target.clone(), r.relation.clone()))
+                        .collect()
+                } else {
+                    crate::memory::okf::parse_related_links(&doc.body)
+                        .into_iter()
+                        .map(|(label, _href)| match label.split_once(" — ") {
+                            Some((n, r)) => (n.trim().to_string(), r.trim().to_string()),
+                            None => (label.trim().to_string(), "related".to_string()),
+                        })
+                        .collect()
+                };
+                for (dst_name, rel) in edges {
                     if dst_name.is_empty() {
                         continue;
                     }
@@ -182,11 +195,12 @@ fn export(out: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) -> Re
     let mut ent_count = 0usize;
     for e in &ents {
         let neighbors = entities::get_neighbors(&conn, &e.name, 1).unwrap_or_default();
-        let links: Vec<OkfLink> = neighbors
+        let relations: Vec<OkfRelation> = neighbors
             .iter()
             .filter(|n| n.name != e.name)
-            .map(|n| OkfLink {
-                label: format!("{} — {}", n.name, n.via_relation),
+            .map(|n| OkfRelation {
+                target: n.name.clone(),
+                relation: n.via_relation.clone(),
                 href: format!("{}.md", slug(&n.name)), // sibling in entities/
             })
             .collect();
@@ -205,7 +219,7 @@ fn export(out: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) -> Re
                 e.source_count,
                 if e.attributes.trim().is_empty() { "{}" } else { e.attributes.trim() }
             ),
-            links,
+            relations,
         };
         let path = ent_dir.join(format!("{}.md", slug(&e.name)));
         std::fs::write(&path, concept.render())
@@ -226,7 +240,7 @@ fn export(out: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) -> Re
                 "Source: {}\nScope: {}\nState: {}\nWeight: {}",
                 f.source, f.scope, f.fact_state, f.source_weight
             ),
-            links: vec![],
+            relations: vec![],
         };
         let path = fact_dir.join(format!("{}.md", f.id));
         std::fs::write(&path, concept.render())
