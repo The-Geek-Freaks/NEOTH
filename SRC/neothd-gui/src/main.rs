@@ -1169,15 +1169,12 @@ fn main() -> Result<()> {
             std::time::Duration::from_secs(2),
             move || {
                 if let Some(w) = weak_kanban_tick.upgrade() {
-                    // Skip the subprocess churn when the operator
-                    // isn't looking at the Code Sessions surface.
-                    if w.get_step() != WizardStep::Settings {
-                        return;
-                    }
-                    // Skip if a prior fetch is still running. `swap`
-                    // returns the previous value: if it was already
-                    // true, another fetch is in flight → bail without
-                    // spawning. Otherwise we've claimed the slot.
+                    // The board fetch only matters on the Code Sessions surface;
+                    // the Buddy activity poll runs EVERY tick (the docked orb is
+                    // always visible) so it reflects live daemon activity.
+                    let want_board = w.get_step() == WizardStep::Settings;
+                    // Skip if a prior fetch is still running. `swap` returns the
+                    // previous value: true → another fetch is in flight → bail.
                     if in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
                         return;
                     }
@@ -1186,18 +1183,34 @@ fn main() -> Result<()> {
                     let done = in_flight.clone();
                     let client = client_timer.clone();
                     std::thread::spawn(move || {
-                        let snap = fetch_board_warm_or_cold(&client);
-                        let snap_for_state = snap.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Ok(mut g) = mutex.lock() {
-                                *g = snap_for_state;
+                        // Daemon→GUI activity push — drive the docked Buddy from
+                        // the daemon's most-recent (≤30s) WAL event. Only override
+                        // when the daemon is actively doing something (!= idle) so
+                        // a quiet daemon leaves the last user-action mood intact.
+                        if let Some((act, cap)) = fetch_activity_warm(&client) {
+                            if act != "idle" {
+                                let weak_b = weak.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(w) = weak_b.upgrade() {
+                                        w.set_buddy_mood(act.into());
+                                        w.set_buddy_caption(cap.into());
+                                    }
+                                });
                             }
-                            if let Some(w) = weak.upgrade() {
-                                apply_kanban_snapshot(&w, snap);
-                            }
-                        });
-                        // Release the slot AFTER the fetch + UI-write
-                        // enqueue, so the next tick can claim it.
+                        }
+                        if want_board {
+                            let snap = fetch_board_warm_or_cold(&client);
+                            let snap_for_state = snap.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Ok(mut g) = mutex.lock() {
+                                    *g = snap_for_state;
+                                }
+                                if let Some(w) = weak.upgrade() {
+                                    apply_kanban_snapshot(&w, snap);
+                                }
+                            });
+                        }
+                        // Release the slot AFTER the fetch + UI-write enqueue.
                         done.store(false, std::sync::atomic::Ordering::Release);
                     });
                 }
@@ -3167,6 +3180,43 @@ impl GuiStreamClient {
         // Too many non-response lines — treat as a broken channel.
         None
     }
+
+    /// One `{"id":N,"method":"activity"}` round-trip → `(mood, caption)`. Same
+    /// robustness net + fallback semantics as `request_board`. Best-effort: a
+    /// `None` just skips a Buddy update this tick.
+    fn request_activity(&mut self) -> Option<(String, String)> {
+        use std::io::Write;
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        let req = format!("{{\"id\":{id},\"method\":\"activity\"}}\n");
+        self.stdin.write_all(req.as_bytes()).ok()?;
+        self.stdin.flush().ok()?;
+        const MAX_SKIP: usize = 32;
+        for _ in 0..MAX_SKIP {
+            let line = self.rx.recv_timeout(GUI_STREAM_READ_TIMEOUT).ok()?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+                continue;
+            };
+            let Some(ok) = v.get("ok").and_then(|b| b.as_bool()) else {
+                continue;
+            };
+            if !ok {
+                return None;
+            }
+            let activity = v.get("activity")?.as_str()?.to_string();
+            let caption = v
+                .get("caption")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            return Some((activity, caption));
+        }
+        None
+    }
 }
 
 impl Drop for GuiStreamClient {
@@ -3186,6 +3236,34 @@ impl Drop for GuiStreamClient {
 /// first (lazy-connecting the client on first use), fall back to the cold
 /// 4-subprocess path on any failure. A failed warm request drops the dead
 /// client so the next tick reconnects from scratch.
+/// Warm-only activity probe for the docked Buddy. Reuses the SHARED gui-stream
+/// client (serialised by its mutex with the board fetch, so requests never
+/// interleave on the wire). `None` when there's no warm channel — the Buddy
+/// keeps its current mood that tick (no cold-path subprocess for ambient mood).
+fn fetch_activity_warm(
+    client: &std::sync::Mutex<Option<GuiStreamClient>>,
+) -> Option<(String, String)> {
+    let bin = which_neothd()?;
+    let mut guard = client.lock().unwrap_or_else(|p| p.into_inner());
+    if guard.is_none() {
+        // Spawn the warm channel on first activity poll so the Buddy reflects
+        // the daemon even if the operator never opens the Code Sessions tab.
+        match GuiStreamClient::connect(&bin) {
+            Ok(c) => *guard = Some(c),
+            Err(_) => return None,
+        }
+    }
+    let c = guard.as_mut()?;
+    match c.request_activity() {
+        Some(v) => Some(v),
+        None => {
+            // Broken channel — drop it so the next fetch reconnects.
+            *guard = None;
+            None
+        }
+    }
+}
+
 fn fetch_board_warm_or_cold(
     client: &std::sync::Mutex<Option<GuiStreamClient>>,
 ) -> KanbanBoardSnapshot {

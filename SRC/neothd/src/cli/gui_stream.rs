@@ -148,6 +148,16 @@ fn handle_request_line(
     };
     match req.method.as_str() {
         "ping" => serde_json::json!({ "id": req.id, "ok": true, "pong": true }).to_string(),
+        // Daemon→GUI activity push: the most-recent (≤30s) WAL event mapped to a
+        // Buddy mood, so the orb reflects what the daemon is doing right now
+        // (memory, audit, consent, channel ingress, provider fallback, cluster).
+        "activity" => {
+            let (activity, caption) = assemble_activity(wal_dir);
+            serde_json::json!({
+                "id": req.id, "ok": true, "activity": activity, "caption": caption,
+            })
+            .to_string()
+        }
         "board" => match crate::cli::kanban::assemble_gui_board(conn, wal_dir, cfg) {
             Ok(board) => serde_json::json!({
                 "id": req.id,
@@ -158,6 +168,71 @@ fn handle_request_line(
             Err(e) => error_response(req.id, &format!("board assembly failed: {e}")),
         },
         other => error_response(req.id, &format!("unknown method '{other}'")),
+    }
+}
+
+/// The most-recent WAL event in the live segment, mapped to a Buddy
+/// `(activity, caption)`. Returns `idle` if the last event is older than 30s
+/// (so a long-quiet daemon doesn't pin a stale mood) or the WAL is unreadable.
+fn assemble_activity(wal_dir: &Path) -> (String, String) {
+    let idle = || ("idle".to_string(), "ready".to_string());
+    let Some(seg) = latest_segment(wal_dir) else {
+        return idle();
+    };
+    let Ok(bytes) = std::fs::read(&seg) else {
+        return idle();
+    };
+    let mut last_event: u8 = 0;
+    let mut last_ns: u128 = 0;
+    let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
+        last_event = dec.header.event_type;
+        last_ns = dec.header.hlc.physical_ns() as u128;
+        Ok(())
+    });
+    if last_ns == 0 {
+        return idle();
+    }
+    let now_ns = crate::time::now_unix_ns() as u128;
+    // 30s freshness window — only reflect activity the daemon did recently.
+    if now_ns.saturating_sub(last_ns) > 30_000_000_000 {
+        return idle();
+    }
+    let (a, c) = activity_for_event(last_event);
+    (a.to_string(), c.to_string())
+}
+
+/// Highest-numbered `*.wal` segment in `wal_dir` (the live one).
+fn latest_segment(wal_dir: &Path) -> Option<std::path::PathBuf> {
+    let mut segs: Vec<std::path::PathBuf> = std::fs::read_dir(wal_dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "wal").unwrap_or(false))
+        .collect();
+    segs.sort();
+    segs.pop()
+}
+
+/// Map a WAL `event_type` byte to a Buddy `(mood, caption)` (mirrors the GUI's
+/// `buddy_activity::GuiActivity` vocabulary). Unmapped events → idle.
+fn activity_for_event(event_type: u8) -> (&'static str, &'static str) {
+    use crate::wal::events as ev;
+    match event_type {
+        ev::EVENT_TYPE_PROVIDER_REQUEST => ("working", "on it"),
+        ev::EVENT_TYPE_PROVIDER_RESPONSE => ("success", "done"),
+        ev::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED => ("intense", "fallback"),
+        ev::EVENT_TYPE_RAW_TEXT => ("thinking", "thinking…"),
+        ev::EVENT_TYPE_REFUSAL_OBSERVED => ("alert", "refusal"),
+        ev::EVENT_TYPE_CHANNEL_INGRESS => ("notification", "new activity"),
+        ev::EVENT_TYPE_CHANNEL_EGRESS => ("working", "replying"),
+        ev::EVENT_TYPE_CONSENT_DECISION => ("consent", "consent"),
+        ev::EVENT_TYPE_AUDIT_RPC_ACCEPT | ev::EVENT_TYPE_COMPACTION_MARKER => ("audit", "verifying"),
+        ev::EVENT_TYPE_WORKER_DIED => ("error", "worker died"),
+        ev::EVENT_TYPE_CLUSTER_PEER_CONNECTED => ("connected", "peer joined"),
+        ev::EVENT_TYPE_CLUSTER_TASK_ACCEPTED => ("agents", "agents deployed"),
+        ev::EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED => ("parallel", "syncing"),
+        ev::EVENT_TYPE_MEMORY_TRANSFER_EXPORTED => ("memory", "remembering"),
+        _ => ("idle", "ready"),
     }
 }
 
@@ -207,6 +282,33 @@ mod tests {
         assert_eq!(v["ok"], false);
         assert_eq!(v["id"], 7);
         assert!(v["error"].as_str().unwrap().contains("unknown method"));
+    }
+
+    #[test]
+    fn activity_maps_high_signal_events_and_defaults_idle() {
+        use crate::wal::events as ev;
+        assert_eq!(activity_for_event(ev::EVENT_TYPE_PROVIDER_REQUEST).0, "working");
+        assert_eq!(activity_for_event(ev::EVENT_TYPE_CONSENT_DECISION).0, "consent");
+        assert_eq!(activity_for_event(ev::EVENT_TYPE_CHANNEL_INGRESS).0, "notification");
+        assert_eq!(activity_for_event(ev::EVENT_TYPE_AUDIT_RPC_ACCEPT).0, "audit");
+        assert_eq!(activity_for_event(ev::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED).0, "intense");
+        assert_eq!(activity_for_event(0x00).0, "idle");
+        // every mapped caption is non-empty
+        for et in [0x01u8, 0x20, 0x21, 0x32, 0x65, 0xAE, 0xEB] {
+            assert!(!activity_for_event(et).1.is_empty());
+        }
+    }
+
+    #[test]
+    fn activity_method_on_empty_wal_dir_is_idle() {
+        let conn = fresh_conn();
+        let cfg = FreedomConfig::default();
+        let tmp = std::env::temp_dir().join("neoth_gui_activity_test_empty");
+        let _ = std::fs::create_dir_all(&tmp);
+        let resp = handle_request_line(r#"{"id":9,"method":"activity"}"#, &conn, &tmp, &cfg);
+        let v = parse(&resp);
+        assert_eq!(v["ok"], true, "got: {resp}");
+        assert_eq!(v["activity"], "idle");
     }
 
     #[test]
