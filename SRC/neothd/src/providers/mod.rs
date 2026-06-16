@@ -564,7 +564,8 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
             Ok(Box::new(
                 claude_cli::ClaudeCliAdapter::new_with_backend_and_timeouts(
                     binary, model, backend, cap, idle, hard,
-                ),
+                )
+                .with_resume_session_id(config.claude_cli.resume_session_id.clone()),
             ))
         }
         ProviderKind::OpenaiApi => {

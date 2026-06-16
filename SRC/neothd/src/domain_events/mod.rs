@@ -40,6 +40,7 @@
 //! event second (best-effort notification to live consumers).
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -279,10 +280,28 @@ pub fn init_global() -> bool {
         let meter = Arc::new(UsageMeter::new());
         let mut rx = bus.subscribe();
         let meter_for_task = Arc::clone(&meter);
+        let meter_path = meter_snapshot_path();
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
-                    Ok(ev) => meter_for_task.absorb(&ev),
+                    Ok(ev) => {
+                        meter_for_task.absorb(&ev);
+                        // GOLD-WIRE-10b: persist the live snapshot whenever a
+                        // provider response lands, so the GUI / `neoth meter`
+                        // subprocess can read it without sharing the bus.
+                        if ev.kind() == "provider_responded" {
+                            if let Err(e) = write_meter_snapshot(
+                                &meter_path,
+                                &meter_for_task.snapshot(),
+                            ) {
+                                tracing::debug!(
+                                    error = %e,
+                                    path = %meter_path.display(),
+                                    "meter snapshot persist failed (best-effort)"
+                                );
+                            }
+                        }
+                    }
                     // A drainer that lagged behind a burst counts the dropped
                     // events (visible via `lagged_events`) and keeps going — the
                     // meter is best-effort telemetry, not an audit log.
@@ -317,6 +336,34 @@ pub fn publish(event: DomainEvent) -> usize {
 /// zero budget — it means the meter is not installed in this process.
 pub fn global_meter_snapshot() -> Option<UsageSnapshot> {
     GLOBAL_METER.get().map(|m| m.snapshot())
+}
+
+/// GOLD-WIRE-10b — canonical path where the daemon persists the live
+/// `UsageSnapshot` so separate GUI / `neoth meter` processes can read it.
+/// Matches the existing `neothd-gui` panel parser expectation
+/// (`~/.neoth/usage_meter.json`).
+pub fn meter_snapshot_path() -> PathBuf {
+    crate::config::FreedomConfig::default_neoth_home().join("usage_meter.json")
+}
+
+/// Atomically persist a snapshot to `path`. Writes to a temp file in the
+/// same directory and renames, so a crash mid-write never leaves a
+/// half-written JSON file. Errors are best-effort: the meter keeps running
+/// even if the disk is temporarily unwritable.
+pub fn write_meter_snapshot(path: &Path, snapshot: &UsageSnapshot) -> std::io::Result<()> {
+    let body = serde_json::to_vec_pretty(snapshot)
+        .map_err(std::io::Error::other)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Read the persisted meter snapshot, if any. Returns `None` when the file
+/// is missing (daemon has never persisted) or unreadable.
+pub fn read_meter_snapshot(path: &Path) -> Option<UsageSnapshot> {
+    let body = std::fs::read(path).ok()?;
+    serde_json::from_slice(&body).ok()
 }
 
 #[cfg(test)]

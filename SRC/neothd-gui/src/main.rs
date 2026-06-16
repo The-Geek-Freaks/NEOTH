@@ -192,6 +192,24 @@ fn main() -> Result<()> {
         }
     });
 
+    // GOLD-WIRE-10b: live budget meter probe — same refresh-loop shape
+    // as usage. Re-fires every BUDGET_REFRESH_INTERVAL so the dashboard
+    // tile stays current as provider calls land in the daemon.
+    window.set_budget_summary("Loading budget…".into());
+    let weak_budget = window.as_weak();
+    std::thread::spawn(move || {
+        loop {
+            let summary = probe_budget_via_subprocess();
+            let weak = weak_budget.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_budget_summary(summary.into());
+                }
+            });
+            std::thread::sleep(BUDGET_REFRESH_INTERVAL);
+        }
+    });
+
     // QM-8 Phase 2: preset list probe — same refresh-loop shape as
     // usage. Lighter cadence (5min) since presets change rarely.
     window.set_preset_summary("Loading presets…".into());
@@ -3637,6 +3655,11 @@ pub const BINARY_MISSING_MESSAGE: &str = "Chat unavailable — `neothd` binary n
 /// json` in a `watch -n 1` loop.
 pub const USAGE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// GOLD-WIRE-10b: how often the dashboard tile re-fires the
+/// `neoth meter --json` subprocess. 15s gives a near-live budget
+/// feel without spawning a subprocess every second.
+pub const BUDGET_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// QM-8 Phase 2: how often the preset tile re-fires `neoth preset
 /// list`. Lighter cadence than usage since presets change rarely.
 pub const PRESET_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
@@ -4164,6 +4187,39 @@ pub fn shape_usage_summary(json: &str) -> String {
         return "No usage in the last 24h.".to_string();
     }
     format!("Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4}")
+}
+
+/// GOLD-WIRE-10b: probe the daemon's live token-budget meter via the
+/// same `neoth meter --json` surface the CLI ships. Returns an operator-
+/// readable one-line summary, or a clear error string when the subprocess
+/// can't run / fails / returns malformed JSON.
+fn probe_budget_via_subprocess() -> String {
+    let candidate = which_neothd();
+    let Some(bin) = candidate else {
+        return "Budget unavailable — `neothd` binary not on PATH.".to_string();
+    };
+    let output = spawn_neothd_plain(&bin)
+        .arg("meter")
+        .arg("--format")
+        .arg("json")
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let panel = panel_logic::parse_usage_meter(&stdout);
+            if panel.available {
+                format!("{} · {} · {}", panel.responses, panel.tokens, panel.note)
+            } else {
+                "Budget unavailable — daemon may not be running.".to_string()
+            }
+        }
+        Ok(out) => format!(
+            "Budget probe failed (exit {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => format!("Budget probe could not start: {e}"),
+    }
 }
 
 /// QM-8 Phase 2.5: resolve the active preset (via `neoth preset list`),

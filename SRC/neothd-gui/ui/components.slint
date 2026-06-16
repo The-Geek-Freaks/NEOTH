@@ -26,8 +26,11 @@ export component NeothButton inherits Rectangle {
     height: 44px;
     width: max(120px, txt.preferred-width + Theme.space-loose * 2);
     border-radius: Theme.radius-button;
-    background: root.primary ? Theme.bg-card : transparent;
-    border-width: root.primary ? 0px : 1px;
+    // GUI-overhaul: primary actions were a flat bg-card fill — indistinguishable
+    // from the surrounding cards. An accent-tinted fill + accent border reads as
+    // a clear primary CTA (secondary stays outline-only), without being flashy.
+    background: root.primary ? Theme.accent-green.with-alpha(0.16) : transparent;
+    border-width: 1px;
     border-color: root.enabled ? Theme.accent-green : Theme.border-subtle;
     opacity: root.enabled ? 1.0 : 0.4;
 
@@ -51,9 +54,7 @@ export component NeothButton inherits Rectangle {
         font-size: Theme.font-size-body;
         font-weight: Theme.weight-medium;
         letter-spacing: Theme.letter-spacing-body;
-        color: root.enabled
-            ? (root.primary ? Theme.text-primary : Theme.accent-green)
-            : Theme.text-dim;
+        color: root.enabled ? Theme.accent-green : Theme.text-dim;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -66,7 +67,7 @@ export component NeothButton inherits Rectangle {
     states [
         hovered when touch.has-hover && root.enabled: {
             underline.width: root.width - Theme.space-base * 2;
-            txt.color: root.primary ? Theme.accent-green : Theme.text-primary;
+            txt.color: Theme.text-primary;
         }
     ]
 }

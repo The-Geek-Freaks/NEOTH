@@ -2649,6 +2649,13 @@ pub struct ClaudeCliConfig {
     /// vars regardless of this list.
     #[serde(default)]
     pub scrub_env_prefixes: Vec<String>,
+    /// Optional claude-cli session UUID to resume. When set, NEOTH passes
+    /// `--resume <uuid>` to the subprocess/tmux warm session. If the
+    /// corresponding `~/.claude/sessions/<uuid>.jsonl` is missing, the
+    /// resume arg is stripped before spawn so claude-cli does not fail
+    /// with "session not found".
+    #[serde(default)]
+    pub resume_session_id: Option<String>,
 }
 
 /// Serde-facing backend tag. Separate from
@@ -3931,6 +3938,7 @@ mod tests {
             backend: ClaudeCliBackendCfg::Tmux,
             tmux: ClaudeCliTmuxConfig::default(),
             scrub_env_prefixes: Vec::new(),
+            resume_session_id: None,
         };
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         assert!(

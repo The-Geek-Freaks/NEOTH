@@ -22,6 +22,26 @@ use crate::wal::events::{
 };
 use crate::wal::spawn as wal_spawn;
 
+/// GOLD-WIRE-10b: fire a `ProviderResponded` domain event so the daemon's
+/// `UsageMeter` counts every provider call, not only council-hemisphere ones.
+/// Mirrors the council path's event shape including latency clamping.
+fn publish_provider_responded(
+    provider_name: &str,
+    model: &str,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    elapsed_ms: u64,
+) {
+    crate::domain_events::publish(crate::domain_events::DomainEvent::ProviderResponded {
+        provider: provider_name.to_string(),
+        model: model.to_string(),
+        input_tokens: input_tokens.unwrap_or(0),
+        output_tokens: output_tokens.unwrap_or(0),
+        latency_ms: elapsed_ms.min(u64::from(u32::MAX)) as u32,
+        ts_unix: now_unix() as i64,
+    });
+}
+
 /// Round-3 v0.4 ARCH-04 integration — default pre-flight token cap
 /// fallback for tests that don't supply a `FreedomConfig`. Production
 /// callers read `config.tokens.max_per_request` (defaults to 100_000
@@ -998,6 +1018,13 @@ async fn dispatch_provider(
                 elapsed_ms,
                 true,
             );
+            publish_provider_responded(
+                provider_name,
+                &model_used,
+                input_tokens,
+                output_tokens,
+                elapsed_ms,
+            );
         }
         // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
         // truncated streams.
@@ -1274,6 +1301,13 @@ async fn dispatch_provider(
                         completion.output_tokens,
                         elapsed_ms,
                         true,
+                    );
+                    publish_provider_responded(
+                        provider_name,
+                        &completion.model,
+                        completion.input_tokens,
+                        completion.output_tokens,
+                        elapsed_ms,
                     );
                     println!("{}", completion.text);
                     (
@@ -4676,6 +4710,13 @@ pub(crate) async fn run_mcp_dispatch_loop(
                             c.output_tokens,
                             elapsed_ms,
                             true,
+                        );
+                        publish_provider_responded(
+                            provider_name,
+                            &c.model,
+                            c.input_tokens,
+                            c.output_tokens,
+                            elapsed_ms,
                         );
                         Ok(c.text)
                     }

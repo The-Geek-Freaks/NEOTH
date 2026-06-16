@@ -79,6 +79,7 @@ pub mod keys;
 pub mod lease;
 pub mod mcp;
 pub mod memory;
+pub mod meter;
 pub mod moral_core;
 pub mod migrate;
 pub mod mode;
@@ -873,6 +874,10 @@ pub enum Commands {
     /// explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`.
     Usage(usage::UsageArgs),
 
+    /// GOLD-WIRE-10b: read the daemon's live token-budget meter snapshot.
+    /// The GUI polls `neoth meter --json` to render the budget tile.
+    Meter(meter::MeterArgs),
+
     /// QM-8 Phase 1: named provider+config preset bundles.
     /// `list` enumerates saved bundles; `show <name>` dumps one; `activate
     /// <name>` marks a bundle active; `deactivate` clears the marker;
@@ -1402,6 +1407,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Usage(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();
             usage::run(&home, args)?;
+        }
+        Commands::Meter(args) => {
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            meter::run(&home, args)?;
         }
         Commands::Preset(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();

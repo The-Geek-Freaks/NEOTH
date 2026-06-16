@@ -151,6 +151,9 @@ export component MainWindow inherits Window {
     // Format: "<calls> calls (ok=<x>, err=<y>), <cost> (<pct>% of cap)"
     // — populated by a subprocess probe to `neoth usage --format json`.
     in property <string> usage-summary: "Loading usage…";
+    // GOLD-WIRE-10b: live token-budget meter rendered for the dashboard.
+    // Populated by a subprocess probe to `neoth meter --json`.
+    in property <string> budget-summary: "Loading budget…";
     // QM-8 Phase 2: saved preset list + active marker.
     // Populated by a subprocess probe to `neoth preset list`.
     in property <string> preset-summary: "Loading presets…";
@@ -647,6 +650,31 @@ export component MainWindow inherits Window {
                     }
                     Text {
                         text: root.usage-summary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            // GOLD-WIRE-10b — live token-budget meter tile. Mirrors the
+            // usage tile; shows the daemon's running token totals as they
+            // are persisted to ~/.neoth/meter.json.
+            Card {
+                preferred-height: 100px;
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "Live token budget";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        color: Theme.accent-green;
+                    }
+                    Text {
+                        text: root.budget-summary;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;

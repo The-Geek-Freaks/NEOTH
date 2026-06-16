@@ -1199,6 +1199,12 @@ Inspect the assembled NEOTH.md operator context
 - `--limit <LIMIT>` — Max rows for `--tier` recall
 - `--db <PATH>` — Override the views.db path for `--tier`
 
+## `neoth meter`
+
+GOLD-WIRE-10b: read the daemon's live token-budget meter snapshot. The GUI polls `neoth meter --json` to render the budget tile
+
+- `--format <FORMAT>` — Output format: `human` (default) or `json`
+
 ## `neoth migrate`
 
 Apply schema migrations to `~/.neoth/views.db`. `neoth serve` runs migrations automatically on startup; this command exposes them offline + supports `--dry-run` and `--to <version>`

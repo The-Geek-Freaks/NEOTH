@@ -170,6 +170,10 @@ pub struct ClaudeCliAdapter {
     /// with no actionable hint. Fires once per adapter instance — second
     /// + Nth `complete` calls stay quiet.
     auto_fallback_warned: std::sync::atomic::AtomicBool,
+    /// Optional claude-cli session UUID to resume. Passed through
+    /// `strip_dead_resume_args` before any spawn so a stale/deleted
+    /// JSONL never kills the session start.
+    resume_session_id: Option<String>,
 }
 
 impl ClaudeCliAdapter {
@@ -234,7 +238,15 @@ impl ClaudeCliAdapter {
             idle_timeout_secs,
             hard_timeout_secs,
             auto_fallback_warned: std::sync::atomic::AtomicBool::new(false),
+            resume_session_id: None,
         }
+    }
+
+    /// Set the optional claude-cli session UUID to resume. Builder-style
+    /// so existing call sites keep compiling without a signature churn.
+    pub fn with_resume_session_id(mut self, id: Option<String>) -> Self {
+        self.resume_session_id = id;
+        self
     }
 
     pub fn backend(&self) -> ClaudeBackend {
@@ -320,6 +332,45 @@ impl ClaudeCliAdapter {
     }
 }
 
+/// Build the final argv for a `claude` spawn, injecting `--resume <uuid>`
+/// when the adapter is configured to resume a session and stripping the
+/// resume pair if the underlying JSONL no longer exists. This is the single
+/// call site that wires `claude_session::strip_dead_resume_args` into the
+/// live spawn paths (subprocess + tmux session start).
+fn build_claude_spawn_args(
+    base: &[&str],
+    resume_session_id: &Option<String>,
+) -> Vec<String> {
+    let mut args: Vec<String> = base.iter().map(|s| s.to_string()).collect();
+    if let Some(uuid) = resume_session_id {
+        args.push(super::claude_session::RESUME_FLAG_LONG.to_string());
+        args.push(uuid.clone());
+    }
+    if let Some(dir) = super::claude_session::claude_sessions_dir() {
+        super::claude_session::strip_dead_resume_args(&args, &dir)
+    } else {
+        // No home dir resolvable — keep args verbatim; a stale resume will
+        // surface as a normal claude-cli error rather than being hidden.
+        args
+    }
+}
+
+/// Quote argv tokens for a shell command string. Only wraps tokens that
+/// contain whitespace or quotes; model names and UUIDs pass through clean.
+fn join_args_for_shell(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            if a.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'') {
+                let escaped = a.replace('"', "\\\"");
+                format!("\"{escaped}\"")
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Spawn `claude` with stdout/stdin piped. On Windows, npm installs the CLI
 /// as a shell script (`claude`) plus `claude.cmd` — CreateProcessW cannot
 /// execute the bare shell script directly (it returns OS error 193,
@@ -340,7 +391,7 @@ impl ClaudeCliAdapter {
 /// env is treated as immutable post-startup — operators who flip
 /// HTTP_PROXY mid-daemon need to restart; the explicit "scan once"
 /// contract is documented at `cached_scrubbed_env()`.
-fn spawn_claude(binary: &str, args: &[&str]) -> std::io::Result<tokio::process::Child> {
+fn spawn_claude(binary: &str, args: &[String]) -> std::io::Result<tokio::process::Child> {
     let scrubbed = cached_scrubbed_env();
     #[cfg(windows)]
     {
@@ -531,6 +582,7 @@ impl Provider for ClaudeCliAdapter {
             let tmux_slot = self.tmux_slot.clone();
             let idle_timeout_secs = self.idle_timeout_secs;
             let hard_timeout_secs = self.hard_timeout_secs;
+            let resume_session_id = self.resume_session_id.clone();
             let result = self
                 .dedup
                 .do_call(key, move || async move {
@@ -543,6 +595,7 @@ impl Provider for ClaudeCliAdapter {
                                 req,
                                 idle_timeout_secs,
                                 hard_timeout_secs,
+                                resume_session_id.clone(),
                             )
                             .await
                         }
@@ -550,7 +603,7 @@ impl Provider for ClaudeCliAdapter {
                             // Auto cannot reach here in practice (resolved
                             // above) but the exhaustive match keeps future
                             // variants explicit.
-                            complete_uncached(&binary, &model_default, req).await
+                            complete_uncached(&binary, &model_default, req, resume_session_id.clone()).await
                         }
                     }
                 })
@@ -580,10 +633,7 @@ impl Provider for ClaudeCliAdapter {
             let model = req.model.clone().unwrap_or_else(|| self.model.clone());
             let prompt = build_prompt_payload(&req);
 
-            let mut child = spawn_claude(
-                &self.binary,
-                // `--verbose` is required by claude-cli for `--print` + `stream-json`
-                // — without it the CLI rejects the combination.
+            let args = build_claude_spawn_args(
                 &[
                     "--print",
                     "--model",
@@ -592,13 +642,15 @@ impl Provider for ClaudeCliAdapter {
                     "stream-json",
                     "--verbose",
                 ],
-            )
-            .with_context(|| {
-                format!(
-                    "spawn `{} --print --model {}` for streaming",
-                    self.binary, model
-                )
-            })?;
+                &self.resume_session_id,
+            );
+            let mut child = spawn_claude(&self.binary, &args)
+                .with_context(|| {
+                    format!(
+                        "spawn `{} --print --model {}` for streaming",
+                        self.binary, model
+                    )
+                })?;
 
             // Write prompt to stdin, close so the CLI sees EOF and starts generating.
             if let Some(mut stdin) = child.stdin.take() {
@@ -693,7 +745,12 @@ impl Provider for ClaudeCliAdapter {
 /// Adapter-free completion: spawn + parse + return. Extracted so the
 /// singleflight wrapper in [`ClaudeCliAdapter::complete`] can call it as
 /// a `FnOnce()` closure without dragging `&self` through the lifetime.
-async fn complete_uncached(binary: &str, model_default: &str, req: Request) -> Result<Completion> {
+async fn complete_uncached(
+    binary: &str,
+    model_default: &str,
+    req: Request,
+    resume_session_id: Option<String>,
+) -> Result<Completion> {
     let started = Instant::now();
     let model = req
         .model
@@ -706,15 +763,16 @@ async fn complete_uncached(binary: &str, model_default: &str, req: Request) -> R
     // result + usage. Without JSON we cannot distinguish "claude returned
     // empty text" from "claude tool-called and never produced text" —
     // both look identical in text mode (zero bytes on stdout).
-    let mut child = spawn_claude(
-        binary,
+    let args = build_claude_spawn_args(
         &["--print", "--model", &model, "--output-format", "json"],
-    )
-    .with_context(|| {
-        format!(
-            "spawn `{binary} --print --model {model}`. Is the claude CLI installed and on PATH?"
-        )
-    })?;
+        &resume_session_id,
+    );
+    let mut child = spawn_claude(binary, &args)
+        .with_context(|| {
+            format!(
+                "spawn `{binary} --print --model {model}`. Is the claude CLI installed and on PATH?"
+            )
+        })?;
 
     let payload = build_prompt_payload(&req);
 
@@ -885,6 +943,7 @@ async fn complete_tmux_uncached(
     req: Request,
     idle_timeout_secs: u64,
     hard_timeout_secs: u64,
+    resume_session_id: Option<String>,
 ) -> Result<Completion> {
     let started = Instant::now();
 
@@ -938,8 +997,14 @@ async fn complete_tmux_uncached(
                 .load(std::sync::atomic::Ordering::Relaxed);
             let name = format!("{}-{}", tmux_slot.session_name_root, rot);
             // Interactive claude shares the `--model` flag with `--print`
-            // mode. Tmux runs the command through the system shell.
-            let cmd = format!("{binary} --model {model}");
+            // mode. Tmux runs the command through the system shell. Wire
+            // the optional resume session id through the same strip-dead
+            // guard as the subprocess path.
+            let resume_args = build_claude_spawn_args(
+                &["--model", &model],
+                &resume_session_id,
+            );
+            let cmd = format!("{binary} {}", join_args_for_shell(&resume_args));
             let session = super::tmux_session::TmuxSession::new(&name, &cmd)
                 .await
                 .with_context(|| {
@@ -1969,6 +2034,123 @@ mod tests {
         assert!(
             !system_section.contains("\n# never"),
             "Memory trigger leaked: {system_section:?}"
+        );
+    }
+
+    // ── GOLD-WIRE-06b: resume session id wiring ───────────────────────────
+
+    /// Helper: run a block with HOME/USERPROFILE pointed at a temp dir so
+    /// `claude_sessions_dir()` resolves predictably.
+    fn with_temp_home<F>(f: F)
+    where
+        F: FnOnce(&std::path::Path),
+    {
+        let _env = crate::test_env::lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let prev_home = std::env::var("HOME").ok();
+        let prev_user = std::env::var("USERPROFILE").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+            std::env::set_var("USERPROFILE", tmp.path());
+        }
+        f(tmp.path());
+        unsafe {
+            if let Some(v) = prev_home {
+                std::env::set_var("HOME", v);
+            } else {
+                std::env::remove_var("HOME");
+            }
+            if let Some(v) = prev_user {
+                std::env::set_var("USERPROFILE", v);
+            } else {
+                std::env::remove_var("USERPROFILE");
+            }
+        }
+    }
+
+    #[test]
+    fn build_claude_spawn_args_without_resume_returns_base_only() {
+        with_temp_home(|_| {
+            let args = build_claude_spawn_args(
+                &["--print", "--model", "sonnet"],
+                &None,
+            );
+            assert_eq!(args, vec!["--print", "--model", "sonnet"]);
+        });
+    }
+
+    #[test]
+    fn build_claude_spawn_args_keeps_resume_when_jsonl_exists() {
+        with_temp_home(|home| {
+            let uuid = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+            let sessions = home.join(".claude").join("sessions");
+            std::fs::create_dir_all(&sessions).unwrap();
+            std::fs::write(sessions.join(format!("{uuid}.jsonl")), b"{}\n").unwrap();
+
+            let args = build_claude_spawn_args(
+                &["--print", "--model", "sonnet"],
+                &Some(uuid.to_string()),
+            );
+            assert_eq!(
+                args,
+                vec!["--print", "--model", "sonnet", "--resume", uuid]
+            );
+        });
+    }
+
+    #[test]
+    fn build_claude_spawn_args_strips_resume_when_jsonl_missing() {
+        with_temp_home(|_| {
+            let uuid = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+            // deliberately do NOT create the jsonl
+            let args = build_claude_spawn_args(
+                &["--print", "--model", "sonnet"],
+                &Some(uuid.to_string()),
+            );
+            assert_eq!(args, vec!["--print", "--model", "sonnet"]);
+        });
+    }
+
+    #[test]
+    fn build_claude_spawn_args_strips_resume_for_bad_uuid() {
+        with_temp_home(|_| {
+            let args = build_claude_spawn_args(
+                &["--print", "--model", "sonnet"],
+                &Some("not-a-uuid".to_string()),
+            );
+            assert_eq!(args, vec!["--print", "--model", "sonnet"]);
+        });
+    }
+
+    #[test]
+    fn join_args_for_shell_quotes_tokens_with_whitespace() {
+        let args = vec![
+            "--model".to_string(),
+            "claude opus".to_string(),
+            "--resume".to_string(),
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca427".to_string(),
+        ];
+        let joined = join_args_for_shell(&args);
+        assert_eq!(
+            joined,
+            "--model \"claude opus\" --resume 1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+        );
+    }
+
+    #[test]
+    fn with_resume_session_id_round_trips() {
+        let adapter = ClaudeCliAdapter::new_with_backend(
+            "claude".into(),
+            "sonnet".into(),
+            ClaudeBackend::Auto,
+            10,
+        )
+        .with_resume_session_id(Some(
+            "deadbeef-dead-beef-dead-beefdeadbeef".to_string(),
+        ));
+        assert_eq!(
+            adapter.resume_session_id,
+            Some("deadbeef-dead-beef-dead-beefdeadbeef".to_string())
         );
     }
 }

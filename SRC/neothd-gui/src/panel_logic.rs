@@ -536,9 +536,9 @@ pub fn parse_usage_meter(json: &str) -> UsageMeterPanel {
     }
     let lagged = g("lagged_events");
     let note = if lagged > 0 {
-        format!("council-path only · ⚠ {lagged} events dropped (token totals undercount)")
+        format!("⚠ {lagged} events dropped (token totals undercount)")
     } else {
-        "council-path only".to_string()
+        "live token budget".to_string()
     };
     UsageMeterPanel {
         available: true,
@@ -1248,7 +1248,7 @@ mod tests {
         assert!(p.available);
         assert_eq!(p.responses, "3 provider responses");
         assert_eq!(p.tokens, "1200 in / 450 out tokens");
-        assert_eq!(p.note, "council-path only");
+        assert_eq!(p.note, "live token budget");
     }
 
     #[test]

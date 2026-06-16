@@ -28,7 +28,16 @@
 //! Tested via temp-dir fixtures so we don't depend on the operator's
 //! real `~/.claude/sessions` layout.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Resolve the directory where claude-cli stores session JSONLs.
+/// Uses `HOME` (Unix) or `USERPROFILE` (Windows), then appends
+/// `.claude/sessions`. Returns `None` when no home dir is available.
+pub fn claude_sessions_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(home).join(".claude").join("sessions"))
+}
 
 /// True ⇔ `s` matches the canonical RFC 4122 UUID form:
 /// 8-4-4-4-12 lower/upper hex with single ASCII dashes at the
