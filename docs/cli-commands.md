@@ -337,6 +337,30 @@ Emit a shell-completion script. `neoth completions zsh > _neoth`, `neoth complet
 - `<SHELL>` — Target shell. `bash | zsh | fish | powershell | elvish`. Omit when using `--reference`
 - `--reference <REFERENCE>` — Emit the generated markdown CLI reference (every command + flag, straight from the clap tree) instead of a shell-completion script. `neoth completions --reference > docs/cli-commands.md`
 
+## `neoth computer-use`
+
+Manage NEOTH's desktop computer-use capability (trycua cua-driver, wired as a gated MCP server): status / enable / disable / install
+
+### `neoth computer-use disable`
+
+Disable computer-use (keeps the entry, sets `enabled: false`)
+
+### `neoth computer-use doctor`
+
+Runtime proof + allowlist drift check: installed version, the LIVE advertised tools (real MCP handshake + `tools/list`), the pinned allowlist, and a missing/extra diff
+
+### `neoth computer-use enable`
+
+Enable computer-use: register the cua-driver MCP server (secure-by- default allowlist) in `mcp_servers.yaml` so the agent gets the tools
+
+### `neoth computer-use install`
+
+Print the cua-driver install command for this platform
+
+### `neoth computer-use status`
+
+Show whether cua-driver is installed + enabled as an MCP server
+
 ## `neoth connect`
 
 UX-01 — discover messaging channels + how to connect them. Read-only post-wizard on-ramp: shows which channels (Telegram, Slack, WhatsApp, …) are connected + the steps to wire the rest
@@ -1403,6 +1427,31 @@ GOLD-FEAT-03 — render NEOTH's own `PLAN/` design corpus (SPECs, design docs, C
 - `--dry-run <DRY_RUN>` — List the pages that would be written without writing anything
 - `--ingest <INGEST>` — GOLD-FEAT-03 slice 2 — after writing, push one recall-friendly pointer per doc into ground-truth (`idx_groundtruth`, scope `neoth-self-wiki`) so the design corpus surfaces on recall. Prior self-wiki rows are revoked first (idempotent). Ignored on dry-run
 
+## `neoth okf`
+
+Export NEOTH's knowledge as an Open Knowledge Format (OKF) bundle — interconnected Obsidian-native markdown concept docs
+
+### `neoth okf export`
+
+Export entities (+ their relations) and ground-truth facts as an OKF bundle of markdown concept docs (point Obsidian at it / sync to a vault)
+
+- `--out <DIR>` — Output bundle directory. Default: `<neoth_home>/okf`
+- `--db <PATH>` — Override the views.db path
+
+### `neoth okf import`
+
+Import an OKF bundle BACK into NEOTH memory: facts → ground-truth (as ImportSession candidates), entities → the entity index
+
+- `--bundle <DIR>` — Bundle directory to read. Default: `<neoth_home>/okf`
+- `--db <PATH>`
+
+### `neoth okf sync`
+
+Export the OKF bundle straight into an Obsidian vault (under `<vault>/NEOTH-knowledge`) so the graph shows up in your vault
+
+- `--vault <PATH>`
+- `--db <PATH>`
+
 ## `neoth os`
 
 `os launch <program>` — launch a program through the PC-01 OS-tool gate: exec-allowlist (`freedom.yaml::tools.os.allowed_exec_paths`, exact canonical match, default deny-all) + autonomy gate (Full-only auto-allow) + WAL audit (`0xAC`/`0xAD`). No arguments, no shell. The gated alternative to an ungated process spawn
@@ -1856,6 +1905,62 @@ Parse + structurally validate a recipe file (no run)
 
 - `<FILE>` — Recipe file path
 
+## `neoth recon`
+
+Operator recon (authorized engagements) over ProjectDiscovery's uncover (exposed-host discovery) + tlsx (TLS/cert intel). Gated by autonomy
+
+### `neoth recon doctor`
+
+Show which recon binaries are installed + where
+
+### `neoth recon tlsx`
+
+Grab TLS/cert intelligence (active — connects to each host:port)
+
+- `-u, --host <HOST>` — Target host(s) / IP / CIDR (comma-separated)
+- `-p, --port <PORT>` — Port(s), comma-separated. Defaults to tlsx's own default (443)
+
+### `neoth recon uncover`
+
+Discover exposed hosts via search engines (passive — uses YOUR engine API keys, configured in uncover's own config/env; NEOTH never sees them)
+
+- `-q, --query <QUERY>` — Search query in the engine's syntax, e.g. 'title:"GitLab"'
+- `-e, --engine <ENGINE>` — Engines to query (comma-separated): shodan,censys,fofa,quake,…
+- `-l, --limit <LIMIT>` — Maximum results
+
+## `neoth reflect`
+
+Self-reflection surfaces. `reflect tech-news` scans trending Hacker News topics and flags the ones your skills + memory don't cover yet
+
+### `neoth reflect forget`
+
+Remove a topic from BOTH the ignore and pin lists
+
+- `<TERM>`
+
+### `neoth reflect ignore`
+
+Stop surfacing a topic as a gap (e.g. one you already follow elsewhere)
+
+- `<TERM>`
+
+### `neoth reflect pin`
+
+Always flag a topic when it trends, even if covered or single-mention
+
+- `<TERM>`
+
+### `neoth reflect tech-news`
+
+Scan trending Hacker News stories and show which topics your installed skills + recent memory don't cover yet (tech-currency self-reflection)
+
+- `--limit <LIMIT>` — How many top HN stories to scan (capped at 100)
+- `--max-gaps <MAX_GAPS>` — Maximum gaps to surface
+
+### `neoth reflect topics`
+
+Show the current per-operator ignore + pin lists
+
 ## `neoth refusal`
 
 Test the Schicht-0 mirror-refusal detector against arbitrary text. `classify <text>` runs the deterministic classifier; `patterns` dumps the pattern dictionaries the classifier uses
@@ -2066,6 +2171,62 @@ Generate proposals from a `BehaviouralProfile` JSON. Operator- facing demonstrat
 List every pending proposal. `--min-confidence` filters by the engine's confidence estimate (0.0..=1.0)
 
 - `--min-confidence <MIN_CONFIDENCE>`
+
+## `neoth self-improve`
+
+Self-improvement — evolve NEOTH's skills with SkillOpt (ask-first switch; status / enable / disable / run / log)
+
+### `neoth self-improve accept`
+
+Adopt a proposal into its skill file (backs up the replaced content)
+
+- `<ID>`
+
+### `neoth self-improve disable`
+
+Turn self-improvement off (keeps the ledger)
+
+### `neoth self-improve enable`
+
+Enable self-improvement. `--auto` also turns on the nightly sleep cycle
+
+- `--auto <AUTO>`
+
+### `neoth self-improve log`
+
+Print the improvement ledger (what changed, when, accepted or not)
+
+### `neoth self-improve pr`
+
+Contribute an ACCEPTED improvement to a BUNDLED skill back to NEOTH: prepare a PR bundle (improved file + PR body + submit script). `--submit` runs it via the operator's authenticated `gh`
+
+- `<ID>`
+- `--submit <SUBMIT>` — Actually open the PR now (requires `gh`), instead of only preparing it
+
+### `neoth self-improve review`
+
+List staged proposals + their diffs (review before adopting)
+
+### `neoth self-improve rollback`
+
+Restore a previously accepted proposal's backup (undo the change)
+
+- `<ID>`
+
+### `neoth self-improve run`
+
+Run one SkillOpt consolidation pass — STAGES a proposal for review (never writes a skill file directly). `--dry-run` only prints the diff
+
+- `--persona <PERSONA>`
+- `--skill <PATH>` — The production skill file SkillOpt should improve
+- `--from <PATH>` — Use this file as the proposed content instead of running SkillOpt (lets the workflow be driven without the engine installed)
+- `--why <TEXT>` — Operator/engine rationale: why this edit is an improvement
+- `--risk <TEXT>` — Operator/engine note: known risks or caveats of adopting it
+- `--dry-run <DRY_RUN>` — Only show the diff; don't stage a proposal
+
+### `neoth self-improve status`
+
+Show the switch state, SkillOpt availability, and the last improvement
 
 ## `neoth serve`
 
