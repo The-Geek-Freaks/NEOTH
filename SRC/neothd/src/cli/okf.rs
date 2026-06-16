@@ -29,12 +29,120 @@ pub enum OkfAction {
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
     },
+    /// Import an OKF bundle BACK into NEOTH memory: facts → ground-truth
+    /// (as ImportSession candidates), entities → the entity index.
+    Import {
+        /// Bundle directory to read. Default: `<neoth_home>/okf`.
+        #[arg(long, value_name = "DIR")]
+        bundle: Option<PathBuf>,
+        #[arg(long, value_name = "PATH")]
+        db: Option<PathBuf>,
+    },
+    /// Export the OKF bundle straight into an Obsidian vault (under
+    /// `<vault>/NEOTH-knowledge`) so the graph shows up in your vault.
+    Sync {
+        #[arg(long, value_name = "PATH")]
+        vault: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        db: Option<PathBuf>,
+    },
 }
 
 pub fn run_okf(args: OkfArgs, output: OutputFormat) -> Result<()> {
     match args.action {
         OkfAction::Export { out, db } => export(out, db, output),
+        OkfAction::Import { bundle, db } => import(bundle, db, output),
+        OkfAction::Sync { vault, db } => export(Some(vault.join("NEOTH-knowledge")), db, output),
     }
+}
+
+fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) -> Result<()> {
+    use crate::memory::groundtruth::{self, Source};
+    use crate::memory::okf::parse;
+    let db_path = db.unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path).context("open views.db")?;
+    let bundle = bundle.unwrap_or_else(|| FreedomConfig::default_neoth_home().join("okf"));
+    let now_ns = crate::time::now_unix_ns_i64();
+    let now_unix = crate::time::now_unix_i64();
+
+    // facts/ → ground-truth (ImportSession = external, lands as a candidate).
+    let mut facts = 0usize;
+    let mut skipped = 0usize;
+    for path in md_files(&bundle.join("facts")) {
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            skipped += 1;
+            continue;
+        };
+        let Some(doc) = parse(&content) else {
+            skipped += 1;
+            continue;
+        };
+        let statement = doc.description.clone().unwrap_or_else(|| doc.title.clone());
+        if statement.trim().is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let scope = doc.tags.first().cloned().unwrap_or_else(|| "imported".to_string());
+        match groundtruth::insert(&conn, &statement, &Source::ImportSession, &scope, now_ns) {
+            Ok(_) => facts += 1,
+            Err(_) => skipped += 1,
+        }
+    }
+
+    // entities/ → the entity index (name + type; relations are a follow-on).
+    let mut entities = 0usize;
+    for path in md_files(&bundle.join("entities")) {
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            skipped += 1;
+            continue;
+        };
+        let Some(doc) = parse(&content) else {
+            skipped += 1;
+            continue;
+        };
+        if doc.title.trim().is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let attrs = std::collections::BTreeMap::new();
+        match crate::memory::entities::resolve_or_create_entity_with_attrs(
+            &conn,
+            &doc.title,
+            &doc.concept_type,
+            &attrs,
+            now_unix,
+        ) {
+            Ok(_) => entities += 1,
+            Err(_) => skipped += 1,
+        }
+    }
+
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!(
+            "{}",
+            serde_json::json!({ "ok": true, "facts": facts, "entities": entities, "skipped": skipped, "bundle": bundle.display().to_string() })
+        );
+    } else {
+        println!(
+            "OKF import: {facts} facts + {entities} entities ingested ({skipped} skipped) from {}",
+            bundle.display()
+        );
+    }
+    Ok(())
+}
+
+/// Every `*.md` file directly under `dir` (non-recursive; ignores README).
+fn md_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().map(|x| x == "md").unwrap_or(false)
+                && p.file_name().map(|n| n != "README.md").unwrap_or(true)
+        })
+        .collect()
 }
 
 fn export(out: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) -> Result<()> {

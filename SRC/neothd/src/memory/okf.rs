@@ -108,6 +108,59 @@ fn yaml_scalar(v: &str) -> String {
     format!("\"{escaped}\"")
 }
 
+/// A parsed OKF concept document (frontmatter + body), for `neoth okf import`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedOkf {
+    pub concept_type: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub body: String,
+}
+
+/// Parse an OKF concept `.md` (YAML frontmatter delimited by `---`, then body).
+/// `None` if there's no frontmatter or the required `type` field is missing.
+/// CRLF-tolerant.
+pub fn parse(content: &str) -> Option<ParsedOkf> {
+    let norm = content.replace("\r\n", "\n");
+    let after_open = norm.trim_start().strip_prefix("---\n")?;
+    let close = after_open.find("\n---")?;
+    let fm = &after_open[..close];
+    let body = after_open[close + 4..]
+        .trim_start_matches(['\n', ' '])
+        .to_string();
+    let val: serde_yaml::Value = serde_yaml::from_str(fm).ok()?;
+    let concept_type = val.get("type")?.as_str()?.trim().to_string();
+    if concept_type.is_empty() {
+        return None;
+    }
+    let title = val
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let description = val
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let tags = val
+        .get("tags")
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ParsedOkf {
+        concept_type,
+        title,
+        description,
+        tags,
+        body,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +207,32 @@ mod tests {
         assert_eq!(slug("  C++ / Rust!  "), "c-rust");
         assert_eq!(slug("###"), "unnamed");
         assert_eq!(slug("already-slug"), "already-slug");
+    }
+
+    #[test]
+    fn render_then_parse_roundtrips() {
+        let c = OkfConcept {
+            concept_type: "fact".into(),
+            title: "A title".into(),
+            description: Some("one-sentence summary".into()),
+            tags: vec!["operator".into(), "verified".into()],
+            body: "Some body text.".into(),
+            links: vec![],
+        };
+        let p = parse(&c.render()).expect("parse own render");
+        assert_eq!(p.concept_type, "fact");
+        assert_eq!(p.title, "A title");
+        assert_eq!(p.description.as_deref(), Some("one-sentence summary"));
+        assert_eq!(p.tags, vec!["operator".to_string(), "verified".to_string()]);
+        assert!(p.body.contains("Some body text."));
+    }
+
+    #[test]
+    fn parse_rejects_no_frontmatter_and_crlf_ok() {
+        assert!(parse("plain text, no frontmatter").is_none());
+        // CRLF frontmatter still parses (the repo writes CRLF on Windows).
+        let p = parse("---\r\ntype: entity\r\ntitle: X\r\n---\r\n\r\nbody").expect("crlf");
+        assert_eq!(p.concept_type, "entity");
+        assert_eq!(p.title, "X");
     }
 }
