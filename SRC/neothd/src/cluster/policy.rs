@@ -165,6 +165,28 @@ pub fn load_transport_from_freedom(freedom_path: &std::path::Path) -> ClusterTra
     }
 }
 
+/// Read `cluster.peers` from `freedom.yaml` — a list of iroh endpoint-id (dial
+/// key) strings to seed the iroh outbound peer registry. Best-effort, read-only;
+/// empty when absent. Inbound peers are learned automatically on connect, so
+/// this is only needed to bootstrap the FIRST outbound contact.
+pub fn load_iroh_peers_from_freedom(freedom_path: &std::path::Path) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(freedom_path) else {
+        return Vec::new();
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return Vec::new();
+    };
+    root.get("cluster")
+        .and_then(|c| c.get("peers"))
+        .and_then(|p| p.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Why the announcer is suppressed. Operator-readable via
 /// `as_str()` for log lines + doctor detail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

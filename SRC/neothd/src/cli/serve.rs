@@ -970,7 +970,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // is bypassed. The handle lives for the daemon lifetime (Router shuts down
     // on drop at `run_serve` exit).
     #[cfg(feature = "cluster-iroh")]
-    let iroh_transport_handle: Option<crate::cluster::iroh_transport::IrohTransport> =
+    let iroh_transport_handle: Option<std::sync::Arc<crate::cluster::iroh_transport::IrohTransport>> =
         if crate::cluster::policy::load_transport_from_freedom(
             &crate::config::FreedomConfig::default_path(),
         ) == crate::cluster::policy::ClusterTransport::Iroh
@@ -985,9 +985,28 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             .await
             {
                 Ok(t) => {
+                    let t = std::sync::Arc::new(t);
+                    // Seed outbound peers from cluster.peers (inbound peers are
+                    // learned automatically on connect).
+                    let seeded = crate::cluster::policy::load_iroh_peers_from_freedom(
+                        &crate::config::FreedomConfig::default_path(),
+                    );
+                    let mut n_seeded = 0;
+                    for p in &seeded {
+                        if t.add_peer_id(p) {
+                            n_seeded += 1;
+                        }
+                    }
+                    // Outbound gossip broadcast tick (WAL tail → peers, dial-by-key).
+                    // Detached: daemon-lifetime; process exit reaps it.
+                    let _broadcast = crate::cluster::iroh_transport::spawn_gossip_broadcast(
+                        std::sync::Arc::clone(&t),
+                        segment_path.clone(),
+                    );
                     info!(
                         node = %t.node_id(),
-                        "cluster: iroh transport ACTIVE (dial-by-key; gossip_handler intake) — peeroxide bypassed"
+                        seeded_peers = n_seeded,
+                        "cluster: iroh transport ACTIVE (dial-by-key; gossip_handler intake + outbound broadcast) — peeroxide bypassed"
                     );
                     Some(t)
                 }

@@ -24,14 +24,19 @@
 //! - [`IrohTransport::send_frame`] dials a peer by its `EndpointAddr` and does
 //!   one request/response round-trip.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use iroh::{
-    Endpoint, EndpointAddr,
+    Endpoint, EndpointAddr, EndpointId,
     endpoint::{Connection, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
+
+/// Shared set of known peer endpoint-ids (dial keys). Learned from inbound
+/// connections + seeded from `cluster.peers` in freedom.yaml.
+pub type PeerRegistry = Arc<Mutex<HashSet<EndpointId>>>;
 
 /// ALPN for NEOTH cluster gossip. Both ends must present the same bytestring or
 /// iroh aborts the handshake — a cheap protocol/version guard.
@@ -49,6 +54,7 @@ pub type FrameHandler = Arc<dyn Fn(Vec<u8>) -> Vec<u8> + Send + Sync>;
 #[derive(Clone)]
 struct GossipProtocol {
     handler: FrameHandler,
+    peers: PeerRegistry,
 }
 
 // `ProtocolHandler` requires `Debug`, but `FrameHandler` (a boxed closure) can't
@@ -61,6 +67,12 @@ impl std::fmt::Debug for GossipProtocol {
 
 impl ProtocolHandler for GossipProtocol {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        // EndpointAddr exchange: learn this peer's dial key from the inbound
+        // connection so we can gossip BACK to it (outbound broadcast).
+        self.peers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(connection.remote_id());
         // One inbound bi-stream per connection = one gossip request/response.
         let (mut send, mut recv) = connection.accept_bi().await?;
         let request = recv
@@ -80,6 +92,7 @@ impl ProtocolHandler for GossipProtocol {
 /// peers by key.
 pub struct IrohTransport {
     router: Router,
+    peers: PeerRegistry,
 }
 
 impl IrohTransport {
@@ -87,15 +100,60 @@ impl IrohTransport {
     /// accepting NEOTH cluster connections. Resolves once the endpoint is
     /// online (has a reachable address / relay home).
     pub async fn bind(handler: FrameHandler) -> Result<Self> {
+        let peers: PeerRegistry = Arc::new(Mutex::new(HashSet::new()));
         let endpoint = Endpoint::bind(presets::N0)
             .await
             .context("iroh: bind endpoint")?;
         let router = Router::builder(endpoint)
-            .accept(NEOTH_CLUSTER_ALPN, GossipProtocol { handler })
+            .accept(
+                NEOTH_CLUSTER_ALPN,
+                GossipProtocol {
+                    handler,
+                    peers: Arc::clone(&peers),
+                },
+            )
             .spawn();
         // Block until the endpoint has a path peers can reach it on.
         router.endpoint().online().await;
-        Ok(Self { router })
+        Ok(Self { router, peers })
+    }
+
+    /// Number of known peers (learned inbound + seeded).
+    pub fn peer_count(&self) -> usize {
+        self.peers.lock().unwrap_or_else(|p| p.into_inner()).len()
+    }
+
+    /// Seed a peer by its endpoint-id string (hex). Returns false if unparseable.
+    pub fn add_peer_id(&self, id: &str) -> bool {
+        match id.trim().parse::<EndpointId>() {
+            Ok(eid) => {
+                self.peers
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(eid);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Broadcast one gossip frame to every known peer (best-effort, dial-by-key).
+    /// Returns how many peers accepted the round-trip.
+    pub async fn broadcast(&self, frame: &[u8]) -> usize {
+        let targets: Vec<EndpointId> = self
+            .peers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .copied()
+            .collect();
+        let mut delivered = 0;
+        for peer in targets {
+            if self.send_frame(peer, frame).await.is_ok() {
+                delivered += 1;
+            }
+        }
+        delivered
     }
 
     /// This node's dial key — share it with peers so they can `send_frame` to us.
@@ -110,7 +168,11 @@ impl IrohTransport {
 
     /// Dial a peer by its `EndpointAddr` and do one gossip request/response
     /// round-trip: write `frame`, read the peer's reply (capped).
-    pub async fn send_frame(&self, peer: EndpointAddr, frame: &[u8]) -> Result<Vec<u8>> {
+    pub async fn send_frame(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        frame: &[u8],
+    ) -> Result<Vec<u8>> {
         let conn = self
             .router
             .endpoint()
@@ -190,6 +252,83 @@ pub fn gossip_handler(
             matches!(verdict, GossipAcceptance::Accept),
             &format!("{verdict:?}"),
         )
+    })
+}
+
+/// Newest `*.wal` segment in `dir` (the live one). Inlined (the wal_sync copy
+/// is private).
+fn newest_wal_segment(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut segs: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "wal").unwrap_or(false))
+        .collect();
+    segs.sort();
+    segs.pop()
+}
+
+/// Outbound gossip broadcast tick for iroh — the send-side counterpart to
+/// `wal_sync::spawn_gossip_tick` (which serves the peeroxide streams). Every 30s
+/// it reads the active WAL segment tail, band-filters replicable frames with the
+/// SAME `collect_gossipable_frames` + `build_outbound` the peeroxide path uses,
+/// and broadcasts each as a bare `GossipFrame` (JSON) to every known peer via
+/// `IrohTransport::broadcast` (dial-by-key). Best-effort: the cursor always
+/// advances (receiver dedups + replay-budget cover gaps).
+pub fn spawn_gossip_broadcast(
+    transport: Arc<IrohTransport>,
+    segment_path: std::path::PathBuf,
+) -> tokio::task::JoinHandle<()> {
+    use crate::cluster::PeerPubkey;
+    use crate::cluster::gossip::GossipPolicy;
+    use crate::cluster::wal_sync::{GossipState, collect_gossipable_frames};
+    tokio::spawn(async move {
+        let policy = GossipPolicy::default();
+        let mut state = GossipState::new();
+        let self_id = PeerPubkey::new(uuid::Uuid::now_v7().to_string());
+        let wal_dir = segment_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut current = segment_path.clone();
+        let mut last_offset = 0usize;
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            if transport.peer_count() == 0 {
+                continue; // no peers ⇒ nothing to gossip
+            }
+            let active = newest_wal_segment(&wal_dir).unwrap_or_else(|| current.clone());
+            if active != current {
+                current = active.clone();
+                last_offset = 0; // rollover ⇒ offset is meaningless for the new file
+            }
+            let Ok(bytes) = tokio::fs::read(&current).await else {
+                continue;
+            };
+            let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
+                continue;
+            };
+            if hdr.is_compressed() {
+                continue; // finalised/rolled segment — body is zstd, skip
+            }
+            let header_len = hdr.header_len();
+            if bytes.len() <= header_len {
+                continue;
+            }
+            let body = &bytes[header_len..];
+            let (frames, new_offset) = collect_gossipable_frames(body, last_offset, &policy, 32);
+            last_offset = new_offset; // always advance (best-effort)
+            for (event_type, raw) in frames {
+                let ts = crate::time::now_unix_i64();
+                if let Some(gframe) = state.build_outbound(&self_id, event_type, raw, ts, &policy) {
+                    if let Ok(wire) = serde_json::to_vec(&gframe) {
+                        let _ = transport.broadcast(&wire).await;
+                    }
+                }
+            }
+        }
     })
 }
 
