@@ -83,6 +83,54 @@ export component ResourcesView inherits Rectangle {
     }
 }
 
+// Reusable read-only probe surface: a header line, a refresh action, and a
+// mono output panel. Used by Agents (cluster/agent topology) and Automation
+// (cron jobs + n8n). The Buddy reacts via the caller's GuiActivity.
+export component ProbeView inherits Rectangle {
+    in property <string> blurb;
+    in property <string> action-label: "Refresh";
+    in property <string> output: "";
+    in property <bool> running: false;
+    in property <string> empty-hint: "Click refresh to load.";
+    callback run-clicked();
+
+    background: Theme.bg-base;
+    VerticalLayout {
+        padding: 28px; spacing: 14px;
+        HorizontalLayout {
+            alignment: space-between;
+            Text {
+                text: root.blurb; color: Theme.text-secondary;
+                font-family: Theme.font-sans; font-size: Theme.font-size-md; vertical-alignment: center;
+            }
+            Rectangle {
+                width: btn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
+                background: root.running ? Theme.surface-2 : Theme.accent-tint;
+                border-width: 1px; border-color: Theme.border-accent;
+                btn := Text {
+                    text: root.running ? "running…" : root.action-label;
+                    color: root.running ? Theme.text-tertiary : Theme.accent;
+                    font-family: Theme.font-sans; font-size: Theme.font-size-sm; vertical-alignment: center;
+                }
+                TouchArea { clicked => { if (!root.running) { root.run-clicked(); } } }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1; border-radius: Theme.radius-lg;
+            background: Theme.bg-void; border-width: 1px; border-color: Theme.border-subtle;
+            Flickable {
+                viewport-width: self.width;
+                Text {
+                    x: 18px; y: 16px; width: parent.width - 36px;
+                    text: root.output != "" ? root.output : root.empty-hint;
+                    color: root.output != "" ? Theme.text-secondary : Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-sm; wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
 // Doctor — runs `neoth doctor` and renders the check output. min:0 in the
 // mockup nav (always available); a one-click health probe.
 export component DoctorView inherits Rectangle {

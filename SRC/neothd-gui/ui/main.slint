@@ -25,7 +25,7 @@ import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentR
 import { ChatView, ChatMessage } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
-import { ResourcesView, DoctorView } from "tabs.slint";
+import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 export { Theme }
 
@@ -280,6 +280,14 @@ export component MainWindow inherits Window {
     in property <string> doctor-output: "";
     in property <bool> doctor-running: false;
     callback doctor-run-clicked();
+    // Agents tab — `neoth cluster status` (the agent/worker topology).
+    in property <string> agents-output: "";
+    in property <bool> agents-running: false;
+    callback agents-refresh-clicked();
+    // Automation tab — `neoth cron list` + `neoth n8n status`.
+    in property <string> automation-output: "";
+    in property <bool> automation-running: false;
+    callback automation-refresh-clicked();
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
     property <string> shell-title:
@@ -1681,22 +1689,23 @@ export component MainWindow inherits Window {
                     running: root.doctor-running;
                     run-clicked => { root.doctor-run-clicked(); }
                 }
-                // Agents / Automation — scaffolded; data wiring lands next.
-                if (root.nav-active == "agents" || root.nav-active == "automation"): Rectangle {
-                    background: Theme.bg-base;
-                    VerticalLayout {
-                        alignment: center; spacing: 10px;
-                        Text {
-                            text: root.shell-title;
-                            color: Theme.text-primary; font-family: Theme.font-display;
-                            font-size: Theme.font-size-display-sm; horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "This surface is being wired up.";
-                            color: Theme.text-tertiary; font-family: Theme.font-mono;
-                            font-size: Theme.font-size-sm; horizontal-alignment: center;
-                        }
-                    }
+                // Agents — the cluster/agent topology (`neoth cluster status`).
+                if root.nav-active == "agents": ProbeView {
+                    blurb: "Agent & worker topology — council hemispheres + cluster nodes.";
+                    action-label: "Refresh agents";
+                    output: root.agents-output;
+                    running: root.agents-running;
+                    empty-hint: "Click \"Refresh agents\" to load the live topology.";
+                    run-clicked => { root.agents-refresh-clicked(); }
+                }
+                // Automation — scheduled jobs + n8n (`neoth cron list` / `n8n status`).
+                if root.nav-active == "automation": ProbeView {
+                    blurb: "Automation — scheduled crons + the n8n workflow bridge.";
+                    action-label: "Refresh automation";
+                    output: root.automation-output;
+                    running: root.automation-running;
+                    empty-hint: "Click \"Refresh automation\" to load crons + n8n status.";
+                    run-clicked => { root.automation-refresh-clicked(); }
                 }
 
                 StatusFooter {

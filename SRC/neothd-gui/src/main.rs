@@ -825,6 +825,48 @@ fn main() -> Result<()> {
         });
     });
 
+    // Agents tab — `neothd cluster status` (the agent/worker + node topology).
+    let weak_agents = window.as_weak();
+    window.on_agents_refresh_clicked(move || {
+        let Some(w0) = weak_agents.upgrade() else {
+            return;
+        };
+        w0.set_agents_running(true);
+        buddy(&w0, GuiActivity::AgentDeploy);
+        let weak = weak_agents.clone();
+        std::thread::spawn(move || {
+            let output = run_neothd_probe(&["cluster", "status"]);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_agents_output(output.into());
+                    w.set_agents_running(false);
+                }
+            });
+        });
+    });
+
+    // Automation tab — scheduled crons + the n8n bridge.
+    let weak_auto = window.as_weak();
+    window.on_automation_refresh_clicked(move || {
+        let Some(w0) = weak_auto.upgrade() else {
+            return;
+        };
+        w0.set_automation_running(true);
+        buddy(&w0, GuiActivity::AgentParallel);
+        let weak = weak_auto.clone();
+        std::thread::spawn(move || {
+            let cron = run_neothd_probe(&["cron", "list"]);
+            let n8n = run_neothd_probe(&["n8n", "status"]);
+            let output = format!("── CRON ──\n{cron}\n\n── N8N ──\n{n8n}");
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_automation_output(output.into());
+                    w.set_automation_running(false);
+                }
+            });
+        });
+    });
+
     // GUI-overhaul feature parity — live connectivity test for a channel
     // (`neoth channel test <name>`, read-only). Off-thread; the daemon's check
     // result (or error) is shaped into the footer status line.
@@ -2170,6 +2212,33 @@ fn fetch_safe_mode_snapshot() -> panel_logic::SafeModeSnapshot {
             panel_logic::parse_safe_mode(&String::from_utf8_lossy(&o.stdout))
         }
         _ => panel_logic::SafeModeSnapshot::default(),
+    }
+}
+
+/// Run a read-only `neothd <args…>` probe; return combined stdout/stderr (or a
+/// friendly error). Backs the Agents / Automation tabs (off the UI thread).
+fn run_neothd_probe(args: &[&str]) -> String {
+    match which_neothd().and_then(|bin| {
+        let mut c = spawn_neothd_plain(&bin);
+        for a in args {
+            c.arg(a);
+        }
+        c.output().ok()
+    }) {
+        Some(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+            let err = String::from_utf8_lossy(&o.stderr);
+            if !err.trim().is_empty() {
+                s.push('\n');
+                s.push_str(&err);
+            }
+            if s.trim().is_empty() {
+                "(no output)".to_string()
+            } else {
+                s
+            }
+        }
+        None => "neothd binary not on PATH.".to_string(),
     }
 }
 
