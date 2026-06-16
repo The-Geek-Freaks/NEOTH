@@ -50,6 +50,7 @@ pub mod autonomy;
 /// EM-02b — `neoth calendar` CalDAV calendar (VEVENT) list/add surface.
 pub mod calendar;
 pub mod checkpoint;
+pub mod computer_use;
 pub mod credential;
 pub mod cron;
 pub mod dream;
@@ -339,6 +340,10 @@ pub enum Commands {
     /// base URL n8n POSTs to + whether the `n8n` binary is on PATH;
     /// `workflows` lists the NEOTH starter workflows bundled in the binary.
     N8n(n8n::N8nArgs),
+    /// Manage NEOTH's desktop computer-use capability (trycua cua-driver,
+    /// wired as a gated MCP server): status / enable / disable / install.
+    #[command(name = "computer-use")]
+    ComputerUse(computer_use::ComputerUseArgs),
 
     /// Fire a scheduled job NOW, out of band of the daemon scheduler:
     /// `cron run <id>` loads jobs.yaml, runs the job through the configured
@@ -1029,6 +1034,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::N8n(args) => {
             n8n::run_n8n(args, global_output)?;
+        }
+        Commands::ComputerUse(args) => {
+            computer_use::run_computer_use(args, global_output)?;
         }
         Commands::Credential(args) => {
             credential::run_credential(args, global_output)?;

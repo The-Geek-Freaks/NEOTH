@@ -103,6 +103,7 @@ pub mod cloud;
 pub mod cluster;
 pub mod code_map;
 pub mod coding;
+pub mod computer_use;
 pub mod config;
 pub mod consent;
 pub mod context;
