@@ -22,7 +22,10 @@ use tracing_subscriber::EnvFilter;
 /// unit-tested without Slint). The `.slint` binds its `show_*` properties to
 /// [`panel_logic::PanelVisibility`], populated on startup from the operator's
 /// complexity level.
+mod buddy_activity;
 mod panel_logic;
+
+use buddy_activity::GuiActivity;
 
 slint::include_modules!();
 
@@ -330,8 +333,7 @@ fn main() -> Result<()> {
         };
 
         // Buddy reacts: the operator just asked → the orb starts thinking.
-        w.set_buddy_mood("thinking".into());
-        w.set_buddy_caption("thinking…".into());
+        buddy(&w, GuiActivity::ChatThinking);
 
         use slint::{Model, ModelRc, VecModel};
         let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
@@ -395,8 +397,7 @@ fn main() -> Result<()> {
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(w) = weak_live.upgrade() {
                                     // Reply deltas are arriving → the orb is on it.
-                                    w.set_buddy_mood("working".into());
-                                    w.set_buddy_caption("on it".into());
+                                    buddy(&w, GuiActivity::ChatStreaming);
                                     use slint::{Model, ModelRc, VecModel};
                                     let mut rows: Vec<ChatMessage> =
                                         w.get_chat_messages().iter().collect();
@@ -483,13 +484,7 @@ fn main() -> Result<()> {
                     // Buddy reflects the outcome: a win lights it green, a
                     // failure shows the error face. It holds that state until
                     // the next message resets it to "thinking".
-                    if succeeded {
-                        w.set_buddy_mood("success".into());
-                        w.set_buddy_caption("done ✓".into());
-                    } else {
-                        w.set_buddy_mood("error".into());
-                        w.set_buddy_caption("error".into());
-                    }
+                    buddy(&w, if succeeded { GuiActivity::ChatDone } else { GuiActivity::ChatError });
                 }
             });
         });
@@ -738,6 +733,9 @@ fn main() -> Result<()> {
     let weak_kanban_refresh = window.as_weak();
     let mutex_refresh = kanban_snapshot.clone();
     window.on_kanban_refresh_clicked(move || {
+        if let Some(w) = weak_kanban_refresh.upgrade() {
+            buddy(&w, GuiActivity::AgentParallel);
+        }
         let weak = weak_kanban_refresh.clone();
         let mutex = mutex_refresh.clone();
         std::thread::spawn(move || {
@@ -773,6 +771,9 @@ fn main() -> Result<()> {
     // result (or error) is shaped into the footer status line.
     let weak_channel_test = window.as_weak();
     window.on_channel_test(move |name| {
+        if let Some(w) = weak_channel_test.upgrade() {
+            buddy(&w, GuiActivity::ChannelTest);
+        }
         let weak = weak_channel_test.clone();
         let name = name.to_string();
         std::thread::spawn(move || {
@@ -849,6 +850,9 @@ fn main() -> Result<()> {
     // would-wipe summary; it mutates nothing.
     let weak_mem_preview = window.as_weak();
     window.on_memory_forget_preview(move |topic| {
+        if let Some(w) = weak_mem_preview.upgrade() {
+            buddy(&w, GuiActivity::MemoryForget);
+        }
         let weak = weak_mem_preview.clone();
         let topic = topic.to_string();
         std::thread::spawn(move || {
@@ -927,6 +931,9 @@ fn main() -> Result<()> {
     // shows + reports a status line.
     let weak_skill_toggle = window.as_weak();
     window.on_skill_toggle(move |id, enabled| {
+        if let Some(w) = weak_skill_toggle.upgrade() {
+            buddy(&w, GuiActivity::SettingsApplied);
+        }
         let weak = weak_skill_toggle.clone();
         let id = id.to_string();
         std::thread::spawn(move || {
@@ -998,6 +1005,10 @@ fn main() -> Result<()> {
     // the combo + every autonomy-derived display update without a reload.
     let weak_autonomy_set = window.as_weak();
     window.on_autonomy_set(move |level| {
+        if let Some(w) = weak_autonomy_set.upgrade() {
+            // Autonomy is a trust decision → the orb shows the secured state.
+            buddy(&w, GuiActivity::Secured);
+        }
         let weak = weak_autonomy_set.clone();
         let level = level.to_string();
         std::thread::spawn(move || {
@@ -2101,6 +2112,16 @@ fn fetch_safe_mode_snapshot() -> panel_logic::SafeModeSnapshot {
         }
         _ => panel_logic::SafeModeSnapshot::default(),
     }
+}
+
+/// Central Buddy driver — the ONE place a GUI event becomes an orb reaction.
+/// Every handler that wants the Buddy to react calls `buddy(&w, GuiActivity::X)`
+/// instead of poking `set_buddy_mood` directly, so the orb's vocabulary stays
+/// consistent (see `buddy_activity::GuiActivity`).
+fn buddy(window: &MainWindow, activity: GuiActivity) {
+    let (mood, caption) = activity.mood();
+    window.set_buddy_mood(mood.into());
+    window.set_buddy_caption(caption.into());
 }
 
 /// GR-10 — push a parsed safe-mode snapshot onto the `MainWindow` Privacy-tab
