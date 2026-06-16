@@ -24,6 +24,7 @@ import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow } from "settings.slint";
 import { ChatView, ChatMessage } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
+import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 
 // SPEC-05 — one saved preset for the selector tile.
@@ -265,6 +266,28 @@ export component MainWindow inherits Window {
     in property <string> buddy-caption: "ready";
     in property <bool> buddy-visible: true;
     callback buddy-clicked();
+
+    // ── App-shell navigation (design-system desktop layout) ───────────
+    // The persistent sidebar's active tab. "chat" shows the ChatView; the
+    // settings-family tabs (memory/hemispheres/channels/coding/privacy/
+    // plugins/cluster/config) drive SettingsView's subtab; agents/automation/
+    // resources/doctor are the net-new mockup tabs.
+    in-out property <string> nav-active: "chat";
+    in-out property <int> nav-complexity: 2;     // 0 minimal · 1 standard · 2 full
+    property <string> shell-title:
+        root.nav-active == "chat"        ? "Chat"
+        : root.nav-active == "memory"      ? "Memory"
+        : root.nav-active == "hemispheres" ? "Hemispheres"
+        : root.nav-active == "channels"    ? "Channels"
+        : root.nav-active == "coding"      ? "Coding"
+        : root.nav-active == "agents"      ? "Agents"
+        : root.nav-active == "automation"  ? "Automation"
+        : root.nav-active == "privacy"     ? "Privacy"
+        : root.nav-active == "plugins"     ? "Plugins"
+        : root.nav-active == "cluster"     ? "Private Mesh"
+        : root.nav-active == "resources"   ? "Resources"
+        : root.nav-active == "doctor"      ? "Doctor"
+        : "Config";
 
     /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
     /// preset tile. Rust shells `neothd preset apply <active>`
@@ -1464,8 +1487,38 @@ export component MainWindow inherits Window {
         } }  // close Done VerticalLayout + SovereignFade
 
         // ── Settings (Pick #32) ───────────────────────────────────────
-        if root.step == WizardStep.settings: SettingsView {
-            autonomy-current: root.autonomy-choice;
+        // ══ APP SHELL — persistent sidebar + topbar + content + status ══
+        // The design-system desktop layout. Shown for the main experience
+        // (chat + settings-family + the net-new mockup tabs); the wizard steps
+        // above keep their own full-screen flow for first-run.
+        if (root.step == WizardStep.chat || root.step == WizardStep.settings): HorizontalLayout {
+            Sidebar {
+                active-tab: root.nav-active;
+                complexity: root.nav-complexity;
+                channels-count: root.chat-channels.length;
+                operator-name: root.operator-id != "" ? root.operator-id : "operator";
+                nav(t) => {
+                    root.nav-active = t;
+                    root.step = (t == "chat") ? WizardStep.chat : WizardStep.settings;
+                }
+                set-complexity(l) => { root.nav-complexity = l; }
+            }
+            VerticalLayout {
+                TopBar { kicker: "NEOTH · SOVEREIGN"; title: root.shell-title; }
+
+                SettingsView {
+                    visible: root.nav-active != "chat"
+                        && root.nav-active != "agents" && root.nav-active != "automation"
+                        && root.nav-active != "resources" && root.nav-active != "doctor";
+                    active: root.nav-active == "memory" ? SettingsTab.memory
+                        : root.nav-active == "hemispheres" ? SettingsTab.hemispheres
+                        : root.nav-active == "channels" ? SettingsTab.channels
+                        : root.nav-active == "coding" ? SettingsTab.code-sessions
+                        : root.nav-active == "privacy" ? SettingsTab.privacy
+                        : root.nav-active == "plugins" ? SettingsTab.plugins
+                        : root.nav-active == "cluster" ? SettingsTab.cluster
+                        : SettingsTab.config;
+                    autonomy-current: root.autonomy-choice;
             provider-current: root.provider-choice;
             provider-current-index: root.provider-choice-index;
             // GU-03 panel-visibility flows MainWindow → SettingsView.
@@ -1585,32 +1638,58 @@ export component MainWindow inherits Window {
             usage-note: root.usage-note;
             // G-5 fix: route "← Chat" back to the Chat surface so the
             // operator can leave Settings without hunting for an exit.
-            back-clicked => { root.step = WizardStep.chat; }
-        }
+                    back-clicked => { root.nav-active = "chat"; root.step = WizardStep.chat; }
+                }
 
-        // ── Chat (Pick #33) ───────────────────────────────────────────
-        // Primary post-onboarding view. Operator types + sees the
-        // scrollback + slash autocomplete. ⚙ icon in sidebar opens
-        // Settings.
-        // G-27 (2026-05-21): sovereign-curve entry fade on the chat
-        // surface — operator transitions from Done → Chat with a
-        // 600ms ease-in. Slint's `if`-remount triggers init →
-        // opacity 0→1 → smooth fade.
-        if root.step == WizardStep.chat: SovereignFade { ChatView {
-            messages: root.chat-messages;
-            composer-draft <=> root.chat-composer-draft;
-            send-enabled: root.chat-send-enabled;
-            slash-active: root.chat-slash-active;
-            channels: root.chat-channels;
-            active-channel-index <=> root.chat-active-channel;
-            unread-counts: root.chat-unread-counts;
-            send-clicked(text) => { root.chat-send-clicked(text); }
-            channel-switched(idx) => { root.chat-channel-switched(idx); }
-            open-settings => { root.step = WizardStep.settings; }
-        } }  // close ChatView + SovereignFade
+                // Chat — primary surface, inside the shell content. Sovereign-
+                // curve fade on remount (Slint `if`-remount → opacity 0→1).
+                if root.nav-active == "chat": SovereignFade { ChatView {
+                    messages: root.chat-messages;
+                    composer-draft <=> root.chat-composer-draft;
+                    send-enabled: root.chat-send-enabled;
+                    slash-active: root.chat-slash-active;
+                    channels: root.chat-channels;
+                    active-channel-index <=> root.chat-active-channel;
+                    unread-counts: root.chat-unread-counts;
+                    send-clicked(text) => { root.chat-send-clicked(text); }
+                    channel-switched(idx) => { root.chat-channel-switched(idx); }
+                    open-settings => { root.nav-active = "config"; }
+                } }  // close ChatView + SovereignFade
+
+                // Net-new mockup tabs (Agents / Automation / Resources / Doctor)
+                // — scaffolded; data wiring lands in follow-up slices.
+                if (root.nav-active == "agents" || root.nav-active == "automation"
+                        || root.nav-active == "resources" || root.nav-active == "doctor"): Rectangle {
+                    background: Theme.bg-base;
+                    VerticalLayout {
+                        alignment: center; spacing: 10px;
+                        Text {
+                            text: root.shell-title;
+                            color: Theme.text-primary; font-family: Theme.font-display;
+                            font-size: Theme.font-size-display-sm; horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "This surface is being wired up.";
+                            color: Theme.text-tertiary; font-family: Theme.font-mono;
+                            font-size: Theme.font-size-sm; horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                StatusFooter {
+                    hardware: root.hardware-summary;
+                    cluster-id: root.cluster-mdns-enabled ? "nh-mesh" : "";
+                    peers: root.cluster-peers.length;
+                    wal-ok: true;
+                    local: true;
+                }
+            }  // close shell content VerticalLayout
+        }  // close shell HorizontalLayout
     }
 
-        FooterBar {
+        // Wizard footer — the app-shell uses its own StatusFooter, so this only
+        // shows for the first-run wizard steps (avoids a double footer).
+        if (root.step != WizardStep.chat && root.step != WizardStep.settings): FooterBar {
             // GUI-overhaul: the footer is the single status surface for EVERY
             // screen. status-line (set by Settings actions — skill/plugin/autonomy
             // toggles, channel tests, hemisphere rebinds, memory ops) takes

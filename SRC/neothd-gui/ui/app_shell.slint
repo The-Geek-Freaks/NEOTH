@@ -1,0 +1,284 @@
+// NEOTH desktop app shell — the persistent-sidebar layout from the design
+// mockup (design-system/, ui_kits/desktop/shell.jsx): a 248px rail with the
+// brand + Buddy, a tier-coloured nav, a complexity selector, and the operator
+// card; a 68px topbar; a 34px mono status footer. This replaces the old
+// wizard-only navigation for the main experience — the wizard stays for
+// first-run, the shell is the home.
+
+import { Theme } from "theme.slint";
+import { Buddy } from "buddy.slint";
+
+// One sidebar nav entry. `tier` tints the active state by meaning
+// (memory=green, consent=pink, default=accent-green), per the mockup.
+component NavBtn inherits Rectangle {
+    in property <string> label;
+    in property <string> glyph;
+    in property <string> tier;          // "memory" | "consent" | ""
+    in property <bool> active;
+    in property <int> count: -1;        // ≥0 shows a count chip
+    callback clicked();
+
+    property <color> tier-color: root.tier == "memory" ? Theme.memory
+        : root.tier == "consent" ? Theme.consent
+        : Theme.accent;
+
+    height: 38px;
+    border-radius: Theme.radius-md;
+    background: root.active ? Theme.surface-2 : transparent;
+    animate background { duration: Theme.duration-fast; easing: ease-out; }
+
+    // active rail (left, 2px, tier-coloured)
+    Rectangle {
+        x: 0; width: 2px; y: 8px; height: parent.height - 16px;
+        border-radius: 2px;
+        background: root.tier-color;
+        opacity: root.active ? 1.0 : 0.0;
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px; spacing: 11px;
+        alignment: start;
+        Rectangle {
+            width: 18px; vertical-stretch: 0;
+            Text {
+                text: root.glyph;
+                color: root.active ? root.tier-color : Theme.text-tertiary;
+                font-size: 14px; font-family: Theme.font-mono;
+                vertical-alignment: center; horizontal-alignment: center;
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.active ? Theme.text-primary : Theme.text-secondary;
+            font-size: 14px; font-family: Theme.font-sans;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        // count chip
+        Rectangle {
+            visible: root.count >= 0;
+            y: (parent.height - self.height) / 2; height: 16px;
+            width: cnt.width + 14px;
+            border-radius: Theme.radius-pill;
+            background: Theme.surface-3;
+            cnt := Text {
+                text: root.count >= 0 ? "\{root.count}" : "";
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 10px;
+                x: 7px; vertical-alignment: center;
+            }
+        }
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+// Complexity segment (minimal / standard / full) — mirrors NEOTH's persona
+// panel_logic; reveals more nav as the operator levels up.
+component ComplexitySeg inherits Rectangle {
+    in property <int> level;            // 0..2
+    callback set-level(int);
+    height: 30px;
+    border-radius: Theme.radius-md;
+    background: Theme.bg-sunken;
+    border-width: 1px; border-color: Theme.border-default;
+    HorizontalLayout {
+        padding: 3px; spacing: 3px;
+        for seg[i] in ["MIN", "STD", "FULL"]: Rectangle {
+            border-radius: Theme.radius-sm;
+            background: root.level == i ? Theme.accent-tint : transparent;
+            border-width: root.level == i ? 1px : 0px;
+            border-color: Theme.border-accent;
+            Text {
+                text: seg; color: root.level == i ? Theme.accent : Theme.text-tertiary;
+                font-family: Theme.font-mono; font-size: 10px;
+                letter-spacing: Theme.letter-spacing-tight;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+            TouchArea { clicked => { root.set-level(i); } }
+        }
+    }
+}
+
+// The full left rail.
+export component Sidebar inherits Rectangle {
+    in property <string> active-tab: "chat";
+    in property <int> complexity: 2;             // 0 minimal .. 2 full
+    in property <bool> theme-dark: true;
+    in property <string> operator-name: "operator";
+    in property <int> channels-count: 0;
+    callback nav(string);
+    callback set-complexity(int);
+    callback toggle-theme();
+
+    width: 248px;
+    background: Theme.bg-sunken;
+    // right hairline
+    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border-subtle; }
+
+    VerticalLayout {
+        padding: 18px; padding-top: 18px; spacing: 2px;
+
+        // brand
+        HorizontalLayout {
+            spacing: 12px; alignment: start;
+            padding-bottom: 16px;
+            Buddy { mood: "idle"; orb-size: 34px; show-face: true; }
+            VerticalLayout {
+                alignment: center; spacing: 3px;
+                Text {
+                    text: "NEOTH"; color: Theme.accent;
+                    font-family: Theme.font-wordmark; font-size: 23px; font-weight: 700;
+                    letter-spacing: 1px;
+                }
+                Text {
+                    text: "v1.0 · SOVEREIGN"; color: Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: 9px;
+                    letter-spacing: Theme.letter-spacing-wide;
+                }
+            }
+        }
+
+        // nav (filtered by complexity)
+        Flickable {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 2px;
+                NavBtn { label: "Chat"; glyph: "💬"; active: root.active-tab == "chat"; clicked => { root.nav("chat"); } }
+                NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
+                NavBtn { label: "Hemispheres"; glyph: "◐"; visible: root.complexity >= 1; active: root.active-tab == "hemispheres"; clicked => { root.nav("hemispheres"); } }
+                NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
+                NavBtn { label: "Coding"; glyph: "⌘"; visible: root.complexity >= 1; active: root.active-tab == "coding"; clicked => { root.nav("coding"); } }
+                NavBtn { label: "Agents"; glyph: "⚇"; visible: root.complexity >= 2; active: root.active-tab == "agents"; clicked => { root.nav("agents"); } }
+                NavBtn { label: "Automation"; glyph: "⟳"; visible: root.complexity >= 2; active: root.active-tab == "automation"; clicked => { root.nav("automation"); } }
+                NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }
+                NavBtn { label: "Plugins"; glyph: "⧉"; visible: root.complexity >= 2; active: root.active-tab == "plugins"; clicked => { root.nav("plugins"); } }
+                NavBtn { label: "Mesh"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }
+                NavBtn { label: "Resources"; glyph: "▦"; visible: root.complexity >= 2; active: root.active-tab == "resources"; clicked => { root.nav("resources"); } }
+                NavBtn { label: "Doctor"; glyph: "✚"; active: root.active-tab == "doctor"; clicked => { root.nav("doctor"); } }
+                NavBtn { label: "Config"; glyph: "⚙"; active: root.active-tab == "config"; clicked => { root.nav("config"); } }
+            }
+        }
+
+        // complexity selector
+        Rectangle {
+            height: 1px; background: Theme.border-subtle;
+        }
+        VerticalLayout {
+            padding-top: 12px; padding-bottom: 12px; spacing: 8px;
+            Text {
+                text: "COMPLEXITY"; color: Theme.text-tertiary;
+                font-family: Theme.font-mono; font-size: 9px; letter-spacing: Theme.letter-spacing-wide;
+            }
+            ComplexitySeg { level: root.complexity; set-level(l) => { root.set-complexity(l); } }
+        }
+
+        // operator footer
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        HorizontalLayout {
+            padding-top: 12px; spacing: 10px; alignment: start;
+            Rectangle {
+                width: 32px; height: 32px;
+                border-radius: Theme.radius-sm;
+                background: Theme.accent-tint;
+                border-width: 1px; border-color: Theme.border-accent;
+                Text {
+                    text: "NH"; color: Theme.accent;
+                    font-family: Theme.font-mono; font-size: 11px;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+            VerticalLayout {
+                alignment: center; horizontal-stretch: 1;
+                Text {
+                    text: root.operator-name; color: Theme.text-primary; font-size: 13px;
+                    overflow: elide;
+                }
+                Text {
+                    text: "OPERATOR"; color: Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: 9px; letter-spacing: Theme.letter-spacing-wide;
+                }
+            }
+            Rectangle {
+                width: 28px; height: 28px; border-radius: Theme.radius-sm;
+                background: ta.has-hover ? Theme.surface-2 : transparent;
+                Text {
+                    text: root.theme-dark ? "☀" : "☾"; color: Theme.text-secondary; font-size: 14px;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                ta := TouchArea { clicked => { root.toggle-theme(); } }
+            }
+        }
+    }
+}
+
+// Topbar — mono kicker + display title; a right slot via `@children`.
+export component TopBar inherits Rectangle {
+    in property <string> kicker;
+    in property <string> title;
+    height: 68px;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+    HorizontalLayout {
+        padding-left: 28px; padding-right: 28px; alignment: space-between;
+        VerticalLayout {
+            alignment: center; spacing: 2px;
+            Text {
+                text: root.kicker; color: Theme.text-tertiary;
+                font-family: Theme.font-mono; font-size: 10px; letter-spacing: Theme.letter-spacing-extra-wide;
+            }
+            Text {
+                text: root.title; color: Theme.text-primary;
+                font-family: Theme.font-display; font-size: 26px;
+            }
+        }
+        HorizontalLayout { alignment: end; spacing: 16px; @children }
+    }
+}
+
+// Status footer — live hardware + cluster + WAL state, mono.
+export component StatusFooter inherits Rectangle {
+    in property <string> hardware: "";
+    in property <string> cluster-id: "";
+    in property <int> peers: 0;
+    in property <bool> wal-ok: true;
+    in property <bool> local: true;
+
+    height: 34px;
+    background: Theme.bg-sunken;
+    Rectangle { y: 0; height: 1px; background: Theme.border-subtle; }
+    HorizontalLayout {
+        padding-left: 22px; padding-right: 22px; alignment: space-between;
+        HorizontalLayout {
+            alignment: start; spacing: 10px;
+            Text { text: "⬡"; color: Theme.accent; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            Text { text: "neoth-core"; color: Theme.text-secondary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            Text {
+                text: root.hardware != "" ? "· " + root.hardware : "";
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+                overflow: elide; horizontal-stretch: 1;
+            }
+        }
+        HorizontalLayout {
+            alignment: end; spacing: 10px;
+            Text {
+                text: root.cluster-id != "" ? "cluster " + root.cluster-id : "cluster off";
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+            }
+            Text {
+                text: root.peers > 0 ? "· \{root.peers} peers" : "";
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+            }
+            Rectangle {
+                width: 7px; height: 7px; border-radius: 3.5px;
+                background: root.wal-ok ? Theme.audit : Theme.text-disabled;
+                y: (parent.height - self.height) / 2;
+            }
+            Text { text: "WAL"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            Rectangle {
+                width: 7px; height: 7px; border-radius: 3.5px;
+                background: root.local ? Theme.memory : Theme.text-disabled;
+                y: (parent.height - self.height) / 2;
+            }
+            Text { text: "local"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+        }
+    }
+}
