@@ -52,6 +52,7 @@ pub mod calendar;
 pub mod checkpoint;
 pub mod computer_use;
 pub mod credential;
+pub mod self_improve;
 pub mod cron;
 pub mod dream;
 pub mod ecology;
@@ -345,6 +346,10 @@ pub enum Commands {
     /// wired as a gated MCP server): status / enable / disable / install.
     #[command(name = "computer-use")]
     ComputerUse(computer_use::ComputerUseArgs),
+    /// Self-improvement — evolve NEOTH's skills with SkillOpt (ask-first switch;
+    /// status / enable / disable / run / log).
+    #[command(name = "self-improve")]
+    SelfImprove(self_improve::SelfImproveArgs),
     /// Export NEOTH's knowledge as an Open Knowledge Format (OKF) bundle —
     /// interconnected Obsidian-native markdown concept docs.
     Okf(okf::OkfArgs),
@@ -1041,6 +1046,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::ComputerUse(args) => {
             computer_use::run_computer_use(args, global_output).await?;
+        }
+        Commands::SelfImprove(args) => {
+            self_improve::run_self_improve(args, global_output)?;
         }
         Commands::Okf(args) => {
             okf::run_okf(args, global_output)?;

@@ -105,6 +105,7 @@ pub mod code_map;
 pub mod coding;
 pub mod computer_use;
 pub mod config;
+pub mod self_improve;
 pub mod consent;
 pub mod context;
 pub mod council;

@@ -150,12 +150,45 @@ pub(crate) fn check_wal_audit_health(_home: &Path) -> CheckOutcome {
     }
 }
 
+/// Self-improvement (SkillOpt) — switch state + engine availability + last run.
+pub(crate) fn check_self_improve(home: &Path) -> CheckOutcome {
+    let cfg = crate::self_improve::SelfImproveConfig::load(home);
+    let installed = crate::self_improve::is_installed();
+    let (status, detail) = if cfg.enabled && installed {
+        let detail = match crate::self_improve::last_record(home) {
+            Some(r) => format!(
+                "enabled; last: {} ({})",
+                r.skill,
+                if r.accepted { "improved" } else { "no change" }
+            ),
+            None => "enabled; SkillOpt ready; no runs yet".to_string(),
+        };
+        (CheckStatus::Pass, detail)
+    } else if cfg.enabled && !installed {
+        (
+            CheckStatus::Warn,
+            "enabled but SkillOpt not installed — `pip install skillopt`".to_string(),
+        )
+    } else {
+        (
+            CheckStatus::Pass,
+            "off (optional) — `neoth self-improve enable` to let NEOTH evolve its skills".to_string(),
+        )
+    };
+    CheckOutcome {
+        name: "self-improvement",
+        status,
+        detail,
+    }
+}
+
 pub(crate) const CHECKS: &[CheckFn] = &[
     check_computer_use,
     check_okf_export,
     check_iroh_transport,
     check_mcp_servers,
     check_wal_audit_health,
+    check_self_improve,
 ];
 
 pub(crate) const DOCS: &[CheckDoc] = &[
@@ -202,6 +235,15 @@ pub(crate) const DOCS: &[CheckDoc] = &[
         common_failures: "Daemon never run (no WAL dir); empty WAL dir.",
         fix: "Run `neoth serve` once to initialise the WAL; `neoth wal show` to \
               inspect frames.",
+    },
+    CheckDoc {
+        name: "self-improvement",
+        purpose: "Whether NEOTH's SkillOpt-based self-evolution is enabled + the \
+                  engine is installed, plus the last improvement outcome. NEOTH \
+                  can evolve its own skills (validation-gated, review-then-adopt).",
+        common_failures: "Switch off (default — opt-in); SkillOpt not pip-installed.",
+        fix: "`pip install skillopt`; `neoth self-improve enable [--auto]`; \
+              `neoth self-improve run` / `log` to drive + inspect.",
     },
 ];
 
