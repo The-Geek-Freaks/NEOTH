@@ -766,6 +766,45 @@ fn main() -> Result<()> {
         }
     });
 
+    // Doctor tab (design-mockup surface) — run `neothd doctor` read-only and
+    // stream the check output into the panel. The Buddy verifies while it runs.
+    let weak_doctor = window.as_weak();
+    window.on_doctor_run_clicked(move || {
+        let Some(w0) = weak_doctor.upgrade() else {
+            return;
+        };
+        w0.set_doctor_running(true);
+        buddy(&w0, GuiActivity::AuditVerify);
+        let weak = weak_doctor.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd()
+                .and_then(|bin| spawn_neothd_plain(&bin).arg("doctor").output().ok())
+            {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "neoth doctor produced no output.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot run doctor.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_doctor_output(output.into());
+                    w.set_doctor_running(false);
+                    buddy(&w, GuiActivity::AuditVerify);
+                }
+            });
+        });
+    });
+
     // GUI-overhaul feature parity — live connectivity test for a channel
     // (`neoth channel test <name>`, read-only). Off-thread; the daemon's check
     // result (or error) is shaped into the footer status line.

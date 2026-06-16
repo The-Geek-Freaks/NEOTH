@@ -1,0 +1,137 @@
+// NEOTH app-shell content tabs that are net-new vs the legacy GUI — the
+// design mockup (ui_kits/desktop) carries them as top-level surfaces. Each is
+// a real, wired view (not a placeholder): Resources reads the live hardware
+// probe; Doctor runs `neoth doctor`.
+
+import { Theme } from "theme.slint";
+
+// One labelled stat row (mono eyebrow + value).
+component StatRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 52px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px; border-color: Theme.border-subtle;
+    HorizontalLayout {
+        padding-left: 16px; padding-right: 16px; alignment: space-between;
+        VerticalLayout {
+            alignment: center; spacing: 3px;
+            Text {
+                text: root.label; color: Theme.text-tertiary;
+                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                letter-spacing: Theme.letter-spacing-wide;
+            }
+            Text {
+                text: root.value != "" ? root.value : "—";
+                color: Theme.text-primary; font-family: Theme.font-sans; font-size: Theme.font-size-base;
+            }
+        }
+    }
+}
+
+// Resources — the live hardware probe (CPU / memory / accelerator / VRAM /
+// disk / local models), the mockup's "neoth-core" surface.
+export component ResourcesView inherits Rectangle {
+    in property <string> cpu;
+    in property <string> memory;
+    in property <string> accelerator;
+    in property <string> vram;
+    in property <float> vram-fraction;
+    in property <string> disk;
+    in property <int> models-count: 0;
+
+    background: Theme.bg-base;
+    VerticalLayout {
+        padding: 28px; spacing: 14px; alignment: start;
+
+        Text {
+            text: "Local hardware — your compute, your machine.";
+            color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-md;
+        }
+
+        StatRow { label: "CPU"; value: root.cpu; }
+        StatRow { label: "MEMORY"; value: root.memory; }
+        StatRow { label: "ACCELERATOR"; value: root.accelerator; }
+
+        // VRAM with a usage meter
+        Rectangle {
+            height: 72px; border-radius: Theme.radius-md;
+            background: Theme.surface-1; border-width: 1px; border-color: Theme.border-subtle;
+            VerticalLayout {
+                padding: 16px; spacing: 8px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text { text: "VRAM"; color: Theme.text-tertiary; font-family: Theme.font-mono;
+                           font-size: Theme.font-size-2xs; letter-spacing: Theme.letter-spacing-wide; }
+                    Text { text: root.vram != "" ? root.vram : "—"; color: Theme.text-primary;
+                           font-family: Theme.font-sans; font-size: Theme.font-size-base; }
+                }
+                Rectangle {
+                    height: 6px; border-radius: 3px; background: Theme.surface-3;
+                    Rectangle {
+                        x: 0; height: parent.height; border-radius: 3px;
+                        width: parent.width * clamp(root.vram-fraction, 0.0, 1.0);
+                        background: Theme.audit;     // cyan = compute/info
+                    }
+                }
+            }
+        }
+
+        StatRow { label: "DISK"; value: root.disk; }
+        StatRow { label: "LOCAL MODELS"; value: root.models-count > 0 ? "\{root.models-count} installed" : "none"; }
+    }
+}
+
+// Doctor — runs `neoth doctor` and renders the check output. min:0 in the
+// mockup nav (always available); a one-click health probe.
+export component DoctorView inherits Rectangle {
+    in property <string> output: "";
+    in property <bool> running: false;
+    callback run-clicked();
+
+    background: Theme.bg-base;
+    VerticalLayout {
+        padding: 28px; spacing: 14px;
+
+        HorizontalLayout {
+            alignment: space-between;
+            VerticalLayout {
+                alignment: center; spacing: 3px;
+                Text {
+                    text: "System health — read-only checks across providers, storage, channels, cluster.";
+                    color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-md;
+                }
+            }
+            Rectangle {
+                width: btn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
+                background: root.running ? Theme.surface-2 : Theme.accent-tint;
+                border-width: 1px; border-color: Theme.border-accent;
+                btn := Text {
+                    text: root.running ? "running…" : "Run neoth doctor";
+                    color: root.running ? Theme.text-tertiary : Theme.accent;
+                    font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                }
+                TouchArea { clicked => { if (!root.running) { root.run-clicked(); } } }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-void;
+            border-width: 1px; border-color: Theme.border-subtle;
+            Flickable {
+                viewport-width: self.width;
+                Text {
+                    x: 18px; y: 16px; width: parent.width - 36px;
+                    text: root.output != "" ? root.output : "Click \"Run neoth doctor\" to probe the system.";
+                    color: root.output != "" ? Theme.text-secondary : Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-sm;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
