@@ -43,8 +43,32 @@ pub enum ReflectAction {
         #[arg(long)]
         off: bool,
     },
-    /// Show the current per-operator ignore + pin lists + weekly-refresh state.
+    /// Turn the nightly daily self-reflection on (daemon archives a daily
+    /// summary + writes an Obsidian daily note). `--off` turns it back off.
+    Daily {
+        #[arg(long)]
+        off: bool,
+    },
+    /// Turn the yearly self-reflection on (daemon archives a yearly summary +
+    /// writes an Obsidian yearly note once a year). `--off` turns it back off.
+    Yearly {
+        #[arg(long)]
+        off: bool,
+    },
+    /// Compose a daily or yearly reflection NOW (archive + Obsidian if a vault is
+    /// configured) without waiting for the cron — handy to test it.
+    Digest {
+        #[arg(value_enum)]
+        period: DigestPeriod,
+    },
+    /// Show the current per-operator ignore + pin lists + cadence states.
     Topics,
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy)]
+pub enum DigestPeriod {
+    Daily,
+    Yearly,
 }
 
 /// Per-operator tuning for the tech-currency gap pass. Stored in its own
@@ -60,6 +84,14 @@ pub struct ReflectTopics {
     /// network fetch to Hacker News; see `crate::daemon::reflection_cron`.
     #[serde(default)]
     pub weekly_refresh: bool,
+    /// Opt-in: the daemon composes a nightly daily reflection (top topics of the
+    /// day) + writes an Obsidian daily note when a vault is configured.
+    #[serde(default)]
+    pub daily_notes: bool,
+    /// Opt-in: the daemon composes a yearly reflection once a year + writes an
+    /// Obsidian yearly summary when a vault is configured.
+    #[serde(default)]
+    pub yearly_summary: bool,
 }
 
 impl ReflectTopics {
@@ -87,8 +119,105 @@ pub async fn run_reflect(args: ReflectArgs, output: OutputFormat) -> Result<()> 
         ReflectAction::Pin { term } => add_topic(&home, &term, false, output),
         ReflectAction::Forget { term } => forget_topic(&home, &term, output),
         ReflectAction::Weekly { off } => set_weekly(&home, !off, output),
+        ReflectAction::Daily { off } => set_cadence(&home, Cadence::Daily, !off, output),
+        ReflectAction::Yearly { off } => set_cadence(&home, Cadence::Yearly, !off, output),
+        ReflectAction::Digest { period } => digest(&home, period, output),
         ReflectAction::Topics => show_topics(&home, output),
     }
+}
+
+#[derive(Clone, Copy)]
+enum Cadence {
+    Daily,
+    Yearly,
+}
+
+fn set_cadence(
+    home: &std::path::Path,
+    cadence: Cadence,
+    on: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let mut topics = ReflectTopics::load(home);
+    let (label, vault_note) = match cadence {
+        Cadence::Daily => {
+            topics.daily_notes = on;
+            ("daily nightly reflection", "Obsidian daily note")
+        }
+        Cadence::Yearly => {
+            topics.yearly_summary = on;
+            ("yearly reflection", "Obsidian yearly summary")
+        }
+    };
+    topics.save(home)?;
+    emit_topics(
+        &topics,
+        output,
+        &if on {
+            format!("{label} ENABLED (daemon archives it + writes the {vault_note} if a vault is set)")
+        } else {
+            format!("{label} disabled")
+        },
+    );
+    Ok(())
+}
+
+fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) -> Result<()> {
+    use crate::reflection::periodic::{self, PeriodKind, date_tag_from_unix, year_tag_from_unix};
+
+    let now_unix = crate::time::now_unix_i64();
+    let now_ns = crate::time::now_unix_ns_i64();
+    let conn = store::open(&home.join("views.db")).context("open views.db")?;
+    let (kind, tag, window, n) = match period {
+        DigestPeriod::Daily => (PeriodKind::Daily, date_tag_from_unix(now_unix), 1, 5),
+        DigestPeriod::Yearly => (PeriodKind::Yearly, year_tag_from_unix(now_unix), 365, 10),
+    };
+    let topics = crate::reflection::top_topics_in_days(&conn, now_ns, window, n)
+        .context("topic query")?;
+    let Some(refl) = periodic::build_reflection(kind, &tag, &topics, now_unix) else {
+        if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+            println!("{}", serde_json::json!({ "kind": kind.as_str(), "tag": tag, "written": false }));
+        } else {
+            println!("{} reflection {tag}: no topics in the window — nothing to summarise.", kind.vault_subdir());
+        }
+        return Ok(());
+    };
+    periodic::append(home, &refl).context("archive reflection")?;
+
+    // Obsidian sync if a vault is configured.
+    let mut obsidian_path = None;
+    if let Ok(cfg) = FreedomConfig::load_from_default_path() {
+        if let Some(vault) = cfg.obsidian_vault.as_deref() {
+            let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
+            let o = periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
+                .context("Obsidian sync")?;
+            if o.written {
+                obsidian_path = Some(o.target_path.display().to_string());
+            }
+        }
+    }
+
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!(
+            "{}",
+            serde_json::json!({
+                "kind": kind.as_str(), "tag": tag, "written": true,
+                "topics": refl.topics, "body": refl.body, "obsidian": obsidian_path,
+            })
+        );
+        return Ok(());
+    }
+    println!("{} reflection {tag} composed:", kind.vault_subdir());
+    println!("  {}", refl.body);
+    if !refl.topics.is_empty() {
+        println!("  topics: {}", refl.topics.join(", "));
+    }
+    if let Some(p) = obsidian_path {
+        println!("  → Obsidian: {p}");
+    } else {
+        println!("  (archived; no Obsidian vault configured — set freedom.yaml::obsidian_vault)");
+    }
+    Ok(())
 }
 
 fn set_weekly(home: &std::path::Path, on: bool, output: OutputFormat) -> Result<()> {
@@ -197,6 +326,8 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
             serde_json::json!({
                 "ignore": topics.ignore, "pin": topics.pin,
                 "weekly_refresh": topics.weekly_refresh,
+                "daily_notes": topics.daily_notes,
+                "yearly_summary": topics.yearly_summary,
             })
         );
         return;
@@ -213,6 +344,14 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
     println!(
         "  weekly: {}",
         if topics.weekly_refresh { "on" } else { "off — `neoth reflect weekly`" }
+    );
+    println!(
+        "  daily : {}",
+        if topics.daily_notes { "on" } else { "off — `neoth reflect daily`" }
+    );
+    println!(
+        "  yearly: {}",
+        if topics.yearly_summary { "on" } else { "off — `neoth reflect yearly`" }
     );
 }
 

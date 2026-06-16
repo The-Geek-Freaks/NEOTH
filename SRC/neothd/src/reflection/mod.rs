@@ -34,6 +34,10 @@ use std::collections::HashMap;
 use anyhow::Result;
 use rusqlite::Connection;
 
+/// Daily + yearly self-reflection cadences (mirrors the weekly OB-02 pattern):
+/// archivable records + Obsidian daily-notes / yearly summaries.
+pub mod periodic;
+
 use crate::proactive::ProactiveItem;
 
 const NS_PER_DAY: i64 = 86_400 * 1_000_000_000;
@@ -80,10 +84,20 @@ static STOPWORD_SET: std::sync::LazyLock<std::collections::HashSet<&'static str>
 /// Pure helper — split out from the producer so tests assert against
 /// data rather than the cron's enqueue side effect.
 pub fn top_topics_last_7_days(conn: &Connection, now_ns: i64, n: usize) -> Result<Vec<String>> {
-    let cutoff = now_ns.saturating_sub(7 * NS_PER_DAY);
-    // Half-open `(cutoff, now]` + RAW_TEXT-only so the weekly summary
-    // reflects what the OPERATOR wrote, not NEOTH's own replies / the
-    // `[INGRESS]` placeholder rows (matches the G-01 detectors' filter).
+    top_topics_in_days(conn, now_ns, 7, n)
+}
+
+/// Generalised window variant of [`top_topics_last_7_days`] — top `n` operator
+/// topics from the last `days` (daily reflection uses 1, weekly 7, yearly 365).
+/// Same `(cutoff, now]` + RAW_TEXT-only filter so summaries reflect what the
+/// OPERATOR wrote, not NEOTH's replies / `[INGRESS]` rows.
+pub fn top_topics_in_days(
+    conn: &Connection,
+    now_ns: i64,
+    days: i64,
+    n: usize,
+) -> Result<Vec<String>> {
+    let cutoff = now_ns.saturating_sub(days.max(1) * NS_PER_DAY);
     let mut stmt = conn.prepare(
         "SELECT text FROM idx_episode \
          WHERE ts_ns > ?1 AND ts_ns <= ?2 AND event_type = ?3",

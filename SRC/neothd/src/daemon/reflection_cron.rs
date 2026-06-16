@@ -163,6 +163,95 @@ async fn run_tech_currency_tick_once(home: &std::path::Path, now_unix: i64) -> R
     Ok(enqueued)
 }
 
+/// Resolve the Obsidian sync target (`vault_root`, `subdir`) from freedom.yaml,
+/// or `None` when no vault is configured. Re-read each tick so toggling the
+/// vault doesn't need a daemon restart.
+fn obsidian_target() -> Option<(PathBuf, String)> {
+    let cfg = crate::config::FreedomConfig::load_from_default_path().ok()?;
+    let vault = cfg.obsidian_vault.clone()?;
+    let subdir = cfg.obsidian_subdir.clone().unwrap_or_else(|| "NEOTH".to_string());
+    Some((PathBuf::from(vault), subdir))
+}
+
+/// Generic offline daily/yearly reflection tick (OPT-IN). Composes a
+/// [`PeriodReflection`] from the period's top operator topics, archives it as
+/// JSONL, and — when an Obsidian vault is configured — writes the daily-note /
+/// yearly-summary. Idempotent per tag via a marker file so the daily cron tick
+/// fires each cadence at most once. Deterministic + offline (no LLM, no
+/// network), so it runs unattended even with the cloud quota exhausted.
+/// `enabled` is the operator opt-in; `window_days` + `topic_n` scale the summary.
+#[allow(clippy::too_many_arguments)]
+fn run_period_reflection_tick_once(
+    home: &std::path::Path,
+    now_unix: i64,
+    kind: crate::reflection::periodic::PeriodKind,
+    enabled: bool,
+    tag: &str,
+    marker_name: &str,
+    window_days: i64,
+    topic_n: usize,
+    obsidian: Option<(&std::path::Path, &str)>,
+) -> Result<bool, String> {
+    use crate::reflection::periodic;
+    use crate::reflection::top_topics_in_days;
+
+    if !enabled {
+        return Ok(false); // opt-in; off by default
+    }
+    let marker = home.join("reflections").join(marker_name);
+    if std::fs::read_to_string(&marker)
+        .ok()
+        .map(|s| s.trim() == tag)
+        .unwrap_or(false)
+    {
+        return Ok(false); // already done this period
+    }
+    let views_path = home.join("views.db");
+    if !views_path.exists() {
+        return Ok(false); // fresh install — nothing to summarise
+    }
+    let conn = crate::memory::store::open(&views_path)
+        .map_err(|e| format!("views.db open failed: {e}"))?;
+    let now_ns = now_unix.saturating_mul(1_000_000_000);
+    let topics = top_topics_in_days(&conn, now_ns, window_days, topic_n)
+        .map_err(|e| format!("topic query failed: {e}"))?;
+
+    let write_marker = |marker: &std::path::Path, tag: &str| {
+        if let Some(p) = marker.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let _ = std::fs::write(marker, tag);
+    };
+
+    match periodic::build_reflection(kind, tag, &topics, now_unix) {
+        Some(refl) => {
+            // Archive FIRST — only mark the period done once it's persisted, so
+            // a transient IO error retries next tick instead of silently
+            // dropping the day's reflection.
+            periodic::append(home, &refl).map_err(|e| format!("archive append failed: {e}"))?;
+            write_marker(&marker, tag);
+            if let Some((vault, subdir)) = obsidian {
+                match periodic::sync_to_obsidian(home, vault, subdir, kind, tag) {
+                    Ok(o) if o.written => info!(
+                        path = %o.target_path.display(),
+                        "reflection cron: {} Obsidian note written",
+                        kind.as_str()
+                    ),
+                    Ok(_) => {}
+                    Err(e) => warn!(error = %e, "reflection cron: Obsidian {} sync failed", kind.as_str()),
+                }
+            }
+            Ok(true)
+        }
+        None => {
+            // Empty period → no vacuous note, but still mark done so we don't
+            // recompute the topic query every tick for the rest of the period.
+            write_marker(&marker, tag);
+            Ok(false)
+        }
+    }
+}
+
 /// Spawn the reflection cron loop. Matches the doctor_cron /
 /// updater_cron pattern in `daemon/`: returns a `JoinHandle<()>`
 /// the daemon's shutdown path can `.abort()` on signal.
@@ -209,6 +298,26 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
                 Err(e) => {
                     warn!(error = %e, "tech-currency tick failed; will retry next interval")
                 }
+            }
+            // Opt-in offline daily + yearly self-reflections → archive + Obsidian
+            // notes. Read the opt-in flags + Obsidian target fresh each tick.
+            let cfg = crate::cli::reflect::ReflectTopics::load(&home);
+            let obsidian = obsidian_target();
+            let obs_ref = obsidian.as_ref().map(|(p, s)| (p.as_path(), s.as_str()));
+            use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, year_tag_from_unix};
+            let daily_tag = date_tag_from_unix(now_unix);
+            if let Err(e) = run_period_reflection_tick_once(
+                &home, now_unix, PeriodKind::Daily, cfg.daily_notes, &daily_tag,
+                "daily-last.txt", 1, 5, obs_ref,
+            ) {
+                warn!(error = %e, "daily reflection tick failed; will retry next interval");
+            }
+            let yearly_tag = year_tag_from_unix(now_unix);
+            if let Err(e) = run_period_reflection_tick_once(
+                &home, now_unix, PeriodKind::Yearly, cfg.yearly_summary, &yearly_tag,
+                "yearly-last.txt", 365, 10, obs_ref,
+            ) {
+                warn!(error = %e, "yearly reflection tick failed; will retry next interval");
             }
         }
     })
@@ -319,5 +428,83 @@ mod tests {
     #[test]
     fn default_cron_interval_is_24h() {
         assert_eq!(DEFAULT_CRON_INTERVAL_SECS, 24 * 3600);
+    }
+
+    #[test]
+    fn period_tick_disabled_is_a_clean_noop() {
+        use crate::reflection::periodic::PeriodKind;
+        let tmp = TempDir::new().unwrap();
+        let r = run_period_reflection_tick_once(
+            tmp.path(),
+            1_700_000_000,
+            PeriodKind::Daily,
+            false, // opt-in OFF
+            "2026-06-16",
+            "daily-last.txt",
+            1,
+            5,
+            None,
+        );
+        assert_eq!(r, Ok(false), "disabled cadence is a clean no-op");
+        assert!(
+            !tmp.path().join("reflections/daily-last.txt").exists(),
+            "no marker written when off"
+        );
+    }
+
+    #[test]
+    fn period_tick_archives_and_is_idempotent_per_tag() {
+        use crate::reflection::periodic::{self, PeriodKind};
+        let tmp = TempDir::new().unwrap();
+        let views = tmp.path().join("views.db");
+        let conn = crate::memory::store::open(&views).unwrap();
+        let now_unix = 1_700_000_000i64;
+        let now_ns = now_unix * 1_000_000_000;
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                1i64,
+                crate::wal::events::EVENT_TYPE_RAW_TEXT as i64,
+                now_ns - 3_600_000_000_000i64, // 1h ago, inside the 1-day window
+                "kubernetes networking deep dive",
+                "hash1",
+            ],
+        )
+        .unwrap();
+        let tag = "2026-test-day";
+        let r = run_period_reflection_tick_once(
+            tmp.path(),
+            now_unix,
+            PeriodKind::Daily,
+            true,
+            tag,
+            "daily-last.txt",
+            1,
+            5,
+            None, // no Obsidian (hermetic — never reads the operator's real config)
+        )
+        .unwrap();
+        assert!(r, "enabled + topics present → archived");
+        assert!(
+            periodic::jsonl_file(tmp.path(), PeriodKind::Daily, tag).exists(),
+            "reflection archived as JSONL"
+        );
+        assert!(tmp.path().join("reflections/daily-last.txt").exists());
+
+        // Second call, same tag → idempotent no-op (marker hit).
+        let r2 = run_period_reflection_tick_once(
+            tmp.path(),
+            now_unix,
+            PeriodKind::Daily,
+            true,
+            tag,
+            "daily-last.txt",
+            1,
+            5,
+            None,
+        )
+        .unwrap();
+        assert!(!r2, "marker makes the tick idempotent per tag");
     }
 }

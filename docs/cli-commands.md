@@ -1932,6 +1932,18 @@ Discover exposed hosts via search engines (passive — uses YOUR engine API keys
 
 Self-reflection surfaces. `reflect tech-news` scans trending Hacker News topics and flags the ones your skills + memory don't cover yet
 
+### `neoth reflect daily`
+
+Turn the nightly daily self-reflection on (daemon archives a daily summary + writes an Obsidian daily note). `--off` turns it back off
+
+- `--off <OFF>`
+
+### `neoth reflect digest`
+
+Compose a daily or yearly reflection NOW (archive + Obsidian if a vault is configured) without waiting for the cron — handy to test it
+
+- `<PERIOD>`
+
 ### `neoth reflect forget`
 
 Remove a topic from BOTH the ignore and pin lists
@@ -1959,11 +1971,17 @@ Scan trending Hacker News stories and show which topics your installed skills + 
 
 ### `neoth reflect topics`
 
-Show the current per-operator ignore + pin lists + weekly-refresh state
+Show the current per-operator ignore + pin lists + cadence states
 
 ### `neoth reflect weekly`
 
 Turn the weekly auto-refresh on (daemon enqueues a tech-currency reflection once a week). `--off` turns it back off
+
+- `--off <OFF>`
+
+### `neoth reflect yearly`
+
+Turn the yearly self-reflection on (daemon archives a yearly summary + writes an Obsidian yearly note once a year). `--off` turns it back off
 
 - `--off <OFF>`
 
