@@ -52,6 +52,15 @@ pub enum SelfImproveAction {
     Rollback {
         id: String,
     },
+    /// Contribute an ACCEPTED improvement to a BUNDLED skill back to NEOTH:
+    /// prepare a PR bundle (improved file + PR body + submit script). `--submit`
+    /// runs it via the operator's authenticated `gh`.
+    Pr {
+        id: String,
+        /// Actually open the PR now (requires `gh`), instead of only preparing it.
+        #[arg(long)]
+        submit: bool,
+    },
     /// Print the improvement ledger (what changed, when, accepted or not).
     Log,
 }
@@ -100,6 +109,7 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
         SelfImproveAction::Accept { id } => {
             si::accept_proposal(&home, &id)?;
             println!("✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo).");
+            offer_upstream_pr_if_bundled(&home, &id);
             Ok(())
         }
         SelfImproveAction::Rollback { id } => {
@@ -107,6 +117,7 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
             println!("✓ proposal {id} rolled back — skill file restored.");
             Ok(())
         }
+        SelfImproveAction::Pr { id, submit } => pr(&home, &id, submit, output),
         SelfImproveAction::Log => log(&home, output),
     }
 }
@@ -263,6 +274,68 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
             println!("    → `neoth self-improve accept {}`", p.id);
         }
     }
+    Ok(())
+}
+
+/// After adopting a proposal, if its skill is one NEOTH SHIPS (bundled), offer
+/// to contribute the improvement upstream. NEOTH asks — the operator decides by
+/// running `pr`. Best-effort: a lookup miss just prints nothing.
+fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) {
+    let Some(p) = si::load_proposals(home).into_iter().find(|p| p.id == id) else {
+        return;
+    };
+    if crate::skills::bundled::is_bundled(&p.skill) {
+        println!(
+            "\n  ↑ `{}` is a BUNDLED skill — want to contribute this improvement back to NEOTH?\n    `neoth self-improve pr {id}`        (prepare the PR bundle for review)\n    `neoth self-improve pr {id} --submit` (open it now via your `gh`)",
+            p.skill
+        );
+    }
+}
+
+fn pr(home: &std::path::Path, id: &str, submit: bool, output: OutputFormat) -> Result<()> {
+    let prepared = si::prepare_upstream_pr(home, id)?;
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!(
+            "{}",
+            serde_json::json!({
+                "id": id, "dir": prepared.dir.display().to_string(),
+                "asset_path": prepared.asset_path, "branch": prepared.branch,
+                "title": prepared.title, "submitted": false,
+            })
+        );
+    } else {
+        println!("PR bundle prepared for proposal {id}:");
+        println!("  dir    : {}", prepared.dir.display());
+        println!("  target : {} @ {}", si::NEOTH_REPO, prepared.asset_path);
+        println!("  branch : {}", prepared.branch);
+        println!("  title  : {}", prepared.title);
+    }
+    if !submit {
+        if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+            println!(
+                "\nReview {}, then submit: `neoth self-improve pr {id} --submit` (or run submit.sh).",
+                prepared.dir.join("PR.md").display()
+            );
+        }
+        return Ok(());
+    }
+    // --submit: needs the operator's authenticated gh.
+    if crate::tools::github::locate_gh().is_none() {
+        anyhow::bail!(
+            "`gh` not found — bundle is ready at {} (run submit.sh once gh is installed + authenticated)",
+            prepared.dir.display()
+        );
+    }
+    let script = prepared.dir.join("submit.sh");
+    println!("\nopening PR via gh…");
+    let status = std::process::Command::new("bash")
+        .arg(&script)
+        .status()
+        .with_context(|| format!("run {}", script.display()))?;
+    if !status.success() {
+        anyhow::bail!("submit.sh exited with {status} — bundle preserved at {}", prepared.dir.display());
+    }
+    println!("✓ PR opened against {}.", si::NEOTH_REPO);
     Ok(())
 }
 

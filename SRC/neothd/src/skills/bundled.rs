@@ -41,6 +41,20 @@
 /// The `include_str!` path is relative to THIS file
 /// (`SRC/neothd/src/skills/bundled.rs`), hence the `../../assets/...`
 /// prefix.
+/// Is `id` one of the skills NEOTH ships inside its binary (vs an
+/// operator-authored / externally installed skill)? Drives the "contribute
+/// this improvement upstream?" offer after a SkillOpt-improved skill is adopted.
+pub fn is_bundled(id: &str) -> bool {
+    BUNDLED_SKILLS.iter().any(|(bid, _)| *bid == id)
+}
+
+/// Repo-relative source path of a bundled skill's `<file>` (default
+/// `skill.yaml`), for an upstream PR. `None` when `id` isn't bundled. The path
+/// mirrors the `include_str!` layout above (`SRC/neothd/assets/skills/<id>/…`).
+pub fn bundled_asset_path(id: &str, file: &str) -> Option<String> {
+    is_bundled(id).then(|| format!("SRC/neothd/assets/skills/{id}/{file}"))
+}
+
 pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "academic_research",

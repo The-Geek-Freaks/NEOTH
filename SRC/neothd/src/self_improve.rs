@@ -219,6 +219,132 @@ pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
+// ── Contribute upstream: PR an improved BUNDLED skill back to NEOTH ──────────
+// When SkillOpt improves a skill NEOTH SHIPS (a bundled skill), the operator can
+// contribute the improvement back. NEOTH never auto-pushes: it PREPARES a
+// self-contained PR bundle (improved file + PR body + a submit script) and the
+// operator decides. Self-contained rule honoured — submission shells out to the
+// operator's already-authenticated `gh`, NEOTH never touches the token.
+
+/// Upstream repo bundled-skill PRs target.
+pub const NEOTH_REPO: &str = "The-Geek-Freaks/NEOTH";
+
+/// Artifacts written for an upstream-PR offer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedPr {
+    /// `<home>/self_improve_prs/<id>/` holding skill file + PR.md + submit.sh.
+    pub dir: PathBuf,
+    /// Repo-relative asset path the PR overwrites.
+    pub asset_path: String,
+    /// Suggested branch name.
+    pub branch: String,
+    /// PR title.
+    pub title: String,
+}
+
+/// Prepare an upstream-PR bundle for an ACCEPTED improvement to a BUNDLED skill.
+/// Writes `<home>/self_improve_prs/<id>/{<skill-file>, PR.md, submit.sh}` — the
+/// improved content (same basename as the improved production file so a markdown
+/// skill stays markdown, a yaml manifest stays yaml), a ready PR body (title +
+/// summary + diff), and a self-contained submit script (fork → branch → copy →
+/// commit → `gh pr create`). Errors if the proposal isn't accepted or its skill
+/// isn't bundled (nothing to contribute upstream).
+pub fn prepare_upstream_pr(home: &Path, id: &str) -> Result<PreparedPr> {
+    let props = load_proposals(home);
+    let p = props
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
+    if p.status != ProposalStatus::Accepted {
+        anyhow::bail!(
+            "proposal `{id}` is {:?} — accept it (`neoth self-improve accept {id}`) before opening a PR",
+            p.status
+        );
+    }
+    // Same filename as the improved production file (skill.md / skill.yaml / …).
+    let file = Path::new(&p.skill_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("skill.yaml");
+    let asset_path = crate::skills::bundled::bundled_asset_path(&p.skill, file).ok_or_else(|| {
+        anyhow::anyhow!(
+            "skill `{}` is not a bundled skill — nothing to contribute upstream",
+            p.skill
+        )
+    })?;
+
+    let dir = home.join("self_improve_prs").join(id);
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let content_path = dir.join(file);
+    crate::util::atomic_write::atomic_write(&content_path, p.after.as_bytes())?;
+
+    let branch = format!("skillopt/{}-{}", p.skill, id);
+    let title = format!("skill({}): SkillOpt improvement", p.skill);
+    let diff = line_diff(&p.before, &p.after);
+    let body = format!(
+        "# {title}\n\n{summary}\n\nSkillOpt staged this improvement to the bundled `{skill}` \
+         skill, the operator adopted it locally (review-then-adopt), then chose to contribute it \
+         upstream.\n\n## Diff\n\n```diff\n{diff}```\n",
+        title = title,
+        summary = p.summary,
+        skill = p.skill,
+        diff = diff,
+    );
+    crate::util::atomic_write::atomic_write(&dir.join("PR.md"), body.as_bytes())?;
+
+    let script = upstream_pr_script(
+        &branch,
+        &title,
+        &asset_path,
+        &content_path.display().to_string(),
+        &dir.join("PR.md").display().to_string(),
+    );
+    crate::util::atomic_write::atomic_write(&dir.join("submit.sh"), script.as_bytes())?;
+
+    Ok(PreparedPr {
+        dir,
+        asset_path,
+        branch,
+        title,
+    })
+}
+
+/// The self-contained submit script: fork (or clone) the repo, drop the improved
+/// file at its asset path, branch + commit + push, `gh pr create`. Uses the
+/// operator's authenticated `gh`; NEOTH never sees the token.
+fn upstream_pr_script(
+    branch: &str,
+    title: &str,
+    asset_path: &str,
+    content_file: &str,
+    body_file: &str,
+) -> String {
+    format!(
+        "#!/usr/bin/env bash\n\
+         set -euo pipefail\n\
+         # Contribute a SkillOpt bundled-skill improvement to {repo}.\n\
+         # Requires an authenticated `gh`. Safe to re-run (uses a fresh temp clone).\n\
+         REPO=\"{repo}\"\n\
+         WORK=\"$(mktemp -d)\"\n\
+         gh repo fork \"$REPO\" --clone=true --default-branch-only \"$WORK/neoth\" \\\n\
+           || gh repo clone \"$REPO\" \"$WORK/neoth\"\n\
+         cd \"$WORK/neoth\"\n\
+         git checkout -b \"{branch}\"\n\
+         mkdir -p \"$(dirname \"{asset}\")\"\n\
+         cp \"{content}\" \"{asset}\"\n\
+         git add \"{asset}\"\n\
+         git commit -m \"{title}\"\n\
+         git push -u origin \"{branch}\"\n\
+         gh pr create --repo \"$REPO\" --title \"{title}\" --body-file \"{body}\"\n",
+        repo = NEOTH_REPO,
+        branch = branch,
+        asset = asset_path,
+        content = content_file,
+        title = title,
+        body = body_file,
+    )
+}
+
 /// Minimal line diff (`+`/`-`/` `) for review display — no external dep. Shows
 /// removed-then-added per changed run; unchanged lines are context-elided to a
 /// count when long.
@@ -396,6 +522,74 @@ mod tests {
 
         let _ = std::fs::remove_file(proposals_path(&tmp));
         let _ = std::fs::remove_file(&skill);
+    }
+
+    #[test]
+    fn prepare_upstream_pr_only_for_accepted_bundled_skill() {
+        let tmp = std::env::temp_dir().join("neoth_si_pr_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_dir_all(tmp.join("self_improve_prs"));
+        let skill = tmp.join("skill.yaml");
+        std::fs::write(&skill, "ORIGINAL").unwrap();
+
+        // A bundled skill id (ships in the binary — see skills::bundled).
+        let id = stage_proposal(
+            &tmp,
+            Proposal {
+                id: "p1".into(),
+                skill: "academic_research".into(),
+                skill_path: skill.display().to_string(),
+                before: "ORIGINAL".into(),
+                after: "IMPROVED".into(),
+                summary: "tighten".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 1,
+                backup: None,
+            },
+        )
+        .unwrap();
+
+        // Pending → refused (must adopt locally first).
+        assert!(prepare_upstream_pr(&tmp, &id).is_err());
+
+        accept_proposal(&tmp, &id).unwrap();
+        let prepared = prepare_upstream_pr(&tmp, &id).expect("bundled + accepted → prepares");
+        assert!(prepared.dir.join("skill.yaml").exists());
+        assert!(prepared.dir.join("PR.md").exists());
+        assert!(prepared.dir.join("submit.sh").exists());
+        assert_eq!(
+            prepared.asset_path,
+            "SRC/neothd/assets/skills/academic_research/skill.yaml"
+        );
+        assert_eq!(
+            std::fs::read_to_string(prepared.dir.join("skill.yaml")).unwrap(),
+            "IMPROVED"
+        );
+
+        // A NON-bundled skill has nothing to contribute upstream.
+        let skill2 = tmp.join("user_skill.md");
+        std::fs::write(&skill2, "x").unwrap();
+        let id2 = stage_proposal(
+            &tmp,
+            Proposal {
+                id: "p2".into(),
+                skill: "my_private_skill".into(),
+                skill_path: skill2.display().to_string(),
+                before: "x".into(),
+                after: "y".into(),
+                summary: "s".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 2,
+                backup: None,
+            },
+        )
+        .unwrap();
+        accept_proposal(&tmp, &id2).unwrap();
+        assert!(prepare_upstream_pr(&tmp, &id2).is_err());
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_dir_all(tmp.join("self_improve_prs"));
     }
 
     #[test]
