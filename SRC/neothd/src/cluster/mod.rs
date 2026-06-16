@@ -27,6 +27,10 @@ use serde::{Deserialize, Serialize};
 /// peer connections. Heartbeat exchange + registry write
 /// land in the protocol-design follow-up.
 pub mod hyperswarm;
+/// iroh QUIC transport (dial-by-key NodeId) — an alternative to the peeroxide
+/// Hyperswarm transport. Feature-gated (`cluster-iroh`), default-off.
+#[cfg(feature = "cluster-iroh")]
+pub mod iroh_transport;
 
 /// Cluster auto-discovery primitives (Phase 1) — `cluster_key`
 /// derivation + HMAC-authenticated announce packets used by the

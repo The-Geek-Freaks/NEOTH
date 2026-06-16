@@ -79,6 +79,12 @@ browser-import = []
 # pulled in only by this feature.
 cluster = ["dep:peeroxide"]
 
+# iroh QUIC cluster transport (dial-by-key NodeId, NAT-traversal, relay
+# fallback) — an alternative to the peeroxide Hyperswarm transport. Default-OFF
+# so the base build stays lean (iroh pulls QUIC + relay deps); opt in with
+# `--features cluster-iroh`. Implies `cluster` (it is a cluster transport).
+cluster-iroh = ["cluster", "dep:iroh"]
+
 # D14b Phase 2c — GPU acceleration for local_qwen. Pin per-platform
 # so contributors building on a non-GPU laptop don't fight CUDA
 # toolkit setup. Default OFF; release binaries flip ON via cargo-dist
@@ -241,6 +247,11 @@ lzma-rs = "0.3"
 # replacement that exposes the same topic-based discovery + hole-
 # punching primitives.
 peeroxide = { version = "1.3", optional = true }
+
+# iroh 1.0 — QUIC transport with dial-by-NodeId, NAT-traversal + relay fallback.
+# Optional, pulled only by the `cluster-iroh` feature (default-off — keeps the
+# base build lean since iroh brings the full QUIC + relay stack).
+iroh = { version = "1", optional = true }
 
 # R-7 heartbeat wire format (Session 19) — per Chorus
 # 019E4A48975F25C0BD9F8B96BC085C94 both reviewers picked CBOR.
