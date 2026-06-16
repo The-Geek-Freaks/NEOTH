@@ -12,6 +12,17 @@
 //! No UI, no state-management, no LLM: pure fetch + frequency analysis, same
 //! rationale as the G-01-mini reflection ([`crate::reflection`]) — it must run
 //! unattended and free even when a cloud quota is exhausted.
+//!
+//! ## Signal quality — shipped vs. future
+//!
+//! HN titles are noisy; token-frequency + stopwords is a coarse first pass.
+//! SHIPPED: a ≥2-distinct-title threshold, a covered-term filter (skills +
+//! memory), and per-operator [`GapFilter::ignore`] / [`GapFilter::pin`] lists
+//! (`neoth reflect ignore` / `pin`) — the cheap, high-leverage tamers.
+//! FUTURE (real NLP work, tracked, not faked here): topic clustering of
+//! near-duplicate headlines, a synonym map (`k8s`↔`kubernetes`), and skill-
+//! ontology matching so "covered" understands capability overlap, not just
+//! substrings.
 
 use anyhow::Result;
 
@@ -111,6 +122,36 @@ pub struct TechGap {
     pub mentions: usize,
     /// One title the term appeared in (operator context, not just a word).
     pub example_title: String,
+    /// The operator pinned this topic — surfaced even when covered / single-
+    /// mention, and ranked first.
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+/// Per-operator tuning for the gap pass. `covered` comes from the operator's
+/// installed skills + recent memory (auto). `ignore` + `pin` are explicit
+/// operator lists (`neoth reflect ignore/pin`) that tame the noisy HN-title
+/// frequency signal: ignore drops a term entirely; pin force-surfaces it (even
+/// if covered or single-mention) and ranks it first. All matched
+/// case-insensitively, substring either-way (so `rust` covers `rustls`).
+#[derive(Clone, Debug, Default)]
+pub struct GapFilter {
+    pub covered: Vec<String>,
+    pub ignore: Vec<String>,
+    pub pin: Vec<String>,
+}
+
+/// Lowercase + drop empties — the form the matcher compares against.
+fn lc(list: &[String]) -> Vec<String> {
+    list.iter()
+        .map(|c| c.trim().to_lowercase())
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+/// Does `term` match any entry (substring either-way, both already lowercase)?
+fn any_match(term: &str, list_lc: &[String]) -> bool {
+    list_lc.iter().any(|c| c.contains(term) || term.contains(c))
 }
 
 /// Title tokens excluded from trend counting: generic words + HN-title noise
@@ -125,18 +166,20 @@ const TITLE_STOPWORDS: &[&str] = &[
     "free", "open", "source", "release", "released", "version", "app", "tool", "tools", "way", "get",
 ];
 
-/// Rank trending terms across `stories` and return the top `max_gaps` that
-/// DON'T appear in `covered` (lowercased skill names + recent memory topics).
-/// Deterministic, no network, no LLM. A term counts when it appears in ≥2
-/// distinct titles (a one-off headline isn't a "trend"). Ordering is by mention
-/// count desc, then alphabetically for stable output.
-pub fn tech_currency_gaps(stories: &[HnStory], covered: &[String], max_gaps: usize) -> Vec<TechGap> {
+/// Rank trending terms across `stories` and return the top `max_gaps` the
+/// operator isn't already on top of. Deterministic, no network, no LLM.
+///
+/// Rules: a term is tokenised from titles (stopwords + <3 chars dropped). A
+/// NON-pinned term surfaces only if it appears in ≥2 distinct titles AND is
+/// neither covered (skills/memory) nor on the ignore list. A PINNED term that
+/// appears at least once always surfaces (bypassing the ≥2 / covered checks)
+/// and is ranked first — operator intent overrides the heuristic. Order:
+/// pinned first, then mention count desc, then alphabetical (stable output).
+pub fn tech_currency_gaps(stories: &[HnStory], filter: &GapFilter, max_gaps: usize) -> Vec<TechGap> {
     use std::collections::HashMap;
-    let covered_lc: Vec<String> = covered
-        .iter()
-        .map(|c| c.trim().to_lowercase())
-        .filter(|c| !c.is_empty())
-        .collect();
+    let covered_lc = lc(&filter.covered);
+    let ignore_lc = lc(&filter.ignore);
+    let pin_lc = lc(&filter.pin);
 
     // term -> (distinct-title mentions, first example title)
     let mut counts: HashMap<String, (usize, String)> = HashMap::new();
@@ -145,15 +188,6 @@ pub fn tech_currency_gaps(stories: &[HnStory], covered: &[String], max_gaps: usi
         for raw in story.title.split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#') {
             let term = normalize_term(raw);
             if term.len() < 3 || TITLE_STOPWORDS.contains(&term.as_str()) {
-                continue;
-            }
-            // Already covered by a skill/memory topic? Substring either way so
-            // "rust" covers "rustls" and "kubernetes" covers a "k8s"-tagged
-            // skill named "kubernetes".
-            if covered_lc
-                .iter()
-                .any(|c| c.contains(&term) || term.contains(c))
-            {
                 continue;
             }
             if seen_in_title.insert(term.clone()) {
@@ -165,16 +199,32 @@ pub fn tech_currency_gaps(stories: &[HnStory], covered: &[String], max_gaps: usi
 
     let mut gaps: Vec<TechGap> = counts
         .into_iter()
-        .filter(|(_, (n, _))| *n >= 2)
-        .map(|(term, (mentions, example_title))| TechGap {
-            term,
-            mentions,
-            example_title,
+        .filter_map(|(term, (mentions, example_title))| {
+            let pinned = any_match(&term, &pin_lc);
+            if pinned {
+                // Operator intent wins over ignore/covered/≥2.
+                return Some(TechGap {
+                    term,
+                    mentions,
+                    example_title,
+                    pinned: true,
+                });
+            }
+            if mentions < 2 || any_match(&term, &ignore_lc) || any_match(&term, &covered_lc) {
+                return None;
+            }
+            Some(TechGap {
+                term,
+                mentions,
+                example_title,
+                pinned: false,
+            })
         })
         .collect();
     gaps.sort_by(|a, b| {
-        b.mentions
-            .cmp(&a.mentions)
+        b.pinned
+            .cmp(&a.pinned)
+            .then_with(|| b.mentions.cmp(&a.mentions))
             .then_with(|| a.term.cmp(&b.term))
     });
     gaps.truncate(max_gaps);
@@ -263,6 +313,13 @@ mod tests {
         assert!(parse_item(&json!({"type": "story", "id": 5, "title": "  "})).is_none());
     }
 
+    fn covered(c: &[&str]) -> GapFilter {
+        GapFilter {
+            covered: c.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn gaps_surface_repeated_uncovered_terms_only() {
         let stories = vec![
@@ -273,8 +330,7 @@ mod tests {
             story(5, "A one-off about quantum"), // single mention → not a trend
         ];
         // Operator already covers kubernetes via an installed skill.
-        let covered = vec!["kubernetes".to_string()];
-        let gaps = tech_currency_gaps(&stories, &covered, 5);
+        let gaps = tech_currency_gaps(&stories, &covered(&["kubernetes"]), 5);
         let terms: Vec<&str> = gaps.iter().map(|g| g.term.as_str()).collect();
         assert!(terms.contains(&"webgpu"), "webgpu is a 2x uncovered trend");
         assert!(
@@ -301,11 +357,38 @@ mod tests {
             story(5, "Deno permissions"),
             story(6, "Deno deploy"),
         ];
-        let gaps = tech_currency_gaps(&stories, &[], 2);
+        let gaps = tech_currency_gaps(&stories, &GapFilter::default(), 2);
         assert_eq!(gaps.len(), 2, "max_gaps truncates");
         // All three trend equally (2 each) → alphabetical tie-break: bun, deno.
         assert_eq!(gaps[0].term, "bun");
         assert_eq!(gaps[1].term, "deno");
+    }
+
+    #[test]
+    fn ignore_drops_and_pin_force_surfaces_and_ranks_first() {
+        let stories = vec![
+            story(1, "Rust async runtime"),
+            story(2, "Rust borrow checker"),
+            story(3, "Show HN: my agent framework"),
+            story(4, "Agent orchestration patterns"),
+            story(5, "Quantum supremacy claim"), // single mention
+        ];
+        let filter = GapFilter {
+            covered: vec!["rust".to_string()], // already covered → normally dropped
+            ignore: vec!["agent".to_string()], // operator: stop showing me "agent"
+            pin: vec!["quantum".to_string()],  // operator: always flag quantum
+        };
+        let gaps = tech_currency_gaps(&stories, &filter, 10);
+        let terms: Vec<&str> = gaps.iter().map(|g| g.term.as_str()).collect();
+        assert!(!terms.contains(&"agent"), "ignore list drops the term");
+        assert!(!terms.contains(&"rust"), "covered still drops the term");
+        assert!(
+            terms.contains(&"quantum"),
+            "pinned term surfaces despite single mention"
+        );
+        // pinned ranks first.
+        assert!(gaps[0].pinned);
+        assert_eq!(gaps[0].term, "quantum");
     }
 
     #[test]
@@ -316,6 +399,7 @@ mod tests {
             term: "webgpu".into(),
             mentions: 3,
             example_title: "WebGPU ships".into(),
+            pinned: false,
         }];
         let body = render_tech_currency_reflection(&gaps).unwrap();
         assert!(body.contains("webgpu"));
