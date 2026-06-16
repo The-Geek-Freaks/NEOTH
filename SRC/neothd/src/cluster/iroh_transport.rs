@@ -144,6 +144,55 @@ impl IrohTransport {
     }
 }
 
+/// A gossip-aware [`FrameHandler`] — the iroh↔gossip bridge for the live-flip.
+///
+/// It routes every inbound frame through the SAME security stack the peeroxide
+/// path uses, so flipping the transport to iroh preserves the cluster's
+/// guarantees:
+///   - **(2) frame acceptance + (4) replay** — `GossipState::accept_inbound`
+///     runs `evaluate_acceptance` (replicable tag / within replay budget / not
+///     a duplicate via the per-origin dedup high-water) and merges the vector
+///     clock (causal frontier — stale frames can't advance state);
+///   - **(5) consent/policy band** — the DoNotGossip re-check on the payload's
+///     OWN event_type (byte 2 of the inner WAL header), so a mistagged frame
+///     can't smuggle a private band across.
+///
+/// **(3) peer trust** + **(1) node capabilities** are enforced BEFORE frames
+/// reach here: iroh's QUIC channel is authenticated by EndpointId, and the
+/// caller verifies the peer's `cluster_key` HMAC proof (`cluster::peer_auth`)
+/// on the Hello before admitting gossip — exactly as the peeroxide loop does.
+pub fn gossip_handler(
+    state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
+) -> FrameHandler {
+    use crate::cluster::gossip::GossipPolicy;
+    use crate::cluster::gossip_wire::{GossipAcceptance, GossipFrame};
+    let policy = GossipPolicy::default();
+    std::sync::Arc::new(move |req: Vec<u8>| -> Vec<u8> {
+        let reply = |accepted: bool, verdict: &str| {
+            serde_json::to_vec(
+                &serde_json::json!({ "accepted": accepted, "verdict": verdict }),
+            )
+            .unwrap_or_default()
+        };
+        let frame: GossipFrame = match serde_json::from_slice(&req) {
+            Ok(f) => f,
+            Err(_) => return reply(false, "malformed"),
+        };
+        // payload's own event_type = byte 2 of the inner WAL header (foreign
+        // frame → read without HMAC, exactly like the peeroxide loop).
+        let payload_et = frame.payload.get(2).copied();
+        let now = crate::time::now_unix_i64();
+        let verdict = {
+            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
+            g.accept_inbound(&frame, payload_et, &policy, now)
+        };
+        reply(
+            matches!(verdict, GossipAcceptance::Accept),
+            &format!("{verdict:?}"),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +227,18 @@ mod tests {
     #[test]
     fn alpn_is_versioned() {
         assert!(NEOTH_CLUSTER_ALPN.ends_with(b"/1"));
+    }
+
+    #[test]
+    fn gossip_handler_rejects_malformed_and_replies_json() {
+        use crate::cluster::wal_sync::GossipState;
+        let state = std::sync::Arc::new(std::sync::Mutex::new(GossipState::new()));
+        let handler = gossip_handler(state);
+        // A non-GossipFrame byte blob must be rejected (decode failure), not
+        // panic — and the reply is a parseable JSON verdict.
+        let reply = handler(b"not a gossip frame".to_vec());
+        let v: serde_json::Value = serde_json::from_slice(&reply).expect("json reply");
+        assert_eq!(v["accepted"], false);
+        assert_eq!(v["verdict"], "malformed");
     }
 }

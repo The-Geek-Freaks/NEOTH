@@ -129,6 +129,42 @@ pub fn load_policy_from_freedom(freedom_path: &std::path::Path) -> (bool, Announ
     (mdns_enabled, policy)
 }
 
+/// Which transport carries cluster gossip + WAL-sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClusterTransport {
+    /// peeroxide Hyperswarm (the shipped default).
+    #[default]
+    Peeroxide,
+    /// iroh QUIC (dial-by-key, NAT-traversal + relay) — requires the
+    /// `cluster-iroh` build feature.
+    Iroh,
+}
+
+/// Read `cluster.transport` from `freedom.yaml` (`"peeroxide"` | `"iroh"`).
+/// Best-effort, read-only; defaults to `Peeroxide`. The iroh path enforces the
+/// SAME security stack (peer_auth proof + `wal_sync::accept_inbound` band/replay
+/// dedup) via `cluster::iroh_transport::gossip_handler`, so the choice is purely
+/// the wire — every node-capability / frame-acceptance / trust / replay /
+/// consent guarantee is transport-independent.
+pub fn load_transport_from_freedom(freedom_path: &std::path::Path) -> ClusterTransport {
+    let Ok(body) = std::fs::read_to_string(freedom_path) else {
+        return ClusterTransport::Peeroxide;
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return ClusterTransport::Peeroxide;
+    };
+    match root
+        .get("cluster")
+        .and_then(|c| c.get("transport"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("iroh") => ClusterTransport::Iroh,
+        _ => ClusterTransport::Peeroxide,
+    }
+}
+
 /// Why the announcer is suppressed. Operator-readable via
 /// `as_str()` for log lines + doctor detail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
