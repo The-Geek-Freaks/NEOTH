@@ -202,10 +202,12 @@ export component Sidebar inherits Rectangle {
                 width: 28px; height: 28px; border-radius: Theme.radius-sm;
                 background: ta.has-hover ? Theme.surface-2 : transparent;
                 Text {
-                    text: root.theme-dark ? "☀" : "☾"; color: Theme.text-secondary; font-size: 14px;
+                    text: Theme.dark ? "☀" : "☾"; color: Theme.text-secondary; font-size: 14px;
                     horizontal-alignment: center; vertical-alignment: center;
                 }
-                ta := TouchArea { clicked => { root.toggle-theme(); } }
+                // Flip the global theme immediately (live), then bubble up so
+                // Rust can persist the choice.
+                ta := TouchArea { clicked => { Theme.dark = !Theme.dark; root.toggle-theme(); } }
             }
         }
     }

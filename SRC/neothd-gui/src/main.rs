@@ -135,6 +135,26 @@ fn main() -> Result<()> {
 
     let window = MainWindow::new()?;
 
+    // Theme — restore the persisted light/dark choice before the window paints
+    // (default dark). Persisted at `<neoth_home>/.gui-theme` as "dark"/"light".
+    {
+        let is_dark = std::fs::read_to_string(default_neoth_home().join(".gui-theme"))
+            .map(|s| s.trim() != "light")
+            .unwrap_or(true);
+        window.global::<Theme>().set_dark(is_dark);
+    }
+    let weak_theme = window.as_weak();
+    window.on_theme_toggle_clicked(move || {
+        if let Some(w) = weak_theme.upgrade() {
+            // The sidebar already flipped Theme.dark live; persist the new value.
+            let is_dark = w.global::<Theme>().get_dark();
+            let _ = std::fs::write(
+                default_neoth_home().join(".gui-theme"),
+                if is_dark { "dark" } else { "light" },
+            );
+        }
+    });
+
     // H-3 fix — hardware probe runs in a worker thread so a hanging
     // `neothd hardware` subprocess can never block the window from
     // appearing. The placeholder string shows until the real probe

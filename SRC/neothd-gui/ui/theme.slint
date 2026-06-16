@@ -21,6 +21,15 @@
 // signal/semantic/glow/buddy tokens are net-new additions.
 
 export global Theme {
+    // ── Theme mode ─────────────────────────────────────────────────────
+    // `dark` is the live light/dark switch. Rust sets it from the persisted
+    // operator choice on startup and flips it on the sidebar toggle. Surfaces,
+    // text, semantic accents + borders switch on it; the raw signal scale
+    // (green-500 etc.) + the Buddy stay vivid neon in BOTH themes (the orb is
+    // the one place the signal palette goes loud). Light values are the design
+    // system's inverted theme (warm paper, darkened neons that hold AA).
+    in-out property <bool> dark: true;
+
     // ══ INK SCALE — near-black canvas the brand lives on ════════════════
     out property <color> ink-1000: #050505;
     out property <color> ink-950:  #0a0a0a;
@@ -65,57 +74,57 @@ export global Theme {
     out property <color> amber-tint: #ffb6271f;    // rgba(255,182,39,.12)
 
     // ══ SEMANTIC SURFACES — elevation on dark ══════════════════════════
-    out property <color> bg-void:   #050505;        // ink-1000 — deepest
-    out property <color> bg-base:   #0d0d0d;        // page background
-    out property <color> bg-center: #0a0a0a;        // 5%-darker radial centre
-    out property <color> bg-sunken: #0a0a0a;
-    out property <color> surface-1: #121212;        // ink-850
-    out property <color> surface-2: #161616;        // ink-800
-    out property <color> surface-3: #1c1c1c;        // ink-700
-    out property <color> bg-card:   #121212;        // card / inset (= surface-1)
-    out property <color> surface-glass: #141414b8;  // rgba(20,20,20,.72)
+    out property <color> bg-void:   root.dark ? #050505 : #eceae4;   // deepest
+    out property <color> bg-base:   root.dark ? #0d0d0d : #f4f2ec;   // page background
+    out property <color> bg-center: root.dark ? #0a0a0a : #e7e4dc;   // radial centre
+    out property <color> bg-sunken: root.dark ? #0a0a0a : #e7e4dc;
+    out property <color> surface-1: root.dark ? #121212 : #fbfaf6;
+    out property <color> surface-2: root.dark ? #161616 : #ffffff;
+    out property <color> surface-3: root.dark ? #1c1c1c : #ffffff;
+    out property <color> bg-card:   root.dark ? #121212 : #fbfaf6;   // card / inset
+    out property <color> surface-glass: root.dark ? #141414b8 : #ffffffbd;
 
     // ══ TEXT HIERARCHY ═════════════════════════════════════════════════
-    out property <color> text-primary:   #ffffff;
-    out property <color> text-secondary: #aaaaaa;   // ink-150
-    out property <color> text-tertiary:  #8a8a8a;   // ink-200
-    out property <color> text-disabled:  #5a5a5a;   // ink-300
-    out property <color> text-inverse:   #0d0d0d;
-    out property <color> text-on-accent: #04130b;
-    out property <color> text-muted:     #aaaaaa;   // back-compat alias
-    out property <color> text-dim:       #909090;   // back-compat (AA-safe caption)
+    out property <color> text-primary:   root.dark ? #ffffff : #11140f;
+    out property <color> text-secondary: root.dark ? #aaaaaa : #4a4d46;
+    out property <color> text-tertiary:  root.dark ? #8a8a8a : #6f726a;
+    out property <color> text-disabled:  root.dark ? #5a5a5a : #a7a99f;
+    out property <color> text-inverse:   root.dark ? #0d0d0d : #f4f2ec;
+    out property <color> text-on-accent: #04130b;   // dark-green ink on the green accent (both themes)
+    out property <color> text-muted:     root.dark ? #aaaaaa : #4a4d46;   // back-compat alias
+    out property <color> text-dim:       root.dark ? #909090 : #6f726a;   // back-compat caption
 
     // ══ SEMANTIC ALIASES — meaning, not colour, at the call site ═══════
-    out property <color> accent:        #00ff80;    // = green-500 (memory)
-    out property <color> accent-hover:  #4dffa6;    // = green-400
-    out property <color> accent-press:  #00cc66;    // = green-600
-    out property <color> accent-tint:   #00ff801a;
-    out property <color> accent-glow:   #00ff808c;
-    out property <color> memory:        #00ff80;
-    out property <color> memory-tint:   #00ff801a;
-    out property <color> audit:         #05d5ff;
-    out property <color> audit-tint:    #05d5ff1a;
-    out property <color> consent:       #ff2a6d;
-    out property <color> consent-tint:  #ff2a6d1a;
-    out property <color> warning:       #ffb627;
-    out property <color> warning-tint:  #ffb6271f;
+    out property <color> accent:        root.dark ? #00ff80 : #008a45;
+    out property <color> accent-hover:  root.dark ? #4dffa6 : #00a352;
+    out property <color> accent-press:  root.dark ? #00cc66 : #006f38;
+    out property <color> accent-tint:   root.dark ? #00ff801a : #008a451f;
+    out property <color> accent-glow:   root.dark ? #00ff808c : #00a3524d;
+    out property <color> memory:        root.dark ? #00ff80 : #008a45;
+    out property <color> memory-tint:   root.dark ? #00ff801a : #008a451f;
+    out property <color> audit:         root.dark ? #05d5ff : #0286a8;
+    out property <color> audit-tint:    root.dark ? #05d5ff1a : #0286a81f;
+    out property <color> consent:       root.dark ? #ff2a6d : #d11254;
+    out property <color> consent-tint:  root.dark ? #ff2a6d1a : #d112541f;
+    out property <color> warning:       root.dark ? #ffb627 : #b8780a;
+    out property <color> warning-tint:  root.dark ? #ffb6271f : #b8780a24;
 
     // Back-compat accent names the existing components reference. Values now
     // resolve to the canonical neon (the operator's "bundle is canonical" call).
-    out property <color> accent-green: #00ff80;     // was #3ecf8e (desaturated) → reverted to neon
-    out property <color> accent-pink:  #ff2a6d;
-    out property <color> accent-amber: #ffb627;     // was #ffb300 → bundle amber
-    out property <color> accent-teal:  #05d5ff;     // realigned to canonical audit-cyan
-    out property <color> accent-cyan:  #05d5ff;
+    out property <color> accent-green: root.dark ? #00ff80 : #008a45;   // neon dark · AA-green light
+    out property <color> accent-pink:  root.dark ? #ff2a6d : #d11254;
+    out property <color> accent-amber: root.dark ? #ffb627 : #b8780a;
+    out property <color> accent-teal:  root.dark ? #05d5ff : #0286a8;   // canonical audit-cyan
+    out property <color> accent-cyan:  root.dark ? #05d5ff : #0286a8;
 
     // ══ BORDERS / DIVIDERS / FOCUS ═════════════════════════════════════
-    out property <color> border-subtle:  #ffffff0f; // rgba(255,255,255,.06)
-    out property <color> border-default:  #ffffff1a; // .10
-    out property <color> border-strong:  #ffffff29; // .16
-    out property <color> border-accent:  #00ff8066; // rgba(0,255,128,.40)
-    out property <color> divider:        #ffffff12; // .07
-    out property <color> focus-ring:     #00ff808c; // rgba(0,255,128,.55)
-    out property <color> scrim:          #050505a8; // rgba(5,5,5,.66)
+    out property <color> border-subtle:  root.dark ? #ffffff0f : #11141212;
+    out property <color> border-default: root.dark ? #ffffff1a : #1114121f;
+    out property <color> border-strong:  root.dark ? #ffffff29 : #11141233;
+    out property <color> border-accent:  root.dark ? #00ff8066 : #008a4573;
+    out property <color> divider:        root.dark ? #ffffff12 : #1114121a;
+    out property <color> focus-ring:     root.dark ? #00ff808c : #008a4580;
+    out property <color> scrim:          root.dark ? #050505a8 : #14161257;
 
     // ══ CORNER RADII — "Noble Curve", never 0px ════════════════════════
     out property <length> radius-xs:   4px;

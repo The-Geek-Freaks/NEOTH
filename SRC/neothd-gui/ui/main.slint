@@ -27,6 +27,7 @@ import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { ResourcesView, DoctorView } from "tabs.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
+export { Theme }
 
 // SPEC-05 — one saved preset for the selector tile.
 export struct PresetRow {
@@ -279,6 +280,8 @@ export component MainWindow inherits Window {
     in property <string> doctor-output: "";
     in property <bool> doctor-running: false;
     callback doctor-run-clicked();
+    // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
+    callback theme-toggle-clicked();
     property <string> shell-title:
         root.nav-active == "chat"        ? "Chat"
         : root.nav-active == "memory"      ? "Memory"
@@ -1507,6 +1510,7 @@ export component MainWindow inherits Window {
                     root.step = (t == "chat") ? WizardStep.chat : WizardStep.settings;
                 }
                 set-complexity(l) => { root.nav-complexity = l; }
+                toggle-theme => { root.theme-toggle-clicked(); }
             }
             VerticalLayout {
                 TopBar { kicker: "NEOTH · SOVEREIGN"; title: root.shell-title; }
