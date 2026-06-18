@@ -52,9 +52,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn launches_true_and_returns_pid() {
-        // `/bin/true` exists on every POSIX system, takes no args, exits 0,
-        // and writes nothing — a clean spawn target.
-        let pid = launch_program(Path::new("/bin/true")).expect("spawn /bin/true");
+        // `true` takes no args, exits 0, and writes nothing - a clean spawn
+        // target. Linux runners commonly expose `/bin/true`; macOS exposes
+        // `/usr/bin/true`.
+        let true_bin = ["/bin/true", "/usr/bin/true"]
+            .into_iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+            .expect("true binary at /bin/true or /usr/bin/true");
+        let pid = launch_program(true_bin).expect("spawn true");
         assert!(pid > 0);
     }
 
