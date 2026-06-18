@@ -86,6 +86,7 @@ fn open_exclusive(path: &Path) -> std::io::Result<Option<File>> {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .share_mode(FILE_SHARE_READ)
             .open(path)
         {
@@ -101,6 +102,7 @@ fn open_exclusive(path: &Path) -> std::io::Result<Option<File>> {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(path)?;
         // Advisory flock: non-blocking exclusive. EWOULDBLOCK ⇒ held by
         // another open file description (another daemon).
@@ -124,6 +126,7 @@ fn open_exclusive(path: &Path) -> std::io::Result<Option<File>> {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(path)?;
         Ok(Some(f))
     }
