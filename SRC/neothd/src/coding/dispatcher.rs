@@ -420,86 +420,65 @@ pub async fn dispatch_session_with_apply(
         // and all `conn` writes happen here, one task at a time, so the
         // match arms below are byte-identical to the pre-COR-19 serial loop.
         for (task, timed_result) in batch.into_iter().zip(exec_results) {
-        // TASK-02: unwrap the per-worker timeout layer first. A hung
-        // worker (Elapsed) is a HARD block — a wall-clock hang is not a
-        // transient retryable error, so it goes straight to Blocked +
-        // 0x4D WORKER_DIED rather than burning the retry rotation. A
-        // worker that finished within budget yields its own Result,
-        // handled byte-identically by the arms below.
-        let exec_result = match timed_result {
-            Ok(r) => r,
-            Err(_elapsed) => {
-                let now_ns = now_unix_ns();
-                if let Err(e) =
-                    store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
-                {
-                    tracing::warn!(
-                        task_id = task.task_id.raw(),
-                        error = %e,
-                        "transition InProgress → Blocked (worker timeout) failed"
-                    );
-                }
-                outcome.tasks_blocked += 1;
-                patch_spiral.record(task.task_id, false);
-                warn!(
-                    task_id = task.task_id.raw(),
-                    timeout_secs = WORKER_EXECUTE_TIMEOUT.as_secs(),
-                    "worker.execute() exceeded per-task timeout; Blocked + 0x4D WORKER_DIED"
-                );
-                emit_worker_died_wal(writer_for_progress, &task, WORKER_EXECUTE_TIMEOUT);
-                continue;
-            }
-        };
-        match exec_result {
-            // QU-01 harte-Kritik fix (Session 28): a refusal can
-            // arrive STRUCTURALLY review-ready — the worker emits
-            // "Sorry, I can't help with that" as non-empty
-            // patch_text, so `review_ready()` is true even though
-            // the content is a refusal. Without this arm, the
-            // no-`--apply` path below promotes it straight to Review
-            // (the apply path would catch it on `git apply` rejection,
-            // but the no-apply path never looked at content). Route
-            // any review-ready-but-refusal outcome into the failure
-            // path so `handle_retryable_failure`'s greeting-regression
-            // check fires + the task lands Blocked instead of landing
-            // a refusal as Review material.
-            Ok(o)
-                if o.review_ready()
-                    && (crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.patch_text)
-                        || crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.summary)) =>
-            {
-                patch_spiral.record(task.task_id, false);
-                record_recent_output(&mut recent_outputs, task.task_id, &worker_output_text(&o));
-                let recent = recent_output_refs(&recent_outputs, task.task_id);
-                let _ = handle_retryable_failure(
-                    conn,
-                    &task,
-                    &mut retry_policy,
-                    &mut patch_spiral,
-                    &recent,
-                    &mut outcome,
-                    "worker reply was a refusal disguised as patch output",
-                    Some(&o),
-                );
-            }
-            Ok(o) if o.review_ready() => {
-                // Q2 streaming: batched — one TASK_COMPLETED frame at
-                // end. SD-02 (Round-3 v0.4) added 0x77 KANBAN_TASK_PROGRESS
-                // heartbeats at task pick-up (above) + review-ready
-                // (below) so `neoth kanban watch` shows progress
-                // between status changes. 30s background heartbeat
-                // (mid-execute) lands in a future sprint.
-                emit_kanban_task_progress_wal(writer_for_progress, &task, 100, "review_ready");
-                // GR-021: a DB error here must NOT propagate with `?` — that
-                // aborts the whole batch loop and strands THIS task plus every
-                // already-InProgress task permanently (no sweep ever resets
-                // InProgress→Backlog). Route the failure through the normal
-                // retry path so the task lands Backlog/Blocked, then move on.
-                if let Err(e) = apply_outcome(conn, &task, &o) {
+            // TASK-02: unwrap the per-worker timeout layer first. A hung
+            // worker (Elapsed) is a HARD block — a wall-clock hang is not a
+            // transient retryable error, so it goes straight to Blocked +
+            // 0x4D WORKER_DIED rather than burning the retry rotation. A
+            // worker that finished within budget yields its own Result,
+            // handled byte-identically by the arms below.
+            let exec_result = match timed_result {
+                Ok(r) => r,
+                Err(_elapsed) => {
+                    let now_ns = now_unix_ns();
+                    if let Err(e) =
+                        store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+                    {
+                        tracing::warn!(
+                            task_id = task.task_id.raw(),
+                            error = %e,
+                            "transition InProgress → Blocked (worker timeout) failed"
+                        );
+                    }
+                    outcome.tasks_blocked += 1;
                     patch_spiral.record(task.task_id, false);
-                    record_recent_output(&mut recent_outputs, task.task_id, &worker_output_text(&o));
+                    warn!(
+                        task_id = task.task_id.raw(),
+                        timeout_secs = WORKER_EXECUTE_TIMEOUT.as_secs(),
+                        "worker.execute() exceeded per-task timeout; Blocked + 0x4D WORKER_DIED"
+                    );
+                    emit_worker_died_wal(writer_for_progress, &task, WORKER_EXECUTE_TIMEOUT);
+                    continue;
+                }
+            };
+            match exec_result {
+                // QU-01 harte-Kritik fix (Session 28): a refusal can
+                // arrive STRUCTURALLY review-ready — the worker emits
+                // "Sorry, I can't help with that" as non-empty
+                // patch_text, so `review_ready()` is true even though
+                // the content is a refusal. Without this arm, the
+                // no-`--apply` path below promotes it straight to Review
+                // (the apply path would catch it on `git apply` rejection,
+                // but the no-apply path never looked at content). Route
+                // any review-ready-but-refusal outcome into the failure
+                // path so `handle_retryable_failure`'s greeting-regression
+                // check fires + the task lands Blocked instead of landing
+                // a refusal as Review material.
+                Ok(o)
+                    if o.review_ready()
+                        && (crate::coding::early_stop::is_refusal_or_capability_disclaimer(
+                            &o.patch_text,
+                        )
+                            || crate::coding::early_stop::is_refusal_or_capability_disclaimer(
+                                &o.summary,
+                            )) =>
+                {
+                    patch_spiral.record(task.task_id, false);
+                    record_recent_output(
+                        &mut recent_outputs,
+                        task.task_id,
+                        &worker_output_text(&o),
+                    );
                     let recent = recent_output_refs(&recent_outputs, task.task_id);
-                    let diagnosis = format!("apply_outcome DB write failed (task-stranding guard): {e}");
                     let _ = handle_retryable_failure(
                         conn,
                         &task,
@@ -507,146 +486,184 @@ pub async fn dispatch_session_with_apply(
                         &mut patch_spiral,
                         &recent,
                         &mut outcome,
-                        &diagnosis,
+                        "worker reply was a refusal disguised as patch output",
                         Some(&o),
                     );
-                    continue;
                 }
+                Ok(o) if o.review_ready() => {
+                    // Q2 streaming: batched — one TASK_COMPLETED frame at
+                    // end. SD-02 (Round-3 v0.4) added 0x77 KANBAN_TASK_PROGRESS
+                    // heartbeats at task pick-up (above) + review-ready
+                    // (below) so `neoth kanban watch` shows progress
+                    // between status changes. 30s background heartbeat
+                    // (mid-execute) lands in a future sprint.
+                    emit_kanban_task_progress_wal(writer_for_progress, &task, 100, "review_ready");
+                    // GR-021: a DB error here must NOT propagate with `?` — that
+                    // aborts the whole batch loop and strands THIS task plus every
+                    // already-InProgress task permanently (no sweep ever resets
+                    // InProgress→Backlog). Route the failure through the normal
+                    // retry path so the task lands Backlog/Blocked, then move on.
+                    if let Err(e) = apply_outcome(conn, &task, &o) {
+                        patch_spiral.record(task.task_id, false);
+                        record_recent_output(
+                            &mut recent_outputs,
+                            task.task_id,
+                            &worker_output_text(&o),
+                        );
+                        let recent = recent_output_refs(&recent_outputs, task.task_id);
+                        let diagnosis =
+                            format!("apply_outcome DB write failed (task-stranding guard): {e}");
+                        let _ = handle_retryable_failure(
+                            conn,
+                            &task,
+                            &mut retry_policy,
+                            &mut patch_spiral,
+                            &recent,
+                            &mut outcome,
+                            &diagnosis,
+                            Some(&o),
+                        );
+                        continue;
+                    }
 
-                // Pick #6 Phase 4: opt-in real-apply path. When the
-                // operator passed `--apply` the dispatcher creates a
-                // task-scoped git worktree, runs git apply, and only
-                // promotes to Review when both succeed. On apply
-                // rejection the task is treated as a retryable
-                // failure with git's stderr as the diagnosis hint.
-                if let Some(cfg) = apply_config {
-                    // Offload the blocking apply (git subprocesses +
-                    // run_worktree_tests' process-poll loop with
-                    // std::thread::sleep) to a blocking thread so it never
-                    // stalls the async worker / serialises concurrent
-                    // sessions on the runtime (GOLD-SEC-05 / A-05). The
-                    // dispatcher stays async; only this sync sub-call moves
-                    // off the executor. All three args are Clone, so the
-                    // 'static + Send closure clones them rather than
-                    // borrowing `conn` (which is !Send).
-                    let apply_res = {
-                        let task_c = task.clone();
-                        let outcome_c = o.clone();
-                        let cfg_c = cfg.clone();
-                        tokio::task::spawn_blocking(move || {
-                            apply_patch_via_worktree(&task_c, &outcome_c, &cfg_c)
-                        })
-                        .await
-                        .unwrap_or_else(|e| Err(format!("apply task panicked: {e}")))
-                    };
-                    match apply_res {
-                        Ok(()) => {
-                            outcome.tasks_completed += 1;
-                            retry_policy.reset(task.task_id);
-                            patch_spiral.record(task.task_id, true);
-                            // GOLD-COR-03 / A-10: the patch really landed in a
-                            // worktree and — when a test command was configured —
-                            // its suite ran green there. Re-attach the summary with
-                            // `applied = true` so `check_auto_promotable` will let
-                            // the operator promote REVIEW → DONE. Without a
-                            // `test_cmd` no suite ran, so the verified-claim stays
-                            // false (apply alone is not test evidence).
-                            // GR-002: an EMPTY patch is a no-op — apply_patch_via_worktree
-                            // returned Ok WITHOUT applying anything or running the
-                            // worktree suite, so the worker's self-reported green
-                            // summary has NO verification behind it. `applied` stays
-                            // false for an empty patch so it can't auto-promote.
-                            let verified = TestSummary {
-                                applied: apply_is_test_verified(
-                                    cfg.test_cmd.is_some(),
-                                    &o.patch_text,
-                                ),
-                                ..o.tests
-                            };
-                            if let Err(e) = store::attach_task_artifact(
-                                conn,
-                                task.task_id,
-                                Some(&o.patch_path),
-                                Some(verified),
-                            ) {
-                                warn!(
-                                    task_id = task.task_id.raw(),
-                                    error = %e,
-                                    "could not mark task test summary as applied"
+                    // Pick #6 Phase 4: opt-in real-apply path. When the
+                    // operator passed `--apply` the dispatcher creates a
+                    // task-scoped git worktree, runs git apply, and only
+                    // promotes to Review when both succeed. On apply
+                    // rejection the task is treated as a retryable
+                    // failure with git's stderr as the diagnosis hint.
+                    if let Some(cfg) = apply_config {
+                        // Offload the blocking apply (git subprocesses +
+                        // run_worktree_tests' process-poll loop with
+                        // std::thread::sleep) to a blocking thread so it never
+                        // stalls the async worker / serialises concurrent
+                        // sessions on the runtime (GOLD-SEC-05 / A-05). The
+                        // dispatcher stays async; only this sync sub-call moves
+                        // off the executor. All three args are Clone, so the
+                        // 'static + Send closure clones them rather than
+                        // borrowing `conn` (which is !Send).
+                        let apply_res = {
+                            let task_c = task.clone();
+                            let outcome_c = o.clone();
+                            let cfg_c = cfg.clone();
+                            tokio::task::spawn_blocking(move || {
+                                apply_patch_via_worktree(&task_c, &outcome_c, &cfg_c)
+                            })
+                            .await
+                            .unwrap_or_else(|e| Err(format!("apply task panicked: {e}")))
+                        };
+                        match apply_res {
+                            Ok(()) => {
+                                outcome.tasks_completed += 1;
+                                retry_policy.reset(task.task_id);
+                                patch_spiral.record(task.task_id, true);
+                                // GOLD-COR-03 / A-10: the patch really landed in a
+                                // worktree and — when a test command was configured —
+                                // its suite ran green there. Re-attach the summary with
+                                // `applied = true` so `check_auto_promotable` will let
+                                // the operator promote REVIEW → DONE. Without a
+                                // `test_cmd` no suite ran, so the verified-claim stays
+                                // false (apply alone is not test evidence).
+                                // GR-002: an EMPTY patch is a no-op — apply_patch_via_worktree
+                                // returned Ok WITHOUT applying anything or running the
+                                // worktree suite, so the worker's self-reported green
+                                // summary has NO verification behind it. `applied` stays
+                                // false for an empty patch so it can't auto-promote.
+                                let verified = TestSummary {
+                                    applied: apply_is_test_verified(
+                                        cfg.test_cmd.is_some(),
+                                        &o.patch_text,
+                                    ),
+                                    ..o.tests
+                                };
+                                if let Err(e) = store::attach_task_artifact(
+                                    conn,
+                                    task.task_id,
+                                    Some(&o.patch_path),
+                                    Some(verified),
+                                ) {
+                                    warn!(
+                                        task_id = task.task_id.raw(),
+                                        error = %e,
+                                        "could not mark task test summary as applied"
+                                    );
+                                }
+                            }
+                            Err(diagnosis) => {
+                                patch_spiral.record(task.task_id, false);
+                                record_recent_output(
+                                    &mut recent_outputs,
+                                    task.task_id,
+                                    &worker_output_text(&o),
+                                );
+                                let recent = recent_output_refs(&recent_outputs, task.task_id);
+                                let _ = handle_retryable_failure(
+                                    conn,
+                                    &task,
+                                    &mut retry_policy,
+                                    &mut patch_spiral,
+                                    &recent,
+                                    &mut outcome,
+                                    &diagnosis,
+                                    Some(&o),
                                 );
                             }
                         }
-                        Err(diagnosis) => {
-                            patch_spiral.record(task.task_id, false);
-                            record_recent_output(
-                                &mut recent_outputs,
-                                task.task_id,
-                                &worker_output_text(&o),
-                            );
-                            let recent = recent_output_refs(&recent_outputs, task.task_id);
-                            let _ = handle_retryable_failure(
-                                conn,
-                                &task,
-                                &mut retry_policy,
-                                &mut patch_spiral,
-                                &recent,
-                                &mut outcome,
-                                &diagnosis,
-                                Some(&o),
-                            );
-                        }
+                    } else {
+                        outcome.tasks_completed += 1;
+                        retry_policy.reset(task.task_id);
+                        patch_spiral.record(task.task_id, true);
+                        // Productive completion resets the repetition ring
+                        // so a later unrelated failure on the same task id
+                        // (rare, but possible after re-queue) starts fresh.
+                        recent_outputs.remove(&task.task_id);
                     }
-                } else {
-                    outcome.tasks_completed += 1;
-                    retry_policy.reset(task.task_id);
-                    patch_spiral.record(task.task_id, true);
-                    // Productive completion resets the repetition ring
-                    // so a later unrelated failure on the same task id
-                    // (rare, but possible after re-queue) starts fresh.
-                    recent_outputs.remove(&task.task_id);
+                }
+                Ok(o) => {
+                    // Outcome reached us but `failed()` (empty patch +
+                    // zero tests) — treat as a retryable failure +
+                    // count toward the patch-spiral + repetition ring.
+                    patch_spiral.record(task.task_id, false);
+                    record_recent_output(
+                        &mut recent_outputs,
+                        task.task_id,
+                        &worker_output_text(&o),
+                    );
+                    let recent = recent_output_refs(&recent_outputs, task.task_id);
+                    let _ = handle_retryable_failure(
+                        conn,
+                        &task,
+                        &mut retry_policy,
+                        &mut patch_spiral,
+                        &recent,
+                        &mut outcome,
+                        "worker returned empty outcome",
+                        Some(&o),
+                    );
+                }
+                Err(e) => {
+                    // Worker-execute error counts as a patch failure
+                    // (no usable patch was produced this attempt). The
+                    // error string is the "output" for repetition-loop
+                    // purposes — a worker that keeps erroring identically
+                    // is wedged just as surely as one that re-emits the
+                    // same patch.
+                    patch_spiral.record(task.task_id, false);
+                    let err_text = format!("worker execute failed: {e}");
+                    record_recent_output(&mut recent_outputs, task.task_id, &err_text);
+                    let recent = recent_output_refs(&recent_outputs, task.task_id);
+                    let _ = handle_retryable_failure(
+                        conn,
+                        &task,
+                        &mut retry_policy,
+                        &mut patch_spiral,
+                        &recent,
+                        &mut outcome,
+                        &err_text,
+                        None,
+                    );
                 }
             }
-            Ok(o) => {
-                // Outcome reached us but `failed()` (empty patch +
-                // zero tests) — treat as a retryable failure +
-                // count toward the patch-spiral + repetition ring.
-                patch_spiral.record(task.task_id, false);
-                record_recent_output(&mut recent_outputs, task.task_id, &worker_output_text(&o));
-                let recent = recent_output_refs(&recent_outputs, task.task_id);
-                let _ = handle_retryable_failure(
-                    conn,
-                    &task,
-                    &mut retry_policy,
-                    &mut patch_spiral,
-                    &recent,
-                    &mut outcome,
-                    "worker returned empty outcome",
-                    Some(&o),
-                );
-            }
-            Err(e) => {
-                // Worker-execute error counts as a patch failure
-                // (no usable patch was produced this attempt). The
-                // error string is the "output" for repetition-loop
-                // purposes — a worker that keeps erroring identically
-                // is wedged just as surely as one that re-emits the
-                // same patch.
-                patch_spiral.record(task.task_id, false);
-                let err_text = format!("worker execute failed: {e}");
-                record_recent_output(&mut recent_outputs, task.task_id, &err_text);
-                let recent = recent_output_refs(&recent_outputs, task.task_id);
-                let _ = handle_retryable_failure(
-                    conn,
-                    &task,
-                    &mut retry_policy,
-                    &mut patch_spiral,
-                    &recent,
-                    &mut outcome,
-                    &err_text,
-                    None,
-                );
-            }
-        }
         }
     }
 
@@ -1084,17 +1101,20 @@ fn handle_retryable_failure(
     //    Past this point retry-strategy hints have already been
     //    rotated through, and continuing burns operator API quota
     //    for no net signal. Bail.
-    let greeting_regression = crate::coding::early_stop::is_refusal_or_capability_disclaimer(&diagnosis)
-        || partial_outcome
-            .map(|o| {
-                // Check both surfaces an LLM refusal could land on:
-                // the operator-facing summary (one-line) AND the patch
-                // body (where a refusal-as-prose ended up if the worker
-                // didn't even produce a diff header).
-                crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.summary)
-                    || crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.patch_text)
-            })
-            .unwrap_or(false);
+    let greeting_regression =
+        crate::coding::early_stop::is_refusal_or_capability_disclaimer(&diagnosis)
+            || partial_outcome
+                .map(|o| {
+                    // Check both surfaces an LLM refusal could land on:
+                    // the operator-facing summary (one-line) AND the patch
+                    // body (where a refusal-as-prose ended up if the worker
+                    // didn't even produce a diff header).
+                    crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.summary)
+                        || crate::coding::early_stop::is_refusal_or_capability_disclaimer(
+                            &o.patch_text,
+                        )
+                })
+                .unwrap_or(false);
     if greeting_regression {
         warn!(
             task_id = task.task_id.raw(),
@@ -1443,7 +1463,10 @@ mod tests {
             !apply_is_test_verified(true, ""),
             "empty patch + test_cmd must NOT be verified"
         );
-        assert!(!apply_is_test_verified(false, ""), "empty patch, no test_cmd");
+        assert!(
+            !apply_is_test_verified(false, ""),
+            "empty patch, no test_cmd"
+        );
         // A real (non-empty) patch with a configured suite IS verified; without a
         // suite it is not (apply alone is not test evidence).
         assert!(
@@ -1619,7 +1642,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome.tasks_attempted, 1);
-        assert_eq!(outcome.tasks_completed, 0, "a hung worker completes nothing");
+        assert_eq!(
+            outcome.tasks_completed, 0,
+            "a hung worker completes nothing"
+        );
         assert_eq!(outcome.tasks_blocked, 1, "the timed-out task lands Blocked");
 
         let task = store::list_tasks_for_session(&conn, session_id)

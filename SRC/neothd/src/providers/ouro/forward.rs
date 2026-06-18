@@ -359,19 +359,40 @@ mod tests {
             let p = format!("model.layers.{l}");
             let mut salt = 2 + l * 10;
             for proj in ["q_proj", "k_proj", "v_proj", "o_proj"] {
-                map.insert(format!("{p}.self_attn.{proj}.weight"), det_tensor(h, h, dev, salt));
+                map.insert(
+                    format!("{p}.self_attn.{proj}.weight"),
+                    det_tensor(h, h, dev, salt),
+                );
                 salt += 1;
             }
-            map.insert(format!("{p}.mlp.gate_proj.weight"), det_tensor(i, h, dev, salt));
-            map.insert(format!("{p}.mlp.up_proj.weight"), det_tensor(i, h, dev, salt + 1));
-            map.insert(format!("{p}.mlp.down_proj.weight"), det_tensor(h, i, dev, salt + 2));
+            map.insert(
+                format!("{p}.mlp.gate_proj.weight"),
+                det_tensor(i, h, dev, salt),
+            );
+            map.insert(
+                format!("{p}.mlp.up_proj.weight"),
+                det_tensor(i, h, dev, salt + 1),
+            );
+            map.insert(
+                format!("{p}.mlp.down_proj.weight"),
+                det_tensor(h, i, dev, salt + 2),
+            );
             for norm in ["norm_pre", "norm_mid", "norm_post"] {
-                map.insert(format!("{p}.{norm}.weight"), Tensor::ones((h,), DType::F32, dev).unwrap());
+                map.insert(
+                    format!("{p}.{norm}.weight"),
+                    Tensor::ones((h,), DType::F32, dev).unwrap(),
+                );
             }
         }
-        map.insert("model.norm.weight".into(), Tensor::ones((h,), DType::F32, dev).unwrap());
+        map.insert(
+            "model.norm.weight".into(),
+            Tensor::ones((h,), DType::F32, dev).unwrap(),
+        );
         if with_lm_head {
-            map.insert("lm_head.weight".into(), det_tensor(cfg.vocab_size, h, dev, 99));
+            map.insert(
+                "lm_head.weight".into(),
+                det_tensor(cfg.vocab_size, h, dev, 99),
+            );
         }
         VarBuilderArgs::from_tensors(map, DType::F32, dev)
     }
@@ -389,7 +410,8 @@ mod tests {
     fn per_loop_cache_decode_matches_full_resequence_baseline() {
         let dev = Device::Cpu;
         let cfg = tiny_cfg();
-        let mut model = OuroModel::new(&cfg, synthetic_nonzero_vb(&dev, true)).expect("build model");
+        let mut model =
+            OuroModel::new(&cfg, synthetic_nonzero_vb(&dev, true)).expect("build model");
 
         // Baseline: full-resequence over [1,2,3,4] at offset 0.
         model.clear_kv_cache();
@@ -400,7 +422,10 @@ mod tests {
         model.clear_kv_cache();
         let other = logits_vec(&model.forward(&input_ids(&dev, &[4, 3, 2, 1]), 0).unwrap());
         assert!(
-            baseline.iter().zip(&other).any(|(a, b)| (a - b).abs() > 1e-3),
+            baseline
+                .iter()
+                .zip(&other)
+                .any(|(a, b)| (a - b).abs() > 1e-3),
             "non-zero weights must make the model context-sensitive (else parity is vacuous)"
         );
 
@@ -410,7 +435,11 @@ mod tests {
         let _ = model.forward(&input_ids(&dev, &[1, 2, 3]), 0).unwrap();
         let incremental = logits_vec(&model.forward(&input_ids(&dev, &[4]), 3).unwrap());
 
-        assert_eq!(baseline.len(), incremental.len(), "logit vectors same length");
+        assert_eq!(
+            baseline.len(),
+            incremental.len(),
+            "logit vectors same length"
+        );
         for (k, (b, inc)) in baseline.iter().zip(&incremental).enumerate() {
             assert!(
                 (b - inc).abs() < 1e-4,
@@ -436,13 +465,24 @@ mod tests {
 
         // Baseline: full-prefill [1,2,3,4,5] @0, last-token logits.
         model.clear_kv_cache();
-        let baseline = logits_vec(&model.forward(&input_ids(&dev, &[1, 2, 3, 4, 5]), 0).unwrap());
+        let baseline = logits_vec(
+            &model
+                .forward(&input_ids(&dev, &[1, 2, 3, 4, 5]), 0)
+                .unwrap(),
+        );
 
         // Context-sensitivity guard (else the oracle is vacuous).
         model.clear_kv_cache();
-        let other = logits_vec(&model.forward(&input_ids(&dev, &[5, 4, 3, 2, 1]), 0).unwrap());
+        let other = logits_vec(
+            &model
+                .forward(&input_ids(&dev, &[5, 4, 3, 2, 1]), 0)
+                .unwrap(),
+        );
         assert!(
-            baseline.iter().zip(&other).any(|(a, b)| (a - b).abs() > 1e-3),
+            baseline
+                .iter()
+                .zip(&other)
+                .any(|(a, b)| (a - b).abs() > 1e-3),
             "non-zero weights must make the model context-sensitive"
         );
 
@@ -455,7 +495,11 @@ mod tests {
         let _ = model.forward(&input_ids(&dev, prefix), 0).unwrap();
         let snap = model.snapshot_all_kv();
         model.restore_all_kv(snap.clone());
-        let kv01 = logits_vec(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+        let kv01 = logits_vec(
+            &model
+                .forward(&input_ids(&dev, suffix), prefix.len())
+                .unwrap(),
+        );
 
         assert_eq!(baseline.len(), kv01.len());
         for (i, (b, k)) in baseline.iter().zip(&kv01).enumerate() {
@@ -469,10 +513,16 @@ mod tests {
         // re-restore + re-forward yields the same logits (guards against a latent
         // Arc-shared-storage mutation).
         model.restore_all_kv(snap);
-        let kv01_again =
-            logits_vec(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+        let kv01_again = logits_vec(
+            &model
+                .forward(&input_ids(&dev, suffix), prefix.len())
+                .unwrap(),
+        );
         for (i, (a, b)) in kv01.iter().zip(&kv01_again).enumerate() {
-            assert!((a - b).abs() < 1e-6, "snapshot mutated by forward at logit[{i}]");
+            assert!(
+                (a - b).abs() < 1e-6,
+                "snapshot mutated by forward at logit[{i}]"
+            );
         }
     }
 

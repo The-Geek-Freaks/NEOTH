@@ -17,7 +17,7 @@
 //! `memory/entities.rs` SQL idioms (rusqlite + `ON CONFLICT DO UPDATE`).
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// Hard cap on the co-access set size, bounding the O(n²) pair fan-out
 /// (`C(50,2)=1225`). The recall hook already passes only the top-K results, but
@@ -126,7 +126,10 @@ pub fn decay_links(conn: &Connection, factor: f64, floor: f64) -> Result<usize> 
     )
     .context("decay link weights")?;
     let pruned = conn
-        .execute("DELETE FROM idx_memory_links WHERE weight < ?1", params![floor])
+        .execute(
+            "DELETE FROM idx_memory_links WHERE weight < ?1",
+            params![floor],
+        )
         .context("prune decayed links")?;
     Ok(pruned)
 }
@@ -328,7 +331,11 @@ mod tests {
         let (_d, c) = conn();
         let big: Vec<i64> = (1..=60).collect(); // 60 > MAX_PAIR_SET
         let n = reinforce_co_access(&c, &big, 1).unwrap();
-        assert_eq!(n, MAX_PAIR_SET * (MAX_PAIR_SET - 1) / 2, "capped to C(50,2)");
+        assert_eq!(
+            n,
+            MAX_PAIR_SET * (MAX_PAIR_SET - 1) / 2,
+            "capped to C(50,2)"
+        );
     }
 
     #[test]
@@ -424,7 +431,10 @@ mod tests {
         }
         let created = bootstrap_co_occurrence(&c, W, 100).unwrap();
         assert_eq!(created, 1, "one (1,2) edge");
-        assert!((weight(&c, 1, 2) - 0.15).abs() < 1e-9, "base bootstrap weight 0.15");
+        assert!(
+            (weight(&c, 1, 2) - 0.15).abs() < 1e-9,
+            "base bootstrap weight 0.15"
+        );
     }
 
     #[test]
@@ -433,9 +443,17 @@ mod tests {
         for id in [1, 2, 3] {
             seed_episode_at(&c, id, 0);
         }
-        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 3, "C(3,2)=3 edges");
+        assert_eq!(
+            bootstrap_co_occurrence(&c, W, 100).unwrap(),
+            3,
+            "C(3,2)=3 edges"
+        );
         // Re-run creates nothing + leaves weights untouched (DO NOTHING).
-        assert_eq!(bootstrap_co_occurrence(&c, W, 200).unwrap(), 0, "re-run is a no-op");
+        assert_eq!(
+            bootstrap_co_occurrence(&c, W, 200).unwrap(),
+            0,
+            "re-run is a no-op"
+        );
         assert!((weight(&c, 1, 2) - 0.15).abs() < 1e-9);
     }
 
@@ -447,8 +465,15 @@ mod tests {
         // A live co-recall first → weight 1.0.
         reinforce_co_access(&c, &[1, 2], 1).unwrap();
         // Bootstrap must NOT touch it (DO NOTHING).
-        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 0, "live edge skipped");
-        assert!((weight(&c, 1, 2) - 1.0).abs() < 1e-9, "live weight preserved");
+        assert_eq!(
+            bootstrap_co_occurrence(&c, W, 100).unwrap(),
+            0,
+            "live edge skipped"
+        );
+        assert!(
+            (weight(&c, 1, 2) - 1.0).abs() < 1e-9,
+            "live weight preserved"
+        );
     }
 
     #[test]
@@ -482,7 +507,11 @@ mod tests {
         let (_d, c) = conn();
         seed_episode_at(&c, 1, 0); // bucket 0
         seed_episode_at(&c, 2, (W as i64) * 5); // bucket 5
-        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 0, "different windows → no edge");
+        assert_eq!(
+            bootstrap_co_occurrence(&c, W, 100).unwrap(),
+            0,
+            "different windows → no edge"
+        );
     }
 
     #[test]
@@ -492,6 +521,10 @@ mod tests {
         for id in 1..=(MAX_BOOTSTRAP_WINDOW_EPISODES as i64 + 1) {
             seed_episode_at(&c, id, 0);
         }
-        assert_eq!(bootstrap_co_occurrence(&c, W, 100).unwrap(), 0, "dense window skipped");
+        assert_eq!(
+            bootstrap_co_occurrence(&c, W, 100).unwrap(),
+            0,
+            "dense window skipped"
+        );
     }
 }

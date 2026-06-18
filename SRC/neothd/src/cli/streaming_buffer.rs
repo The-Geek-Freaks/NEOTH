@@ -358,7 +358,13 @@ mod tests {
     #[test]
     fn code_block_not_flushed_mid_body_only_after_closing_fence() {
         assert_eq!(
-            stream(&["```rust\n", "fn main() {\n", "    println!(\"hi\");\n", "}\n", "```\n"]),
+            stream(&[
+                "```rust\n",
+                "fn main() {\n",
+                "    println!(\"hi\");\n",
+                "}\n",
+                "```\n"
+            ]),
             &["```rust\nfn main() {\n    println!(\"hi\");\n}\n```\n"]
         );
     }
@@ -395,7 +401,12 @@ mod tests {
     #[test]
     fn table_held_until_blank_line() {
         assert_eq!(
-            stream(&["| Name | Value |\n", "|------|-------|\n", "| foo  | 42 |\n", "\nMore"]),
+            stream(&[
+                "| Name | Value |\n",
+                "|------|-------|\n",
+                "| foo  | 42 |\n",
+                "\nMore"
+            ]),
             &["| Name | Value |\n|------|-------|\n| foo  | 42 |\n\nMore"]
         );
     }

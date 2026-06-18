@@ -114,7 +114,10 @@ pub struct ContradictionRow {
 fn token_set(s: &str) -> HashSet<String> {
     s.to_lowercase()
         .split_whitespace()
-        .map(|t| t.trim_matches(|c: char| c.is_ascii_punctuation()).to_string())
+        .map(|t| {
+            t.trim_matches(|c: char| c.is_ascii_punctuation())
+                .to_string()
+        })
         .filter(|t| !t.is_empty() && !STOPWORDS.contains(&t.as_str()))
         .collect()
 }
@@ -245,7 +248,10 @@ fn has_negation(s: &str) -> bool {
     let lower = s.to_lowercase();
     let toks: HashSet<String> = lower
         .split_whitespace()
-        .map(|t| t.trim_matches(|c: char| c.is_ascii_punctuation() && c != '\'').to_string())
+        .map(|t| {
+            t.trim_matches(|c: char| c.is_ascii_punctuation() && c != '\'')
+                .to_string()
+        })
         .collect();
     DEFAULT_NEGATION_MARKERS.iter().any(|m| {
         if m.contains(' ') {
@@ -295,7 +301,10 @@ pub fn pair_confidence(stmt_a: &str, stmt_b: &str) -> Option<PairSignal> {
     let signal = if negation { 0.4 } else { (1.0 - vj) * 0.3 };
     let confidence = (subj * 0.6 + signal).min(1.0);
     if confidence >= EMIT_THRESHOLD {
-        Some(PairSignal { confidence, negation })
+        Some(PairSignal {
+            confidence,
+            negation,
+        })
     } else {
         None
     }
@@ -324,7 +333,11 @@ pub fn detect_contradictions(facts: &[GroundTruth]) -> Vec<DetectedPair> {
                 continue;
             }
             if let Some(sig) = pair_confidence(&a.statement, &b.statement) {
-                let (lo, hi) = if a.id < b.id { (a.id, b.id) } else { (b.id, a.id) };
+                let (lo, hi) = if a.id < b.id {
+                    (a.id, b.id)
+                } else {
+                    (b.id, a.id)
+                };
                 out.push(DetectedPair {
                     a_id: lo,
                     b_id: hi,
@@ -365,7 +378,11 @@ fn record_pair(
     sig: PairSignal,
     now_ns: i64,
 ) -> Result<bool> {
-    let (lo, hi) = if a.id < b.id { (a.id, b.id) } else { (b.id, a.id) };
+    let (lo, hi) = if a.id < b.id {
+        (a.id, b.id)
+    } else {
+        (b.id, a.id)
+    };
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO idx_contradictions \
             (fact_a_id, fact_b_id, confidence, detected_at, resolved_at, decision) \
@@ -389,7 +406,10 @@ fn record_pair(
                 |r| r.get(0),
             )
             .optional()?;
-        if matches!(loser_state.as_deref().and_then(FactState::parse), Some(FactState::Verified)) {
+        if matches!(
+            loser_state.as_deref().and_then(FactState::parse),
+            Some(FactState::Verified)
+        ) {
             groundtruth::set_fact_state(conn, loser, FactState::Contradicted)?;
             tracing::info!(
                 fact_a_id = lo,
@@ -441,7 +461,9 @@ pub fn detect_contradictions_for(
         )
         .optional()
         .context("load new fact for contradiction scan")?;
-    let Some(new_fact) = row else { return Ok(Vec::new()) };
+    let Some(new_fact) = row else {
+        return Ok(Vec::new());
+    };
     if new_fact.revoked_at.is_some() || !is_comparable(&new_fact.fact_state) {
         return Ok(Vec::new());
     }
@@ -453,8 +475,11 @@ pub fn detect_contradictions_for(
         }
         if let Some(sig) = pair_confidence(&new_fact.statement, &peer.statement) {
             if record_pair(conn, &new_fact, peer, sig, now_ns)? {
-                let (lo, hi) =
-                    if new_fact.id < peer.id { (new_fact.id, peer.id) } else { (peer.id, new_fact.id) };
+                let (lo, hi) = if new_fact.id < peer.id {
+                    (new_fact.id, peer.id)
+                } else {
+                    (peer.id, new_fact.id)
+                };
                 detected.push((lo, hi));
             }
         }
@@ -518,7 +543,10 @@ pub async fn pair_confidence_semantic(
     let signal = if negation { 0.4 } else { (1.0 - vj) * 0.3 };
     let confidence = (subj * 0.6 + signal).min(1.0);
     if confidence >= EMIT_THRESHOLD {
-        Some(PairSignal { confidence, negation })
+        Some(PairSignal {
+            confidence,
+            negation,
+        })
     } else {
         None
     }
@@ -537,8 +565,10 @@ pub async fn scan_contradictions(
     embed: Option<&dyn EmbedProvider>,
 ) -> Result<usize> {
     let all = groundtruth::surface_for_recall(conn, 100_000, true)?;
-    let verified: Vec<GroundTruth> =
-        all.into_iter().filter(|g| is_comparable(&g.fact_state)).collect();
+    let verified: Vec<GroundTruth> = all
+        .into_iter()
+        .filter(|g| is_comparable(&g.fact_state))
+        .collect();
     tracing::info!(
         facts = verified.len(),
         semantic = embed.is_some(),
@@ -623,7 +653,10 @@ pub fn resolve(conn: &Connection, ledger_id: i64, now_ns: i64) -> Result<bool> {
                 |r| r.get(0),
             )
             .optional()?;
-        if matches!(st.as_deref().and_then(FactState::parse), Some(FactState::Contradicted)) {
+        if matches!(
+            st.as_deref().and_then(FactState::parse),
+            Some(FactState::Contradicted)
+        ) {
             groundtruth::set_fact_state(conn, id, FactState::Verified)?;
         }
     }
@@ -637,7 +670,11 @@ pub fn forget_for_ids(conn: &Connection, revoked_ids: &[i64]) -> Result<i64> {
     if revoked_ids.is_empty() {
         return Ok(0);
     }
-    let placeholders = revoked_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let placeholders = revoked_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
     let sql = format!(
         "DELETE FROM idx_contradictions \
          WHERE fact_a_id IN ({p}) OR fact_b_id IN ({p})",
@@ -645,7 +682,11 @@ pub fn forget_for_ids(conn: &Connection, revoked_ids: &[i64]) -> Result<i64> {
     );
     // The id list is bound once per IN clause; double it for params_from_iter
     // (avoids the fragile twice-pushed &dyn ToSql pattern).
-    let doubled: Vec<i64> = revoked_ids.iter().chain(revoked_ids.iter()).copied().collect();
+    let doubled: Vec<i64> = revoked_ids
+        .iter()
+        .chain(revoked_ids.iter())
+        .copied()
+        .collect();
     let n = conn.execute(&sql, rusqlite::params_from_iter(doubled))?;
     Ok(n as i64)
 }
@@ -669,7 +710,13 @@ mod tests {
     use crate::memory::groundtruth::Source;
     use crate::memory::store;
 
-    fn gt(id: i64, statement: &str, scope: &str, fact_state: &str, source_weight: &str) -> GroundTruth {
+    fn gt(
+        id: i64,
+        statement: &str,
+        scope: &str,
+        fact_state: &str,
+        source_weight: &str,
+    ) -> GroundTruth {
         GroundTruth {
             id,
             statement: statement.to_string(),
@@ -721,13 +768,19 @@ mod tests {
         assert!(sig.is_some(), "same subject, diverging value → recorded");
         let sig = sig.unwrap();
         assert!(sig.confidence >= EMIT_THRESHOLD);
-        assert!(!sig.negation, "value divergence is ambiguous → no auto-flag");
+        assert!(
+            !sig.negation,
+            "value divergence is ambiguous → no auto-flag"
+        );
     }
 
     #[test]
     fn pair_confidence_negation_flip_is_auto_resolvable() {
         let sig = pair_confidence("the vpn is up", "the vpn is not up");
-        assert!(sig.is_some(), "same subject, opposite polarity → contradiction");
+        assert!(
+            sig.is_some(),
+            "same subject, opposite polarity → contradiction"
+        );
         assert!(sig.unwrap().negation, "a polarity flip is auto-resolvable");
     }
 
@@ -748,7 +801,10 @@ mod tests {
             gt(1, "nas is at 192.168.1.20", "global", "verified", "{}"),
             gt(2, "nas is at 10.0.0.5", "host:cube", "verified", "{}"),
         ];
-        assert!(detect_contradictions(&facts).is_empty(), "different scope → no pair");
+        assert!(
+            detect_contradictions(&facts).is_empty(),
+            "different scope → no pair"
+        );
         let same = vec![
             gt(1, "nas is at 192.168.1.20", "global", "verified", "{}"),
             gt(2, "nas is at 10.0.0.5", "global", "verified", "{}"),
@@ -764,13 +820,22 @@ mod tests {
             gt(1, "nas is at 192.168.1.20", "global", "verified", "{}"),
             gt(2, "nas is at 10.0.0.5", "global", "candidate", "{}"),
         ];
-        assert!(detect_contradictions(&facts).is_empty(), "candidate not compared");
+        assert!(
+            detect_contradictions(&facts).is_empty(),
+            "candidate not compared"
+        );
     }
 
     #[test]
     fn loser_is_lower_source_count_then_older() {
         let a = gt(1, "x", "global", "verified", r#"{"omi":1}"#); // 1 source
-        let b = gt(2, "x", "global", "verified", r#"{"omi":1,"import:hermes":1}"#); // 2 sources
+        let b = gt(
+            2,
+            "x",
+            "global",
+            "verified",
+            r#"{"omi":1,"import:hermes":1}"#,
+        ); // 2 sources
         assert_eq!(loser_id(&a, &b), 1, "fewer sources loses");
         let c = gt(5, "x", "global", "verified", "{}");
         let d = gt(9, "x", "global", "verified", "{}");
@@ -786,7 +851,14 @@ mod tests {
         groundtruth::insert(&conn, "vpn is up", &Source::Onboarding, "global", 2).unwrap();
         assert!(list_contradictions(&conn, false).unwrap().is_empty());
         // Fact B: a single operator assertion of the OPPOSITE polarity → verified, 1 source.
-        groundtruth::insert(&conn, "vpn is not up", &Source::OperatorRuntime, "global", 3).unwrap();
+        groundtruth::insert(
+            &conn,
+            "vpn is not up",
+            &Source::OperatorRuntime,
+            "global",
+            3,
+        )
+        .unwrap();
         let pending = list_contradictions(&conn, false).unwrap();
         assert_eq!(pending.len(), 1, "polarity contradiction recorded");
         // B (1 source) loses to A (2 sources) → B flagged Contradicted, drops from recall.
@@ -797,13 +869,19 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(b_state, "contradicted", "the lower-credibility loser is auto-flagged");
+        assert_eq!(
+            b_state, "contradicted",
+            "the lower-credibility loser is auto-flagged"
+        );
         let surfaced: Vec<_> = groundtruth::surface_for_recall(&conn, 10, false)
             .unwrap()
             .into_iter()
             .map(|g| g.statement)
             .collect();
-        assert!(!surfaced.contains(&"vpn is not up".to_string()), "contradicted fact hidden");
+        assert!(
+            !surfaced.contains(&"vpn is not up".to_string()),
+            "contradicted fact hidden"
+        );
         // Dismissing the contradiction restores the loser to recall (complete undo).
         assert!(resolve(&conn, pending[0].ledger_id, 999).unwrap());
         let restored: String = conn
@@ -822,12 +900,28 @@ mod tests {
         // be surfaced to the operator but NEVER silently dropped from recall.
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("v.db")).unwrap();
-        groundtruth::insert(&conn, "standup is at 9am", &Source::OperatorRuntime, "global", 1)
-            .unwrap();
-        groundtruth::insert(&conn, "standup is at 5pm", &Source::OperatorRuntime, "global", 2)
-            .unwrap();
+        groundtruth::insert(
+            &conn,
+            "standup is at 9am",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "standup is at 5pm",
+            &Source::OperatorRuntime,
+            "global",
+            2,
+        )
+        .unwrap();
         // Recorded in the ledger for operator review...
-        assert_eq!(list_contradictions(&conn, false).unwrap().len(), 1, "ledger records it");
+        assert_eq!(
+            list_contradictions(&conn, false).unwrap().len(),
+            1,
+            "ledger records it"
+        );
         // ...but BOTH facts stay verified + surface (no destructive auto-hide).
         let surfaced: Vec<_> = groundtruth::surface_for_recall(&conn, 10, false)
             .unwrap()
@@ -855,8 +949,15 @@ mod tests {
             .query_row("SELECT id FROM idx_contradictions", [], |r| r.get(0))
             .unwrap();
         assert!(resolve(&conn, id, 200).unwrap());
-        assert!(list_contradictions(&conn, false).unwrap().is_empty(), "dismissed hidden");
-        assert_eq!(list_contradictions(&conn, true).unwrap().len(), 1, "still in full list");
+        assert!(
+            list_contradictions(&conn, false).unwrap().is_empty(),
+            "dismissed hidden"
+        );
+        assert_eq!(
+            list_contradictions(&conn, true).unwrap().len(),
+            1,
+            "still in full list"
+        );
     }
 
     #[test]
@@ -875,7 +976,11 @@ mod tests {
             [],
         )
         .unwrap();
-        assert_eq!(forget_for_ids(&conn, &[2]).unwrap(), 1, "the (1,2) pair is deleted");
+        assert_eq!(
+            forget_for_ids(&conn, &[2]).unwrap(),
+            1,
+            "the (1,2) pair is deleted"
+        );
         assert_eq!(forget_for_ids(&conn, &[99]).unwrap(), 0, "unknown id no-op");
         let remaining: i64 = conn
             .query_row("SELECT count(*) FROM idx_contradictions", [], |r| r.get(0))
@@ -890,7 +995,10 @@ mod tests {
         // A leading stopword must NOT steal a slot from a content token: the
         // budget is the first 3 CONTENT tokens, so 'nas' survives despite 'the'.
         let s = subject_tokens("the big primary nas");
-        assert!(s.contains("nas"), "content token survives the stopword budget");
+        assert!(
+            s.contains("nas"),
+            "content token survives the stopword budget"
+        );
         assert!(!s.contains("the"));
     }
 
@@ -927,8 +1035,20 @@ mod tests {
     #[test]
     fn multi_clause_pair_detects_only_the_diverging_clause() {
         let facts = vec![
-            gt(1, "nas is at 192.168.1.20 and router is at 10.0.0.1", "global", "verified", "{}"),
-            gt(2, "nas is at 10.0.0.5 and router is at 10.0.0.1", "global", "verified", "{}"),
+            gt(
+                1,
+                "nas is at 192.168.1.20 and router is at 10.0.0.1",
+                "global",
+                "verified",
+                "{}",
+            ),
+            gt(
+                2,
+                "nas is at 10.0.0.5 and router is at 10.0.0.1",
+                "global",
+                "verified",
+                "{}",
+            ),
         ];
         // Only the nas value diverges (router is identical in both) → exactly one pair.
         assert_eq!(detect_contradictions(&facts).len(), 1);
@@ -1002,8 +1122,14 @@ mod tests {
         // Synonym subjects ("nas" vs "storage server") with diverging values. The
         // subjects share ZERO tokens, so the insert-time Jaccard trigger records
         // nothing — the ledger is empty after both inserts.
-        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 1)
-            .unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 192.168.1.20",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
         groundtruth::insert(
             &conn,
             "storage server is at 10.0.0.5",
@@ -1012,7 +1138,10 @@ mod tests {
             2,
         )
         .unwrap();
-        assert!(list_contradictions(&conn, true).unwrap().is_empty(), "Jaccard insert sees nothing");
+        assert!(
+            list_contradictions(&conn, true).unwrap().is_empty(),
+            "Jaccard insert sees nothing"
+        );
         // Deterministic re-scan (None) also finds nothing — subjects don't overlap.
         assert_eq!(scan_contradictions(&conn, 10, None).await.unwrap(), 0);
         // Semantic scan clusters nas ≈ storage → records the contradiction.
@@ -1028,10 +1157,22 @@ mod tests {
     async fn scan_none_embed_runs_the_deterministic_path() {
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("v.db")).unwrap();
-        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 1)
-            .unwrap();
-        groundtruth::insert(&conn, "nas is at 10.0.0.5", &Source::OperatorRuntime, "global", 2)
-            .unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 192.168.1.20",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            2,
+        )
+        .unwrap();
         // Insert-time already recorded the divergence; clear it to exercise the
         // scan(None) detection path directly.
         conn.execute("DELETE FROM idx_contradictions", []).unwrap();

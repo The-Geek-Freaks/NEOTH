@@ -215,7 +215,10 @@ mod tests {
     fn compute_key_is_24_lowercase_hex() {
         let k = compute_key(b"hello world");
         assert_eq!(k.len(), 24);
-        assert!(k.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            k.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]
@@ -226,7 +229,10 @@ mod tests {
 
     #[test]
     fn marker_format_is_pinned() {
-        assert_eq!(marker_for("abc123abc123abc123abc123"), "<<ccr:abc123abc123abc123abc123>>");
+        assert_eq!(
+            marker_for("abc123abc123abc123abc123"),
+            "<<ccr:abc123abc123abc123abc123>>"
+        );
     }
 
     #[test]

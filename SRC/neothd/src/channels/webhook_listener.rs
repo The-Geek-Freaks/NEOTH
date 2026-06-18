@@ -654,7 +654,10 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
         // whole pipeline (and re-send the reply when send creds are wired).
         if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref()) {
             if dedup.lock().await.check_and_insert(mid) {
-                debug!(message_id = mid, "webhook: duplicate wamid — skipping re-delivery");
+                debug!(
+                    message_id = mid,
+                    "webhook: duplicate wamid — skipping re-delivery"
+                );
                 continue;
             }
         }
@@ -779,7 +782,10 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             // confirm_degraded: records a Strict
                                             // Confirm that reached send (dead path
                                             // under the standard pipeline gate).
-                                            matches!(gov.decision, crate::permissions::Decision::Confirm(_)),
+                                            matches!(
+                                                gov.decision,
+                                                crate::permissions::Decision::Confirm(_)
+                                            ),
                                             now,
                                         );
                                         append_audit(
@@ -896,7 +902,10 @@ async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMe
         // a duplicate before it re-runs the pipeline (+ re-sends the reply).
         if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref()) {
             if dedup.lock().await.check_and_insert(mid) {
-                debug!(message_id = mid, "LINE webhook: duplicate event — skipping redelivery");
+                debug!(
+                    message_id = mid,
+                    "LINE webhook: duplicate event — skipping redelivery"
+                );
                 continue;
             }
         }
@@ -1275,10 +1284,16 @@ mod tests {
             "Deny verdict must not hit the WhatsApp Graph API"
         );
         let (event_type, payload) = read_first_frame(&seg);
-        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED);
+        assert_eq!(
+            event_type,
+            crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED
+        );
         let text = String::from_utf8_lossy(&payload);
         assert!(!text.contains("+4900000"), "recipient phone leaked: {text}");
-        assert!(text.contains("channel_send"), "denial payload tags the action");
+        assert!(
+            text.contains("channel_send"),
+            "denial payload tags the action"
+        );
     }
 
     #[tokio::test]
@@ -1352,7 +1367,11 @@ mod tests {
         let _ = join.await;
         // Exactly one Graph API POST landed (also enforced by `.expect(1)`).
         let reqs = server.received_requests().await.unwrap();
-        assert_eq!(reqs.len(), 1, "Allow+send must hit the Graph API exactly once");
+        assert_eq!(
+            reqs.len(),
+            1,
+            "Allow+send must hit the Graph API exactly once"
+        );
         let (event_type, payload) = read_first_frame(&seg);
         assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND);
         let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
@@ -1415,10 +1434,16 @@ mod tests {
             "Deny verdict must not hit the LINE push API"
         );
         let (event_type, payload) = read_first_frame(&seg);
-        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED);
+        assert_eq!(
+            event_type,
+            crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED
+        );
         let text = String::from_utf8_lossy(&payload);
         assert!(!text.contains("+4900000"), "recipient leaked: {text}");
-        assert!(text.contains("channel_send"), "denial payload tags the action");
+        assert!(
+            text.contains("channel_send"),
+            "denial payload tags the action"
+        );
     }
 
     #[tokio::test]
@@ -1455,7 +1480,11 @@ mod tests {
         drop(writer);
         let _ = join.await;
         let reqs = server.received_requests().await.unwrap();
-        assert_eq!(reqs.len(), 1, "Allow+send must hit the LINE push API exactly once");
+        assert_eq!(
+            reqs.len(),
+            1,
+            "Allow+send must hit the LINE push API exactly once"
+        );
         let (event_type, payload) = read_first_frame(&seg);
         assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND);
         let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
@@ -1642,7 +1671,10 @@ mod tests {
         let sig = sign_meta(body, b"appsecret");
         let (status, _) =
             http_post(&host, "/webhook", body, &[("x-hub-signature-256", &sig)]).await;
-        assert_eq!(status, 200, "Meta POST must 200 even while the pipeline blocks");
+        assert_eq!(
+            status, 200,
+            "Meta POST must 200 even while the pipeline blocks"
+        );
         assert!(
             !completed.load(Ordering::SeqCst),
             "pipeline must still be blocked when the 200 returns (fire-and-forget)"

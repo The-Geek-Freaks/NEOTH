@@ -26,7 +26,7 @@
 //! *contradiction*, a different mechanism) so BOTH scans share ONE surface +
 //! one chat hook.
 
-use crate::profile::fact_check::{assess, Confidence};
+use crate::profile::fact_check::{Confidence, assess};
 
 /// Completion/success claims that, made WITHOUT evidence, are Information Voids.
 /// Multi-word phrases (not bare "work"/"fix") to keep false positives low.
@@ -158,7 +158,10 @@ mod tests {
     #[test]
     fn does_not_flag_a_grounded_verifiable_answer() {
         let c = challenge_answer("NEOTH shipped in 2026. It may help with recall.");
-        assert!(!c.has_speculative(), "grounded/hedged claims must NOT be flagged: {c:?}");
+        assert!(
+            !c.has_speculative(),
+            "grounded/hedged claims must NOT be flagged: {c:?}"
+        );
         assert!(!c.has_voids());
         assert!(c.note().is_none());
     }
@@ -186,7 +189,10 @@ mod tests {
     fn success_claim_with_a_test_anchor_is_not_a_void() {
         // Same success claim BUT it cites a test → supported, not flagged.
         let voids = scan_information_voids("It works now — the test suite passes, 0 failed.");
-        assert!(voids.is_empty(), "evidence anchor must suppress the void: {voids:?}");
+        assert!(
+            voids.is_empty(),
+            "evidence anchor must suppress the void: {voids:?}"
+        );
     }
 
     #[test]

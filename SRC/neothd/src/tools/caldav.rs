@@ -284,7 +284,10 @@ pub enum CloseOutcome {
 /// `create_task` is idempotent (a re-run hits the existing resource, never
 /// duplicates). 16-hex of xxh3-64 keeps it path-safe.
 pub fn task_uid(summary: &str) -> String {
-    format!("neoth-{:016x}", xxhash_rust::xxh3::xxh3_64(summary.as_bytes()))
+    format!(
+        "neoth-{:016x}",
+        xxhash_rust::xxh3::xxh3_64(summary.as_bytes())
+    )
 }
 
 /// Reject a UID that could escape the collection path (`..`, `/`, control
@@ -390,7 +393,10 @@ pub async fn create_task(
         .put(&url)
         .basic_auth(username, Some(password))
         .header(reqwest::header::IF_NONE_MATCH, "*")
-        .header(reqwest::header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "text/calendar; charset=utf-8",
+        )
         .body(body)
         .send()
         .await
@@ -400,7 +406,13 @@ pub async fn create_task(
         return Ok((uid, CreateOutcome::AlreadyExists));
     }
     if !status.is_success() {
-        let snippet: String = resp.text().await.unwrap_or_default().chars().take(200).collect();
+        let snippet: String = resp
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(200)
+            .collect();
         anyhow::bail!("CalDAV PUT failed: HTTP {status} — {snippet}");
     }
     Ok((uid, CreateOutcome::Created))
@@ -442,13 +454,19 @@ pub async fn close_task(
     let mut put = client
         .put(&url)
         .basic_auth(username, Some(password))
-        .header(reqwest::header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "text/calendar; charset=utf-8",
+        )
         .body(completed);
     // Optimistic concurrency: only overwrite the exact version we read.
     if let Some(tag) = &etag {
         put = put.header(reqwest::header::IF_MATCH, tag.as_str());
     }
-    let resp = put.send().await.with_context(|| format!("CalDAV PUT {url}"))?;
+    let resp = put
+        .send()
+        .await
+        .with_context(|| format!("CalDAV PUT {url}"))?;
     if resp.status() == reqwest::StatusCode::PRECONDITION_FAILED {
         return Ok(CloseOutcome::Conflict);
     }
@@ -579,7 +597,10 @@ END:VCALENDAR</cal:calendar-data>
     #[test]
     fn build_vtodo_ics_escapes_special_chars() {
         let ics = build_vtodo_ics("u", "a,b; c\\d\ne", None);
-        assert!(ics.contains("SUMMARY:a\\,b\\; c\\\\d\\ne\r\n"), "got: {ics}");
+        assert!(
+            ics.contains("SUMMARY:a\\,b\\; c\\\\d\\ne\r\n"),
+            "got: {ics}"
+        );
         assert!(!ics.contains("DUE:"));
     }
 
@@ -673,7 +694,9 @@ END:VCALENDAR</cal:calendar-data>
             .respond_with(ResponseTemplate::new(404))
             .mount(&mock)
             .await;
-        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc").await.unwrap();
+        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc")
+            .await
+            .unwrap();
         assert_eq!(outcome, CloseOutcome::NotFound);
     }
 
@@ -696,7 +719,9 @@ END:VCALENDAR</cal:calendar-data>
             .respond_with(ResponseTemplate::new(204))
             .mount(&mock)
             .await;
-        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc").await.unwrap();
+        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc")
+            .await
+            .unwrap();
         assert_eq!(outcome, CloseOutcome::Completed);
     }
 
@@ -709,7 +734,9 @@ END:VCALENDAR</cal:calendar-data>
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("ETag", "\"v1\"")
-                    .set_body_string("BEGIN:VTODO\r\nUID:neoth-abc\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\n"),
+                    .set_body_string(
+                        "BEGIN:VTODO\r\nUID:neoth-abc\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\n",
+                    ),
             )
             .mount(&mock)
             .await;
@@ -718,7 +745,9 @@ END:VCALENDAR</cal:calendar-data>
             .respond_with(ResponseTemplate::new(412))
             .mount(&mock)
             .await;
-        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc").await.unwrap();
+        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc")
+            .await
+            .unwrap();
         assert_eq!(
             outcome,
             CloseOutcome::Conflict,

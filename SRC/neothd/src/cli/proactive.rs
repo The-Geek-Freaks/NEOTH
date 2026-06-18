@@ -262,14 +262,19 @@ fn write_accepted_skill(home: &std::path::Path, proposal: &ProposedAction) -> Re
     use crate::skills::creator::{validate_skill_id, write_skill_yaml};
     use crate::skills::schema::SkillManifest;
 
-    let manifest: SkillManifest = serde_yaml::from_str(&proposal.draft_yaml).with_context(|| {
+    let manifest: SkillManifest =
+        serde_yaml::from_str(&proposal.draft_yaml).with_context(|| {
+            format!(
+                "accepted skill proposal {} carries a draft_yaml that is not a valid SkillManifest",
+                proposal.id,
+            )
+        })?;
+    validate_skill_id(&manifest.id).with_context(|| {
         format!(
-            "accepted skill proposal {} carries a draft_yaml that is not a valid SkillManifest",
-            proposal.id,
+            "skill id {:?} is invalid (cannot be a dir name)",
+            manifest.id
         )
     })?;
-    validate_skill_id(&manifest.id)
-        .with_context(|| format!("skill id {:?} is invalid (cannot be a dir name)", manifest.id))?;
     let skills_dir = home.join("skills");
     write_skill_yaml(&skills_dir, &manifest.id, &proposal.draft_yaml)
 }

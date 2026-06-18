@@ -38,7 +38,10 @@ fn render_report(report: &FactCheckReport, output: OutputFormat) -> Result<Strin
         OutputFormat::Jsonl => format!("{}\n", serde_json::to_string(report)?),
         OutputFormat::Table => {
             let mut s = String::new();
-            s.push_str(&format!("# fact-check verdict: {}\n", report.verdict.as_str()));
+            s.push_str(&format!(
+                "# fact-check verdict: {}\n",
+                report.verdict.as_str()
+            ));
             s.push_str(&format!(
                 "#   verifiable={} plausible={} opinion={} suspect={}\n",
                 report.count(Confidence::Verifiable),

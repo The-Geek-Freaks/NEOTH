@@ -201,6 +201,10 @@ mod tests {
         insert_warm(&conn, None);
         insert_warm(&conn, None);
         let report = check_integrity(&conn).unwrap();
-        assert!(report.ok, "NULL summary ids must not collide: {:?}", report.issues);
+        assert!(
+            report.ok,
+            "NULL summary ids must not collide: {:?}",
+            report.issues
+        );
     }
 }

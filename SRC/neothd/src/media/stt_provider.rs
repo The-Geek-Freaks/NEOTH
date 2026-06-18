@@ -75,14 +75,20 @@ impl OpenAiWhisperClient {
     }
 
     fn endpoint(&self) -> String {
-        format!("{}/v1/audio/transcriptions", self.base_url.trim_end_matches('/'))
+        format!(
+            "{}/v1/audio/transcriptions",
+            self.base_url.trim_end_matches('/')
+        )
     }
 }
 
 /// Parse OpenAI's `verbose_json` transcription response into a
 /// [`TranscriptionResult`]. PURE — the network is the caller's. The API returns
 /// `start`/`end` in SECONDS (float); we convert to ms.
-pub fn parse_openai_whisper(body: &[u8], req_language: &str) -> Result<TranscriptionResult, String> {
+pub fn parse_openai_whisper(
+    body: &[u8],
+    req_language: &str,
+) -> Result<TranscriptionResult, String> {
     let v: serde_json::Value =
         serde_json::from_slice(body).map_err(|e| format!("openai whisper decode: {e}"))?;
     let text = v
@@ -258,7 +264,10 @@ impl SttProviderImpl for AzureSpeechClient {
         let resp = client
             .post(self.endpoint(&request.language))
             .header("Ocp-Apim-Subscription-Key", self.api_key.expose())
-            .header("Content-Type", "audio/wav; codecs=audio/pcm; samplerate=16000")
+            .header(
+                "Content-Type",
+                "audio/wav; codecs=audio/pcm; samplerate=16000",
+            )
             .header("Accept", "application/json")
             .body(audio.to_vec())
             .send()
@@ -359,8 +368,7 @@ async fn emit_stt_transcribed(
             return;
         }
     };
-    let header =
-        crate::wal::make_header(crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED, &payload);
+    let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED, &payload);
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(error = %e, "WAL append STT_TRANSCRIBED (0xCC) failed (non-fatal)");
     }
@@ -401,7 +409,10 @@ mod tests {
         let body = br#"{"text":"hallo"}"#;
         let r = parse_openai_whisper(body, "de").unwrap();
         assert_eq!(r.text, "hallo");
-        assert_eq!(r.language, "de", "no language in response → request language");
+        assert_eq!(
+            r.language, "de",
+            "no language in response → request language"
+        );
         assert!(r.segments.is_empty());
     }
 
@@ -426,26 +437,40 @@ mod tests {
         let c = AzureSpeechClient::new("westeurope", SecretString::from("k"));
         assert!(c.endpoint("de-DE").contains("language=de-DE"));
         assert!(c.endpoint("").contains("language=en-US"));
-        assert!(c.endpoint("de-DE").starts_with("https://westeurope.stt.speech.microsoft.com"));
+        assert!(
+            c.endpoint("de-DE")
+                .starts_with("https://westeurope.stt.speech.microsoft.com")
+        );
     }
 
     #[test]
     fn openai_endpoint_path() {
         let c = OpenAiWhisperClient::new(SecretString::from("k"));
-        assert_eq!(c.endpoint(), "https://api.openai.com/v1/audio/transcriptions");
+        assert_eq!(
+            c.endpoint(),
+            "https://api.openai.com/v1/audio/transcriptions"
+        );
     }
 
     fn cloud_on() -> crate::config::MediaConfig {
-        crate::config::MediaConfig { cloud_stt_enabled: true, ..Default::default() }
+        crate::config::MediaConfig {
+            cloud_stt_enabled: true,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn factory_returns_right_kind_or_deferral() {
         let on = cloud_on();
         assert_eq!(
-            make_stt_provider(SttProviderKind::OpenAiWhisperApi, Some(SecretString::from("k")), None, &on)
-                .unwrap()
-                .kind(),
+            make_stt_provider(
+                SttProviderKind::OpenAiWhisperApi,
+                Some(SecretString::from("k")),
+                None,
+                &on
+            )
+            .unwrap()
+            .kind(),
             SttProviderKind::OpenAiWhisperApi
         );
         assert_eq!(
@@ -460,7 +485,15 @@ mod tests {
             SttProviderKind::AzureSpeech
         );
         assert!(make_stt_provider(SttProviderKind::OpenAiWhisperApi, None, None, &on).is_err());
-        assert!(make_stt_provider(SttProviderKind::AzureSpeech, Some(SecretString::from("k")), None, &on).is_err());
+        assert!(
+            make_stt_provider(
+                SttProviderKind::AzureSpeech,
+                Some(SecretString::from("k")),
+                None,
+                &on
+            )
+            .is_err()
+        );
         assert!(make_stt_provider(SttProviderKind::WhisperRsLocal, None, None, &on).is_err());
         assert!(make_stt_provider(SttProviderKind::Vosk, None, None, &on).is_err());
     }
@@ -479,24 +512,33 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(err.contains("cloud STT") && err.contains("LEAVES the device"), "got: {err}");
+        assert!(
+            err.contains("cloud STT") && err.contains("LEAVES the device"),
+            "got: {err}"
+        );
         // Azure likewise refused by the gate (region present, still blocked).
-        assert!(make_stt_provider(
-            SttProviderKind::AzureSpeech,
-            Some(SecretString::from("k")),
-            Some("eastus".into()),
-            &off,
-        )
-        .err()
-        .unwrap()
-        .contains("cloud STT"));
+        assert!(
+            make_stt_provider(
+                SttProviderKind::AzureSpeech,
+                Some(SecretString::from("k")),
+                Some("eastus".into()),
+                &off,
+            )
+            .err()
+            .unwrap()
+            .contains("cloud STT")
+        );
     }
 
     #[tokio::test]
     async fn transcribe_surfaces_error_on_unreachable_host() {
-        let c = OpenAiWhisperClient::new(SecretString::from("k")).with_base_url("http://127.0.0.1:1");
+        let c =
+            OpenAiWhisperClient::new(SecretString::from("k")).with_base_url("http://127.0.0.1:1");
         let err = c.transcribe(b"RIFF....", &req("en")).await.unwrap_err();
-        assert!(err.contains("openai whisper"), "expected an openai error, got: {err}");
+        assert!(
+            err.contains("openai whisper"),
+            "expected an openai error, got: {err}"
+        );
     }
 
     struct MockStt;
@@ -528,7 +570,11 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("required_audit_for_cloud_media"), "got: {err}");
         // Without required-audit, a writerless call still transcribes (best-effort).
-        assert!(transcribe_and_audit(&MockStt, &audio, &req("en"), None, false).await.is_ok());
+        assert!(
+            transcribe_and_audit(&MockStt, &audio, &req("en"), None, false)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

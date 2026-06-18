@@ -1152,7 +1152,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
         let (handle, join) = spawn(seg).expect("spawn");
-        assert!(handle.is_alive(), "freshly-spawned writer must report alive");
+        assert!(
+            handle.is_alive(),
+            "freshly-spawned writer must report alive"
+        );
 
         // A `Some`-but-crashed writer: receiver dropped → `tx.is_closed()` true.
         // `is_alive()` must report false AND `append()` must fail closed so a
@@ -1160,7 +1163,10 @@ mod tests {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
         let dead = WalWriterHandle { tx, quota: None };
-        assert!(!dead.is_alive(), "a crashed-but-Some writer must report not-alive");
+        assert!(
+            !dead.is_alive(),
+            "a crashed-but-Some writer must report not-alive"
+        );
         let h = header_for(1, 1);
         let err = dead.append(h, b"x".to_vec()).await.unwrap_err();
         assert!(matches!(err, WalError::WriterClosed));
@@ -1526,8 +1532,8 @@ mod tests {
         // The home is seeded over the ceiling, so once any thread's crossing
         // measures, the guard latches breached and refuses the rest — the
         // ceiling is enforced, not blown open by the storm.
-        use std::sync::atomic::{AtomicU64, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("seed.bin"), vec![0u8; 4096]).unwrap();
         let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), 1024));
@@ -1551,7 +1557,10 @@ mod tests {
         // 4 KiB seed over a 1 KiB ceiling: the breach must latch and stay
         // sticky — far fewer than the 1600 attempts can be admitted.
         let n = admitted.load(Ordering::Relaxed);
-        assert!(n < 1600, "breach must refuse the bulk of writes; admitted {n}");
+        assert!(
+            n < 1600,
+            "breach must refuse the bulk of writes; admitted {n}"
+        );
         assert!(
             matches!(guard.try_admit(1), Err(WalError::QuotaExceeded { .. })),
             "ceiling breach must be sticky after the concurrent storm"

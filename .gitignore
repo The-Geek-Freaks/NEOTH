@@ -54,7 +54,9 @@ Thumbs.db
 desktop.ini
 
 # --- IDEs ---
-.vscode/
+.vscode/*
+!.vscode/
+!.vscode/tasks.json
 .idea/
 *.iml
 *.iws
@@ -80,6 +82,14 @@ criterion/
 # --- cargo-fuzz ---
 fuzz/corpus/
 fuzz/artifacts/
+
+# --- graphify code-graph artifacts (regenerable; graph.json is ~24MB) ---
+graphify-out/
+**/graphify-out/
+.graphify_python
+# NEOTH self-map vault: keep the Obsidian markdown map, drop the heavy HTML/JSON copies
+SRC/neothd/assets/obsidian_vault/NEOTH-Self/*.html
+SRC/neothd/assets/obsidian_vault/NEOTH-Self/*.json
 
 # --- Upstream research clones + private operator notes ---
 # QUELLEN/ contains third-party forks (Hermes, OpenClaw, agentmemory, etc.)
@@ -115,3 +125,5 @@ nul
 SRC/neothd/check_msvc.bat
 # Belt-and-suspenders: catch any future operator batch scripts in crate roots
 SRC/**/*.bat
+# Tracked MSVC wrapper used by VSCode tasks and coding agents.
+!SRC/_run.bat

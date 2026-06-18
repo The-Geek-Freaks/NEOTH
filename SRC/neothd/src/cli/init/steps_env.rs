@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
 use super::{
-    print_gui_handoff_banner, WizardStep, write_detect_complete_sidecar, InitArgs,
-    OnboardingMode, WizardModeChoice, WizardState,
+    InitArgs, OnboardingMode, WizardModeChoice, WizardState, WizardStep, print_gui_handoff_banner,
+    write_detect_complete_sidecar,
 };
 
 /// Step 0 — pick GUI vs CLI surface as the very first thing the
@@ -76,7 +76,11 @@ pub(crate) fn step0_mode_selection(args: &InitArgs, interactive: bool) -> Result
     }
 }
 
-pub(crate) fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step1_license(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 1: license");
 
     println!("\n=================================================================");
@@ -159,7 +163,9 @@ pub(crate) async fn step1b_detect_environment(
     let env_class = crate::wizard::env_probe::probe_and_classify();
     println!("  environment: {env_class}");
     if env_class.is_headless() {
-        println!("  (headless — GUI / browser-OAuth steps are optional here; `neoth init --cli` skips them)");
+        println!(
+            "  (headless — GUI / browser-OAuth steps are optional here; `neoth init --cli` skips them)"
+        );
     }
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -325,18 +331,19 @@ pub(crate) fn step1d_onboarding_mode(
     } else {
         #[cfg(feature = "wizard")]
         {
-            println!("\n[1d/9] Is this a fresh start, or are you moving in from another assistant?\n");
+            println!(
+                "\n[1d/9] Is this a fresh start, or are you moving in from another assistant?\n"
+            );
             let options = [
                 "Fresh install — start with an empty memory",
                 "Migrate — import memory from a previous AI assistant",
             ];
-            let picked =
-                dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt("[1d/9] Onboarding mode")
-                    .items(&options)
-                    .default(usize::from(args.import_memory.is_some()))
-                    .interact()
-                    .context("onboarding-mode prompt")?;
+            let picked = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("[1d/9] Onboarding mode")
+                .items(&options)
+                .default(usize::from(args.import_memory.is_some()))
+                .interact()
+                .context("onboarding-mode prompt")?;
             if picked == 1 {
                 OnboardingMode::Migration
             } else {
@@ -354,9 +361,7 @@ pub(crate) fn step1d_onboarding_mode(
     };
 
     state.onboarding_mode = mode;
-    state
-        .steps_completed
-        .push(WizardStep::OnboardingMode as u8);
+    state.steps_completed.push(WizardStep::OnboardingMode as u8);
 
     match (mode, interactive) {
         (OnboardingMode::Migration, true) => {

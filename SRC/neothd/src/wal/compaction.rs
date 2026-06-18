@@ -605,7 +605,7 @@ mod tests {
         use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_RAW_TEXT};
         use crate::wal::frame::encode_frame;
         use crate::wal::segment_header::{
-            SegmentHeaderV2, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN,
+            SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN, SegmentHeaderV2,
         };
 
         let dir = tempdir().unwrap();
@@ -660,7 +660,11 @@ mod tests {
         let file = std::fs::read(&seg).unwrap();
         let (hl, logical) = logical_segment_bytes(&file).unwrap();
         assert_eq!(hl, SEGMENT_HEADER_V2_LEN);
-        assert_eq!(&logical[hl..], &raw_clean[..], "decompress restores the frame stream");
+        assert_eq!(
+            &logical[hl..],
+            &raw_clean[..],
+            "decompress restores the frame stream"
+        );
         verify_marker(&seg, key, &marker).expect("compressed segment verifies clean");
 
         // TAMPER — a changed byte inside the compressed window now FAILS (no more
@@ -668,7 +672,10 @@ mod tests {
         let (raw_tampered, _) = build_raw(true);
         write_compressed(&raw_tampered);
         let r = verify_marker(&seg, key, &marker);
-        assert!(r.is_err(), "tampered compressed window must fail HMAC: {r:?}");
+        assert!(
+            r.is_err(),
+            "tampered compressed window must fail HMAC: {r:?}"
+        );
         assert!(format!("{r:?}").contains("HMAC mismatch"), "got: {r:?}");
     }
 

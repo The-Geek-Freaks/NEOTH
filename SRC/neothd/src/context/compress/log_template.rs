@@ -108,7 +108,14 @@ impl ReformatTransform for LogTemplate {
             if tokens.is_empty() {
                 // Blank line breaks any active run.
                 if let Some(r) = run.take() {
-                    Self::flush_run(&r, &lines, &tokenized, &self.config, &mut next_template_id, &mut output);
+                    Self::flush_run(
+                        &r,
+                        &lines,
+                        &tokenized,
+                        &self.config,
+                        &mut next_template_id,
+                        &mut output,
+                    );
                 }
                 output.push_str(lines[i]);
                 output.push('\n');
@@ -121,14 +128,28 @@ impl ReformatTransform for LogTemplate {
                 }
                 _ => {
                     if let Some(r) = run.take() {
-                        Self::flush_run(&r, &lines, &tokenized, &self.config, &mut next_template_id, &mut output);
+                        Self::flush_run(
+                            &r,
+                            &lines,
+                            &tokenized,
+                            &self.config,
+                            &mut next_template_id,
+                            &mut output,
+                        );
                     }
                     run = Some(Run::start(i, tokens));
                 }
             }
         }
         if let Some(r) = run.take() {
-            Self::flush_run(&r, &lines, &tokenized, &self.config, &mut next_template_id, &mut output);
+            Self::flush_run(
+                &r,
+                &lines,
+                &tokenized,
+                &self.config,
+                &mut next_template_id,
+                &mut output,
+            );
         }
 
         // Restore the trailing newline only if the input had one.
@@ -140,7 +161,10 @@ impl ReformatTransform for LogTemplate {
 
         if output.len() >= content.len() {
             // Never inflate.
-            return Ok(ReformatOutput::from_lengths(content.len(), content.to_string()));
+            return Ok(ReformatOutput::from_lengths(
+                content.len(),
+                content.to_string(),
+            ));
         }
         Ok(ReformatOutput::from_lengths(content.len(), output))
     }
@@ -272,7 +296,10 @@ mod tests {
 
     #[test]
     fn empty_and_below_min_lines_skip() {
-        assert!(matches!(reformat().apply(""), Err(TransformError::Skipped { .. })));
+        assert!(matches!(
+            reformat().apply(""),
+            Err(TransformError::Skipped { .. })
+        ));
         assert!(matches!(
             reformat().apply("INFO a\nINFO b\nINFO c\n"),
             Err(TransformError::Skipped { .. })
@@ -283,7 +310,12 @@ mod tests {
     fn templated_run_collapses_losslessly() {
         let mut log = String::new();
         for i in 0..50 {
-            log.push_str(&format!("2025-01-15T12:34:{:02} INFO worker-{} processing job {}\n", i, i, 100 + i));
+            log.push_str(&format!(
+                "2025-01-15T12:34:{:02} INFO worker-{} processing job {}\n",
+                i,
+                i,
+                100 + i
+            ));
         }
         let r = reformat().apply(&log).expect("must collapse");
         assert!(r.bytes_saved > 0);
@@ -319,9 +351,16 @@ mod tests {
         let mut iter = r.output.lines();
         let header = iter.next().unwrap();
         assert!(header.starts_with("[Template T1:"));
-        let template_part = header.trim_start_matches("[Template T1: ").split("] (").next().unwrap();
+        let template_part = header
+            .trim_start_matches("[Template T1: ")
+            .split("] (")
+            .next()
+            .unwrap();
         let template_tokens: Vec<&str> = template_part.split_whitespace().collect();
-        let var_pos = template_tokens.iter().position(|t| *t == WILDCARD).expect("wildcard");
+        let var_pos = template_tokens
+            .iter()
+            .position(|t| *t == WILDCARD)
+            .expect("wildcard");
         let mut reconstructed = Vec::new();
         for variant_line in iter {
             if variant_line.is_empty() {
@@ -354,7 +393,10 @@ mod tests {
         if r.output.matches("[Template T1:").count() == 1
             && r.output.matches("[Template T2:").count() == 0
         {
-            assert!(!r.output.contains("(10 occurrences)"), "must not bridge blank line");
+            assert!(
+                !r.output.contains("(10 occurrences)"),
+                "must not bridge blank line"
+            );
         }
     }
 

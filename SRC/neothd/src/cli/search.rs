@@ -39,9 +39,9 @@ pub async fn run_search(args: SearchArgs) -> Result<()> {
     }
     let query = match args.query.clone() {
         Some(q) => q,
-        None => anyhow::bail!(
-            "neoth search: provide a <query> (or pass --stats for usage analytics)"
-        ),
+        None => {
+            anyhow::bail!("neoth search: provide a <query> (or pass --stats for usage analytics)")
+        }
     };
     let provider_name = args
         .provider

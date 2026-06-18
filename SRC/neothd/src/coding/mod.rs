@@ -90,9 +90,9 @@ pub use classifier::{Complexity, classify_heuristic};
 #[allow(unused_imports)]
 pub use decomposer::{
     CHARS_PER_TOKEN, DecomposerError, DecomposerLlm, DecomposerResponse, DecompositionResult,
-    MAX_INPUT_TOKENS, SessionComplexity, TaskType, build_prompt,
-    build_repair_prompt, clamp_task_type, decompose, estimate_input_tokens, parse_response,
-    truncate_to_budget, validate_tasks,
+    MAX_INPUT_TOKENS, SessionComplexity, TaskType, build_prompt, build_repair_prompt,
+    clamp_task_type, decompose, estimate_input_tokens, parse_response, truncate_to_budget,
+    validate_tasks,
 };
 #[allow(unused_imports)]
 pub use feed::{FeedEntry, is_kanban_event, parse_kanban_payload};

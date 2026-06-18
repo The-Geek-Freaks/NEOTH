@@ -172,7 +172,9 @@ fn verify_segments(
         let (header_len, logical) = match compaction::logical_segment_bytes(&raw) {
             Ok(v) => v,
             Err(e) => {
-                outcome.failures.push(format!("{}: unreconstructable segment: {e}", seg.display()));
+                outcome
+                    .failures
+                    .push(format!("{}: unreconstructable segment: {e}", seg.display()));
                 continue;
             }
         };
@@ -703,7 +705,10 @@ mod tests {
         assert_eq!(find_last_rotation_segment(&segs, None), None);
         // No rotation → the full list is returned unchanged.
         let n = segs.len();
-        assert_eq!(apply_since_rotation_filter(segs, OutputFormat::Json).len(), n);
+        assert_eq!(
+            apply_since_rotation_filter(segs, OutputFormat::Json).len(),
+            n
+        );
     }
 
     #[test]
@@ -712,7 +717,10 @@ mod tests {
         let seg = dir.path().join("000001.wal");
         std::fs::write(&seg, b"short").unwrap();
         assert!(!segment_has_rotation(&seg, Some("anything")));
-        assert!(!segment_has_rotation(&dir.path().join("does-not-exist.wal"), Some("anything")));
+        assert!(!segment_has_rotation(
+            &dir.path().join("does-not-exist.wal"),
+            Some("anything")
+        ));
     }
 
     // V02-03 acceptance (note 2026-05-16): the end-to-end "tamper
@@ -759,16 +767,25 @@ mod tests {
         // Load the trust root the same way `collect_authorised_ranges` does.
         let trusted =
             crate::wal::signing::load_signing_pubkey_if_present(&dir.path().join("signing.key"));
-        assert!(trusted.is_some(), "emit must have created the operator signing key");
+        assert!(
+            trusted.is_some(),
+            "emit must have created the operator signing key"
+        );
         let ranges = extract_redaction_authorisations(&audit_seg, trusted.as_deref()).unwrap();
-        assert_eq!(ranges.len(), 1, "an operator-signed marker must be honoured");
+        assert_eq!(
+            ranges.len(),
+            1,
+            "an operator-signed marker must be honoured"
+        );
         assert!(ranges[0].segment.ends_with("000001.wal"));
         assert_eq!(ranges[0].offsets, offsets);
 
         // The 0xF3 bypass closure: an exemption NOT signed by the operator key is
         // IGNORED. No trust root ⇒ nothing honoured; a different key ⇒ rejected.
         assert!(
-            extract_redaction_authorisations(&audit_seg, None).unwrap().is_empty(),
+            extract_redaction_authorisations(&audit_seg, None)
+                .unwrap()
+                .is_empty(),
             "no trust root ⇒ no exemption honoured",
         );
         let wrong_key =
@@ -895,9 +912,11 @@ mod tests {
         }))
         .unwrap();
         let (w, j) = crate::wal::writer::spawn(wal_dir.join(audit_name)).unwrap();
-        let header =
-            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_REDACTION_MARKER, &payload)
-                .build();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_REDACTION_MARKER,
+            &payload,
+        )
+        .build();
         w.append(header, payload).await.unwrap();
         drop(w);
         let _ = j.await;
@@ -912,10 +931,10 @@ mod tests {
     /// signed `0xF3` reclassifies it to PASS.
     #[tokio::test]
     async fn run_verify_e2e_redaction_exemption_signature_trust() {
-        use crate::wal::compaction::{load_or_init_key, CompactionState};
+        use crate::wal::compaction::{CompactionState, load_or_init_key};
         use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_RAW_TEXT};
         use crate::wal::frame::encode_frame;
-        use crate::wal::segment_header::{SegmentHeader, SEGMENT_HEADER_LEN};
+        use crate::wal::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader};
 
         let dir = tempfile::tempdir().unwrap();
         let wal_dir = dir.path();
@@ -942,7 +961,9 @@ mod tests {
         //      manual-append segment hits the writer-reopen tangle the module note
         //      atop `tests` warns about; a single-encoder build sidesteps it.)
         let from = SEGMENT_HEADER_LEN as u64;
-        let mut seg_bytes = SegmentHeader::new(1, 1, 0, 0, [0u8; 16]).to_le_bytes().to_vec();
+        let mut seg_bytes = SegmentHeader::new(1, 1, 0, 0, [0u8; 16])
+            .to_le_bytes()
+            .to_vec();
         for p in [b"alpha".as_slice(), b"beta", b"gamma"] {
             let h = crate::wal::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, p).build();
             seg_bytes.extend_from_slice(&encode_frame(&h, p));
@@ -979,7 +1000,8 @@ mod tests {
                 .write(true)
                 .open(&seg)
                 .unwrap();
-            let h1 = crate::wal::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, b"alpha".as_slice()).build();
+            let h1 =
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, b"alpha".as_slice()).build();
             crate::wal::redact::redact_frame_in_place(&mut f, from, &h1).unwrap();
             f.sync_all().unwrap();
         }
@@ -1038,12 +1060,12 @@ mod tests {
     #[tokio::test]
     async fn run_verify_finds_and_checks_markers_in_a_compressed_segment() {
         use crate::wal::HeaderBuilder;
-        use crate::wal::compaction::{load_or_init_key, CompactionState};
+        use crate::wal::compaction::{CompactionState, load_or_init_key};
         use crate::wal::compress::compress_frames;
         use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_RAW_TEXT};
         use crate::wal::frame::encode_frame;
         use crate::wal::segment_header::{
-            SegmentHeaderV2, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN,
+            SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN, SegmentHeaderV2,
         };
 
         let dir = tempfile::tempdir().unwrap();
@@ -1075,7 +1097,11 @@ mod tests {
 
         // The walk now decompresses → the marker inside the blob IS found.
         let markers = extract_markers(&seg).unwrap();
-        assert_eq!(markers.len(), 1, "marker inside the compressed blob must be found");
+        assert_eq!(
+            markers.len(),
+            1,
+            "marker inside the compressed blob must be found"
+        );
 
         // And `run_verify` checks it (clean) instead of reporting a hollow pass.
         let args = VerifyArgs {
@@ -1157,7 +1183,11 @@ mod tests {
             crate::wal::redact::payload_contains_topic("acmecorp"),
         )
         .expect("redact sealed segment");
-        assert_eq!(report.frames_redacted_count(), 1, "the topic frame is scrubbed");
+        assert_eq!(
+            report.frames_redacted_count(),
+            1,
+            "the topic frame is scrubbed"
+        );
 
         // Marker HMAC now mismatches + NO authorisation → FAIL.
         assert!(
@@ -1181,9 +1211,9 @@ mod tests {
         .unwrap();
         drop(rw);
         let _ = rj.await;
-        run_verify(args())
-            .await
-            .expect("operator-signed 0xF3 over the redacted compressed window reclassifies to PASS");
+        run_verify(args()).await.expect(
+            "operator-signed 0xF3 over the redacted compressed window reclassifies to PASS",
+        );
     }
 
     #[test]

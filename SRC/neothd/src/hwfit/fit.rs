@@ -24,15 +24,51 @@ pub struct GpuSpec {
 /// Curated table of common inference GPUs (memory bandwidth from vendor
 /// specs, GB/s). Not exhaustive — `--bandwidth` overrides for anything absent.
 pub const KNOWN_GPUS: &[GpuSpec] = &[
-    GpuSpec { name: "H100", vram_gb: 80.0, bandwidth_gb_s: 3350.0 },
-    GpuSpec { name: "A100", vram_gb: 80.0, bandwidth_gb_s: 2039.0 },
-    GpuSpec { name: "RTX 4090", vram_gb: 24.0, bandwidth_gb_s: 1008.0 },
-    GpuSpec { name: "RTX 3090", vram_gb: 24.0, bandwidth_gb_s: 936.0 },
-    GpuSpec { name: "RTX 4080", vram_gb: 16.0, bandwidth_gb_s: 717.0 },
-    GpuSpec { name: "RTX 3080", vram_gb: 10.0, bandwidth_gb_s: 760.0 },
-    GpuSpec { name: "RTX 4070", vram_gb: 12.0, bandwidth_gb_s: 504.0 },
-    GpuSpec { name: "RTX 3060", vram_gb: 12.0, bandwidth_gb_s: 360.0 },
-    GpuSpec { name: "RTX 4060", vram_gb: 8.0, bandwidth_gb_s: 272.0 },
+    GpuSpec {
+        name: "H100",
+        vram_gb: 80.0,
+        bandwidth_gb_s: 3350.0,
+    },
+    GpuSpec {
+        name: "A100",
+        vram_gb: 80.0,
+        bandwidth_gb_s: 2039.0,
+    },
+    GpuSpec {
+        name: "RTX 4090",
+        vram_gb: 24.0,
+        bandwidth_gb_s: 1008.0,
+    },
+    GpuSpec {
+        name: "RTX 3090",
+        vram_gb: 24.0,
+        bandwidth_gb_s: 936.0,
+    },
+    GpuSpec {
+        name: "RTX 4080",
+        vram_gb: 16.0,
+        bandwidth_gb_s: 717.0,
+    },
+    GpuSpec {
+        name: "RTX 3080",
+        vram_gb: 10.0,
+        bandwidth_gb_s: 760.0,
+    },
+    GpuSpec {
+        name: "RTX 4070",
+        vram_gb: 12.0,
+        bandwidth_gb_s: 504.0,
+    },
+    GpuSpec {
+        name: "RTX 3060",
+        vram_gb: 12.0,
+        bandwidth_gb_s: 360.0,
+    },
+    GpuSpec {
+        name: "RTX 4060",
+        vram_gb: 8.0,
+        bandwidth_gb_s: 272.0,
+    },
 ];
 
 /// Fraction of the theoretical bandwidth/size ceiling a real decode loop hits
@@ -97,9 +133,11 @@ pub fn rank_models(
         })
         .collect();
     out.sort_by(|a, b| {
-        b.fits
-            .cmp(&a.fits)
-            .then(b.tok_s.partial_cmp(&a.tok_s).unwrap_or(std::cmp::Ordering::Equal))
+        b.fits.cmp(&a.fits).then(
+            b.tok_s
+                .partial_cmp(&a.tok_s)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
     });
     out
 }

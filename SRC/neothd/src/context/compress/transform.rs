@@ -175,7 +175,10 @@ mod tests {
             &[ContentType::PlainText]
         }
         fn apply(&self, content: &str) -> Result<ReformatOutput, TransformError> {
-            Ok(ReformatOutput::from_lengths(content.len(), content.to_string()))
+            Ok(ReformatOutput::from_lengths(
+                content.len(),
+                content.to_string(),
+            ))
         }
     }
 
@@ -198,7 +201,11 @@ mod tests {
         ) -> Result<OffloadOutput, TransformError> {
             let key = format!("test_key_{:024x}", content.len());
             store.put(&key, content);
-            Ok(OffloadOutput::from_lengths(content.len(), content.to_string(), key))
+            Ok(OffloadOutput::from_lengths(
+                content.len(),
+                content.to_string(),
+                key,
+            ))
         }
         fn confidence(&self) -> f32 {
             0.5

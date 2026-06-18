@@ -464,7 +464,10 @@ mod tests {
         );
         assert!(!report.integrity_issues.is_empty());
         // Refused ⇒ no work done: the aged hot row was NOT consolidated.
-        assert_eq!(report.consolidated, 0, "no consolidation work on a refused pass");
+        assert_eq!(
+            report.consolidated, 0,
+            "no consolidation work on a refused pass"
+        );
         assert_eq!(report.hot_decayed, 0, "no decay work on a refused pass");
         let hot_still_there: i64 = conn
             .query_row(
@@ -473,7 +476,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(hot_still_there, 1, "the hot row is untouched by a refused pass");
+        assert_eq!(
+            hot_still_there, 1,
+            "the hot row is untouched by a refused pass"
+        );
     }
 
     #[test]
@@ -507,7 +513,10 @@ mod tests {
             (unpinned - 0.8 * Tier::Hot.decay_factor()).abs() < 1e-9,
             "unpinned importance must decay by the hot factor, got {unpinned}"
         );
-        assert!(pinned > unpinned, "the pinned event now outranks the decayed one");
+        assert!(
+            pinned > unpinned,
+            "the pinned event now outranks the decayed one"
+        );
     }
 
     #[test]
@@ -522,7 +531,10 @@ mod tests {
 
         let report = run_consolidation_pass(&mut conn, now, None).unwrap();
 
-        assert_eq!(report.auto_pinned, 1, "the high-trust high-importance row is auto-pinned");
+        assert_eq!(
+            report.auto_pinned, 1,
+            "the high-trust high-importance row is auto-pinned"
+        );
         let (pinned, importance): (i64, f64) = conn
             .query_row(
                 "SELECT pinned, importance FROM idx_episode WHERE event_id = 1",
@@ -558,8 +570,16 @@ mod tests {
             )
             .unwrap()
         };
-        assert_eq!(pinned(1), 0, "high-importance but low-trust must stay unpinned");
-        assert_eq!(pinned(2), 0, "high-trust but low-importance must stay unpinned");
+        assert_eq!(
+            pinned(1),
+            0,
+            "high-importance but low-trust must stay unpinned"
+        );
+        assert_eq!(
+            pinned(2),
+            0,
+            "high-trust but low-importance must stay unpinned"
+        );
         // Both decayed normally (not pinned).
         let importance = |id: i64| -> f64 {
             conn.query_row(

@@ -284,7 +284,11 @@ pub fn run_test(provider_str: &str, output: &OutputFormat) -> Result<()> {
         }
         OutputFormat::Table => {
             if wired {
-                println!("✓ provider `{}` is wired into: {}", target.as_str(), roles.join(", "));
+                println!(
+                    "✓ provider `{}` is wired into: {}",
+                    target.as_str(),
+                    roles.join(", ")
+                );
                 println!(
                     "  live round-trip: `neoth hemispheres test --role {} --live`",
                     // first concrete role label, or 'left' for the single-mode collapse
@@ -342,9 +346,18 @@ mod tests {
         };
         // `right` is unset → falls back to default_slot (gemini).
         topo.default_slot.provider = Some(InferenceProvider::Gemini);
-        assert_eq!(provider_bindings(&topo, InferenceProvider::ClaudeCli), vec!["left"]);
-        assert_eq!(provider_bindings(&topo, InferenceProvider::LocalQwen), vec!["cerebellum"]);
-        assert_eq!(provider_bindings(&topo, InferenceProvider::Gemini), vec!["right"]);
+        assert_eq!(
+            provider_bindings(&topo, InferenceProvider::ClaudeCli),
+            vec!["left"]
+        );
+        assert_eq!(
+            provider_bindings(&topo, InferenceProvider::LocalQwen),
+            vec!["cerebellum"]
+        );
+        assert_eq!(
+            provider_bindings(&topo, InferenceProvider::Gemini),
+            vec!["right"]
+        );
         // A provider on no slot is unwired.
         assert!(provider_bindings(&topo, InferenceProvider::OpenAi).is_empty());
     }

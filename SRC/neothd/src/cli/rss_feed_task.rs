@@ -31,9 +31,9 @@ use tracing::{info, warn};
 
 use crate::config::FeedEntry;
 use crate::memory::{ctx, store};
+use crate::wal::HeaderBuilder;
 use crate::wal::events::{EVENT_TYPE_RSS_FEED_ITEM_INDEXED, EVENT_TYPE_RSS_FEED_PASS_COMPLETE};
 use crate::wal::writer::WalWriterHandle;
-use crate::wal::HeaderBuilder;
 
 /// Default cadence: every 1 hour. Well-mannered for most public feeds.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -185,9 +185,17 @@ pub async fn run_one_pass_against(
             {
                 href
             } else {
-                let t = item.title.as_ref().map(|t| t.content.as_str()).unwrap_or("");
+                let t = item
+                    .title
+                    .as_ref()
+                    .map(|t| t.content.as_str())
+                    .unwrap_or("");
                 let p = item.published.map(|d| d.to_rfc3339()).unwrap_or_default();
-                let s = item.summary.as_ref().map(|s| s.content.as_str()).unwrap_or("");
+                let s = item
+                    .summary
+                    .as_ref()
+                    .map(|s| s.content.as_str())
+                    .unwrap_or("");
                 // `\u{1f}` (unit separator) keeps the three fields unambiguous.
                 entry_id_fallback = format!("content:{t}\u{1f}{p}\u{1f}{s}");
                 entry_id_fallback.as_str()
@@ -215,8 +223,7 @@ pub async fn run_one_pass_against(
                 summary.clone()
             };
 
-            let entry_id_hash =
-                format!("{:016x}", xxhash_rust::xxh3::xxh3_64(entry_id.as_bytes()));
+            let entry_id_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(entry_id.as_bytes()));
             let ctx_key = format!("rss:{}:{}", entry.label, entry_id_hash);
 
             let link = item
@@ -225,10 +232,7 @@ pub async fn run_one_pass_against(
                 .map(|l| l.href.as_str())
                 .unwrap_or(&entry.url);
 
-            let published = item
-                .published
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default();
+            let published = item.published.map(|dt| dt.to_rfc3339()).unwrap_or_default();
 
             let content = format!(
                 "# {title}\n\nSource: {}\nPublished: {}\nLink: {}\n\n{}",
@@ -436,7 +440,10 @@ mod tests {
         let entry_id = "https://example.com/1";
         let entry_id_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(entry_id.as_bytes()));
         let ctx_key = format!("rss:test_rss:{entry_id_hash}");
-        assert!(label_exists(dir.path(), &ctx_key), "ctx row must exist: {ctx_key}");
+        assert!(
+            label_exists(dir.path(), &ctx_key),
+            "ctx row must exist: {ctx_key}"
+        );
         drop(writer);
         join.await.ok();
     }
@@ -542,7 +549,10 @@ mod tests {
         let report = run_one_pass_against(dir.path(), &entries, &writer, &client)
             .await
             .unwrap();
-        assert_eq!(report.entries_indexed, 2, "both id-less entries must index distinctly");
+        assert_eq!(
+            report.entries_indexed, 2,
+            "both id-less entries must index distinctly"
+        );
         let conn = store::open(&dir.path().join("views.db")).unwrap();
         let rows: i64 = conn
             .query_row(
@@ -587,7 +597,10 @@ mod tests {
         let report = run_one_pass_against(dir.path(), &entries, &writer, &client)
             .await
             .unwrap();
-        assert_eq!(report.entries_indexed, 2, "max_entries cap must be respected");
+        assert_eq!(
+            report.entries_indexed, 2,
+            "max_entries cap must be respected"
+        );
         drop(writer);
         join.await.ok();
     }
@@ -652,7 +665,10 @@ entries:
                 let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
                 assert_eq!(p["feed_label"], "wal_test");
                 // Raw title must NOT be in the WAL frame — only the hash.
-                assert!(!p.to_string().contains("First Post"), "raw title must not be in WAL");
+                assert!(
+                    !p.to_string().contains("First Post"),
+                    "raw title must not be in WAL"
+                );
             }
             let t = f.header.total_len as usize;
             if t == 0 {
@@ -660,14 +676,21 @@ entries:
             }
             cur += t;
         }
-        assert!(found_item, "a 0x4E RSS_FEED_ITEM_INDEXED frame must be present");
+        assert!(
+            found_item,
+            "a 0x4E RSS_FEED_ITEM_INDEXED frame must be present"
+        );
     }
 
     // Compile-time pin: both RSS codes live in the `0x40..=0x4F` cron band and
     // are distinct. A future edit that moves them out of band fails the build.
     const _: () = {
-        assert!(EVENT_TYPE_RSS_FEED_ITEM_INDEXED >= 0x40 && EVENT_TYPE_RSS_FEED_ITEM_INDEXED <= 0x4F);
-        assert!(EVENT_TYPE_RSS_FEED_PASS_COMPLETE >= 0x40 && EVENT_TYPE_RSS_FEED_PASS_COMPLETE <= 0x4F);
+        assert!(
+            EVENT_TYPE_RSS_FEED_ITEM_INDEXED >= 0x40 && EVENT_TYPE_RSS_FEED_ITEM_INDEXED <= 0x4F
+        );
+        assert!(
+            EVENT_TYPE_RSS_FEED_PASS_COMPLETE >= 0x40 && EVENT_TYPE_RSS_FEED_PASS_COMPLETE <= 0x4F
+        );
         assert!(EVENT_TYPE_RSS_FEED_ITEM_INDEXED != EVENT_TYPE_RSS_FEED_PASS_COMPLETE);
     };
 }

@@ -34,8 +34,7 @@ use std::path::{Path, PathBuf};
 /// Uses `HOME` (Unix) or `USERPROFILE` (Windows), then appends
 /// `.claude/sessions`. Returns `None` when no home dir is available.
 pub fn claude_sessions_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".claude").join("sessions"))
 }
 

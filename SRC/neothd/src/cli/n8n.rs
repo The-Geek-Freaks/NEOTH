@@ -160,8 +160,20 @@ mod tests {
     #[test]
     fn status_and_workflows_are_infallible() {
         // Both read-only views must succeed regardless of host n8n state.
-        run_n8n(N8nArgs { action: N8nAction::Status }, OutputFormat::Json).expect("status ok");
-        run_n8n(N8nArgs { action: N8nAction::Workflows }, OutputFormat::Table).expect("workflows ok");
+        run_n8n(
+            N8nArgs {
+                action: N8nAction::Status,
+            },
+            OutputFormat::Json,
+        )
+        .expect("status ok");
+        run_n8n(
+            N8nArgs {
+                action: N8nAction::Workflows,
+            },
+            OutputFormat::Table,
+        )
+        .expect("workflows ok");
     }
 
     #[test]

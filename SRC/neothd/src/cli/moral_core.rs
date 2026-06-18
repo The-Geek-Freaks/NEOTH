@@ -124,7 +124,10 @@ pub fn run_moral_core(args: MoralCoreArgs) -> Result<()> {
                         })
                     })
                     .collect();
-                println!("{}", serde_json::json!({ "dir": dir.display().to_string(), "blocks": rows }));
+                println!(
+                    "{}",
+                    serde_json::json!({ "dir": dir.display().to_string(), "blocks": rows })
+                );
             }
             OutputFormat::Table => {
                 if blocks.is_empty() {
@@ -132,7 +135,12 @@ pub fn run_moral_core(args: MoralCoreArgs) -> Result<()> {
                 } else {
                     println!("moral-core blocks ({}):", blocks.len());
                     for b in &blocks {
-                        println!("  [{}] {} directive(s)  ({})", b.tag, b.directive_count(), b.source);
+                        println!(
+                            "  [{}] {} directive(s)  ({})",
+                            b.tag,
+                            b.directive_count(),
+                            b.source
+                        );
                     }
                 }
             }
@@ -166,9 +174,13 @@ pub fn run_moral_core(args: MoralCoreArgs) -> Result<()> {
                     println!("  blocks:       {}", blocks.len());
                     println!("  directives:   {directive_total}");
                     if !exists {
-                        println!("  ⚠ directory missing — moral core is opt-in; create it + add `*.md` files");
+                        println!(
+                            "  ⚠ directory missing — moral core is opt-in; create it + add `*.md` files"
+                        );
                     } else if directive_total == 0 {
-                        println!("  ⚠ no directives parsed — add `- directive` bullets under `# Heading`s");
+                        println!(
+                            "  ⚠ no directives parsed — add `- directive` bullets under `# Heading`s"
+                        );
                     } else {
                         println!("  ✓ {directive_total} directive(s) ready to inject");
                     }
@@ -206,7 +218,10 @@ pub fn run_moral_core(args: MoralCoreArgs) -> Result<()> {
                 );
             }
         }
-        MoralCoreAction::Add { category, directive } => {
+        MoralCoreAction::Add {
+            category,
+            directive,
+        } => {
             moral_core::writer::append_directive(&dir, &category, &directive)?;
             println!("added to '{category}': {directive}");
         }
@@ -216,7 +231,9 @@ pub fn run_moral_core(args: MoralCoreArgs) -> Result<()> {
         }
         MoralCoreAction::Disable { category } => {
             moral_core::writer::disable_block(&dir, &category)?;
-            println!("disabled block '{category}' — renamed to {category}.md.disabled, not injected");
+            println!(
+                "disabled block '{category}' — renamed to {category}.md.disabled, not injected"
+            );
         }
         MoralCoreAction::Enable { category } => {
             moral_core::writer::enable_block(&dir, &category)?;
@@ -330,14 +347,20 @@ mod tests {
     #[test]
     fn init_then_disable_removes_from_injection() {
         let tmp = tempfile::tempdir().unwrap();
-        run_moral_core(args_with(tmp.path(), MoralCoreAction::Init { force: false })).unwrap();
+        run_moral_core(args_with(
+            tmp.path(),
+            MoralCoreAction::Init { force: false },
+        ))
+        .unwrap();
         assert!(
             !moral_core::load_moral_core(tmp.path()).unwrap().is_empty(),
             "init scaffolds blocks"
         );
         run_moral_core(args_with(
             tmp.path(),
-            MoralCoreAction::Disable { category: "voice".into() },
+            MoralCoreAction::Disable {
+                category: "voice".into(),
+            },
         ))
         .unwrap();
         let after = moral_core::load_moral_core(tmp.path()).unwrap();

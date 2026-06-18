@@ -386,8 +386,9 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
         let co = count(
             "SELECT COUNT(*) FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
         );
-        let lt =
-            count("SELECT COUNT(*) FROM idx_longterm WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'");
+        let lt = count(
+            "SELECT COUNT(*) FROM idx_longterm WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        );
         let pr = count(
             "SELECT COUNT(*) FROM idx_profile \
              WHERE field COLLATE NOCASE LIKE ?1 ESCAPE '\\' \

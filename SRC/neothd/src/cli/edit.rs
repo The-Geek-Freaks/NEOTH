@@ -24,7 +24,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 use sha2::{Digest, Sha256};
 
@@ -180,7 +180,11 @@ mod tests {
         assert!(diff.starts_with("## hashline v1 lines=3"));
         // Only line 1 (beta→BETA) changed.
         let changes: Vec<&str> = diff.lines().filter(|l| l.starts_with("@@ ")).collect();
-        assert_eq!(changes.len(), 1, "only the one changed line is emitted: {diff}");
+        assert_eq!(
+            changes.len(),
+            1,
+            "only the one changed line is emitted: {diff}"
+        );
         assert_eq!(changes[0], format!("@@ {} +1: BETA", anchor("beta")));
     }
 
@@ -230,7 +234,10 @@ mod tests {
     #[test]
     fn apply_rejects_a_malformed_header() {
         let err = apply_hashline_diff("base", "not a hashline header\n@@ x +0: y").unwrap_err();
-        assert!(err.to_string().contains("malformed hashline header"), "got: {err}");
+        assert!(
+            err.to_string().contains("malformed hashline header"),
+            "got: {err}"
+        );
     }
 
     #[test]

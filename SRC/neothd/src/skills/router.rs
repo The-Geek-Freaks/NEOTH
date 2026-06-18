@@ -490,9 +490,8 @@ mod tests {
     fn two_single_tokens_survive_full_auto_floor() {
         // Two distinct single-word hits = summed weight 2 = intentional enough.
         let skills = vec![skill("news", &["news", "headlines"], true)];
-        let m =
-            route_with_min_weight("the news and the headlines", &skills, FULL_AUTO_MIN_WEIGHT)
-                .expect("two distinct single-token hits (weight 2) must clear the floor");
+        let m = route_with_min_weight("the news and the headlines", &skills, FULL_AUTO_MIN_WEIGHT)
+            .expect("two distinct single-token hits (weight 2) must clear the floor");
         assert_eq!(m.skill.id(), "news");
     }
 

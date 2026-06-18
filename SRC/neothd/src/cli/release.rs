@@ -71,7 +71,9 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let key_path = sig_keygen::default_release_key_path(&home);
     match &args.action {
-        ReleaseAction::Setup { repo, force } => setup(&key_path, repo.as_deref(), *force, args.output),
+        ReleaseAction::Setup { repo, force } => {
+            setup(&key_path, repo.as_deref(), *force, args.output)
+        }
         ReleaseAction::Keygen { force } => keygen(&key_path, *force, args.output),
         ReleaseAction::Sign { file, comment } => {
             sign(&key_path, file, comment.as_deref(), args.output)
@@ -102,7 +104,10 @@ fn keygen(key_path: &std::path::Path, force: bool, output: OutputFormat) -> Resu
             );
         }
         OutputFormat::Table => {
-            println!("✓ Release signing key generated (key id {}).", kp.key_id_hex());
+            println!(
+                "✓ Release signing key generated (key id {}).",
+                kp.key_id_hex()
+            );
             println!("  Saved (secret): {}", key_path.display());
             println!();
             println!("Two values go into your release pipeline. Do this ONCE:");
@@ -135,7 +140,12 @@ const PUBKEY_VAR: &str = "NEOTH_RELEASE_MINISIGN_PUBKEY";
 
 /// ONE-COMMAND setup: generate-or-reuse the key, then provision the repo's CI
 /// via `gh`. The secret is piped to `gh` over STDIN — never argv, never printed.
-fn setup(key_path: &std::path::Path, repo: Option<&str>, force: bool, output: OutputFormat) -> Result<()> {
+fn setup(
+    key_path: &std::path::Path,
+    repo: Option<&str>,
+    force: bool,
+    output: OutputFormat,
+) -> Result<()> {
     let slug = match repo {
         Some(r) => r.to_string(),
         None => detect_repo_slug().context(
@@ -175,7 +185,10 @@ fn setup(key_path: &std::path::Path, repo: Option<&str>, force: bool, output: Ou
             );
         }
         OutputFormat::Table => {
-            println!("✓ Release signing is set up for {slug} (key id {}).", kp.key_id_hex());
+            println!(
+                "✓ Release signing is set up for {slug} (key id {}).",
+                kp.key_id_hex()
+            );
             println!("  • GitHub secret   {SECRET_ENV}  — set (the private key; never shown).");
             println!("  • GitHub variable {PUBKEY_VAR}  — set (the public key).");
             println!();
@@ -213,8 +226,12 @@ fn detect_repo_slug() -> Result<String> {
         anyhow::bail!("`git remote get-url origin` failed — pass `--repo owner/name`");
     }
     let url = String::from_utf8_lossy(&out.stdout);
-    parse_repo_slug(url.trim())
-        .ok_or_else(|| anyhow::anyhow!("could not parse a GitHub `owner/name` from `{}`", url.trim()))
+    parse_repo_slug(url.trim()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not parse a GitHub `owner/name` from `{}`",
+            url.trim()
+        )
+    })
 }
 
 /// Fail early + actionably if `gh` is missing or not authenticated.
@@ -422,8 +439,7 @@ mod tests {
         // Generate a key, capture its secret, then point the env at a DIFFERENT
         // key — sign must use the env key.
         let env_kp = ReleaseKeypair::generate().unwrap();
-        let env_b64 =
-            base64::engine::general_purpose::STANDARD.encode(env_kp.secret_bytes());
+        let env_b64 = base64::engine::general_purpose::STANDARD.encode(env_kp.secret_bytes());
         // A file key also exists (different key).
         let file_kp = ReleaseKeypair::generate().unwrap();
         sig_keygen::save_secret_key(&key_path, &file_kp, false).unwrap();

@@ -149,7 +149,12 @@ fn compiled() -> &'static Vec<(usize, Regex)> {
         rules()
             .iter()
             .enumerate()
-            .map(|(i, r)| (i, Regex::new(r.re).expect("dangerous_command rule regex must compile")))
+            .map(|(i, r)| {
+                (
+                    i,
+                    Regex::new(r.re).expect("dangerous_command rule regex must compile"),
+                )
+            })
             .collect()
     })
 }
@@ -192,7 +197,10 @@ mod tests {
         // A scoped delete is NOT flagged.
         assert!(ids("rm -rf ./build").is_empty());
         assert!(ids("rm -rf target/").is_empty());
-        assert!(ids("rm -rf /home/user/project").is_empty(), "specific path under / is fine");
+        assert!(
+            ids("rm -rf /home/user/project").is_empty(),
+            "specific path under / is fine"
+        );
     }
 
     #[test]
@@ -206,7 +214,10 @@ mod tests {
         assert!(ids("neoth sudomode").contains(&r));
         assert!(ids("neoth autonomy full-auto").contains(&r));
         assert!(ids("neoth autonomy set full").contains(&r));
-        assert!(ids("/usr/local/bin/neoth sudomode").contains(&r), "path-prefixed neoth too");
+        assert!(
+            ids("/usr/local/bin/neoth sudomode").contains(&r),
+            "path-prefixed neoth too"
+        );
         assert_eq!(worst_severity("neoth sudomode"), Some(Severity::Critical));
         // Benign neoth commands are NOT flagged.
         assert!(ids("neoth status").is_empty());
@@ -298,7 +309,10 @@ mod tests {
     #[test]
     fn worst_severity_prefers_critical() {
         // Critical < High in the Ord, so min() yields the worst.
-        assert_eq!(worst_severity("rm -rf / && git push -f"), Some(Severity::Critical));
+        assert_eq!(
+            worst_severity("rm -rf / && git push -f"),
+            Some(Severity::Critical)
+        );
         assert_eq!(worst_severity("git push --force"), Some(Severity::High));
         assert_eq!(worst_severity("ls"), None);
     }

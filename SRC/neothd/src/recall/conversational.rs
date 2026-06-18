@@ -388,7 +388,10 @@ mod tests {
         // left "talked about rust" because the `for` had already moved past
         // "talked about" by the time "when we" peeled and exposed it.
         assert_eq!(clean_topic_en("when we talked about rust"), "rust");
-        assert_eq!(clean_topic_en("that we discussed memory tiers"), "memory tiers");
+        assert_eq!(
+            clean_topic_en("that we discussed memory tiers"),
+            "memory tiers"
+        );
         // Single-particle cases still behave (no over-strip / no infinite loop).
         assert_eq!(clean_topic_en("when i said rust"), "rust");
         assert_eq!(clean_topic_en("about caching"), "caching");
@@ -398,14 +401,20 @@ mod tests {
     fn clean_topic_en_does_not_corrupt_word_starting_with_particle_gr057() {
         // GR-057 — a particle must NOT eat the leading chars of a longer word
         // it's merely a prefix of: "we" ⊀ "weather", "i" ⊀ "ideas".
-        assert_eq!(clean_topic_en("when i said weather was nice"), "weather was nice");
+        assert_eq!(
+            clean_topic_en("when i said weather was nice"),
+            "weather was nice"
+        );
         assert_eq!(clean_topic_en("about ideas"), "ideas");
     }
 
     #[test]
     fn clean_topic_de_does_not_corrupt_word_starting_with_particle_gr057() {
         // GR-057 — "wir" must not corrupt "wirklich" (prefix without a boundary).
-        assert_eq!(clean_topic_de("über wirklich wichtiges"), "wirklich wichtiges");
+        assert_eq!(
+            clean_topic_de("über wirklich wichtiges"),
+            "wirklich wichtiges"
+        );
     }
 
     #[test]
@@ -414,7 +423,11 @@ mod tests {
         // this yielded "talked about rust".
         let r = detect_recall_intent("Do you remember when we talked about rust?").unwrap();
         assert_eq!(r.language, RecallLanguage::English);
-        assert_eq!(r.topic, "rust", "chained opener must peel fully, got {:?}", r.topic);
+        assert_eq!(
+            r.topic, "rust",
+            "chained opener must peel fully, got {:?}",
+            r.topic
+        );
     }
 
     #[test]

@@ -408,7 +408,11 @@ mod tests {
             day(2_500_000, &["gpt"]), // +2.4M over the 120k baseline max
         ]);
         let a = evaluate_anomaly(&b, &cfg()).expect("a >1M jump must trip");
-        assert!(a.kinds.contains(&AnomalyKind::AbsoluteJump), "{:?}", a.kinds);
+        assert!(
+            a.kinds.contains(&AnomalyKind::AbsoluteJump),
+            "{:?}",
+            a.kinds
+        );
     }
 
     #[test]

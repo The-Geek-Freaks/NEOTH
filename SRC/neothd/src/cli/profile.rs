@@ -1356,10 +1356,8 @@ fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<
     // Atomic write — `.tmp` + rename (same pattern as config::presets::apply),
     // so a crash mid-write can never leave freedom.yaml truncated/corrupt.
     let tmp = path.with_extension("yaml.tmp");
-    std::fs::write(&tmp, updated.as_bytes())
-        .with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .with_context(|| format!("rename into {}", path.display()))?;
+    std::fs::write(&tmp, updated.as_bytes()).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).with_context(|| format!("rename into {}", path.display()))?;
 
     // Post-write verify: re-parse the written file as a full FreedomConfig and
     // confirm the field actually landed. A structured edit should never produce
@@ -1446,10 +1444,7 @@ async fn run_pipeline_cli_batch(
 
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
-    let segment = wal_dir.join(format!(
-        "profile-run-{}.wal",
-        crate::time::now_unix_secs(),
-    ));
+    let segment = wal_dir.join(format!("profile-run-{}.wal", crate::time::now_unix_secs(),));
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer")?;
 

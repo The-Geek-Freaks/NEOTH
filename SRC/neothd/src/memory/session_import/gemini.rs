@@ -31,7 +31,10 @@ fn parse_document(v: &Value) -> ForeignSession {
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string();
-    let started_at = v.get("startTime").and_then(Value::as_str).map(str::to_string);
+    let started_at = v
+        .get("startTime")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let project = v
         .get("projectHash")
         .and_then(Value::as_str)
@@ -79,7 +82,10 @@ fn parse_jsonl(body: &str) -> ForeignSession {
             }
         }
         if started_at.is_none() {
-            started_at = v.get("startTime").and_then(Value::as_str).map(str::to_string);
+            started_at = v
+                .get("startTime")
+                .and_then(Value::as_str)
+                .map(str::to_string);
         }
         if project.is_none() {
             project = v
@@ -94,7 +100,11 @@ fn parse_jsonl(body: &str) -> ForeignSession {
         ) {
             accumulate_usage(&v, &mut usage);
             if let Some(msg) = message_from(&v) {
-                let id = v.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                let id = v
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 if !id.is_empty() {
                     if let Some(slot) = ordered.iter_mut().find(|(eid, _)| *eid == id) {
                         slot.1 = msg;
@@ -142,7 +152,10 @@ fn message_from(v: &Value) -> Option<ForeignMessage> {
         role,
         text,
         model: v.get("model").and_then(Value::as_str).map(str::to_string),
-        timestamp: v.get("timestamp").and_then(Value::as_str).map(str::to_string),
+        timestamp: v
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 

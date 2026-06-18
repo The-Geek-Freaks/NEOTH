@@ -5,11 +5,15 @@ use anyhow::{Context, Result};
 use tracing::debug;
 
 use super::{
-    get_os_username, WizardStep, validate_bcp47, validate_operator_id, InitArgs, OperatorRole,
-    WizardState,
+    InitArgs, OperatorRole, WizardState, WizardStep, get_os_username, validate_bcp47,
+    validate_operator_id,
 };
 
-pub(crate) fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step2_operator_id(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 2: operator_id");
     let default_id = get_os_username();
 
@@ -54,7 +58,11 @@ pub(crate) fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut 
     Ok(())
 }
 
-pub(crate) fn step3_language(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step3_language(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 3: language");
     validate_bcp47(&args.language)?;
     let default_code = args
@@ -137,7 +145,10 @@ pub(crate) fn step3b_hmac_backup(
             };
             // Best-effort: a backup failure must NOT abort onboarding.
             match crate::cli::security::run_backup_hmac_key(&bargs) {
-                Ok(()) => eprintln!("[neoth init] WAL integrity key backed up to {}", output.display()),
+                Ok(()) => eprintln!(
+                    "[neoth init] WAL integrity key backed up to {}",
+                    output.display()
+                ),
                 Err(e) => eprintln!("[neoth init] HMAC key backup failed (non-fatal): {e}"),
             }
         }
@@ -148,7 +159,11 @@ pub(crate) fn step3b_hmac_backup(
     Ok(())
 }
 
-pub(crate) fn step4_role(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step4_role(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 4: role");
     let role = if let Some(r) = args.role {
         r

@@ -28,10 +28,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::PeerPubkey;
 use super::gossip::{GossipPolicy, GossipTag, ReplayBudget};
 use super::gossip_wire::{GossipAcceptance, GossipFrame, VectorClock};
 use super::heartbeat::{FrameBody, FrameKind, WireFrame};
-use super::PeerPubkey;
 use super::peer_streams::PeerStreamRegistry;
 use crate::wal::writer::WalWriterHandle;
 
@@ -98,8 +98,8 @@ pub fn classify_event(event_type: u8) -> ReplicationClass {
         // (0x12 INSTALLER_RAN excluded: it carries login_state).
         0x13 => Replicate,
         // PII — gated behind the operator's raw-ingress opt-in (default off).
-        0x01 => RawIngressGated,             // RAW_TEXT
-        0x20 | 0x21 => RawIngressGated,      // PROVIDER_REQUEST / RESPONSE
+        0x01 => RawIngressGated,                      // RAW_TEXT
+        0x20 | 0x21 => RawIngressGated,               // PROVIDER_REQUEST / RESPONSE
         0x32 | 0x33 | 0x35..=0x38 => RawIngressGated, // channel ingress/egress/quarantine/sanitize/ack/edit
         // Default-deny everything else: the entire 0xE* cluster band (addr /
         // autonomy / pubkey topology), permissions 0xA*, profile 0xB*, consent
@@ -232,9 +232,12 @@ pub fn collect_gossipable_frames(
     let mut cursor = from_offset.min(body.len());
     while cursor + WAL_HEADER_MIN <= body.len() && out.len() < max {
         let event_type = body[cursor + 2];
-        let total_len =
-            u32::from_le_bytes([body[cursor + 9], body[cursor + 10], body[cursor + 11], body[cursor + 12]])
-                as usize;
+        let total_len = u32::from_le_bytes([
+            body[cursor + 9],
+            body[cursor + 10],
+            body[cursor + 11],
+            body[cursor + 12],
+        ]) as usize;
         // Torn tail / corrupt length ⇒ stop (don't advance past garbage).
         if total_len < WAL_HEADER_MIN || cursor + total_len > body.len() {
             break;
@@ -403,11 +406,17 @@ mod tests {
         let p = GossipPolicy::default();
         // Permissions / autonomy / lease (0xA0..=0xAF) — local security state.
         for et in 0xA0u8..=0xAF {
-            assert!(!is_replicable(et, &p), "permission band 0x{et:02X} must not gossip");
+            assert!(
+                !is_replicable(et, &p),
+                "permission band 0x{et:02X} must not gossip"
+            );
         }
         // Profile band (0xB0..=0xBF) — operator PII.
         for et in 0xB0u8..=0xBF {
-            assert!(!is_replicable(et, &p), "profile band 0x{et:02X} must not gossip");
+            assert!(
+                !is_replicable(et, &p),
+                "profile band 0x{et:02X} must not gossip"
+            );
         }
         // Consent + WAL-structure + operator/system band.
         for et in [0x65u8, 0xF0, 0xF1, 0xF2, 0xF3, 0xFF] {
@@ -415,7 +424,10 @@ mod tests {
         }
         // Daemon lifecycle BOOT/SHUTDOWN/rollover/compaction.
         for et in [0x10u8, 0x11, 0x14, 0x15] {
-            assert!(!is_replicable(et, &p), "lifecycle 0x{et:02X} must not gossip");
+            assert!(
+                !is_replicable(et, &p),
+                "lifecycle 0x{et:02X} must not gossip"
+            );
         }
         // The ENTIRE cluster band is DoNotGossip: 0xE6 PEER_CONFIRMED leaks
         // addr + autonomy_level, 0xE0/0xE9 leak peer pubkeys (topology), and
@@ -485,7 +497,11 @@ mod tests {
         assert_eq!(frames.len(), 2, "only the 2 replicable frames collected");
         assert_eq!(frames[0].0, 0x90);
         assert_eq!(frames[1].0, 0x91);
-        assert_eq!(new_off, body.len(), "cursor advanced past ALL frames walked");
+        assert_eq!(
+            new_off,
+            body.len(),
+            "cursor advanced past ALL frames walked"
+        );
     }
 
     #[test]
@@ -523,9 +539,15 @@ mod tests {
         let p = GossipPolicy::default();
         let mut st = GossipState::new();
         // A permission event is never wrapped.
-        assert!(st.build_outbound(&self_pk(), 0xA0, vec![1, 2, 3], 1000, &p).is_none());
+        assert!(
+            st.build_outbound(&self_pk(), 0xA0, vec![1, 2, 3], 1000, &p)
+                .is_none()
+        );
         // A cluster-topology event (0xE6 leaks addr/autonomy) is NOT wrapped.
-        assert!(st.build_outbound(&self_pk(), 0xE6, vec![9], 1000, &p).is_none());
+        assert!(
+            st.build_outbound(&self_pk(), 0xE6, vec![9], 1000, &p)
+                .is_none()
+        );
         // A verified-clean memory-tier transition is wrapped + VC advances.
         let f = st
             .build_outbound(&self_pk(), 0x90, vec![9], 1000, &p)

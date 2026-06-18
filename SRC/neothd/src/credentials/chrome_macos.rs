@@ -54,8 +54,8 @@ type Aes128CbcDec = cbc::Decryptor<Aes128>;
 // constants are shared in `chrome_common`; macOS supplies only the PBKDF2
 // iteration count (1003) + the Login Keychain source.
 pub use crate::credentials::chrome_common::{
-    AES_KEY_BYTES, CHROME_CBC_IV, ChromeLoginRow, DecryptedChromeCredential, SALTYSALT,
-    V10_PREFIX, V11_PREFIX,
+    AES_KEY_BYTES, CHROME_CBC_IV, ChromeLoginRow, DecryptedChromeCredential, SALTYSALT, V10_PREFIX,
+    V11_PREFIX,
 };
 
 /// PBKDF2 iteration count on macOS. Chrome hardcodes **1003** on

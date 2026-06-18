@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use super::{WizardStep, InitArgs, ProviderKind, WizardState};
+use super::{InitArgs, ProviderKind, WizardState, WizardStep};
 
 /// Step 7 — operator picks an autonomy level (Phase 28b R-23).
 ///
@@ -15,7 +15,11 @@ use super::{WizardStep, InitArgs, ProviderKind, WizardState};
 ///
 /// Non-interactive: honours `--autonomy <level>`. Falls back to `Standard`
 /// if absent — least-surprise default per spec.
-pub(crate) fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step7_autonomy(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     use crate::permissions::AutonomyLevel;
 
     debug!("wizard step 7: autonomy");
@@ -153,7 +157,11 @@ pub(crate) fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut Wiz
 /// directly OR add `--auto-update` / `--auto-update-apply`
 /// flags later (not yet wired — would land alongside other
 /// non-interactive wizard knobs).
-pub(crate) fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step7b_auto_update(
+    _args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 7b: auto-update");
 
     if !interactive {
@@ -367,7 +375,11 @@ pub(crate) fn step7c_wasm_plugin_activation(
 /// runs skip it. The install is user-scoped (no root/admin) + best-effort
 /// — a failure warns + leaves `supervisor.enabled = false` rather than
 /// aborting onboarding.
-pub(crate) fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step7d_supervisor(
+    _args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 7d: supervisor");
 
     if !interactive {
@@ -536,7 +548,9 @@ pub(crate) fn step_zero_friction(
     if want {
         state.autonomy = AutonomyLevel::Full;
         state.inference.mode = TopologyMode::Single;
-        info!("GOLD-FEAT-01b zero-friction preset applied: Full autonomy + single-provider + all-skills-active");
+        info!(
+            "GOLD-FEAT-01b zero-friction preset applied: Full autonomy + single-provider + all-skills-active"
+        );
         if interactive {
             println!(
                 "  ⚡ Zero-friction preset applied: Full autonomy, single provider, all skills active."
@@ -608,13 +622,19 @@ mod zero_friction_tests {
         let mut state = WizardState::default();
         step_zero_friction(&args_with_zero_friction(true), false, &mut state).expect("applies");
 
-        let preset =
-            crate::wizard::zero_friction::apply_zero_friction(crate::config::FreedomConfig::default());
+        let preset = crate::wizard::zero_friction::apply_zero_friction(
+            crate::config::FreedomConfig::default(),
+        );
 
         assert_eq!(state.autonomy, preset.autonomy, "autonomy twin must match");
         assert!(
-            matches!(state.inference.mode, crate::config::inference::TopologyMode::Single)
-                && matches!(preset.inference.mode, crate::config::inference::TopologyMode::Single),
+            matches!(
+                state.inference.mode,
+                crate::config::inference::TopologyMode::Single
+            ) && matches!(
+                preset.inference.mode,
+                crate::config::inference::TopologyMode::Single
+            ),
             "inference.mode twin must match"
         );
     }

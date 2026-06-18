@@ -222,7 +222,10 @@ pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
         .find(|p| p.id == id)
         .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
     if p.status != ProposalStatus::Accepted {
-        anyhow::bail!("proposal `{id}` is {:?}, not accepted — nothing to roll back", p.status);
+        anyhow::bail!(
+            "proposal `{id}` is {:?}, not accepted — nothing to roll back",
+            p.status
+        );
     }
     let backup = p
         .backup
@@ -283,12 +286,13 @@ pub fn prepare_upstream_pr(home: &Path, id: &str) -> Result<PreparedPr> {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("skill.yaml");
-    let asset_path = crate::skills::bundled::bundled_asset_path(&p.skill, file).ok_or_else(|| {
-        anyhow::anyhow!(
-            "skill `{}` is not a bundled skill — nothing to contribute upstream",
-            p.skill
-        )
-    })?;
+    let asset_path =
+        crate::skills::bundled::bundled_asset_path(&p.skill, file).ok_or_else(|| {
+            anyhow::anyhow!(
+                "skill `{}` is not a bundled skill — nothing to contribute upstream",
+                p.skill
+            )
+        })?;
 
     let dir = home.join("self_improve_prs").join(id);
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
@@ -313,7 +317,10 @@ pub fn prepare_upstream_pr(home: &Path, id: &str) -> Result<PreparedPr> {
         quality.push_str(&format!("- **Eval:** {}\n", p.heldout_eval_summary));
     }
     if !p.why_this_improves.is_empty() {
-        quality.push_str(&format!("- **Why this improves:** {}\n", p.why_this_improves));
+        quality.push_str(&format!(
+            "- **Why this improves:** {}\n",
+            p.why_this_improves
+        ));
     }
     if !p.risk_notes.is_empty() {
         quality.push_str(&format!("- **Risks:** {}\n", p.risk_notes));
@@ -443,12 +450,7 @@ pub fn parse_proposal_output(stdout: &str) -> (String, ProposalQuality) {
                 .and_then(|s| s.as_str())
             {
                 let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
-                let s = |k: &str| {
-                    v.get(k)
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string()
-                };
+                let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
                 return (
                     content.to_string(),
                     ProposalQuality {
@@ -527,7 +529,10 @@ mod tests {
         // Fresh config (never asked): Full autonomy turns it on automatically.
         let fresh = SelfImproveConfig::default();
         let eff = fresh.effective(A::Full);
-        assert!(eff.enabled && eff.auto, "full-auto implies self-improve auto-on");
+        assert!(
+            eff.enabled && eff.auto,
+            "full-auto implies self-improve auto-on"
+        );
         // Below Full, a fresh config stays off (no implicit enabling).
         for lvl in [A::Strict, A::Standard, A::Elevated] {
             let e = SelfImproveConfig::default().effective(lvl);

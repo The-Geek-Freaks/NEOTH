@@ -656,14 +656,22 @@ mod tests {
         let home_formal = tempdir().unwrap();
         let home_lowkey = tempdir().unwrap();
 
-        let against_formal =
-            propose_and_store(home_formal.path(), &profile, ProfilePreset::Formal.as_str(), None)
-                .await
-                .unwrap();
-        let against_lowkey =
-            propose_and_store(home_lowkey.path(), &profile, ProfilePreset::Lowkey.as_str(), None)
-                .await
-                .unwrap();
+        let against_formal = propose_and_store(
+            home_formal.path(),
+            &profile,
+            ProfilePreset::Formal.as_str(),
+            None,
+        )
+        .await
+        .unwrap();
+        let against_lowkey = propose_and_store(
+            home_lowkey.path(),
+            &profile,
+            ProfilePreset::Lowkey.as_str(),
+            None,
+        )
+        .await
+        .unwrap();
 
         assert!(
             against_formal >= 1,

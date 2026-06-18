@@ -316,8 +316,10 @@ pub fn extract_master_key<R: Key4DbReader>(
     // exit path (incl. the `?` / wrong-password early-returns below). The
     // returned master-key blob is wiped by the caller (`firefox.rs`) once it
     // has copied out the 32-byte AES key.
-    let intermediate =
-        Zeroizing::new(derive_intermediate_key(&metadata.global_salt, primary_password.as_bytes()));
+    let intermediate = Zeroizing::new(derive_intermediate_key(
+        &metadata.global_salt,
+        primary_password.as_bytes(),
+    ));
 
     // Step 1: verify the primary password by decrypting the
     // password-check envelope and checking the canonical plaintext.

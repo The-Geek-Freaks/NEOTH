@@ -39,7 +39,9 @@ fn resolve_editor_from_sources(visual: Option<&str>, editor: Option<&str>) -> Op
 /// [`PROMPT_MARKER`]; everything from the marker to EOF (or the context heading)
 /// is the prompt.
 fn build_template(prefill: Option<&str>) -> String {
-    let mut s = String::from("# NEOTH Prompt Editor\n# (write your prompt below the marker, save + quit)\n\n");
+    let mut s = String::from(
+        "# NEOTH Prompt Editor\n# (write your prompt below the marker, save + quit)\n\n",
+    );
     s.push_str(PROMPT_MARKER);
     s.push_str("\n\n");
     if let Some(p) = prefill {
@@ -162,9 +164,18 @@ mod tests {
 
     #[test]
     fn resolve_prefers_visual_then_editor_skipping_empty() {
-        assert_eq!(resolve_editor_from_sources(Some("vim"), Some("nano")).as_deref(), Some("vim"));
-        assert_eq!(resolve_editor_from_sources(Some(""), Some("nano")).as_deref(), Some("nano"));
-        assert_eq!(resolve_editor_from_sources(Some("  "), Some("code -w")).as_deref(), Some("code -w"));
+        assert_eq!(
+            resolve_editor_from_sources(Some("vim"), Some("nano")).as_deref(),
+            Some("vim")
+        );
+        assert_eq!(
+            resolve_editor_from_sources(Some(""), Some("nano")).as_deref(),
+            Some("nano")
+        );
+        assert_eq!(
+            resolve_editor_from_sources(Some("  "), Some("code -w")).as_deref(),
+            Some("code -w")
+        );
         assert_eq!(resolve_editor_from_sources(None, None), None);
         assert_eq!(resolve_editor_from_sources(Some(""), Some("")), None);
     }
@@ -193,7 +204,10 @@ mod tests {
 
     #[test]
     fn extract_no_marker_returns_whole_trimmed() {
-        assert_eq!(extract_user_input("  just freeform text  "), "just freeform text");
+        assert_eq!(
+            extract_user_input("  just freeform text  "),
+            "just freeform text"
+        );
     }
 
     #[test]

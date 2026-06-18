@@ -22,7 +22,6 @@
 
 use std::time::Duration;
 
-
 /// Default n8n web port. Operator can override via wizard prompt;
 /// the const is the recommendation we render in the picker.
 pub const DEFAULT_N8N_PORT: u16 = 5678;

@@ -179,7 +179,11 @@ impl SelectorCache {
             let fingerprint = stored
                 .as_ref()
                 .and_then(|e| e.fingerprint.clone())
-                .or_else(|| web_extract::fingerprint_first(raw_html, &active).ok().flatten());
+                .or_else(|| {
+                    web_extract::fingerprint_first(raw_html, &active)
+                        .ok()
+                        .flatten()
+                });
             self.entries.insert(
                 cache_key.to_string(),
                 CacheEntry {
@@ -321,7 +325,8 @@ impl SelectorCache {
     fn save(&self, path: &Path) -> Result<()> {
         let body = serde_json::to_string_pretty(self).context("serialize selector cache")?;
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, body.as_bytes()).with_context(|| format!("write {}", tmp.display()))?;
+        std::fs::write(&tmp, body.as_bytes())
+            .with_context(|| format!("write {}", tmp.display()))?;
         std::fs::rename(&tmp, path)
             .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
         Ok(())
@@ -423,7 +428,11 @@ mod tests {
         assert_eq!(entry.selector, "span.price");
         assert!(entry.fingerprint.is_some());
         // 0x59 emitted, no raw URL in the WAL.
-        assert!(scan_event_types(&wal_path).await.contains(&EVENT_TYPE_WEB_EXTRACT_HIT));
+        assert!(
+            scan_event_types(&wal_path)
+                .await
+                .contains(&EVENT_TYPE_WEB_EXTRACT_HIT)
+        );
     }
 
     #[tokio::test]
@@ -435,7 +444,9 @@ mod tests {
         // Pre-seed a cache entry whose OLD selector won't match the new HTML,
         // but whose fingerprint will relocate the element.
         let v1 = r#"<div class="card"><span class="price" id="p1">$9</span></div>"#;
-        let fp = web_extract::fingerprint_first(v1, "span#p1").unwrap().unwrap();
+        let fp = web_extract::fingerprint_first(v1, "span#p1")
+            .unwrap()
+            .unwrap();
         let mut cache = SelectorCache::default();
         cache.entries.insert(
             "x.test:price".to_string(),
@@ -457,11 +468,20 @@ mod tests {
         drop(writer);
         join.await.ok();
 
-        assert!(res.stale_recovered, "fingerprint should heal the stale selector");
+        assert!(
+            res.stale_recovered,
+            "fingerprint should heal the stale selector"
+        );
         assert_eq!(res.hits, vec!["$9"]);
         let types = scan_event_types(&wal_path).await;
-        assert!(types.contains(&EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE), "0x5A expected");
-        assert!(types.contains(&EVENT_TYPE_WEB_EXTRACT_HIT), "0x59 after recovery");
+        assert!(
+            types.contains(&EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE),
+            "0x5A expected"
+        );
+        assert!(
+            types.contains(&EVENT_TYPE_WEB_EXTRACT_HIT),
+            "0x59 after recovery"
+        );
     }
 
     #[tokio::test]
@@ -484,7 +504,12 @@ mod tests {
         );
         // No span anywhere → refind fails.
         let (res, audits) = cache
-            .apply(r#"<p>nothing here</p>"#, "https://x.test", "x.test:k", "span.price")
+            .apply(
+                r#"<p>nothing here</p>"#,
+                "https://x.test",
+                "x.test:k",
+                "span.price",
+            )
             .unwrap();
         for a in &audits {
             a.emit(Some(&writer)).await;
@@ -529,7 +554,9 @@ mod tests {
     async fn stale_recovered_false_when_refind_element_has_no_text() {
         // Build a fingerprint from v1: span.icon with text "★".
         let v1 = r#"<div class="card"><span class="icon">&#9733;</span></div>"#;
-        let fp = web_extract::fingerprint_first(v1, "span.icon").unwrap().unwrap();
+        let fp = web_extract::fingerprint_first(v1, "span.icon")
+            .unwrap()
+            .unwrap();
 
         let mut cache = SelectorCache::default();
         cache.entries.insert(
@@ -564,7 +591,10 @@ mod tests {
             "derived selector should be the attribute form"
         );
         // The healed entry must be persisted in the cache.
-        let entry = cache.entries.get("x.test:icon").expect("entry should be updated");
+        let entry = cache
+            .entries
+            .get("x.test:icon")
+            .expect("entry should be updated");
         assert_eq!(entry.selector, r#"span[class~="icon"]"#);
     }
 
@@ -616,5 +646,4 @@ mod tests {
         assert!(!needs_immediate_sync(EVENT_TYPE_WEB_EXTRACT_HIT));
         assert!(needs_immediate_sync(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE));
     }
-
 }

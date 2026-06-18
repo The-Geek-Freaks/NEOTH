@@ -282,8 +282,7 @@ async fn run_preset(
     for (role, prior_slot) in &prior {
         let new_slot = cfg.inference.slot_for(*role);
         if new_slot.provider != prior_slot.provider || new_slot.model != prior_slot.model {
-            audit_segment =
-                Some(emit_rebind_audit(*role, prior_slot, new_slot, now_unix).await?);
+            audit_segment = Some(emit_rebind_audit(*role, prior_slot, new_slot, now_unix).await?);
             changed.push(role.as_str());
         }
     }

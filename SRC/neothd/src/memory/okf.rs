@@ -121,7 +121,10 @@ pub fn slug(name: &str) -> String {
 /// YAML-quote a scalar: always double-quote + escape `\` and `"`, so a value
 /// with `:`, `#`, `[`, leading spaces, etc. can never break the frontmatter.
 fn yaml_scalar(v: &str) -> String {
-    let escaped = v.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " ");
+    let escaped = v
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ");
     format!("\"{escaped}\"")
 }
 

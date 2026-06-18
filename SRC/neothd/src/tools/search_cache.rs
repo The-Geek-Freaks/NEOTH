@@ -245,7 +245,10 @@ mod tests {
         // "now" is BEFORE the stored fetch time.
         assert!(cache.get("brave", "q", 5, 4_000).is_none());
         let key = SearchCache::cache_key("brave", "q", 5);
-        assert!(!cache.entry_path(&key).exists(), "forward-dated entry evicted");
+        assert!(
+            !cache.entry_path(&key).exists(),
+            "forward-dated entry evicted"
+        );
     }
 
     #[test]

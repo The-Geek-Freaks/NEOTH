@@ -599,7 +599,12 @@ fn revoke(conn: &rusqlite::Connection, id: i64, output: OutputFormat) -> Result<
 /// GOLD-ADAPT-MEM-01 — `neoth groundtruth state <id> <state>`: operator-driven
 /// trust-state transition (promote a corroborated candidate, supersede,
 /// contradict, or deprecate a fact).
-fn set_state(conn: &rusqlite::Connection, id: i64, state: &str, output: OutputFormat) -> Result<()> {
+fn set_state(
+    conn: &rusqlite::Connection,
+    id: i64,
+    state: &str,
+    output: OutputFormat,
+) -> Result<()> {
     let Some(fs) = groundtruth::FactState::parse(state) else {
         anyhow::bail!(
             "unknown fact state '{state}' — use one of: \
@@ -655,9 +660,17 @@ async fn contradictions(
                 println!("no contradictions in the ledger");
                 return Ok(());
             }
-            println!("# {} contradiction(s){}", rows.len(), if resolved { " (incl. dismissed)" } else { "" });
+            println!(
+                "# {} contradiction(s){}",
+                rows.len(),
+                if resolved { " (incl. dismissed)" } else { "" }
+            );
             for c in &rows {
-                let mark = if c.decision == "dismissed" { " [dismissed]" } else { "" };
+                let mark = if c.decision == "dismissed" {
+                    " [dismissed]"
+                } else {
+                    ""
+                };
                 println!(
                     "  [{:>4}] fact {} vs {}  conf={:.2}{}",
                     c.ledger_id, c.fact_a_id, c.fact_b_id, c.confidence, mark,

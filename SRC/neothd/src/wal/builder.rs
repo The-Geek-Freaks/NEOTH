@@ -199,12 +199,18 @@ mod tests {
     struct HlcRestore(Hlc);
     impl HlcRestore {
         fn snapshot() -> Self {
-            Self(*crate::wal::GLOBAL_HLC.lock().unwrap_or_else(|p| p.into_inner()))
+            Self(
+                *crate::wal::GLOBAL_HLC
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()),
+            )
         }
     }
     impl Drop for HlcRestore {
         fn drop(&mut self) {
-            *crate::wal::GLOBAL_HLC.lock().unwrap_or_else(|p| p.into_inner()) = self.0;
+            *crate::wal::GLOBAL_HLC
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) = self.0;
         }
     }
 

@@ -43,7 +43,9 @@ pub fn run(home: &Path, args: MeterArgs) -> Result<()> {
                     }
                 );
             } else {
-                println!("Meter unavailable — daemon may not be running or has not persisted a snapshot yet.");
+                println!(
+                    "Meter unavailable — daemon may not be running or has not persisted a snapshot yet."
+                );
             }
         }
     }

@@ -400,7 +400,10 @@ mod tests {
             total_mib: 8000,
         });
         let summary = report.render_summary();
-        assert!(summary.contains("GPU VRAM:      4000 / 8000 MiB (50% used)"), "got: {summary}");
+        assert!(
+            summary.contains("GPU VRAM:      4000 / 8000 MiB (50% used)"),
+            "got: {summary}"
+        );
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"vram\""));
         assert!(json.contains("\"used_mib\":4000"));

@@ -180,49 +180,47 @@ async fn run_call(
     )
     .await
     {
-            Ok(r) => r,
-            Err(GateError::NotInAllowlist { .. }) => {
-                anyhow::bail!(
-                    "MCP `{server_id}::{tool}` blocked by per-server allow_tools allowlist. \
+        Ok(r) => r,
+        Err(GateError::NotInAllowlist { .. }) => {
+            anyhow::bail!(
+                "MCP `{server_id}::{tool}` blocked by per-server allow_tools allowlist. \
                  Edit ~/.neoth/mcp_servers.yaml to allow it, or pick a listed tool."
-                );
-            }
-            Err(GateError::MissingAllowlistSecureDefault { .. }) => {
-                // Reviewer-1 P1-A secure-by-default (2026-05-20): server
-                // has neither an allow_tools list nor `trust_all_tools:
-                // true`. Operator must opt in explicitly — silent
-                // catalogue-trust is the very behaviour we removed.
-                anyhow::bail!(
-                    "MCP `{server_id}::{tool}` denied: secure-by-default requires either \
+            );
+        }
+        Err(GateError::MissingAllowlistSecureDefault { .. }) => {
+            // Reviewer-1 P1-A secure-by-default (2026-05-20): server
+            // has neither an allow_tools list nor `trust_all_tools:
+            // true`. Operator must opt in explicitly — silent
+            // catalogue-trust is the very behaviour we removed.
+            anyhow::bail!(
+                "MCP `{server_id}::{tool}` denied: secure-by-default requires either \
                      an `allow_tools` pin or `trust_all_tools: true` for this server. \
                      Edit ~/.neoth/mcp_servers.yaml."
-                );
-            }
-            Err(GateError::PermissionDenied { reason, .. }) => {
-                anyhow::bail!(
-                    "MCP `{server_id}::{tool}` denied by autonomy policy ({}): {reason}",
-                    autonomy.as_str()
-                );
-            }
-            Err(GateError::ConfirmRequired { reason, .. }) => {
-                anyhow::bail!(
-                    "MCP `{server_id}::{tool}` requires operator confirm ({}): {reason}. \
+            );
+        }
+        Err(GateError::PermissionDenied { reason, .. }) => {
+            anyhow::bail!(
+                "MCP `{server_id}::{tool}` denied by autonomy policy ({}): {reason}",
+                autonomy.as_str()
+            );
+        }
+        Err(GateError::ConfirmRequired { reason, .. }) => {
+            anyhow::bail!(
+                "MCP `{server_id}::{tool}` requires operator confirm ({}): {reason}. \
                  Lower autonomy via `neoth init` or extend allow_tools.",
-                    autonomy.as_str()
-                );
-            }
-            // SC-11 — `neoth mcp call` invokes a tool directly (no skill
-            // context), so `invoke_with_audit` never produces this; the
-            // arm exists only to keep the match exhaustive after the
-            // variant was added for the skill-scoped dispatch path.
-            Err(GateError::SkillAllowlistBlocked { .. }) => {
-                anyhow::bail!(
-                    "MCP `{server_id}::{tool}` blocked by an active skill's tool_allowlist"
-                );
-            }
-            Err(GateError::Mcp(e)) => return Err(e.into()),
-            Err(GateError::Wal(e)) => return Err(e),
-        };
+                autonomy.as_str()
+            );
+        }
+        // SC-11 — `neoth mcp call` invokes a tool directly (no skill
+        // context), so `invoke_with_audit` never produces this; the
+        // arm exists only to keep the match exhaustive after the
+        // variant was added for the skill-scoped dispatch path.
+        Err(GateError::SkillAllowlistBlocked { .. }) => {
+            anyhow::bail!("MCP `{server_id}::{tool}` blocked by an active skill's tool_allowlist");
+        }
+        Err(GateError::Mcp(e)) => return Err(e.into()),
+        Err(GateError::Wal(e)) => return Err(e),
+    };
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!("{}", serde_json::to_string_pretty(&result)?);

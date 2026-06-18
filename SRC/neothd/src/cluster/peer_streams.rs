@@ -67,8 +67,12 @@ impl PeerStreamRegistry {
     /// the map half-modified, so a poisoned lock (a panic elsewhere while held)
     /// still hands back consistent data — and panicking the connection task on
     /// poison would be a worse failure than continuing. (SL-00(1c) review.)
-    fn guard(&self) -> std::sync::MutexGuard<'_, HashMap<String, tokio::sync::mpsc::Sender<WireFrame>>> {
-        self.senders.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn guard(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, tokio::sync::mpsc::Sender<WireFrame>>> {
+        self.senders
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Register a peer's outbound channel. Replaces any prior entry (a
@@ -163,7 +167,8 @@ mod tests {
         let reg = PeerStreamRegistry::new();
         let mut rx = reg.register("aa11");
         assert_eq!(reg.peer_count(), 1);
-        reg.send_to("aa11", sample_frame()).expect("registered peer accepts a frame");
+        reg.send_to("aa11", sample_frame())
+            .expect("registered peer accepts a frame");
         let got = rx.recv().await.expect("frame arrives on the receiver");
         assert_eq!(got.kind, FrameKind::Goodbye);
     }
@@ -175,7 +180,10 @@ mod tests {
         assert_eq!(reg.peer_count(), 1);
         reg.unregister("bb22");
         assert_eq!(reg.peer_count(), 0);
-        assert_eq!(reg.send_to("bb22", sample_frame()), Err(SendError::UnknownPeer));
+        assert_eq!(
+            reg.send_to("bb22", sample_frame()),
+            Err(SendError::UnknownPeer)
+        );
     }
 
     #[tokio::test]
@@ -190,7 +198,10 @@ mod tests {
                 break;
             }
         }
-        assert!(full, "a never-drained queue must eventually report QueueFull, not block");
+        assert!(
+            full,
+            "a never-drained queue must eventually report QueueFull, not block"
+        );
     }
 
     #[tokio::test]
@@ -221,6 +232,9 @@ mod tests {
         let reg = PeerStreamRegistry::new();
         let _a = reg.register("zz");
         let _b = reg.register("aa");
-        assert_eq!(reg.connected_peers(), vec!["aa".to_string(), "zz".to_string()]);
+        assert_eq!(
+            reg.connected_peers(),
+            vec!["aa".to_string(), "zz".to_string()]
+        );
     }
 }

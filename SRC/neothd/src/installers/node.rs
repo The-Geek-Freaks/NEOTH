@@ -16,8 +16,6 @@
 //! No silent `sudo apt install` — operator runs the package-manager
 //! command themselves per the AGENTER "operator GO per command" rule.
 
-
-
 /// One of the OS-specific Node install paths. Pinned exhaustively.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NodeInstallPath {

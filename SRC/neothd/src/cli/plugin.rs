@@ -114,9 +114,7 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
         PluginAction::Disable { id } => {
             set_activation(&home, &id, PluginActivation::Disabled, args.output)
         }
-        PluginAction::Test { path, capture_wal } => {
-            run_test(&path, args.output, capture_wal).await
-        }
+        PluginAction::Test { path, capture_wal } => run_test(&path, args.output, capture_wal).await,
         PluginAction::Verify { path } => run_verify(&path, args.output),
         PluginAction::Ledger { id } => run_ledger(id.as_deref(), args.output),
     }
@@ -210,7 +208,13 @@ async fn run_test(path: &std::path::Path, output: OutputFormat, capture_wal: boo
     } else {
         let invocation_outcome: Option<TestInvocationSummary> =
             run_test_invoke(&manifest, &wasm_bytes);
-        render_test_report(&manifest, wasm_bytes.len(), invocation_outcome, None, output)
+        render_test_report(
+            &manifest,
+            wasm_bytes.len(),
+            invocation_outcome,
+            None,
+            output,
+        )
     }
 }
 
@@ -643,8 +647,8 @@ async fn run_test_invoke_with_wal(
     wasm_bytes: &[u8],
 ) -> Option<TestInvocationWithWal> {
     use crate::wasm_plugin::dispatch::{
-        invocation_outcome_from_compile_failure, invoke_plugin_with_state, CompileOutcome,
-        InvocationStage,
+        CompileOutcome, InvocationStage, invocation_outcome_from_compile_failure,
+        invoke_plugin_with_state,
     };
     use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState};
     use crate::wasm_plugin::hostcalls;
@@ -687,7 +691,9 @@ async fn run_test_invoke_with_wal(
     }
     let module = match &compile_outcome {
         CompileOutcome::Compiled { module, .. } => module,
-        CompileOutcome::Failed { .. } => unreachable!("guarded by invocation_outcome_from_compile_failure"),
+        CompileOutcome::Failed { .. } => {
+            unreachable!("guarded by invocation_outcome_from_compile_failure")
+        }
     };
     let linker = match hostcalls::build_linker(engine.raw()) {
         Ok(l) => l,
@@ -1164,7 +1170,9 @@ version = \"0.1.0\"\n\
     async fn ux07_test_bails_when_path_does_not_exist() {
         let dir = TempDir::new().unwrap();
         let missing = dir.path().join("not_there");
-        let err = run_test(&missing, OutputFormat::Table, false).await.unwrap_err();
+        let err = run_test(&missing, OutputFormat::Table, false)
+            .await
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("does not exist"),
@@ -1177,7 +1185,9 @@ version = \"0.1.0\"\n\
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("oops.txt");
         std::fs::write(&file, b"not a plugin dir").unwrap();
-        let err = run_test(&file, OutputFormat::Table, false).await.unwrap_err();
+        let err = run_test(&file, OutputFormat::Table, false)
+            .await
+            .unwrap_err();
         assert!(format!("{err:#}").contains("not a directory"));
     }
 
@@ -1204,7 +1214,9 @@ version = \"0.1.0\"\n\
         let plugin_dir = dir.path().join("plug");
         std::fs::create_dir(&plugin_dir).unwrap();
         write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]); // wasm magic only
-        let err = run_test(&plugin_dir, OutputFormat::Table, false).await.unwrap_err();
+        let err = run_test(&plugin_dir, OutputFormat::Table, false)
+            .await
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("missing `plugin.toml`"),
@@ -1218,7 +1230,9 @@ version = \"0.1.0\"\n\
         let plugin_dir = dir.path().join("plug");
         std::fs::create_dir(&plugin_dir).unwrap();
         write_manifest(&plugin_dir, VALID_MANIFEST);
-        let err = run_test(&plugin_dir, OutputFormat::Table, false).await.unwrap_err();
+        let err = run_test(&plugin_dir, OutputFormat::Table, false)
+            .await
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("missing `plugin.wasm`"),
@@ -1236,7 +1250,9 @@ version = \"0.1.0\"\n\
             "id = \"BadCase\"\nname = \"\"\nversion = \"0.1.0\"\n",
         );
         write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]);
-        let err = run_test(&plugin_dir, OutputFormat::Table, false).await.unwrap_err();
+        let err = run_test(&plugin_dir, OutputFormat::Table, false)
+            .await
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("manifest invalid"),
@@ -1258,7 +1274,9 @@ version = \"0.1.0\"\n\
         write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]);
         // Use the JSON output so the test doesn't depend on Table-format
         // string drift; either renderer is acceptable.
-        run_test(&plugin_dir, OutputFormat::Json, false).await.unwrap();
+        run_test(&plugin_dir, OutputFormat::Json, false)
+            .await
+            .unwrap();
     }
 
     #[cfg(not(feature = "wasm-plugin-host"))]
@@ -1453,7 +1471,10 @@ version = \"0.1.0\"\n\
         let frames = decode_wal_frames(std::path::Path::new(
             "/nonexistent-uxo7b/does-not-exist.wal",
         ));
-        assert!(frames.is_empty(), "a missing segment yields no frames, no panic");
+        assert!(
+            frames.is_empty(),
+            "a missing segment yields no frames, no panic"
+        );
     }
 
     /// UX-07b end-to-end plumbing (feature build): the capture path spawns a

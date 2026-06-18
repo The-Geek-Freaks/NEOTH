@@ -366,7 +366,10 @@ mod tests {
         // 14B (wrong size) and bartowski standard (wrong class) excluded.
         assert_eq!(ranked.len(), 2);
         // Most-downloaded abliterated 7B wins.
-        assert_eq!(ranked[0].repo, "someone/Qwen2.5-7B-Instruct-abliterated-GGUF");
+        assert_eq!(
+            ranked[0].repo,
+            "someone/Qwen2.5-7B-Instruct-abliterated-GGUF"
+        );
         assert_eq!(ranked[0].downloads, 9000);
         assert!(ranked.iter().all(|v| v.class == VariantClass::Abliterated));
     }
@@ -399,7 +402,10 @@ mod tests {
     #[test]
     fn curated_fallback_returns_verified_repos() {
         let abl = curated_fallback(7.0, VariantClass::Abliterated).unwrap();
-        assert_eq!(abl.repo, "mradermacher/Qwen2.5-7B-Instruct-abliterated-GGUF");
+        assert_eq!(
+            abl.repo,
+            "mradermacher/Qwen2.5-7B-Instruct-abliterated-GGUF"
+        );
         assert_eq!(abl.class, VariantClass::Abliterated);
         let std = curated_fallback(32.0, VariantClass::Standard).unwrap();
         assert_eq!(std.repo, "bartowski/Qwen2.5-32B-Instruct-GGUF");

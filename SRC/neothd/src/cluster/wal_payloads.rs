@@ -64,7 +64,8 @@ impl ClusterRoleChangedPayload {
         // GOLD-SEC-25 / A-48: fail loud rather than write an EMPTY payload
         // into the WAL on a serialization failure. POD struct (no floats),
         // so serde_json is infallible here.
-        serde_json::to_vec(self).expect("cluster WAL payload is POD; serde_json serialization is infallible")
+        serde_json::to_vec(self)
+            .expect("cluster WAL payload is POD; serde_json serialization is infallible")
     }
 }
 
@@ -125,7 +126,8 @@ impl ClusterRequestForwardedPayload {
         // GOLD-SEC-25 / A-48: fail loud rather than write an EMPTY payload
         // into the WAL on a serialization failure. POD struct (no floats),
         // so serde_json is infallible here.
-        serde_json::to_vec(self).expect("cluster WAL payload is POD; serde_json serialization is infallible")
+        serde_json::to_vec(self)
+            .expect("cluster WAL payload is POD; serde_json serialization is infallible")
     }
 }
 

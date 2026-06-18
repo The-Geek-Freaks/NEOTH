@@ -78,10 +78,14 @@ pub struct LaneBudget {
 ///   reserves the deferred vector/assoc fan-out lanes for when they land.
 pub fn budget_for(tier: RecallTier) -> LaneBudget {
     match tier {
-        RecallTier::Skip => LaneBudget { semantic: true, episodic: false },
-        RecallTier::Single | RecallTier::Multi => {
-            LaneBudget { semantic: true, episodic: true }
-        }
+        RecallTier::Skip => LaneBudget {
+            semantic: true,
+            episodic: false,
+        },
+        RecallTier::Single | RecallTier::Multi => LaneBudget {
+            semantic: true,
+            episodic: true,
+        },
     }
 }
 
@@ -124,9 +128,7 @@ pub fn fuse_lanes(lanes: &[LaneResult], limit: usize) -> Vec<EpisodeHit> {
     let mut scored: Vec<(EpisodeHit, f64)> =
         order.into_iter().filter_map(|k| acc.remove(&k)).collect();
     // Stable sort: equal fused scores stay in first-seen (lane-priority) order.
-    scored.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(limit);
     scored.into_iter().map(|(hit, _)| hit).collect()
 }
@@ -163,18 +165,30 @@ mod tests {
     fn budget_single_and_multi_cover_all_text_tiers() {
         for t in [RecallTier::Single, RecallTier::Multi] {
             let b = budget_for(t);
-            assert!(b.semantic && b.episodic, "{t:?} keeps both text lanes (no recall regression)");
+            assert!(
+                b.semantic && b.episodic,
+                "{t:?} keeps both text lanes (no recall regression)"
+            );
         }
     }
 
     #[test]
     fn dedup_by_text_hash_collapses_cross_lane_duplicate() {
         // Same content "abc" appears in both lanes; warm tag in lane B.
-        let lane_a = LaneResult { weight: SEMANTIC_WEIGHT, hits: vec![hit("abc", "hot", 0.5)] };
-        let lane_b = LaneResult { weight: EPISODIC_WEIGHT, hits: vec![hit("abc", "warm", 0.9)] };
+        let lane_a = LaneResult {
+            weight: SEMANTIC_WEIGHT,
+            hits: vec![hit("abc", "hot", 0.5)],
+        };
+        let lane_b = LaneResult {
+            weight: EPISODIC_WEIGHT,
+            hits: vec![hit("abc", "warm", 0.9)],
+        };
         let out = fuse_lanes(&[lane_a, lane_b], 10);
         assert_eq!(out.len(), 1, "the duplicate content collapses to one row");
-        assert_eq!(out[0].tier, "hot", "the higher-priority (first) lane's row is kept");
+        assert_eq!(
+            out[0].tier, "hot",
+            "the higher-priority (first) lane's row is kept"
+        );
     }
 
     #[test]
@@ -194,7 +208,11 @@ mod tests {
         };
         let out = fuse_lanes(&[lane_a, lane_b], 10);
         let order: Vec<&str> = out.iter().map(|h| h.text_hash.as_str()).collect();
-        assert_eq!(order, vec!["Y", "X", "Z"], "corroborated Y leads, then X, then Z");
+        assert_eq!(
+            order,
+            vec!["Y", "X", "Z"],
+            "corroborated Y leads, then X, then Z"
+        );
     }
 
     #[test]
@@ -202,29 +220,46 @@ mod tests {
         // RRF with one lane is monotonic in rank → input order is preserved.
         let lane = LaneResult {
             weight: SEMANTIC_WEIGHT,
-            hits: vec![hit("a", "hot", 0.1), hit("b", "hot", 0.9), hit("c", "hot", 0.5)],
+            hits: vec![
+                hit("a", "hot", 0.1),
+                hit("b", "hot", 0.9),
+                hit("c", "hot", 0.5),
+            ],
         };
         let out = fuse_lanes(&[lane], 10);
         let order: Vec<&str> = out.iter().map(|h| h.text_hash.as_str()).collect();
-        assert_eq!(order, vec!["a", "b", "c"], "single-lane fusion keeps the lane's order");
+        assert_eq!(
+            order,
+            vec!["a", "b", "c"],
+            "single-lane fusion keeps the lane's order"
+        );
     }
 
     #[test]
     fn empty_lane_does_not_panic_and_contributes_nothing() {
-        let lane_a = LaneResult { weight: SEMANTIC_WEIGHT, hits: vec![] };
+        let lane_a = LaneResult {
+            weight: SEMANTIC_WEIGHT,
+            hits: vec![],
+        };
         let lane_b = LaneResult {
             weight: EPISODIC_WEIGHT,
             hits: vec![hit("a", "warm", 0.5), hit("b", "warm", 0.5)],
         };
         let out = fuse_lanes(&[lane_a, lane_b], 10);
-        assert_eq!(out.len(), 2, "an empty lane is a no-op, the other lane still surfaces");
+        assert_eq!(
+            out.len(),
+            2,
+            "an empty lane is a no-op, the other lane still surfaces"
+        );
     }
 
     #[test]
     fn limit_truncates_after_fusion() {
-        let many: Vec<EpisodeHit> =
-            (0..10).map(|i| hit(&format!("h{i}"), "hot", 0.5)).collect();
-        let lane = LaneResult { weight: SEMANTIC_WEIGHT, hits: many };
+        let many: Vec<EpisodeHit> = (0..10).map(|i| hit(&format!("h{i}"), "hot", 0.5)).collect();
+        let lane = LaneResult {
+            weight: SEMANTIC_WEIGHT,
+            hits: many,
+        };
         let out = fuse_lanes(&[lane], 3);
         assert_eq!(out.len(), 3, "fused result is truncated to the limit");
     }

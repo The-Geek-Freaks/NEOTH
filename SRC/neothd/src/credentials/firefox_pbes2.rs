@@ -515,7 +515,10 @@ mod tests {
         push_integer_be(&mut pbkdf2_params, iters_be);
         push_integer_be(&mut pbkdf2_params, keylen_be);
         let mut prf_alg = Vec::new();
-        push_oid_bytes(&mut prf_alg, &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x09]);
+        push_oid_bytes(
+            &mut prf_alg,
+            &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x09],
+        );
         push_null(&mut prf_alg);
         push_sequence(&mut pbkdf2_params, &prf_alg);
         let mut kdf_alg_id = Vec::new();

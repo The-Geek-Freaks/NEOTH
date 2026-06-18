@@ -851,7 +851,8 @@ mod tests {
         // a first-attempt apply that just happens to skip every
         // claim, not a re-apply).
         let (_dir, mut conn, writer, join) = setup().await;
-        crate::profile::redaction::add(&conn, "identity.location", true, None, "operator", 1).unwrap();
+        crate::profile::redaction::add(&conn, "identity.location", true, None, "operator", 1)
+            .unwrap();
         crate::profile::redaction::add(&conn, "skills.rust", true, None, "operator", 1).unwrap();
 
         let out = apply_delta(&mut conn, &writer, &delta(), 2).await.unwrap();
@@ -876,7 +877,8 @@ mod tests {
         // accidentally pin the field forever.
         let (_dir, mut conn, writer, join) = setup().await;
         // never_recreate=false → must not block.
-        crate::profile::redaction::add(&conn, "identity.location", false, None, "operator", 1).unwrap();
+        crate::profile::redaction::add(&conn, "identity.location", false, None, "operator", 1)
+            .unwrap();
 
         let out = apply_delta(&mut conn, &writer, &delta(), 2).await.unwrap();
         // Both claims land — the redaction was advisory-only.

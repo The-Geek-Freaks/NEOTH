@@ -100,8 +100,7 @@ fn merge_credentials(
             }
         }
     }
-    let merged: Credentials =
-        serde_yaml::from_value(base).context("rebuild merged credentials")?;
+    let merged: Credentials = serde_yaml::from_value(base).context("rebuild merged credentials")?;
     imported.sort();
     Ok((merged, imported))
 }
@@ -165,7 +164,10 @@ fn run_scan(path: &std::path::Path, entropy: bool, output: OutputFormat) -> Resu
             if findings.is_empty() {
                 println!("no secrets found ({files_scanned} files scanned)");
             } else {
-                println!("⚠ {} secret(s) in {files_scanned} files scanned:", findings.len());
+                println!(
+                    "⚠ {} secret(s) in {files_scanned} files scanned:",
+                    findings.len()
+                );
                 for (file, f) in &findings {
                     println!("  {file}:{}  [{}]  {}", f.line, f.pattern, f.redacted);
                 }
@@ -191,8 +193,7 @@ fn scan_path(
     out: &mut Vec<(String, crate::security::secrets_scan::Finding)>,
     files_scanned: &mut usize,
 ) -> Result<()> {
-    let meta = std::fs::metadata(path)
-        .with_context(|| format!("stat {}", path.display()))?;
+    let meta = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if meta.is_file() {
         scan_file(path, entropy, out, files_scanned);
         return Ok(());
@@ -211,7 +212,8 @@ fn scan_path(
         }
         if m.is_dir() {
             let name = de.file_name().to_string_lossy().to_string();
-            if matches!(name.as_str(), ".git" | "target" | "node_modules") || name.starts_with('.') {
+            if matches!(name.as_str(), ".git" | "target" | "node_modules") || name.starts_with('.')
+            {
                 continue;
             }
             scan_path(&p, entropy, out, files_scanned)?;
@@ -355,7 +357,11 @@ mod tests {
         std::fs::write(root.join("blob.bin"), b"AKIAIOSFODNN7EXAMPLE\x00\x01").unwrap();
         // a .git dir whose contents must NOT be scanned.
         std::fs::create_dir(root.join(".git")).unwrap();
-        std::fs::write(root.join(".git").join("config"), "token=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00\n").unwrap();
+        std::fs::write(
+            root.join(".git").join("config"),
+            "token=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00\n",
+        )
+        .unwrap();
 
         let mut findings = Vec::new();
         let mut scanned = 0usize;
@@ -408,7 +414,11 @@ mod tests {
         let imported = vec!["provider_key".to_string(), "telegram_token".to_string()];
         let (added, overwritten) = classify_import(&existing, &imported);
         assert_eq!(added, vec!["telegram_token"], "telegram is new");
-        assert_eq!(overwritten, vec!["provider_key"], "provider_key already set");
+        assert_eq!(
+            overwritten,
+            vec!["provider_key"],
+            "provider_key already set"
+        );
     }
 
     #[test]

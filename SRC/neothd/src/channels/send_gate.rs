@@ -189,12 +189,22 @@ mod tests {
     fn egress_payload_is_metadata_only_no_plaintext() {
         let recipient = "+4915112345678";
         let message = "secret message body";
-        let bytes =
-            channel_egress_payload("whatsapp", recipient, message, Some("wamid.X"), false, true, 1700);
+        let bytes = channel_egress_payload(
+            "whatsapp",
+            recipient,
+            message,
+            Some("wamid.X"),
+            false,
+            true,
+            1700,
+        );
         let s = String::from_utf8(bytes).unwrap();
         // The phone number and the body NEVER appear in the clear.
         assert!(!s.contains(recipient), "recipient phone leaked: {s}");
-        assert!(!s.contains("secret message body"), "message body leaked: {s}");
+        assert!(
+            !s.contains("secret message body"),
+            "message body leaked: {s}"
+        );
         // But the hashes + safe metadata DO.
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["channel"], "whatsapp");
@@ -210,13 +220,17 @@ mod tests {
 
     #[test]
     fn denied_payload_hashes_recipient_and_omits_body() {
-        let bytes = channel_send_denied_payload("whatsapp", "+4915112345678", "strict: confirm", 1700);
+        let bytes =
+            channel_send_denied_payload("whatsapp", "+4915112345678", "strict: confirm", 1700);
         let s = String::from_utf8(bytes).unwrap();
         assert!(!s.contains("+4915112345678"));
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["action"], "channel_send");
         assert_eq!(v["reason"], "strict: confirm");
-        assert!(v.get("message_hash").is_none(), "no body field at all on a denial");
+        assert!(
+            v.get("message_hash").is_none(),
+            "no body field at all on a denial"
+        );
     }
 
     #[test]
@@ -230,10 +244,16 @@ mod tests {
         assert_eq!(v["channel"], "whatsapp");
         assert_eq!(v["delivered"], false);
         assert_eq!(v["error_kind"], "meta_api_error");
-        assert!(v.get("message_hash").is_none(), "no body field on a failed send");
+        assert!(
+            v.get("message_hash").is_none(),
+            "no body field on a failed send"
+        );
         assert_eq!(
             v["to_hash"],
-            format!("{:016x}", xxhash_rust::xxh3::xxh3_64("+4915112345678".as_bytes()))
+            format!(
+                "{:016x}",
+                xxhash_rust::xxh3::xxh3_64("+4915112345678".as_bytes())
+            )
         );
     }
 }

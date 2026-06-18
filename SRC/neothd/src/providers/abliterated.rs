@@ -96,9 +96,18 @@ mod tests {
             "Initial analysis: CVE-2024-9999 is a use-after-free in libfoo.",
         );
         let sys = req.system.expect("system must be Some");
-        assert!(sys.contains("CVE-2024-9999 is a use-after-free"), "shadow present: {sys}");
-        assert!(sys.contains("You are a security researcher."), "original system preserved: {sys}");
-        assert!(sys.contains("Continue and expand"), "continuation directive present: {sys}");
+        assert!(
+            sys.contains("CVE-2024-9999 is a use-after-free"),
+            "shadow present: {sys}"
+        );
+        assert!(
+            sys.contains("You are a security researcher."),
+            "original system preserved: {sys}"
+        );
+        assert!(
+            sys.contains("Continue and expand"),
+            "continuation directive present: {sys}"
+        );
     }
 
     #[test]

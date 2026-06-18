@@ -98,7 +98,14 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
     // (AUDIT-RPC-01) rather than open a 2nd writer; the launch is gated either way.
     let result = {
         if daemon_live {
-            launch_os_app(program, &cfg.tools.os, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
+            launch_os_app(
+                program,
+                &cfg.tools.os,
+                cfg.autonomy,
+                AuditSink::DaemonRpc(&home),
+                now,
+            )
+            .await
         } else {
             let segment = FreedomConfig::default_neoth_home()
                 .join("wal")
@@ -108,9 +115,14 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
             }
             match crate::wal::spawn(segment) {
                 Ok((writer, join)) => {
-                    let r =
-                        launch_os_app(program, &cfg.tools.os, cfg.autonomy, AuditSink::Writer(&writer), now)
-                            .await;
+                    let r = launch_os_app(
+                        program,
+                        &cfg.tools.os,
+                        cfg.autonomy,
+                        AuditSink::Writer(&writer),
+                        now,
+                    )
+                    .await;
                     drop(writer);
                     let _ = join.await;
                     r
@@ -195,7 +207,8 @@ async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<
         }
         match crate::wal::spawn(segment) {
             Ok((writer, join)) => {
-                let r = read_os_clipboard(clip, cfg.autonomy, AuditSink::Writer(&writer), now).await;
+                let r =
+                    read_os_clipboard(clip, cfg.autonomy, AuditSink::Writer(&writer), now).await;
                 drop(writer);
                 let _ = join.await;
                 r
@@ -269,7 +282,14 @@ async fn run_clipboard_set(
     )?;
     let clip = &cfg.tools.os.clipboard;
     let result = if daemon_live {
-        write_os_clipboard(&content, clip, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
+        write_os_clipboard(
+            &content,
+            clip,
+            cfg.autonomy,
+            AuditSink::DaemonRpc(&home),
+            now,
+        )
+        .await
     } else {
         let segment = home.join("wal").join("000001.wal");
         if let Some(parent) = segment.parent() {
@@ -277,9 +297,14 @@ async fn run_clipboard_set(
         }
         match crate::wal::spawn(segment) {
             Ok((writer, join)) => {
-                let r =
-                    write_os_clipboard(&content, clip, cfg.autonomy, AuditSink::Writer(&writer), now)
-                        .await;
+                let r = write_os_clipboard(
+                    &content,
+                    clip,
+                    cfg.autonomy,
+                    AuditSink::Writer(&writer),
+                    now,
+                )
+                .await;
                 drop(writer);
                 let _ = join.await;
                 r

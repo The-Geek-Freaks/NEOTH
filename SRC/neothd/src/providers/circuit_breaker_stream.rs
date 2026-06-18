@@ -148,11 +148,7 @@ mod tests {
     use futures_util::stream as fstream;
 
     fn unique_provider_id(suffix: &str) -> String {
-        format!(
-            "gr04stream-{}-{}",
-            suffix,
-            crate::time::now_unix_ns_u128()
-        )
+        format!("gr04stream-{}-{}", suffix, crate::time::now_unix_ns_u128())
     }
 
     fn consecutive_failures(id: &str) -> u32 {

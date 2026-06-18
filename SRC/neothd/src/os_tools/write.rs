@@ -14,7 +14,10 @@ use std::path::Path;
 /// gate. The parent dir must exist (we never create it).
 pub fn write_file_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "write target has no parent dir")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "write target has no parent dir",
+        )
     })?;
     let file_name = path
         .file_name()
@@ -22,7 +25,10 @@ pub fn write_file_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         .unwrap_or("target");
     // Temp name in the same dir; pid keeps concurrent daemon writes from
     // colliding (writes are gated + effectively serial, so this is ample).
-    let tmp = parent.join(format!(".neoth-write-{}-{file_name}.tmp", std::process::id()));
+    let tmp = parent.join(format!(
+        ".neoth-write-{}-{file_name}.tmp",
+        std::process::id()
+    ));
 
     if let Err(e) = std::fs::write(&tmp, contents) {
         let _ = std::fs::remove_file(&tmp);

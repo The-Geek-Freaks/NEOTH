@@ -893,9 +893,9 @@ fn run_wal_export(
                          `neoth wal verify-proof --proof <file> --pubkey <key>`"
                     );
                 }
-                None => println!(
-                    "  signed:         no (--sign to ed25519-sign with your operator key)"
-                ),
+                None => {
+                    println!("  signed:         no (--sign to ed25519-sign with your operator key)")
+                }
             }
             if marker_count == 0 {
                 println!(
@@ -1138,7 +1138,15 @@ mod tests {
         write_segment_with_marker(waldir.path(), 1, 5);
         let outdir = tempdir().unwrap();
         let out = outdir.path().join("proof.neoth-proof");
-        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json).unwrap();
+        run_wal_export(
+            "100d",
+            Some(&out),
+            waldir.path(),
+            false,
+            false,
+            OutputFormat::Json,
+        )
+        .unwrap();
 
         let body = std::fs::read_to_string(&out).unwrap();
         let env: ProofEnvelope = serde_json::from_str(&body).unwrap();
@@ -1159,7 +1167,15 @@ mod tests {
         write_segment_with_marker(waldir.path(), 1, 3);
         let outdir = tempdir().unwrap();
         let out = outdir.path().join("p.neoth-proof");
-        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json).unwrap();
+        run_wal_export(
+            "100d",
+            Some(&out),
+            waldir.path(),
+            false,
+            false,
+            OutputFormat::Json,
+        )
+        .unwrap();
         let mut env: ProofEnvelope =
             serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
         // Flip a frame's hash after export: the envelope digest must reject it.
@@ -1180,8 +1196,15 @@ mod tests {
         write_segment_with_marker(waldir.path(), 1, 3);
         let outdir = tempdir().unwrap();
         let out = outdir.path().join("p.neoth-proof");
-        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json)
-            .unwrap();
+        run_wal_export(
+            "100d",
+            Some(&out),
+            waldir.path(),
+            false,
+            false,
+            OutputFormat::Json,
+        )
+        .unwrap();
         let mut env: ProofEnvelope =
             serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
         let key = ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]);
@@ -1207,8 +1230,15 @@ mod tests {
         write_segment_with_marker(waldir.path(), 1, 3);
         let outdir = tempdir().unwrap();
         let out = outdir.path().join("p.neoth-proof");
-        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json)
-            .unwrap();
+        run_wal_export(
+            "100d",
+            Some(&out),
+            waldir.path(),
+            false,
+            false,
+            OutputFormat::Json,
+        )
+        .unwrap();
         let mut env: ProofEnvelope =
             serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
         let key_a = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);

@@ -180,7 +180,10 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(called, 3, "the short torn tail after the 3 good frames is dropped");
+        assert_eq!(
+            called, 3,
+            "the short torn tail after the 3 good frames is dropped"
+        );
     }
 
     #[test]
@@ -193,7 +196,10 @@ mod tests {
         let mut seg = uncompressed_segment(&frames);
         seg.extend_from_slice(&[0xAB; 200]); // long enough to clear the header → InvalidMagic
         let r = for_each_frame(&seg, |_, _| Ok(()));
-        assert!(r.is_err(), "a non-BufferTooShort decode error must fail loud");
+        assert!(
+            r.is_err(),
+            "a non-BufferTooShort decode error must fail loud"
+        );
         assert!(
             format!("{:?}", r.unwrap_err()).contains("tamper-suspect"),
             "the error must name the tamper-suspect cause"

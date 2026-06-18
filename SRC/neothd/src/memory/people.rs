@@ -269,10 +269,7 @@ pub fn score_person(row: &PersonStat, now_unix: u64) -> f32 {
         0.0
     };
 
-    (W_RECENCY * recency
-        + W_FREQUENCY * frequency
-        + W_RECIPROCITY * reciprocity
-        + W_DEPTH * depth)
+    (W_RECENCY * recency + W_FREQUENCY * frequency + W_RECIPROCITY * reciprocity + W_DEPTH * depth)
         .clamp(0.0, 1.0)
 }
 
@@ -377,7 +374,10 @@ mod tests {
         let fresh = recency_factor(1000, 1000);
         assert!((fresh - 1.0).abs() < 1e-6);
         let half = recency_factor(1000, 1000 + (RECENCY_HALFLIFE_DAYS as u64) * DAY);
-        assert!((half - 0.5).abs() < 0.02, "expected ~0.5 at half-life, got {half}");
+        assert!(
+            (half - 0.5).abs() < 0.02,
+            "expected ~0.5 at half-life, got {half}"
+        );
     }
 
     #[test]
@@ -497,7 +497,10 @@ mod tests {
         };
         let fresh = score_person(&row, 1000);
         let aged = score_person(&row, 1000 + 90 * DAY);
-        assert!(aged < fresh, "90-day-stale score {aged} must be < fresh {fresh}");
+        assert!(
+            aged < fresh,
+            "90-day-stale score {aged} must be < fresh {fresh}"
+        );
     }
 
     #[test]
@@ -554,17 +557,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         record_interaction(
             dir.path(),
-            &Interaction { person_key: "u", channel: "telegram", display: Some("Old"), is_reply_to_bot: false, msg_len: 10 },
+            &Interaction {
+                person_key: "u",
+                channel: "telegram",
+                display: Some("Old"),
+                is_reply_to_bot: false,
+                msg_len: 10,
+            },
             1000,
         )
         .unwrap();
         record_interaction(
             dir.path(),
-            &Interaction { person_key: "u", channel: "telegram", display: Some("New"), is_reply_to_bot: false, msg_len: 10 },
+            &Interaction {
+                person_key: "u",
+                channel: "telegram",
+                display: Some("New"),
+                is_reply_to_bot: false,
+                msg_len: 10,
+            },
             1000,
         )
         .unwrap();
-        assert_eq!(load_people(dir.path()).rows[0].display.as_deref(), Some("New"));
+        assert_eq!(
+            load_people(dir.path()).rows[0].display.as_deref(),
+            Some("New")
+        );
     }
 
     #[test]
@@ -577,7 +595,11 @@ mod tests {
     #[test]
     fn wrong_schema_loads_empty() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(people_path(dir.path()), br#"{"schema_version":999,"rows":[]}"#).unwrap();
+        std::fs::write(
+            people_path(dir.path()),
+            br#"{"schema_version":999,"rows":[]}"#,
+        )
+        .unwrap();
         assert!(load_people(dir.path()).rows.is_empty());
     }
 

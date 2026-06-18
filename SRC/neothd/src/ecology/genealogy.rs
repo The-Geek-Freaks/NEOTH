@@ -238,11 +238,7 @@ fn parse_tool_frame(event_type: u8, payload: &[u8]) -> Option<(ToolKind, String,
 fn parse_plugin_loaded(payload: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
     let id = v.get("plugin_id").and_then(|s| s.as_str())?.to_string();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id)
-    }
+    if id.is_empty() { None } else { Some(id) }
 }
 
 #[cfg(test)]
@@ -251,7 +247,7 @@ mod tests {
     use crate::wal::events::{
         EVENT_TYPE_MCP_TOOL_CALLED, EVENT_TYPE_PLUGIN_CAP_USED, EVENT_TYPE_PLUGIN_HOSTCALL,
     };
-    use crate::wal::writer::{spawn, WalWriterHandle};
+    use crate::wal::writer::{WalWriterHandle, spawn};
 
     async fn append_json(writer: &WalWriterHandle, event_type: u8, payload: serde_json::Value) {
         let bytes = serde_json::to_vec(&payload).unwrap();

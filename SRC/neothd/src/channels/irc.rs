@@ -189,7 +189,9 @@ impl Channel for IrcChannel {
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
         let sender = self.sender.get().ok_or_else(|| {
-            ChannelError::Transport("irc not connected (the receive loop must be live to send)".into())
+            ChannelError::Transport(
+                "irc not connected (the receive loop must be live to send)".into(),
+            )
         })?;
         for line in irc_lines(text) {
             sender
@@ -227,7 +229,11 @@ mod tests {
     #[test]
     fn new_parses_channel_csv_trimming_blanks() {
         let c = ch();
-        assert_eq!(c.config.channels, vec!["#a", "#b"], "trims spaces + drops the trailing empty");
+        assert_eq!(
+            c.config.channels,
+            vec!["#a", "#b"],
+            "trims spaces + drops the trailing empty"
+        );
     }
 
     #[test]
@@ -242,7 +248,14 @@ mod tests {
 
     #[test]
     fn password_is_exposed_into_config() {
-        let c = IrcChannel::new("h", 6667, "n", Some(SecretString::from("hunter2")), "#x", false);
+        let c = IrcChannel::new(
+            "h",
+            6667,
+            "n",
+            Some(SecretString::from("hunter2")),
+            "#x",
+            false,
+        );
         assert_eq!(c.config.password.as_deref(), Some("hunter2"));
         assert_eq!(c.config.use_tls, Some(false));
     }
@@ -260,7 +273,11 @@ mod tests {
     #[test]
     fn twitch_adapter_reports_twitch_name() {
         let c = IrcChannel::for_twitch("MyBot", SecretString::from("tok"), "#chan");
-        assert_eq!(c.name(), "twitch", "Twitch reuses the IRC adapter but reports its own kind");
+        assert_eq!(
+            c.name(),
+            "twitch",
+            "Twitch reuses the IRC adapter but reports its own kind"
+        );
     }
 
     #[test]
@@ -269,8 +286,20 @@ mod tests {
         assert_eq!(c.config.server.as_deref(), Some("irc.chat.twitch.tv"));
         assert_eq!(c.config.port, Some(6697));
         assert_eq!(c.config.use_tls, Some(true));
-        assert_eq!(c.config.nickname.as_deref(), Some("mybot"), "username lowercased");
-        assert_eq!(c.config.password.as_deref(), Some("oauth:abc"), "oauth: prefix prepended");
-        assert_eq!(c.config.channels, vec!["#mychannel", "#two"], "channels lowercased + parsed");
+        assert_eq!(
+            c.config.nickname.as_deref(),
+            Some("mybot"),
+            "username lowercased"
+        );
+        assert_eq!(
+            c.config.password.as_deref(),
+            Some("oauth:abc"),
+            "oauth: prefix prepended"
+        );
+        assert_eq!(
+            c.config.channels,
+            vec!["#mychannel", "#two"],
+            "channels lowercased + parsed"
+        );
     }
 }

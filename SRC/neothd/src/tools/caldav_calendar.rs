@@ -18,8 +18,8 @@
 
 use anyhow::{Context, Result};
 
-use super::caldav::{parse_multistatus, parse_property, resource_url, unfold_ics, CreateOutcome};
-use crate::email::calendar::{render_ics, CalendarEvent};
+use super::caldav::{CreateOutcome, parse_multistatus, parse_property, resource_url, unfold_ics};
+use crate::email::calendar::{CalendarEvent, render_ics};
 use crate::providers::http_client;
 
 /// The `REPORT` body: a `calendar-query` filtering for `VEVENT`, asking for the
@@ -164,7 +164,10 @@ pub fn event_uid(event: &CalendarEvent) -> String {
         return event.event_id.clone();
     }
     let key = format!("{}\u{1f}{}", event.summary, event.start_rfc3339);
-    format!("neoth-evt-{:016x}", xxhash_rust::xxh3::xxh3_64(key.as_bytes()))
+    format!(
+        "neoth-evt-{:016x}",
+        xxhash_rust::xxh3::xxh3_64(key.as_bytes())
+    )
 }
 
 /// PUT a VEVENT to `<calendar_url>/<uid>.ics`. UID-keyed + `If-None-Match: *`
@@ -192,7 +195,10 @@ pub async fn create_event_against(
     let resp = http_client::build_client()?
         .put(&url)
         .basic_auth(username, Some(password))
-        .header(reqwest::header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "text/calendar; charset=utf-8",
+        )
         // Idempotency: only create if it does not already exist.
         .header(reqwest::header::IF_NONE_MATCH, "*")
         .body(body)
@@ -249,7 +255,10 @@ mod tests {
             "BEGIN:VEVENT\r\nUID:x\r\nSUMMARY:Quick\r\nDTSTART:20260530T090000Z\r\nEND:VEVENT\r\n";
         let e = parse_vevent(ics).expect("parses");
         assert_eq!(e.start_rfc3339, "20260530T090000Z");
-        assert_eq!(e.end_rfc3339, "20260530T090000Z", "missing DTEND mirrors DTSTART");
+        assert_eq!(
+            e.end_rfc3339, "20260530T090000Z",
+            "missing DTEND mirrors DTSTART"
+        );
     }
 
     #[test]

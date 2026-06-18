@@ -77,7 +77,12 @@ impl CompactionPolicy {
     /// cap. `threshold_fraction` is clamped to (0.0, 1.0]; a non-positive or
     /// NaN fraction disables compaction (fail-safe — never compact on garbage
     /// config). Returns [`disabled`](Self::disabled) when `enabled` is false.
-    pub fn from_config(enabled: bool, progressive: bool, max_per_request: u32, fraction: f32) -> Self {
+    pub fn from_config(
+        enabled: bool,
+        progressive: bool,
+        max_per_request: u32,
+        fraction: f32,
+    ) -> Self {
         // Fail-safe: a disabled flag, a non-finite fraction (incl. NaN), or a
         // fraction outside (0.0, 1.0] all disable compaction rather than
         // compacting on garbage config. `is_finite()` rejects NaN cleanly
@@ -124,7 +129,9 @@ pub fn needs_compaction(prompt: &str, policy: &CompactionPolicy) -> bool {
 /// Wrap raw history in the summarization instruction. The driver prepends its
 /// own system prompt; the explicit instruction here dominates the request.
 pub fn build_compaction_prompt(history: &str) -> String {
-    format!("{COMPACTION_INSTRUCTION}\n\n--- TRANSCRIPT START ---\n{history}\n--- TRANSCRIPT END ---\n\nDENSE SUMMARY:")
+    format!(
+        "{COMPACTION_INSTRUCTION}\n\n--- TRANSCRIPT START ---\n{history}\n--- TRANSCRIPT END ---\n\nDENSE SUMMARY:"
+    )
 }
 
 /// Prefix a model-produced summary with [`SUMMARY_MARKER`] so it slots back in
@@ -204,9 +211,18 @@ mod tests {
     #[test]
     fn build_compaction_prompt_embeds_retention_instruction_and_history() {
         let p = build_compaction_prompt("TOOL_RESULT: /etc/hosts had 3 lines");
-        assert!(p.contains("UNRESOLVED tool result"), "must demand retention");
-        assert!(p.contains("/etc/hosts had 3 lines"), "must include the history");
-        assert!(p.contains("DENSE SUMMARY:"), "must cue the model to summarize");
+        assert!(
+            p.contains("UNRESOLVED tool result"),
+            "must demand retention"
+        );
+        assert!(
+            p.contains("/etc/hosts had 3 lines"),
+            "must include the history"
+        );
+        assert!(
+            p.contains("DENSE SUMMARY:"),
+            "must cue the model to summarize"
+        );
     }
 
     #[test]
@@ -221,7 +237,10 @@ mod tests {
     fn split_last_exchange_carves_off_most_recent() {
         let h = "OP PROMPT\n\n[assistant]\nfirst\n\n[tool results]\nR1\n\n[assistant]\nsecond\n\n[tool results]\nR2";
         let (older, last) = split_last_exchange(h);
-        assert!(older.ends_with("R1"), "older = everything before the last [assistant]");
+        assert!(
+            older.ends_with("R1"),
+            "older = everything before the last [assistant]"
+        );
         assert!(last.starts_with("\n\n[assistant]\nsecond"));
         assert!(last.contains("R2"));
         // No marker (iteration 1) → whole text older, last empty.
@@ -236,8 +255,14 @@ mod tests {
         let w = wrap_summary_with_last_exchange("summary of older", last);
         assert!(w.starts_with(SUMMARY_MARKER));
         assert!(w.contains("summary of older"));
-        assert!(w.contains("VERBATIM_RESULT"), "last exchange must survive structurally");
-        assert!(w.contains("\n\n[assistant]\nlast reply"), "marker structure preserved");
+        assert!(
+            w.contains("VERBATIM_RESULT"),
+            "last exchange must survive structurally"
+        );
+        assert!(
+            w.contains("\n\n[assistant]\nlast reply"),
+            "marker structure preserved"
+        );
         // Empty last exchange → identical to plain wrap_summary.
         assert_eq!(wrap_summary_with_last_exchange("s", ""), wrap_summary("s"));
     }

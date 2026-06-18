@@ -28,8 +28,8 @@ pub fn decode(link: &str) -> Result<RecipeSpec, RecipeError> {
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload.as_bytes())
         .map_err(|e| RecipeError::Parse(format!("invalid deeplink base64: {e}")))?;
-    let yaml =
-        String::from_utf8(bytes).map_err(|e| RecipeError::Parse(format!("deeplink not utf-8: {e}")))?;
+    let yaml = String::from_utf8(bytes)
+        .map_err(|e| RecipeError::Parse(format!("deeplink not utf-8: {e}")))?;
     RecipeSpec::parse(&yaml)
 }
 

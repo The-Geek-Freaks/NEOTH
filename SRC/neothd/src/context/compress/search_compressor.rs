@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::context::compress::ccr::{compute_key, marker_for, CcrStore};
+use crate::context::compress::ccr::{CcrStore, compute_key, marker_for};
 use crate::context::compress::content_detector::ContentType;
 use crate::context::compress::transform::{
     CompressionContext, OffloadOutput, OffloadTransform, TransformError,
@@ -259,7 +259,7 @@ impl SearchOffload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::compress::ccr::{extract_keys, InMemoryCcrStore};
+    use crate::context::compress::ccr::{InMemoryCcrStore, extract_keys};
 
     fn offload() -> SearchOffload {
         SearchOffload::default()
@@ -287,16 +287,31 @@ mod tests {
             Some("C:\\repo\\src\\main.rs"),
             "Windows drive path was dropped before HR-01"
         );
-        assert_eq!(parse_line_path("D:/a/b.rs:7:x"), Some("D:/a/b.rs"), "forward-slash drive too");
+        assert_eq!(
+            parse_line_path("D:/a/b.rs:7:x"),
+            Some("D:/a/b.rs"),
+            "forward-slash drive too"
+        );
         // Unix paths still parse (no regression).
-        assert_eq!(parse_line_path("src/utils.py:42:def foo"), Some("src/utils.py"));
+        assert_eq!(
+            parse_line_path("src/utils.py:42:def foo"),
+            Some("src/utils.py")
+        );
         assert_eq!(parse_line_path("/home/x/f.rs:1: y"), Some("/home/x/f.rs"));
         // Non-hits pass through (None): summary, blank, a timestamped log line that
         // must NOT be mistaken for a `path:line:` hit, and a missing line number.
         assert_eq!(parse_line_path("12 matches across 3 files"), None);
         assert_eq!(parse_line_path(""), None);
-        assert_eq!(parse_line_path("WARNING at 12:34: disk full"), None, "spaced prefix is not a path");
-        assert_eq!(parse_line_path("nolinenum.py:foo"), None, "missing line number");
+        assert_eq!(
+            parse_line_path("WARNING at 12:34: disk full"),
+            None,
+            "spaced prefix is not a path"
+        );
+        assert_eq!(
+            parse_line_path("nolinenum.py:foo"),
+            None,
+            "missing line number"
+        );
     }
 
     #[test]
@@ -344,7 +359,11 @@ mod tests {
         let store = InMemoryCcrStore::new();
         let ctx = CompressionContext::with_query("fn_17");
         let r = offload().apply(&input, &ctx, &store).expect("thins");
-        assert!(r.output.contains("big.py:18:def fn_17"), "query anchor must survive: {}", r.output);
+        assert!(
+            r.output.contains("big.py:18:def fn_17"),
+            "query anchor must survive: {}",
+            r.output
+        );
     }
 
     #[test]

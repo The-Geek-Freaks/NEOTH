@@ -194,9 +194,11 @@ pub fn compute_parity_run(grades: &[GraderGrade]) -> Result<ParityRunResult> {
     for q in &queries {
         let f = lookup(&per_query_factual_pk, q);
         let u = lookup(&per_query_useful_pk, q);
-        let any_grader_factual_zero = complete_graders
-            .iter()
-            .any(|gr| get(q, gr, GradedSystem::Neoth).map(|g| g.factual == 0).unwrap_or(false));
+        let any_grader_factual_zero = complete_graders.iter().any(|gr| {
+            get(q, gr, GradedSystem::Neoth)
+                .map(|g| g.factual == 0)
+                .unwrap_or(false)
+        });
         let class = if any_grader_factual_zero {
             DivergenceClass::Critical(CriticalReason::FactualBelow50)
         } else {
@@ -228,7 +230,11 @@ pub fn compute_parity_run(grades: &[GraderGrade]) -> Result<ParityRunResult> {
 }
 
 fn lookup(pairs: &[(String, f64)], q: &str) -> f64 {
-    pairs.iter().find(|(qid, _)| qid == q).map(|(_, v)| *v).unwrap_or(0.0)
+    pairs
+        .iter()
+        .find(|(qid, _)| qid == q)
+        .map(|(_, v)| *v)
+        .unwrap_or(0.0)
 }
 
 #[cfg(test)]
@@ -273,7 +279,11 @@ mod tests {
     #[test]
     fn matched_high_scores_pass_all_gates() {
         let r = compute_parity_run(&matched_high()).unwrap();
-        assert!(r.aggregate >= parity::PARITY_PASS_THRESHOLD, "agg {}", r.aggregate);
+        assert!(
+            r.aggregate >= parity::PARITY_PASS_THRESHOLD,
+            "agg {}",
+            r.aggregate
+        );
         assert_eq!(r.critical_queries.len(), 0);
         assert!(r.absolute_floors_met, "high NEOTH scores clear the floors");
         assert!(r.verdict.passed);
@@ -292,8 +302,15 @@ mod tests {
             }
         }
         let r = compute_parity_run(&grades).unwrap();
-        assert!(r.aggregate >= 0.85, "parity is high (both equally bad): {}", r.aggregate);
-        assert!(!r.absolute_floors_met, "0/5 NEOTH must fail the absolute floor");
+        assert!(
+            r.aggregate >= 0.85,
+            "parity is high (both equally bad): {}",
+            r.aggregate
+        );
+        assert!(
+            !r.absolute_floors_met,
+            "0/5 NEOTH must fail the absolute floor"
+        );
         assert!(!r.verdict.passed, "high parity + failed floor ⇒ gate FAILS");
     }
 

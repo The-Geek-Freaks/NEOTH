@@ -86,7 +86,6 @@ pub struct DoctorArgs {
     pub output: OutputFormat,
 }
 
-
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
 /// exists for that check name (typo in operator's `--explain` flag).
 fn find_check_doc(name: &str) -> Option<&'static CheckDoc> {
@@ -273,7 +272,12 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome]) {
     };
     let mut blob = String::new();
     for o in &problems {
-        blob.push_str(&format!("- [{}] {}: {}\n", o.status.tag(), o.name, o.detail));
+        blob.push_str(&format!(
+            "- [{}] {}: {}\n",
+            o.status.tag(),
+            o.name,
+            o.detail
+        ));
     }
     let req = crate::providers::Request {
         prompt: format!(
@@ -337,8 +341,7 @@ mod tests {
         // without a DOCS entry in its domain file fails here.
         let dir = tempdir().unwrap();
         let outcomes = run_all_checks(dir.path());
-        let doc_names: std::collections::HashSet<&str> =
-            all_check_docs().map(|d| d.name).collect();
+        let doc_names: std::collections::HashSet<&str> = all_check_docs().map(|d| d.name).collect();
         for o in &outcomes {
             assert!(
                 doc_names.contains(o.name),
@@ -419,8 +422,16 @@ mod tests {
         }];
         let out = stuck_processes_outcome(&stuck);
         assert_eq!(out.status, CheckStatus::Warn);
-        assert!(out.detail.contains("pid 4242"), "must name the PID: {}", out.detail);
-        assert!(out.detail.contains("18m idle"), "must show idle minutes: {}", out.detail);
+        assert!(
+            out.detail.contains("pid 4242"),
+            "must name the PID: {}",
+            out.detail
+        );
+        assert!(
+            out.detail.contains("18m idle"),
+            "must show idle minutes: {}",
+            out.detail
+        );
         // Honesty: must NOT point at the not-yet-built stuck-clean / reset cmds.
         assert!(!out.detail.contains("stuck-clean"));
         assert!(!out.detail.contains("chat reset"));
@@ -578,143 +589,144 @@ mod tests {
     mod cluster_doctor_tests {
         use super::*;
 
-    #[test]
-    fn cluster_registry_pass_when_empty() {
-        let dir = tempdir().unwrap();
-        let outcome = check_cluster_registry(dir.path());
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        assert!(outcome.detail.contains("no confirmed"));
-    }
-
-    #[test]
-    fn cluster_registry_pass_when_fresh() {
-        let dir = tempdir().unwrap();
-        let now = crate::time::now_unix_i64();
-        let peer = crate::cluster::registry::PairedPeer {
-            pub_key_hex: "ab".repeat(32),
-            instance_label: "laptop".into(),
-            hostname: String::new(),
-            addr: "192.0.2.1:4242".into(),
-            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
-            paired_at_unix: now - 3600,
-            last_seen_unix: now - 60,
-            ..Default::default()
-        };
-        crate::cluster::registry::upsert(dir.path(), peer).unwrap();
-        let outcome = check_cluster_registry(dir.path());
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        assert!(outcome.detail.contains("1 confirmed"));
-    }
-
-    #[test]
-    fn cluster_registry_warns_on_stale() {
-        let dir = tempdir().unwrap();
-        let now = crate::time::now_unix_i64();
-        let peer = crate::cluster::registry::PairedPeer {
-            pub_key_hex: "ab".repeat(32),
-            instance_label: "old-laptop".into(),
-            hostname: String::new(),
-            addr: "192.0.2.1:4242".into(),
-            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
-            paired_at_unix: now - 30 * 86_400,
-            last_seen_unix: now - 30 * 86_400, // 30 days old > 14d threshold
-            ..Default::default()
-        };
-        crate::cluster::registry::upsert(dir.path(), peer).unwrap();
-        let outcome = check_cluster_registry(dir.path());
-        assert_eq!(outcome.status, CheckStatus::Warn);
-        assert!(outcome.detail.contains("stale"));
-        assert!(outcome.detail.contains("old-laptop"));
-    }
-
-    // ── check_cluster_mdns_announcer (Bite #2) ─────────────────────────
-
-    fn open_announce_policy() -> crate::cluster::policy::AnnouncePolicy {
-        crate::cluster::policy::AnnouncePolicy {
-            announce_on_untrusted_wifi: true,
-            trusted_ssids: vec![],
+        #[test]
+        fn cluster_registry_pass_when_empty() {
+            let dir = tempdir().unwrap();
+            let outcome = check_cluster_registry(dir.path());
+            assert_eq!(outcome.status, CheckStatus::Pass);
+            assert!(outcome.detail.contains("no confirmed"));
         }
-    }
 
-    fn strict_announce_policy() -> crate::cluster::policy::AnnouncePolicy {
-        crate::cluster::policy::AnnouncePolicy {
-            announce_on_untrusted_wifi: false,
-            trusted_ssids: vec!["home-wifi".into()],
+        #[test]
+        fn cluster_registry_pass_when_fresh() {
+            let dir = tempdir().unwrap();
+            let now = crate::time::now_unix_i64();
+            let peer = crate::cluster::registry::PairedPeer {
+                pub_key_hex: "ab".repeat(32),
+                instance_label: "laptop".into(),
+                hostname: String::new(),
+                addr: "192.0.2.1:4242".into(),
+                discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+                paired_at_unix: now - 3600,
+                last_seen_unix: now - 60,
+                ..Default::default()
+            };
+            crate::cluster::registry::upsert(dir.path(), peer).unwrap();
+            let outcome = check_cluster_registry(dir.path());
+            assert_eq!(outcome.status, CheckStatus::Pass);
+            assert!(outcome.detail.contains("1 confirmed"));
         }
-    }
 
-    #[test]
-    fn mdns_announcer_pass_when_disabled() {
-        let outcome = evaluate_announcer_state(false, &open_announce_policy(), Some("anything"), 0);
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        assert!(outcome.detail.contains("disabled"));
-    }
+        #[test]
+        fn cluster_registry_warns_on_stale() {
+            let dir = tempdir().unwrap();
+            let now = crate::time::now_unix_i64();
+            let peer = crate::cluster::registry::PairedPeer {
+                pub_key_hex: "ab".repeat(32),
+                instance_label: "old-laptop".into(),
+                hostname: String::new(),
+                addr: "192.0.2.1:4242".into(),
+                discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+                paired_at_unix: now - 30 * 86_400,
+                last_seen_unix: now - 30 * 86_400, // 30 days old > 14d threshold
+                ..Default::default()
+            };
+            crate::cluster::registry::upsert(dir.path(), peer).unwrap();
+            let outcome = check_cluster_registry(dir.path());
+            assert_eq!(outcome.status, CheckStatus::Warn);
+            assert!(outcome.detail.contains("stale"));
+            assert!(outcome.detail.contains("old-laptop"));
+        }
 
-    #[test]
-    fn mdns_announcer_pass_when_proceed_with_ssid() {
-        let outcome =
-            evaluate_announcer_state(true, &strict_announce_policy(), Some("home-wifi"), 2);
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        assert!(outcome.detail.contains("home-wifi"));
-        assert!(outcome.detail.contains("2 paired"));
-    }
+        // ── check_cluster_mdns_announcer (Bite #2) ─────────────────────────
 
-    #[test]
-    fn mdns_announcer_pass_when_open_policy_any_network() {
-        let outcome = evaluate_announcer_state(true, &open_announce_policy(), None, 0);
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        // Open policy → SsidUnknown path collapses to Proceed via gate;
-        // detail uses the any-network label.
-        assert!(outcome.detail.contains("any-network"));
-    }
+        fn open_announce_policy() -> crate::cluster::policy::AnnouncePolicy {
+            crate::cluster::policy::AnnouncePolicy {
+                announce_on_untrusted_wifi: true,
+                trusted_ssids: vec![],
+            }
+        }
 
-    #[test]
-    fn mdns_announcer_pass_when_untrusted_ssid_but_no_peers() {
-        let outcome =
-            evaluate_announcer_state(true, &strict_announce_policy(), Some("coffee-shop"), 0);
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        assert!(outcome.detail.contains("single-instance"));
-        assert!(outcome.detail.contains("coffee-shop"));
-    }
+        fn strict_announce_policy() -> crate::cluster::policy::AnnouncePolicy {
+            crate::cluster::policy::AnnouncePolicy {
+                announce_on_untrusted_wifi: false,
+                trusted_ssids: vec!["home-wifi".into()],
+            }
+        }
 
-    #[test]
-    fn mdns_announcer_warn_when_untrusted_ssid_with_peers() {
-        let outcome =
-            evaluate_announcer_state(true, &strict_announce_policy(), Some("coffee-shop"), 3);
-        assert_eq!(outcome.status, CheckStatus::Warn);
-        assert!(outcome.detail.contains("coffee-shop"));
-        assert!(outcome.detail.contains("3 paired"));
-        assert!(outcome.detail.contains("trusted_ssids"));
-    }
+        #[test]
+        fn mdns_announcer_pass_when_disabled() {
+            let outcome =
+                evaluate_announcer_state(false, &open_announce_policy(), Some("anything"), 0);
+            assert_eq!(outcome.status, CheckStatus::Pass);
+            assert!(outcome.detail.contains("disabled"));
+        }
 
-    #[test]
-    fn mdns_announcer_pass_when_ssid_unknown_and_no_peers() {
-        let outcome = evaluate_announcer_state(true, &strict_announce_policy(), None, 0);
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        assert!(outcome.detail.contains("no paired peers"));
-    }
+        #[test]
+        fn mdns_announcer_pass_when_proceed_with_ssid() {
+            let outcome =
+                evaluate_announcer_state(true, &strict_announce_policy(), Some("home-wifi"), 2);
+            assert_eq!(outcome.status, CheckStatus::Pass);
+            assert!(outcome.detail.contains("home-wifi"));
+            assert!(outcome.detail.contains("2 paired"));
+        }
 
-    #[test]
-    fn mdns_announcer_warn_when_ssid_unknown_with_peers() {
-        let outcome = evaluate_announcer_state(true, &strict_announce_policy(), None, 1);
-        assert_eq!(outcome.status, CheckStatus::Warn);
-        assert!(outcome.detail.contains("wired"));
-        assert!(outcome.detail.contains("1 paired"));
-        assert!(outcome.detail.contains("announce_on_untrusted_wifi"));
-    }
+        #[test]
+        fn mdns_announcer_pass_when_open_policy_any_network() {
+            let outcome = evaluate_announcer_state(true, &open_announce_policy(), None, 0);
+            assert_eq!(outcome.status, CheckStatus::Pass);
+            // Open policy → SsidUnknown path collapses to Proceed via gate;
+            // detail uses the any-network label.
+            assert!(outcome.detail.contains("any-network"));
+        }
 
-    #[test]
-    fn mdns_announcer_check_via_home_does_not_panic() {
-        // End-to-end smoke for the home-reading wrapper: missing
-        // freedom.yaml + missing cluster.yaml → safe defaults +
-        // ssid lookup might return either None or Some depending
-        // on the test host. Must not panic.
-        let dir = tempdir().unwrap();
-        let outcome = check_cluster_mdns_announcer(dir.path());
-        assert_eq!(outcome.name, "cluster mDNS announcer");
-        // Status is platform-dependent (host SSID may match nothing
-        // in the default trusted list); we only pin that it ran.
-    }
+        #[test]
+        fn mdns_announcer_pass_when_untrusted_ssid_but_no_peers() {
+            let outcome =
+                evaluate_announcer_state(true, &strict_announce_policy(), Some("coffee-shop"), 0);
+            assert_eq!(outcome.status, CheckStatus::Pass);
+            assert!(outcome.detail.contains("single-instance"));
+            assert!(outcome.detail.contains("coffee-shop"));
+        }
+
+        #[test]
+        fn mdns_announcer_warn_when_untrusted_ssid_with_peers() {
+            let outcome =
+                evaluate_announcer_state(true, &strict_announce_policy(), Some("coffee-shop"), 3);
+            assert_eq!(outcome.status, CheckStatus::Warn);
+            assert!(outcome.detail.contains("coffee-shop"));
+            assert!(outcome.detail.contains("3 paired"));
+            assert!(outcome.detail.contains("trusted_ssids"));
+        }
+
+        #[test]
+        fn mdns_announcer_pass_when_ssid_unknown_and_no_peers() {
+            let outcome = evaluate_announcer_state(true, &strict_announce_policy(), None, 0);
+            assert_eq!(outcome.status, CheckStatus::Pass);
+            assert!(outcome.detail.contains("no paired peers"));
+        }
+
+        #[test]
+        fn mdns_announcer_warn_when_ssid_unknown_with_peers() {
+            let outcome = evaluate_announcer_state(true, &strict_announce_policy(), None, 1);
+            assert_eq!(outcome.status, CheckStatus::Warn);
+            assert!(outcome.detail.contains("wired"));
+            assert!(outcome.detail.contains("1 paired"));
+            assert!(outcome.detail.contains("announce_on_untrusted_wifi"));
+        }
+
+        #[test]
+        fn mdns_announcer_check_via_home_does_not_panic() {
+            // End-to-end smoke for the home-reading wrapper: missing
+            // freedom.yaml + missing cluster.yaml → safe defaults +
+            // ssid lookup might return either None or Some depending
+            // on the test host. Must not panic.
+            let dir = tempdir().unwrap();
+            let outcome = check_cluster_mdns_announcer(dir.path());
+            assert_eq!(outcome.name, "cluster mDNS announcer");
+            // Status is platform-dependent (host SSID may match nothing
+            // in the default trusted list); we only pin that it ran.
+        }
     } // mod cluster_doctor_tests (GOLD-SEC-16)
 
     #[test]
@@ -1311,8 +1323,7 @@ mod tests {
     #[test]
     fn check_cloud_archive_warns_when_dest_missing() {
         let dir = tempdir().unwrap();
-        let yaml =
-            "operator_id: demo-user\nautonomy: standard\ncloud_archive_dest: /definitely/not/here\n";
+        let yaml = "operator_id: demo-user\nautonomy: standard\ncloud_archive_dest: /definitely/not/here\n";
         std::fs::write(dir.path().join("freedom.yaml"), yaml).unwrap();
         let o = check_cloud_archive_dest(dir.path());
         assert_eq!(o.status, CheckStatus::Warn);

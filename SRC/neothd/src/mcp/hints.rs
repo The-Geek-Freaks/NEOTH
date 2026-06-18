@@ -129,13 +129,21 @@ impl SubdirHintTracker {
         // symlinks — closing the escape where a symlinked subdir lexically
         // passes `starts_with` but really points outside the project.
         if self.wd_canon.is_none() {
-            self.wd_canon =
-                Some(working_dir.canonicalize().unwrap_or_else(|_| working_dir.to_path_buf()));
+            self.wd_canon = Some(
+                working_dir
+                    .canonicalize()
+                    .unwrap_or_else(|_| working_dir.to_path_buf()),
+            );
         }
         if self.gitignore.is_none() {
-            self.gitignore = Some(build_gitignore(self.wd_canon.as_deref().unwrap_or(working_dir)));
+            self.gitignore = Some(build_gitignore(
+                self.wd_canon.as_deref().unwrap_or(working_dir),
+            ));
         }
-        let wd_canon = self.wd_canon.clone().unwrap_or_else(|| working_dir.to_path_buf());
+        let wd_canon = self
+            .wd_canon
+            .clone()
+            .unwrap_or_else(|| working_dir.to_path_buf());
         let gitignore = self.gitignore.clone().unwrap_or_else(Gitignore::empty);
 
         let mut out = Vec::new();
@@ -221,7 +229,11 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 /// respecting + size-capped. Each hint file is itself canonicalised + re-checked
 /// to be inside `wd_canon` (closes a file-level symlink escape). `None` when the
 /// dir isn't real or carries no non-empty, in-bounds hint.
-fn load_single_dir_hints(dir_canon: &Path, wd_canon: &Path, gitignore: &Gitignore) -> Option<String> {
+fn load_single_dir_hints(
+    dir_canon: &Path,
+    wd_canon: &Path,
+    gitignore: &Gitignore,
+) -> Option<String> {
     if !dir_canon.is_dir() {
         return None;
     }
@@ -299,9 +311,7 @@ fn build_gitignore(working_dir: &Path) -> Gitignore {
             builder.add(&gi);
         }
     }
-    builder
-        .build()
-        .unwrap_or_else(|_| Gitignore::empty())
+    builder.build().unwrap_or_else(|_| Gitignore::empty())
 }
 
 fn find_git_root(start: &Path) -> Option<&Path> {
@@ -350,7 +360,10 @@ mod tests {
             &args(serde_json::json!({"command": "cargo test -p core src/lib.rs"})),
             wd,
         );
-        assert!(t.pending_dirs.contains(&PathBuf::from("/project/crates/core")));
+        assert!(
+            t.pending_dirs
+                .contains(&PathBuf::from("/project/crates/core"))
+        );
         // `src/lib.rs` token → parent `src`; flags (`-p`) skipped.
         assert!(t.pending_dirs.contains(&PathBuf::from("/project/src")));
     }
@@ -361,7 +374,10 @@ mod tests {
             normalize_lexical(Path::new("/a/b/../c")),
             PathBuf::from("/a/c")
         );
-        assert_eq!(normalize_lexical(Path::new("/a/./b")), PathBuf::from("/a/b"));
+        assert_eq!(
+            normalize_lexical(Path::new("/a/./b")),
+            PathBuf::from("/a/b")
+        );
     }
 
     #[test]
@@ -411,10 +427,7 @@ mod tests {
         fs::create_dir_all(&wd).unwrap();
         let mut t = SubdirHintTracker::new();
         // Absolute path escaping the working dir.
-        t.record_tool_arguments(
-            &args(serde_json::json!({"path": "/etc/passwd"})),
-            &wd,
-        );
+        t.record_tool_arguments(&args(serde_json::json!({"path": "/etc/passwd"})), &wd);
         assert!(t.load_new_hints(&wd).is_empty());
         // `..`-escape is normalised + clamped, never loads outside wd.
         t.record_tool_arguments(&args(serde_json::json!({"path": "../../../secret/x"})), &wd);
@@ -447,7 +460,10 @@ mod tests {
         let mut t = SubdirHintTracker::new();
         t.record_tool_arguments(&args(serde_json::json!({"path": "module/x.rs"})), wd);
         let loaded = t.load_new_hints(wd);
-        assert!(loaded.is_empty(), "a .gitignore'd hint file must be skipped");
+        assert!(
+            loaded.is_empty(),
+            "a .gitignore'd hint file must be skipped"
+        );
     }
 
     #[test]
@@ -456,10 +472,7 @@ mod tests {
         let mut t = SubdirHintTracker::new();
         // Flood far past the cap with distinct path tokens.
         for i in 0..(MAX_PENDING_DIRS + 500) {
-            t.record_tool_arguments(
-                &serde_json::json!({ "path": format!("d{i}/f.rs") }),
-                wd,
-            );
+            t.record_tool_arguments(&serde_json::json!({ "path": format!("d{i}/f.rs") }), wd);
         }
         assert!(
             t.pending_dirs.len() <= MAX_PENDING_DIRS,

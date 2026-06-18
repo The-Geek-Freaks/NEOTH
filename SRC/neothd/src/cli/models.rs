@@ -248,7 +248,10 @@ fn run_models_fit(
                     String::new()
                 }
             );
-            println!("  {:<10} {:>8} {:>6} {:>10}", "model", "size", "fits", "~tok/s");
+            println!(
+                "  {:<10} {:>8} {:>6} {:>10}",
+                "model", "size", "fits", "~tok/s"
+            );
             for m in &ranked {
                 println!(
                     "  {:<10} {:>6.1}GB {:>6} {:>10.0}",
@@ -300,11 +303,7 @@ fn build_recommendation(vram_mib: Option<u32>, class: VariantClass) -> Vec<RecCa
 }
 
 /// Assemble a [`RecCandidate`] from a shortlist option + resolved repo.
-fn candidate_from(
-    rank: usize,
-    opt: &selector::QuantOption,
-    variant: GgufVariant,
-) -> RecCandidate {
+fn candidate_from(rank: usize, opt: &selector::QuantOption, variant: GgufVariant) -> RecCandidate {
     let pull_ref = variant.pull_ref(opt.quant);
     RecCandidate {
         rank,
@@ -668,7 +667,10 @@ mod tests {
         assert_eq!(top.param_b, 32.0);
         assert_eq!(top.quant, "Q4_K_M");
         assert_eq!(top.class, "abliterated");
-        assert_eq!(top.repo, "mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF");
+        assert_eq!(
+            top.repo,
+            "mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF"
+        );
         assert_eq!(
             top.pull_ref,
             "hf.co/mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF:Q4_K_M"

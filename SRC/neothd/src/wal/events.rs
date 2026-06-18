@@ -1917,7 +1917,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("channel_send", EVENT_TYPE_CHANNEL_SEND),
     ("channel_send_denied", EVENT_TYPE_CHANNEL_SEND_DENIED),
     ("token_anomaly_detected", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
-    ("session_health_degraded", EVENT_TYPE_SESSION_HEALTH_DEGRADED),
+    (
+        "session_health_degraded",
+        EVENT_TYPE_SESSION_HEALTH_DEGRADED,
+    ),
     ("mcp_tool_called", EVENT_TYPE_MCP_TOOL_CALLED),
     ("mcp_tool_rejected", EVENT_TYPE_MCP_TOOL_REJECTED),
     ("risk_gate_blocked", EVENT_TYPE_RISK_GATE_BLOCKED),
@@ -1943,7 +1946,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "context_compaction_start",
         EVENT_TYPE_CONTEXT_COMPACTION_START,
     ),
-    ("context_compaction_done", EVENT_TYPE_CONTEXT_COMPACTION_DONE),
+    (
+        "context_compaction_done",
+        EVENT_TYPE_CONTEXT_COMPACTION_DONE,
+    ),
     ("indexer_tamper_suspect", EVENT_TYPE_INDEXER_TAMPER_SUSPECT),
     ("watchdog_restart", EVENT_TYPE_WATCHDOG_RESTART),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
@@ -1965,7 +1971,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("preset_applied", EVENT_TYPE_PRESET_APPLIED),
     ("consent_granted", EVENT_TYPE_CONSENT_GRANTED),
     ("consent_revoked", EVENT_TYPE_CONSENT_REVOKED),
-    ("sudomode_preset_applied", EVENT_TYPE_SUDOMODE_PRESET_APPLIED),
+    (
+        "sudomode_preset_applied",
+        EVENT_TYPE_SUDOMODE_PRESET_APPLIED,
+    ),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -1995,7 +2004,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("email_tiebreak_applied", EVENT_TYPE_EMAIL_TIEBREAK_APPLIED),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
     ("dream_composed", EVENT_TYPE_DREAM_COMPOSED),
-    ("memory_transfer_exported", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
+    (
+        "memory_transfer_exported",
+        EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
+    ),
     ("recon_run", EVENT_TYPE_RECON_RUN),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
@@ -2219,9 +2231,8 @@ const _: () = {
         || EVENT_TYPE_CHANNEL_GATE_REJECTED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED < 0x30
         || EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED > 0x3F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_EMAIL_INGRESS_TRIAGED < 0x30 || EVENT_TYPE_EMAIL_INGRESS_TRIAGED > 0x3F)
-            as usize];
+    let _ = [(); 1][(EVENT_TYPE_EMAIL_INGRESS_TRIAGED < 0x30
+        || EVENT_TYPE_EMAIL_INGRESS_TRIAGED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EMAIL_INGRESS_QUARANTINED < 0x30
         || EVENT_TYPE_EMAIL_INGRESS_QUARANTINED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EMAIL_TIEBREAK_APPLIED < 0x30
@@ -2238,10 +2249,9 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_DOCTOR_TICK < 0x40 || EVENT_TYPE_DOCTOR_TICK > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_RESOURCE_PRESSURE_ALERT < 0x40
         || EVENT_TYPE_RESOURCE_PRESSURE_ALERT > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_WAL_CRC_ALERT < 0x40 || EVENT_TYPE_WAL_CRC_ALERT > 0x4F) as usize];
     let _ =
-        [(); 1][(EVENT_TYPE_WAL_CRC_ALERT < 0x40 || EVENT_TYPE_WAL_CRC_ALERT > 0x4F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_CRASH_LOG_ALERT < 0x40 || EVENT_TYPE_CRASH_LOG_ALERT > 0x4F) as usize];
+        [(); 1][(EVENT_TYPE_CRASH_LOG_ALERT < 0x40 || EVENT_TYPE_CRASH_LOG_ALERT > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_SILENCE_ALERT < 0x40
         || EVENT_TYPE_CHANNEL_SILENCE_ALERT > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_RECALL_LATENCY_ALERT < 0x40
@@ -2257,26 +2267,23 @@ const _: () = {
         || EVENT_TYPE_RSS_FEED_PASS_COMPLETE > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_COMPACTION_AUTH_FAILED < 0x50 || EVENT_TYPE_COMPACTION_AUTH_FAILED > 0x5F)
-            as usize];
+    let _ = [(); 1][(EVENT_TYPE_COMPACTION_AUTH_FAILED < 0x50
+        || EVENT_TYPE_COMPACTION_AUTH_FAILED > 0x5F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RISK_GATE_DENIED < 0x50 || EVENT_TYPE_RISK_GATE_DENIED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED < 0x50
         || EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED > 0x5F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_RISK_CONFIRM_GRANTED < 0x50 || EVENT_TYPE_RISK_CONFIRM_GRANTED > 0x5F)
-            as usize];
+    let _ = [(); 1][(EVENT_TYPE_RISK_CONFIRM_GRANTED < 0x50
+        || EVENT_TYPE_RISK_CONFIRM_GRANTED > 0x5F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RISK_CONFIRM_USED < 0x50 || EVENT_TYPE_RISK_CONFIRM_USED > 0x5F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_RISK_CONFIRM_EXPIRED < 0x50 || EVENT_TYPE_RISK_CONFIRM_EXPIRED > 0x5F)
-            as usize];
+    let _ = [(); 1][(EVENT_TYPE_RISK_CONFIRM_EXPIRED < 0x50
+        || EVENT_TYPE_RISK_CONFIRM_EXPIRED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE < 0x50
         || EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HINT_LOADED < 0x50 || EVENT_TYPE_HINT_LOADED > 0x5F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_WEB_EXTRACT_HIT < 0x50 || EVENT_TYPE_WEB_EXTRACT_HIT > 0x5F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_WEB_EXTRACT_HIT < 0x50 || EVENT_TYPE_WEB_EXTRACT_HIT > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE < 0x50
         || EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONTEXT_COMPACTION_START < 0x50
@@ -2298,10 +2305,9 @@ const _: () = {
         || EVENT_TYPE_COUNCIL_DIVERSITY_WARNING > 0x6F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_COUNCIL_TRANSCRIPT < 0x60 || EVENT_TYPE_COUNCIL_TRANSCRIPT > 0x6F) as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_CHANNEL_SEND < 0x60 || EVENT_TYPE_CHANNEL_SEND > 0x6F) as usize];
-    let _ = [(); 1][(EVENT_TYPE_CHANNEL_SEND_DENIED < 0x60
-        || EVENT_TYPE_CHANNEL_SEND_DENIED > 0x6F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CHANNEL_SEND < 0x60 || EVENT_TYPE_CHANNEL_SEND > 0x6F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_CHANNEL_SEND_DENIED < 0x60 || EVENT_TYPE_CHANNEL_SEND_DENIED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TOKEN_ANOMALY_DETECTED < 0x60
         || EVENT_TYPE_TOKEN_ANOMALY_DETECTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SESSION_HEALTH_DEGRADED < 0x60
@@ -2336,8 +2342,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_MODE_CHECKPOINT < 0x90 || EVENT_TYPE_MODE_CHECKPOINT > 0x9F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_IDENTITY_MERGED < 0x90 || EVENT_TYPE_IDENTITY_MERGED > 0x9F) as usize];
-    let _ = [(); 1][(EVENT_TYPE_OMI_ACTION_PROMOTED < 0x90
-        || EVENT_TYPE_OMI_ACTION_PROMOTED > 0x9F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_OMI_ACTION_PROMOTED < 0x90 || EVENT_TYPE_OMI_ACTION_PROMOTED > 0x9F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PERMISSION_GRANTED < 0xA0 || EVENT_TYPE_PERMISSION_GRANTED > 0xAF) as usize];
     let _ = [(); 1]
@@ -2360,10 +2366,10 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_OS_APP_LAUNCH < 0xA0 || EVENT_TYPE_OS_APP_LAUNCH > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_OS_APP_LAUNCH_DENIED < 0xA0
         || EVENT_TYPE_OS_APP_LAUNCH_DENIED > 0xAF) as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_AUDIT_RPC_ACCEPT < 0xA0 || EVENT_TYPE_AUDIT_RPC_ACCEPT > 0xAF) as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_AUDIT_RPC_REJECT < 0xA0 || EVENT_TYPE_AUDIT_RPC_REJECT > 0xAF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_AUDIT_RPC_ACCEPT < 0xA0 || EVENT_TYPE_AUDIT_RPC_ACCEPT > 0xAF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_AUDIT_RPC_REJECT < 0xA0 || EVENT_TYPE_AUDIT_RPC_REJECT > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_DELTA < 0xB0 || EVENT_TYPE_PROFILE_DELTA > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PROFILE_REINFORCED < 0xB0 || EVENT_TYPE_PROFILE_REINFORCED > 0xBF) as usize];
@@ -2382,10 +2388,10 @@ const _: () = {
     let _ = [(); 1]
         [(EVENT_TYPE_OPERATOR_FEEDBACK < 0xB0 || EVENT_TYPE_OPERATOR_FEEDBACK > 0xBF) as usize];
     // PC-01 clipboard — OS-tool overflow from the full 0xA band into reserved 0xB space.
-    let _ = [(); 1][(EVENT_TYPE_OS_CLIPBOARD_ACCESS < 0xB0
-        || EVENT_TYPE_OS_CLIPBOARD_ACCESS > 0xBF) as usize];
-    let _ = [(); 1][(EVENT_TYPE_OS_CLIPBOARD_DENIED < 0xB0
-        || EVENT_TYPE_OS_CLIPBOARD_DENIED > 0xBF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_OS_CLIPBOARD_ACCESS < 0xB0 || EVENT_TYPE_OS_CLIPBOARD_ACCESS > 0xBF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_OS_CLIPBOARD_DENIED < 0xB0 || EVENT_TYPE_OS_CLIPBOARD_DENIED > 0xBF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -2400,16 +2406,18 @@ const _: () = {
     let _ = [(); 1]
         [(EVENT_TYPE_PLUGIN_CAP_DENIED < 0xC0 || EVENT_TYPE_PLUGIN_CAP_DENIED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_TODO_WRITE < 0xC0 || EVENT_TYPE_TODO_WRITE > 0xCF) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_CALENDAR_WRITE < 0xC0 || EVENT_TYPE_CALENDAR_WRITE > 0xCF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_CALENDAR_WRITE < 0xC0 || EVENT_TYPE_CALENDAR_WRITE > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CALENDAR_WRITE_DENIED < 0xC0
         || EVENT_TYPE_CALENDAR_WRITE_DENIED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CALENDAR_WRITE_FAILED < 0xC0
         || EVENT_TYPE_CALENDAR_WRITE_FAILED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED < 0xC0
         || EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED > 0xCF) as usize];
-    let _ = [(); 1][(EVENT_TYPE_STT_TRANSCRIBED < 0xC0 || EVENT_TYPE_STT_TRANSCRIBED > 0xCF) as usize];
-    let _ = [(); 1][(EVENT_TYPE_TTS_SYNTHESIZED < 0xC0 || EVENT_TYPE_TTS_SYNTHESIZED > 0xCF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_STT_TRANSCRIBED < 0xC0 || EVENT_TYPE_STT_TRANSCRIBED > 0xCF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_TTS_SYNTHESIZED < 0xC0 || EVENT_TYPE_TTS_SYNTHESIZED > 0xCF) as usize];
     // GR-166 — RISK_GATE_BLOCKED (0xCF) sits at the top of the 0xC0-0xCF tool
     // band but had no band-guard; pin it like its neighbours.
     let _ = [(); 1]
@@ -2450,7 +2458,8 @@ const _: () = {
         || EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE > 0xDF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_HMAC_KEY_ROTATED < 0xD0 || EVENT_TYPE_HMAC_KEY_ROTATED > 0xDF) as usize];
-    let _ = [(); 1][(EVENT_TYPE_PRESET_APPLIED < 0xD0 || EVENT_TYPE_PRESET_APPLIED > 0xDF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_PRESET_APPLIED < 0xD0 || EVENT_TYPE_PRESET_APPLIED > 0xDF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONSENT_GRANTED < 0xD0 || EVENT_TYPE_CONSENT_GRANTED > 0xDF) as usize];
     let _ =
@@ -2484,16 +2493,16 @@ const _: () = {
         || EVENT_TYPE_CLUSTER_REQUEST_FORWARDED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT < 0xE0
         || EVENT_TYPE_CLUSTER_HEARTBEAT_SENT > 0xEF) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_CLUSTER_TASK_ACCEPTED < 0xE0 || EVENT_TYPE_CLUSTER_TASK_ACCEPTED > 0xEF) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_CLUSTER_TASK_REJECTED < 0xE0 || EVENT_TYPE_CLUSTER_TASK_REJECTED > 0xEF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_TASK_ACCEPTED < 0xE0
+        || EVENT_TYPE_CLUSTER_TASK_ACCEPTED > 0xEF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_TASK_REJECTED < 0xE0
+        || EVENT_TYPE_CLUSTER_TASK_REJECTED > 0xEF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_CLUSTER_GOSSIP_SENT < 0xE0 || EVENT_TYPE_CLUSTER_GOSSIP_SENT > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED < 0xE0
         || EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED > 0xEF) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_CLUSTER_GOSSIP_DROPPED < 0xE0 || EVENT_TYPE_CLUSTER_GOSSIP_DROPPED > 0xEF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_GOSSIP_DROPPED < 0xE0
+        || EVENT_TYPE_CLUSTER_GOSSIP_DROPPED > 0xEF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
@@ -2604,14 +2613,8 @@ mod tests {
                 EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED,
             ),
             ("WORKER_DIED", EVENT_TYPE_WORKER_DIED),
-            (
-                "RSS_FEED_ITEM_INDEXED",
-                EVENT_TYPE_RSS_FEED_ITEM_INDEXED,
-            ),
-            (
-                "RSS_FEED_PASS_COMPLETE",
-                EVENT_TYPE_RSS_FEED_PASS_COMPLETE,
-            ),
+            ("RSS_FEED_ITEM_INDEXED", EVENT_TYPE_RSS_FEED_ITEM_INDEXED),
+            ("RSS_FEED_PASS_COMPLETE", EVENT_TYPE_RSS_FEED_PASS_COMPLETE),
             ("RECOVERY_TRUNCATED", EVENT_TYPE_RECOVERY_TRUNCATED),
             (
                 "COUNCIL_SYNTHESIS_ATTEMPTED",
@@ -2634,7 +2637,10 @@ mod tests {
             ("CHANNEL_SEND", EVENT_TYPE_CHANNEL_SEND),
             ("CHANNEL_SEND_DENIED", EVENT_TYPE_CHANNEL_SEND_DENIED),
             ("TOKEN_ANOMALY_DETECTED", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
-            ("SESSION_HEALTH_DEGRADED", EVENT_TYPE_SESSION_HEALTH_DEGRADED),
+            (
+                "SESSION_HEALTH_DEGRADED",
+                EVENT_TYPE_SESSION_HEALTH_DEGRADED,
+            ),
             ("HOOK_FIRED", EVENT_TYPE_HOOK_FIRED),
             ("HOOK_BLOCKED", EVENT_TYPE_HOOK_BLOCKED),
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),
@@ -2669,15 +2675,9 @@ mod tests {
             ("OS_FILE_READ", EVENT_TYPE_OS_FILE_READ),
             ("OS_FILE_DENIED", EVENT_TYPE_OS_FILE_DENIED),
             ("OS_FILE_WRITE", EVENT_TYPE_OS_FILE_WRITE),
-            (
-                "OS_FILE_WRITE_DENIED",
-                EVENT_TYPE_OS_FILE_WRITE_DENIED,
-            ),
+            ("OS_FILE_WRITE_DENIED", EVENT_TYPE_OS_FILE_WRITE_DENIED),
             ("OS_APP_LAUNCH", EVENT_TYPE_OS_APP_LAUNCH),
-            (
-                "OS_APP_LAUNCH_DENIED",
-                EVENT_TYPE_OS_APP_LAUNCH_DENIED,
-            ),
+            ("OS_APP_LAUNCH_DENIED", EVENT_TYPE_OS_APP_LAUNCH_DENIED),
             ("AUDIT_RPC_ACCEPT", EVENT_TYPE_AUDIT_RPC_ACCEPT),
             ("AUDIT_RPC_REJECT", EVENT_TYPE_AUDIT_RPC_REJECT),
             ("COST_ESTIMATE_SHOWN", EVENT_TYPE_COST_ESTIMATE_SHOWN),
@@ -2723,7 +2723,10 @@ mod tests {
                 "CONTEXT_COMPACTION_START",
                 EVENT_TYPE_CONTEXT_COMPACTION_START,
             ),
-            ("CONTEXT_COMPACTION_DONE", EVENT_TYPE_CONTEXT_COMPACTION_DONE),
+            (
+                "CONTEXT_COMPACTION_DONE",
+                EVENT_TYPE_CONTEXT_COMPACTION_DONE,
+            ),
             ("WATCHDOG_RESTART", EVENT_TYPE_WATCHDOG_RESTART),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
@@ -2733,14 +2736,8 @@ mod tests {
             ("PLUGIN_CAP_DENIED", EVENT_TYPE_PLUGIN_CAP_DENIED),
             ("TODO_WRITE", EVENT_TYPE_TODO_WRITE),
             ("CALENDAR_WRITE", EVENT_TYPE_CALENDAR_WRITE),
-            (
-                "CALENDAR_WRITE_DENIED",
-                EVENT_TYPE_CALENDAR_WRITE_DENIED,
-            ),
-            (
-                "CALENDAR_WRITE_FAILED",
-                EVENT_TYPE_CALENDAR_WRITE_FAILED,
-            ),
+            ("CALENDAR_WRITE_DENIED", EVENT_TYPE_CALENDAR_WRITE_DENIED),
+            ("CALENDAR_WRITE_FAILED", EVENT_TYPE_CALENDAR_WRITE_FAILED),
             (
                 "VIDEO_FRAME_SYNTHESIZED",
                 EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
@@ -2769,7 +2766,10 @@ mod tests {
             ("PRESET_APPLIED", EVENT_TYPE_PRESET_APPLIED),
             ("CONSENT_GRANTED", EVENT_TYPE_CONSENT_GRANTED),
             ("CONSENT_REVOKED", EVENT_TYPE_CONSENT_REVOKED),
-            ("SUDOMODE_PRESET_APPLIED", EVENT_TYPE_SUDOMODE_PRESET_APPLIED),
+            (
+                "SUDOMODE_PRESET_APPLIED",
+                EVENT_TYPE_SUDOMODE_PRESET_APPLIED,
+            ),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",
@@ -2795,18 +2795,9 @@ mod tests {
                 "CLUSTER_REQUEST_FORWARDED",
                 EVENT_TYPE_CLUSTER_REQUEST_FORWARDED,
             ),
-            (
-                "CLUSTER_HEARTBEAT_SENT",
-                EVENT_TYPE_CLUSTER_HEARTBEAT_SENT,
-            ),
-            (
-                "CLUSTER_TASK_ACCEPTED",
-                EVENT_TYPE_CLUSTER_TASK_ACCEPTED,
-            ),
-            (
-                "CLUSTER_TASK_REJECTED",
-                EVENT_TYPE_CLUSTER_TASK_REJECTED,
-            ),
+            ("CLUSTER_HEARTBEAT_SENT", EVENT_TYPE_CLUSTER_HEARTBEAT_SENT),
+            ("CLUSTER_TASK_ACCEPTED", EVENT_TYPE_CLUSTER_TASK_ACCEPTED),
+            ("CLUSTER_TASK_REJECTED", EVENT_TYPE_CLUSTER_TASK_REJECTED),
             ("CLUSTER_GOSSIP_SENT", EVENT_TYPE_CLUSTER_GOSSIP_SENT),
             (
                 "CLUSTER_GOSSIP_RECEIVED",
@@ -2818,7 +2809,10 @@ mod tests {
             ("PRE_MUTATION_SNAPSHOT", EVENT_TYPE_PRE_MUTATION_SNAPSHOT),
             ("REDACTION_MARKER", EVENT_TYPE_REDACTION_MARKER),
             ("DREAM_COMPOSED", EVENT_TYPE_DREAM_COMPOSED),
-            ("MEMORY_TRANSFER_EXPORTED", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
+            (
+                "MEMORY_TRANSFER_EXPORTED",
+                EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
+            ),
             ("RECON_RUN", EVENT_TYPE_RECON_RUN),
         ];
         for i in 0..codes.len() {
@@ -3092,7 +3086,10 @@ mod tests {
             EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED,
             EVENT_TYPE_CLUSTER_GOSSIP_DROPPED,
         ] {
-            assert!((0xE0..=0xEF).contains(&code), "gossip 0x{code:02X} in cluster band");
+            assert!(
+                (0xE0..=0xEF).contains(&code),
+                "gossip 0x{code:02X} in cluster band"
+            );
             // High-cadence + re-derivable ⇒ batchable, NOT immediate-sync.
             assert!(
                 !needs_immediate_sync(code),
@@ -3116,7 +3113,10 @@ mod tests {
                 "0x{code:02X} escaped the operator-decision band 0x60..=0x6F"
             );
             // Governance audit anchors — durability-critical, never batched.
-            assert!(needs_immediate_sync(code), "0x{code:02X} must be immediate-sync");
+            assert!(
+                needs_immediate_sync(code),
+                "0x{code:02X} must be immediate-sync"
+            );
         }
         // Distinct from the generic codes they replace.
         assert_ne!(EVENT_TYPE_CHANNEL_SEND, EVENT_TYPE_CHANNEL_EGRESS);

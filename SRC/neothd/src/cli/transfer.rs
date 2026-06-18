@@ -164,11 +164,27 @@ async fn run_export(
     )
     .context("transfer export refused: required audit cannot be written")?;
 
-    let out_path = out
-        .unwrap_or_else(|| home.join("exports").join(format!("transfer-{ts_unix}.json")));
+    let out_path = out.unwrap_or_else(|| {
+        home.join("exports")
+            .join(format!("transfer-{ts_unix}.json"))
+    });
     write_atomic(&out_path, &bundle_json).context("write transfer bundle")?;
-    emit_transfer_exported(&home, daemon_live, &dest_b64, bundle_json.len(), event_count, days).await;
-    render_export(&dest_b64, event_count, bundle_json.len(), Some(&out_path), output);
+    emit_transfer_exported(
+        &home,
+        daemon_live,
+        &dest_b64,
+        bundle_json.len(),
+        event_count,
+        days,
+    )
+    .await;
+    render_export(
+        &dest_b64,
+        event_count,
+        bundle_json.len(),
+        Some(&out_path),
+        output,
+    );
     Ok(())
 }
 
@@ -231,8 +247,8 @@ async fn emit_transfer_exported(
 /// cap (a hostile/oversized file can't force a huge allocation).
 fn read_bundle(file: &Path) -> Result<TransferBundle> {
     let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
-    let meta = std::fs::metadata(file)
-        .with_context(|| format!("stat bundle {}", file.display()))?;
+    let meta =
+        std::fs::metadata(file).with_context(|| format!("stat bundle {}", file.display()))?;
     if meta.len() as usize > cfg.transfer.max_bundle_bytes {
         anyhow::bail!(
             "bundle {} is {} bytes — exceeds transfer.max_bundle_bytes={}",
@@ -268,10 +284,9 @@ fn run_verify(file: PathBuf, pubkey: Option<String>, output: OutputFormat) -> Re
     let bundle = read_bundle(&file)?;
     let expected = parse_expected_sender(pubkey.as_deref())?;
     // Recipient check against the operator's own transfer pubkey.
-    let my_secret = transfer_bundle::load_or_init_transfer_key(
-        &transfer_bundle::default_transfer_key_path(),
-    )
-    .context("load transfer key")?;
+    let my_secret =
+        transfer_bundle::load_or_init_transfer_key(&transfer_bundle::default_transfer_key_path())
+            .context("load transfer key")?;
     let my_pub = transfer_bundle::transfer_pubkey_b64(&my_secret);
     let my_pub_bytes = parse_b64_32(&my_pub, "transfer pubkey")?;
     let verdict = transfer_bundle::verify_bundle(&bundle, Some(&my_pub_bytes), expected.as_ref());
@@ -350,10 +365,9 @@ fn run_import(
 ) -> Result<()> {
     let bundle = read_bundle(&file)?;
     let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
-    let my_secret = transfer_bundle::load_or_init_transfer_key(
-        &transfer_bundle::default_transfer_key_path(),
-    )
-    .context("load transfer key")?;
+    let my_secret =
+        transfer_bundle::load_or_init_transfer_key(&transfer_bundle::default_transfer_key_path())
+            .context("load transfer key")?;
     let my_pub_bytes = parse_b64_32(&transfer_bundle::transfer_pubkey_b64(&my_secret), "pub")?;
     let expected = parse_expected_sender(pubkey.as_deref())?;
 
@@ -384,8 +398,10 @@ fn run_import(
         .unwrap_or(0);
 
     let home = FreedomConfig::default_neoth_home();
-    let out_path =
-        out.unwrap_or_else(|| home.join("imports").join(format!("import-{}.json", now_unix())));
+    let out_path = out.unwrap_or_else(|| {
+        home.join("imports")
+            .join(format!("import-{}.json", now_unix()))
+    });
     write_atomic(&out_path, &recovered).context("write recovered bundle")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -470,7 +486,13 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn render_export(dest: &str, events: usize, bytes: usize, out: Option<&Path>, output: OutputFormat) {
+fn render_export(
+    dest: &str,
+    events: usize,
+    bytes: usize,
+    out: Option<&Path>,
+    output: OutputFormat,
+) {
     let dest_short = &dest[..dest.len().min(16)];
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -488,7 +510,9 @@ fn render_export(dest: &str, events: usize, bytes: usize, out: Option<&Path>, ou
                 "[dry-run] would export {events} event(s) → {bytes}-byte sealed bundle for {dest_short}…"
             ),
             Some(p) => {
-                println!("✓ Exported {events} event(s) → {bytes}-byte sealed bundle for {dest_short}…");
+                println!(
+                    "✓ Exported {events} event(s) → {bytes}-byte sealed bundle for {dest_short}…"
+                );
                 println!("  → {}", p.display());
             }
         },
@@ -516,7 +540,9 @@ mod tests {
         )
         .unwrap();
         let mut stmt = conn
-            .prepare("INSERT INTO idx_episode (event_id, ts_ns, text, importance) VALUES (?1,?2,?3,?4)")
+            .prepare(
+                "INSERT INTO idx_episode (event_id, ts_ns, text, importance) VALUES (?1,?2,?3,?4)",
+            )
             .unwrap();
         for (id, ts, text, imp) in rows {
             stmt.execute(rusqlite::params![id, ts, text, imp]).unwrap();
@@ -587,7 +613,10 @@ mod tests {
     fn verdict_str_covers_all_five() {
         use VerifyVerdict::*;
         assert_eq!(verdict_str(&SelfConsistent), "self_consistent");
-        assert_eq!(verdict_str(&VerifiedAgainstExpected), "verified_against_pinned_sender");
+        assert_eq!(
+            verdict_str(&VerifiedAgainstExpected),
+            "verified_against_pinned_sender"
+        );
         assert_eq!(verdict_str(&SignatureMismatch), "signature_mismatch");
         assert_eq!(verdict_str(&WrongRecipient), "wrong_recipient");
         assert_eq!(verdict_str(&UnsupportedSchema(2)), "unsupported_schema");

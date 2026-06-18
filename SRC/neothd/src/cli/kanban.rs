@@ -414,8 +414,7 @@ fn run_move(conn: &Connection, task_id: KanbanTaskId, raw_status: &str) -> Resul
 /// the transition so a task is never marked finished over failing tests.
 fn run_finish(conn: &Connection, task_id: i64, verify_tests: bool) -> Result<()> {
     if verify_tests {
-        let cwd =
-            std::env::current_dir().context("resolve current dir for --verify-tests")?;
+        let cwd = std::env::current_dir().context("resolve current dir for --verify-tests")?;
         let passed = run_cargo_tests(&cwd)?;
         gate_finish(task_id, passed)?;
         println!("--verify-tests: cargo test passed");
@@ -1038,7 +1037,10 @@ mod tests {
         let err = gate_finish(42, false).unwrap_err().to_string();
         assert!(err.contains("cargo test"), "err names the failure: {err}");
         assert!(err.contains("#42"), "err names the task: {err}");
-        assert!(err.contains("NOT moved"), "err states the task stays put: {err}");
+        assert!(
+            err.contains("NOT moved"),
+            "err states the task stays put: {err}"
+        );
     }
 
     fn fresh_db() -> (tempfile::TempDir, Connection) {
@@ -1242,7 +1244,8 @@ mod tests {
         // round-trips through serde so a field rename surfaces here, not
         // in the operator's settings panel.
         let (_dir, conn) = fresh_db();
-        let s = store::insert_session(&conn, 1, "prompt", "hash", "cli", Some("demo-user")).unwrap();
+        let s =
+            store::insert_session(&conn, 1, "prompt", "hash", "cli", Some("demo-user")).unwrap();
         store::insert_task(&conn, s, 10, "Task title", None, "ui", None).unwrap();
 
         let sessions = select_sessions(&conn, false).unwrap();

@@ -147,7 +147,9 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
             wal_dir,
         } => {
             let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
-            let min_streak = min_streak.unwrap_or(cfg.ecology.correlation_min_streak).max(1);
+            let min_streak = min_streak
+                .unwrap_or(cfg.ecology.correlation_min_streak)
+                .max(1);
             let wal_dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
 
             let records = scan_winner_records(&wal_dir);
@@ -200,8 +202,12 @@ fn run_channel_weights(home: Option<PathBuf>, output: OutputFormat) {
     // Aggregate per channel: topic-row count + the strongest decayed weight.
     let mut by_channel: BTreeMap<String, (usize, f32)> = BTreeMap::new();
     for row in &weights.rows {
-        let w =
-            crate::memory::channel_weights::channel_weight_of(&weights, &row.channel, row.topic_hash, now);
+        let w = crate::memory::channel_weights::channel_weight_of(
+            &weights,
+            &row.channel,
+            row.topic_hash,
+            now,
+        );
         let e = by_channel.entry(row.channel.clone()).or_insert((0, 0.0));
         e.0 += 1;
         if w > e.1 {
@@ -221,7 +227,9 @@ fn run_channel_weights(home: Option<PathBuf>, output: OutputFormat) {
         }
         OutputFormat::Table => {
             if by_channel.is_empty() {
-                println!("(no channel-acceptance history yet — it accrues as channels get replies)");
+                println!(
+                    "(no channel-acceptance history yet — it accrues as channels get replies)"
+                );
                 return;
             }
             println!("per-channel acceptance familiarity (KF-05):");
@@ -264,7 +272,9 @@ fn run_status(scheduler_enabled: bool, output: OutputFormat) {
         }
         OutputFormat::Table => {
             println!("Ecology layer (CH-13) — maturity matrix");
-            println!("  (NOT stable self-improvement: read-only diagnostics + a review-gated scheduler)");
+            println!(
+                "  (NOT stable self-improvement: read-only diagnostics + a review-gated scheduler)"
+            );
             for s in &surfaces {
                 let state = if s.name == "scheduler" {
                     if scheduler_enabled {
@@ -333,9 +343,7 @@ async fn run_genealogy(
         }
         OutputFormat::Table => {
             if genealogy.nodes.is_empty() {
-                println!(
-                    "(no tools recorded yet — install a skill/plugin or invoke an MCP tool)"
-                );
+                println!("(no tools recorded yet — install a skill/plugin or invoke an MCP tool)");
                 return;
             }
             println!(
@@ -439,7 +447,12 @@ mod tests {
         let s = ecology_surfaces();
         assert_eq!(s.len(), 5);
         // The diagnostics are beta + read-only.
-        for name in ["correlation", "winner-chain", "genealogy", "channel-weights"] {
+        for name in [
+            "correlation",
+            "winner-chain",
+            "genealogy",
+            "channel-weights",
+        ] {
             let row = s.iter().find(|r| r.name == name).unwrap();
             assert_eq!(row.maturity, "beta");
             assert_eq!(row.access, "read-only");

@@ -436,7 +436,8 @@ mod tests {
         ));
 
         // A real MCP notification carries a method and NO id.
-        let notification = br#"{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}"#;
+        let notification =
+            br#"{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}"#;
         assert!(matches!(
             classify_frame(notification, 7, "srv").unwrap(),
             FrameMatch::Skip

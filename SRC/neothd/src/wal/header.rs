@@ -273,20 +273,64 @@ mod tests {
         assert_eq!(b[2], 0xAB, "byte 2: event_type");
         assert_eq!(b[3], 0xCD, "byte 3: event_subtype");
         assert_eq!(b[4], h.flags.bits(), "byte 4: flags");
-        assert_eq!(&b[5..7], &96u16.to_le_bytes(), "bytes 5..7: header_len = 96");
-        assert_eq!(&b[7..9], &reserved_len.to_le_bytes(), "bytes 7..9: reserved_len");
-        assert_eq!(&b[9..13], &total_len.to_le_bytes(), "bytes 9..13: total_len");
-        assert_eq!(&b[13..17], &payload_len.to_le_bytes(), "bytes 13..17: payload_len");
-        assert_eq!(&b[17..21], &generation.to_le_bytes(), "bytes 17..21: generation");
-        assert_eq!(&b[21..29], &event_id.to_le_bytes(), "bytes 21..29: event_id");
-        assert_eq!(&b[29..37], &phys.to_le_bytes(), "bytes 29..37: hlc.physical_ns");
-        assert_eq!(&b[37..41], &logical.to_le_bytes(), "bytes 37..41: hlc.logical");
-        assert_eq!(&b[41..45], &h.importance.raw().to_le_bytes(), "bytes 41..45: importance f32");
+        assert_eq!(
+            &b[5..7],
+            &96u16.to_le_bytes(),
+            "bytes 5..7: header_len = 96"
+        );
+        assert_eq!(
+            &b[7..9],
+            &reserved_len.to_le_bytes(),
+            "bytes 7..9: reserved_len"
+        );
+        assert_eq!(
+            &b[9..13],
+            &total_len.to_le_bytes(),
+            "bytes 9..13: total_len"
+        );
+        assert_eq!(
+            &b[13..17],
+            &payload_len.to_le_bytes(),
+            "bytes 13..17: payload_len"
+        );
+        assert_eq!(
+            &b[17..21],
+            &generation.to_le_bytes(),
+            "bytes 17..21: generation"
+        );
+        assert_eq!(
+            &b[21..29],
+            &event_id.to_le_bytes(),
+            "bytes 21..29: event_id"
+        );
+        assert_eq!(
+            &b[29..37],
+            &phys.to_le_bytes(),
+            "bytes 29..37: hlc.physical_ns"
+        );
+        assert_eq!(
+            &b[37..41],
+            &logical.to_le_bytes(),
+            "bytes 37..41: hlc.logical"
+        );
+        assert_eq!(
+            &b[41..45],
+            &h.importance.raw().to_le_bytes(),
+            "bytes 41..45: importance f32"
+        );
         assert_eq!(&b[45..49], &scope.to_le_bytes(), "bytes 45..49: scope");
-        assert_eq!(&b[49..53], &category.to_le_bytes(), "bytes 49..53: category");
+        assert_eq!(
+            &b[49..53],
+            &category.to_le_bytes(),
+            "bytes 49..53: category"
+        );
         assert_eq!(&b[53..69], &session, "bytes 53..69: session_id");
         assert_eq!(&b[69..85], &node, "bytes 69..85: node_id");
-        assert_eq!(&b[85..93], &payload_hash.to_le_bytes(), "bytes 85..93: payload_hash");
+        assert_eq!(
+            &b[85..93],
+            &payload_hash.to_le_bytes(),
+            "bytes 85..93: payload_hash"
+        );
         assert_eq!(&b[93..96], &[0u8, 0, 0], "bytes 93..96: reserved = zero");
     }
 

@@ -25,7 +25,10 @@ const MAX_CATEGORY_LEN: usize = 64;
 /// `..` nor an absolute/relative escape can be constructed.
 pub fn validate_category(name: &str) -> Result<()> {
     if name.is_empty() || name.len() > MAX_CATEGORY_LEN {
-        bail!("category name must be 1..={MAX_CATEGORY_LEN} chars, got {} ", name.len());
+        bail!(
+            "category name must be 1..={MAX_CATEGORY_LEN} chars, got {} ",
+            name.len()
+        );
     }
     if !name
         .chars()
@@ -248,7 +251,10 @@ mod tests {
         remove_directive(tmp.path(), "voice", 2).unwrap(); // drop "be concise"
         let blocks = load_moral_core(tmp.path()).unwrap();
         assert_eq!(blocks[0].directives, vec!["be blunt", "no filler"]);
-        assert!(remove_directive(tmp.path(), "voice", 9).is_err(), "out of range");
+        assert!(
+            remove_directive(tmp.path(), "voice", 9).is_err(),
+            "out of range"
+        );
     }
 
     #[test]

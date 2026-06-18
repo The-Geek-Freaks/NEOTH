@@ -189,7 +189,8 @@ impl RecipeSpec {
 mod tests {
     use super::*;
 
-    const MINIMAL: &str = "name: greet\nprompt: \"Say hi to {{who}}.\"\nparameters:\n  - key: who\n";
+    const MINIMAL: &str =
+        "name: greet\nprompt: \"Say hi to {{who}}.\"\nparameters:\n  - key: who\n";
 
     #[test]
     fn parses_minimal_recipe() {

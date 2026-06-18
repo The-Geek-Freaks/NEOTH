@@ -423,9 +423,9 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: OS file read of {} requires confirm",
             path.display()
         )),
-        Action::ClusterTaskAccept => Decision::Deny(
-            "strict: no unattended cluster-delegated task execution".into(),
-        ),
+        Action::ClusterTaskAccept => {
+            Decision::Deny("strict: no unattended cluster-delegated task execution".into())
+        }
         Action::OsFileWrite { path } => Decision::Deny(format!(
             "strict: OS file write of {} denied (writes mutate the operator FS)",
             path.display()
@@ -440,7 +440,10 @@ fn evaluate_strict(action: &Action) -> Decision {
         Action::OsClipboardWrite => Decision::Deny(
             "strict: OS clipboard write denied (pastejacking injection vector)".into(),
         ),
-        Action::ExternalTaskWrite { provider, action: act } => Decision::Confirm(format!(
+        Action::ExternalTaskWrite {
+            provider,
+            action: act,
+        } => Decision::Confirm(format!(
             "strict: external task {act} on {provider} requires confirm"
         )),
     }
@@ -524,7 +527,10 @@ fn evaluate_standard(action: &Action) -> Decision {
         // The creds are the operator's own + they typed the command, but a
         // network MUTATION still confirms at Standard (a TTY prompt or `--yes`
         // satisfies it) so an accidental write to the wrong list is caught.
-        Action::ExternalTaskWrite { provider, action: act } => Decision::Confirm(format!(
+        Action::ExternalTaskWrite {
+            provider,
+            action: act,
+        } => Decision::Confirm(format!(
             "standard: external task {act} on {provider} requires confirm"
         )),
     }
@@ -735,7 +741,10 @@ mod tests {
             evaluate(&a, AutonomyLevel::Standard),
             Decision::Confirm(_)
         ));
-        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Allow));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Elevated),
+            Decision::Allow
+        ));
         assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
         // Unleasable for now (gate-only).
         assert!(lease_scope_for(&a).is_none());
@@ -746,19 +755,37 @@ mod tests {
     #[test]
     fn clipboard_read_ladder() {
         let a = Action::OsClipboardRead;
-        assert!(matches!(evaluate(&a, AutonomyLevel::Strict), Decision::Deny(_)));
-        assert!(matches!(evaluate(&a, AutonomyLevel::Standard), Decision::Confirm(_)));
-        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Confirm(_)));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Strict),
+            Decision::Deny(_)
+        ));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Elevated),
+            Decision::Confirm(_)
+        ));
         assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
     }
 
     #[test]
     fn clipboard_write_ladder() {
         let a = Action::OsClipboardWrite;
-        assert!(matches!(evaluate(&a, AutonomyLevel::Strict), Decision::Deny(_)));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Strict),
+            Decision::Deny(_)
+        ));
         // Stricter than write/launch: Standard DENIES (not Confirm) — pastejacking.
-        assert!(matches!(evaluate(&a, AutonomyLevel::Standard), Decision::Deny(_)));
-        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Confirm(_)));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Standard),
+            Decision::Deny(_)
+        ));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Elevated),
+            Decision::Confirm(_)
+        ));
         assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
     }
 
@@ -772,7 +799,9 @@ mod tests {
         ));
         assert!(matches!(
             evaluate(
-                &Action::OsFileRead { path: std::path::PathBuf::from("/x") },
+                &Action::OsFileRead {
+                    path: std::path::PathBuf::from("/x")
+                },
                 AutonomyLevel::Standard
             ),
             Decision::Allow
@@ -789,7 +818,9 @@ mod tests {
         ));
         assert!(matches!(
             evaluate(
-                &Action::OsAppLaunch { program: std::path::PathBuf::from("/x") },
+                &Action::OsAppLaunch {
+                    program: std::path::PathBuf::from("/x")
+                },
                 AutonomyLevel::Standard
             ),
             Decision::Confirm(_)
@@ -1088,16 +1119,26 @@ mod tests {
             Action::ExecScripts,
             Action::ExecArbitrary,
             Action::ChannelSend,
-            Action::PaidProviderCall { eur_estimate: 999.0 },
+            Action::PaidProviderCall {
+                eur_estimate: 999.0,
+            },
             Action::McpToolInvocation {
                 server_id: "s".into(),
                 tool: "t".into(),
             },
-            Action::OsFileRead { path: PathBuf::from("/tmp/x") },
-            Action::OsFileWrite { path: PathBuf::from("/tmp/x") },
-            Action::OsAppLaunch { program: PathBuf::from("/usr/bin/x") },
+            Action::OsFileRead {
+                path: PathBuf::from("/tmp/x"),
+            },
+            Action::OsFileWrite {
+                path: PathBuf::from("/tmp/x"),
+            },
+            Action::OsAppLaunch {
+                program: PathBuf::from("/usr/bin/x"),
+            },
             Action::ClusterTaskAccept,
-            Action::ProactiveChannelSend { channel: "telegram".into() },
+            Action::ProactiveChannelSend {
+                channel: "telegram".into(),
+            },
             Action::ExternalTaskWrite {
                 provider: "caldav".into(),
                 action: "add".into(),
@@ -1390,7 +1431,10 @@ mod tests {
             Decision::Confirm(_)
         ));
         // Elevated + Full allow.
-        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Allow));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Elevated),
+            Decision::Allow
+        ));
         assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
     }
 
@@ -1401,12 +1445,18 @@ mod tests {
         };
         // One notch stricter than OsFileRead (Strict confirm / Standard allow):
         // a WRITE mutates the FS.
-        assert!(matches!(evaluate(&w, AutonomyLevel::Strict), Decision::Deny(_)));
+        assert!(matches!(
+            evaluate(&w, AutonomyLevel::Strict),
+            Decision::Deny(_)
+        ));
         assert!(matches!(
             evaluate(&w, AutonomyLevel::Standard),
             Decision::Confirm(_)
         ));
-        assert!(matches!(evaluate(&w, AutonomyLevel::Elevated), Decision::Allow));
+        assert!(matches!(
+            evaluate(&w, AutonomyLevel::Elevated),
+            Decision::Allow
+        ));
         assert!(matches!(evaluate(&w, AutonomyLevel::Full), Decision::Allow));
         // A raw-OS write must NEVER be unlockable by a lease.
         assert_eq!(lease_scope_for(&w), None);

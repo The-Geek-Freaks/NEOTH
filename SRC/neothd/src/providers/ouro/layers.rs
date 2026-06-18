@@ -444,7 +444,10 @@ mod tests {
         let mut attn = OuroAttention::new(rope, &cfg, vb.pp("self_attn")).expect("build attention");
         let xs = Tensor::zeros((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
         let _ = attn.forward(&xs, None, 0, 0).unwrap();
-        assert!(attn.kv_caches[0].is_some(), "first forward must populate loop-0 cache");
+        assert!(
+            attn.kv_caches[0].is_some(),
+            "first forward must populate loop-0 cache"
+        );
         attn.clear_kv_cache();
         assert!(attn.kv_caches[0].is_none(), "clear must reset to None");
     }

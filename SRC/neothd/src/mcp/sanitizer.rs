@@ -490,7 +490,9 @@ mod tests {
         );
         assert!(v.flagged);
         assert!(
-            !v.sanitized.to_lowercase().contains("ignore previous instructions"),
+            !v.sanitized
+                .to_lowercase()
+                .contains("ignore previous instructions"),
             "no raw injection payload may survive: {}",
             v.sanitized
         );

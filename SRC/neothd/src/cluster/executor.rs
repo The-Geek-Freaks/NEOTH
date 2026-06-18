@@ -286,7 +286,11 @@ mod tests {
     fn truncate_respects_byte_cap_and_char_boundaries() {
         let s = "a".repeat(100_000);
         let out = truncate_to_bytes(&s, MAX_TASK_RESULT_BYTES);
-        assert!(out.len() <= MAX_TASK_RESULT_BYTES, "stays under cap: {}", out.len());
+        assert!(
+            out.len() <= MAX_TASK_RESULT_BYTES,
+            "stays under cap: {}",
+            out.len()
+        );
         assert!(out.ends_with("[truncated by cluster slave]"));
 
         // Multi-byte chars are not split.
@@ -326,7 +330,10 @@ mod tests {
                     !error.contains("sk-ant-api03-AAAABBBBCCCCDDDDEEEE1234"),
                     "secret must be redacted in the delegated-task error: {error}"
                 );
-                assert!(error.contains("[REDACTED"), "redaction marker present: {error}");
+                assert!(
+                    error.contains("[REDACTED"),
+                    "redaction marker present: {error}"
+                );
             }
             other => panic!("expected Failed, got {other:?}"),
         }

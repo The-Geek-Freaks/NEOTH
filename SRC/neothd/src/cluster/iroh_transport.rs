@@ -80,7 +80,9 @@ impl ProtocolHandler for GossipProtocol {
             .await
             .map_err(AcceptError::from_err)?;
         let reply = (self.handler)(request);
-        send.write_all(&reply).await.map_err(AcceptError::from_err)?;
+        send.write_all(&reply)
+            .await
+            .map_err(AcceptError::from_err)?;
         send.finish().map_err(AcceptError::from_err)?;
         // Wait for the peer to read the reply + close, so the response isn't cut.
         connection.closed().await;
@@ -168,11 +170,7 @@ impl IrohTransport {
 
     /// Dial a peer by its `EndpointAddr` and do one gossip request/response
     /// round-trip: write `frame`, read the peer's reply (capped).
-    pub async fn send_frame(
-        &self,
-        peer: impl Into<EndpointAddr>,
-        frame: &[u8],
-    ) -> Result<Vec<u8>> {
+    pub async fn send_frame(&self, peer: impl Into<EndpointAddr>, frame: &[u8]) -> Result<Vec<u8>> {
         let conn = self
             .router
             .endpoint()
@@ -231,10 +229,8 @@ pub fn gossip_handler(
     let policy = GossipPolicy::default();
     std::sync::Arc::new(move |req: Vec<u8>| -> Vec<u8> {
         let reply = |accepted: bool, verdict: &str| {
-            serde_json::to_vec(
-                &serde_json::json!({ "accepted": accepted, "verdict": verdict }),
-            )
-            .unwrap_or_default()
+            serde_json::to_vec(&serde_json::json!({ "accepted": accepted, "verdict": verdict }))
+                .unwrap_or_default()
         };
         let frame: GossipFrame = match serde_json::from_slice(&req) {
             Ok(f) => f,

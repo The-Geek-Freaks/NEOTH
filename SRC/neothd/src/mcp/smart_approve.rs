@@ -143,7 +143,11 @@ impl ReadOnlyCache {
         tools
             .iter()
             .copied()
-            .filter(|t| !self.inner.contains_key(&(server.to_string(), (*t).to_string())))
+            .filter(|t| {
+                !self
+                    .inner
+                    .contains_key(&(server.to_string(), (*t).to_string()))
+            })
             .collect()
     }
 }
@@ -318,8 +322,14 @@ mod tests {
     #[test]
     fn judge_prompt_instructs_json_response() {
         let prompt = build_judge_prompt(&["t1"]);
-        assert!(prompt.contains("read_only_tools"), "must request read_only_tools key");
-        assert!(prompt.contains("valid JSON"), "must instruct JSON-only response");
+        assert!(
+            prompt.contains("read_only_tools"),
+            "must request read_only_tools key"
+        );
+        assert!(
+            prompt.contains("valid JSON"),
+            "must instruct JSON-only response"
+        );
     }
 
     // ---- parse_judge_response -----------------------------------------------
@@ -436,11 +446,17 @@ mod tests {
         let tools = vec![
             tool(
                 "read_graph",
-                Some(ToolAnnotations { read_only_hint: Some(true), destructive_hint: Some(false) }),
+                Some(ToolAnnotations {
+                    read_only_hint: Some(true),
+                    destructive_hint: Some(false),
+                }),
             ),
             tool(
                 "delete_node",
-                Some(ToolAnnotations { read_only_hint: Some(false), destructive_hint: Some(true) }),
+                Some(ToolAnnotations {
+                    read_only_hint: Some(false),
+                    destructive_hint: Some(true),
+                }),
             ),
             tool("unknown", None),
         ];

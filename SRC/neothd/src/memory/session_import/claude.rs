@@ -36,7 +36,10 @@ pub fn parse(body: &str) -> Result<ForeignSession> {
         }
 
         let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
-        let ts = v.get("timestamp").and_then(Value::as_str).map(str::to_string);
+        let ts = v
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         if started_at.is_none() {
             started_at = ts.clone();
         }
@@ -48,8 +51,7 @@ pub fn parse(body: &str) -> Result<ForeignSession> {
         if v.get("isMeta").and_then(Value::as_bool).unwrap_or(false) {
             continue;
         }
-        if v
-            .get("isCompactSummary")
+        if v.get("isCompactSummary")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {

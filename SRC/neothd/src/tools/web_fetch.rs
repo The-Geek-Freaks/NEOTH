@@ -77,13 +77,12 @@ pub async fn fetch(url: &str) -> Result<FetchResult> {
 /// CSS-extract layer.
 pub async fn fetch_raw(url: &str) -> Result<RawFetchResult> {
     let (raw, meta) = fetch_inner(url).await?;
-    let raw_html = if meta.content_type.starts_with("text/html")
-        || meta.content_type.contains("xhtml")
-    {
-        raw
-    } else {
-        String::new()
-    };
+    let raw_html =
+        if meta.content_type.starts_with("text/html") || meta.content_type.contains("xhtml") {
+            raw
+        } else {
+            String::new()
+        };
     Ok(RawFetchResult { raw_html, meta })
 }
 

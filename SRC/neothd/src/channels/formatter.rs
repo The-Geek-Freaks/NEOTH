@@ -496,7 +496,11 @@ impl Formatter for LineFormatter {
             }
             rendered.push_str("```");
         }
-        split_into_messages(&rendered, LINE_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
+        split_into_messages(
+            &rendered,
+            LINE_MAX_CHARS - SPLIT_HEADROOM,
+            reply.length_hint,
+        )
     }
 }
 
@@ -568,7 +572,11 @@ impl Formatter for NostrFormatter {
             }
             rendered.push_str("```");
         }
-        split_into_messages(&rendered, NOSTR_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
+        split_into_messages(
+            &rendered,
+            NOSTR_MAX_CHARS - SPLIT_HEADROOM,
+            reply.length_hint,
+        )
     }
 }
 
@@ -639,7 +647,11 @@ impl Formatter for TwitchFormatter {
             rendered.push('\n');
             rendered.push_str(&cb.body);
         }
-        split_into_messages(&rendered, TWITCH_MAX_CHARS - SPLIT_HEADROOM, reply.length_hint)
+        split_into_messages(
+            &rendered,
+            TWITCH_MAX_CHARS - SPLIT_HEADROOM,
+            reply.length_hint,
+        )
     }
 }
 

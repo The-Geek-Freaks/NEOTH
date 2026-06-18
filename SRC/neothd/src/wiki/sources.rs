@@ -221,10 +221,22 @@ mod tests {
 
     #[test]
     fn classify_by_prefix() {
-        assert_eq!(SourceCategory::classify("SPEC_channels.md"), SourceCategory::Spec);
-        assert_eq!(SourceCategory::classify("00_DESIGN_v1.1.md"), SourceCategory::Design);
-        assert_eq!(SourceCategory::classify("BLUEPRINT_v06.md"), SourceCategory::Design);
-        assert_eq!(SourceCategory::classify("CHORUS_pick6.md"), SourceCategory::Chorus);
+        assert_eq!(
+            SourceCategory::classify("SPEC_channels.md"),
+            SourceCategory::Spec
+        );
+        assert_eq!(
+            SourceCategory::classify("00_DESIGN_v1.1.md"),
+            SourceCategory::Design
+        );
+        assert_eq!(
+            SourceCategory::classify("BLUEPRINT_v06.md"),
+            SourceCategory::Design
+        );
+        assert_eq!(
+            SourceCategory::classify("CHORUS_pick6.md"),
+            SourceCategory::Chorus
+        );
         assert_eq!(SourceCategory::classify("NOTES.md"), SourceCategory::Other);
     }
 
@@ -234,7 +246,10 @@ mod tests {
         // tokens carrying a digit (versions/dates) are preserved verbatim.
         assert_eq!(prettify_stem("SPEC_channels"), "SPEC Channels");
         assert_eq!(prettify_stem("local_inference"), "Local Inference");
-        assert_eq!(prettify_stem("00_DESIGN_v1.1_FINAL"), "00 Design v1.1 Final");
+        assert_eq!(
+            prettify_stem("00_DESIGN_v1.1_FINAL"),
+            "00 Design v1.1 Final"
+        );
     }
 
     #[test]

@@ -65,7 +65,15 @@ pub async fn run_import(args: ImportArgs) -> Result<()> {
             dry_run,
         } => {
             let conn = store::open(&db_path).context("open views.db")?;
-            import_session(&conn, &path, &format, &scope, &granularity, dry_run, args.output)
+            import_session(
+                &conn,
+                &path,
+                &format,
+                &scope,
+                &granularity,
+                dry_run,
+                args.output,
+            )
         }
     }
 }

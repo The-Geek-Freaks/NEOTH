@@ -302,7 +302,8 @@ mod tests {
 
     #[test]
     fn parse_validate_response_accepts_a_live_phone_node() {
-        let body = r#"{"display_phone_number":"+49 151 12345678","verified_name":"NEOTH Bot","id":"123"}"#;
+        let body =
+            r#"{"display_phone_number":"+49 151 12345678","verified_name":"NEOTH Bot","id":"123"}"#;
         let r = parse_validate_response(true, body).unwrap();
         assert!(r.ok);
         assert_eq!(r.display_phone_number.as_deref(), Some("+49 151 12345678"));
@@ -398,7 +399,9 @@ mod tests {
             .mount(&server)
             .await;
         let token = SecretString::from("fake");
-        let r = validate_token_at(&server.uri(), &token, "123").await.unwrap();
+        let r = validate_token_at(&server.uri(), &token, "123")
+            .await
+            .unwrap();
         assert!(r.ok);
         assert_eq!(r.verified_name.as_deref(), Some("NEOTH"));
     }

@@ -299,7 +299,11 @@ mod tests {
             1. Numbered list items also work after stripping the prefix\n";
         let claims = extract_claims_heuristic(text);
         assert!(claims.len() >= 3, "expected ≥3 claims, got {claims:?}");
-        assert!(claims.iter().any(|c| c.statement.starts_with("The primary server")));
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.statement.starts_with("The primary server"))
+        );
         assert!(claims.iter().any(|c| c.statement.starts_with("Numbered")));
     }
 
@@ -361,7 +365,11 @@ mod tests {
                    The daemon writes WAL frames before any provider call.\n";
         let claims = parse_llm_output(raw);
         // First claim ("The operator prefers German for chat") is 37 chars — passes MIN.
-        assert!(claims.iter().any(|c| c.statement.contains("operator prefers")));
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.statement.contains("operator prefers"))
+        );
         assert!(
             claims
                 .iter()

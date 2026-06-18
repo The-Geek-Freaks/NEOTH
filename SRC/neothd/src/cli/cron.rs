@@ -145,7 +145,10 @@ mod tests {
     #[test]
     fn jobs_path_defaults_under_neoth_home() {
         let p = jobs_path(None);
-        assert!(p.ends_with("jobs.yaml"), "default ends with jobs.yaml: {p:?}");
+        assert!(
+            p.ends_with("jobs.yaml"),
+            "default ends with jobs.yaml: {p:?}"
+        );
     }
 
     #[test]

@@ -29,7 +29,6 @@
 
 use std::time::Duration;
 
-
 /// Default paperless-ngx web port. Operator can override via wizard;
 /// the const is the recommendation we render in the picker.
 pub const DEFAULT_PAPERLESS_PORT: u16 = 8000;
@@ -138,19 +137,34 @@ impl InstallStrategy {
 /// Probe `docker --version`. Returns the version string on success
 /// or None when Docker is missing.
 pub async fn check_docker_available() -> Option<String> {
-    crate::installers::probe::cli_version_args("docker", &["--version"], Some(std::time::Duration::from_secs(5))).await
+    crate::installers::probe::cli_version_args(
+        "docker",
+        &["--version"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .await
 }
 
 /// Probe `docker compose version` — modern Docker bundles compose as
 /// a subcommand, not a standalone binary. Returns version string on
 /// success.
 pub async fn check_docker_compose_available() -> Option<String> {
-    crate::installers::probe::cli_version_args("docker", &["compose", "version"], Some(std::time::Duration::from_secs(5))).await
+    crate::installers::probe::cli_version_args(
+        "docker",
+        &["compose", "version"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .await
 }
 
 /// Probe legacy `docker-compose --version` — older Docker installs.
 pub async fn check_docker_compose_legacy_available() -> Option<String> {
-    crate::installers::probe::cli_version_args("docker-compose", &["--version"], Some(std::time::Duration::from_secs(5))).await
+    crate::installers::probe::cli_version_args(
+        "docker-compose",
+        &["--version"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .await
 }
 
 /// Outcome of a live paperless-ngx HTTP probe.

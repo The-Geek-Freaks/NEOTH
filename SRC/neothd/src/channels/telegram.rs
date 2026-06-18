@@ -73,7 +73,10 @@ impl TelegramChannel {
             .get_me()
             .await
             .map_err(|e| ChannelError::Transport(format!("Telegram getMe: {e}")))?;
-        Ok(me.username.clone().unwrap_or_else(|| "(unknown)".to_string()))
+        Ok(me
+            .username
+            .clone()
+            .unwrap_or_else(|| "(unknown)".to_string()))
     }
 }
 
@@ -171,9 +174,7 @@ impl Channel for TelegramChannel {
         if edit.is_err() {
             bot.edit_message_text(ChatId(id), TgMessageId(mid), new_text)
                 .await
-                .map_err(|e| {
-                    ChannelError::Transport(format!("telegram editMessageText: {e}"))
-                })?;
+                .map_err(|e| ChannelError::Transport(format!("telegram editMessageText: {e}")))?;
         }
         Ok(())
     }
@@ -485,8 +486,7 @@ async fn audit_notice_egress(
     let payload = crate::channels::send_gate::channel_egress_payload(
         "telegram", chat_id, body, None, false, false, now,
     );
-    let header =
-        crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_SEND, &payload);
+    let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_SEND, &payload);
     if let Err(e) = w.append(header, payload).await {
         tracing::warn!(error = %e, "Telegram notice-egress WAL append failed (non-fatal)");
     }

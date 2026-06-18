@@ -193,10 +193,7 @@ pub(crate) fn check_cluster_registry(_home: &Path) -> CheckOutcome {
 
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
-pub(crate) const CHECKS: &[CheckFn] = &[
-    check_cluster_registry,
-    check_cluster_mdns_announcer,
-];
+pub(crate) const CHECKS: &[CheckFn] = &[check_cluster_registry, check_cluster_mdns_announcer];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
 pub(crate) const DOCS: &[CheckDoc] = &[

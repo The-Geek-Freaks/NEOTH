@@ -24,7 +24,7 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// Content types recognised by the detector. The string tags match the upstream
 /// `ContentType` values 1:1.
@@ -179,8 +179,10 @@ static LOG_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 static HTML_DOCTYPE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\s*<!doctype\s+html").unwrap());
 static HTML_TAG_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<html[\s>]").unwrap());
-static HTML_HEAD_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<head[\s>]").unwrap());
-static HTML_BODY_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<body[\s>]").unwrap());
+static HTML_HEAD_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<head[\s>]").unwrap());
+static HTML_BODY_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<body[\s>]").unwrap());
 static HTML_STRUCTURAL_TAGS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)<(div|span|script|style|link|meta|nav|header|footer|aside|article|section|main)[\s>]",
@@ -502,7 +504,10 @@ mod tests {
         let r = detect_content_type(r#"[{"id": 1}, {"id": 2}]"#);
         assert_eq!(r.content_type, ContentType::JsonArray);
         assert_eq!(r.confidence, 1.0);
-        assert_eq!(r.metadata.get("is_dict_array").unwrap().as_bool(), Some(true));
+        assert_eq!(
+            r.metadata.get("is_dict_array").unwrap().as_bool(),
+            Some(true)
+        );
         assert_eq!(r.metadata.get("item_count").unwrap().as_u64(), Some(2));
     }
 
@@ -511,7 +516,10 @@ mod tests {
         let r = detect_content_type(r#"[1, 2, 3]"#);
         assert_eq!(r.content_type, ContentType::JsonArray);
         assert_eq!(r.confidence, 0.8);
-        assert_eq!(r.metadata.get("is_dict_array").unwrap().as_bool(), Some(false));
+        assert_eq!(
+            r.metadata.get("is_dict_array").unwrap().as_bool(),
+            Some(false)
+        );
     }
 
     #[test]

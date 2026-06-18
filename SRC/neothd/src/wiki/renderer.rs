@@ -161,7 +161,11 @@ mod tests {
 
     #[test]
     fn yaml_escape_handles_quotes_and_backslashes() {
-        let a = src("x", r#"Title with "quotes" and \ slash"#, SourceCategory::Other);
+        let a = src(
+            "x",
+            r#"Title with "quotes" and \ slash"#,
+            SourceCategory::Other,
+        );
         let page = render_page(&a, &[], "b");
         assert!(page.contains(r#"title: "Title with \"quotes\" and \\ slash""#));
     }
@@ -177,7 +181,10 @@ mod tests {
         let design_pos = idx.find("## Design").unwrap();
         let spec_pos = idx.find("## Specifications").unwrap();
         let chorus_pos = idx.find("## Chorus Verdicts").unwrap();
-        assert!(design_pos < spec_pos && spec_pos < chorus_pos, "category order");
+        assert!(
+            design_pos < spec_pos && spec_pos < chorus_pos,
+            "category order"
+        );
         assert!(idx.contains("- [[SPEC_a]] — Spec A"));
         assert!(idx.contains("from 3 design docs"));
     }

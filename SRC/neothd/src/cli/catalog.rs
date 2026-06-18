@@ -399,8 +399,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("models_catalog.json");
         let mut cat = ModelsCatalog::default().with_path(path);
-        cat.upsert("anthropic_api", SourceOrigin::Api, vec![ModelEntry::new("claude-opus-4-7")]);
-        cat.upsert("gemini_api", SourceOrigin::Api, vec![ModelEntry::new("gemini-3.1-pro")]);
+        cat.upsert(
+            "anthropic_api",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("claude-opus-4-7")],
+        );
+        cat.upsert(
+            "gemini_api",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("gemini-3.1-pro")],
+        );
         // None → every cached provider.
         assert_eq!(select_providers(&cat, None).len(), 2);
         // Some(match) → exactly that one key.
@@ -416,10 +424,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("models_catalog.json");
         let mut cat = ModelsCatalog::default().with_path(path.clone());
-        cat.upsert("anthropic_api", SourceOrigin::Api, vec![ModelEntry::new("claude-opus-4-7")]);
+        cat.upsert(
+            "anthropic_api",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("claude-opus-4-7")],
+        );
         cat.save().unwrap();
-        run_list(&path, false, Some("anthropic_api"), OutputFormat::Json).expect("filtered list ok");
-        run_list(&path, false, Some("absent"), OutputFormat::Json).expect("absent provider → empty ok");
+        run_list(&path, false, Some("anthropic_api"), OutputFormat::Json)
+            .expect("filtered list ok");
+        run_list(&path, false, Some("absent"), OutputFormat::Json)
+            .expect("absent provider → empty ok");
     }
 
     #[test]

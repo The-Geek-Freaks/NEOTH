@@ -69,7 +69,11 @@ impl PeriodReflection {
     /// Render to Obsidian markdown — YAML frontmatter + H1 + ## Body + ## Topics.
     /// Field order pinned for Dataview stability (matches WeeklyReflection).
     pub fn to_obsidian_md(&self) -> String {
-        let title_kind = if self.kind == "yearly" { "Yearly" } else { "Daily" };
+        let title_kind = if self.kind == "yearly" {
+            "Yearly"
+        } else {
+            "Daily"
+        };
         let yaml_list = |key: &str, items: &[String]| -> String {
             if items.is_empty() {
                 format!("{key}: []")
@@ -317,16 +321,27 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], r);
 
-        let out = sync_to_obsidian(home.path(), vault.path(), "NEOTH", PeriodKind::Yearly, "2026")
-            .unwrap();
+        let out = sync_to_obsidian(
+            home.path(),
+            vault.path(),
+            "NEOTH",
+            PeriodKind::Yearly,
+            "2026",
+        )
+        .unwrap();
         assert!(out.written);
         assert!(out.target_path.ends_with("NEOTH/Yearly/2026.md"));
         assert!(out.target_path.exists());
 
         // Empty tag → no file, written:false.
-        let empty =
-            sync_to_obsidian(home.path(), vault.path(), "NEOTH", PeriodKind::Daily, "1999-01-01")
-                .unwrap();
+        let empty = sync_to_obsidian(
+            home.path(),
+            vault.path(),
+            "NEOTH",
+            PeriodKind::Daily,
+            "1999-01-01",
+        )
+        .unwrap();
         assert!(!empty.written);
         assert!(!empty.target_path.exists());
     }

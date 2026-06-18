@@ -76,8 +76,8 @@ fn load_recipe(source: &str) -> Result<RecipeSpec> {
     if deeplink::is_deeplink(source) {
         return deeplink::decode(source).context("decode recipe deeplink");
     }
-    let body = std::fs::read_to_string(source)
-        .with_context(|| format!("read recipe file `{source}`"))?;
+    let body =
+        std::fs::read_to_string(source).with_context(|| format!("read recipe file `{source}`"))?;
     RecipeSpec::parse(&body).with_context(|| format!("parse recipe `{source}`"))
 }
 
@@ -184,7 +184,12 @@ fn substitute_parent_tokens(value: &str, parent: &BTreeMap<String, String>) -> S
     out
 }
 
-async fn run_one(source: &str, params: &[String], dry_run: bool, output: OutputFormat) -> Result<()> {
+async fn run_one(
+    source: &str,
+    params: &[String],
+    dry_run: bool,
+    output: OutputFormat,
+) -> Result<()> {
     let spec = load_recipe(source)?;
     let supplied = parse_params(params);
     // Resolve sub-recipes (template composition) into the param map first.
@@ -194,8 +199,8 @@ async fn run_one(source: &str, params: &[String], dry_run: bool, output: OutputF
         Path::new(source).parent().map(Path::to_path_buf)
     };
     let augmented = resolve_subrecipes(&spec, parent_dir.as_deref(), &supplied, 0)?;
-    let rendered = render(&spec, &augmented)
-        .map_err(|e| anyhow::anyhow!("recipe `{}`: {e}", spec.name))?;
+    let rendered =
+        render(&spec, &augmented).map_err(|e| anyhow::anyhow!("recipe `{}`: {e}", spec.name))?;
 
     if dry_run {
         match output {
@@ -348,10 +353,7 @@ fn shell_check_succeeds(cmd: &str) -> bool {
         c.args(["-c", cmd]);
         c
     };
-    command
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    command.status().map(|s| s.success()).unwrap_or(false)
 }
 
 fn validate_one(file: &Path, output: OutputFormat) -> Result<()> {
@@ -378,7 +380,10 @@ fn validate_one(file: &Path, output: OutputFormat) -> Result<()> {
         }
         Err(e) => match output {
             OutputFormat::Json | OutputFormat::Jsonl => {
-                println!("{}", serde_json::json!({ "valid": false, "error": e.to_string() }));
+                println!(
+                    "{}",
+                    serde_json::json!({ "valid": false, "error": e.to_string() })
+                );
                 anyhow::bail!("recipe invalid")
             }
             OutputFormat::Table => {
@@ -476,7 +481,8 @@ mod tests {
 
     #[test]
     fn load_recipe_accepts_deeplink() {
-        let spec = RecipeSpec::parse("name: g\nprompt: \"hi {{x}}\"\nparameters:\n  - key: x\n").unwrap();
+        let spec =
+            RecipeSpec::parse("name: g\nprompt: \"hi {{x}}\"\nparameters:\n  - key: x\n").unwrap();
         let link = deeplink::encode(&spec).unwrap();
         let loaded = load_recipe(&link).unwrap();
         assert_eq!(loaded.name, "g");
@@ -502,8 +508,7 @@ mod tests {
 
         let spec = load_recipe(parent_path.to_str().unwrap()).unwrap();
         let supplied = parse_params(&["target=host.x".into()]);
-        let augmented =
-            resolve_subrecipes(&spec, dir.path().into(), &supplied, 0).unwrap();
+        let augmented = resolve_subrecipes(&spec, dir.path().into(), &supplied, 0).unwrap();
         let rendered = render(&spec, &augmented).unwrap();
         assert_eq!(rendered.prompt, "Do this: scan host.x");
     }
@@ -513,7 +518,11 @@ mod tests {
         // GR-117: a sub-recipe `file` that escapes the parent recipe directory
         // (`../secret.yaml`) must be REFUSED, not read.
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("secret.yaml"), "name: secret\nprompt: leaked\n").unwrap();
+        std::fs::write(
+            root.path().join("secret.yaml"),
+            "name: secret\nprompt: leaked\n",
+        )
+        .unwrap();
         let recipe_dir = root.path().join("recipes");
         std::fs::create_dir_all(&recipe_dir).unwrap();
         let parent_path = recipe_dir.join("parent.yaml");
@@ -523,8 +532,8 @@ mod tests {
         )
         .unwrap();
         let spec = load_recipe(parent_path.to_str().unwrap()).unwrap();
-        let err =
-            resolve_subrecipes(&spec, recipe_dir.as_path().into(), &BTreeMap::new(), 0).unwrap_err();
+        let err = resolve_subrecipes(&spec, recipe_dir.as_path().into(), &BTreeMap::new(), 0)
+            .unwrap_err();
         assert!(
             err.to_string().contains("OUTSIDE") || err.to_string().contains("path-traversal"),
             "a `../` sub-recipe path must be refused: {err}"

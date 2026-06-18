@@ -106,43 +106,88 @@ pub fn scan_nspace(text: &str, extra_patterns: &[String]) -> NSpacePenalty {
 // ── Pattern tables ──────────────────────────────────────────────────────────
 
 const PATTERNS_APOLOGY: &[&str] = &[
-    "i apologize", "i'm sorry", "i am sorry", "sorry for", "sorry about",
-    "i apologise", "my apologies", "pardon me", "excuse me for", "forgive me",
-    "entschuldige", "entschuldigung", "es tut mir leid",
+    "i apologize",
+    "i'm sorry",
+    "i am sorry",
+    "sorry for",
+    "sorry about",
+    "i apologise",
+    "my apologies",
+    "pardon me",
+    "excuse me for",
+    "forgive me",
+    "entschuldige",
+    "entschuldigung",
+    "es tut mir leid",
 ];
 
 const PATTERNS_HEDGING: &[&str] = &[
-    "it might be", "it may be", "it could be", "i'm not sure but",
-    "i'm not entirely sure", "generally speaking", "in most cases",
-    "it's worth noting that", "it is worth noting", "keep in mind that",
-    "it's important to keep in mind", "please note that", "please be aware",
+    "it might be",
+    "it may be",
+    "it could be",
+    "i'm not sure but",
+    "i'm not entirely sure",
+    "generally speaking",
+    "in most cases",
+    "it's worth noting that",
+    "it is worth noting",
+    "keep in mind that",
+    "it's important to keep in mind",
+    "please note that",
+    "please be aware",
 ];
 
 const PATTERNS_TONE_POLICING: &[&str] = &[
-    "let's keep things civil", "let's stay respectful", "i'd encourage you to",
-    "i'd gently suggest", "i'd like to remind you", "please be mindful",
-    "i understand your frustration, but", "bitte bleib höflich", "bleib respektvoll",
+    "let's keep things civil",
+    "let's stay respectful",
+    "i'd encourage you to",
+    "i'd gently suggest",
+    "i'd like to remind you",
+    "please be mindful",
+    "i understand your frustration, but",
+    "bitte bleib höflich",
+    "bleib respektvoll",
 ];
 
 const PATTERNS_FAKE_EMPATHY: &[&str] = &[
-    "i understand how you feel", "i can understand your frustration",
-    "i understand that this can be", "i know this is difficult",
-    "i can imagine how", "that must be frustrating", "i hear you",
-    "ich verstehe deine frustration", "das muss schwierig sein",
+    "i understand how you feel",
+    "i can understand your frustration",
+    "i understand that this can be",
+    "i know this is difficult",
+    "i can imagine how",
+    "that must be frustrating",
+    "i hear you",
+    "ich verstehe deine frustration",
+    "das muss schwierig sein",
 ];
 
 const PATTERNS_ASSISTANT_THEATER: &[&str] = &[
-    "as an ai", "as an ai assistant", "as a language model", "i'm just an ai",
-    "i am just an ai", "as your assistant", "my purpose is to", "i'm designed to",
-    "i was trained to", "it's important for me to clarify",
-    "i need to be transparent", "i want to be clear that i am",
+    "as an ai",
+    "as an ai assistant",
+    "as a language model",
+    "i'm just an ai",
+    "i am just an ai",
+    "as your assistant",
+    "my purpose is to",
+    "i'm designed to",
+    "i was trained to",
+    "it's important for me to clarify",
+    "i need to be transparent",
+    "i want to be clear that i am",
 ];
 
 const PATTERNS_SAFETY_MORALIZING: &[&str] = &[
-    "i must note that", "i should mention that", "i want to make sure you're aware",
-    "please consider the ethical", "there are ethical considerations",
-    "i cannot and will not", "i must decline", "i must emphasize",
-    "i strongly advise", "proceed with caution", "please be careful",
+    "i must note that",
+    "i should mention that",
+    "i want to make sure you're aware",
+    "please consider the ethical",
+    "there are ethical considerations",
+    "i cannot and will not",
+    "i must decline",
+    "i must emphasize",
+    "i strongly advise",
+    "proceed with caution",
+    "please be careful",
 ];
 
 #[cfg(test)]
@@ -182,14 +227,22 @@ mod tests {
                      how you feel. As an AI, I must note the ethical considerations.";
         let r = scan_nspace(worst, &[]);
         assert!(r.total_penalty <= NSPACE_PENALTY_CAP);
-        assert!(r.hits.len() >= 4, "several groups fire: {:?}", r.groups_hit());
+        assert!(
+            r.hits.len() >= 4,
+            "several groups fire: {:?}",
+            r.groups_hit()
+        );
     }
 
     #[test]
     fn one_penalty_per_group_not_per_match() {
         // Two apology phrases → still one performative_apology hit.
         let r = scan_nspace("I'm sorry. I apologize again.", &[]);
-        let apology_hits = r.hits.iter().filter(|h| h.group == "performative_apology").count();
+        let apology_hits = r
+            .hits
+            .iter()
+            .filter(|h| h.group == "performative_apology")
+            .count();
         assert_eq!(apology_hits, 1);
     }
 

@@ -99,7 +99,9 @@ pub fn process_transcript(
     let clean = match san.flush() {
         Ok(FlushOutcome::Clean(report)) => report.text,
         Ok(FlushOutcome::Quarantined(_)) => {
-            tracing::warn!("omi: transcript chunk quarantined by SC-18 — dropped, nothing promoted");
+            tracing::warn!(
+                "omi: transcript chunk quarantined by SC-18 — dropped, nothing promoted"
+            );
             return Ok(0);
         }
         Ok(FlushOutcome::Empty) => return Ok(0),
@@ -278,7 +280,10 @@ mod tests {
 
     #[test]
     fn extract_action_items_caps_at_20() {
-        let text = (0..25).map(|i| format!("TODO item {i}")).collect::<Vec<_>>().join("\n");
+        let text = (0..25)
+            .map(|i| format!("TODO item {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_eq!(extract_action_items(&text).len(), MAX_ACTION_ITEMS);
     }
 
@@ -305,8 +310,14 @@ mod tests {
         let segdir = tempfile::tempdir().unwrap();
         let seg = segdir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
-        let n = process_transcript(&conn, &writer, "the wifi password is on the router", 0.9, 0.75)
-            .unwrap();
+        let n = process_transcript(
+            &conn,
+            &writer,
+            "the wifi password is on the router",
+            0.9,
+            0.75,
+        )
+        .unwrap();
         assert_eq!(n, 1);
         drop(writer);
         join.await.ok();
@@ -332,7 +343,10 @@ mod tests {
                 found = true;
                 let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
                 assert_eq!(p["source"], "omi");
-                assert!(!p.to_string().contains("router"), "raw transcript must not be in the frame");
+                assert!(
+                    !p.to_string().contains("router"),
+                    "raw transcript must not be in the frame"
+                );
             }
             let t = f.header.total_len as usize;
             if t == 0 {

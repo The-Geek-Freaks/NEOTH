@@ -13,11 +13,15 @@ use crate::providers::local_probe::probe_local_bridge_sync;
 #[cfg(feature = "wizard")]
 use super::npm_path_hint;
 use super::{
-    catalog_recommended_for_provider_kind, prompt_provider_key, WizardStep, which_binary,
-    InitArgs, ProviderKind, WizardState,
+    InitArgs, ProviderKind, WizardState, WizardStep, catalog_recommended_for_provider_kind,
+    prompt_provider_key, which_binary,
 };
 
-pub(crate) async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) async fn step5_provider(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 5: provider");
 
     // Detect the three first-class CLIs and offer to install any that are
@@ -186,13 +190,14 @@ pub(crate) async fn step5_provider(args: &InitArgs, interactive: bool, state: &m
             // GOLD-WIRE-03: the bundled fallback comes from the same SSOT as
             // `providers::from_config` (`model_roles::default_table`), so the
             // wizard + the runtime can't drift.
-            let resolved_default = catalog_recommended_for_provider_kind(kind).unwrap_or_else(|| {
-                crate::providers::default_model(
-                    "claude_cli",
-                    crate::providers::model_roles::ModelRole::Flagship,
-                    "claude-opus-4-7",
-                )
-            });
+            let resolved_default =
+                catalog_recommended_for_provider_kind(kind).unwrap_or_else(|| {
+                    crate::providers::default_model(
+                        "claude_cli",
+                        crate::providers::model_roles::ModelRole::Flagship,
+                        "claude-opus-4-7",
+                    )
+                });
             state.provider_model = Some(args.provider_model.clone().unwrap_or(resolved_default));
         }
         ProviderKind::OpenaiApi

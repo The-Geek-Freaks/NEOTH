@@ -382,12 +382,11 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
     // plugin.wasm` writes `plugin.wasm.minisig`; absence is fine (the
     // signature gate is opt-in via freedom.yaml::plugins.wasm.author_pubkey).
     // Capped read — a hostile over-size companion is refused, not OOM'd.
-    let signature = read_capped_minisig(&minisig_path).map_err(|()| {
-        DiscoveryError::SignatureInvalid {
+    let signature =
+        read_capped_minisig(&minisig_path).map_err(|()| DiscoveryError::SignatureInvalid {
             dir: dir.to_path_buf(),
             reason: format!("plugin.wasm.minisig exceeds {MAX_MINISIG_BYTES} bytes — refusing"),
-        }
-    })?;
+        })?;
     Ok(DiscoveredPlugin {
         dir: dir.to_path_buf(),
         manifest,

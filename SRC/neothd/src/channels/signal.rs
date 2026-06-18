@@ -155,7 +155,10 @@ mod tests {
     #[test]
     fn new_trims_trailing_slash_from_url() {
         let a = SignalChannel::new("http://127.0.0.1:8080/", "+4400").unwrap();
-        assert_eq!(a.cli_url, "http://127.0.0.1:8080", "trailing slash stripped");
+        assert_eq!(
+            a.cli_url, "http://127.0.0.1:8080",
+            "trailing slash stripped"
+        );
     }
 
     #[test]

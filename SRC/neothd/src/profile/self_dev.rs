@@ -370,18 +370,32 @@ mod tests {
         // operator's chosen preset, a casual writer on Deepdive/Tutor/Opsec must
         // also be nudged toward Lowkey — not silently skipped (the old `==Formal`
         // guard fired for none of these three).
-        for basis in [ProfilePreset::Deepdive, ProfilePreset::Tutor, ProfilePreset::Opsec] {
+        for basis in [
+            ProfilePreset::Deepdive,
+            ProfilePreset::Tutor,
+            ProfilePreset::Opsec,
+        ] {
             let profile = profile_with_tone(0.9, 50);
             let current = apply_preset(basis);
             let switch = propose_adjustments(&profile, &current)
                 .into_iter()
                 .find(|p| p.kind == ProposalKind::SwitchPreset)
                 .unwrap_or_else(|| panic!("casual tone on {basis:?} must propose a switch"));
-            assert_eq!(switch.target, "lowkey", "basis {basis:?} should suggest Lowkey");
+            assert_eq!(
+                switch.target, "lowkey",
+                "basis {basis:?} should suggest Lowkey"
+            );
         }
         // ...and on Lowkey itself, a casual writer is already a match → no switch.
-        let on_lowkey = propose_adjustments(&profile_with_tone(0.9, 50), &apply_preset(ProfilePreset::Lowkey));
-        assert!(on_lowkey.iter().all(|p| p.kind != ProposalKind::SwitchPreset));
+        let on_lowkey = propose_adjustments(
+            &profile_with_tone(0.9, 50),
+            &apply_preset(ProfilePreset::Lowkey),
+        );
+        assert!(
+            on_lowkey
+                .iter()
+                .all(|p| p.kind != ProposalKind::SwitchPreset)
+        );
     }
 
     // ── length-driven verbosity ─────────────────────────────────

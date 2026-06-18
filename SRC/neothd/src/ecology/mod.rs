@@ -12,12 +12,6 @@
 //! signal is a pure function over WAL data.
 
 pub mod correlation_detector;
-/// F4-01 Phase 1 — Ecology auto-scheduler cron. A 6h tick that detects a
-/// low-dissent council regime (winner streak >= `ecology.correlation_min_streak`)
-/// and STAGES P-04 self-dev proposals for `neoth self-dev review` (never
-/// auto-applies — the DESIGN_CH13 P2 review-gate), emitting
-/// `0x4C ECOLOGY_SCHEDULER_FIRED` as the audit trail. Off by default.
-pub mod scheduler;
 /// F4-01 Phase 3 — tool genealogy. A deterministic, read-only inventory of the
 /// tools NEOTH actually exercises (MCP tools via `0xC0`, plugins via
 /// `0xC4`/`0xC6`/`0xC2`) + installed skills as zero-count nodes. Surfaced via
@@ -25,6 +19,12 @@ pub mod scheduler;
 /// on tool-id in the `0x63` winner frame (see module docs); the measurable
 /// provider/role/mode winner-chain lives in [`winner_chain`].
 pub mod genealogy;
+/// F4-01 Phase 1 — Ecology auto-scheduler cron. A 6h tick that detects a
+/// low-dissent council regime (winner streak >= `ecology.correlation_min_streak`)
+/// and STAGES P-04 self-dev proposals for `neoth self-dev review` (never
+/// auto-applies — the DESIGN_CH13 P2 review-gate), emitting
+/// `0x4C ECOLOGY_SCHEDULER_FIRED` as the audit trail. Off by default.
+pub mod scheduler;
 /// F4-01 — council winner-chain: the measured win-distribution (per provider+
 /// role, with avg/last score + the selection-mode mix) over the `0x63`
 /// winner frames. The part of the blueprint's "winner-chain" that IS grounded

@@ -385,6 +385,9 @@ base64 = "0.22"
 # openssl, no `ring`. `subtle` for constant-time HMAC compare
 # during PBKDF2 verification.
 aes    = "0.8"
+# A3-01 transfer bundles use AES-256-GCM cross-platform; Windows Chrome
+# credential decrypt reuses the same crate below the cfg(windows) code path.
+aes-gcm = "0.10"
 cbc    = { version = "0.1", features = ["block-padding"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 subtle = "2"
@@ -497,6 +500,14 @@ pdf-extract         = "0.9"
 # R-9 audio: pure-Rust audio decode (wav, mp3, flac, ogg). Doesn't bring in
 # any system codec libraries — decoders are Rust-native.
 symphonia           = { version = "0.5", default-features = false, features = ["wav", "mp3", "flac", "isomp4", "aac", "pcm"] }
+# GOLD-ADAPT-HANDY-01: band-limited FFT resampler. Replaces the linear
+# interpolation in audio.rs. No system deps — pure Rust FFT (rustfft inside).
+rubato              = "0.16"
+# GOLD-ADAPT-HANDY-03: STT post-processing — fuzzy custom-word correction.
+# strsim: Levenshtein + other string metrics; natural: Soundex phonetics.
+# Both are pure Rust with no system deps.
+strsim              = "0.11"
+natural             = "0.5"
 # R-9 vision: pure-Rust image decode (PNG, JPEG, WebP, GIF). No system deps.
 image               = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 # Hardware probe — cross-platform CPU + RAM + (later) GPU info. Pure
@@ -572,15 +583,6 @@ libc        = "0.2"
 # Win32_Security_Authorization: E-11 SetEntriesInAclW + SetNamedSecurityInfoW + BuildExplicitAccessWithNameW (2026-05-24).
 # Win32_Storage_FileSystem: E-12 FlushFileBuffers WAL durability (2026-05-24).
 windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
-# C-03b Windows (Session 28) — AES-256-GCM decrypt for Chrome's v10/v11
-# password envelope. Chrome wraps the per-blob password in a 3-byte
-# version prefix + 12-byte nonce + ciphertext + 16-byte tag; the
-# operator's symmetric key lives DPAPI-wrapped in `Local State`. Only
-# Windows uses GCM — the Linux + macOS paths use AES-128-CBC and reuse
-# the `aes 0.8` + `cbc 0.1` crates already in the cross-platform
-# dependency block for C-04b. Pinning `aes-gcm` Windows-only keeps
-# the dep graph clean on non-Chrome-decrypt platforms.
-aes-gcm = "0.10"
 
 # C-03b Linux (Session 28) — Secret Service (DBus) client for Chrome's
 # AES-128-CBC password envelope. Chrome on Linux stores the symmetric

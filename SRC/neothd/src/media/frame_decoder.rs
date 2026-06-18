@@ -116,7 +116,10 @@ async fn run_ffmpeg_frame(
     let args = ffmpeg_frame_args(&input.to_string_lossy(), ts_ms, format).ok_or_else(|| {
         ExtractionError::Backend {
             backend: "video",
-            reason: format!("frame format {} is not an encodable still image", format.as_str()),
+            reason: format!(
+                "frame format {} is not an encodable still image",
+                format.as_str()
+            ),
         }
     })?;
     let mut cmd = tokio::process::Command::new("ffmpeg");

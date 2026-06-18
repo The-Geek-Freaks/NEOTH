@@ -61,9 +61,10 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
             })
             .unwrap_or_else(|| ("unknown".to_string(), String::new()));
         let cache_key = format!("{host}{path}:{selector}");
-        let result =
-            crate::tools::web_selector_cache::extract_with_cache(&args.url, &cache_key, &selector, None)
-                .await?;
+        let result = crate::tools::web_selector_cache::extract_with_cache(
+            &args.url, &cache_key, &selector, None,
+        )
+        .await?;
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 println!(
@@ -81,7 +82,10 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
                 println!("url:       {}", args.url);
                 println!("selector:  {selector}");
                 if result.stale_recovered {
-                    println!("recovered: yes (selector healed to `{}`)", result.selector_used);
+                    println!(
+                        "recovered: yes (selector healed to `{}`)",
+                        result.selector_used
+                    );
                 }
                 println!("matches:   {}", result.hits.len());
                 println!();

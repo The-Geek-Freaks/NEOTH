@@ -69,9 +69,13 @@ pub fn autonomy_posture(level: AutonomyLevel) -> AutonomyPosture {
         "SelfBinaryReplace (Confirm even at Full)",
     ];
     let behavior = match level {
-        AutonomyLevel::Strict => "boundary asks are DENIED outright — the agent acts only inside safe rails",
+        AutonomyLevel::Strict => {
+            "boundary asks are DENIED outright — the agent acts only inside safe rails"
+        }
         AutonomyLevel::Standard => "boundary asks require Confirm (--yes / interactive prompt)",
-        AutonomyLevel::Elevated => "most boundary asks Allow; the highest-blast-radius ones still Confirm",
+        AutonomyLevel::Elevated => {
+            "most boundary asks Allow; the highest-blast-radius ones still Confirm"
+        }
         AutonomyLevel::Full => "boundary asks Allow; only SelfBinaryReplace still Confirms",
         AutonomyLevel::Custom => "per-action policy from your custom autonomy map",
     };
@@ -440,15 +444,30 @@ mod tests {
         for l in levels {
             let p = autonomy_posture(l);
             assert_eq!(p.level, l.as_str());
-            assert!(behaviors.insert(p.behavior), "behaviour line must be unique per level");
-            assert!(p.gated_examples.iter().any(|e| e.contains("SelfBinaryReplace")));
+            assert!(
+                behaviors.insert(p.behavior),
+                "behaviour line must be unique per level"
+            );
+            assert!(
+                p.gated_examples
+                    .iter()
+                    .any(|e| e.contains("SelfBinaryReplace"))
+            );
         }
     }
 
     #[test]
     fn strict_denies_full_confirms_only_self_replace() {
-        assert!(autonomy_posture(AutonomyLevel::Strict).behavior.contains("DENIED"));
-        assert!(autonomy_posture(AutonomyLevel::Full).behavior.contains("SelfBinaryReplace"));
+        assert!(
+            autonomy_posture(AutonomyLevel::Strict)
+                .behavior
+                .contains("DENIED")
+        );
+        assert!(
+            autonomy_posture(AutonomyLevel::Full)
+                .behavior
+                .contains("SelfBinaryReplace")
+        );
     }
 
     #[test]

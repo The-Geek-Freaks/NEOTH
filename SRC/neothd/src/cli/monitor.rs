@@ -179,8 +179,7 @@ pub async fn run(mut args: MonitorArgs) -> Result<()> {
     let cutoff = now_unix - (args.hours as i64 * 3600);
 
     // Collect summaries for the three HO-07 alert event types.
-    let (wal_count, wal_last) =
-        aggregate_wal_alerts(&wal_dir, EVENT_TYPE_WAL_CRC_ALERT, cutoff);
+    let (wal_count, wal_last) = aggregate_wal_alerts(&wal_dir, EVENT_TYPE_WAL_CRC_ALERT, cutoff);
     let (crash_count, crash_last) = if crash_log.exists() {
         count_crash_log_alerts(&crash_log, cutoff)
     } else {
@@ -233,23 +232,21 @@ pub async fn run(mut args: MonitorArgs) -> Result<()> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "window_hours": args.hours,
-            "alerts": rows,
-            "any_alerts": has_alerts,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "window_hours": args.hours,
+                "alerts": rows,
+                "any_alerts": has_alerts,
+            }))?
+        );
     } else {
         println!("neoth monitor status  (last {}h)", args.hours);
         println!("{:-<60}", "");
         println!("{:<36} {:>20} {:>8}", "Rule", "Last alert (UTC)", "Count");
         println!("{:-<60}", "");
         for s in &summaries {
-            println!(
-                "{:<36} {:>20} {:>8}",
-                s.rule,
-                s.last_ts_display(),
-                s.count
-            );
+            println!("{:<36} {:>20} {:>8}", s.rule, s.last_ts_display(), s.count);
         }
         println!("{:-<60}", "");
         if has_alerts {

@@ -278,8 +278,7 @@ mod tests {
             enabled: false,
             ..Default::default()
         };
-        let handle =
-            spawn_recall_latency_cron_loop(cfg, home.path().to_path_buf(), writer);
+        let handle = spawn_recall_latency_cron_loop(cfg, home.path().to_path_buf(), writer);
         assert!(handle.is_none());
     }
 

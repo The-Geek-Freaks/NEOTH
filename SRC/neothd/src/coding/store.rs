@@ -1112,7 +1112,10 @@ mod tests {
         patch_task_status(&conn, task_id, TaskStatus::InProgress, started_ns).unwrap();
         let n = reap_stale_inprogress_tasks(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
         assert_eq!(n, 1);
-        let task = list_tasks_for_session(&conn, session_id).unwrap().pop().unwrap();
+        let task = list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(task.status, TaskStatus::Blocked);
     }
 
@@ -1129,7 +1132,10 @@ mod tests {
         patch_task_status(&conn, task_id, TaskStatus::InProgress, started_ns).unwrap();
         let n = reap_stale_inprogress_tasks(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
         assert_eq!(n, 0);
-        let task = list_tasks_for_session(&conn, session_id).unwrap().pop().unwrap();
+        let task = list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(task.status, TaskStatus::InProgress);
     }
 
@@ -1145,7 +1151,10 @@ mod tests {
         insert_task(&conn, session_id, old_ns, "still-backlog", None, "ui", None).unwrap();
         let n = reap_stale_inprogress_tasks(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
         assert_eq!(n, 0);
-        let task = list_tasks_for_session(&conn, session_id).unwrap().pop().unwrap();
+        let task = list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(task.status, TaskStatus::Backlog);
     }
 

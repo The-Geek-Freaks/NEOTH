@@ -734,9 +734,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wal_path = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
-        emit_readonly_allow(&writer, "codegraph", "codegraph_relevant_files", 1_700_000_000)
-            .await
-            .unwrap();
+        emit_readonly_allow(
+            &writer,
+            "codegraph",
+            "codegraph_relevant_files",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
         drop(writer);
         join.await.ok();
 
@@ -753,7 +758,10 @@ mod tests {
                 assert_eq!(p["tool"], "codegraph_relevant_files");
                 assert_eq!(p["source"], "smart_approve");
                 assert_eq!(p["reason"], "readonly_hint");
-                assert!(!p.to_string().contains("arguments"), "args must not be audited");
+                assert!(
+                    !p.to_string().contains("arguments"),
+                    "args must not be audited"
+                );
             }
             let t = f.header.total_len as usize;
             if t == 0 {

@@ -22,7 +22,11 @@ pub const NOSTR_MAX_TEXT_CHARS: usize = 8_000;
 /// gift wraps are addressed TO us, the sender is never ourselves, so the reply
 /// `chat_id` is always the sender's pubkey — a reply DM routes straight back to
 /// them.
-pub fn map_nostr_dm(sender_pubkey_hex: &str, content: &str, ts_unix: u64) -> Option<InboundMessage> {
+pub fn map_nostr_dm(
+    sender_pubkey_hex: &str,
+    content: &str,
+    ts_unix: u64,
+) -> Option<InboundMessage> {
     let content = content.trim();
     if content.is_empty() {
         return None;
@@ -83,7 +87,10 @@ mod tests {
     fn dm_maps_to_inbound_replying_to_sender() {
         let m = map_nostr_dm("abcd1234pubkeyhex", "gm nostr", 1000).unwrap();
         assert_eq!(m.channel, ChannelKind::Nostr);
-        assert_eq!(m.chat_id, "abcd1234pubkeyhex", "a DM replies to the sender's pubkey");
+        assert_eq!(
+            m.chat_id, "abcd1234pubkeyhex",
+            "a DM replies to the sender's pubkey"
+        );
         assert_eq!(m.sender_id, "abcd1234pubkeyhex");
         assert_eq!(m.text.as_deref(), Some("gm nostr"));
         assert_eq!(m.channel_ts_unix, 1000);
@@ -110,7 +117,11 @@ mod tests {
     #[test]
     fn short_reply_is_one_chunk_preserving_newlines() {
         let out = nostr_text_chunks("line one\nline two");
-        assert_eq!(out, vec!["line one\nline two"], "newlines stay inside one DM chunk");
+        assert_eq!(
+            out,
+            vec!["line one\nline two"],
+            "newlines stay inside one DM chunk"
+        );
     }
 
     #[test]

@@ -5,10 +5,10 @@
 //! synthesis, and emits a `0xC9 VIDEO_FRAME_SYNTHESIZED` audit frame (metadata
 //! only — the prompt is hashed, the frame pixels are NEVER in the WAL).
 
+use super::Asset;
 use super::frame_decoder::FrameDecoder;
 use super::multimodal_synth::MultimodalSynthesizer;
 use super::video_frames::{FrameFormat, MultimodalProvider, MultimodalRequest};
-use super::Asset;
 use crate::wal::writer::WalWriterHandle;
 
 /// Build the `0xC9 VIDEO_FRAME_SYNTHESIZED` audit payload. Metadata only: the
@@ -90,7 +90,14 @@ pub async fn dispatch_video_analysis(
     let answer = synth.synthesize(&req).await?;
 
     if let Some(w) = writer {
-        emit_synthesized(w, synth.provider(), frame_count, prompt, answer.chars().count()).await;
+        emit_synthesized(
+            w,
+            synth.provider(),
+            frame_count,
+            prompt,
+            answer.chars().count(),
+        )
+        .await;
     }
     Ok(answer)
 }
@@ -106,8 +113,10 @@ async fn emit_synthesized(
 ) {
     let now = crate::time::now_unix_secs();
     let payload = synthesized_payload(provider, frame_count, prompt, output_chars, now);
-    let header =
-        crate::wal::make_header(crate::wal::events::EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED, &payload);
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
+        &payload,
+    );
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(error = %e, "WAL append VIDEO_FRAME_SYNTHESIZED (0xC9) failed (non-fatal)");
     }
@@ -169,10 +178,17 @@ mod tests {
     }
 
     fn frames_on() -> crate::config::MediaConfig {
-        crate::config::MediaConfig { video_frame_upload_enabled: true, ..Default::default() }
+        crate::config::MediaConfig {
+            video_frame_upload_enabled: true,
+            ..Default::default()
+        }
     }
 
-    fn test_writer() -> (WalWriterHandle, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+    fn test_writer() -> (
+        WalWriterHandle,
+        tokio::task::JoinHandle<()>,
+        tempfile::TempDir,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let (w, j) = crate::wal::writer::spawn(dir.path().join("vd.wal")).unwrap();
         (w, j, dir)
@@ -286,7 +302,15 @@ mod tests {
             seen_frames: std::sync::Mutex::new(0),
         };
         let err = dispatch_video_analysis(
-            &decoder, &synth, &asset(), &[], FrameFormat::Jpeg, "p", 64, None, &frames_on(),
+            &decoder,
+            &synth,
+            &asset(),
+            &[],
+            FrameFormat::Jpeg,
+            "p",
+            64,
+            None,
+            &frames_on(),
         )
         .await
         .unwrap_err();
@@ -307,11 +331,22 @@ mod tests {
         };
         let off = crate::config::MediaConfig::default();
         let err = dispatch_video_analysis(
-            &decoder, &synth, &asset(), &[0, 500], FrameFormat::Jpeg, "p", 64, None, &off,
+            &decoder,
+            &synth,
+            &asset(),
+            &[0, 500],
+            FrameFormat::Jpeg,
+            "p",
+            64,
+            None,
+            &off,
         )
         .await
         .unwrap_err();
-        assert!(err.contains("video frame upload") && err.contains("LEAVE the device"), "got: {err}");
+        assert!(
+            err.contains("video frame upload") && err.contains("LEAVE the device"),
+            "got: {err}"
+        );
         // Gate fired before decoding — nothing touched the asset.
         assert_eq!(decoder.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(*synth.seen_frames.lock().unwrap(), 0);
@@ -335,7 +370,15 @@ mod tests {
             ..Default::default()
         };
         let err = dispatch_video_analysis(
-            &decoder, &synth, &asset(), &[0, 500], FrameFormat::Jpeg, "p", 64, None, &cfg,
+            &decoder,
+            &synth,
+            &asset(),
+            &[0, 500],
+            FrameFormat::Jpeg,
+            "p",
+            64,
+            None,
+            &cfg,
         )
         .await
         .unwrap_err();
@@ -345,13 +388,22 @@ mod tests {
 
     #[test]
     fn payload_hashes_prompt_and_omits_raw_text() {
-        let p = synthesized_payload(MultimodalProvider::AnthropicClaude, 3, "secret prompt", 42, 1700);
+        let p = synthesized_payload(
+            MultimodalProvider::AnthropicClaude,
+            3,
+            "secret prompt",
+            42,
+            1700,
+        );
         let v: serde_json::Value = serde_json::from_slice(&p).unwrap();
         assert_eq!(v["provider"], "anthropic_claude");
         assert_eq!(v["frame_count"], 3);
         assert_eq!(v["output_chars"], 42);
         assert_eq!(v["ts_unix"], 1700);
-        assert!(!p.windows(6).any(|w| w == b"secret"), "raw prompt must not be in the frame");
+        assert!(
+            !p.windows(6).any(|w| w == b"secret"),
+            "raw prompt must not be in the frame"
+        );
         assert_eq!(
             v["prompt_hash"],
             format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"secret prompt"))

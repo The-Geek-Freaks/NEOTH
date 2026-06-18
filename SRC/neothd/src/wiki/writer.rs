@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::wiki::renderer::{render_index, render_page, INDEX_SLUG};
-use crate::wiki::sources::{discover_sources, WikiSource};
+use crate::wiki::renderer::{INDEX_SLUG, render_index, render_page};
+use crate::wiki::sources::{WikiSource, discover_sources};
 
 /// One planned page write.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,7 +96,11 @@ pub fn plan_wiki(sources: &[WikiSource], out_dir: &Path) -> Result<WikiBuildPlan
 
 /// Execute (or, on `dry_run`, simulate) the plan. Real writes create `out_dir`
 /// then write each page; dry-run touches nothing and only fills the counters.
-pub fn write_plan(plan: &WikiBuildPlan, sources_count: usize, dry_run: bool) -> Result<WikiBuildStats> {
+pub fn write_plan(
+    plan: &WikiBuildPlan,
+    sources_count: usize,
+    dry_run: bool,
+) -> Result<WikiBuildStats> {
     let mut stats = WikiBuildStats {
         sources: sources_count,
         pages_planned: plan.pages.len(),
@@ -118,7 +122,11 @@ pub fn write_plan(plan: &WikiBuildPlan, sources_count: usize, dry_run: bool) -> 
 
 /// Discover → plan → write. The CLI entry point. Returns the stats + the
 /// ordered page slugs (for the dry-run listing).
-pub fn build_wiki(source_dir: &Path, out_dir: &Path, dry_run: bool) -> Result<(WikiBuildStats, Vec<String>)> {
+pub fn build_wiki(
+    source_dir: &Path,
+    out_dir: &Path,
+    dry_run: bool,
+) -> Result<(WikiBuildStats, Vec<String>)> {
     let sources = discover_sources(source_dir)?;
     // No source docs → no wiki (a lone content-free index page is useless).
     if sources.is_empty() {

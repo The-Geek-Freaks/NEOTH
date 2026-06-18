@@ -263,8 +263,16 @@ mod tests {
         assert!(claims[0].statement.contains("2 operator request(s)"));
         assert!(claims[0].statement.contains("~650 tokens processed"));
         assert!(claims[0].statement.contains("models: claude-x"));
-        assert!(claims[1].statement.contains("operator request: Fix the login bug"));
-        assert!(claims[2].statement.contains("operator request: Now add tests"));
+        assert!(
+            claims[1]
+                .statement
+                .contains("operator request: Fix the login bug")
+        );
+        assert!(
+            claims[2]
+                .statement
+                .contains("operator request: Now add tests")
+        );
         assert!(claims.iter().all(|c| c.source == Source::ImportSession));
         assert!(claims.iter().all(|c| c.scope == "session:imported"));
     }
@@ -287,8 +295,14 @@ mod tests {
     fn clean_request_drops_tool_only_turns() {
         assert_eq!(clean_request("[tool_result]"), None);
         assert_eq!(clean_request("[tool_use: Read]\n[tool_result]"), None);
-        assert_eq!(clean_request("real request").as_deref(), Some("real request"));
-        assert_eq!(clean_request("[tool_result]\nFix it").as_deref(), Some("Fix it"));
+        assert_eq!(
+            clean_request("real request").as_deref(),
+            Some("real request")
+        );
+        assert_eq!(
+            clean_request("[tool_result]\nFix it").as_deref(),
+            Some("Fix it")
+        );
     }
 
     #[test]

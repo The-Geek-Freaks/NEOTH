@@ -41,7 +41,10 @@ pub struct GoalContext {
 impl GoalContext {
     /// Convenience: neither goal nor grind set.
     pub fn empty() -> Self {
-        Self { goal: None, grind: None }
+        Self {
+            goal: None,
+            grind: None,
+        }
     }
 
     /// True when neither field is set (no nudge will ever fire).
@@ -155,18 +158,30 @@ mod tests {
     #[test]
     fn goal_context_empty_when_both_none() {
         assert!(GoalContext::empty().is_empty());
-        assert!(GoalContext { goal: None, grind: None }.is_empty());
+        assert!(
+            GoalContext {
+                goal: None,
+                grind: None
+            }
+            .is_empty()
+        );
     }
 
     #[test]
     fn goal_context_not_empty_when_goal_set() {
-        let ctx = GoalContext { goal: Some("finish".into()), grind: None };
+        let ctx = GoalContext {
+            goal: Some("finish".into()),
+            grind: None,
+        };
         assert!(!ctx.is_empty());
     }
 
     #[test]
     fn goal_context_not_empty_when_grind_set() {
-        let ctx = GoalContext { goal: None, grind: Some("grind".into()) };
+        let ctx = GoalContext {
+            goal: None,
+            grind: Some("grind".into()),
+        };
         assert!(!ctx.is_empty());
     }
 
@@ -190,8 +205,14 @@ mod tests {
         let first = t.on_clean_exit();
         assert!(first.is_some(), "goal nudge must fire on first clean exit");
         let text = first.unwrap();
-        assert!(text.contains("finish the report"), "nudge must include goal text");
-        assert!(text.contains("<!-- goal-nudge -->"), "must have invisible marker");
+        assert!(
+            text.contains("finish the report"),
+            "nudge must include goal text"
+        );
+        assert!(
+            text.contains("<!-- goal-nudge -->"),
+            "must have invisible marker"
+        );
 
         let second = t.on_clean_exit();
         assert!(
@@ -226,8 +247,14 @@ mod tests {
             let nudge = t.on_clean_exit();
             assert!(nudge.is_some(), "grind nudge must fire on turn {i}");
             let text = nudge.unwrap();
-            assert!(text.contains("build everything"), "nudge must include grind text at turn {i}");
-            assert!(text.contains("Keep working"), "grind nudge must say keep working");
+            assert!(
+                text.contains("build everything"),
+                "nudge must include grind text at turn {i}"
+            );
+            assert!(
+                text.contains("Keep working"),
+                "grind nudge must say keep working"
+            );
         }
     }
 
@@ -246,7 +273,10 @@ mod tests {
         // Subsequent clean exits: grind takes over.
         for i in 0..3 {
             let nudge = t.on_clean_exit().unwrap();
-            assert!(nudge.contains("keep grinding"), "turn {i} must be grind nudge");
+            assert!(
+                nudge.contains("keep grinding"),
+                "turn {i} must be grind nudge"
+            );
         }
     }
 
@@ -268,17 +298,26 @@ mod tests {
     #[test]
     fn long_goal_text_is_truncated_in_nudge() {
         let long = "x".repeat(MAX_NUDGE_TEXT_LEN + 100);
-        let ctx = GoalContext { goal: Some(long), grind: None };
+        let ctx = GoalContext {
+            goal: Some(long),
+            grind: None,
+        };
         let mut t = GoalTracker::new(ctx);
         let nudge = t.on_clean_exit().unwrap();
         // Nudge contains the ellipsis from truncation.
-        assert!(nudge.contains('…'), "long goal must be truncated with ellipsis");
+        assert!(
+            nudge.contains('…'),
+            "long goal must be truncated with ellipsis"
+        );
     }
 
     #[test]
     fn short_goal_text_is_not_truncated() {
         let short = "finish the report";
-        let ctx = GoalContext { goal: Some(short.into()), grind: None };
+        let ctx = GoalContext {
+            goal: Some(short.into()),
+            grind: None,
+        };
         let mut t = GoalTracker::new(ctx);
         let nudge = t.on_clean_exit().unwrap();
         assert!(nudge.contains(short), "short goal must not be truncated");

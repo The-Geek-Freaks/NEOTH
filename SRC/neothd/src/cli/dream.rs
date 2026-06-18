@@ -68,11 +68,15 @@ async fn run_now(
         // GOLD-ADOPT-21 — theme labels are a low-stakes utility call; route them
         // to the fast/cheap `inference.utility_provider` when configured (else
         // this is identical to the main provider).
-        crate::providers::from_config_for_utility(&config).await.ok()
+        crate::providers::from_config_for_utility(&config)
+            .await
+            .ok()
     } else {
         None
     };
-    let window = window_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WINDOW);
+    let window = window_secs
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_WINDOW);
     let max = max_events.unwrap_or(DEFAULT_MAX_EVENTS);
 
     // One-shot CLI: writer = None — `emit_dream_composed` below handles the

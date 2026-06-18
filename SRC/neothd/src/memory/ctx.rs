@@ -12,7 +12,6 @@
 //! Public surface mirrors the ctx-mode tool names so future migration to a
 //! WASM-hosted MCP plugin is mechanical.
 
-
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};

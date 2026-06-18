@@ -181,16 +181,13 @@ async fn emit_identity_merged(
     }
     let segment = FreedomConfig::default_wal_dir().join("000001.wal");
     if let Some(p) = segment.parent() {
-        std::fs::create_dir_all(p)
-            .with_context(|| format!("create WAL dir {}", p.display()))?;
+        std::fs::create_dir_all(p).with_context(|| format!("create WAL dir {}", p.display()))?;
     }
     let (writer, _join) = crate::wal::writer::spawn(segment)
         .context("0x9B IDENTITY_MERGED: WAL writer spawn failed; merge not recorded")?;
-    let header = crate::wal::HeaderBuilder::new(
-        crate::wal::events::EVENT_TYPE_IDENTITY_MERGED,
-        &payload,
-    )
-    .build();
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_IDENTITY_MERGED, &payload)
+            .build();
     writer
         .try_append_sync(header, payload)
         .context("0x9B IDENTITY_MERGED: frame append failed (audit gap)")?;

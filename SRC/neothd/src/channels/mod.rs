@@ -26,6 +26,12 @@ pub mod discord_gateway;
 pub mod discord_gateway_loop;
 pub mod formatter;
 pub mod identity;
+#[cfg(feature = "irc-channel")]
+pub mod irc;
+/// GOLD-FEAT-10 — IRC. The pure protocol-mapping module (`irc_api`) is always
+/// compiled (carries no `irc` dependency); the connection adapter (`irc`) is
+/// behind the `irc-channel` feature.
+pub mod irc_api;
 pub mod keet;
 pub mod keet_bencode;
 pub mod keet_crypto;
@@ -33,15 +39,15 @@ pub mod keet_dht;
 pub mod keet_pairing;
 pub mod keet_udp;
 pub mod keet_wal;
-/// SPEC-11 — stateful send-then-edit wrapper for streaming previews + post-reply
-/// corrections. First call sends, later calls edit-in-place + emit `0x38`.
-pub mod live_delivery;
 /// GOLD-FEAT-10 — LINE Messaging API adapter. Inbound rides the shared webhook
 /// listener (LINE pushes events to a public URL); outbound goes through the
 /// push REST endpoint. Zero extra deps (pure reqwest + serde) → always
 /// compiled, no feature gate.
 pub mod line;
 pub mod line_api;
+/// SPEC-11 — stateful send-then-edit wrapper for streaming previews + post-reply
+/// corrections. First call sends, later calls edit-in-place + emit `0x38`.
+pub mod live_delivery;
 /// GOLD-FEAT-10 — Matrix E2EE adapter (`matrix-sdk`). Feature-gated: the heavy
 /// crypto tree is only compiled in `--features matrix-channel` builds. The
 /// `ChannelKind::Matrix` variant + `MatrixFormatter` + probe row stay compiled
@@ -50,23 +56,17 @@ pub mod line_api;
 pub mod matrix;
 #[cfg(feature = "matrix-channel")]
 pub mod matrix_client;
-/// GOLD-FEAT-10 — IRC. The pure protocol-mapping module (`irc_api`) is always
-/// compiled (carries no `irc` dependency); the connection adapter (`irc`) is
-/// behind the `irc-channel` feature.
-pub mod irc_api;
-#[cfg(feature = "irc-channel")]
-pub mod irc;
-/// GOLD-FEAT-10 — Nostr: the pure rumor→`InboundMessage` mapping + outbound
-/// chunker stay always-compiled (`nostr_api`); the relay adapter (`nostr`) is
-/// behind the `nostr-channel` feature (heavy `nostr-sdk` tree).
-pub mod nostr_api;
-#[cfg(feature = "nostr-channel")]
-pub mod nostr;
 /// GOLD-FEAT-10 — Mattermost (self-hosted, Slack-style team chat). WebSocket
 /// receive + REST send over the always-present `tokio-tungstenite` + `reqwest`
 /// deps — no new crate, no feature gate. NEOTH dials OUT, so no public URL.
 pub mod mattermost;
 pub mod mattermost_api;
+#[cfg(feature = "nostr-channel")]
+pub mod nostr;
+/// GOLD-FEAT-10 — Nostr: the pure rumor→`InboundMessage` mapping + outbound
+/// chunker stay always-compiled (`nostr_api`); the relay adapter (`nostr`) is
+/// behind the `nostr-channel` feature (heavy `nostr-sdk` tree).
+pub mod nostr_api;
 pub mod pears_bridge;
 pub mod probe;
 pub mod rate_limit;

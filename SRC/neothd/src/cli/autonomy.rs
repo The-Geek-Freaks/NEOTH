@@ -239,9 +239,8 @@ pub async fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()
 }
 
 fn run_show(output: OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path().context(
-        "load freedom.yaml (run `neoth init` first if this is a fresh install)",
-    )?;
+    let cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
     let mode = operating_mode_label(&cfg);
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -275,9 +274,8 @@ fn run_show(output: OutputFormat) -> Result<()> {
 /// Persists `autonomy` + `skills.enable_all_bundled` atomically, audits the
 /// authority change, and (for full-auto) prints the consequence up front.
 async fn run_set_mode(full_auto: bool, gui_confirmed: bool, output: OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path().context(
-        "load freedom.yaml (run `neoth init` first if this is a fresh install)",
-    )?;
+    let cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
     let required = cfg.audit_rpc.required_for_oneshot_permission_events;
     let home = FreedomConfig::default_neoth_home();
     let pidfile = crate::daemon::pidfile::default_pidfile();
@@ -333,7 +331,9 @@ async fn run_set_mode(full_auto: bool, gui_confirmed: bool, output: OutputFormat
             } else {
                 println!("operating mode: GATED (saved to freedom.yaml)");
                 println!("  autonomy: {} -> standard", previous.as_str());
-                println!("  skills:   curated set (run `neoth skill enable <id>` for individual extras)");
+                println!(
+                    "  skills:   curated set (run `neoth skill enable <id>` for individual extras)"
+                );
                 println!("  NEOTH asks before sensitive actions.");
             }
         }
@@ -342,9 +342,8 @@ async fn run_set_mode(full_auto: bool, gui_confirmed: bool, output: OutputFormat
 }
 
 async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path().context(
-        "load freedom.yaml (run `neoth init` first if this is a fresh install)",
-    )?;
+    let cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
     let required = cfg.audit_rpc.required_for_oneshot_permission_events;
     let home = FreedomConfig::default_neoth_home();
     let pidfile = crate::daemon::pidfile::default_pidfile();
@@ -510,7 +509,10 @@ mod tests {
         let err = apply_level(FreedomConfig::default(), "yolo").unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("invalid autonomy level"), "got: {msg}");
-        assert!(msg.contains("strict") && msg.contains("full"), "lists valid levels: {msg}");
+        assert!(
+            msg.contains("strict") && msg.contains("full"),
+            "lists valid levels: {msg}"
+        );
     }
 
     #[test]
@@ -532,7 +534,10 @@ mod tests {
             Some(EVENT_TYPE_LEVEL_ELEVATED)
         );
         // Unchanged → no frame.
-        assert_eq!(change_event(AutonomyLevel::Elevated, AutonomyLevel::Elevated), None);
+        assert_eq!(
+            change_event(AutonomyLevel::Elevated, AutonomyLevel::Elevated),
+            None
+        );
     }
 
     #[test]
@@ -557,7 +562,10 @@ mod tests {
         let (next, prev) = apply_mode(cfg, false);
         assert_eq!(prev, AutonomyLevel::Full);
         assert_eq!(next.autonomy, AutonomyLevel::Standard);
-        assert!(!next.skills.enable_all_bundled, "gated curates the skill set");
+        assert!(
+            !next.skills.enable_all_bundled,
+            "gated curates the skill set"
+        );
         assert_eq!(operating_mode_label(&next), "gated");
     }
 

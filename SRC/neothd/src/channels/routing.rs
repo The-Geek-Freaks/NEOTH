@@ -236,8 +236,14 @@ mod tests {
         // whatsapp sub-kinds alias to the same recipient slot
         let mut r2 = ChannelRouting::default();
         r2.destinations.whatsapp_recipient = Some("+15551234567".to_string());
-        assert_eq!(r2.destinations.for_channel("whatsapp_business"), Some("+15551234567"));
-        assert_eq!(r2.destinations.for_channel("whatsapp_baileys"), Some("+15551234567"));
+        assert_eq!(
+            r2.destinations.for_channel("whatsapp_business"),
+            Some("+15551234567")
+        );
+        assert_eq!(
+            r2.destinations.for_channel("whatsapp_baileys"),
+            Some("+15551234567")
+        );
     }
 
     #[test]
@@ -255,7 +261,10 @@ mod tests {
         let original = routing();
         original.save_to(&path).expect("save");
         let loaded = ChannelRouting::load_from(&path).expect("load");
-        assert_eq!(loaded, original, "routing config survives a save/load roundtrip");
+        assert_eq!(
+            loaded, original,
+            "routing config survives a save/load roundtrip"
+        );
     }
 
     #[test]

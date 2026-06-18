@@ -23,8 +23,8 @@
 use crate::config::SecurityPolicy;
 use crate::mcp::repetition_guard::{GuardVerdict, ToolRepetitionGuard};
 use crate::mcp::tool_call_parser::ParsedToolCall;
-use crate::security::risk_gate::{evaluate_tool_risk, RiskGate};
-use crate::security::{inspect_tool_args, ToolCallRisk};
+use crate::security::risk_gate::{RiskGate, evaluate_tool_risk};
+use crate::security::{ToolCallRisk, inspect_tool_args};
 
 /// One inspector's decision for a prospective tool call.
 pub enum InspectorVerdict {
@@ -188,10 +188,16 @@ mod tests {
         let c = call("fs", "read", serde_json::json!({ "path": "a" }));
         // Defaults: a 4th identical call in a row blocks.
         for _ in 0..3 {
-            assert!(matches!(chain.inspect(&c, &policy()), InspectorVerdict::Allow));
+            assert!(matches!(
+                chain.inspect(&c, &policy()),
+                InspectorVerdict::Allow
+            ));
         }
         match chain.inspect(&c, &policy()) {
-            InspectorVerdict::Block { inspector, kind: BlockKind::Repetition(_) } => {
+            InspectorVerdict::Block {
+                inspector,
+                kind: BlockKind::Repetition(_),
+            } => {
                 assert_eq!(inspector, "repetition")
             }
             _ => panic!("expected a repetition block on the 4th identical call"),
@@ -204,7 +210,10 @@ mod tests {
         // The default dangerous-command policy is Deny.
         let c = call("sh", "exec", serde_json::json!({ "command": "rm -rf /" }));
         match chain.inspect(&c, &policy()) {
-            InspectorVerdict::Block { inspector, kind: BlockKind::Risk { gate, .. } } => {
+            InspectorVerdict::Block {
+                inspector,
+                kind: BlockKind::Risk { gate, .. },
+            } => {
                 assert_eq!(inspector, "risk_policy");
                 assert!(gate.is_blocked());
             }
@@ -223,12 +232,18 @@ mod tests {
         for _ in 0..3 {
             assert!(matches!(
                 chain.inspect(&c, &policy()),
-                InspectorVerdict::Block { kind: BlockKind::Risk { .. }, .. }
+                InspectorVerdict::Block {
+                    kind: BlockKind::Risk { .. },
+                    ..
+                }
             ));
         }
         assert!(matches!(
             chain.inspect(&c, &policy()),
-            InspectorVerdict::Block { kind: BlockKind::Repetition(_), .. }
+            InspectorVerdict::Block {
+                kind: BlockKind::Repetition(_),
+                ..
+            }
         ));
     }
 
@@ -252,7 +267,10 @@ mod tests {
         let c = call("fs", "read", serde_json::json!({}));
         assert!(matches!(
             chain.inspect(&c, &policy()),
-            InspectorVerdict::Block { inspector: "deny_all", .. }
+            InspectorVerdict::Block {
+                inspector: "deny_all",
+                ..
+            }
         ));
     }
 }

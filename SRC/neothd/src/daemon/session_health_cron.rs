@@ -174,7 +174,12 @@ fn day_score(d: &DayHealth) -> (f64, f64, f64, u64) {
     } else if mi > 50_000.0 {
         score -= 3.0;
     }
-    (score.clamp(0.0, 100.0), refusal_rate, failure_rate, mean_input)
+    (
+        score.clamp(0.0, 100.0),
+        refusal_rate,
+        failure_rate,
+        mean_input,
+    )
 }
 
 /// Scan every `*.wal` segment, bucketing the health-signal frames by UTC
@@ -547,7 +552,10 @@ mod tests {
             ..Default::default()
         };
         let (score, refusal_rate, _, _) = day_score(&d);
-        assert!((refusal_rate - 1.0).abs() < 1e-6, "denominator is total turns, capped at 1.0");
+        assert!(
+            (refusal_rate - 1.0).abs() < 1e-6,
+            "denominator is total turns, capped at 1.0"
+        );
         assert_eq!(score, 0.0, "100 - 150 clamps to 0");
     }
 
@@ -560,8 +568,14 @@ mod tests {
         };
         assert!((day_score(&mk(60_000)).0 - 97.0).abs() < 1e-6, "60k → -3");
         assert!((day_score(&mk(110_000)).0 - 93.0).abs() < 1e-6, "110k → -7");
-        assert!((day_score(&mk(160_000)).0 - 88.0).abs() < 1e-6, "160k → -12");
-        assert!((day_score(&mk(40_000)).0 - 100.0).abs() < 1e-6, "under 50k → no penalty");
+        assert!(
+            (day_score(&mk(160_000)).0 - 88.0).abs() < 1e-6,
+            "160k → -12"
+        );
+        assert!(
+            (day_score(&mk(40_000)).0 - 100.0).abs() < 1e-6,
+            "under 50k → no penalty"
+        );
     }
 
     #[test]
@@ -572,7 +586,11 @@ mod tests {
             provider_errors: 10,
             ..Default::default()
         };
-        assert!((day_score(&d).0 - 82.0).abs() < 1e-6, "score was {}", day_score(&d).0);
+        assert!(
+            (day_score(&d).0 - 82.0).abs() < 1e-6,
+            "score was {}",
+            day_score(&d).0
+        );
     }
 
     #[test]
@@ -591,19 +609,55 @@ mod tests {
             quota_hits: 9,
             ..Default::default()
         };
-        assert!((day_score(&capped).0 - (100.0 - 24.0)).abs() < 1e-6, "quota penalty caps at 3");
+        assert!(
+            (day_score(&capped).0 - (100.0 - 24.0)).abs() < 1e-6,
+            "quota penalty caps at 3"
+        );
     }
 
     #[test]
     fn compute_baseline_needs_three_qualifying_days() {
         let mut by_day = BTreeMap::new();
-        by_day.insert(11, DayHealth { activity: 50, ..Default::default() });
-        by_day.insert(12, DayHealth { activity: 50, ..Default::default() }); // current (excluded)
-        assert!(compute_baseline(&by_day, 12, 7, 10).is_none(), "only 1 prior qualifying day");
-        by_day.insert(10, DayHealth { activity: 50, ..Default::default() });
-        by_day.insert(9, DayHealth { activity: 50, ..Default::default() });
+        by_day.insert(
+            11,
+            DayHealth {
+                activity: 50,
+                ..Default::default()
+            },
+        );
+        by_day.insert(
+            12,
+            DayHealth {
+                activity: 50,
+                ..Default::default()
+            },
+        ); // current (excluded)
+        assert!(
+            compute_baseline(&by_day, 12, 7, 10).is_none(),
+            "only 1 prior qualifying day"
+        );
+        by_day.insert(
+            10,
+            DayHealth {
+                activity: 50,
+                ..Default::default()
+            },
+        );
+        by_day.insert(
+            9,
+            DayHealth {
+                activity: 50,
+                ..Default::default()
+            },
+        );
         // A near-idle day is skipped, not counted toward the baseline.
-        by_day.insert(8, DayHealth { activity: 2, ..Default::default() });
+        by_day.insert(
+            8,
+            DayHealth {
+                activity: 2,
+                ..Default::default()
+            },
+        );
         let b = compute_baseline(&by_day, 12, 7, 10).expect("3 qualifying prior days");
         assert!((b - 100.0).abs() < 1e-6, "all clean prior days → mean 100");
     }
@@ -612,13 +666,29 @@ mod tests {
     fn regression_fires_on_sharp_drop_below_floor() {
         let mut by_day = BTreeMap::new();
         for d in 10..13 {
-            by_day.insert(d, DayHealth { activity: 50, ..Default::default() }); // baseline 100
+            by_day.insert(
+                d,
+                DayHealth {
+                    activity: 50,
+                    ..Default::default()
+                },
+            ); // baseline 100
         }
         // Current day degraded into C territory (score ~61) — a >20pt drop AND
         // below the 75 floor. alert_at_or_below=F so this is the regression path.
-        by_day.insert(13, DayHealth { activity: 50, job_failures: 12, ..Default::default() });
+        by_day.insert(
+            13,
+            DayHealth {
+                activity: 50,
+                job_failures: 12,
+                ..Default::default()
+            },
+        );
         let alert = evaluate_health(&by_day, &cfg(10, "F")).expect("regression should fire");
-        assert!(alert.regression_triggered, "fired via the regression path, not the floor");
+        assert!(
+            alert.regression_triggered,
+            "fired via the regression path, not the floor"
+        );
         assert!(alert.baseline_mean_score.unwrap() > 90.0);
     }
 
@@ -626,11 +696,24 @@ mod tests {
     fn regression_quiet_when_day_is_still_healthy() {
         let mut by_day = BTreeMap::new();
         for d in 10..13 {
-            by_day.insert(d, DayHealth { activity: 50, ..Default::default() }); // baseline 100
+            by_day.insert(
+                d,
+                DayHealth {
+                    activity: 50,
+                    ..Default::default()
+                },
+            ); // baseline 100
         }
         // Current day dropped to a B (~79) — below baseline-20 but ABOVE the 75
         // floor, so the regression must NOT fire (a B is still healthy).
-        by_day.insert(13, DayHealth { activity: 50, job_failures: 6, ..Default::default() });
+        by_day.insert(
+            13,
+            DayHealth {
+                activity: 50,
+                job_failures: 6,
+                ..Default::default()
+            },
+        );
         assert!(
             evaluate_health(&by_day, &cfg(10, "F")).is_none(),
             "a still-healthy B must not regression-alert",
@@ -656,28 +739,53 @@ mod tests {
         // Two NON-counted frames (hard-block + abliterated-used) prove they are
         // excluded from the bad-health tally (the moral core working correctly).
         for _ in 0..12 {
-            append(&writer, EVENT_TYPE_PROVIDER_RESPONSE, serde_json::json!({"input_tokens": 1000}))
-                .await;
+            append(
+                &writer,
+                EVENT_TYPE_PROVIDER_RESPONSE,
+                serde_json::json!({"input_tokens": 1000}),
+            )
+            .await;
         }
         for _ in 0..8 {
-            append(&writer, EVENT_TYPE_REFUSAL_PERSISTENT, serde_json::json!({})).await;
+            append(
+                &writer,
+                EVENT_TYPE_REFUSAL_PERSISTENT,
+                serde_json::json!({}),
+            )
+            .await;
         }
         for _ in 0..5 {
             append(&writer, EVENT_TYPE_JOB_FAILED, serde_json::json!({})).await;
         }
         // New health signals: provider errors (0x22) + truncated-context (0x2F).
         for _ in 0..3 {
-            append(&writer, crate::wal::events::EVENT_TYPE_PROVIDER_ERROR, serde_json::json!({}))
-                .await;
+            append(
+                &writer,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                serde_json::json!({}),
+            )
+            .await;
         }
         for _ in 0..2 {
-            append(&writer, crate::wal::events::EVENT_TYPE_BUDGET_EXCEEDED, serde_json::json!({}))
-                .await;
+            append(
+                &writer,
+                crate::wal::events::EVENT_TYPE_BUDGET_EXCEEDED,
+                serde_json::json!({}),
+            )
+            .await;
         }
-        append(&writer, crate::wal::events::EVENT_TYPE_REFUSAL_HARD_BLOCKED, serde_json::json!({}))
-            .await;
-        append(&writer, crate::wal::events::EVENT_TYPE_REFUSAL_ABLITERATED_USED, serde_json::json!({}))
-            .await;
+        append(
+            &writer,
+            crate::wal::events::EVENT_TYPE_REFUSAL_HARD_BLOCKED,
+            serde_json::json!({}),
+        )
+        .await;
+        append(
+            &writer,
+            crate::wal::events::EVENT_TYPE_REFUSAL_ABLITERATED_USED,
+            serde_json::json!({}),
+        )
+        .await;
         drop(writer);
         let _ = join.await;
 
@@ -687,9 +795,16 @@ mod tests {
             .await
             .unwrap()
             .expect("a 67%-refusal-failure day must alert");
-        assert!(alert.grade <= Grade::D, "grade was {}", alert.grade.as_str());
+        assert!(
+            alert.grade <= Grade::D,
+            "grade was {}",
+            alert.grade.as_str()
+        );
         assert_eq!(alert.activity, 12);
-        assert_eq!(alert.refusal_failures, 8, "hard-block + abliterated-used must NOT count");
+        assert_eq!(
+            alert.refusal_failures, 8,
+            "hard-block + abliterated-used must NOT count"
+        );
         assert_eq!(alert.job_failures, 5);
         assert_eq!(alert.provider_errors, 3);
         assert_eq!(alert.budget_exceeded_count, 2);

@@ -447,7 +447,10 @@ mod tests {
         let r = utf8_or_scrub(vec![0xff, 0xfe, 0x00], "username");
         assert!(r.is_err());
         assert!(r.unwrap_err().contains("username not UTF-8"));
-        assert_eq!(utf8_or_scrub(b"alice".to_vec(), "username").unwrap(), "alice");
+        assert_eq!(
+            utf8_or_scrub(b"alice".to_vec(), "username").unwrap(),
+            "alice"
+        );
     }
 
     #[test]

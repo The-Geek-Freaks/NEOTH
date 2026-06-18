@@ -227,8 +227,9 @@ mod tests {
         );
 
         // 4. Master-switch ON + full identity ⇒ Some (the only activation path).
-        let active = cluster_transport_activation(&freedom_with(Some("home-lab"), true), &full_phrase)
-            .expect("enabled=true + full identity ⇒ transport activates");
+        let active =
+            cluster_transport_activation(&freedom_with(Some("home-lab"), true), &full_phrase)
+                .expect("enabled=true + full identity ⇒ transport activates");
         assert_eq!(active.name, "home-lab");
     }
 

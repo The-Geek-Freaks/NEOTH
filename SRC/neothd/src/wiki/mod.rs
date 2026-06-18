@@ -15,7 +15,7 @@ pub mod renderer;
 pub mod sources;
 pub mod writer;
 
-pub use ingest::{ingest_sources, IngestStats, WIKI_SCOPE};
-pub use renderer::{render_index, render_page, INDEX_SLUG};
-pub use sources::{discover_sources, SourceCategory, WikiSource};
-pub use writer::{build_wiki, plan_wiki, write_plan, WikiBuildPlan, WikiBuildStats};
+pub use ingest::{IngestStats, WIKI_SCOPE, ingest_sources};
+pub use renderer::{INDEX_SLUG, render_index, render_page};
+pub use sources::{SourceCategory, WikiSource, discover_sources};
+pub use writer::{WikiBuildPlan, WikiBuildStats, build_wiki, plan_wiki, write_plan};

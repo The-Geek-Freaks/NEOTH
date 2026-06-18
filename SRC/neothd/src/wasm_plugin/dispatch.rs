@@ -890,7 +890,9 @@ mod tests {
     #[test]
     fn invoke_plugin_wrapper_still_runs_without_handles() {
         let engine = NeothEngine::new().expect("engine");
-        let module = engine.compile_from_bytes(&echo_wasm()).expect("compile echo");
+        let module = engine
+            .compile_from_bytes(&echo_wasm())
+            .expect("compile echo");
         let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker");
         let outcome = invoke_plugin(
             &engine,

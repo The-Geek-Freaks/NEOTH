@@ -51,11 +51,17 @@ pub struct UncoverResult {
 pub fn build_args(query: &str, engines: &[String], limit: u32) -> Result<Vec<String>> {
     super::validate_arg("query", query)?;
     if engines.is_empty() {
-        anyhow::bail!("recon uncover: at least one -engine required ({:?})", KNOWN_ENGINES);
+        anyhow::bail!(
+            "recon uncover: at least one -engine required ({:?})",
+            KNOWN_ENGINES
+        );
     }
     for e in engines {
         if !KNOWN_ENGINES.contains(&e.as_str()) {
-            anyhow::bail!("recon uncover: unknown engine {e:?} (known: {:?})", KNOWN_ENGINES);
+            anyhow::bail!(
+                "recon uncover: unknown engine {e:?} (known: {:?})",
+                KNOWN_ENGINES
+            );
         }
     }
     let limit = limit.clamp(1, 10_000);
@@ -91,12 +97,11 @@ pub async fn run(query: &str, engines: &[String], limit: u32) -> Result<Vec<Unco
     let bin = super::locate(BINARY)
         .ok_or_else(|| anyhow::anyhow!("`{BINARY}` not installed — `{INSTALL_HINT}`"))?;
     let args = build_args(query, engines, limit)?;
-    let out = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(bin).args(&args).output()
-    })
-    .await
-    .context("join uncover task")?
-    .context("run uncover")?;
+    let out =
+        tokio::task::spawn_blocking(move || std::process::Command::new(bin).args(&args).output())
+            .await
+            .context("join uncover task")?
+            .context("run uncover")?;
     // uncover prints engine/auth errors to stderr; surface them but still parse
     // whatever stdout produced (partial results across engines are normal).
     if !out.stderr.is_empty() {

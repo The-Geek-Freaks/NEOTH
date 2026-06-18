@@ -186,7 +186,13 @@ fn inline_token_excerpt(url: &str) -> Option<String> {
     if password.is_empty() {
         return None;
     }
-    Some(password.chars().take(AUDIT_EXCERPT_CHARS).collect::<String>() + "…")
+    Some(
+        password
+            .chars()
+            .take(AUDIT_EXCERPT_CHARS)
+            .collect::<String>()
+            + "…",
+    )
 }
 
 /// One regex hit from [`match_secret_kinds`]. Kept private so the

@@ -330,7 +330,11 @@ NEOTH never phones home.
         let claims = parse_openclaw_text(text).unwrap();
         assert_eq!(claims.len(), 2);
         assert_eq!(claims[0].scope, "host:primary");
-        assert!(claims[0].statement.contains("Primary server is at 10.0.0.1"));
+        assert!(
+            claims[0]
+                .statement
+                .contains("Primary server is at 10.0.0.1")
+        );
         assert_eq!(claims[1].scope, "global");
         assert!(claims[1].statement.contains("never phones home"));
         for c in &claims {

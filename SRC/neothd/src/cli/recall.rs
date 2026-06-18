@@ -165,7 +165,10 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         let tier = crate::memory::recall_gate::classify_recall_need(&q);
         match args.output {
             crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
-                println!("{}", serde_json::json!({ "query": q, "tier": tier.as_str() }));
+                println!(
+                    "{}",
+                    serde_json::json!({ "query": q, "tier": tier.as_str() })
+                );
             }
             crate::cli::OutputFormat::Table => println!("recall tier: {}", tier.as_str()),
         }
@@ -179,8 +182,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         // MEM-14: the queried entity's own credibility (source_count) + merged
         // attributes head the result.
         let head = crate::memory::entities::get_entity(&conn, &entity)?;
-        let neighbors =
-            crate::memory::entities::get_neighbors(&conn, &entity, args.graph_depth)?;
+        let neighbors = crate::memory::entities::get_neighbors(&conn, &entity, args.graph_depth)?;
         match args.output {
             crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
                 let rows: Vec<_> = neighbors
@@ -219,19 +221,28 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                             attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
                         format!(" [{}]", pairs.join(", "))
                     };
-                    println!("entity '{}' ({} sources){}", e.name, e.source_count, attr_str);
+                    println!(
+                        "entity '{}' ({} sources){}",
+                        e.name, e.source_count, attr_str
+                    );
                 }
                 if neighbors.is_empty() {
                     println!("no graph neighbours for '{entity}' (unknown entity or no relations)");
                 } else {
-                    println!("graph neighbours of '{entity}' (≤{} hops):", args.graph_depth);
+                    println!(
+                        "graph neighbours of '{entity}' (≤{} hops):",
+                        args.graph_depth
+                    );
                     for n in &neighbors {
                         let cred = if n.source_count > 1 {
                             format!(", {} sources", n.source_count)
                         } else {
                             String::new()
                         };
-                        println!("  [{}] {} (via {}{})", n.depth, n.name, n.via_relation, cred);
+                        println!(
+                            "  [{}] {} (via {}{})",
+                            n.depth, n.name, n.via_relation, cred
+                        );
                     }
                 }
             }
@@ -255,7 +266,10 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 .await?;
         match args.output {
             crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
-                println!("{}", serde_json::json!({ "entities": ents, "relations": rels }));
+                println!(
+                    "{}",
+                    serde_json::json!({ "entities": ents, "relations": rels })
+                );
             }
             crate::cli::OutputFormat::Table => {
                 println!("knowledge graph: +{ents} entit(y/ies), +{rels} relation(s)")
@@ -290,7 +304,10 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 o.tier.as_str()
             ),
             (None, crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl) => {
-                println!("{}", serde_json::json!({ "event_id": event_id, "found": false }));
+                println!(
+                    "{}",
+                    serde_json::json!({ "event_id": event_id, "found": false })
+                );
             }
             (None, crate::cli::OutputFormat::Table) => {
                 println!("no memory found for event {event_id}")
@@ -357,7 +374,11 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // searching. No WAL, no network.
     if let Some(window) = args.scorecard {
         const DEFAULT_SCORECARD_WINDOW: usize = 500;
-        let window = if window == 0 { DEFAULT_SCORECARD_WINDOW } else { window.min(5000) };
+        let window = if window == 0 {
+            DEFAULT_SCORECARD_WINDOW
+        } else {
+            window.min(5000)
+        };
         let db_path = args.db.clone().unwrap_or_else(store::default_path);
         let conn = store::open(&db_path).context("open views.db")?;
         let card = store::recall_scorecard(&conn, window).context("compute recall scorecard")?;
@@ -432,8 +453,8 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     let recall_tier = crate::memory::recall_gate::classify_recall_need(&query);
     let budget = crate::memory::recall_lanes::budget_for(recall_tier);
     let tier_str = recall_tier.as_str();
-    let (rows, reinforcements) = tokio::task::spawn_blocking(
-        move || -> Result<RecallTaskOutput> {
+    let (rows, reinforcements) =
+        tokio::task::spawn_blocking(move || -> Result<RecallTaskOutput> {
             // RECALL-METER-01: time the full multi-tier recall query.
             let recall_t0 = std::time::Instant::now();
             // GOLD-ADAPT-MEM-03 — Semantic lane (hot tier): FTS5/bm25 keyword
@@ -570,10 +591,9 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             }
 
             Ok((rows, reinforcements))
-        },
-    )
-    .await
-    .context("recall query task panicked")??;
+        })
+        .await
+        .context("recall query task panicked")??;
 
     // Phase 28a R-22 MT-3: Hebbian reinforce on EVERY recall hit (all
     // tiers) is computed inside the blocking task above (GOLD-SEC-06).
@@ -717,7 +737,10 @@ fn append_graph_facts(db_path: &std::path::Path, query: &str, output: crate::cli
         }
         if let Ok(neighbors) = crate::memory::entities::get_neighbors(&conn, &cand, 2) {
             if !neighbors.is_empty() {
-                print!("\n{}", crate::memory::context_inject::build_facts_block(&cand, &neighbors));
+                print!(
+                    "\n{}",
+                    crate::memory::context_inject::build_facts_block(&cand, &neighbors)
+                );
             }
         }
     }
@@ -749,7 +772,10 @@ fn render_dreams(dreams: &[crate::daemon::dreaming::Dream]) {
 
 /// GOLD-ADAPT-MEM-15 — render the recall-quality scorecard. JSON output is the
 /// full struct (for scripting); Table is a compact human summary.
-fn render_scorecard(card: &crate::memory::store::RecallScorecard, output: crate::cli::OutputFormat) {
+fn render_scorecard(
+    card: &crate::memory::store::RecallScorecard,
+    output: crate::cli::OutputFormat,
+) {
     match output {
         crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
             match serde_json::to_string_pretty(card) {
@@ -759,15 +785,26 @@ fn render_scorecard(card: &crate::memory::store::RecallScorecard, output: crate:
         }
         crate::cli::OutputFormat::Table => {
             let span = match (card.window_start_ts, card.window_end_ts) {
-                (Some(a), Some(b)) => format!("{} → {}", format_ts(a * 1_000_000_000), format_ts(b * 1_000_000_000)),
+                (Some(a), Some(b)) => format!(
+                    "{} → {}",
+                    format_ts(a * 1_000_000_000),
+                    format_ts(b * 1_000_000_000)
+                ),
                 _ => "no data".to_string(),
             };
-            println!("Recall Quality Scorecard (window: {}, {})", card.window, span);
+            println!(
+                "Recall Quality Scorecard (window: {}, {})",
+                card.window, span
+            );
             println!("──────────────────────────────────────────────────────────");
             println!(
                 "Total recalls        : {:<6}  Data sufficient: {}",
                 card.total_recalls,
-                if card.data_sufficient { "yes" } else { "no (need ≥10 non-skip)" }
+                if card.data_sufficient {
+                    "yes"
+                } else {
+                    "no (need ≥10 non-skip)"
+                }
             );
             println!(
                 "Hit rate             : {:>5.1}%  Empty rate     : {:>5.1}%",
@@ -820,8 +857,13 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
     // stretches the recency half-life. Both no-op (age tier + access-naive curve)
     // when access_count is 0.
     let rank_tier = tiers::tier_for_by_access(age_tier, h.access_count, importance);
-    let base =
-        tiers::ranking_score_repromoted(importance, age_tier, rank_tier, days_since, h.access_count);
+    let base = tiers::ranking_score_repromoted(
+        importance,
+        age_tier,
+        rank_tier,
+        days_since,
+        h.access_count,
+    );
     // JV-MEM-14: weight by source trust so operator-explicit memories outrank
     // lower-trust external chatter at equal relevance.
     let base = base * tiers::trust_weight(h.trust);
@@ -1899,11 +1941,14 @@ mod tests {
             trust: 1,
         };
         let mut rows = vec![
-            mk(1, "x".repeat(1200)),       // verbose → length-penalised
+            mk(1, "x".repeat(1200)),         // verbose → length-penalised
             mk(2, "short note".to_string()), // short → unpenalised, outranks it
         ];
         rank_in_place(&mut rows, now_ns);
-        assert_eq!(rows[0].event_id, 2, "the short entry outranks the verbose one");
+        assert_eq!(
+            rows[0].event_id, 2,
+            "the short entry outranks the verbose one"
+        );
         assert_eq!(rows[1].event_id, 1);
     }
 
@@ -2041,12 +2086,14 @@ mod tests {
         }
 
         // Recall intent → memory reply that quotes the seeded episode.
-        let reply =
-            answer_conversational_recall("Do you remember when we talked about rust?", &db)
-                .await
-                .expect("recall intent must produce a reply");
+        let reply = answer_conversational_recall("Do you remember when we talked about rust?", &db)
+            .await
+            .expect("recall intent must produce a reply");
         assert!(reply.starts_with("Yes — "), "english template: {reply}");
-        assert!(reply.contains("rust ist gut"), "reply must quote the episode: {reply}");
+        assert!(
+            reply.contains("rust ist gut"),
+            "reply must quote the episode: {reply}"
+        );
 
         // Normal prompt → None → falls through to the provider unchanged.
         assert!(
@@ -2057,10 +2104,14 @@ mod tests {
 
         // Recall intent but no match → Some(localized "nothing found"), NOT None
         // (the short-circuit still fires; the operator learns the recall ran).
-        let miss = answer_conversational_recall("Do you remember when we talked about zzzqqq?", &db)
-            .await
-            .expect("recall intent fires even with no hit");
-        assert!(miss.contains("Nothing found"), "empty match → localized miss: {miss}");
+        let miss =
+            answer_conversational_recall("Do you remember when we talked about zzzqqq?", &db)
+                .await
+                .expect("recall intent fires even with no hit");
+        assert!(
+            miss.contains("Nothing found"),
+            "empty match → localized miss: {miss}"
+        );
     }
 
     #[tokio::test]
@@ -2069,10 +2120,12 @@ mod tests {
         // the recall short-circuit still fires and renders "nothing found".
         let dir = tempdir().unwrap();
         let missing = dir.path().join("does-not-exist.db");
-        let reply =
-            answer_conversational_recall("weißt du noch als wir über rust geredet haben?", &missing)
-                .await
-                .expect("recall intent fires regardless of DB state");
+        let reply = answer_conversational_recall(
+            "weißt du noch als wir über rust geredet haben?",
+            &missing,
+        )
+        .await
+        .expect("recall intent fires regardless of DB state");
         assert!(
             reply.starts_with("Ich finde keine Erinnerung"),
             "german miss line: {reply}"
@@ -2085,9 +2138,15 @@ mod tests {
     #[test]
     fn channel_recall_authorized_only_for_provable_operator() {
         // Sender's resolved uuid matches the pinned operator uuid → authorized.
-        assert!(channel_recall_authorized(Some("op-uuid-1"), Some("op-uuid-1")));
+        assert!(channel_recall_authorized(
+            Some("op-uuid-1"),
+            Some("op-uuid-1")
+        ));
         // A different sender on the same channel → never gets the operator's memory.
-        assert!(!channel_recall_authorized(Some("rando-uuid"), Some("op-uuid-1")));
+        assert!(!channel_recall_authorized(
+            Some("rando-uuid"),
+            Some("op-uuid-1")
+        ));
         // Operator uuid NOT pinned → recall is withheld from everyone on the
         // channel surface (deliberately stricter than channel-weights learning).
         assert!(!channel_recall_authorized(Some("op-uuid-1"), None));
@@ -2213,7 +2272,10 @@ mod tests {
         let conn = store::open(&db).unwrap();
         let card = store::recall_scorecard(&conn, 500).unwrap();
         assert_eq!(card.total_recalls, 12);
-        assert!((card.hit_rate - 1.0).abs() < 1e-9, "all 10 non-skip returned rows");
+        assert!(
+            (card.hit_rate - 1.0).abs() < 1e-9,
+            "all 10 non-skip returned rows"
+        );
         assert!(card.data_sufficient);
     }
 
@@ -2261,8 +2323,15 @@ mod tests {
             out.canonical.iter().any(|h| h.text.contains("Stripe")),
             "canonical lane must surface the verified ground-truth fact"
         );
-        assert!(!out.episodes.is_empty(), "episodes lane must surface the matching episode");
-        assert_eq!(out.contradictions.len(), 1, "exactly one pending contradiction matches 'payment'");
+        assert!(
+            !out.episodes.is_empty(),
+            "episodes lane must surface the matching episode"
+        );
+        assert_eq!(
+            out.contradictions.len(),
+            1,
+            "exactly one pending contradiction matches 'payment'"
+        );
         let c = &out.contradictions[0];
         assert!(
             c.statement_a.contains("retry limit") && c.statement_b.contains("retry limit"),
@@ -2306,7 +2375,9 @@ mod tests {
             "a 'candidate' fact must NOT appear in the canonical lane (verified-only gate)"
         );
         assert!(
-            out.canonical.iter().any(|h| h.text.contains("red") || h.text.contains("blue")),
+            out.canonical
+                .iter()
+                .any(|h| h.text.contains("red") || h.text.contains("blue")),
             "verified facts SHOULD populate the canonical lane"
         );
         assert!(

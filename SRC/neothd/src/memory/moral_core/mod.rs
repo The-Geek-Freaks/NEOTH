@@ -88,15 +88,24 @@ pub fn load_moral_core(dir: &Path) -> Result<Vec<MoralCoreBlock>> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
-    let rd = std::fs::read_dir(dir).with_context(|| format!("read moral-core dir {}", dir.display()))?;
+    let rd =
+        std::fs::read_dir(dir).with_context(|| format!("read moral-core dir {}", dir.display()))?;
     let mut out: Vec<MoralCoreBlock> = Vec::new();
     for de in rd.flatten() {
         let p = de.path();
-        if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("md")) != Some(true) {
+        if p.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("md"))
+            != Some(true)
+        {
             continue;
         }
         let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("moral");
-        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or(stem).to_string();
+        let name = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(stem)
+            .to_string();
         let content = match std::fs::read_to_string(&p) {
             Ok(c) => c,
             Err(_) => continue,
@@ -187,14 +196,21 @@ some prose ignored
     fn empty_blocks_render_nothing() {
         assert_eq!(compact_directives(&[]), "");
         // A doc with a heading but no directives → no block → empty.
-        assert_eq!(compact_directives(&parse_blocks("# Empty\nprose only", "f", "f.md")), "");
+        assert_eq!(
+            compact_directives(&parse_blocks("# Empty\nprose only", "f", "f.md")),
+            ""
+        );
     }
 
     #[test]
     fn load_missing_dir_is_empty_and_reads_md() {
         let tmp = tempfile::tempdir().unwrap();
         // missing subdir → empty
-        assert!(load_moral_core(&tmp.path().join("nope")).unwrap().is_empty());
+        assert!(
+            load_moral_core(&tmp.path().join("nope"))
+                .unwrap()
+                .is_empty()
+        );
         // a real file
         std::fs::write(tmp.path().join("a.md"), "# Core\n- directive one").unwrap();
         std::fs::write(tmp.path().join("ignore.txt"), "# X\n- not md").unwrap();

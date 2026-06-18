@@ -52,8 +52,8 @@ type Aes128CbcDec = cbc::Decryptor<Aes128>;
 // constants are shared in `chrome_common`; Linux supplies only the PBKDF2
 // iteration count (1) + the Secret Service keyring source.
 pub use crate::credentials::chrome_common::{
-    AES_KEY_BYTES, CHROME_CBC_IV, ChromeLoginRow, DecryptedChromeCredential, SALTYSALT,
-    V10_PREFIX, V11_PREFIX,
+    AES_KEY_BYTES, CHROME_CBC_IV, ChromeLoginRow, DecryptedChromeCredential, SALTYSALT, V10_PREFIX,
+    V11_PREFIX,
 };
 
 /// Fallback PBKDF2 password Chrome uses on Linux when the operator's

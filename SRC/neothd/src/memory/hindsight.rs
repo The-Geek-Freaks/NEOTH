@@ -831,6 +831,9 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         save_session_card(home.path(), 300, "topic beta", "reply").unwrap();
         let banner = next_session_seed_banner(home.path(), "some-other-current-id");
-        assert!(banner.contains("turns over"), "no display_name → summary: {banner}");
+        assert!(
+            banner.contains("turns over"),
+            "no display_name → summary: {banner}"
+        );
     }
 }

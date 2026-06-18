@@ -54,7 +54,10 @@ mod tests {
         let mut n = nb("Mozilla", 1, "works at");
         n.source_count = 4;
         let block = build_facts_block("Alice", &[n]);
-        assert!(block.contains("4 sources"), "multi-sourced fact shows credibility: {block}");
+        assert!(
+            block.contains("4 sources"),
+            "multi-sourced fact shows credibility: {block}"
+        );
         // Single-source neighbour stays unannotated.
         assert!(!build_facts_block("Alice", &[nb("Bob", 1, "knows")]).contains("sources"));
     }

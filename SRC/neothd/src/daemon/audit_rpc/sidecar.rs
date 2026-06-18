@@ -40,8 +40,8 @@ pub fn write_sidecar(home: &Path, port: u16, pid: u32, token: &str) -> Result<()
 /// fail-open on AVAILABILITY but never on integrity).
 pub fn read_sidecar(home: &Path) -> Result<(u16, u32)> {
     let path = sidecar_path(home);
-    let body =
-        std::fs::read(&path).with_context(|| format!("read audit-RPC sidecar {}", path.display()))?;
+    let body = std::fs::read(&path)
+        .with_context(|| format!("read audit-RPC sidecar {}", path.display()))?;
     let raw = crate::wal::compaction::maybe_unwrap_dpapi(&body, &path)?;
     let v: serde_json::Value =
         serde_json::from_slice(&raw).context("parse audit-RPC sidecar JSON")?;

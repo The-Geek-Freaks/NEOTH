@@ -21,8 +21,6 @@
 //! Operator already has `pear` on PATH → returns `AlreadyInstalled`
 //! and the wizard skips the install step entirely.
 
-
-
 /// One of the OS-specific Pears install paths. Pinned exhaustively.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PearsInstallPath {

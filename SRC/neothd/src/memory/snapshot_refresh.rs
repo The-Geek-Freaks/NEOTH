@@ -91,7 +91,10 @@ fn newest_embedding_unix(conn: &Connection) -> Option<i64> {
 /// caller wraps it in `spawn_blocking`. Returns `Ok(Some(corpus_count))` when a
 /// rebuild was performed, `Ok(None)` when the pass was a gated/idempotent no-op.
 /// An `Err` is surfaced to the caller, which logs it and continues (best-effort).
-pub(crate) fn refresh_snapshot_once(neoth_home: &Path, backend_is_hnsw: bool) -> Result<Option<usize>> {
+pub(crate) fn refresh_snapshot_once(
+    neoth_home: &Path,
+    backend_is_hnsw: bool,
+) -> Result<Option<usize>> {
     if !backend_is_hnsw {
         return Ok(None);
     }

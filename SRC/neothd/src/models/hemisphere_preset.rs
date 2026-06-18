@@ -11,7 +11,7 @@
 //! the wizard ships a verified-good default that also works air-gapped.
 
 use crate::installers::ollama;
-use crate::models::gguf_variants::{curated_or_nearest, VariantClass};
+use crate::models::gguf_variants::{VariantClass, curated_or_nearest};
 use crate::models::selector::plan_local_hemispheres;
 
 /// The three hemisphere roles, in the order the wizard binds them.
@@ -106,7 +106,10 @@ mod tests {
         );
         // Every slot is a verified abliterated GGUF served via hf.co ref.
         for l in &p.locals {
-            assert!(l.ollama_model_ref.starts_with("hf.co/mradermacher/"), "{l:?}");
+            assert!(
+                l.ollama_model_ref.starts_with("hf.co/mradermacher/"),
+                "{l:?}"
+            );
             assert!(l.ollama_model_ref.contains("abliterated-GGUF"));
             assert_eq!(l.pull_command[0], "ollama");
             assert_eq!(l.pull_command[2], l.ollama_model_ref);
@@ -132,7 +135,12 @@ mod tests {
 
     #[test]
     fn standard_class_uses_bartowski_refs() {
-        let p = build_local_preset(Some(8 * 1024), 2, VariantClass::Standard, DEFAULT_OLLAMA_PORT);
+        let p = build_local_preset(
+            Some(8 * 1024),
+            2,
+            VariantClass::Standard,
+            DEFAULT_OLLAMA_PORT,
+        );
         for l in &p.locals {
             assert!(l.ollama_model_ref.starts_with("hf.co/bartowski/"), "{l:?}");
         }

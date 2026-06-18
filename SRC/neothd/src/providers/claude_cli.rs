@@ -337,10 +337,7 @@ impl ClaudeCliAdapter {
 /// resume pair if the underlying JSONL no longer exists. This is the single
 /// call site that wires `claude_session::strip_dead_resume_args` into the
 /// live spawn paths (subprocess + tmux session start).
-fn build_claude_spawn_args(
-    base: &[&str],
-    resume_session_id: &Option<String>,
-) -> Vec<String> {
+fn build_claude_spawn_args(base: &[&str], resume_session_id: &Option<String>) -> Vec<String> {
     let mut args: Vec<String> = base.iter().map(|s| s.to_string()).collect();
     if let Some(uuid) = resume_session_id {
         args.push(super::claude_session::RESUME_FLAG_LONG.to_string());
@@ -360,7 +357,9 @@ fn build_claude_spawn_args(
 fn join_args_for_shell(args: &[String]) -> String {
     args.iter()
         .map(|a| {
-            if a.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'') {
+            if a.chars()
+                .any(|c| c.is_whitespace() || c == '"' || c == '\'')
+            {
                 let escaped = a.replace('"', "\\\"");
                 format!("\"{escaped}\"")
             } else {
@@ -603,7 +602,13 @@ impl Provider for ClaudeCliAdapter {
                             // Auto cannot reach here in practice (resolved
                             // above) but the exhaustive match keeps future
                             // variants explicit.
-                            complete_uncached(&binary, &model_default, req, resume_session_id.clone()).await
+                            complete_uncached(
+                                &binary,
+                                &model_default,
+                                req,
+                                resume_session_id.clone(),
+                            )
+                            .await
                         }
                     }
                 })
@@ -644,13 +649,12 @@ impl Provider for ClaudeCliAdapter {
                 ],
                 &self.resume_session_id,
             );
-            let mut child = spawn_claude(&self.binary, &args)
-                .with_context(|| {
-                    format!(
-                        "spawn `{} --print --model {}` for streaming",
-                        self.binary, model
-                    )
-                })?;
+            let mut child = spawn_claude(&self.binary, &args).with_context(|| {
+                format!(
+                    "spawn `{} --print --model {}` for streaming",
+                    self.binary, model
+                )
+            })?;
 
             // Write prompt to stdin, close so the CLI sees EOF and starts generating.
             if let Some(mut stdin) = child.stdin.take() {
@@ -767,12 +771,11 @@ async fn complete_uncached(
         &["--print", "--model", &model, "--output-format", "json"],
         &resume_session_id,
     );
-    let mut child = spawn_claude(binary, &args)
-        .with_context(|| {
-            format!(
-                "spawn `{binary} --print --model {model}`. Is the claude CLI installed and on PATH?"
-            )
-        })?;
+    let mut child = spawn_claude(binary, &args).with_context(|| {
+        format!(
+            "spawn `{binary} --print --model {model}`. Is the claude CLI installed and on PATH?"
+        )
+    })?;
 
     let payload = build_prompt_payload(&req);
 
@@ -916,10 +919,7 @@ enum TmuxRetryPlan {
 /// that class's `max_attempts` is exhausted (Auth's `max_attempts` is 0, so it
 /// always surfaces: immediate, never retried). Kept pure so the loop's
 /// decision logic is unit-testable without spawning a tmux session.
-fn plan_tmux_retry(
-    signal: &super::claude_retry::FailureSignal<'_>,
-    attempt: u32,
-) -> TmuxRetryPlan {
+fn plan_tmux_retry(signal: &super::claude_retry::FailureSignal<'_>, attempt: u32) -> TmuxRetryPlan {
     let class = super::claude_retry::classify_failure(signal);
     let decision = super::claude_retry::retry_decision(class);
     if attempt >= decision.max_attempts {
@@ -1000,10 +1000,7 @@ async fn complete_tmux_uncached(
             // mode. Tmux runs the command through the system shell. Wire
             // the optional resume session id through the same strip-dead
             // guard as the subprocess path.
-            let resume_args = build_claude_spawn_args(
-                &["--model", &model],
-                &resume_session_id,
-            );
+            let resume_args = build_claude_spawn_args(&["--model", &model], &resume_session_id);
             let cmd = format!("{binary} {}", join_args_for_shell(&resume_args));
             let session = super::tmux_session::TmuxSession::new(&name, &cmd)
                 .await
@@ -1390,7 +1387,10 @@ mod tests {
             "empty-stdout backoff is the longer idle wait, got {:?}",
             step.sleep
         );
-        assert!(!step.reset_session, "empty stdout does not reset the session");
+        assert!(
+            !step.reset_session,
+            "empty stdout does not reset the session"
+        );
         assert!(
             retry_step(plan_tmux_retry(&sig, 1)).is_none(),
             "empty stdout is max_attempts=1 — attempt 1 is exhausted"
@@ -2071,10 +2071,7 @@ mod tests {
     #[test]
     fn build_claude_spawn_args_without_resume_returns_base_only() {
         with_temp_home(|_| {
-            let args = build_claude_spawn_args(
-                &["--print", "--model", "sonnet"],
-                &None,
-            );
+            let args = build_claude_spawn_args(&["--print", "--model", "sonnet"], &None);
             assert_eq!(args, vec!["--print", "--model", "sonnet"]);
         });
     }
@@ -2087,14 +2084,9 @@ mod tests {
             std::fs::create_dir_all(&sessions).unwrap();
             std::fs::write(sessions.join(format!("{uuid}.jsonl")), b"{}\n").unwrap();
 
-            let args = build_claude_spawn_args(
-                &["--print", "--model", "sonnet"],
-                &Some(uuid.to_string()),
-            );
-            assert_eq!(
-                args,
-                vec!["--print", "--model", "sonnet", "--resume", uuid]
-            );
+            let args =
+                build_claude_spawn_args(&["--print", "--model", "sonnet"], &Some(uuid.to_string()));
+            assert_eq!(args, vec!["--print", "--model", "sonnet", "--resume", uuid]);
         });
     }
 
@@ -2103,10 +2095,8 @@ mod tests {
         with_temp_home(|_| {
             let uuid = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
             // deliberately do NOT create the jsonl
-            let args = build_claude_spawn_args(
-                &["--print", "--model", "sonnet"],
-                &Some(uuid.to_string()),
-            );
+            let args =
+                build_claude_spawn_args(&["--print", "--model", "sonnet"], &Some(uuid.to_string()));
             assert_eq!(args, vec!["--print", "--model", "sonnet"]);
         });
     }
@@ -2145,9 +2135,7 @@ mod tests {
             ClaudeBackend::Auto,
             10,
         )
-        .with_resume_session_id(Some(
-            "deadbeef-dead-beef-dead-beefdeadbeef".to_string(),
-        ));
+        .with_resume_session_id(Some("deadbeef-dead-beef-dead-beefdeadbeef".to_string()));
         assert_eq!(
             adapter.resume_session_id,
             Some("deadbeef-dead-beef-dead-beefdeadbeef".to_string())

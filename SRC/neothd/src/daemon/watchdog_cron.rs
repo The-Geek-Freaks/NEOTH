@@ -159,7 +159,8 @@ pub fn spawn_watchdog_cron_loop(
         );
         loop {
             ticker.tick().await;
-            if let Err(e) = run_watchdog_tick(&config, restart_allowed, &writer, &mut states).await {
+            if let Err(e) = run_watchdog_tick(&config, restart_allowed, &writer, &mut states).await
+            {
                 tracing::warn!(error = %e, "watchdog tick failed");
             }
         }
@@ -218,7 +219,8 @@ pub async fn run_watchdog_tick(
                             "watchdog restart spawn failed",
                         ),
                     }
-                    emit_watchdog_frame(writer, svc, "restart", restarts_in_window, ts_unix).await?;
+                    emit_watchdog_frame(writer, svc, "restart", restarts_in_window, ts_unix)
+                        .await?;
                 } else {
                     tracing::warn!(
                         service = svc.label(),
@@ -363,7 +365,10 @@ mod tests {
         // Budget is now exhausted for the window: the next threshold breach is
         // RateLimited, not Restart, and does NOT charge the budget further.
         for tick in 0..2 {
-            assert_eq!(observe(&mut s, false, 300 + tick * 10), RestartDecision::Wait);
+            assert_eq!(
+                observe(&mut s, false, 300 + tick * 10),
+                RestartDecision::Wait
+            );
         }
         assert_eq!(observe(&mut s, false, 330), RestartDecision::RateLimited);
         assert_eq!(s.restarts_in_window, 2);

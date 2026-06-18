@@ -99,7 +99,9 @@ fn random_32() -> Result<[u8; 32]> {
 
 /// Decode a base64 string into exactly 32 bytes (an X25519 pubkey).
 pub fn parse_b64_32(s: &str, what: &str) -> Result<[u8; 32]> {
-    let v = B64.decode(s).with_context(|| format!("decode {what} base64"))?;
+    let v = B64
+        .decode(s)
+        .with_context(|| format!("decode {what} base64"))?;
     let arr: [u8; 32] = v
         .as_slice()
         .try_into()
@@ -178,7 +180,9 @@ pub fn verify_signature(
         None => (embedded, SignatureCheck::SelfConsistent),
     };
     let vk = VerifyingKey::from_bytes(&verify_key_bytes).context("parse signer pubkey")?;
-    let sig_bytes = B64.decode(&bundle.signature_b64).context("decode signature")?;
+    let sig_bytes = B64
+        .decode(&bundle.signature_b64)
+        .context("decode signature")?;
     let sig = Signature::from_slice(&sig_bytes).context("parse signature")?;
     vk.verify(&bundle.canonical_bytes(), &sig)
         .context("signature verification failed")?;
@@ -195,7 +199,9 @@ pub fn decrypt_with(bundle: &TransferBundle, recipient_secret: &[u8; 32]) -> Res
     if nonce_bytes.len() != 12 {
         bail!("nonce must be 12 bytes, got {}", nonce_bytes.len());
     }
-    let ciphertext = B64.decode(&bundle.ciphertext_b64).context("decode ciphertext")?;
+    let ciphertext = B64
+        .decode(&bundle.ciphertext_b64)
+        .context("decode ciphertext")?;
     let secret = StaticSecret::from(*recipient_secret);
     let shared = secret.diffie_hellman(&PublicKey::from(eph_pub));
     let aes_key = derive_key(shared.as_bytes(), &eph_pub);

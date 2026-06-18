@@ -98,11 +98,20 @@ pub fn quantized_shortlist(vram_mib: Option<u32>) -> Vec<QuantOption> {
             if need <= vram_gb {
                 // Quality: bigger model dominates; Q8 edges Q4 at equal size.
                 let quality = param_b + if quant == Quant::Q8 { 0.3 } else { 0.0 };
-                opts.push(QuantOption { param_b, quant, est_vram_gb: need, quality });
+                opts.push(QuantOption {
+                    param_b,
+                    quant,
+                    est_vram_gb: need,
+                    quality,
+                });
             }
         }
     }
-    opts.sort_by(|a, b| b.quality.partial_cmp(&a.quality).unwrap_or(std::cmp::Ordering::Equal));
+    opts.sort_by(|a, b| {
+        b.quality
+            .partial_cmp(&a.quality)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     opts.truncate(4); // a focused shortlist, not the whole ladder
     opts
 }
@@ -206,19 +215,34 @@ fn est_f16_vram_gb(param_b: f32) -> f32 {
 pub fn fit_local_qwen(vram_mib: Option<u32>) -> ModelFit {
     let Some(mib) = vram_mib else {
         let (param_b, repo, label) = CPU_FLOOR;
-        return ModelFit { repo, label, param_b, est_vram_gb: est_f16_vram_gb(param_b) };
+        return ModelFit {
+            repo,
+            label,
+            param_b,
+            est_vram_gb: est_f16_vram_gb(param_b),
+        };
     };
     // MiB → GB (1 GiB ≈ 1.074 GB; using /1024 keeps a small safety margin).
     let vram_gb = mib as f32 / 1024.0;
     for &(param_b, repo, label) in QWEN2_5_LADDER {
         let need = est_f16_vram_gb(param_b);
         if need <= vram_gb {
-            return ModelFit { repo, label, param_b, est_vram_gb: need };
+            return ModelFit {
+                repo,
+                label,
+                param_b,
+                est_vram_gb: need,
+            };
         }
     }
     // VRAM smaller than the smallest GPU model → the CPU floor (runs on CPU+RAM).
     let (param_b, repo, label) = CPU_FLOOR;
-    ModelFit { repo, label, param_b, est_vram_gb: est_f16_vram_gb(param_b) }
+    ModelFit {
+        repo,
+        label,
+        param_b,
+        est_vram_gb: est_f16_vram_gb(param_b),
+    }
 }
 
 /// Operator-facing RECOMMENDATION tier for a VRAM size — the single source of
@@ -232,7 +256,11 @@ pub fn recommended_tier_label(vram_mib: Option<u32>) -> &'static str {
         None => "cloud",
         Some(mib) => {
             let fit = fit_local_qwen(Some(mib));
-            if fit.param_b >= 3.0 { fit.label } else { "cloud" }
+            if fit.param_b >= 3.0 {
+                fit.label
+            } else {
+                "cloud"
+            }
         }
     }
 }
@@ -245,7 +273,10 @@ mod tests {
     fn fit_is_f16_honest_not_quantized_aspirational() {
         // A 24 GiB GPU (3090/4090) holds a 7B in F16 (~18 GB), NOT a 72B
         // (~187 GB) — the bug in the old recommended_model_tier thresholds.
-        assert_eq!(fit_local_qwen(Some(24 * 1024)).repo, "Qwen/Qwen2.5-7B-Instruct");
+        assert_eq!(
+            fit_local_qwen(Some(24 * 1024)).repo,
+            "Qwen/Qwen2.5-7B-Instruct"
+        );
         // 48 GiB (A6000) fits the 14B (~36 GB); 32B (~83 GB) still doesn't.
         assert_eq!(fit_local_qwen(Some(48 * 1024)).label, "qwen2.5-14b");
         // 80 GiB (A100) F16 still can't hold the 32B (~83 GB) → 14B.
@@ -295,7 +326,10 @@ mod tests {
         // ...and the shortlist also offers a near-lossless quality pick (14B-Q8)
         // for the same VRAM, so the operator chooses size vs fidelity.
         let list = quantized_shortlist(Some(24 * 1024));
-        assert!(list.iter().any(|o| o.param_b == 14.0 && o.quant == Quant::Q8));
+        assert!(
+            list.iter()
+                .any(|o| o.param_b == 14.0 && o.quant == Quant::Q8)
+        );
         assert!(list.len() <= 4 && !list.is_empty());
     }
 

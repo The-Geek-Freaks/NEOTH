@@ -7,6 +7,6 @@
 pub mod fit;
 
 pub use fit::{
-    default_candidates, estimate_tok_s, lookup_gpu, rank_models, GpuSpec, ModelFit,
-    DECODE_EFFICIENCY, FIT_HEADROOM, KNOWN_GPUS,
+    DECODE_EFFICIENCY, FIT_HEADROOM, GpuSpec, KNOWN_GPUS, ModelFit, default_candidates,
+    estimate_tok_s, lookup_gpu, rank_models,
 };

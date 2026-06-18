@@ -27,12 +27,6 @@ pub mod doctor_cron;
 /// `freedom.yaml::drift_alert.threshold`. Off by default (master
 /// switch `drift_alert.enabled`).
 pub mod drift_alert_cron;
-/// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron (scans WAL usage
-/// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
-pub mod token_anomaly_cron;
-/// GOLD-ADAPT-VIEW-05 — session-health / outcome cron (A–F daily grade from the
-/// WAL audit trail; alerts on degradation).
-pub mod session_health_cron;
 pub mod export;
 /// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
 /// `idx_profile` for novel high-confidence claims via
@@ -45,6 +39,16 @@ pub mod g02_surfacing_cron;
 pub mod hardware;
 pub mod installer_audit_sidecar;
 pub mod model_download_audit;
+/// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +
+/// channel activity every `monitor.interval_secs` and emits
+/// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
+/// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
+pub mod monitor_cron;
+/// OM-01 — local OMI transcript ingest task. Polls a self-hosted OMI backend
+/// (SC-14: cloud endpoints refused at startup), sanitises + promotes
+/// high-confidence items to ground-truth (`0x9C`), extracts action items to
+/// kanban. Off by default.
+pub mod omi_ingest_task;
 /// G-01 (first slice) — inactivity-gap detector: enqueues one proactive
 /// "still there?" nudge after `pattern_cron.inactivity_gap_secs` of
 /// operator silence (deduped per UTC day), onto the G-01 proactive
@@ -60,6 +64,10 @@ pub mod pattern_cron;
 /// the queue's daily budget is wider.
 pub mod proactive_dispatcher;
 pub mod profile_adapt_cron;
+/// MONITOR-03 / RECALL-METER-01 — recall-p95 latency alert cron. Reads the
+/// `idx_recall_latency` window + emits `0x4B RECALL_LATENCY_ALERT` when p95
+/// exceeds the threshold. Off by default.
+pub mod recall_latency_cron;
 /// Round-3 v0.4 G-01 cron-wiring — periodic reflection-builder tick
 /// that glues `reflection::build_reflection_item` (G-01-mini) +
 /// `proactive::ProactiveQueue::enqueue` (G-01a). Ticks every 24h
@@ -67,36 +75,14 @@ pub mod profile_adapt_cron;
 /// item itself keeps emissions to one per ISO week regardless of
 /// tick frequency.
 pub mod reflection_cron;
-pub mod resource_watch;
-/// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +
-/// channel activity every `monitor.interval_secs` and emits
-/// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
-/// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
-pub mod monitor_cron;
-/// GOLD-FEAT-09 — daemon watchdog/auto-recovery cron. Probes supervised local
-/// services (n8n / Ollama) every `watchdog.interval_secs`, restarts them at
-/// `Elevated`+ autonomy after `consecutive_failures_before_restart` down ticks
-/// (crash-loop-guarded by a per-window restart budget), and emits
-/// `0x5F WATCHDOG_RESTART`. Off by default.
-pub mod watchdog_cron;
-/// MONITOR-02 — real-time worker-task death detection. Polls the daemon's
-/// long-running cron/worker abort handles + emits `0x4D WORKER_DIED` (naming the
-/// task) the moment one panics/exits — lower latency + attribution than the
-/// HO-07 crash.log scan. Holds only abort-handle clones (shutdown unaffected).
-pub mod worker_watch;
-/// OM-01 — local OMI transcript ingest task. Polls a self-hosted OMI backend
-/// (SC-14: cloud endpoints refused at startup), sanitises + promotes
-/// high-confidence items to ground-truth (`0x9C`), extracts action items to
-/// kanban. Off by default.
-pub mod omi_ingest_task;
 /// ADV-14 — longitudinal recall-regression anchor cron. Weekly re-embeds the
 /// anchor queries' fresh answers + emits `0x3F REGRESSION_ALERT` on cosine
 /// drift below threshold. Off by default.
 pub mod regression_cron;
-/// MONITOR-03 / RECALL-METER-01 — recall-p95 latency alert cron. Reads the
-/// `idx_recall_latency` window + emits `0x4B RECALL_LATENCY_ALERT` when p95
-/// exceeds the threshold. Off by default.
-pub mod recall_latency_cron;
+pub mod resource_watch;
+/// GOLD-ADAPT-VIEW-05 — session-health / outcome cron (A–F daily grade from the
+/// WAL audit trail; alerts on degradation).
+pub mod session_health_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks
@@ -111,7 +97,21 @@ pub mod startup_credential_audit;
 /// daemon auto-restarts + unattended self-update can activate the new
 /// binary. User-scoped, no root/admin.
 pub mod supervisor;
+/// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron (scans WAL usage
+/// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
+pub mod token_anomaly_cron;
 pub mod updater_cron;
+/// GOLD-FEAT-09 — daemon watchdog/auto-recovery cron. Probes supervised local
+/// services (n8n / Ollama) every `watchdog.interval_secs`, restarts them at
+/// `Elevated`+ autonomy after `consecutive_failures_before_restart` down ticks
+/// (crash-loop-guarded by a per-window restart budget), and emits
+/// `0x5F WATCHDOG_RESTART`. Off by default.
+pub mod watchdog_cron;
+/// MONITOR-02 — real-time worker-task death detection. Polls the daemon's
+/// long-running cron/worker abort handles + emits `0x4D WORKER_DIED` (naming the
+/// task) the moment one panics/exits — lower latency + attribution than the
+/// HO-07 crash.log scan. Holds only abort-handle clones (shutdown unaffected).
+pub mod worker_watch;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
 pub mod dreaming;
 pub mod healthz;

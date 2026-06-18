@@ -185,7 +185,14 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
     // avoid an unnameable borrow lifetime across the awaited future.
     let result = {
         if daemon_live {
-            read_os_file(path, &cfg.tools.os, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
+            read_os_file(
+                path,
+                &cfg.tools.os,
+                cfg.autonomy,
+                AuditSink::DaemonRpc(&home),
+                now,
+            )
+            .await
         } else {
             let segment = FreedomConfig::default_neoth_home()
                 .join("wal")
@@ -195,9 +202,14 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
             }
             match crate::wal::spawn(segment) {
                 Ok((writer, join)) => {
-                    let r =
-                        read_os_file(path, &cfg.tools.os, cfg.autonomy, AuditSink::Writer(&writer), now)
-                            .await;
+                    let r = read_os_file(
+                        path,
+                        &cfg.tools.os,
+                        cfg.autonomy,
+                        AuditSink::Writer(&writer),
+                        now,
+                    )
+                    .await;
                     drop(writer);
                     let _ = join.await;
                     r

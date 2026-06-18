@@ -43,10 +43,9 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
 
     // GOLD-ADOPT-27 — channel health probe (which channels are live /
     // misconfigured / absent). Best-effort credential load from this home.
-    let creds = crate::config::credentials::Credentials::load_or_default(
-        &home.join("credentials.yaml"),
-    )
-    .unwrap_or_default();
+    let creds =
+        crate::config::credentials::Credentials::load_or_default(&home.join("credentials.yaml"))
+            .unwrap_or_default();
     let channel_health = crate::channels::probe::probe_all(
         &crate::channels::probe::ChannelCredsView::from_config(cfg.as_ref(), &creds),
     );
@@ -60,19 +59,20 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
 
     // Headline operating mode (gated | full-auto | advanced) — derived from the
     // (autonomy, skills.enable_all_bundled) pair. `None` when no config loaded.
-    let operating_mode = cfg
-        .as_ref()
-        .map(crate::cli::autonomy::operating_mode_label);
+    let operating_mode = cfg.as_ref().map(crate::cli::autonomy::operating_mode_label);
 
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             // Merge the channel-health rows into the snapshot object so the
             // output stays a single JSON document.
-            let mut v: serde_json::Value = serde_json::from_str(&snap.render_json())
-                .unwrap_or_else(|_| serde_json::json!({}));
+            let mut v: serde_json::Value =
+                serde_json::from_str(&snap.render_json()).unwrap_or_else(|_| serde_json::json!({}));
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("channels".into(), serde_json::to_value(&channel_health)?);
-                obj.insert("operating_mode".into(), serde_json::to_value(operating_mode)?);
+                obj.insert(
+                    "operating_mode".into(),
+                    serde_json::to_value(operating_mode)?,
+                );
             }
             println!("{}", serde_json::to_string_pretty(&v)?);
         }
@@ -80,8 +80,12 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
             print!("{}", snap.render_table());
             if let Some(mode) = operating_mode {
                 let hint = match mode {
-                    "full-auto" => " (acts without asking; whole skill library routed — `neoth autonomy gated` to revert)",
-                    "gated" => " (asks before sensitive actions — `neoth autonomy full-auto` for hands-off)",
+                    "full-auto" => {
+                        " (acts without asking; whole skill library routed — `neoth autonomy gated` to revert)"
+                    }
+                    "gated" => {
+                        " (asks before sensitive actions — `neoth autonomy full-auto` for hands-off)"
+                    }
                     _ => " (raw autonomy level set directly)",
                 };
                 println!("operating mode: {mode}{hint}");

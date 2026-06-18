@@ -11,8 +11,6 @@
 //! OBS via the WebSocket lives separately in `plugins/obs_facecam.rs`
 //! when FC-3 implementation lands.
 
-
-
 /// Default obs-websocket port (since OBS 28). Pinned drift-guarded —
 /// operators copy-pasting from OBS docs expect this match.
 pub const DEFAULT_OBS_WEBSOCKET_PORT: u16 = 4455;

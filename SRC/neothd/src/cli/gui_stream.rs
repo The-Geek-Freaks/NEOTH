@@ -226,7 +226,9 @@ fn activity_for_event(event_type: u8) -> (&'static str, &'static str) {
         ev::EVENT_TYPE_CHANNEL_INGRESS => ("notification", "new activity"),
         ev::EVENT_TYPE_CHANNEL_EGRESS => ("working", "replying"),
         ev::EVENT_TYPE_CONSENT_DECISION => ("consent", "consent"),
-        ev::EVENT_TYPE_AUDIT_RPC_ACCEPT | ev::EVENT_TYPE_COMPACTION_MARKER => ("audit", "verifying"),
+        ev::EVENT_TYPE_AUDIT_RPC_ACCEPT | ev::EVENT_TYPE_COMPACTION_MARKER => {
+            ("audit", "verifying")
+        }
         ev::EVENT_TYPE_WORKER_DIED => ("error", "worker died"),
         ev::EVENT_TYPE_CLUSTER_PEER_CONNECTED => ("connected", "peer joined"),
         ev::EVENT_TYPE_CLUSTER_TASK_ACCEPTED => ("agents", "agents deployed"),
@@ -287,11 +289,26 @@ mod tests {
     #[test]
     fn activity_maps_high_signal_events_and_defaults_idle() {
         use crate::wal::events as ev;
-        assert_eq!(activity_for_event(ev::EVENT_TYPE_PROVIDER_REQUEST).0, "working");
-        assert_eq!(activity_for_event(ev::EVENT_TYPE_CONSENT_DECISION).0, "consent");
-        assert_eq!(activity_for_event(ev::EVENT_TYPE_CHANNEL_INGRESS).0, "notification");
-        assert_eq!(activity_for_event(ev::EVENT_TYPE_AUDIT_RPC_ACCEPT).0, "audit");
-        assert_eq!(activity_for_event(ev::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED).0, "intense");
+        assert_eq!(
+            activity_for_event(ev::EVENT_TYPE_PROVIDER_REQUEST).0,
+            "working"
+        );
+        assert_eq!(
+            activity_for_event(ev::EVENT_TYPE_CONSENT_DECISION).0,
+            "consent"
+        );
+        assert_eq!(
+            activity_for_event(ev::EVENT_TYPE_CHANNEL_INGRESS).0,
+            "notification"
+        );
+        assert_eq!(
+            activity_for_event(ev::EVENT_TYPE_AUDIT_RPC_ACCEPT).0,
+            "audit"
+        );
+        assert_eq!(
+            activity_for_event(ev::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED).0,
+            "intense"
+        );
         assert_eq!(activity_for_event(0x00).0, "idle");
         // every mapped caption is non-empty
         for et in [0x01u8, 0x20, 0x21, 0x32, 0x65, 0xAE, 0xEB] {

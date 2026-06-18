@@ -120,6 +120,14 @@ ignore = [
     # different PTY crate OR await upstream portable-pty bump. Not a
     # vulnerability — unmaintained advisory only.
     { id = "RUSTSEC-2017-0008", reason = "serial 0.4.0 unmaintained — transitive via portable-pty; no vuln, only maintenance status. Upstream bump tracked." },
+    # proc-macro-error2 — unmaintained fork, pulled transitively through
+    # aquamarine/matrix-sdk and matrix-pickle/vodozemac. No safe upgrade is
+    # available from NEOTH's side without replacing the Matrix stack.
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained — transitive via matrix-sdk/vodozemac; no vuln, no safe direct upgrade. Re-evaluate with next Matrix stack bump." },
+    # rustls-pemfile 2.2.0 — unmaintained thin wrapper, transitive via irc.
+    # No direct NEOTH use; migrate once irc exposes a rustls-pki-types path or
+    # the IRC adapter moves off this dependency chain.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained — transitive via irc; no vuln, no safe direct upgrade. Re-evaluate when replacing/bumping IRC transport." },
 ]
 
 [sources]

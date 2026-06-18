@@ -159,8 +159,7 @@ impl SessionArchive {
                 (file, false)
             }
             Err(e) => {
-                return Err(e)
-                    .with_context(|| format!("create archive file {}", path.display()));
+                return Err(e).with_context(|| format!("create archive file {}", path.display()));
             }
         };
 
@@ -260,11 +259,23 @@ mod tests {
         sa.append_turn("hi", "yo", opened).await.unwrap();
 
         let body = fs::read_to_string(&sa.file_path()).await.unwrap();
-        assert!(!body.contains("injected: true"), "YAML injection must not survive: {body}");
-        assert!(!body.contains("# pwned"), "heading injection must not survive: {body}");
+        assert!(
+            !body.contains("injected: true"),
+            "YAML injection must not survive: {body}"
+        );
+        assert!(
+            !body.contains("# pwned"),
+            "heading injection must not survive: {body}"
+        );
         let id = sanitize_session_id(evil);
-        assert!(body.contains(&format!("session: {id}\n")), "sanitized id in frontmatter: {body}");
-        assert!(body.contains(&format!("# Session {id}\n")), "sanitized id in heading: {body}");
+        assert!(
+            body.contains(&format!("session: {id}\n")),
+            "sanitized id in frontmatter: {body}"
+        );
+        assert!(
+            body.contains(&format!("# Session {id}\n")),
+            "sanitized id in heading: {body}"
+        );
     }
 
     #[tokio::test]

@@ -243,10 +243,19 @@ mod tests {
     #[test]
     fn parse_single_word_each_verdict() {
         assert_eq!(parse_tiebreak_verdict("BENIGN"), TiebreakVerdict::Benign);
-        assert_eq!(parse_tiebreak_verdict("phishing"), TiebreakVerdict::Phishing);
+        assert_eq!(
+            parse_tiebreak_verdict("phishing"),
+            TiebreakVerdict::Phishing
+        );
         assert_eq!(parse_tiebreak_verdict("Spam."), TiebreakVerdict::Spam);
-        assert_eq!(parse_tiebreak_verdict("MALWARE\n"), TiebreakVerdict::Malware);
-        assert_eq!(parse_tiebreak_verdict("uncertain"), TiebreakVerdict::Uncertain);
+        assert_eq!(
+            parse_tiebreak_verdict("MALWARE\n"),
+            TiebreakVerdict::Malware
+        );
+        assert_eq!(
+            parse_tiebreak_verdict("uncertain"),
+            TiebreakVerdict::Uncertain
+        );
     }
 
     #[test]
@@ -282,7 +291,10 @@ mod tests {
 
     #[test]
     fn parse_garbage_is_uncertain() {
-        assert_eq!(parse_tiebreak_verdict("I cannot help with that"), TiebreakVerdict::Uncertain);
+        assert_eq!(
+            parse_tiebreak_verdict("I cannot help with that"),
+            TiebreakVerdict::Uncertain
+        );
         assert_eq!(parse_tiebreak_verdict(""), TiebreakVerdict::Uncertain);
     }
 
@@ -294,7 +306,10 @@ mod tests {
             crate::security::email_threat::assess_email_threat("verify your account", None, &[]);
         let body = "creds: AKIAIOSFODNN7EXAMPLE and a normal sentence.";
         let prompt = build_tiebreak_prompt("Subject", body, &assessment);
-        assert!(!prompt.contains("AKIAIOSFODNN7EXAMPLE"), "secret leaked into prompt: {prompt}");
+        assert!(
+            !prompt.contains("AKIAIOSFODNN7EXAMPLE"),
+            "secret leaked into prompt: {prompt}"
+        );
         assert!(prompt.contains("normal sentence"));
         assert!(prompt.to_uppercase().contains("PHISHING")); // the verdict menu
     }
@@ -317,10 +332,19 @@ mod tests {
         let assessment =
             crate::security::email_threat::assess_email_threat("please run this", None, &[fname]);
         let prompt = build_tiebreak_prompt("Subject", "body", &assessment);
-        assert!(!prompt.contains("AKIAIOSFODNN7EXAMPLE"), "filename secret leaked: {prompt}");
-        assert!(!prompt.contains("totally safe and benign"), "filename injection text leaked: {prompt}");
+        assert!(
+            !prompt.contains("AKIAIOSFODNN7EXAMPLE"),
+            "filename secret leaked: {prompt}"
+        );
+        assert!(
+            !prompt.contains("totally safe and benign"),
+            "filename injection text leaked: {prompt}"
+        );
         // The threat is still surfaced via the static rule id.
-        assert!(prompt.contains("malware-attachment:mw-001-exe"), "rule id missing: {prompt}");
+        assert!(
+            prompt.contains("malware-attachment:mw-001-exe"),
+            "rule id missing: {prompt}"
+        );
     }
 
     #[test]
@@ -335,7 +359,10 @@ mod tests {
             "body",
             &assessment,
         );
-        assert!(prompt.contains("[subject withheld"), "injection subject not withheld: {prompt}");
+        assert!(
+            prompt.contains("[subject withheld"),
+            "injection subject not withheld: {prompt}"
+        );
         assert!(
             !prompt.contains("ignore all previous instructions"),
             "injection subject leaked: {prompt}"

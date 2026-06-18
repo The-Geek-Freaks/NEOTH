@@ -274,7 +274,10 @@ mod tests {
     #[test]
     fn extract_text_returns_empty_on_no_match() {
         let html = r#"<div><span class="price">$9.99</span></div>"#;
-        assert_eq!(extract_text(html, "span.missing").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            extract_text(html, "span.missing").unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -286,7 +289,10 @@ mod tests {
     #[test]
     fn extract_attr_returns_hrefs() {
         let html = r#"<a class="dl" href="/file.zip">Download</a>"#;
-        assert_eq!(extract_attr(html, "a.dl", "href").unwrap(), vec!["/file.zip"]);
+        assert_eq!(
+            extract_attr(html, "a.dl", "href").unwrap(),
+            vec!["/file.zip"]
+        );
     }
 
     #[test]
@@ -336,7 +342,11 @@ mod tests {
         assert_eq!(derived, r#"span[class~="md:flex"]"#);
         // The derived selector MUST be valid CSS (the bare `.md:flex` was not).
         let resel = Selector::parse(&derived).expect("derived selector must parse");
-        assert_eq!(doc.select(&resel).count(), 1, "must re-match the same element");
+        assert_eq!(
+            doc.select(&resel).count(),
+            1,
+            "must re-match the same element"
+        );
         // End-to-end: extract_text no longer errors on the relocated selector.
         assert_eq!(extract_text(html, &derived).unwrap(), vec!["x"]);
     }
@@ -349,7 +359,10 @@ mod tests {
         let sel = Selector::parse("a").unwrap();
         let el = doc.select(&sel).next().unwrap();
         let derived = derive_selector(&el);
-        assert!(Selector::parse(&derived).is_ok(), "escaped selector must parse: {derived}");
+        assert!(
+            Selector::parse(&derived).is_ok(),
+            "escaped selector must parse: {derived}"
+        );
     }
 
     #[test]

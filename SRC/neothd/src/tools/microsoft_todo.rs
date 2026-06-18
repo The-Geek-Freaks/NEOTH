@@ -151,7 +151,10 @@ async fn refresh_access_token_against(
             resp.status()
         );
     }
-    let token: TokenResponse = resp.json().await.context("microsoft oauth refresh decode")?;
+    let token: TokenResponse = resp
+        .json()
+        .await
+        .context("microsoft oauth refresh decode")?;
     if token.access_token.is_empty() {
         anyhow::bail!("microsoft oauth refresh returned an empty access_token");
     }
@@ -170,7 +173,8 @@ async fn default_list_id_against(base: &str, access_token: &SecretString) -> Res
     if !resp.status().is_success() {
         anyhow::bail!("microsoft_todo lists returned {}", resp.status());
     }
-    let body: GraphCollection<TodoList> = resp.json().await.context("microsoft_todo lists decode")?;
+    let body: GraphCollection<TodoList> =
+        resp.json().await.context("microsoft_todo lists decode")?;
     body.value
         .iter()
         .find(|l| l.wellknown_list_name.as_deref() == Some("defaultList"))
@@ -197,7 +201,8 @@ async fn list_tasks_against(base: &str, access_token: &SecretString) -> Result<V
     if !resp.status().is_success() {
         anyhow::bail!("microsoft_todo list returned {}", resp.status());
     }
-    let body: GraphCollection<MicrosoftTask> = resp.json().await.context("microsoft_todo list decode")?;
+    let body: GraphCollection<MicrosoftTask> =
+        resp.json().await.context("microsoft_todo list decode")?;
     Ok(body.value)
 }
 
@@ -281,11 +286,13 @@ mod tests {
             due: None,
         };
         assert!(t.is_open());
-        assert!(!MicrosoftTask {
-            status: Some("completed".into()),
-            ..t.clone()
-        }
-        .is_open());
+        assert!(
+            !MicrosoftTask {
+                status: Some("completed".into()),
+                ..t.clone()
+            }
+            .is_open()
+        );
     }
 
     #[tokio::test]
@@ -343,7 +350,10 @@ mod tests {
         .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("400"));
-        assert!(!msg.contains("rt-LEAK"), "must not echo refresh token: {msg}");
+        assert!(
+            !msg.contains("rt-LEAK"),
+            "must not echo refresh token: {msg}"
+        );
     }
 
     /// Mount the default-list lookup so the task ops can resolve it.

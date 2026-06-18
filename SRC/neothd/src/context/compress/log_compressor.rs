@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::context::compress::ccr::{compute_key, marker_for, CcrStore};
+use crate::context::compress::ccr::{CcrStore, compute_key, marker_for};
 use crate::context::compress::content_detector::ContentType;
 use crate::context::compress::tag_protector::{has_protected_regions, protected_line_mask};
 use crate::context::compress::transform::{
@@ -46,9 +46,11 @@ static HIGH_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(\b(ERROR|FAIL|FAILED|FATAL|CRITICAL|PANIC|EXCEPTION|ASSERT|ABORT|TIMEOUT|DENIED|REJECTED)\b|Traceback \(most recent call last\)|^\s*at\s+[\w.$]+\()").unwrap()
 });
 /// Warnings — kept.
-static WARN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(WARN|WARNING|DEPRECAT)").unwrap());
+static WARN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(WARN|WARNING|DEPRECAT)").unwrap());
 /// Routine noise — the first to be dropped.
-static LOW_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(INFO|DEBUG|TRACE|VERBOSE)\b").unwrap());
+static LOW_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(INFO|DEBUG|TRACE|VERBOSE)\b").unwrap());
 
 /// Importance score in `0.0..=1.0`. High = keep, low = droppable noise.
 /// Checked high→warn→low so an "INFO: ERROR recovered" line scores as an error.
@@ -221,7 +223,8 @@ impl OffloadTransform for LogOffload {
         }
         let repetition = 1.0 - (unique.len() as f32 / sampled as f32);
         let dilution = low_priority as f32 / sampled as f32;
-        (repetition * self.config.uniqueness_weight + dilution * self.config.priority_dilution_weight)
+        (repetition * self.config.uniqueness_weight
+            + dilution * self.config.priority_dilution_weight)
             .clamp(0.0, 1.0)
     }
 
@@ -243,7 +246,10 @@ impl OffloadTransform for LogOffload {
         for k in keep.iter_mut().take(ht) {
             *k = true;
         }
-        for k in keep.iter_mut().skip(n.saturating_sub(self.config.head_tail)) {
+        for k in keep
+            .iter_mut()
+            .skip(n.saturating_sub(self.config.head_tail))
+        {
             *k = true;
         }
         let mut kept_priority = 0usize;
@@ -343,7 +349,7 @@ impl OffloadTransform for LogOffload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::compress::ccr::{extract_keys, InMemoryCcrStore};
+    use crate::context::compress::ccr::{InMemoryCcrStore, extract_keys};
 
     fn offload() -> LogOffload {
         LogOffload::default()
@@ -406,7 +412,10 @@ mod tests {
 
     #[test]
     fn estimate_bloat_safe_on_huge_input() {
-        let log: String = (0..100_000).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let log: String = (0..100_000)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let _ = offload().estimate_bloat(&log); // sample-bounded → must not hang
     }
 
@@ -459,7 +468,11 @@ mod tests {
             .apply(&log, &CompressionContext::default(), &store)
             .expect("compresses");
         // Both fence delimiters survive, and so does the interior.
-        assert_eq!(r.output.matches("```").count(), 2, "both fences must survive");
+        assert_eq!(
+            r.output.matches("```").count(),
+            2,
+            "both fences must survive"
+        );
         assert!(r.output.contains("fn main() { panic!(\"boom\") }"));
         assert!(r.output.contains("let x = 1;"));
         assert!(r.bytes_saved > 0);
@@ -518,10 +531,16 @@ mod tests {
         let r = offload()
             .apply(&log, &CompressionContext::default(), &store)
             .expect("compresses");
-        assert!(r.output.contains("Traceback (most recent call last)"), "header");
+        assert!(
+            r.output.contains("Traceback (most recent call last)"),
+            "header"
+        );
         assert!(r.output.contains("File \"a.py\""), "frame a.py missing");
         assert!(r.output.contains("File \"b.py\""), "frame b.py missing");
-        assert!(r.output.contains("ValueError: oops"), "exception line missing");
+        assert!(
+            r.output.contains("ValueError: oops"),
+            "exception line missing"
+        );
         assert!(r.bytes_saved > 0);
     }
 

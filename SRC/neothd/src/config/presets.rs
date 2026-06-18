@@ -388,7 +388,10 @@ mod tests {
         // None/empty are no-ops (zero-copy borrow when both absent).
         let plain = Preset::default();
         assert!(
-            matches!(wrap_user_prompt("hi", &plain), std::borrow::Cow::Borrowed(_)),
+            matches!(
+                wrap_user_prompt("hi", &plain),
+                std::borrow::Cow::Borrowed(_)
+            ),
             "no-inject must be zero-copy"
         );
         assert_eq!(wrap_user_prompt("hi", &plain), "hi");
@@ -397,13 +400,19 @@ mod tests {
             inject_prefix: Some("Answer in JSON.".into()),
             ..Default::default()
         };
-        assert_eq!(wrap_user_prompt("list colours", &pref), "Answer in JSON.\n\nlist colours");
+        assert_eq!(
+            wrap_user_prompt("list colours", &pref),
+            "Answer in JSON.\n\nlist colours"
+        );
 
         let suf = Preset {
             inject_suffix: Some("Be terse.".into()),
             ..Default::default()
         };
-        assert_eq!(wrap_user_prompt("explain x", &suf), "explain x\n\nBe terse.");
+        assert_eq!(
+            wrap_user_prompt("explain x", &suf),
+            "explain x\n\nBe terse."
+        );
 
         let both = Preset {
             inject_prefix: Some("P".into()),

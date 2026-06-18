@@ -607,7 +607,11 @@ mod tests {
         // pre-fix gate only fired at Strict, letting un-consented cloud egress
         // through on the n8n surface.
         let home = tempfile::tempdir().expect("tempdir");
-        let out = cloud_egress_gate(AutonomyLevel::Standard, Some(ProviderKind::OpenaiApi), home.path());
+        let out = cloud_egress_gate(
+            AutonomyLevel::Standard,
+            Some(ProviderKind::OpenaiApi),
+            home.path(),
+        );
         let out = out.expect("must refuse cloud without consent at Standard");
         assert_eq!(out.error_code(), Some(ApiErrorCode::PermissionDenied));
     }
@@ -618,8 +622,15 @@ mod tests {
         // proceeds (None == no refusal) at a non-Strict autonomy.
         let home = tempfile::tempdir().expect("tempdir");
         crate::consent::grant(home.path(), ProviderKind::OpenaiApi).expect("record consent");
-        let out = cloud_egress_gate(AutonomyLevel::Standard, Some(ProviderKind::OpenaiApi), home.path());
-        assert!(out.is_none(), "a consented cloud provider must pass the gate");
+        let out = cloud_egress_gate(
+            AutonomyLevel::Standard,
+            Some(ProviderKind::OpenaiApi),
+            home.path(),
+        );
+        assert!(
+            out.is_none(),
+            "a consented cloud provider must pass the gate"
+        );
     }
 
     #[test]
@@ -628,7 +639,11 @@ mod tests {
         // regardless of any recorded consent (parity with the prior behavior).
         let home = tempfile::tempdir().expect("tempdir");
         crate::consent::grant(home.path(), ProviderKind::OpenaiApi).expect("record consent");
-        let out = cloud_egress_gate(AutonomyLevel::Strict, Some(ProviderKind::OpenaiApi), home.path());
+        let out = cloud_egress_gate(
+            AutonomyLevel::Strict,
+            Some(ProviderKind::OpenaiApi),
+            home.path(),
+        );
         let out = out.expect("Strict must refuse cloud even with consent");
         assert_eq!(out.error_code(), Some(ApiErrorCode::PermissionDenied));
     }
@@ -639,8 +654,12 @@ mod tests {
         // never gated — at any autonomy level.
         let home = tempfile::tempdir().expect("tempdir");
         assert!(
-            cloud_egress_gate(AutonomyLevel::Standard, Some(ProviderKind::LocalQwen), home.path())
-                .is_none(),
+            cloud_egress_gate(
+                AutonomyLevel::Standard,
+                Some(ProviderKind::LocalQwen),
+                home.path()
+            )
+            .is_none(),
             "a local provider is not cloud egress"
         );
         assert!(

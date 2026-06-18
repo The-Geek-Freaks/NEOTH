@@ -73,17 +73,17 @@ use tracing::{debug, error, info, warn};
 
 use super::discovery::ClusterKey;
 use super::executor::ClusterTaskJob;
+use super::gossip::GossipPolicy;
+use super::gossip_wire::GossipAcceptance;
 use super::heartbeat::{
     self, FrameBody, FrameKind, HeartbeatBody, HelloBody, PROTOCOL_NAME, PROTOCOL_VERSION,
     TaskDelegateBody, TaskResultBody, TaskResultStatus, WireFrame,
 };
-use super::gossip::GossipPolicy;
-use super::gossip_wire::GossipAcceptance;
 use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
 use super::wal_sync::GossipState;
-use super::{PeerSessionId, PeerLoad, PeerLoadRegistry};
+use super::{PeerLoad, PeerLoadRegistry, PeerSessionId};
 use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
 
@@ -574,7 +574,8 @@ async fn handle_peeroxide_connection(
     // COR-16/A-43: best-effort, but a write failure (disk full, perms,
     // serde) must not vanish — log it so a peer's RTT/stability silently
     // freezing in `neoth cluster topology` is diagnosable.
-    if let Err(e) = crate::cluster::registry::refresh_rtt(&neoth_home, &remote_pk_hex, handshake_rtt_ms)
+    if let Err(e) =
+        crate::cluster::registry::refresh_rtt(&neoth_home, &remote_pk_hex, handshake_rtt_ms)
     {
         tracing::warn!(error = %e, peer = %remote_pk_hex, "cluster registry refresh_rtt failed (non-fatal)");
     }
@@ -834,7 +835,11 @@ async fn handle_peeroxide_connection(
                         last_capabilities_hash = Some(b.capabilities_hash);
                     }
                 } else if kind == FrameKind::CapabilityUpdate {
-                    emit_capabilities_changed_wal(wal_writer.as_deref(), &peer_id, &peer_capabilities);
+                    emit_capabilities_changed_wal(
+                        wal_writer.as_deref(),
+                        &peer_id,
+                        &peer_capabilities,
+                    );
                 }
             }
             Ok(false) => {
@@ -949,7 +954,11 @@ fn emit_heartbeat_sent_wal(writer: Option<&WalWriterHandle>, peer_id: &str, body
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_HEARTBEAT_SENT, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_HEARTBEAT_SENT,
+        payload,
+    );
 }
 
 fn emit_peer_health_changed_wal(
@@ -1039,7 +1048,9 @@ fn cluster_task_gate(is_paired: bool, decision: &Decision, lease_active: bool) -
         return TaskGateOutcome::Reject("not_paired");
     }
     match decision {
-        Decision::Allow => TaskGateOutcome::Accept { lease_backed: lease_active },
+        Decision::Allow => TaskGateOutcome::Accept {
+            lease_backed: lease_active,
+        },
         Decision::Confirm(_) => {
             if lease_active {
                 TaskGateOutcome::Accept { lease_backed: true }
@@ -1073,7 +1084,13 @@ async fn handle_task_delegate(
     // frame is rejected even from an unpaired peer.
     if let Err(e) = heartbeat::validate_task_delegate(&body) {
         debug!(error = %e, "cluster: rejecting malformed TaskDelegate");
-        reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "malformed");
+        reply_task_rejected(
+            peer_streams,
+            remote_pk_hex,
+            own_peer_id,
+            &task_id,
+            "malformed",
+        );
         emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "malformed");
         return;
     }
@@ -1083,8 +1100,19 @@ async fn handle_task_delegate(
     // reject without touching the registry or lease store.
     let decision = permissions::evaluate(&Action::ClusterTaskAccept, autonomy);
     if matches!(decision, Decision::Deny(_)) {
-        reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "autonomy_deny");
-        emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "autonomy_deny");
+        reply_task_rejected(
+            peer_streams,
+            remote_pk_hex,
+            own_peer_id,
+            &task_id,
+            "autonomy_deny",
+        );
+        emit_task_rejected_wal(
+            wal_writer.as_deref(),
+            &task_id,
+            remote_pk_hex,
+            "autonomy_deny",
+        );
         return;
     }
 
@@ -1134,8 +1162,19 @@ async fn handle_task_delegate(
                     // as a DISTINCT, operator-visible reason rather than hiding
                     // a dead executor behind "busy" (review finding).
                     Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                        reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "busy");
-                        emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
+                        reply_task_rejected(
+                            peer_streams,
+                            remote_pk_hex,
+                            own_peer_id,
+                            &task_id,
+                            "busy",
+                        );
+                        emit_task_rejected_wal(
+                            wal_writer.as_deref(),
+                            &task_id,
+                            remote_pk_hex,
+                            "busy",
+                        );
                     }
                     Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                         error!(task_id = %task_id, "cluster executor channel closed — executor task is gone");
@@ -1181,16 +1220,16 @@ async fn check_cluster_lease(neoth_home: &std::path::Path, subject: &str) -> boo
     let path = crate::permissions::lease::LeaseStore::default_path(neoth_home);
     let subject = subject.to_string();
     let now = now_unix_secs() as i64;
-    tokio::task::spawn_blocking(move || {
-        match crate::permissions::lease::LeaseStore::load(&path) {
+    tokio::task::spawn_blocking(
+        move || match crate::permissions::lease::LeaseStore::load(&path) {
             Ok(store) => store.active_for(
                 &subject,
                 &crate::permissions::lease::LeaseScope::ClusterTaskAccept,
                 now,
             ),
             Err(_) => false,
-        }
-    })
+        },
+    )
     .await
     .unwrap_or(false)
 }
@@ -1239,7 +1278,11 @@ fn emit_task_accepted_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_TASK_ACCEPTED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_TASK_ACCEPTED,
+        payload,
+    );
 }
 
 fn emit_task_rejected_wal(
@@ -1257,7 +1300,11 @@ fn emit_task_rejected_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_TASK_REJECTED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_TASK_REJECTED,
+        payload,
+    );
 }
 
 /// SL-01b: an inbound gossip frame was ACCEPTED (the receive ACL passed). The
@@ -1277,7 +1324,11 @@ fn emit_gossip_received_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED,
+        payload,
+    );
 }
 
 /// SL-01b: an inbound gossip frame was DROPPED, with the reason discriminant.
@@ -1301,7 +1352,11 @@ fn emit_gossip_dropped_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_DROPPED,
+        payload,
+    );
 }
 
 // ── Connection-loop primitives (testable against tokio::io::duplex) ────────
@@ -1555,7 +1610,9 @@ mod tests {
         // also covered it (audit detail), but is not required.
         assert_eq!(
             cluster_task_gate(true, &allow, false),
-            TaskGateOutcome::Accept { lease_backed: false }
+            TaskGateOutcome::Accept {
+                lease_backed: false
+            }
         );
         assert_eq!(
             cluster_task_gate(true, &allow, true),

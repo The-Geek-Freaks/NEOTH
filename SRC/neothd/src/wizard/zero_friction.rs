@@ -7,8 +7,8 @@
 //! pure config transform the wizard's zero-friction path applies before writing
 //! `freedom.yaml`; it never touches secrets (those live in `credentials.yaml`).
 
-use crate::config::inference::TopologyMode;
 use crate::config::FreedomConfig;
+use crate::config::inference::TopologyMode;
 use crate::permissions::AutonomyLevel;
 
 /// Return a copy of `cfg` with the zero-friction preset applied: Full autonomy,
@@ -39,9 +39,15 @@ mod tests {
         let z = apply_zero_friction(base);
 
         assert_eq!(z.autonomy, AutonomyLevel::Full, "Full autonomy");
-        assert!(!z.skills.disabled_for_eval_sessions, "skills not eval-suppressed");
+        assert!(
+            !z.skills.disabled_for_eval_sessions,
+            "skills not eval-suppressed"
+        );
         assert!(!z.skills.eval_session_active, "no active eval session");
-        assert!(matches!(z.inference.mode, TopologyMode::Single), "single-provider");
+        assert!(
+            matches!(z.inference.mode, TopologyMode::Single),
+            "single-provider"
+        );
     }
 
     #[test]

@@ -34,7 +34,10 @@ pub fn default_ccr_dir() -> PathBuf {
 /// `ccr::compute_key`. Reject anything else before it touches the filesystem —
 /// a CLI-supplied key must never escape the store dir (no `../`, no separators).
 fn is_valid_key(key: &str) -> bool {
-    key.len() == 24 && key.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    key.len() == 24
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// Directory-backed, persistent [`CcrStore`].

@@ -124,11 +124,7 @@ pub fn lookup(dir: &Path, url: &str) -> Option<CachedDoc> {
     let path = dir.join(format!("{}.json", key(url)));
     let body = std::fs::read_to_string(&path).ok()?;
     let doc: CachedDoc = serde_json::from_str(&body).ok()?;
-    if doc.url == url {
-        Some(doc)
-    } else {
-        None
-    }
+    if doc.url == url { Some(doc) } else { None }
 }
 
 /// Persist `doc` (best-effort: a failure is logged, never propagated, so a
@@ -258,7 +254,9 @@ mod tests {
 
     #[test]
     fn credential_params_in_url_block_caching() {
-        assert!(url_has_credential_params("https://api.x/v1?access_token=abc"));
+        assert!(url_has_credential_params(
+            "https://api.x/v1?access_token=abc"
+        ));
         assert!(url_has_credential_params("https://x/d?foo=1&api_key=K"));
         assert!(url_has_credential_params("https://x/d?sig=zzz"));
         assert!(!url_has_credential_params(

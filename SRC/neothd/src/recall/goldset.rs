@@ -102,16 +102,16 @@ impl GraderGrade {
 
 /// Load a goldset JSONL file (one [`GoldsetEntry`] per non-blank line).
 pub fn load_goldset(path: &Path) -> Result<Vec<GoldsetEntry>> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("read goldset {}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read goldset {}", path.display()))?;
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let entry: GoldsetEntry = serde_json::from_str(line)
-            .with_context(|| format!("parse goldset line {}", i + 1))?;
+        let entry: GoldsetEntry =
+            serde_json::from_str(line).with_context(|| format!("parse goldset line {}", i + 1))?;
         out.push(entry);
     }
     if out.is_empty() {
@@ -181,8 +181,16 @@ mod tests {
 
     #[test]
     fn grade_validate_rejects_out_of_range() {
-        assert!(grade("q", "A", GradedSystem::Neoth, [5, 5, 5, 5, 5]).validate().is_ok());
-        assert!(grade("q", "A", GradedSystem::Neoth, [6, 0, 0, 0, 0]).validate().is_err());
+        assert!(
+            grade("q", "A", GradedSystem::Neoth, [5, 5, 5, 5, 5])
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            grade("q", "A", GradedSystem::Neoth, [6, 0, 0, 0, 0])
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]

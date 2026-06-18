@@ -379,10 +379,7 @@ mod tests {
         let resp = "Sam's birthday is a wonderful day filled with cake.";
         let out = factual_contradiction_check(resp, &a, DEFAULT_NEGATION_MARKERS, 80);
         assert!(!out.agrees);
-        assert!(
-            out.missing_keywords
-                .contains(&"Sam's birthday".to_string())
-        );
+        assert!(out.missing_keywords.contains(&"Sam's birthday".to_string()));
     }
 
     #[test]

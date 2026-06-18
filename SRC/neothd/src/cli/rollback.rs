@@ -261,16 +261,18 @@ fn find_snapshot_at(segment: &Path, target_offset: u64) -> Result<PreMutationSna
     let mut found: Option<Result<PreMutationSnapshot>> = None;
     crate::wal::scan::for_each_frame(&bytes, |cursor, frame| {
         if cursor as u64 == target_offset {
-            found = Some(if frame.header.event_type != EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
-                Err(anyhow::anyhow!(
-                    "frame at offset {target_offset} is not a PRE_MUTATION_SNAPSHOT \
+            found = Some(
+                if frame.header.event_type != EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
+                    Err(anyhow::anyhow!(
+                        "frame at offset {target_offset} is not a PRE_MUTATION_SNAPSHOT \
                      (event_type 0x{:02X}, expected 0xF2)",
-                    frame.header.event_type
-                ))
-            } else {
-                serde_json::from_slice::<PreMutationSnapshot>(frame.payload)
-                    .context("decode snapshot JSON payload")
-            });
+                        frame.header.event_type
+                    ))
+                } else {
+                    serde_json::from_slice::<PreMutationSnapshot>(frame.payload)
+                        .context("decode snapshot JSON payload")
+                },
+            );
         }
         Ok(())
     })?;
@@ -1157,7 +1159,11 @@ mod tests {
         std::fs::write(&seg, &seg_bytes).unwrap();
 
         let entries = collect_snapshots(dir.path(), None).unwrap();
-        assert_eq!(entries.len(), 1, "snapshot inside the zstd blob must be found");
+        assert_eq!(
+            entries.len(),
+            1,
+            "snapshot inside the zstd blob must be found"
+        );
         let ((_, offset), found) = &entries[0];
         assert_eq!(
             *offset, SEGMENT_HEADER_V2_LEN as u64,

@@ -110,8 +110,12 @@ impl ProviderWorker {
 /// when nothing matches → the caller falls back to Direct (no hint).
 fn parse_category_reply(reply: &str) -> Option<ToolCategory> {
     let lower = reply.trim().to_ascii_lowercase();
-    ToolCategory::from_str(&lower)
-        .or_else(|| lower.split_whitespace().next().and_then(ToolCategory::from_str))
+    ToolCategory::from_str(&lower).or_else(|| {
+        lower
+            .split_whitespace()
+            .next()
+            .and_then(ToolCategory::from_str)
+    })
 }
 
 #[async_trait]
@@ -420,14 +424,23 @@ mod tests {
         // every task prompt, replacing the blunt "Always include tests."
         let p = build_task_prompt(&sample_task(), None);
         assert!(p.contains("stop at the first rung"), "YAGNI ladder missing");
-        assert!(p.contains("Does the standard library do it"), "stdlib rung missing");
-        assert!(p.contains("// neoth:"), "ceiling-comment convention missing");
+        assert!(
+            p.contains("Does the standard library do it"),
+            "stdlib rung missing"
+        );
+        assert!(
+            p.contains("// neoth:"),
+            "ceiling-comment convention missing"
+        );
         assert!(p.contains("ONE runnable check"), "lazy-check rule missing");
         assert!(
             p.contains("NEVER cut security"),
             "security carve-out missing — the lazy ladder must not undercut security"
         );
-        assert!(!p.contains("Always include tests"), "the blunt always-test rule should be gone");
+        assert!(
+            !p.contains("Always include tests"),
+            "the blunt always-test rule should be gone"
+        );
         assert!(p.contains("at most 3 short lines"), "prose budget missing");
     }
 

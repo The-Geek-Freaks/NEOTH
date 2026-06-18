@@ -157,13 +157,7 @@ pub async fn read_os_file(
     // Layer 3 — read + audit.
     match read_file_text(&canonical, cfg.max_read_bytes) {
         Ok(text) => {
-            emit_read(
-                sink,
-                &canonical.display().to_string(),
-                text.len(),
-                now_unix,
-            )
-            .await;
+            emit_read(sink, &canonical.display().to_string(), text.len(), now_unix).await;
             Ok(text)
         }
         Err(e) => {
@@ -208,7 +202,13 @@ pub async fn write_os_file(
     let resolved = match resolve_write_target(target, &cfg.allowed_write_paths) {
         Ok(p) => p,
         Err(e) => {
-            emit_write_denied(sink, &target.display().to_string(), &e.to_string(), now_unix).await;
+            emit_write_denied(
+                sink,
+                &target.display().to_string(),
+                &e.to_string(),
+                now_unix,
+            )
+            .await;
             return Err(e.into());
         }
     };
@@ -279,8 +279,13 @@ pub async fn launch_os_app(
     let resolved = match resolve_exec_program(program, &cfg.allowed_exec_paths) {
         Ok(p) => p,
         Err(e) => {
-            emit_launch_denied(sink, &program.display().to_string(), &e.to_string(), now_unix)
-                .await;
+            emit_launch_denied(
+                sink,
+                &program.display().to_string(),
+                &e.to_string(),
+                now_unix,
+            )
+            .await;
             return Err(e.into());
         }
     };
@@ -372,8 +377,13 @@ pub async fn read_os_clipboard(
             return Err(OsGateError::Denied(reason));
         }
         Decision::Confirm(reason) => {
-            emit_clipboard_denied(sink, "read", &format!("confirm-required: {reason}"), now_unix)
-                .await;
+            emit_clipboard_denied(
+                sink,
+                "read",
+                &format!("confirm-required: {reason}"),
+                now_unix,
+            )
+            .await;
             return Err(OsGateError::ConfirmRequired(reason));
         }
     }
@@ -485,8 +495,13 @@ pub async fn write_os_clipboard(
             return Err(OsGateError::Denied(reason));
         }
         Decision::Confirm(reason) => {
-            emit_clipboard_denied(sink, "write", &format!("confirm-required: {reason}"), now_unix)
-                .await;
+            emit_clipboard_denied(
+                sink,
+                "write",
+                &format!("confirm-required: {reason}"),
+                now_unix,
+            )
+            .await;
             return Err(OsGateError::ConfirmRequired(reason));
         }
     }
@@ -521,12 +536,7 @@ async fn emit_launch(sink: AuditSink<'_>, program: &str, pid: u32, ts_unix: i64)
     dispatch_frame(sink, EVENT_TYPE_OS_APP_LAUNCH, payload).await;
 }
 
-async fn emit_launch_denied(
-    sink: AuditSink<'_>,
-    program: &str,
-    reason: &str,
-    ts_unix: i64,
-) {
+async fn emit_launch_denied(sink: AuditSink<'_>, program: &str, reason: &str, ts_unix: i64) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "program": program,
         "reason": reason,
@@ -536,13 +546,7 @@ async fn emit_launch_denied(
     dispatch_frame(sink, EVENT_TYPE_OS_APP_LAUNCH_DENIED, payload).await;
 }
 
-async fn emit_write(
-    sink: AuditSink<'_>,
-    path: &str,
-    bytes: usize,
-    existed: bool,
-    ts_unix: i64,
-) {
+async fn emit_write(sink: AuditSink<'_>, path: &str, bytes: usize, existed: bool, ts_unix: i64) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "path": path,
         "bytes": bytes,
@@ -553,12 +557,7 @@ async fn emit_write(
     dispatch_frame(sink, EVENT_TYPE_OS_FILE_WRITE, payload).await;
 }
 
-async fn emit_write_denied(
-    sink: AuditSink<'_>,
-    path: &str,
-    reason: &str,
-    ts_unix: i64,
-) {
+async fn emit_write_denied(sink: AuditSink<'_>, path: &str, reason: &str, ts_unix: i64) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "path": path,
         "reason": reason,
@@ -649,9 +648,16 @@ mod tests {
         let f = dir.path().join("out.txt");
         let cfg = cfg_for(dir.path());
         // Elevated ⇒ OsFileWrite is Allow.
-        let resolved = write_os_file(&f, b"written", &cfg, AutonomyLevel::Elevated, AuditSink::None, 0)
-            .await
-            .expect("elevated write under allowlist must succeed");
+        let resolved = write_os_file(
+            &f,
+            b"written",
+            &cfg,
+            AutonomyLevel::Elevated,
+            AuditSink::None,
+            0,
+        )
+        .await
+        .expect("elevated write under allowlist must succeed");
         assert!(resolved.ends_with("out.txt"));
         assert_eq!(fs::read(&f).unwrap(), b"written");
     }
@@ -700,8 +706,15 @@ mod tests {
             allowed_exec_paths: Vec::new(),
             clipboard: crate::config::ClipboardConfig::default(),
         };
-        let r = write_os_file(&dir.path().join("x.txt"), b"y", &cfg, AutonomyLevel::Full, AuditSink::None, 0)
-            .await;
+        let r = write_os_file(
+            &dir.path().join("x.txt"),
+            b"y",
+            &cfg,
+            AutonomyLevel::Full,
+            AuditSink::None,
+            0,
+        )
+        .await;
         assert!(matches!(
             r,
             Err(OsGateError::Allowlist(AllowlistError::DenyAll))
@@ -774,9 +787,15 @@ mod tests {
         fs::write(&f, b"forwarded-or-not").unwrap();
         let cfg = cfg_for(dir.path());
         let home = tempdir().unwrap(); // no sidecar here ⇒ forward is Unavailable
-        let text = read_os_file(&f, &cfg, AutonomyLevel::Standard, AuditSink::DaemonRpc(home.path()), 0)
-            .await
-            .expect("read must succeed even when audit-RPC forwarding is unavailable");
+        let text = read_os_file(
+            &f,
+            &cfg,
+            AutonomyLevel::Standard,
+            AuditSink::DaemonRpc(home.path()),
+            0,
+        )
+        .await
+        .expect("read must succeed even when audit-RPC forwarding is unavailable");
         assert_eq!(text, "forwarded-or-not");
     }
 
@@ -903,7 +922,9 @@ mod tests {
 
     #[tokio::test]
     async fn launch_deny_all_when_no_exec_allowlist() {
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let dir = tempdir().unwrap();
         let cfg = cfg_for(dir.path()); // exec allowlist is empty here
         let r = launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await;
@@ -915,7 +936,9 @@ mod tests {
 
     #[tokio::test]
     async fn launch_denied_at_strict() {
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let cfg = exec_cfg(&exe);
         let r = launch_os_app(&exe, &cfg, AutonomyLevel::Strict, AuditSink::None, 0).await;
         assert!(matches!(r, Err(OsGateError::Denied(_))));
@@ -923,7 +946,9 @@ mod tests {
 
     #[tokio::test]
     async fn launch_confirms_at_standard_no_tty() {
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let cfg = exec_cfg(&exe);
         let r = launch_os_app(&exe, &cfg, AutonomyLevel::Standard, AuditSink::None, 0).await;
         assert!(matches!(r, Err(OsGateError::ConfirmRequired(_))));
@@ -933,7 +958,9 @@ mod tests {
     async fn launch_confirms_at_elevated_stricter_than_write() {
         // Proves the exec gate is one notch stricter than OsFileWrite (which
         // Elevated ALLOWS): program execution still confirms at Elevated.
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let cfg = exec_cfg(&exe);
         let r = launch_os_app(&exe, &cfg, AutonomyLevel::Elevated, AuditSink::None, 0).await;
         assert!(matches!(r, Err(OsGateError::ConfirmRequired(_))));
@@ -941,7 +968,9 @@ mod tests {
 
     #[tokio::test]
     async fn launch_succeeds_at_full_and_returns_pid() {
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let cfg = exec_cfg(&exe);
         let (resolved, pid) = launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::None, 0)
             .await
@@ -953,7 +982,9 @@ mod tests {
     #[tokio::test]
     async fn launch_non_allowlisted_binary_is_denied() {
         // A real, launchable binary that simply isn't the allowlisted one.
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let dir = tempdir().unwrap();
         let other = dir.path().join("decoy");
         std::fs::write(&other, b"x").unwrap();
@@ -971,13 +1002,22 @@ mod tests {
         use crate::wal::segment_header::SEGMENT_HEADER_LEN;
         use crate::wal::spawn as wal_spawn;
 
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let dir = tempdir().unwrap();
         let cfg = cfg_for(dir.path()); // empty exec allowlist ⇒ deny-all
         let segdir = tempdir().unwrap();
         let seg = segdir.path().join("000001.wal");
         let (writer, join) = wal_spawn(seg.clone()).unwrap();
-        let _ = launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::Writer(&writer), 0).await;
+        let _ = launch_os_app(
+            &exe,
+            &cfg,
+            AutonomyLevel::Full,
+            AuditSink::Writer(&writer),
+            0,
+        )
+        .await;
         drop(writer);
         join.await.unwrap();
 
@@ -992,14 +1032,22 @@ mod tests {
         use crate::wal::segment_header::SEGMENT_HEADER_LEN;
         use crate::wal::spawn as wal_spawn;
 
-        let Some(exe) = real_arg_free_exe() else { return };
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
         let cfg = exec_cfg(&exe);
         let segdir = tempdir().unwrap();
         let seg = segdir.path().join("000001.wal");
         let (writer, join) = wal_spawn(seg.clone()).unwrap();
-        launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::Writer(&writer), 1_700_000_000)
-            .await
-            .expect("full launch");
+        launch_os_app(
+            &exe,
+            &cfg,
+            AutonomyLevel::Full,
+            AuditSink::Writer(&writer),
+            1_700_000_000,
+        )
+        .await
+        .expect("full launch");
         drop(writer);
         join.await.unwrap();
 
@@ -1014,7 +1062,9 @@ mod tests {
     #[cfg(feature = "os-clipboard")]
     mod clipboard_tests {
         use crate::config::ClipboardConfig;
-        use crate::os_tools::gate::{read_os_clipboard, write_os_clipboard, AuditSink, OsGateError};
+        use crate::os_tools::gate::{
+            AuditSink, OsGateError, read_os_clipboard, write_os_clipboard,
+        };
         use crate::permissions::AutonomyLevel;
         // `emit_clipboard_access` is private to the gate module — reachable from
         // this descendant via `super::super::`.
@@ -1113,7 +1163,8 @@ mod tests {
             // Layer 0b fires BEFORE the autonomy gate + the backend.
             let cfg = clip_cfg(true, true, true);
             assert!(matches!(
-                write_os_clipboard("rm -rf /\n", &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                write_os_clipboard("rm -rf /\n", &cfg, AutonomyLevel::Full, AuditSink::None, 0)
+                    .await,
                 Err(OsGateError::PastejackingPattern(_))
             ));
             assert!(
@@ -1134,7 +1185,8 @@ mod tests {
             for bad in ["a\u{0085}b", "a\u{2028}b", "a\u{2029}b"] {
                 assert!(
                     matches!(
-                        write_os_clipboard(bad, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                        write_os_clipboard(bad, &cfg, AutonomyLevel::Full, AuditSink::None, 0)
+                            .await,
                         Err(OsGateError::PastejackingPattern(_))
                     ),
                     "unicode line terminator in {bad:?} must be rejected"
@@ -1152,7 +1204,8 @@ mod tests {
             for bad in ["benign\x1b[201~rm -rf /", "a\x00b", "ding\x07"] {
                 assert!(
                     matches!(
-                        write_os_clipboard(bad, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                        write_os_clipboard(bad, &cfg, AutonomyLevel::Full, AuditSink::None, 0)
+                            .await,
                         Err(OsGateError::PastejackingPattern(_))
                     ),
                     "control char in {bad:?} must be rejected even with newlines allowed"
@@ -1179,7 +1232,14 @@ mod tests {
             let mut cfg = clip_cfg(true, true, true);
             cfg.max_clipboard_write_bytes = 4;
             assert!(matches!(
-                write_os_clipboard("way too long", &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                write_os_clipboard(
+                    "way too long",
+                    &cfg,
+                    AutonomyLevel::Full,
+                    AuditSink::None,
+                    0
+                )
+                .await,
                 Err(OsGateError::WriteTooLarge(_))
             ));
         }
@@ -1192,8 +1252,14 @@ mod tests {
             // prove the guard did NOT reject it.
             let mut cfg = clip_cfg(true, true, true);
             cfg.allow_newlines_in_write = true;
-            let w = write_os_clipboard("line1\nline2", &cfg, AutonomyLevel::Full, AuditSink::None, 0)
-                .await;
+            let w = write_os_clipboard(
+                "line1\nline2",
+                &cfg,
+                AutonomyLevel::Full,
+                AuditSink::None,
+                0,
+            )
+            .await;
             assert!(
                 matches!(w, Ok(_) | Err(OsGateError::ClipboardUnavailable(_))),
                 "opted-in multi-line write must pass the pastejack guard (got {w:?})"
@@ -1268,7 +1334,10 @@ mod tests {
                 }
                 cursor += frame.header.total_len as usize;
             }
-            assert!(clip_frames >= 3, "expected >=3 clipboard frames, got {clip_frames}");
+            assert!(
+                clip_frames >= 3,
+                "expected >=3 clipboard frames, got {clip_frames}"
+            );
         }
     }
 }

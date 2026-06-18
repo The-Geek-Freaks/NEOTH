@@ -23,7 +23,6 @@
 // Harmless for non-matrix builds — it only widens the compile-time recursion
 // budget for trait/`Send` evaluation, never changes runtime behaviour.
 #![recursion_limit = "512"]
-
 // Crate-level clippy lints. The disabled ones are stylistic / documentation
 // nits where the project's chosen formatting (4-space indented continuation
 // lines in doc bullets, explicit `..Default::default()` after partial
@@ -105,7 +104,6 @@ pub mod code_map;
 pub mod coding;
 pub mod computer_use;
 pub mod config;
-pub mod self_improve;
 pub mod consent;
 pub mod context;
 pub mod council;
@@ -137,11 +135,12 @@ pub mod profile;
 pub mod providers;
 pub mod recall;
 pub mod recipes;
-pub mod recovery;
 pub mod recon;
+pub mod recovery;
 pub mod reflection;
 pub mod secret;
 pub mod security;
+pub mod self_improve;
 pub mod skills;
 pub mod slash;
 pub mod sources;
@@ -160,10 +159,10 @@ pub mod tweaks;
 pub mod updater;
 pub mod util;
 pub mod wal;
+pub mod wasm_plugin;
 /// GOLD-FEAT-03 — NEOTH self-wiki: render the `PLAN/` design corpus into an
 /// interlinked Obsidian vault (`neoth obsidian wiki-build`).
 pub mod wiki;
-pub mod wasm_plugin;
 pub mod wizard;
 
 pub const BANNER: &str = "Neoth ready. Sup.";

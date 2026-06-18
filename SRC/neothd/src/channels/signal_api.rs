@@ -261,7 +261,10 @@ mod tests {
                   "groupInfo":{"groupId":"GROUP_BASE64==","type":"DELIVER"}}}}"#,
         );
         let msg = envelope_to_inbound(&env).expect("group msg maps");
-        assert_eq!(msg.chat_id, "GROUP_BASE64==", "group → chat_id is the group id");
+        assert_eq!(
+            msg.chat_id, "GROUP_BASE64==",
+            "group → chat_id is the group id"
+        );
         assert_eq!(msg.sender_id, "+4499", "sender stays the member number");
     }
 
@@ -279,11 +282,17 @@ mod tests {
         let empty_text = envelope_json(
             r#"{"envelope":{"source":"+44","timestamp":1,"dataMessage":{"message":"   "}}}"#,
         );
-        assert!(envelope_to_inbound(&empty_text).is_none(), "blank text dropped");
+        assert!(
+            envelope_to_inbound(&empty_text).is_none(),
+            "blank text dropped"
+        );
         let no_source = envelope_json(
             r#"{"envelope":{"source":"","timestamp":1,"dataMessage":{"message":"x"}}}"#,
         );
-        assert!(envelope_to_inbound(&no_source).is_none(), "source-less envelope dropped");
+        assert!(
+            envelope_to_inbound(&no_source).is_none(),
+            "source-less envelope dropped"
+        );
     }
 
     #[test]

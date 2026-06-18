@@ -216,10 +216,7 @@ pub fn record_recall_latency(
 /// RECALL-METER-01 — the most recent `limit` recall-latency samples (ms),
 /// newest first. The daemon recall-latency cron reads this window to compute
 /// p95. Empty when no recall has run yet.
-pub fn recent_recall_latencies_ms(
-    conn: &Connection,
-    limit: usize,
-) -> rusqlite::Result<Vec<f64>> {
+pub fn recent_recall_latencies_ms(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<f64>> {
     let mut stmt =
         conn.prepare("SELECT latency_ms FROM idx_recall_latency ORDER BY id DESC LIMIT ?1")?;
     let rows = stmt.query_map(rusqlite::params![limit as i64], |r| r.get::<_, f64>(0))?;
@@ -262,10 +259,7 @@ pub struct RecallEvent {
 
 /// GOLD-ADAPT-MEM-15 — the recent recall-outcome window (newest first), capped at
 /// `limit` rows. Empty when no recall has run yet.
-pub fn recent_recall_events(
-    conn: &Connection,
-    limit: usize,
-) -> rusqlite::Result<Vec<RecallEvent>> {
+pub fn recent_recall_events(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<RecallEvent>> {
     let mut stmt = conn.prepare(
         "SELECT ts_unix, result_count, reinforced_count, tier \
          FROM idx_recall_events ORDER BY id DESC LIMIT ?1",
@@ -336,8 +330,7 @@ pub fn compute_scorecard(events: &[RecallEvent], latencies: &[f64]) -> RecallSco
     let multi = events.iter().filter(|e| e.tier == "multi").count();
 
     let non_skip: Vec<&RecallEvent> = events.iter().filter(|e| e.tier != "skip").collect();
-    let non_empty: Vec<&&RecallEvent> =
-        non_skip.iter().filter(|e| e.result_count >= 1).collect();
+    let non_empty: Vec<&&RecallEvent> = non_skip.iter().filter(|e| e.result_count >= 1).collect();
 
     let hit_rate = if non_skip.is_empty() {
         0.0
@@ -358,7 +351,13 @@ pub fn compute_scorecard(events: &[RecallEvent], latencies: &[f64]) -> RecallSco
             .sum::<f64>()
             / non_empty.len() as f64
     };
-    let pct = |n: usize| if total == 0 { 0.0 } else { n as f64 / total as f64 * 100.0 };
+    let pct = |n: usize| {
+        if total == 0 {
+            0.0
+        } else {
+            n as f64 / total as f64 * 100.0
+        }
+    };
     let latency_mean_ms = if latencies.is_empty() {
         0.0
     } else {
@@ -370,7 +369,11 @@ pub fn compute_scorecard(events: &[RecallEvent], latencies: &[f64]) -> RecallSco
         total_recalls: total,
         data_sufficient: non_skip.len() >= 10,
         hit_rate,
-        empty_rate: if non_skip.is_empty() { 0.0 } else { 1.0 - hit_rate },
+        empty_rate: if non_skip.is_empty() {
+            0.0
+        } else {
+            1.0 - hit_rate
+        },
         mean_result_count,
         reinforcement_rate,
         tier_skip_pct: pct(skip),
@@ -901,7 +904,10 @@ fn apply_schema(conn: &Connection) -> Result<()> {
     // created before the `merged_into` column existed. `CREATE TABLE IF NOT
     // EXISTS` never alters an existing table, so back-fill the column here;
     // `.ok()` swallows the "duplicate column" error on tables that already have it.
-    let _ = conn.execute("ALTER TABLE idx_human_identity ADD COLUMN merged_into TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE idx_human_identity ADD COLUMN merged_into TEXT",
+        [],
+    );
 
     // Stamp schema version (idempotent).
     conn.execute(
@@ -970,7 +976,12 @@ mod tests {
     // ── GOLD-ADAPT-MEM-15 recall-quality scorecard ──
 
     fn ev(result_count: u32, reinforced_count: u32, tier: &str) -> RecallEvent {
-        RecallEvent { ts_unix: 1, result_count, reinforced_count, tier: tier.to_string() }
+        RecallEvent {
+            ts_unix: 1,
+            result_count,
+            reinforced_count,
+            tier: tier.to_string(),
+        }
     }
 
     #[test]
@@ -1007,7 +1018,10 @@ mod tests {
         let sc = compute_scorecard(&events, &[]);
         assert_eq!(sc.total_recalls, 15);
         assert!(sc.data_sufficient, "10 non-skip recalls ≥ the 10 floor");
-        assert!((sc.hit_rate - 0.8).abs() < 1e-9, "8/10 non-skip returned rows");
+        assert!(
+            (sc.hit_rate - 0.8).abs() < 1e-9,
+            "8/10 non-skip returned rows"
+        );
         assert!((sc.empty_rate - 0.2).abs() < 1e-9);
         assert!((sc.tier_skip_pct - (5.0 / 15.0 * 100.0)).abs() < 1e-6);
         assert!((sc.tier_single_pct - (8.0 / 15.0 * 100.0)).abs() < 1e-6);
@@ -1057,7 +1071,10 @@ mod tests {
         let sc = recall_scorecard(&conn, 500).unwrap();
         assert_eq!(sc.total_recalls, 12);
         assert_eq!(sc.window, 12);
-        assert!((sc.hit_rate - 1.0).abs() < 1e-9, "all 10 non-skip returned rows");
+        assert!(
+            (sc.hit_rate - 1.0).abs() < 1e-9,
+            "all 10 non-skip returned rows"
+        );
         assert!(sc.data_sufficient);
         assert_eq!(sc.latency_p50_ms, 42.0);
     }

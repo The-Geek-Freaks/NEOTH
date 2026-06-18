@@ -487,10 +487,7 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "pm-wwas",
         include_str!("../../assets/skills/pm-wwas/skill.yaml"),
     ),
-    (
-        "pme",
-        include_str!("../../assets/skills/pme/skill.yaml"),
-    ),
+    ("pme", include_str!("../../assets/skills/pme/skill.yaml")),
     (
         "prototype",
         include_str!("../../assets/skills/prototype/skill.yaml"),
@@ -794,11 +791,20 @@ mod tests {
                 "agent_engineering_patterns",
                 "help me design agentic system for this",
             ),
-            ("cybersec_detection_engineering", "i need to write a sigma rule"),
+            (
+                "cybersec_detection_engineering",
+                "i need to write a sigma rule",
+            ),
             ("cybersec_dfir", "follow the order of volatility here"),
             ("cybersec_exploit_dev", "help me build a poc exploit"),
-            ("cybersec_malware_analysis", "triage this malware sample please"),
-            ("cybersec_pentest_recon", "walk me through the nmap scan phases"),
+            (
+                "cybersec_malware_analysis",
+                "triage this malware sample please",
+            ),
+            (
+                "cybersec_pentest_recon",
+                "walk me through the nmap scan phases",
+            ),
             ("cybersec_threat_modeling", "run a stride analysis on this"),
         ];
 

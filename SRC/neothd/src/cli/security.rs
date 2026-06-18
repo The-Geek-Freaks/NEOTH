@@ -324,7 +324,9 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
     rails.push(Rail {
         name: "os_file_tools",
         engaged: reads == 0 && writes == 0,
-        detail: format!("{reads} read path(s), {writes} write path(s) allowlisted (empty = deny-all)"),
+        detail: format!(
+            "{reads} read path(s), {writes} write path(s) allowlisted (empty = deny-all)"
+        ),
     });
 
     // OS app-launch (PC-01 app-launch slice) — its OWN rail, separate from
@@ -488,7 +490,8 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
              the cloud call itself is audited 0xCC STT_TRANSCRIBED (metadata only)."
                 .to_string()
         } else {
-            "off — speech-to-text stays on-device (local candle Whisper); no audio leaves".to_string()
+            "off — speech-to-text stays on-device (local candle Whisper); no audio leaves"
+                .to_string()
         },
     });
     rails.push(Rail {
@@ -562,7 +565,10 @@ fn run_safe_mode(args: &SafeModeArgs) -> Result<()> {
             "engaged_count": rails.iter().filter(|r| r.engaged).count(),
             "total": rails.len(),
         });
-        println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
     } else {
         print!("{}", render_rails(&rails));
     }
@@ -644,7 +650,12 @@ pub(crate) fn rotation_authorisation_message(
     format!("hmac-key-rotated-v1|{new_key_sha256}|{replaced}|{reason}|{ts_unix}").into_bytes()
 }
 
-async fn emit_hmac_key_rotated(home: &std::path::Path, new_key: &[u8], replaced: bool, reason: &str) {
+async fn emit_hmac_key_rotated(
+    home: &std::path::Path,
+    new_key: &[u8],
+    replaced: bool,
+    reason: &str,
+) {
     use sha2::{Digest, Sha256};
     let new_key_sha256: String = Sha256::digest(new_key)
         .iter()
@@ -1178,20 +1189,20 @@ mod tests {
         let rails = collect_rails(&cfg);
         assert_eq!(rails.len(), 19, "all rails surfaced");
         for name in [
-            "autonomy_gate",          // default Standard = gated
-            "private_inference",      // default no cloud fallback
-            "proactive_messaging",    // default off
-            "cluster_transport",      // default off
-            "os_file_tools",          // default empty allowlists = deny-all
-            "os_app_launch",          // default empty exec allowlist = deny-all
-            "email_llm_tiebreak",     // default off = no LLM sees mail
-            "email_downgrade_allowed", // default denied = no LLM auto-deliver
-            "omi_ingest",             // default off = no passive ingest
-            "ecology_scheduler",      // default off = no auto-scheduler
-            "channel_weight_learning", // default operator_only = poison-resistant
-            "cloud_stt_enabled",      // default off = audio stays on-device
-            "cloud_tts_enabled",      // default off = text stays on-device
-            "cloud_vision_enabled",   // default off = no images to cloud
+            "autonomy_gate",              // default Standard = gated
+            "private_inference",          // default no cloud fallback
+            "proactive_messaging",        // default off
+            "cluster_transport",          // default off
+            "os_file_tools",              // default empty allowlists = deny-all
+            "os_app_launch",              // default empty exec allowlist = deny-all
+            "email_llm_tiebreak",         // default off = no LLM sees mail
+            "email_downgrade_allowed",    // default denied = no LLM auto-deliver
+            "omi_ingest",                 // default off = no passive ingest
+            "ecology_scheduler",          // default off = no auto-scheduler
+            "channel_weight_learning",    // default operator_only = poison-resistant
+            "cloud_stt_enabled",          // default off = audio stays on-device
+            "cloud_tts_enabled",          // default off = text stays on-device
+            "cloud_vision_enabled",       // default off = no images to cloud
             "video_frame_upload_enabled", // default off = no frames to cloud
         ] {
             assert!(
@@ -1791,7 +1802,10 @@ mod tests {
             cur = cur.saturating_add(total);
         }
         let p = found.expect("a 0xD9 HMAC_KEY_ROTATED frame must be present");
-        let expected: String = Sha256::digest(&raw).iter().map(|b| format!("{b:02x}")).collect();
+        let expected: String = Sha256::digest(&raw)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         assert_eq!(p["new_key_sha256"].as_str().unwrap(), expected);
         assert_eq!(p["reason"].as_str().unwrap(), "rewrap");
         // The raw key must NOT appear anywhere in the payload.

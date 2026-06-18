@@ -365,7 +365,12 @@ mod tests {
     #[tokio::test]
     async fn register_malformed_body_returns_400() {
         let roster = fresh_roster();
-        let resp = route(&fixture_request("POST", "/register", "not json"), &roster, None).await;
+        let resp = route(
+            &fixture_request("POST", "/register", "not json"),
+            &roster,
+            None,
+        )
+        .await;
         assert!(resp.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(resp.contains("bad_body"));
     }
@@ -434,7 +439,12 @@ mod tests {
         assert!(resp.starts_with("HTTP/1.1 401 Unauthorized"));
         assert!(resp.contains("unauthorized"));
         // Roster must NOT have been mutated by an unauthenticated call.
-        let status = route(&fixture_request_auth("GET", "/status", "", Some("s3cr3t")), &roster, Some("s3cr3t")).await;
+        let status = route(
+            &fixture_request_auth("GET", "/status", "", Some("s3cr3t")),
+            &roster,
+            Some("s3cr3t"),
+        )
+        .await;
         assert!(status.contains("\"total_peers\":0"));
     }
 
@@ -462,7 +472,12 @@ mod tests {
         let roster = fresh_roster();
         // Unauthenticated probe of an unknown path must 401 (not 404),
         // so callers cannot enumerate which paths exist.
-        let resp = route(&fixture_request_auth("GET", "/secret-admin", "", None), &roster, Some("s3cr3t")).await;
+        let resp = route(
+            &fixture_request_auth("GET", "/secret-admin", "", None),
+            &roster,
+            Some("s3cr3t"),
+        )
+        .await;
         assert!(resp.starts_with("HTTP/1.1 401 Unauthorized"));
     }
 

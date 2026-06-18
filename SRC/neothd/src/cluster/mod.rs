@@ -181,9 +181,7 @@ impl PeerSessionId {
 /// wire frames are byte-identical to the pre-ARCH-21 `gossip_wire::PeerId`.
 /// Kept a DISTINCT newtype from [`PeerSessionId`] so a UUID session id can
 /// never be swapped for a pubkey.
-#[derive(
-    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(transparent)]
 pub struct PeerPubkey(pub String);
 

@@ -53,11 +53,8 @@ pub fn search_session_cards<'a>(
         let name = card.display_name.as_deref().unwrap_or("").to_lowercase();
         let topics = card.top_topics.join(" ").to_lowercase();
         let summary = card.one_line_summary.to_lowercase();
-        let utterances = format!(
-            "{} {}",
-            card.opening_utterance, card.closing_utterance
-        )
-        .to_lowercase();
+        let utterances =
+            format!("{} {}", card.opening_utterance, card.closing_utterance).to_lowercase();
 
         let mut score = 0u32;
         let mut fields: Vec<&'static str> = Vec::new();
@@ -101,7 +98,14 @@ pub fn search_session_cards<'a>(
 mod tests {
     use super::*;
 
-    fn card(id: &str, started: i64, name: Option<&str>, topics: &[&str], summary: &str, open: &str) -> HindsightCard {
+    fn card(
+        id: &str,
+        started: i64,
+        name: Option<&str>,
+        topics: &[&str],
+        summary: &str,
+        open: &str,
+    ) -> HindsightCard {
         HindsightCard {
             session_id: id.to_string(),
             started_at_unix: started,
@@ -120,9 +124,9 @@ mod tests {
     #[test]
     fn ranks_by_field_weight() {
         let cards = vec![
-            card("a", 100, None, &["misc"], "talked about rust", "hi"),       // summary hit (2)
-            card("b", 200, Some("Rust deep dive"), &["go"], "x", "y"),         // name hit (4)
-            card("c", 300, None, &["rust", "async"], "x", "y"),               // topics hit (3)
+            card("a", 100, None, &["misc"], "talked about rust", "hi"), // summary hit (2)
+            card("b", 200, Some("Rust deep dive"), &["go"], "x", "y"),  // name hit (4)
+            card("c", 300, None, &["rust", "async"], "x", "y"),         // topics hit (3)
         ];
         let hits = search_session_cards(&cards, "rust", 10);
         assert_eq!(hits.len(), 3);
@@ -135,11 +139,14 @@ mod tests {
     #[test]
     fn multi_term_accumulates_score() {
         let cards = vec![
-            card("a", 100, None, &["rust"], "x", "y"),                 // 1 term hits topics = 3
-            card("b", 200, None, &["rust", "async"], "x", "y"),       // both terms hit topics = 6
+            card("a", 100, None, &["rust"], "x", "y"), // 1 term hits topics = 3
+            card("b", 200, None, &["rust", "async"], "x", "y"), // both terms hit topics = 6
         ];
         let hits = search_session_cards(&cards, "rust async", 10);
-        assert_eq!(hits[0].card.session_id, "b", "more terms matched ranks higher");
+        assert_eq!(
+            hits[0].card.session_id, "b",
+            "more terms matched ranks higher"
+        );
     }
 
     #[test]

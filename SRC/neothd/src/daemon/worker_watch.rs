@@ -78,14 +78,14 @@ async fn emit_worker_died(writer: &WalWriterHandle, worker: &str) {
         "MONITOR-02: daemon worker task DIED unexpectedly (panic or early exit)"
     );
     let now = crate::time::now_unix_secs();
-    let payload =
-        match serde_json::to_vec(&serde_json::json!({ "worker": worker, "ts_unix": now })) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(error = %e, "serialize WORKER_DIED payload failed");
-                return;
-            }
-        };
+    let payload = match serde_json::to_vec(&serde_json::json!({ "worker": worker, "ts_unix": now }))
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "serialize WORKER_DIED payload failed");
+            return;
+        }
+    };
     let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_WORKER_DIED, &payload);
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(error = %e, "WORKER_DIED WAL append failed (audit gap)");
@@ -131,11 +131,15 @@ mod tests {
             &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..],
         )
         .unwrap();
-        assert_eq!(f.header.event_type, crate::wal::events::EVENT_TYPE_WORKER_DIED);
+        assert_eq!(
+            f.header.event_type,
+            crate::wal::events::EVENT_TYPE_WORKER_DIED
+        );
         let v: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
         assert_eq!(v["worker"], "test_worker");
         // Exactly one frame (the dedup held): no second WORKER_DIED after it.
-        let next = &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN + f.header.total_len as usize..];
+        let next =
+            &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN + f.header.total_len as usize..];
         assert!(
             crate::wal::frame::decode_frame(next).is_err(),
             "only one WORKER_DIED frame must be written",

@@ -231,8 +231,8 @@ async fn tavily_search_against(
 pub const SEARXNG_DEFAULT_URL: &str = "http://127.0.0.1:8888";
 
 async fn searxng_search(query: &str, count: usize) -> Result<Vec<SearchHit>> {
-    let base = std::env::var("NEOTH_SEARXNG_URL")
-        .unwrap_or_else(|_| SEARXNG_DEFAULT_URL.to_string());
+    let base =
+        std::env::var("NEOTH_SEARXNG_URL").unwrap_or_else(|_| SEARXNG_DEFAULT_URL.to_string());
     let lang = std::env::var("NEOTH_SEARXNG_LANG").unwrap_or_else(|_| "en".to_string());
     searxng_search_against(base.trim_end_matches('/'), query, count, &lang).await
 }
@@ -241,7 +241,14 @@ async fn searxng_search(query: &str, count: usize) -> Result<Vec<SearchHit>> {
 /// `news` category + a `week` time-range so SearXNG biases toward fresh items.
 fn is_news_query(query: &str) -> bool {
     const NEWS_CUES: &[&str] = &[
-        "news", "latest", "breaking", "today", "yesterday", "this week", "headlines", "update on",
+        "news",
+        "latest",
+        "breaking",
+        "today",
+        "yesterday",
+        "this week",
+        "headlines",
+        "update on",
     ];
     let q = query.to_ascii_lowercase();
     NEWS_CUES.iter().any(|cue| q.contains(cue))

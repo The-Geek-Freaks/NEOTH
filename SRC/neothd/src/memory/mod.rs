@@ -15,14 +15,26 @@
 //! `neoth serve`.
 
 pub mod archive;
+/// GOLD-ADAPT-MEM-07 — Hebbian co-access association graph between memory rows
+/// (episodes). Co-recalled memories reinforce a symmetric weighted link;
+/// `neoth recall --assoc <event_id>` queries the 1-hop neighbourhood.
+pub mod assoc_graph;
 pub mod bulk_text;
+pub mod channel_weights;
 pub mod consolidate;
+/// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
+pub mod context_inject;
+/// GOLD-ADAPT-MEM-02 — contradiction detection + ledger over ground-truth facts.
+pub mod contradiction;
 pub mod ctx;
 pub mod decay_task;
 pub mod diff;
 pub mod dimension;
 pub mod drift;
 pub mod embeddings;
+/// GOLD-ADAPT-MEM-06 — knowledge-graph layer (typed entities + weighted
+/// relations + bounded BFS neighbour expansion). `neoth recall --graph`.
+pub mod entities;
 pub mod foreign_import;
 pub mod forget;
 pub mod gc;
@@ -30,27 +42,16 @@ pub mod gc_task;
 pub mod groundtruth;
 pub mod hindsight;
 pub mod indexer;
-/// GOLD-ADAPT-MEM-06 — knowledge-graph layer (typed entities + weighted
-/// relations + bounded BFS neighbour expansion). `neoth recall --graph`.
-pub mod entities;
-/// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
-pub mod context_inject;
-/// GOLD-ADAPT-MEM-02 — contradiction detection + ledger over ground-truth facts.
-pub mod contradiction;
-/// GOLD-ADAPT-MEM-07 — Hebbian co-access association graph between memory rows
-/// (episodes). Co-recalled memories reinforce a symmetric weighted link;
-/// `neoth recall --assoc <event_id>` queries the 1-hop neighbourhood.
-pub mod assoc_graph;
-/// Open Knowledge Format (OKF) renderer — export knowledge as Obsidian-native
-/// markdown concept docs (see `cli::okf`).
-pub mod okf;
-/// GOLD-FEAT-07 — LOWKEY moral-core loader (operator behavioural directives
-/// injected at enrichment position 0). `neoth moral-core {list,preview,doctor}`.
-pub mod moral_core;
 pub mod infra_scan;
 pub mod ingress;
 pub mod integrity;
 pub mod migrations;
+/// GOLD-FEAT-07 — LOWKEY moral-core loader (operator behavioural directives
+/// injected at enrichment position 0). `neoth moral-core {list,preview,doctor}`.
+pub mod moral_core;
+/// Open Knowledge Format (OKF) renderer — export knowledge as Obsidian-native
+/// markdown concept docs (see `cli::okf`).
+pub mod okf;
 pub mod operator_md;
 /// GOLD-ADAPT-OH-10 — per-person relationship scorer (recency × frequency ×
 /// reciprocity × depth, clamped) → proactive surfacing priority. Surfaced via
@@ -62,7 +63,6 @@ pub mod recall_gate;
 /// GOLD-ADAPT-MEM-03 — parallel recall lanes + RRF late fusion.
 pub mod recall_lanes;
 pub mod region_router;
-pub mod channel_weights;
 pub mod regions;
 pub mod routing_weights;
 /// GOLD-ADAPT-VIEW-04 — cross-agent session-transcript import (claude-code /

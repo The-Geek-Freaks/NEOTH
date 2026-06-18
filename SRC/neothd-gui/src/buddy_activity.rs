@@ -100,10 +100,31 @@ mod tests {
     /// If a `GuiActivity` mapped to a mood NOT in here, the orb would silently
     /// fall back to the green default — a wiring bug. This catches it.
     const RENDERED_MOODS: &[&str] = &[
-        "idle", "thinking", "searching", "analyzing", "working", "memory",
-        "learning", "audit", "success", "happy", "excited", "consent", "alert",
-        "problem", "secure", "connected", "connecting", "loading", "intense",
-        "cracking", "notification", "parallel", "agents", "sleeping", "error",
+        "idle",
+        "thinking",
+        "searching",
+        "analyzing",
+        "working",
+        "memory",
+        "learning",
+        "audit",
+        "success",
+        "happy",
+        "excited",
+        "consent",
+        "alert",
+        "problem",
+        "secure",
+        "connected",
+        "connecting",
+        "loading",
+        "intense",
+        "cracking",
+        "notification",
+        "parallel",
+        "agents",
+        "sleeping",
+        "error",
         "danger",
     ];
 
@@ -142,7 +163,13 @@ mod tests {
 
     #[test]
     fn chat_lifecycle_moods_are_distinct() {
-        assert_ne!(GuiActivity::ChatThinking.mood().0, GuiActivity::ChatStreaming.mood().0);
-        assert_ne!(GuiActivity::ChatDone.mood().0, GuiActivity::ChatError.mood().0);
+        assert_ne!(
+            GuiActivity::ChatThinking.mood().0,
+            GuiActivity::ChatStreaming.mood().0
+        );
+        assert_ne!(
+            GuiActivity::ChatDone.mood().0,
+            GuiActivity::ChatError.mood().0
+        );
     }
 }

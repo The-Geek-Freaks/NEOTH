@@ -24,7 +24,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
-use super::line_api::{send_line_push, LINE_API_BASE};
+use super::line_api::{LINE_API_BASE, send_line_push};
 use super::{Channel, ChannelError, MessageId, PipelineHandler};
 use crate::secret::SecretString;
 
@@ -57,8 +57,7 @@ impl LineChannel {
     }
 
     /// Operator-visible hint surfaced by the wizard + `neoth doctor`.
-    pub const SETUP_HINT: &'static str =
-        "LINE Messaging API: create a Messaging API channel at developers.line.biz, \
+    pub const SETUP_HINT: &'static str = "LINE Messaging API: create a Messaging API channel at developers.line.biz, \
          copy the channel secret (Basic Settings) + long-lived channel access token \
          (Messaging API tab) into credentials.yaml, and point your LINE webhook URL \
          at the reverse proxy fronting NEOTH's /line/webhook listener.";
@@ -92,7 +91,14 @@ impl Channel for LineChannel {
         chat_id: &str,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
-        send_line_push(&self.http, &self.base_url, &self.access_token, chat_id, text).await
+        send_line_push(
+            &self.http,
+            &self.base_url,
+            &self.access_token,
+            chat_id,
+            text,
+        )
+        .await
     }
 
     /// Proactive send delegates to `send_text` — the push POST is identical for

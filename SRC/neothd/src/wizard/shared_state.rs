@@ -242,7 +242,13 @@ mod tests {
         };
         let yaml = serde_yaml::to_string(&s).unwrap();
         for sentinel in [
-            "Bearer ", "sk-", "ghp_", "xoxb-", "xapp-", "AKIA", "-----BEGIN",
+            "Bearer ",
+            "sk-",
+            "ghp_",
+            "xoxb-",
+            "xapp-",
+            "AKIA",
+            "-----BEGIN",
         ] {
             assert!(
                 !yaml.contains(sentinel),

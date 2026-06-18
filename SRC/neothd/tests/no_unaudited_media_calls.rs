@@ -60,7 +60,9 @@ fn no_cloud_media_call_bypasses_the_audited_wrappers() {
                     continue;
                 }
                 let trimmed = line.trim_start();
-                if trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("//!")
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("///")
+                    || trimmed.starts_with("//!")
                 {
                     continue;
                 }

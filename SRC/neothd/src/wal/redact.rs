@@ -128,7 +128,8 @@ where
     let (header_len, sealed_compressed) = {
         let probe_len = (SEGMENT_HEADER_LEN + 1).min(file_len as usize);
         let mut probe = vec![0u8; probe_len];
-        file.seek(SeekFrom::Start(0)).context("seek to segment head")?;
+        file.seek(SeekFrom::Start(0))
+            .context("seek to segment head")?;
         file.read_exact(&mut probe).context("read segment head")?;
         match parse_segment_header(&probe) {
             Ok(h) => {
@@ -294,7 +295,8 @@ where
     let mut frames = decompress_frames(blob)
         .with_context(|| format!("decompress sealed WAL segment {}", segment_path.display()))?;
 
-    let report = redact_frames_in_buffer(&mut frames, &mut predicate, header_len as u64, segment_path)?;
+    let report =
+        redact_frames_in_buffer(&mut frames, &mut predicate, header_len as u64, segment_path)?;
 
     // No predicate match ⇒ leave the file byte-identical (no needless recompress
     // /rename). Frames skipped or already-redacted both land here.
@@ -404,7 +406,8 @@ where
         // Copy the header bytes out so no borrow of `frames` survives into the
         // mutation below.
         let mut hdr_arr = [0u8; HEADER_BODY_LEN];
-        hdr_arr.copy_from_slice(&frames[start + PREAMBLE_LEN..start + PREAMBLE_LEN + HEADER_BODY_LEN]);
+        hdr_arr
+            .copy_from_slice(&frames[start + PREAMBLE_LEN..start + PREAMBLE_LEN + HEADER_BODY_LEN]);
         let header = EventHeaderV2::from_le_bytes(&hdr_arr)
             .with_context(|| format!("parse header at logical offset {}", base_offset + cursor))?;
         let total_len = header.total_len as u64;
@@ -601,8 +604,13 @@ pub async fn emit_redaction_marker(
         .unwrap_or_else(crate::wal::signing::default_signing_key_path);
     let signing_key = crate::wal::signing::load_or_init_signing_key(&signing_key_path)
         .context("load operator signing key to authenticate the redaction marker")?;
-    let signed_msg =
-        redaction_authorisation_message(&segment_name, redacted_offsets, bytes_redacted, topic, now_unix);
+    let signed_msg = redaction_authorisation_message(
+        &segment_name,
+        redacted_offsets,
+        bytes_redacted,
+        topic,
+        now_unix,
+    );
     let sig = crate::wal::signing::sign_b64(&signing_key, &signed_msg);
     let signer_pubkey = crate::wal::signing::pubkey_b64(&signing_key);
     let payload = serde_json::to_vec(&serde_json::json!({
@@ -701,7 +709,9 @@ mod tests {
     /// Write a *live* v2 segment file: 61-byte v2 header (COMPRESSED flag set)
     /// followed by RAW frames — exactly what the writer produces before clean
     /// finalize. Returns the file path + the raw-file offsets of each frame.
-    fn write_v2_live_segment_with_frames(payloads: &[&[u8]]) -> (tempfile::NamedTempFile, Vec<u64>) {
+    fn write_v2_live_segment_with_frames(
+        payloads: &[&[u8]],
+    ) -> (tempfile::NamedTempFile, Vec<u64>) {
         use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
         let tmp = tempfile::NamedTempFile::new().expect("tempfile");
         let mut bytes = Vec::new();
@@ -726,7 +736,8 @@ mod tests {
         // hole. With the header-length fix the matching frame is scrubbed.
         let (tmp, offsets) =
             write_v2_live_segment_with_frames(&[b"hello world", b"AcmeCorp is a secret"]);
-        let report = scan_and_redact(tmp.path(), payload_contains_topic("acmecorp")).expect("redact");
+        let report =
+            scan_and_redact(tmp.path(), payload_contains_topic("acmecorp")).expect("redact");
         assert_eq!(report.frames_redacted_count(), 1, "v2 frame must be found");
         assert_eq!(report.frames_redacted, vec![offsets[1]]);
         assert_eq!(report.frames_skipped, 1);
@@ -781,7 +792,11 @@ mod tests {
             write_sealed_compressed_segment(&[b"keep this frame", b"AcmeCorp is a secret"]);
         let report = scan_and_redact(&path, payload_contains_topic("acmecorp"))
             .expect("redact sealed segment");
-        assert_eq!(report.frames_redacted_count(), 1, "sealed frame must be found");
+        assert_eq!(
+            report.frames_redacted_count(),
+            1,
+            "sealed frame must be found"
+        );
         assert_eq!(report.frames_skipped, 1);
         // Offsets recorded in LOGICAL space (header_len + pos) so a 0xF3 marker
         // aligns with what `neoth verify` computes over the reconstructed segment.
@@ -1126,7 +1141,10 @@ mod tests {
         assert_eq!(payload["ts_unix"], 1_700_000_000_i64);
         // The marker is now operator-SIGNED — verify only honours authenticated
         // exemptions, so the signature + pubkey must be present.
-        assert!(payload["signer_pubkey"].as_str().is_some(), "marker carries operator pubkey");
+        assert!(
+            payload["signer_pubkey"].as_str().is_some(),
+            "marker carries operator pubkey"
+        );
         assert!(payload["sig"].as_str().is_some(), "marker is signed");
     }
 }

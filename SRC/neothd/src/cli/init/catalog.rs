@@ -220,7 +220,7 @@ pub(crate) fn apply_local_multi_preset_interactive(
 ) -> Result<()> {
     use crate::installers::ollama::DEFAULT_OLLAMA_PORT;
     use crate::models::gguf_variants::VariantClass;
-    use crate::models::hemisphere_preset::{build_local_preset, ROLES};
+    use crate::models::hemisphere_preset::{ROLES, build_local_preset};
     use crate::models::selector::recommended_local_count;
 
     let vram_mib = crate::installers::gpu::probe_gpu().vram_mib;
@@ -322,7 +322,9 @@ pub(crate) fn topology_default_idx_for_probe(probe: &crate::daemon::accelerator:
     }
 }
 
-pub(crate) fn recommended_provider_for_role(role: &str) -> crate::config::inference::InferenceProvider {
+pub(crate) fn recommended_provider_for_role(
+    role: &str,
+) -> crate::config::inference::InferenceProvider {
     use crate::config::inference::InferenceProvider as I;
     match role {
         "left" => I::ClaudeCli,       // analytic / structured reasoning
@@ -348,8 +350,8 @@ pub(crate) fn recommended_local_provider_for_role(
 ) -> crate::config::inference::InferenceProvider {
     use crate::config::inference::InferenceProvider as I;
     match role {
-        "left" => I::LocalOuro,       // explicit-reasoning LoopLM for the analytic role
-        "right" => I::LocalQwen,      // creative / freeform
+        "left" => I::LocalOuro,  // explicit-reasoning LoopLM for the analytic role
+        "right" => I::LocalQwen, // creative / freeform
         "cerebellum" => I::LocalQwen, // fast routing
         _ => I::LocalQwen,
     }
@@ -559,7 +561,9 @@ pub(crate) fn prompt_hemisphere_model(
 }
 
 /// Parse the `--inference-mode` flag. None → Single.
-pub(crate) fn parse_topology_mode_arg(arg: Option<&str>) -> Result<crate::config::inference::TopologyMode> {
+pub(crate) fn parse_topology_mode_arg(
+    arg: Option<&str>,
+) -> Result<crate::config::inference::TopologyMode> {
     use crate::config::inference::TopologyMode;
     match arg {
         None => Ok(TopologyMode::Single),

@@ -117,12 +117,29 @@ pub fn classify_recall_need(query: &str) -> RecallTier {
     // Short pleasantries / greetings.
     let token_count = q.split_whitespace().count();
     const GREETINGS: &[&str] = &[
-        "hi", "hello", "hey", "thanks", "thank you", "yo", "ok", "okay",
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "yo",
+        "ok",
+        "okay",
         // German pleasantries (operator's language). The ≤2-token guard keeps
         // "danke, das hilft jetzt" (a real follow-up) out of the Skip path.
-        "hallo", "servus", "moin", "danke", "vielen dank", "tschüss", "tschuss",
+        "hallo",
+        "servus",
+        "moin",
+        "danke",
+        "vielen dank",
+        "tschüss",
+        "tschuss",
     ];
-    if token_count <= 2 && GREETINGS.iter().any(|g| q == *g || q.starts_with(&format!("{g} "))) {
+    if token_count <= 2
+        && GREETINGS
+            .iter()
+            .any(|g| q == *g || q.starts_with(&format!("{g} ")))
+    {
         return RecallTier::Skip;
     }
     if SKIP_CUES.iter().any(|c| q.contains(c)) {
@@ -140,8 +157,20 @@ mod tests {
 
     #[test]
     fn skips_status_identity_and_greetings() {
-        for q in ["hi", "hello there", "thanks", "who are you", "what time is it", "ping", "status"] {
-            assert_eq!(classify_recall_need(q), RecallTier::Skip, "{q:?} should skip");
+        for q in [
+            "hi",
+            "hello there",
+            "thanks",
+            "who are you",
+            "what time is it",
+            "ping",
+            "status",
+        ] {
+            assert_eq!(
+                classify_recall_need(q),
+                RecallTier::Skip,
+                "{q:?} should skip"
+            );
         }
         assert_eq!(classify_recall_need("   "), RecallTier::Skip);
     }
@@ -154,14 +183,25 @@ mod tests {
             "summarize our last session",
             "everything about the cluster design",
         ] {
-            assert_eq!(classify_recall_need(q), RecallTier::Multi, "{q:?} should fan out");
+            assert_eq!(
+                classify_recall_need(q),
+                RecallTier::Multi,
+                "{q:?} should fan out"
+            );
         }
     }
 
     #[test]
     fn single_for_ordinary_queries() {
-        for q in ["how does the WAL writer rotate segments", "rust borrow checker rules"] {
-            assert_eq!(classify_recall_need(q), RecallTier::Single, "{q:?} ordinary");
+        for q in [
+            "how does the WAL writer rotate segments",
+            "rust borrow checker rules",
+        ] {
+            assert_eq!(
+                classify_recall_need(q),
+                RecallTier::Single,
+                "{q:?} ordinary"
+            );
         }
     }
 
@@ -189,7 +229,11 @@ mod tests {
             "bist du da",
             "welches datum ist heute",
         ] {
-            assert_eq!(classify_recall_need(q), RecallTier::Skip, "{q:?} should skip");
+            assert_eq!(
+                classify_recall_need(q),
+                RecallTier::Skip,
+                "{q:?} should skip"
+            );
         }
     }
 
@@ -203,7 +247,11 @@ mod tests {
             "alles was wir über rust gemacht haben",
             "gib mir eine zusammenfassung unserer session",
         ] {
-            assert_eq!(classify_recall_need(q), RecallTier::Multi, "{q:?} should fan out");
+            assert_eq!(
+                classify_recall_need(q),
+                RecallTier::Multi,
+                "{q:?} should fan out"
+            );
         }
     }
 
@@ -219,7 +267,11 @@ mod tests {
             // not a greeting-Skip.
             "danke das hilft jetzt weiter",
         ] {
-            assert_eq!(classify_recall_need(q), RecallTier::Single, "{q:?} ordinary");
+            assert_eq!(
+                classify_recall_need(q),
+                RecallTier::Single,
+                "{q:?} ordinary"
+            );
         }
     }
 }

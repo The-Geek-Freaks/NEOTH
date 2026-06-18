@@ -507,7 +507,10 @@ mod tests {
         {
             let _g = SecretTmpGuard::new(&leaked);
         } // dropped without disarm → removed
-        assert!(!leaked.exists(), "an un-disarmed guard must remove the temp on drop");
+        assert!(
+            !leaked.exists(),
+            "an un-disarmed guard must remove the temp on drop"
+        );
 
         let kept = dir.path().join(".kept.tmp");
         std::fs::write(&kept, b"secret-bytes").unwrap();
@@ -515,7 +518,10 @@ mod tests {
             let g = SecretTmpGuard::new(&kept);
             g.disarm();
         }
-        assert!(kept.exists(), "a disarmed guard must leave the file (rename succeeded)");
+        assert!(
+            kept.exists(),
+            "a disarmed guard must leave the file (rename succeeded)"
+        );
     }
 
     #[test]
@@ -550,10 +556,7 @@ mod tests {
         let path = dir.path().join("c.yaml");
         std::fs::write(&path, "discord_bot_token: bot-abc123\n").unwrap();
         let c = Credentials::load_or_default(&path).unwrap();
-        assert_eq!(
-            c.discord_bot_token.as_ref().unwrap().expose(),
-            "bot-abc123"
-        );
+        assert_eq!(c.discord_bot_token.as_ref().unwrap().expose(), "bot-abc123");
         assert!(c.has_any());
     }
 

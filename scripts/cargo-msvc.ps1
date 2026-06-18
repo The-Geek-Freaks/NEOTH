@@ -1,5 +1,6 @@
 param(
     [switch] $D,
+    [string] $p,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]] $CargoArgs
 )
@@ -8,6 +9,19 @@ $ErrorActionPreference = "Stop"
 
 if (-not $CargoArgs -or $CargoArgs.Count -eq 0) {
     $CargoArgs = @("test", "--workspace")
+}
+
+# PowerShell consumes bare `-p value` before ValueFromRemainingArguments can
+# forward it to cargo. Put the common cargo package selector back.
+if ($PSBoundParameters.ContainsKey("p")) {
+    if (-not $CargoArgs -or $CargoArgs.Count -eq 0) {
+        throw "-p was passed, but no cargo subcommand preceded it."
+    }
+    $tail = @()
+    if ($CargoArgs.Count -gt 1) {
+        $tail = @($CargoArgs[1..($CargoArgs.Count - 1)])
+    }
+    $CargoArgs = @($CargoArgs[0], "-p", $p) + $tail
 }
 
 if ($env:NEOTH_CARGO_MSVC_DEBUG) {
@@ -60,6 +74,7 @@ $vcvars = Join-Path $vsInstall "VC\Auxiliary\Build\vcvars64.bat"
 if (-not (Test-Path $vcvars)) {
     throw "vcvars64.bat not found at $vcvars"
 }
+$vsInstallerDir = Split-Path -Parent $vswhere
 
 $sdkLibRoot = Join-Path $programFilesX86 "Windows Kits\10\Lib"
 if (-not (Test-Path $sdkLibRoot)) {
@@ -102,7 +117,10 @@ function Quote-CmdArg {
 $cargoArgLine = ($CargoArgs | ForEach-Object { Quote-CmdArg $_ }) -join " "
 
 # Use delayed expansion so LIB/INCLUDE are expanded after vcvars64.bat mutates them.
-$cmd = "`"$vcvars`" >nul && " +
+# Keep vcvars64 output unredirected; silencing it has regressed to cc-rs
+# ToolNotFound/cl.exe failures on this checkout.
+$cmd = "set `"PATH=$vsInstallerDir;%PATH%`" && " +
+    "`"$vcvars`" && " +
     "set `"LIB=!LIB!;$ucrtLib`" && " +
     "set `"INCLUDE=!INCLUDE!;$ucrtInclude`" && " +
     "cd /d `"$workspace`" && " +

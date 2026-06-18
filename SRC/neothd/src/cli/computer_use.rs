@@ -83,7 +83,11 @@ fn status(output: OutputFormat) -> Result<()> {
     println!("NEOTH computer-use (cua-driver)");
     println!(
         "  driver installed : {}",
-        if installed { "yes" } else { "NO — run `neoth computer-use install`" }
+        if installed {
+            "yes"
+        } else {
+            "NO — run `neoth computer-use install`"
+        }
     );
     println!(
         "  MCP server       : {}",
@@ -94,7 +98,9 @@ fn status(output: OutputFormat) -> Result<()> {
         }
     );
     if enabled {
-        println!("  allowlisted tools: {tool_count} (secure-by-default; autonomy-gated + WAL-audited)");
+        println!(
+            "  allowlisted tools: {tool_count} (secure-by-default; autonomy-gated + WAL-audited)"
+        );
     }
     Ok(())
 }
@@ -107,7 +113,11 @@ fn set_enabled(on: bool, output: OutputFormat) -> Result<()> {
         .find(|s| s.id == cu::CUA_DRIVER_SERVER_ID)
     {
         s.enabled = on;
-        if on { "re-enabled existing entry" } else { "disabled" }
+        if on {
+            "re-enabled existing entry"
+        } else {
+            "disabled"
+        }
     } else if on {
         servers.servers.push(cu::cua_driver_server());
         "registered + enabled"
@@ -149,7 +159,10 @@ fn set_enabled(on: bool, output: OutputFormat) -> Result<()> {
 async fn doctor(output: OutputFormat) -> Result<()> {
     let installed = cu::is_installed();
     let version = cu::cua_driver_version();
-    let allowed: Vec<String> = cu::COMPUTER_USE_TOOLS.iter().map(|s| s.to_string()).collect();
+    let allowed: Vec<String> = cu::COMPUTER_USE_TOOLS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     // The runtime proof: spawn cua-driver, do the MCP initialize handshake, and
     // read its real `tools/list`. None when not installed / handshake fails.
@@ -167,8 +180,15 @@ async fn doctor(output: OutputFormat) -> Result<()> {
 
     let (missing, extra): (Vec<String>, Vec<String>) = match &advertised {
         Some(adv) => (
-            allowed.iter().filter(|a| !adv.contains(a)).cloned().collect(),
-            adv.iter().filter(|a| !allowed.contains(a)).cloned().collect(),
+            allowed
+                .iter()
+                .filter(|a| !adv.contains(a))
+                .cloned()
+                .collect(),
+            adv.iter()
+                .filter(|a| !allowed.contains(a))
+                .cloned()
+                .collect(),
         ),
         None => (Vec::new(), Vec::new()),
     };
@@ -198,7 +218,11 @@ async fn doctor(output: OutputFormat) -> Result<()> {
                 .unwrap_or_default()
         ),
     }
-    println!("  allowed   : {} tools — {}", allowed.len(), allowed.join(", "));
+    println!(
+        "  allowed   : {} tools — {}",
+        allowed.len(),
+        allowed.join(", ")
+    );
     if !missing.is_empty() {
         println!(
             "  ⚠ MISSING : pinned but NOT advertised — {} (driver upgrade may have renamed them; re-pin)",

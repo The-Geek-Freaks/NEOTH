@@ -26,10 +26,9 @@ use std::path::{Path, PathBuf};
 use crate::config::MonitorConfig;
 use crate::wal::{
     events::{
-        EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS,
-        EVENT_TYPE_CHANNEL_SILENCE_ALERT, EVENT_TYPE_COMPACTION_AUTH_FAILED,
-        EVENT_TYPE_CRASH_LOG_ALERT, EVENT_TYPE_RECOVERY_TRUNCATED,
-        EVENT_TYPE_WAL_CRC_ALERT,
+        EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_CHANNEL_SILENCE_ALERT,
+        EVENT_TYPE_COMPACTION_AUTH_FAILED, EVENT_TYPE_CRASH_LOG_ALERT,
+        EVENT_TYPE_RECOVERY_TRUNCATED, EVENT_TYPE_WAL_CRC_ALERT,
     },
     writer::WalWriterHandle,
 };
@@ -173,10 +172,7 @@ pub fn parse_panic_ts(line: &str) -> Option<i64> {
 /// Check `crash_log_path` for new `[neoth panic]` lines. `known_byte_offset`
 /// is the byte count seen on the last tick — new lines are those in the file
 /// tail beyond this offset. Returns `(result, new_offset)`.
-pub fn check_crash_log(
-    crash_log_path: &Path,
-    known_byte_offset: u64,
-) -> (CrashLogResult, u64) {
+pub fn check_crash_log(crash_log_path: &Path, known_byte_offset: u64) -> (CrashLogResult, u64) {
     let content = match std::fs::read(crash_log_path) {
         Ok(b) => b,
         Err(_) => {
@@ -298,7 +294,11 @@ pub fn evaluate_channel_silence(
     let (last_ts, silence_secs, should_alert) = match last_activity {
         Some(t) => {
             let silence = (now_unix - t).max(0) as u64;
-            (t, silence, in_window && silence >= config.channel_silence_secs)
+            (
+                t,
+                silence,
+                in_window && silence >= config.channel_silence_secs,
+            )
         }
         // MONITOR-05: never saw a CHANNEL_INGRESS/EGRESS frame → we cannot claim
         // "silence" (silence = was-active-now-quiet). A host with NO channels
@@ -413,10 +413,9 @@ pub async fn run_monitor_tick(
             "ts_unix": ts_unix,
         }))
         .map_err(|e| format!("serialize channel_silence payload: {e}"))?;
-        let header =
-            crate::wal::HeaderBuilder::new(EVENT_TYPE_CHANNEL_SILENCE_ALERT, &payload)
-                .flags(crate::wal::EventFlags::SYNTHETIC)
-                .build();
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_CHANNEL_SILENCE_ALERT, &payload)
+            .flags(crate::wal::EventFlags::SYNTHETIC)
+            .build();
         writer
             .append(header, payload)
             .await
@@ -452,7 +451,11 @@ pub async fn run_monitor_tick_live(
     // window for many ticks — suppress re-emit within `min_repeat_alert_secs`
     // by zeroing the counts (so `run_monitor_tick` sees no anomaly this tick).
     if wal_scan.has_anomalies()
-        && !alert_due(emit_state.last_wal_crc_emit, now_unix, config.min_repeat_alert_secs)
+        && !alert_due(
+            emit_state.last_wal_crc_emit,
+            now_unix,
+            config.min_repeat_alert_secs,
+        )
     {
         wal_scan.recovery_truncated_count = 0;
         wal_scan.compaction_auth_failed_count = 0;
@@ -474,7 +477,11 @@ pub async fn run_monitor_tick_live(
     // MONITOR-04 dedup: silence is level-triggered (stays true while quiet) —
     // suppress re-emit within the window.
     if channel.should_alert
-        && !alert_due(emit_state.last_silence_emit, now_unix, config.min_repeat_alert_secs)
+        && !alert_due(
+            emit_state.last_silence_emit,
+            now_unix,
+            config.min_repeat_alert_secs,
+        )
     {
         channel.should_alert = false;
     }
@@ -502,10 +509,9 @@ pub async fn run_monitor_tick_live(
 /// per-channel table lives in `neoth status`.
 fn warn_misconfigured_channels(home: &Path) {
     let cfg = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok();
-    let creds = crate::config::credentials::Credentials::load_or_default(
-        &home.join("credentials.yaml"),
-    )
-    .unwrap_or_default();
+    let creds =
+        crate::config::credentials::Credentials::load_or_default(&home.join("credentials.yaml"))
+            .unwrap_or_default();
     let view = crate::channels::probe::ChannelCredsView::from_config(cfg.as_ref(), &creds);
     for h in crate::channels::probe::misconfigured(&view) {
         tracing::warn!(
@@ -608,9 +614,18 @@ mod tests {
         // First emit (last==0) always due; within window not due; past window due;
         // window 0 disables dedup (always due).
         let now = 1_700_000_000i64;
-        assert!(alert_due(0, now, 3600), "first emit (no prior) is always due");
-        assert!(!alert_due(now - 100, now, 3600), "100s < 3600s window → suppressed");
-        assert!(alert_due(now - 4000, now, 3600), "4000s >= 3600s → due again");
+        assert!(
+            alert_due(0, now, 3600),
+            "first emit (no prior) is always due"
+        );
+        assert!(
+            !alert_due(now - 100, now, 3600),
+            "100s < 3600s window → suppressed"
+        );
+        assert!(
+            alert_due(now - 4000, now, 3600),
+            "4000s >= 3600s → due again"
+        );
         assert!(alert_due(now - 1, now, 0), "window 0 disables dedup");
     }
 
@@ -717,10 +732,9 @@ mod tests {
             in_active_window: false,
             should_alert: false,
         };
-        let (_, crash_alerted, _) =
-            run_monitor_tick(&cfg, &writer, scan, Some(crash), channel)
-                .await
-                .unwrap();
+        let (_, crash_alerted, _) = run_monitor_tick(&cfg, &writer, scan, Some(crash), channel)
+            .await
+            .unwrap();
         assert!(!crash_alerted);
         assert_eq!(count_frames(&seg, EVENT_TYPE_CRASH_LOG_ALERT), 0);
     }
@@ -754,10 +768,9 @@ mod tests {
             in_active_window: false,
             should_alert: false,
         };
-        let (_, crash_alerted, _) =
-            run_monitor_tick(&cfg, &writer, scan, Some(result), channel)
-                .await
-                .unwrap();
+        let (_, crash_alerted, _) = run_monitor_tick(&cfg, &writer, scan, Some(result), channel)
+            .await
+            .unwrap();
         assert!(crash_alerted);
         assert_eq!(count_frames(&seg, EVENT_TYPE_CRASH_LOG_ALERT), 1);
     }
@@ -808,8 +821,9 @@ mod tests {
             compaction_auth_failed_count: 0,
             window_secs: 3600,
         };
-        let (_, _, silence_alerted) =
-            run_monitor_tick(&cfg, &writer, scan, None, result).await.unwrap();
+        let (_, _, silence_alerted) = run_monitor_tick(&cfg, &writer, scan, None, result)
+            .await
+            .unwrap();
         assert!(silence_alerted);
         assert_eq!(count_frames(&seg, EVENT_TYPE_CHANNEL_SILENCE_ALERT), 1);
     }
@@ -841,10 +855,10 @@ mod tests {
     #[test]
     fn active_window_boundary_cases() {
         // Standard window 07..21
-        assert!(is_in_active_window(7, 7, 21));   // exactly at start
-        assert!(is_in_active_window(20, 7, 21));  // one before end
+        assert!(is_in_active_window(7, 7, 21)); // exactly at start
+        assert!(is_in_active_window(20, 7, 21)); // one before end
         assert!(!is_in_active_window(21, 7, 21)); // at end (exclusive)
-        assert!(!is_in_active_window(6, 7, 21));  // just before start
+        assert!(!is_in_active_window(6, 7, 21)); // just before start
         // Wrapping window 22..06
         assert!(is_in_active_window(23, 22, 6));
         assert!(is_in_active_window(0, 22, 6));

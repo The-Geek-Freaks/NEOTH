@@ -161,8 +161,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // guards above). As the agent issues tool calls with path args, the first
     // time it enters a dir under cwd we inject that dir's .neothhints/AGENTS.md
     // once. No-op when no hint files exist (e.g. the channel/daemon cwd).
-    let mut hint_tracker =
-        hints_enabled.then(crate::mcp::hints::SubdirHintTracker::new);
+    let mut hint_tracker = hints_enabled.then(crate::mcp::hints::SubdirHintTracker::new);
     let hint_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     loop {
@@ -484,8 +483,10 @@ async fn compact_if_needed<D: CompletionDriver + Send>(
     let summary_prompt = crate::context::compaction::build_compaction_prompt(older);
     match driver.complete(&summary_prompt).await {
         Ok(summary) if !summary.trim().is_empty() => {
-            let compacted =
-                crate::context::compaction::wrap_summary_with_last_exchange(&summary, last_exchange);
+            let compacted = crate::context::compaction::wrap_summary_with_last_exchange(
+                &summary,
+                last_exchange,
+            );
             let after_tokens = crate::tokens::budget::count_tokens(&compacted);
             info!(
                 iteration,
@@ -505,7 +506,10 @@ async fn compact_if_needed<D: CompletionDriver + Send>(
             compacted
         }
         Ok(_) => {
-            warn!(iteration, "compaction returned empty summary — keeping original prompt");
+            warn!(
+                iteration,
+                "compaction returned empty summary — keeping original prompt"
+            );
             prompt
         }
         Err(e) => {
@@ -763,8 +767,9 @@ fn check_risk_leases(
             .iter()
             .any(|l| l.granted_to == RISK_LEASE_SUBJECT && &l.scope == scope && !l.is_active(now))
     };
-    let expired_present = (needs_dangerous && !dangerous_leased && scope_expired(&LeaseScope::DangerousCommand))
-        || (needs_egress && !egress_leased && scope_expired(&LeaseScope::Egress));
+    let expired_present =
+        (needs_dangerous && !dangerous_leased && scope_expired(&LeaseScope::DangerousCommand))
+            || (needs_egress && !egress_leased && scope_expired(&LeaseScope::Egress));
     (dangerous_leased, egress_leased, lease_id, expired_present)
 }
 
@@ -910,7 +915,8 @@ async fn emit_hint_loaded(
     }))
     .unwrap_or_default();
     let header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HINT_LOADED, &payload).build();
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HINT_LOADED, &payload)
+            .build();
     if let Err(e) = w.append(header, payload).await {
         warn!(error = %e, "HINT_LOADED append failed");
     }
@@ -970,7 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn hr08_compresses_large_tool_blocks_and_leaves_small_ones() {
-        use crate::context::compress::{extract_keys, CompressionRuntime, Gate, Thresholds};
+        use crate::context::compress::{CompressionRuntime, Gate, Thresholds, extract_keys};
 
         let runtime = CompressionRuntime::new(Gate::enabled(512, 3), Thresholds::default())
             .expect("enabled gate builds a runtime");
@@ -992,14 +998,23 @@ mod tests {
         compress_tool_results(&mut blocks, &runtime, 5, None).await;
 
         // Big array shrank and carries a CCR retrieval marker.
-        assert!(blocks[0].len() < big_json.len(), "big array should compress");
-        assert!(blocks[0].contains("<<ccr:"), "compressed block carries a CCR marker");
+        assert!(
+            blocks[0].len() < big_json.len(),
+            "big array should compress"
+        );
+        assert!(
+            blocks[0].contains("<<ccr:"),
+            "compressed block carries a CCR marker"
+        );
         // Small block left byte-identical.
         assert_eq!(blocks[1], small, "small block must be untouched");
         // The byte-exact original is retrievable from the shared store.
         let keys = extract_keys(&blocks[0]);
         assert!(!keys.is_empty());
-        assert_eq!(runtime.store.get(&keys[0]).as_deref(), Some(big_json.as_str()));
+        assert_eq!(
+            runtime.store.get(&keys[0]).as_deref(),
+            Some(big_json.as_str())
+        );
     }
 
     #[tokio::test]
@@ -1059,8 +1074,14 @@ mod tests {
         };
         let big = "history ".repeat(50);
         let out = compact_if_needed(&mut driver, big, &policy, None, 2).await;
-        assert!(out.starts_with(SUMMARY_MARKER), "compacted prompt carries the marker");
-        assert!(out.contains("pending: fetch Y"), "summary content is preserved");
+        assert!(
+            out.starts_with(SUMMARY_MARKER),
+            "compacted prompt carries the marker"
+        );
+        assert!(
+            out.contains("pending: fetch Y"),
+            "summary content is preserved"
+        );
         // The driver received the retention-instructed compaction prompt.
         let seen = driver.seen_prompts.lock().unwrap();
         assert_eq!(seen.len(), 1);
@@ -1226,16 +1247,23 @@ mod tests {
         let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
         let mut verdict = String::new();
         while cur < bytes.len() {
-            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else { break };
+            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else {
+                break;
+            };
             if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_CONFIRM_USED {
                 let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
                 verdict = p["verdict"].as_str().unwrap_or("").to_string();
             }
             let t = f.header.total_len as usize;
-            if t == 0 { break; }
+            if t == 0 {
+                break;
+            }
             cur += t;
         }
-        assert_eq!(verdict, "lifted_by_lease", "active lease must lift + audit via RISK_CONFIRM_USED");
+        assert_eq!(
+            verdict, "lifted_by_lease",
+            "active lease must lift + audit via RISK_CONFIRM_USED"
+        );
 
         // GR-032 single-use: the lifted lease was CONSUMED — a second blocked
         // call in the same (still-unexpired) window would re-block. The store no
@@ -1262,7 +1290,10 @@ mod tests {
             egress: vec![],
             dangerous: inspect("git push --force origin main"),
         };
-        assert!(!high.dangerous.is_empty(), "git push --force must be a High finding");
+        assert!(
+            !high.dangerous.is_empty(),
+            "git push --force must be a High finding"
+        );
         // GR-046: without confirm_high a High block is NOT liftable via the
         // DangerousCommand lease; WITH confirm_high it IS (so `neoth risk-confirm`
         // can lift the confirm_high block).
@@ -1326,17 +1357,24 @@ mod tests {
         let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
         let mut found = false;
         while cur < bytes.len() {
-            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else { break };
+            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else {
+                break;
+            };
             if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_GATE_DENIED {
                 found = true;
                 let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
                 assert_eq!(p["verdict"], "denied");
                 assert_eq!(p["rule"], "rm_rf_root");
                 // The raw command must NOT be in the audit frame.
-                assert!(!p.to_string().contains("rm -rf"), "raw command must not be in WAL");
+                assert!(
+                    !p.to_string().contains("rm -rf"),
+                    "raw command must not be in WAL"
+                );
             }
             let t = f.header.total_len as usize;
-            if t == 0 { break; }
+            if t == 0 {
+                break;
+            }
             cur += t;
         }
         assert!(found, "a RISK_GATE_DENIED frame must be present");
@@ -1595,8 +1633,7 @@ mod tests {
         ));
         store.save(&path).unwrap();
 
-        let consumed =
-            consume_risk_leases_at(home.path(), true, false).expect("save must succeed");
+        let consumed = consume_risk_leases_at(home.path(), true, false).expect("save must succeed");
         assert!(consumed.is_some(), "the covering lease was consumed");
         let reloaded = LeaseStore::load(&path).unwrap();
         assert!(

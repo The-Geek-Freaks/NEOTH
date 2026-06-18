@@ -101,10 +101,7 @@ pub fn parse_item(v: &serde_json::Value) -> Option<HnStory> {
     Some(HnStory {
         id: v.get("id").and_then(|i| i.as_i64()).unwrap_or(0),
         title,
-        url: v
-            .get("url")
-            .and_then(|u| u.as_str())
-            .map(|s| s.to_string()),
+        url: v.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()),
         score: v.get("score").and_then(|s| s.as_i64()).unwrap_or(0),
         by: v
             .get("by")
@@ -158,12 +155,13 @@ fn any_match(term: &str, list_lc: &[String]) -> bool {
 /// that would otherwise dominate ("show", "ask", "new", "using", …). Kept
 /// lowercase; matched case-insensitively.
 const TITLE_STOPWORDS: &[&str] = &[
-    "the", "a", "an", "and", "or", "but", "of", "in", "on", "to", "for", "with", "is", "are", "was",
-    "be", "by", "at", "as", "from", "how", "why", "what", "when", "your", "you", "i", "my", "we",
-    "it", "its", "this", "that", "new", "now", "can", "will", "has", "have", "do", "does", "not",
-    "show", "ask", "tell", "hn", "using", "use", "used", "via", "vs", "into", "out", "up", "more",
-    "about", "after", "over", "than", "they", "their", "our", "all", "one", "two", "first", "best",
-    "free", "open", "source", "release", "released", "version", "app", "tool", "tools", "way", "get",
+    "the", "a", "an", "and", "or", "but", "of", "in", "on", "to", "for", "with", "is", "are",
+    "was", "be", "by", "at", "as", "from", "how", "why", "what", "when", "your", "you", "i", "my",
+    "we", "it", "its", "this", "that", "new", "now", "can", "will", "has", "have", "do", "does",
+    "not", "show", "ask", "tell", "hn", "using", "use", "used", "via", "vs", "into", "out", "up",
+    "more", "about", "after", "over", "than", "they", "their", "our", "all", "one", "two", "first",
+    "best", "free", "open", "source", "release", "released", "version", "app", "tool", "tools",
+    "way", "get",
 ];
 
 /// Rank trending terms across `stories` and return the top `max_gaps` the
@@ -175,7 +173,11 @@ const TITLE_STOPWORDS: &[&str] = &[
 /// appears at least once always surfaces (bypassing the ≥2 / covered checks)
 /// and is ranked first — operator intent overrides the heuristic. Order:
 /// pinned first, then mention count desc, then alphabetical (stable output).
-pub fn tech_currency_gaps(stories: &[HnStory], filter: &GapFilter, max_gaps: usize) -> Vec<TechGap> {
+pub fn tech_currency_gaps(
+    stories: &[HnStory],
+    filter: &GapFilter,
+    max_gaps: usize,
+) -> Vec<TechGap> {
     use std::collections::HashMap;
     let covered_lc = lc(&filter.covered);
     let ignore_lc = lc(&filter.ignore);
@@ -185,7 +187,10 @@ pub fn tech_currency_gaps(stories: &[HnStory], filter: &GapFilter, max_gaps: usi
     let mut counts: HashMap<String, (usize, String)> = HashMap::new();
     for story in stories {
         let mut seen_in_title: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for raw in story.title.split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#') {
+        for raw in story
+            .title
+            .split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
+        {
             let term = normalize_term(raw);
             if term.len() < 3 || TITLE_STOPWORDS.contains(&term.as_str()) {
                 continue;

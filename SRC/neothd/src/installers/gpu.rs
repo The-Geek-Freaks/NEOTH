@@ -226,7 +226,10 @@ pub fn probe_gpu() -> GpuReport {
     const T: std::time::Duration = std::time::Duration::from_millis(1500);
     let nvidia = probe_cmd(
         "nvidia-smi",
-        &["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+        &[
+            "--query-gpu=name,memory.total",
+            "--format=csv,noheader,nounits",
+        ],
         T,
     );
     let rocm = probe_cmd("rocm-smi", &["--showmeminfo", "vram", "--csv"], T);
@@ -463,7 +466,11 @@ mod tests {
     fn probe_cmd_nonexistent_command_returns_none() {
         // spawn() fails → early None, no thread spawned.
         assert_eq!(
-            probe_cmd("definitely-not-a-real-binary-xyz", &[], std::time::Duration::from_millis(500)),
+            probe_cmd(
+                "definitely-not-a-real-binary-xyz",
+                &[],
+                std::time::Duration::from_millis(500)
+            ),
             None
         );
     }

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use super::{
-    spawn_daemon_detached, WizardStep, try_inline_consent_grant, write_first_tour_marker,
-    InitArgs, OperatorRole, ProviderKind, WizardState,
+    InitArgs, OperatorRole, ProviderKind, WizardState, WizardStep, spawn_daemon_detached,
+    try_inline_consent_grant, write_first_tour_marker,
 };
 
 /// Step 9 (post-write) — optional ground-truth Q&A. Always interactive.
@@ -450,7 +450,10 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     Ok(())
 }
 
-pub(crate) fn write_initialized_marker(neoth_dir: &std::path::Path, state: &WizardState) -> Result<()> {
+pub(crate) fn write_initialized_marker(
+    neoth_dir: &std::path::Path,
+    state: &WizardState,
+) -> Result<()> {
     let now_system = std::time::SystemTime::now();
     let now = now_system
         .duration_since(std::time::UNIX_EPOCH)

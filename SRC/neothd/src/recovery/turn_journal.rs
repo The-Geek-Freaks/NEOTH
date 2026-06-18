@@ -72,10 +72,7 @@ impl TurnJournal {
         // run shouldn't poison the new turn's history.
         std::fs::write(&path, b"")
             .with_context(|| format!("create journal file {}", path.display()))?;
-        Ok(Self {
-            turn_id,
-            path,
-        })
+        Ok(Self { turn_id, path })
     }
 
     pub fn turn_id(&self) -> &str {

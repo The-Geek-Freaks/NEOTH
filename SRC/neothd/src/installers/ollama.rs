@@ -209,7 +209,10 @@ mod tests {
     #[test]
     fn openai_compat_endpoint_is_v1() {
         assert_eq!(openai_compat_endpoint(11434), "http://127.0.0.1:11434/v1");
-        assert_eq!(openai_compat_endpoint(DEFAULT_OLLAMA_PORT), "http://127.0.0.1:11434/v1");
+        assert_eq!(
+            openai_compat_endpoint(DEFAULT_OLLAMA_PORT),
+            "http://127.0.0.1:11434/v1"
+        );
     }
 
     #[test]
@@ -219,7 +222,10 @@ mod tests {
             "hf.co/huihui-ai/Qwen2.5-7B-Instruct-abliterated-GGUF:Q4_K_M"
         );
         // A leading slash is tolerated.
-        assert_eq!(hf_gguf_ref("/unsloth/X-GGUF", "Q8_0"), "hf.co/unsloth/X-GGUF:Q8_0");
+        assert_eq!(
+            hf_gguf_ref("/unsloth/X-GGUF", "Q8_0"),
+            "hf.co/unsloth/X-GGUF:Q8_0"
+        );
     }
 
     #[tokio::test]
@@ -233,7 +239,11 @@ mod tests {
         let cmd = pull_command(&hf_gguf_ref("unsloth/Qwen2.5-14B-Instruct-GGUF", "Q8_0"));
         assert_eq!(
             cmd,
-            vec!["ollama", "pull", "hf.co/unsloth/Qwen2.5-14B-Instruct-GGUF:Q8_0"]
+            vec![
+                "ollama",
+                "pull",
+                "hf.co/unsloth/Qwen2.5-14B-Instruct-GGUF:Q8_0"
+            ]
         );
     }
 
@@ -269,10 +279,21 @@ mod tests {
         assert!(up.contains("curl"), "{up}");
         assert!(up.contains(OLLAMA_INSTALL_SCRIPT_URL), "{up}");
         assert!(up.contains("| sh"), "{up}");
-        assert_ne!(up, InstallPath::UpstreamScript.as_str(), "must not be the bare tag");
-        assert_eq!(InstallPath::Winget.display_command(), "winget install Ollama.Ollama");
+        assert_ne!(
+            up,
+            InstallPath::UpstreamScript.as_str(),
+            "must not be the bare tag"
+        );
+        assert_eq!(
+            InstallPath::Winget.display_command(),
+            "winget install Ollama.Ollama"
+        );
         assert_eq!(InstallPath::Brew.display_command(), "brew install ollama");
-        assert!(InstallPath::Manual.display_command().contains(OLLAMA_DOWNLOAD_URL));
+        assert!(
+            InstallPath::Manual
+                .display_command()
+                .contains(OLLAMA_DOWNLOAD_URL)
+        );
     }
 
     #[test]

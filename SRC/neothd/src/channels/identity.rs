@@ -237,7 +237,11 @@ mod tests {
         let tg = resolve_or_create_human_uuid(&conn, "telegram", "100", "chatA").unwrap();
         let sl = resolve_or_create_human_uuid(&conn, "slack", "U200", "chatB").unwrap();
         let before = merge_human_uuids(&conn, &tg, &sl).unwrap();
-        assert_eq!(before.len(), 1, "the slack alias reassigned to the telegram uuid");
+        assert_eq!(
+            before.len(),
+            1,
+            "the slack alias reassigned to the telegram uuid"
+        );
         assert_eq!(before[0].channel, "slack");
         // Victim is TOMBSTONED (kept, merged_into set), not deleted — reversible.
         let merged_into: Option<String> = conn
@@ -251,7 +255,10 @@ mod tests {
         // `list` excludes the tombstoned victim → only the canonical remains.
         assert_eq!(list_identities(&conn, None).unwrap().len(), 1);
         let resolved = resolve_or_create_human_uuid(&conn, "slack", "U200", "chatB").unwrap();
-        assert_eq!(resolved, tg, "the merged slack alias now points at the canonical");
+        assert_eq!(
+            resolved, tg,
+            "the merged slack alias now points at the canonical"
+        );
     }
 
     #[test]

@@ -21,5 +21,5 @@ pub mod deeplink;
 pub mod render;
 pub mod schema;
 
-pub use render::{render, RenderedRecipe};
+pub use render::{RenderedRecipe, render};
 pub use schema::{InputType, RecipeError, RecipeParameter, RecipeSettings, RecipeSpec};

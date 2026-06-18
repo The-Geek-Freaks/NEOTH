@@ -668,9 +668,9 @@ pub fn merge_overlapping_dreams(
     for i in 0..dreams.len() {
         let mut placed = false;
         for g in meta.iter_mut() {
-            let hits = g
-                .iter()
-                .any(|&j| crate::providers::embed::cosine(&centroids[i], &centroids[j]) >= threshold);
+            let hits = g.iter().any(|&j| {
+                crate::providers::embed::cosine(&centroids[i], &centroids[j]) >= threshold
+            });
             if hits {
                 g.push(i);
                 placed = true;
@@ -858,9 +858,7 @@ mod tests {
     fn seed_with_dreams_empty_query_returns_all_recent() {
         let dir = tempdir().unwrap();
         // Write a few dreams for today.
-        let day = format_date_utc(
-            crate::time::now_unix_i64(),
-        );
+        let day = format_date_utc(crate::time::now_unix_i64());
         for (i, label) in ["alpha", "beta", "gamma"].iter().enumerate() {
             let mut d = compose_dream(&day, label, &[]);
             d.composed_ts_unix = (i as i64) * 10;
@@ -876,9 +874,7 @@ mod tests {
     #[test]
     fn seed_with_dreams_filters_by_substring_in_theme_or_summary() {
         let dir = tempdir().unwrap();
-        let day = format_date_utc(
-            crate::time::now_unix_i64(),
-        );
+        let day = format_date_utc(crate::time::now_unix_i64());
         let mut a = compose_dream(&day, "auth_bug", &[]);
         a.tags.push("debug".into());
         append_dream(dir.path(), &a).unwrap();
@@ -894,9 +890,7 @@ mod tests {
     #[test]
     fn seed_with_dreams_respects_max_hits() {
         let dir = tempdir().unwrap();
-        let day = format_date_utc(
-            crate::time::now_unix_i64(),
-        );
+        let day = format_date_utc(crate::time::now_unix_i64());
         for i in 0..10 {
             let d = compose_dream(&day, &format!("entry_{i}"), &[]);
             append_dream(dir.path(), &d).unwrap();
@@ -1070,19 +1064,31 @@ mod tests {
         let groups = vec![vec![0], vec![1]];
         let embeddings = vec![slot_vec(0), b];
         // threshold below the pair's cosine → merge.
-        assert_eq!(merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.75).len(), 1);
+        assert_eq!(
+            merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.75).len(),
+            1
+        );
         // threshold above the pair's cosine → stay separate.
-        assert_eq!(merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.80).len(), 2);
+        assert_eq!(
+            merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.80).len(),
+            2
+        );
     }
 
     #[test]
     fn merge_defensive_passthrough() {
         // single dream → unchanged.
         let one = vec![dream_with("solo", vec![1], &[])];
-        assert_eq!(merge_overlapping_dreams(&one, &[vec![0]], &[slot_vec(0)], 0.75).len(), 1);
+        assert_eq!(
+            merge_overlapping_dreams(&one, &[vec![0]], &[slot_vec(0)], 0.75).len(),
+            1
+        );
         // cluster_groups length mismatch → input clone (no merge attempted).
         let two = vec![dream_with("a", vec![1], &[]), dream_with("b", vec![2], &[])];
-        assert_eq!(merge_overlapping_dreams(&two, &[vec![0]], &[slot_vec(0)], 0.75).len(), 2);
+        assert_eq!(
+            merge_overlapping_dreams(&two, &[vec![0]], &[slot_vec(0)], 0.75).len(),
+            2
+        );
         // empty → empty.
         assert!(merge_overlapping_dreams(&[], &[], &[], 0.75).is_empty());
     }
@@ -1102,7 +1108,11 @@ mod tests {
             compose_dreams_with_embeddings("2026-06-05", &events, &DreamSlotMock, None, 0.5, true)
                 .await
                 .unwrap();
-        assert_eq!(dreams.len(), 2, "orthogonal weather/news clusters must not cross-merge");
+        assert_eq!(
+            dreams.len(),
+            2,
+            "orthogonal weather/news clusters must not cross-merge"
+        );
     }
 
     #[test]
@@ -1189,9 +1199,10 @@ mod tests {
 
     #[tokio::test]
     async fn compose_dreams_empty_input_returns_empty() {
-        let dreams = compose_dreams_with_embeddings("2026-05-23", &[], &DreamSlotMock, None, 0.5, false)
-            .await
-            .unwrap();
+        let dreams =
+            compose_dreams_with_embeddings("2026-05-23", &[], &DreamSlotMock, None, 0.5, false)
+                .await
+                .unwrap();
         assert!(dreams.is_empty());
     }
 
@@ -1278,13 +1289,19 @@ mod tests {
             sanitize_theme_label("  auth   refactor\n", "fb"),
             "auth refactor"
         );
-        assert_eq!(sanitize_theme_label("\"deploy pipeline\"", "fb"), "deploy pipeline");
+        assert_eq!(
+            sanitize_theme_label("\"deploy pipeline\"", "fb"),
+            "deploy pipeline"
+        );
         assert_eq!(sanitize_theme_label("`code review`", "fb"), "code review");
     }
 
     #[test]
     fn sanitize_theme_label_empty_falls_back() {
-        assert_eq!(sanitize_theme_label("", "cluster-0-seed-1"), "cluster-0-seed-1");
+        assert_eq!(
+            sanitize_theme_label("", "cluster-0-seed-1"),
+            "cluster-0-seed-1"
+        );
         assert_eq!(sanitize_theme_label("   \n\t  ", "fb"), "fb");
         assert_eq!(sanitize_theme_label("\"\"", "fb"), "fb");
     }
@@ -1293,7 +1310,11 @@ mod tests {
     fn sanitize_theme_label_clamps_long_output() {
         let long = "a".repeat(200);
         let out = sanitize_theme_label(&long, "fb");
-        assert!(out.chars().count() <= THEME_LABEL_MAX_CHARS + 1, "got {} chars", out.chars().count());
+        assert!(
+            out.chars().count() <= THEME_LABEL_MAX_CHARS + 1,
+            "got {} chars",
+            out.chars().count()
+        );
         assert!(out.ends_with('…'));
     }
 
@@ -1307,9 +1328,10 @@ mod tests {
         let chat = FixedLabelChat {
             reply: "  monday weather outlook  ",
         };
-        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&chat), 0.5, false)
-            .await
-            .unwrap();
+        let dreams =
+            compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&chat), 0.5, false)
+                .await
+                .unwrap();
         assert_eq!(dreams.len(), 1);
         // The LLM label replaced the deterministic cluster-N-seed-id.
         assert_eq!(dreams[0].theme_label, "monday weather outlook");
@@ -1320,10 +1342,16 @@ mod tests {
     async fn compose_dreams_falls_back_to_deterministic_on_chat_error() {
         let day = "2026-06-03";
         let events = vec![cluster_ev(1, "weather forecast for monday")];
-        let dreams =
-            compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&FailingChat), 0.5, false)
-                .await
-                .unwrap();
+        let dreams = compose_dreams_with_embeddings(
+            day,
+            &events,
+            &DreamSlotMock,
+            Some(&FailingChat),
+            0.5,
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(dreams.len(), 1);
         // Chat error must degrade the label, never fail the pass.
         assert!(

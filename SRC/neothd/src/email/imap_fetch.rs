@@ -102,7 +102,10 @@ pub async fn fetch_unseen(cfg: &ImapConnectionConfig, limit: usize) -> Result<Ve
         }
     };
 
-    session.select("INBOX").await.context("SELECT INBOX failed")?;
+    session
+        .select("INBOX")
+        .await
+        .context("SELECT INBOX failed")?;
 
     let uids = session
         .uid_search("UNSEEN")
@@ -141,10 +144,7 @@ pub async fn fetch_unseen(cfg: &ImapConnectionConfig, limit: usize) -> Result<Ve
 /// the bytes don't parse as a mail at all.
 pub fn parse_rfc822(uid: u32, raw: &[u8]) -> Option<InboundEmail> {
     let parsed = mailparse::parse_mail(raw).ok()?;
-    let from = parsed
-        .headers
-        .get_first_value("From")
-        .unwrap_or_default();
+    let from = parsed.headers.get_first_value("From").unwrap_or_default();
     let subject = parsed
         .headers
         .get_first_value("Subject")

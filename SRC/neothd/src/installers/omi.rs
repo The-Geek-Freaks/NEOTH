@@ -82,7 +82,10 @@ fn extract_host(url: &str) -> Option<String> {
         return None;
     }
     // Strip userinfo (everything up to and including the last '@').
-    let hostport = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let hostport = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
     let host = if let Some(rest) = hostport.strip_prefix('[') {
         // Bracketed IPv6: [::1]:443 → ::1
         rest.split(']').next().unwrap_or("").to_string()
@@ -279,10 +282,19 @@ mod tests {
 
     #[test]
     fn extract_host_strips_scheme_userinfo_port() {
-        assert_eq!(extract_host("http://127.0.0.1:8002/v1").as_deref(), Some("127.0.0.1"));
-        assert_eq!(extract_host("https://u:p@host.tld/x").as_deref(), Some("host.tld"));
+        assert_eq!(
+            extract_host("http://127.0.0.1:8002/v1").as_deref(),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            extract_host("https://u:p@host.tld/x").as_deref(),
+            Some("host.tld")
+        );
         assert_eq!(extract_host("http://[::1]:443/").as_deref(), Some("::1"));
-        assert_eq!(extract_host("http://localhost").as_deref(), Some("localhost"));
+        assert_eq!(
+            extract_host("http://localhost").as_deref(),
+            Some("localhost")
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::memory::groundtruth::{insert, list_for_scope, revoke, Source};
+use crate::memory::groundtruth::{Source, insert, list_for_scope, revoke};
 use crate::wiki::sources::WikiSource;
 
 /// Scope tag carried by every self-wiki ground-truth row — segregates the
@@ -53,7 +53,13 @@ pub fn ingest_sources(
         }
     }
     for src in sources {
-        insert(conn, &statement_for(src), &Source::BulkText, WIKI_SCOPE, now_ns)?;
+        insert(
+            conn,
+            &statement_for(src),
+            &Source::BulkText,
+            WIKI_SCOPE,
+            now_ns,
+        )?;
         stats.inserted += 1;
     }
     Ok(stats)

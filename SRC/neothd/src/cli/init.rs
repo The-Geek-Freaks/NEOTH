@@ -449,8 +449,14 @@ mod tests {
         use crate::config::inference::InferenceProvider as I;
         assert_eq!(recommended_local_provider_for_role("left"), I::LocalOuro);
         assert_eq!(recommended_local_provider_for_role("right"), I::LocalQwen);
-        assert_eq!(recommended_local_provider_for_role("cerebellum"), I::LocalQwen);
-        assert_eq!(recommended_local_provider_for_role("hippocampus"), I::LocalQwen);
+        assert_eq!(
+            recommended_local_provider_for_role("cerebellum"),
+            I::LocalQwen
+        );
+        assert_eq!(
+            recommended_local_provider_for_role("hippocampus"),
+            I::LocalQwen
+        );
     }
 
     // ── Finding 6 (Session 13) wizard local-only preset ─────────────
@@ -522,7 +528,12 @@ mod tests {
         let mut topo = InferenceTopology::default();
         apply_local_abliterated_preset(&mut topo, &preset);
         assert_eq!(topo.mode, TopologyMode::Triplet);
-        for slot in [&topo.left, &topo.right, &topo.cerebellum, &topo.default_slot] {
+        for slot in [
+            &topo.left,
+            &topo.right,
+            &topo.cerebellum,
+            &topo.default_slot,
+        ] {
             assert_eq!(slot.provider, Some(InferenceProvider::OpenAiCompat));
             assert_eq!(slot.endpoint.as_deref(), Some("http://127.0.0.1:11434/v1"));
             assert!(slot.key.is_none(), "Ollama needs no API key");
@@ -1002,7 +1013,11 @@ mod tests {
         assert!(state.auto_update.enabled);
         assert!(state.auto_update.auto_apply);
         // Step marker recorded.
-        assert!(state.steps_completed.contains(&(WizardStep::AutoUpdate as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::AutoUpdate as u8))
+        );
     }
 
     #[test]
@@ -1022,7 +1037,11 @@ mod tests {
             "non-interactive must not install a supervisor"
         );
         assert_eq!(state.supervisor.kind, crate::config::SupervisorKind::None);
-        assert!(state.steps_completed.contains(&(WizardStep::Supervisor as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::Supervisor as u8))
+        );
     }
 
     #[tokio::test]
@@ -1328,7 +1347,11 @@ mod tests {
             state.plugins.wasm.activations.is_empty(),
             "no plugins discovered → no activations recorded"
         );
-        assert!(state.steps_completed.contains(&(WizardStep::WasmPlugins as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::WasmPlugins as u8))
+        );
     }
 
     #[test]
@@ -1344,7 +1367,11 @@ mod tests {
         let mut state = fixture_state();
         step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
         assert!(state.plugins.wasm.activations.is_empty());
-        assert!(state.steps_completed.contains(&(WizardStep::WasmPlugins as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::WasmPlugins as u8))
+        );
     }
 
     #[test]
@@ -1381,7 +1408,11 @@ mod tests {
             "non-interactive run MUST NOT auto-activate; got {:?}",
             state.plugins.wasm.activations,
         );
-        assert!(state.steps_completed.contains(&(WizardStep::WasmPlugins as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::WasmPlugins as u8))
+        );
     }
 
     #[test]
@@ -1506,7 +1537,11 @@ mod tests {
             WizardStep::ALL.len(),
             "WizardStep::ALL must contain only distinct discriminants"
         );
-        assert_eq!(WizardStep::ALL.len(), 20, "WizardStep variant count drifted");
+        assert_eq!(
+            WizardStep::ALL.len(),
+            20,
+            "WizardStep variant count drifted"
+        );
     }
 
     #[test]
@@ -1725,7 +1760,11 @@ mod tests {
         let args = args_with_flag(|a| a.download_qwen_weights = true);
         step5c_qwen_weights(&args, false, &mut state).await.unwrap();
         assert!(!state.download_qwen_weights);
-        assert!(state.steps_completed.contains(&(WizardStep::QwenWeights as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::QwenWeights as u8))
+        );
     }
 
     // The std::Mutex env-lock is intentional here: tests in this module
@@ -1755,7 +1794,11 @@ mod tests {
         let args = args_with_flag(|a| a.download_qwen_weights = true);
         step5c_qwen_weights(&args, false, &mut state).await.unwrap();
         assert!(state.download_qwen_weights);
-        assert!(state.steps_completed.contains(&(WizardStep::QwenWeights as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::QwenWeights as u8))
+        );
 
         unsafe {
             match prev_home {
@@ -1780,7 +1823,11 @@ mod tests {
         // happens to have Obsidian already installed (sets it true).
         // The flag-absent path either records "already present" or
         // does nothing — the marker MUST land either way.
-        assert!(state.steps_completed.contains(&(WizardStep::Obsidian as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::Obsidian as u8))
+        );
     }
 
     #[tokio::test]
@@ -1791,7 +1838,11 @@ mod tests {
             .await
             .unwrap();
         assert!(state.install_obsidian);
-        assert!(state.steps_completed.contains(&(WizardStep::Obsidian as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::Obsidian as u8))
+        );
     }
 
     #[test]
@@ -1801,7 +1852,11 @@ mod tests {
         step6d_obsidian_vault_bootstrap(&args, false, &mut state).unwrap();
         assert!(!state.bootstrap_vault);
         assert!(state.vault_path.is_none());
-        assert!(state.steps_completed.contains(&(WizardStep::ObsidianVault as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::ObsidianVault as u8))
+        );
     }
 
     #[test]
@@ -1821,7 +1876,11 @@ mod tests {
         assert!(path.exists());
         assert!(path.join("README.md").exists());
         assert!(path.join(".obsidian").join("app.json").exists());
-        assert!(state.steps_completed.contains(&(WizardStep::ObsidianVault as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::ObsidianVault as u8))
+        );
     }
 
     #[test]
@@ -1868,7 +1927,11 @@ mod tests {
         let args = args_with_flag(|_| {});
         step6f_import_memory(&args, false, &mut state).unwrap();
         assert!(state.import_memory.is_none());
-        assert!(state.steps_completed.contains(&(WizardStep::ImportMemory as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::ImportMemory as u8))
+        );
     }
 
     #[test]
@@ -1881,7 +1944,11 @@ mod tests {
         let args = args_with_flag(|a| a.import_memory = Some(memory_path.clone()));
         step6f_import_memory(&args, false, &mut state).unwrap();
         assert_eq!(state.import_memory.as_ref(), Some(&memory_path));
-        assert!(state.steps_completed.contains(&(WizardStep::ImportMemory as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::ImportMemory as u8))
+        );
     }
 
     // --- GOLD-HON-10: step 1d onboarding mode (new vs migration) ---
@@ -1892,9 +1959,11 @@ mod tests {
         let args = args_with_flag(|_| {});
         step1d_onboarding_mode(&args, false, &mut state).unwrap();
         assert_eq!(state.onboarding_mode, OnboardingMode::New);
-        assert!(state
-            .steps_completed
-            .contains(&(WizardStep::OnboardingMode as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::OnboardingMode as u8))
+        );
     }
 
     #[test]
@@ -1905,9 +1974,11 @@ mod tests {
         });
         step1d_onboarding_mode(&args, false, &mut state).unwrap();
         assert_eq!(state.onboarding_mode, OnboardingMode::Migration);
-        assert!(state
-            .steps_completed
-            .contains(&(WizardStep::OnboardingMode as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::OnboardingMode as u8))
+        );
     }
 
     #[test]
@@ -2040,7 +2111,9 @@ mod tests {
         state.experience_level = crate::wizard::recommend::ExperienceLevel::Beginner;
         step5d_profile_approval_gate(true, &mut state).expect("step5d Beginner");
         assert!(
-            state.steps_completed.contains(&(WizardStep::ProfileGate as u8)),
+            state
+                .steps_completed
+                .contains(&(WizardStep::ProfileGate as u8)),
             "step5d marker (60) must be recorded irrespective of experience level",
         );
     }
@@ -2053,7 +2126,11 @@ mod tests {
         let mut state = fixture_state();
         state.experience_level = crate::wizard::recommend::ExperienceLevel::Intermediate;
         step5d_profile_approval_gate(true, &mut state).expect("step5d Intermediate");
-        assert!(state.steps_completed.contains(&(WizardStep::ProfileGate as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::ProfileGate as u8))
+        );
     }
 
     #[tokio::test]
@@ -2099,6 +2176,10 @@ mod tests {
             crate::permissions::AutonomyLevel::Standard,
             "Beginner gate must land on Standard regardless of prior state",
         );
-        assert!(state.steps_completed.contains(&(WizardStep::Autonomy as u8)));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::Autonomy as u8))
+        );
     }
 }

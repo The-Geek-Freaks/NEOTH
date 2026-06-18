@@ -417,7 +417,9 @@ pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Res
         .context("copy zip body to disk")?;
     if written > MAX_EXTRACT_BYTES {
         let _ = std::fs::remove_file(&dest);
-        anyhow::bail!("zip member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)");
+        anyhow::bail!(
+            "zip member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)"
+        );
     }
     Ok(dest)
 }
@@ -450,7 +452,9 @@ pub fn extract_tar_gz_binary(tar_gz_bytes: &[u8], out_dir: &Path, binary: &str) 
         .read_to_end(&mut decompressed)
         .context("gz decompress tarball")?;
     if n as u64 > MAX_EXTRACT_BYTES {
-        anyhow::bail!("gz tarball exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)");
+        anyhow::bail!(
+            "gz tarball exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)"
+        );
     }
     extract_tar_binary_from_bytes(&decompressed, out_dir, binary)
 }
@@ -478,7 +482,9 @@ fn extract_tar_binary_from_bytes(raw_tar: &[u8], out_dir: &Path, binary: &str) -
                 .context("copy tar body to disk")?;
             if written > MAX_EXTRACT_BYTES {
                 let _ = std::fs::remove_file(&dest);
-                anyhow::bail!("tar member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)");
+                anyhow::bail!(
+                    "tar member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)"
+                );
             }
             return Ok(dest);
         }
@@ -858,8 +864,12 @@ pub fn apply_from_staged(
         ),
         None => None,
     };
-    crate::updater::sig_verify::check_signature(&bytes, signature_text.as_deref(), require_signature)
-        .context("staged self-update signature gate (apply time)")?;
+    crate::updater::sig_verify::check_signature(
+        &bytes,
+        signature_text.as_deref(),
+        require_signature,
+    )
+    .context("staged self-update signature gate (apply time)")?;
     // Re-verify integrity (SHA-256) against the recorded hash before any swap.
     let companion_text = format!("{}  staged\n", pending.archive_sha256);
     let format = archive_format_for_target(&pending.target_triple);

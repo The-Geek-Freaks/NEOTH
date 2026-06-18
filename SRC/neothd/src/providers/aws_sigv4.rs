@@ -538,7 +538,10 @@ mod tests {
             "/model/anthropic.claude-3-5-sonnet-20241022-v2%3A0/converse"
         );
         // Unreserved chars (`-._~`) + '/' pass through unchanged.
-        assert_eq!(uri_encode_path("/model/test-a_b.c~d/converse"), "/model/test-a_b.c~d/converse");
+        assert_eq!(
+            uri_encode_path("/model/test-a_b.c~d/converse"),
+            "/model/test-a_b.c~d/converse"
+        );
         // Non-ASCII encodes per UTF-8 byte, uppercase hex (AWS get-utf8 vector).
         assert_eq!(uri_encode_path("/\u{1234}"), "/%E1%88%B4");
         // Other reserved chars also encode (space, '?', '#').
@@ -584,7 +587,10 @@ mod tests {
             &fixture_creds(),
             fixture_time(),
         );
-        assert_eq!(colon.authorization, colon2.authorization, "must be deterministic");
+        assert_eq!(
+            colon.authorization, colon2.authorization,
+            "must be deterministic"
+        );
         assert_ne!(
             colon.authorization, no_colon.authorization,
             "encoded ':' path must sign differently from a ':'-free path"

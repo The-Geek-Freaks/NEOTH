@@ -33,8 +33,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::gossip::GossipTag;
 use super::PeerPubkey;
+use super::gossip::GossipTag;
 
 /// One peer's logical-time view of the cluster. BTreeMap so serde
 /// + compare iterate in deterministic order — important for the

@@ -76,7 +76,8 @@ pub async fn try_post_audit_frame(
             "stale audit-RPC sidecar (daemon pid {pid} not alive)"
         )));
     }
-    let token = read_rpc_token(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
+    let token =
+        read_rpc_token(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
     let body = format!(
         "{{\"event_type\":{event_type},\"payload_b64\":{:?}}}",

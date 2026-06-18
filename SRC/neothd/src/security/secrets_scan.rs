@@ -27,7 +27,10 @@ pub fn patterns() -> Vec<SecretPattern> {
         ("openai_key", r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}"),
         ("slack_token", r"xox[baprs]-[A-Za-z0-9-]{10,}"),
         ("google_api_key", r"AIza[0-9A-Za-z_-]{35}"),
-        ("pem_private_key", r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
+        (
+            "pem_private_key",
+            r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----",
+        ),
         (
             "generic_secret_assignment",
             r#"(?i)\b(?:api[_-]?key|secret|token|password|passwd|access[_-]?key)\b\s*[:=]\s*['"]?[A-Za-z0-9_\-/+.]{12,}"#,
@@ -189,7 +192,10 @@ api_key = \"s3cr3t_value_here_long\"
     fn finding_is_redacted_never_full_secret() {
         let f = scan_text("aws = AKIAIOSFODNN7EXAMPLE");
         let aws = f.iter().find(|x| x.pattern == "aws_access_key_id").unwrap();
-        assert!(!aws.redacted.contains("AKIAIOSFODNN7EXAMPLE"), "must not echo the full secret");
+        assert!(
+            !aws.redacted.contains("AKIAIOSFODNN7EXAMPLE"),
+            "must not echo the full secret"
+        );
         assert!(aws.redacted.starts_with("AKIA"));
         assert!(aws.redacted.contains("chars)"));
     }
@@ -234,12 +240,19 @@ phone = 5551234567890123456789
         assert!(f.iter().any(|x| x.line == 2 && x.pattern == "high_entropy"));
         // ...the prose line + the all-digit "phone" (no letters) are not.
         assert!(!f.iter().any(|x| x.line == 1));
-        assert!(!f.iter().any(|x| x.line == 3), "pure-digit token has no letters → skipped");
+        assert!(
+            !f.iter().any(|x| x.line == 3),
+            "pure-digit token has no letters → skipped"
+        );
     }
 
     #[test]
     fn entropy_finding_is_redacted() {
-        let f = entropy_findings("k = a8Xk2Lp9Qz4Rw7Tm3Vb6Nc0Df1Gh5Jk", ENTROPY_MIN_LEN, ENTROPY_MIN_BITS);
+        let f = entropy_findings(
+            "k = a8Xk2Lp9Qz4Rw7Tm3Vb6Nc0Df1Gh5Jk",
+            ENTROPY_MIN_LEN,
+            ENTROPY_MIN_BITS,
+        );
         assert_eq!(f.len(), 1);
         assert!(f[0].redacted.contains("chars)"));
         assert!(!f[0].redacted.contains("a8Xk2Lp9Qz4Rw7Tm3Vb6Nc0Df1Gh5Jk"));

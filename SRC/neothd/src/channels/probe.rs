@@ -220,7 +220,10 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
         }
         ChannelKind::Discord => {
             if v.discord_bot {
-                (ProbeStatus::Ok, "bot token configured (gateway receive loop)")
+                (
+                    ProbeStatus::Ok,
+                    "bot token configured (gateway receive loop)",
+                )
             } else {
                 (ProbeStatus::NotConfigured, "no discord_bot_token")
             }
@@ -420,7 +423,10 @@ mod tests {
             keet_seed: true,
             ..Default::default()
         };
-        assert_eq!(probe_channel(ChannelKind::Keet, &v).status, ProbeStatus::Warn);
+        assert_eq!(
+            probe_channel(ChannelKind::Keet, &v).status,
+            ProbeStatus::Warn
+        );
     }
 
     #[test]

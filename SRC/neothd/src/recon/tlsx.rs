@@ -101,12 +101,11 @@ pub async fn run(hosts: &[String], ports: &[String]) -> Result<Vec<TlsxResult>> 
     let bin = super::locate(BINARY)
         .ok_or_else(|| anyhow::anyhow!("`{BINARY}` not installed — `{INSTALL_HINT}`"))?;
     let args = build_args(hosts, ports)?;
-    let out = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(bin).args(&args).output()
-    })
-    .await
-    .context("join tlsx task")?
-    .context("run tlsx")?;
+    let out =
+        tokio::task::spawn_blocking(move || std::process::Command::new(bin).args(&args).output())
+            .await
+            .context("join tlsx task")?
+            .context("run tlsx")?;
     if !out.stderr.is_empty() {
         let err = String::from_utf8_lossy(&out.stderr);
         for line in err.lines().filter(|l| !l.trim().is_empty()).take(8) {

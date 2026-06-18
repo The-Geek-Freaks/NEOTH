@@ -104,9 +104,7 @@ async fn fetch_via_jina_at(base: &str, url: &str) -> Result<String> {
         .with_context(|| format!("jina_reader: read body for {url}"))?
     {
         if body.len() + chunk.len() > JINA_MAX_BYTES {
-            anyhow::bail!(
-                "jina_reader: response body exceeds ceiling {JINA_MAX_BYTES} for {url}"
-            );
+            anyhow::bail!("jina_reader: response body exceeds ceiling {JINA_MAX_BYTES} for {url}");
         }
         body.extend_from_slice(&chunk);
     }

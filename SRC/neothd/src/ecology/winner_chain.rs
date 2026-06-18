@@ -81,18 +81,20 @@ pub fn build_winner_chain(records: &[WinnerRecord]) -> WinnerChain {
     let total_f = total as f64;
     let mut stats: Vec<WinnerStat> = voices
         .into_iter()
-        .map(|((provider, role), (wins, score_sum, last_score))| WinnerStat {
-            provider,
-            role,
-            wins,
-            win_share: wins as f64 / total_f,
-            avg_score: if wins == 0 {
-                0.0
-            } else {
-                score_sum / wins as f64
+        .map(
+            |((provider, role), (wins, score_sum, last_score))| WinnerStat {
+                provider,
+                role,
+                wins,
+                win_share: wins as f64 / total_f,
+                avg_score: if wins == 0 {
+                    0.0
+                } else {
+                    score_sum / wins as f64
+                },
+                last_score,
             },
-            last_score,
-        })
+        )
         .collect();
     // Deterministic: most wins first, ties broken by provider then role.
     stats.sort_by(|a, b| {
@@ -171,7 +173,11 @@ mod tests {
             rec("p", "right", 0.9, "best_always"),
         ];
         let c = build_winner_chain(&recs);
-        assert_eq!(c.stats.len(), 2, "(p,left) and (p,right) are separate voices");
+        assert_eq!(
+            c.stats.len(),
+            2,
+            "(p,left) and (p,right) are separate voices"
+        );
     }
 
     #[test]
@@ -189,10 +195,7 @@ mod tests {
     #[test]
     fn tie_break_is_deterministic() {
         // Two voices with equal wins → provider-asc, then role-asc.
-        let recs = vec![
-            rec("z", "left", 0.9, "m"),
-            rec("a", "left", 0.9, "m"),
-        ];
+        let recs = vec![rec("z", "left", 0.9, "m"), rec("a", "left", 0.9, "m")];
         let c = build_winner_chain(&recs);
         assert_eq!(c.stats[0].provider, "a", "equal wins → provider ascending");
         assert_eq!(c.stats[1].provider, "z");

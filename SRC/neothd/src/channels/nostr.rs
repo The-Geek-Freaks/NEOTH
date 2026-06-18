@@ -72,7 +72,8 @@ impl NostrChannel {
 
     /// Parse the operator's secret key (accepts `nsec1…` bech32 or 64-char hex).
     fn keys(&self) -> Result<Keys> {
-        Keys::parse(self.secret_key.expose()).context("parse nostr secret key (expected nsec1… or hex)")
+        Keys::parse(self.secret_key.expose())
+            .context("parse nostr secret key (expected nsec1… or hex)")
     }
 }
 

@@ -667,8 +667,7 @@ Steps to reproduce:
         // A direct, anti-pattern-free response incurs zero N-Space penalty, so
         // its dynamic signal is unchanged by LOWKEY-03 — length-maxed + no
         // refusal / structural / nspace hit → exactly 1.0.
-        let clean =
-            "the wal writer rotates segments at 64 mib and fsyncs each frame. ".repeat(15);
+        let clean = "the wal writer rotates segments at 64 mib and fsyncs each frame. ".repeat(15);
         assert_eq!(
             crate::council::nspace::scan_nspace(clean.trim(), &[]).total_penalty,
             0.0,

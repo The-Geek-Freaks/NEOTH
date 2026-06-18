@@ -36,18 +36,30 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 31);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
-        assert!(is_allowed_client_event(c), "{c:#x} (autonomy) must be allowed");
+        assert!(
+            is_allowed_client_event(c),
+            "{c:#x} (autonomy) must be allowed"
+        );
     }
     // EM-02b calendar external-write audits.
     for c in [0xCAu8, 0xCB] {
-        assert!(is_allowed_client_event(c), "{c:#x} (calendar) must be allowed");
+        assert!(
+            is_allowed_client_event(c),
+            "{c:#x} (calendar) must be allowed"
+        );
     }
     // SR-017 / GOLD-SEC-30 consent grant/revoke marker audits.
     for c in [0xDBu8, 0xDC] {
-        assert!(is_allowed_client_event(c), "{c:#x} (consent) must be allowed");
+        assert!(
+            is_allowed_client_event(c),
+            "{c:#x} (consent) must be allowed"
+        );
     }
     // GOLD-ADOPT-23 point 3 — `neoth risk-confirm` grant audit.
-    assert!(is_allowed_client_event(0x54), "0x54 (risk_confirm_granted) must be allowed");
+    assert!(
+        is_allowed_client_event(0x54),
+        "0x54 (risk_confirm_granted) must be allowed"
+    );
     for c in 0xA5u8..=0xADu8 {
         assert!(is_allowed_client_event(c), "{c:#x} must be allowed");
     }
@@ -55,11 +67,19 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     // ingest (0x2C/0x2D), recall-score (0x3E), self-update (0xD2), and model
     // pull (0xD7/0xD8) — now forward instead of silently skipping when a
     // daemon owns the WAL.
-    for c in [0x2Cu8, 0x2D, 0x30, 0x31, 0x3D, 0x3E, 0x9B, 0xC8, 0xD2, 0xD7, 0xD8, 0xD9, 0xF5] {
-        assert!(is_allowed_client_event(c), "{c:#x} (one-shot) must be allowed");
+    for c in [
+        0x2Cu8, 0x2D, 0x30, 0x31, 0x3D, 0x3E, 0x9B, 0xC8, 0xD2, 0xD7, 0xD8, 0xD9, 0xF5,
+    ] {
+        assert!(
+            is_allowed_client_event(c),
+            "{c:#x} (one-shot) must be allowed"
+        );
     }
     // recon (`neoth recon uncover/tlsx`) forwards its RECON_RUN audit.
-    assert!(is_allowed_client_event(0xF6), "0xF6 (recon_run) must be allowed");
+    assert!(
+        is_allowed_client_event(0xF6),
+        "0xF6 (recon_run) must be allowed"
+    );
     // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
     // autonomy codes must NOT bleed into the neighbouring 0xA0/0xA1/0xA4.
     for c in [0x10u8, 0x15, 0xA0, 0xA1, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
@@ -132,7 +152,10 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
     let (addr, task) = bind_and_serve(state).await.unwrap();
 
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(br#"{"program":"/bin/x"}"#);
-    let body = format!("{{\"event_type\":{},\"payload_b64\":{:?}}}", EVENT_TYPE_OS_APP_LAUNCH, payload_b64);
+    let body = format!(
+        "{{\"event_type\":{},\"payload_b64\":{:?}}}",
+        EVENT_TYPE_OS_APP_LAUNCH, payload_b64
+    );
     let status = raw_post(addr, Some("tok-valid"), &body).await;
     assert_eq!(status, 200);
 
@@ -151,8 +174,14 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         types.push(f.header.event_type);
         cur = cur.saturating_add(f.header.total_len as usize);
     }
-    assert!(types.contains(&EVENT_TYPE_OS_APP_LAUNCH), "forwarded frame landed");
-    assert!(types.contains(&crate::wal::events::EVENT_TYPE_AUDIT_RPC_ACCEPT), "accept marker landed");
+    assert!(
+        types.contains(&EVENT_TYPE_OS_APP_LAUNCH),
+        "forwarded frame landed"
+    );
+    assert!(
+        types.contains(&crate::wal::events::EVENT_TYPE_AUDIT_RPC_ACCEPT),
+        "accept marker landed"
+    );
 }
 
 #[tokio::test]
@@ -176,7 +205,10 @@ async fn wrong_token_is_401_and_writes_no_frame() {
     wal_join.await.ok();
     // No frame written (auth failures are not audited).
     let bytes = tokio::fs::read(&seg).await.unwrap();
-    assert!(crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..]).is_err());
+    assert!(
+        crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -199,7 +231,9 @@ async fn blocked_event_type_is_422_and_emits_reject() {
     drop(writer);
     wal_join.await.ok();
     let bytes = tokio::fs::read(&seg).await.unwrap();
-    let f = crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..]).unwrap();
+    let f =
+        crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
+            .unwrap();
     assert_eq!(f.header.event_type, EVENT_TYPE_AUDIT_RPC_REJECT);
 }
 
@@ -221,15 +255,21 @@ async fn client_round_trips_against_a_live_listener() {
     write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
 
     // The CLIENT path: read sidecar+token, connect, POST.
-    try_post_audit_frame(home.path(), EVENT_TYPE_OS_FILE_READ, br#"{"path":"/etc/hosts","bytes":42}"#)
-        .await
-        .expect("client round-trip must succeed end-to-end");
+    try_post_audit_frame(
+        home.path(),
+        EVENT_TYPE_OS_FILE_READ,
+        br#"{"path":"/etc/hosts","bytes":42}"#,
+    )
+    .await
+    .expect("client round-trip must succeed end-to-end");
 
     task.abort();
     drop(writer);
     wal_join.await.ok();
     let bytes = tokio::fs::read(&seg).await.unwrap();
-    let f = crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..]).unwrap();
+    let f =
+        crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
+            .unwrap();
     assert_eq!(f.header.event_type, EVENT_TYPE_OS_FILE_READ);
 }
 

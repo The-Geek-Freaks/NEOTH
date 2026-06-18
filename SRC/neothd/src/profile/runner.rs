@@ -449,7 +449,9 @@ pub async fn run_pipeline(
                     now_unix as i64,
                 )
                 .await?;
-                return Ok(PipelineRun::Skipped(PipelineSkip::GuardRejected(reason_str)));
+                return Ok(PipelineRun::Skipped(PipelineSkip::GuardRejected(
+                    reason_str,
+                )));
             }
         }
     };

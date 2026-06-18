@@ -88,7 +88,8 @@ impl ProofBundle {
         // hex Strings + a clamped-finite `importance`), so serde_json cannot
         // fail here — and if a future field makes it fallible we fail loud
         // rather than sign over nothing.
-        serde_json::to_vec(self).expect("ProofBundle is POD; serde_json serialization is infallible")
+        serde_json::to_vec(self)
+            .expect("ProofBundle is POD; serde_json serialization is infallible")
     }
 
     /// SHA-256 (lowercase hex) over [`Self::canonical_bytes`].
@@ -210,7 +211,9 @@ impl ProofEnvelope {
                 }
                 match crate::wal::signing::verify_b64(expected.trim(), sig, &msg) {
                     Ok(()) => SignatureCheck::VerifiedAgainstExpected,
-                    Err(e) => SignatureCheck::Invalid { reason: e.to_string() },
+                    Err(e) => SignatureCheck::Invalid {
+                        reason: e.to_string(),
+                    },
                 }
             }
             // No pinned key: self-consistency only (proves no post-sign tamper,
@@ -219,7 +222,9 @@ impl ProofEnvelope {
                 Ok(()) => SignatureCheck::SelfConsistent {
                     signer_pubkey: embedded_pk.clone(),
                 },
-                Err(e) => SignatureCheck::Invalid { reason: e.to_string() },
+                Err(e) => SignatureCheck::Invalid {
+                    reason: e.to_string(),
+                },
             },
         }
     }

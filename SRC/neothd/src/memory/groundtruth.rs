@@ -256,7 +256,14 @@ pub fn insert(
             "INSERT INTO idx_groundtruth \
                 (statement, source, scope, asserted_at, revoked_at, fact_state, source_weight) \
              VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
-            params![stmt, source.as_str(), scope, now_ns, state.as_str(), source_weight_json(&weights)],
+            params![
+                stmt,
+                source.as_str(),
+                scope,
+                now_ns,
+                state.as_str(),
+                source_weight_json(&weights)
+            ],
         )
         .context("insert ground-truth")?;
         conn.last_insert_rowid()
@@ -447,11 +454,25 @@ mod tests {
     #[test]
     fn operator_source_inserts_verified_and_surfaces_immediately() {
         let (_dir, conn) = open();
-        let id = insert(&conn, "nas at 10.0.0.5", &Source::OperatorRuntime, "global", 1).unwrap();
+        let id = insert(
+            &conn,
+            "nas at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
         let st: String = conn
-            .query_row("SELECT fact_state FROM idx_groundtruth WHERE id=?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(st, "verified", "operator-attested facts are verified on sight");
+        assert_eq!(
+            st, "verified",
+            "operator-attested facts are verified on sight"
+        );
         assert_eq!(surface_for_recall(&conn, 10, false).unwrap().len(), 1);
     }
 
@@ -460,7 +481,11 @@ mod tests {
         let (_dir, conn) = open();
         let id = insert(&conn, "alice prefers tea", &Source::Omi, "global", 1).unwrap();
         let st: String = conn
-            .query_row("SELECT fact_state FROM idx_groundtruth WHERE id=?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(st, "candidate", "external (omi) facts start unverified");
         assert_eq!(
@@ -477,9 +502,18 @@ mod tests {
         let (_dir, conn) = open();
         let id1 = insert(&conn, "team standup is at 9am", &Source::Omi, "global", 1).unwrap();
         // Same statement+scope from a SECOND distinct source → corroborated.
-        let id2 =
-            insert(&conn, "team standup is at 9am", &Source::ImportHermes, "global", 2).unwrap();
-        assert_eq!(id1, id2, "the duplicate corroborates, it does not create a new row");
+        let id2 = insert(
+            &conn,
+            "team standup is at 9am",
+            &Source::ImportHermes,
+            "global",
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            id1, id2,
+            "the duplicate corroborates, it does not create a new row"
+        );
         let (st, sw): (String, String) = conn
             .query_row(
                 "SELECT fact_state, source_weight FROM idx_groundtruth WHERE id=?1",
@@ -487,9 +521,19 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(st, "verified", "≥2 distinct sources auto-promote candidate→verified");
-        assert!(sw.contains("omi") && sw.contains("import:hermes"), "both sources recorded");
-        assert_eq!(surface_for_recall(&conn, 10, false).unwrap().len(), 1, "now surfaces");
+        assert_eq!(
+            st, "verified",
+            "≥2 distinct sources auto-promote candidate→verified"
+        );
+        assert!(
+            sw.contains("omi") && sw.contains("import:hermes"),
+            "both sources recorded"
+        );
+        assert_eq!(
+            surface_for_recall(&conn, 10, false).unwrap().len(),
+            1,
+            "now surfaces"
+        );
     }
 
     #[test]
@@ -499,21 +543,42 @@ mod tests {
         let id2 = insert(&conn, "router pw rotated", &Source::Omi, "global", 2).unwrap();
         assert_eq!(id, id2);
         let st: String = conn
-            .query_row("SELECT fact_state FROM idx_groundtruth WHERE id=?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(st, "candidate", "one source asserting twice is NOT corroboration");
+        assert_eq!(
+            st, "candidate",
+            "one source asserting twice is NOT corroboration"
+        );
     }
 
     #[test]
     fn operator_reassertion_verifies_an_external_candidate() {
         let (_dir, conn) = open();
         let id = insert(&conn, "vpn endpoint is x", &Source::Omi, "global", 1).unwrap();
-        let id2 = insert(&conn, "vpn endpoint is x", &Source::OperatorRuntime, "global", 2).unwrap();
+        let id2 = insert(
+            &conn,
+            "vpn endpoint is x",
+            &Source::OperatorRuntime,
+            "global",
+            2,
+        )
+        .unwrap();
         assert_eq!(id, id2);
         let st: String = conn
-            .query_row("SELECT fact_state FROM idx_groundtruth WHERE id=?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(st, "verified", "an operator re-assertion verifies immediately");
+        assert_eq!(
+            st, "verified",
+            "an operator re-assertion verifies immediately"
+        );
     }
 
     #[test]
@@ -527,21 +592,38 @@ mod tests {
             0,
             "a deprecated fact is no longer surfaced"
         );
-        assert!(!set_fact_state(&conn, 99_999, FactState::Verified).unwrap(), "unknown id → false");
+        assert!(
+            !set_fact_state(&conn, 99_999, FactState::Verified).unwrap(),
+            "unknown id → false"
+        );
     }
 
     #[test]
     fn corroboration_never_revives_an_operator_terminal_state() {
         let (_dir, conn) = open();
-        let id = insert(&conn, "decommissioned host", &Source::OperatorRuntime, "global", 1).unwrap();
+        let id = insert(
+            &conn,
+            "decommissioned host",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
         set_fact_state(&conn, id, FactState::Deprecated).unwrap();
         // A fresh external assertion of the same statement must NOT revive it.
         let id2 = insert(&conn, "decommissioned host", &Source::Omi, "global", 2).unwrap();
         assert_eq!(id, id2);
         let st: String = conn
-            .query_row("SELECT fact_state FROM idx_groundtruth WHERE id=?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(st, "deprecated", "a terminal state set by the operator is not silently flipped");
+        assert_eq!(
+            st, "deprecated",
+            "a terminal state set by the operator is not silently flipped"
+        );
     }
 
     #[test]

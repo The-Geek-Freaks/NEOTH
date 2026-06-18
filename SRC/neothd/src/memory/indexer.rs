@@ -512,12 +512,22 @@ mod tests {
         let mut frames = Vec::new();
         let p1 = b"compressed hello".to_vec();
         frames.extend_from_slice(&encode_frame(
-            &header_for(EVENT_TYPE_RAW_TEXT, p1.len() as u32, 11, 1_700_000_000_000_000_011),
+            &header_for(
+                EVENT_TYPE_RAW_TEXT,
+                p1.len() as u32,
+                11,
+                1_700_000_000_000_000_011,
+            ),
             &p1,
         ));
         let p2 = b"compressed world".to_vec();
         frames.extend_from_slice(&encode_frame(
-            &header_for(EVENT_TYPE_RAW_TEXT, p2.len() as u32, 12, 1_700_000_000_000_000_012),
+            &header_for(
+                EVENT_TYPE_RAW_TEXT,
+                p2.len() as u32,
+                12,
+                1_700_000_000_000_000_012,
+            ),
             &p2,
         ));
 
@@ -536,7 +546,11 @@ mod tests {
             .unwrap();
         assert_eq!(count, 2);
         let text: String = conn
-            .query_row("SELECT text FROM idx_episode WHERE event_id = 12", [], |r| r.get(0))
+            .query_row(
+                "SELECT text FROM idx_episode WHERE event_id = 12",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(text, "compressed world");
         // Re-poll: a sealed compressed segment yields nothing new.
@@ -561,12 +575,22 @@ mod tests {
         let mut frames = Vec::new();
         let p1 = b"stale-cursor hello".to_vec();
         frames.extend_from_slice(&encode_frame(
-            &header_for(EVENT_TYPE_RAW_TEXT, p1.len() as u32, 21, 1_700_000_000_000_000_021),
+            &header_for(
+                EVENT_TYPE_RAW_TEXT,
+                p1.len() as u32,
+                21,
+                1_700_000_000_000_000_021,
+            ),
             &p1,
         ));
         let p2 = b"stale-cursor world".to_vec();
         frames.extend_from_slice(&encode_frame(
-            &header_for(EVENT_TYPE_RAW_TEXT, p2.len() as u32, 22, 1_700_000_000_000_000_022),
+            &header_for(
+                EVENT_TYPE_RAW_TEXT,
+                p2.len() as u32,
+                22,
+                1_700_000_000_000_000_022,
+            ),
             &p2,
         ));
         let blob = compress_frames(&frames).unwrap();

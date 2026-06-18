@@ -137,7 +137,10 @@ mod tests {
 
     #[test]
     fn forges_a_skill_from_a_normal_dream() {
-        let d = dream_with("WiFi troubleshooting", "Operator repeatedly debugs router drops.");
+        let d = dream_with(
+            "WiFi troubleshooting",
+            "Operator repeatedly debugs router drops.",
+        );
         let p = build_skill_proposal_from_dream(&d).expect("normal dream forges a skill");
         assert_eq!(p.kind, ProposalKind::Skill);
         assert!(p.title.contains("WiFi troubleshooting"));
@@ -166,8 +169,14 @@ mod tests {
 
     #[test]
     fn slugify_collapses_and_prefixes() {
-        assert_eq!(slugify_theme("WiFi  drops!!").as_deref(), Some("dream_wifi_drops"));
-        assert_eq!(slugify_theme("café-notes").as_deref(), Some("dream_caf_notes"));
+        assert_eq!(
+            slugify_theme("WiFi  drops!!").as_deref(),
+            Some("dream_wifi_drops")
+        );
+        assert_eq!(
+            slugify_theme("café-notes").as_deref(),
+            Some("dream_caf_notes")
+        );
         assert_eq!(slugify_theme("   "), None);
         assert_eq!(slugify_theme("###"), None);
     }
@@ -189,6 +198,9 @@ mod tests {
         let d = dream_with("topic", "summary text");
         let a = build_skill_proposal_from_dream(&d).unwrap();
         let b = build_skill_proposal_from_dream(&d).unwrap();
-        assert_eq!(a.id, b.id, "same dream -> same proposal id (idempotent staging)");
+        assert_eq!(
+            a.id, b.id,
+            "same dream -> same proposal id (idempotent staging)"
+        );
     }
 }

@@ -620,7 +620,10 @@ mod tests {
 
         let gate = Gate::for_level(AutonomyLevel::Standard);
         let _ = gate
-            .check(&Action::DangerousTarget("home-server".into()), Some(&writer))
+            .check(
+                &Action::DangerousTarget("home-server".into()),
+                Some(&writer),
+            )
             .await;
 
         drop(writer);
@@ -801,10 +804,7 @@ mod tests {
 
         let gate = Gate::for_level(AutonomyLevel::Full).with_confirm(ConfirmStrategy::FailClosed);
         let r = gate
-            .check(
-                &Action::DangerousTarget("192.0.2.1".into()),
-                Some(&writer),
-            )
+            .check(&Action::DangerousTarget("192.0.2.1".into()), Some(&writer))
             .await;
         assert!(
             matches!(r, Err(GateError::Denied(_))),

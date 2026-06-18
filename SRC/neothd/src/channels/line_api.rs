@@ -247,7 +247,9 @@ pub fn decode_line_payload(raw: &str) -> DecodedLineWebhook {
 
     if messages.is_empty() {
         return DecodedLineWebhook::NoMessages {
-            reason: "no actionable text events (follow/postback/sticker, standby, or empty verify ping)".into(),
+            reason:
+                "no actionable text events (follow/postback/sticker, standby, or empty verify ping)"
+                    .into(),
         };
     }
     DecodedLineWebhook::Messages(messages)
@@ -356,7 +358,10 @@ fn map_status(response: &reqwest::Response, ctx: &str) -> std::result::Result<()
         return Err(ChannelError::RateLimited { retry_after_secs });
     }
     if matches!(status.as_u16(), 401 | 403) {
-        return Err(ChannelError::Auth(format!("{ctx} HTTP {}", status.as_u16())));
+        return Err(ChannelError::Auth(format!(
+            "{ctx} HTTP {}",
+            status.as_u16()
+        )));
     }
     Err(ChannelError::Transport(format!(
         "{ctx} HTTP {}",
@@ -407,7 +412,10 @@ mod tests {
                 "webhookEventId":"e1","message":{"id":"m1","type":"text","text":"hi team"}}]}"#,
         );
         assert_eq!(msgs[0].chat_id, "Cgroup", "group → chat_id is the group id");
-        assert_eq!(msgs[0].sender_id, "Umember", "sender stays the member user id");
+        assert_eq!(
+            msgs[0].sender_id, "Umember",
+            "sender stays the member user id"
+        );
     }
 
     #[test]
@@ -429,7 +437,10 @@ mod tests {
             "source":{"type":"room","userId":"Umember"},
             "webhookEventId":"e","message":{"id":"m","type":"text","text":"hi"}}]}"#;
         assert!(
-            matches!(decode_line_payload(raw), DecodedLineWebhook::NoMessages { .. }),
+            matches!(
+                decode_line_payload(raw),
+                DecodedLineWebhook::NoMessages { .. }
+            ),
             "a room event with no roomId must be dropped, not cross-routed to the user's DM"
         );
     }
@@ -465,7 +476,10 @@ mod tests {
                 "webhookEventId":"e3","message":{"id":"m3","type":"text","text":"x"}}]}"#,
         );
         assert_eq!(msgs[0].chat_id, "Cg");
-        assert_eq!(msgs[0].sender_id, "Cg", "no userId → sender falls back to chat id");
+        assert_eq!(
+            msgs[0].sender_id, "Cg",
+            "no userId → sender falls back to chat id"
+        );
     }
 
     #[test]
@@ -557,10 +571,9 @@ mod tests {
 
     #[test]
     fn push_response_extracts_first_sent_message_id() {
-        let parsed: PushResponse = serde_json::from_str(
-            r#"{"sentMessages":[{"id":"4611...","quoteToken":"q"}]}"#,
-        )
-        .unwrap();
+        let parsed: PushResponse =
+            serde_json::from_str(r#"{"sentMessages":[{"id":"4611...","quoteToken":"q"}]}"#)
+                .unwrap();
         assert_eq!(parsed.sent_messages[0].id, "4611...");
     }
 }

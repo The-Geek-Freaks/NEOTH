@@ -62,9 +62,7 @@ fn field_name(line: &str) -> Option<&str> {
     // A struct field name is a bare identifier; reject anything with spaces,
     // parens, `<`, etc. (so `fn foo(x: T)` / `match x:` don't false-match).
     if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         || name.chars().next().is_some_and(|c| c.is_ascii_digit())
     {
         return None;
@@ -79,7 +77,9 @@ fn field_name(line: &str) -> Option<&str> {
 
 #[test]
 fn no_secret_named_fields_in_wal_structs() {
-    let wal_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("wal");
+    let wal_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("wal");
     let mut files = Vec::new();
     collect_rs_files(&wal_root, &mut files);
 

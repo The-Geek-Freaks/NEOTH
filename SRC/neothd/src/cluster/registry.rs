@@ -92,8 +92,9 @@ fn try_lock_registry_file(lock_path: &Path) -> Result<Option<std::fs::File>> {
         {
             Ok(f) => Ok(Some(f)),
             Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Ok(None),
-            Err(e) => Err(e)
-                .with_context(|| format!("open cluster lock file {}", lock_path.display())),
+            Err(e) => {
+                Err(e).with_context(|| format!("open cluster lock file {}", lock_path.display()))
+            }
         }
     }
     #[cfg(unix)]
@@ -572,7 +573,8 @@ mod tests {
         // otherwise an upgrade would silently disable every paired peer.
         let legacy = "\
 peers:
-  - pub_key_hex: ".to_string()
+  - pub_key_hex: "
+            .to_string()
             + "ab".repeat(32).as_str()
             + "
     instance_label: laptop
@@ -595,11 +597,15 @@ peers:
         upsert(dir.path(), peer.clone()).unwrap();
         // Exact + case-insensitive both resolve.
         assert_eq!(
-            find_by_hostname(dir.path(), "Workstation-01").unwrap().pub_key_hex,
+            find_by_hostname(dir.path(), "Workstation-01")
+                .unwrap()
+                .pub_key_hex,
             peer.pub_key_hex
         );
         assert_eq!(
-            find_by_hostname(dir.path(), "workstation-01").unwrap().pub_key_hex,
+            find_by_hostname(dir.path(), "workstation-01")
+                .unwrap()
+                .pub_key_hex,
             peer.pub_key_hex
         );
     }
@@ -626,7 +632,10 @@ peers:
         // A fresh peer starts NEUTRAL; a hit nudges up, a miss nudges down.
         let up = compute_stability(NEUTRAL_STABILITY, true);
         let down = compute_stability(NEUTRAL_STABILITY, false);
-        assert!(up > NEUTRAL_STABILITY && up <= 1.0, "hit moves toward 1.0: {up}");
+        assert!(
+            up > NEUTRAL_STABILITY && up <= 1.0,
+            "hit moves toward 1.0: {up}"
+        );
         assert!(
             (0.0..NEUTRAL_STABILITY).contains(&down),
             "miss moves toward 0.0: {down}"
@@ -661,7 +670,10 @@ peers:
         let dir = tempdir().unwrap();
         upsert(dir.path(), sample_peer("ab", "laptop")).unwrap();
         let key = format!("ab{}", "0".repeat(62));
-        assert_eq!(load(dir.path()).unwrap().peers[0].stability_score, NEUTRAL_STABILITY);
+        assert_eq!(
+            load(dir.path()).unwrap().peers[0].stability_score,
+            NEUTRAL_STABILITY
+        );
         assert!(refresh_stability(dir.path(), &key, true).unwrap());
         let after_hit = load(dir.path()).unwrap().peers[0].stability_score;
         assert!(after_hit > NEUTRAL_STABILITY);

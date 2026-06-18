@@ -72,7 +72,12 @@ pub async fn run_recall_score(args: RecallScoreArgs) -> Result<()> {
                  The gate refuses to score a subset.",
                 missing.len(),
                 entries.len(),
-                missing.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                missing
+                    .iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
         if matches!(args.output, OutputFormat::Table) {
@@ -148,12 +153,21 @@ fn render(r: &ParityRunResult, output: &OutputFormat) {
                     }))
                     .collect::<Vec<_>>(),
             });
-            println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&body).unwrap_or_default()
+            );
         }
         OutputFormat::Table => {
             println!("# Recall-parity gate (ARCH-05 / SPEC-08)");
-            println!("  verdict       : {}", if r.verdict.passed { "PASS" } else { "FAIL" });
-            println!("  aggregate     : {:.4}  (>= {:.2})", r.aggregate, r.verdict.threshold);
+            println!(
+                "  verdict       : {}",
+                if r.verdict.passed { "PASS" } else { "FAIL" }
+            );
+            println!(
+                "  aggregate     : {:.4}  (>= {:.2})",
+                r.aggregate, r.verdict.threshold
+            );
             println!(
                 "  mean kappa    : {:.4}  (>= 0.60 reliability: {})",
                 r.mean_kappa, r.verdict.kappa_gate_met
@@ -161,13 +175,31 @@ fn render(r: &ParityRunResult, output: &OutputFormat) {
             println!("  absolute floors met: {}", r.verdict.absolute_floors_met);
             println!("  CRITICAL      : {}", r.verdict.critical_count);
             println!("  per dimension :");
-            for ((d, k), (_, pk)) in r.dimension_kappas.iter().zip(r.dimension_parity_kappa.iter()) {
-                println!("    {:<13} kappa={:.3}  parity_kappa={:.3}", d.as_str(), k, pk);
+            for ((d, k), (_, pk)) in r
+                .dimension_kappas
+                .iter()
+                .zip(r.dimension_parity_kappa.iter())
+            {
+                println!(
+                    "    {:<13} kappa={:.3}  parity_kappa={:.3}",
+                    d.as_str(),
+                    k,
+                    pk
+                );
             }
             println!("  absolute floors (mean NEOTH score vs floor):");
             for (d, mean) in &r.absolute_floors {
-                let ok = if *mean >= d.absolute_floor() { "ok" } else { "FAIL" };
-                println!("    {:<13} {:.2} / {:.1}  {ok}", d.as_str(), mean, d.absolute_floor());
+                let ok = if *mean >= d.absolute_floor() {
+                    "ok"
+                } else {
+                    "FAIL"
+                };
+                println!(
+                    "    {:<13} {:.2} / {:.1}  {ok}",
+                    d.as_str(),
+                    mean,
+                    d.absolute_floor()
+                );
             }
             if !r.critical_queries.is_empty() {
                 println!("  CRITICAL queries (a single one aborts cutover):");

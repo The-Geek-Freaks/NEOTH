@@ -533,7 +533,10 @@ async fn build_prompt_bundle(
     let _used_skill_id = enriched.used_skill_id;
 
     (
-        PromptBundle { combined_system, skill_tool_allowlist },
+        PromptBundle {
+            combined_system,
+            skill_tool_allowlist,
+        },
         config,
         prompt,
         home,
@@ -831,9 +834,9 @@ async fn dispatch_provider(
     // block. Idempotent — re-entry from council debate
     // doesn't double-inject. Per
     // `PLAN/QUELLEN_ADOPT_karpathy_2026-05-21.md`.
-    let merged_system = Some(crate::providers::context_guards::apply_code_discipline_preamble(
-        final_system.as_deref(),
-    ));
+    let merged_system = Some(
+        crate::providers::context_guards::apply_code_discipline_preamble(final_system.as_deref()),
+    );
     let req = Request {
         prompt: final_prompt.clone(),
         system: merged_system.clone(),
@@ -1184,26 +1187,20 @@ async fn dispatch_provider(
             // never drift. CLI-specific bits stay here: the convened log
             // above, the WAL-writer shutdown on failure, stdout print, and
             // the cost-estimate tuple below.
-            let response_text =
-                match dispatch_council_with_recovery(&req, config, &writer).await {
-                    Ok(text) => text,
-                    Err(e) => {
-                        // CLI returns the error to the caller (after a clean
-                        // WAL-writer shutdown) rather than falling back to a
-                        // single provider the way the channel path does.
-                        warn!(error = %e, "council debate failed; returning error");
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Err(e);
-                    }
-                };
+            let response_text = match dispatch_council_with_recovery(&req, config, &writer).await {
+                Ok(text) => text,
+                Err(e) => {
+                    // CLI returns the error to the caller (after a clean
+                    // WAL-writer shutdown) rather than falling back to a
+                    // single provider the way the channel path does.
+                    warn!(error = %e, "council debate failed; returning error");
+                    drop(writer);
+                    let _ = writer_join.await;
+                    return Err(e);
+                }
+            };
             println!("{response_text}");
-            (
-                response_text,
-                None,
-                None,
-                model_for_estimate(args, config),
-            )
+            (response_text, None, None, model_for_estimate(args, config))
         } else if use_loop {
             info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
             // SC-11 — scope the MCP gate to the matched skill's
@@ -1580,9 +1577,11 @@ async fn run_post_reply_pipelines(
                 // `apply_code_discipline_preamble` no-ops when the
                 // preamble is already present so this is
                 // safe under any sequencing.
-                system: Some(crate::providers::context_guards::apply_code_discipline_preamble(
-                    final_system.as_deref(),
-                )),
+                system: Some(
+                    crate::providers::context_guards::apply_code_discipline_preamble(
+                        final_system.as_deref(),
+                    ),
+                ),
                 model: Some(model_used.clone()),
                 ..Default::default()
             };
@@ -1978,8 +1977,14 @@ async fn run_post_reply_pipelines(
     // on process exit. Uses the cheap utility provider + a 12s timeout cap; any
     // failure leaves the deterministic `one_line_summary` in place.
     if config.memory.name_sessions {
-        name_session_best_effort(&config, &writer, &first_tour_home, &current_session_id, &prompt)
-            .await;
+        name_session_best_effort(
+            &config,
+            &writer,
+            &first_tour_home,
+            &current_session_id,
+            &prompt,
+        )
+        .await;
     }
 
     // GOLD-ADOPT-24 — turn-end context-window usage bar (this turn's tokens vs
@@ -2001,7 +2006,8 @@ async fn run_post_reply_pipelines(
         // speculative/unsupported claims in the final answer (STDERR, never
         // stdout). Pure + LLM-free; fires only on suspect absolutisms, so a
         // well-grounded reply prints nothing extra.
-        if let Some(note) = crate::council::self_challenge::challenge_answer(&response_text).note() {
+        if let Some(note) = crate::council::self_challenge::challenge_answer(&response_text).note()
+        {
             eprintln!("{note}");
         }
     }
@@ -2342,7 +2348,10 @@ pub async fn run_chat_with(
     // load just shaves the serial cost off the front edge.
     let home = FreedomConfig::default_neoth_home();
     let (
-        PromptBundle { combined_system, skill_tool_allowlist },
+        PromptBundle {
+            combined_system,
+            skill_tool_allowlist,
+        },
         config,
         prompt,
         home,
@@ -2358,28 +2367,41 @@ pub async fn run_chat_with(
         prompt,
         quota_path,
         hooks,
-    ) =
-        match enforce_preflight(
-            combined_system, prompt, provider, &args, &config, writer, writer_join, &home,
-        )
-        .await?
-        {
-            PreflightOutcome::Done => return Ok(()),
-            PreflightOutcome::Continue {
-                writer,
-                writer_join,
-                predicted_cost,
-                review_context,
-                final_prompt,
-                final_system,
-                prompt,
-                quota_path,
-                hooks,
-            } => (
-                writer, writer_join, predicted_cost, review_context, final_prompt,
-                final_system, prompt, quota_path, hooks,
-            ),
-        };
+    ) = match enforce_preflight(
+        combined_system,
+        prompt,
+        provider,
+        &args,
+        &config,
+        writer,
+        writer_join,
+        &home,
+    )
+    .await?
+    {
+        PreflightOutcome::Done => return Ok(()),
+        PreflightOutcome::Continue {
+            writer,
+            writer_join,
+            predicted_cost,
+            review_context,
+            final_prompt,
+            final_system,
+            prompt,
+            quota_path,
+            hooks,
+        } => (
+            writer,
+            writer_join,
+            predicted_cost,
+            review_context,
+            final_prompt,
+            final_system,
+            prompt,
+            quota_path,
+            hooks,
+        ),
+    };
     let DispatchOutput {
         response_text,
         final_input_tokens,
@@ -2491,11 +2513,8 @@ async fn name_session_best_effort(
             tracing::debug!(error = %e, "session-naming: PROVIDER_REQUEST frame failed");
         }
     }
-    let completion = tokio::time::timeout(
-        std::time::Duration::from_secs(12),
-        provider.complete(req),
-    )
-    .await;
+    let completion =
+        tokio::time::timeout(std::time::Duration::from_secs(12), provider.complete(req)).await;
     if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
         "provider": provider.name(),
         "call_type": "session_naming",
@@ -2872,14 +2891,16 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 // paths do NOT — so the meter currently counts council token
                 // burn only. Extend those call sites in WIRE-10b for a full
                 // token budget. `latency_ms` is clamped (a call can't take 49d).
-                crate::domain_events::publish(crate::domain_events::DomainEvent::ProviderResponded {
-                    provider: provider_name.to_string(),
-                    model: c.model.clone(),
-                    input_tokens: c.input_tokens.unwrap_or(0),
-                    output_tokens: c.output_tokens.unwrap_or(0),
-                    latency_ms: elapsed_ms.min(u64::from(u32::MAX)) as u32,
-                    ts_unix: now_unix() as i64,
-                });
+                crate::domain_events::publish(
+                    crate::domain_events::DomainEvent::ProviderResponded {
+                        provider: provider_name.to_string(),
+                        model: c.model.clone(),
+                        input_tokens: c.input_tokens.unwrap_or(0),
+                        output_tokens: c.output_tokens.unwrap_or(0),
+                        latency_ms: elapsed_ms.min(u64::from(u32::MAX)) as u32,
+                        ts_unix: now_unix() as i64,
+                    },
+                );
                 Ok(crate::council::orchestrator::CompletionRecord {
                     text: c.text,
                     input_tokens: c.input_tokens,
@@ -3603,7 +3624,8 @@ fn recall_lanes_for_block(
     const RECALL_BLOCK_LIMIT: usize = 5;
     let conn = crate::memory::store::open(db_path).ok()?;
     let plan = crate::memory::region_router::route_query(prompt);
-    let mut output = crate::cli::recall::query_three_lanes(&conn, &plan, prompt, RECALL_BLOCK_LIMIT);
+    let mut output =
+        crate::cli::recall::query_three_lanes(&conn, &plan, prompt, RECALL_BLOCK_LIMIT);
     // GOLD-FEAT-12 D-block dedup: drop episodes whose text already appears as a
     // canonical fact (or an earlier episode) before the block is rendered.
     dedup_recall_lanes(&mut output);
@@ -3625,9 +3647,13 @@ fn recall_lanes_for_block(
 /// different inputs per lane (bare statement vs WAL payload envelope), so they
 /// cannot be compared across lanes.
 fn dedup_recall_lanes(out: &mut crate::cli::recall::RecallOutput) {
-    let mut seen: std::collections::HashSet<u64> =
-        out.canonical.iter().map(|h| recall_dedup_key(&h.text)).collect();
-    out.episodes.retain(|h| seen.insert(recall_dedup_key(&h.text)));
+    let mut seen: std::collections::HashSet<u64> = out
+        .canonical
+        .iter()
+        .map(|h| recall_dedup_key(&h.text))
+        .collect();
+    out.episodes
+        .retain(|h| seen.insert(recall_dedup_key(&h.text)));
 }
 
 /// Normalized xxh3 dedup key: trim + collapse internal whitespace + lowercase,
@@ -3636,7 +3662,11 @@ fn dedup_recall_lanes(out: &mut crate::cli::recall::RecallOutput) {
 /// genuinely distinct memories). Hashes the FULL text, pre snippet-truncation,
 /// so two long memories that differ only past the 240-char cut stay distinct.
 fn recall_dedup_key(text: &str) -> u64 {
-    let norm = text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let norm = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
     xxhash_rust::xxh3::xxh3_64(norm.as_bytes())
 }
 
@@ -3676,7 +3706,12 @@ fn render_recall_block_layered(out: &crate::cli::recall::RecallOutput) -> String
     if !out.episodes.is_empty() {
         s.push_str("### Relevant episodes\n");
         for (i, h) in out.episodes.iter().enumerate() {
-            s.push_str(&format!("{}. [{}] {}\n", i + 1, h.tier, recall_snippet(&h.text)));
+            s.push_str(&format!(
+                "{}. [{}] {}\n",
+                i + 1,
+                h.tier,
+                recall_snippet(&h.text)
+            ));
         }
     }
     if !out.contradictions.is_empty() {
@@ -4860,12 +4895,24 @@ mod tests {
     // ── GOLD-ADOPT-21 session-title sanitizer ───────────────────────────
     #[test]
     fn sanitize_session_title_strips_quotes_punct_and_extra_lines() {
-        assert_eq!(sanitize_session_title("\"Rust Parser Refactor\""), "Rust Parser Refactor");
-        assert_eq!(sanitize_session_title("Fixing the WAL bug."), "Fixing the WAL bug");
+        assert_eq!(
+            sanitize_session_title("\"Rust Parser Refactor\""),
+            "Rust Parser Refactor"
+        );
+        assert_eq!(
+            sanitize_session_title("Fixing the WAL bug."),
+            "Fixing the WAL bug"
+        );
         // First non-empty line only (models sometimes add a preamble blank line).
-        assert_eq!(sanitize_session_title("\n  Auth Flow Redesign  \nignored second line"), "Auth Flow Redesign");
+        assert_eq!(
+            sanitize_session_title("\n  Auth Flow Redesign  \nignored second line"),
+            "Auth Flow Redesign"
+        );
         // Backtick / single-quote wrappers + trailing ?! stripped.
-        assert_eq!(sanitize_session_title("`What about caching?`"), "What about caching");
+        assert_eq!(
+            sanitize_session_title("`What about caching?`"),
+            "What about caching"
+        );
         // Empty / whitespace → empty (caller skips the update).
         assert_eq!(sanitize_session_title("   \n  "), "");
         // Over-long titles are capped at 80 chars.
@@ -5057,8 +5104,7 @@ mod tests {
             "never-called"
         }
         async fn complete(&self, _req: Request) -> Result<Completion> {
-            self.calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Completion {
                 text: "SHOULD NOT BE CALLED".into(),
                 model: "x".into(),
@@ -6643,12 +6689,24 @@ mod tests {
         };
         let out = render_recall_block_layered(&output);
         assert!(out.contains("Relevant memory"), "header: {out}");
-        assert!(out.contains("### Relevant episodes"), "episodes sub-heading: {out}");
+        assert!(
+            out.contains("### Relevant episodes"),
+            "episodes sub-heading: {out}"
+        );
         assert!(out.contains("[hot]"), "tier tag: {out}");
-        assert!(out.contains("line1 line2"), "newline flattened to space: {out}");
-        assert!(out.contains('…'), "over-long snippet truncated with ellipsis");
+        assert!(
+            out.contains("line1 line2"),
+            "newline flattened to space: {out}"
+        );
+        assert!(
+            out.contains('…'),
+            "over-long snippet truncated with ellipsis"
+        );
         // JV-MEM-10: empty lanes emit no sub-heading.
-        assert!(!out.contains("Canonical facts"), "empty canonical lane → no heading: {out}");
+        assert!(
+            !out.contains("Canonical facts"),
+            "empty canonical lane → no heading: {out}"
+        );
         assert!(
             !out.contains("Flagged contradictions"),
             "empty contradiction lane → no heading: {out}"
@@ -6692,7 +6750,7 @@ mod tests {
         let mut out = crate::cli::recall::RecallOutput {
             canonical: vec![ep("Alex is the operator.")],
             episodes: vec![
-                ep("alex  is the   operator."),   // case/ws variant of canonical → dropped
+                ep("alex  is the   operator."), // case/ws variant of canonical → dropped
                 ep("Distinct episode about Rust."), // kept
                 ep("distinct episode about rust."), // case variant of prior episode → dropped
             ],
@@ -6711,7 +6769,11 @@ mod tests {
             "the canonical-dup and the intra-lane dup are both dropped"
         );
         assert_eq!(out.episodes[0].text, "Distinct episode about Rust.");
-        assert_eq!(out.contradictions.len(), 1, "contradiction lane is untouched");
+        assert_eq!(
+            out.contradictions.len(),
+            1,
+            "contradiction lane is untouched"
+        );
     }
 
     // ── GOLD-ADAPT-MEM-12 — session-guidance block ───────────────────────
@@ -6725,8 +6787,14 @@ mod tests {
     fn guidance_block_pending_only_omits_sessions_section() {
         let out = render_guidance_block(&[], 3).expect("pending alone yields a block");
         assert!(out.contains("Session context"), "header: {out}");
-        assert!(out.contains("3 flagged fact-contradiction"), "pending count: {out}");
-        assert!(!out.contains("Recent sessions"), "no cards → no sessions heading: {out}");
+        assert!(
+            out.contains("3 flagged fact-contradiction"),
+            "pending count: {out}"
+        );
+        assert!(
+            !out.contains("Recent sessions"),
+            "no cards → no sessions heading: {out}"
+        );
     }
 
     #[test]
@@ -6747,7 +6815,10 @@ mod tests {
         let out = render_guidance_block(std::slice::from_ref(&card), 0)
             .expect("a recent card yields a block");
         assert!(out.contains("### Recent sessions"), "{out}");
-        assert!(out.contains("4 turns on the cluster design"), "summary rendered: {out}");
+        assert!(
+            out.contains("4 turns on the cluster design"),
+            "summary rendered: {out}"
+        );
     }
 
     #[test]
@@ -6787,7 +6858,10 @@ mod tests {
         use crate::memory::regions::MemoryRegion as Region;
         assert!(matches!(hemisphere_region(R::Left), Region::Hippocampus));
         assert!(matches!(hemisphere_region(R::Right), Region::Hippocampus));
-        assert!(matches!(hemisphere_region(R::Cerebellum), Region::Cerebellum));
+        assert!(matches!(
+            hemisphere_region(R::Cerebellum),
+            Region::Cerebellum
+        ));
     }
 
     #[test]
@@ -6814,7 +6888,10 @@ mod tests {
         let frag = hemisphere_recall_fragment_at(&db, R::Left, "quokkas")
             .expect("Left fact match yields a fragment");
         assert!(frag.contains("Left hemisphere"), "{frag}");
-        assert!(frag.contains("(fact)"), "Left leads with groundtruth: {frag}");
+        assert!(
+            frag.contains("(fact)"),
+            "Left leads with groundtruth: {frag}"
+        );
         assert!(frag.contains("quokkas"), "{frag}");
     }
 

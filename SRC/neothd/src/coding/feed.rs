@@ -692,7 +692,10 @@ mod tests {
         let s = render_session_summary(&outcome, 1);
         assert!(s.contains('✅'), "all done → check icon, got: {s}");
         assert!(s.contains("3/3"), "got: {s}");
-        assert!(!s.contains("blocked"), "no blocked clause when none, got: {s}");
+        assert!(
+            !s.contains("blocked"),
+            "no blocked clause when none, got: {s}"
+        );
     }
 
     #[test]
@@ -715,7 +718,11 @@ mod tests {
         );
         assert_eq!(item.source, "coding_session");
         assert_eq!(item.scheduled_for_unix, 0, "drains on the next tick");
-        assert!(item.body.contains("2/2"), "body carries the counts, got: {}", item.body);
+        assert!(
+            item.body.contains("2/2"),
+            "body carries the counts, got: {}",
+            item.body
+        );
     }
 
     #[test]

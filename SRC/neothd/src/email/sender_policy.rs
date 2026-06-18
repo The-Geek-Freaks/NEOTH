@@ -67,7 +67,10 @@ fn extract_verdict(header: &str, mechanism: &str) -> AuthVerdict {
             continue;
         }
         let after = &lower[i + needle.len()..];
-        let word: String = after.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+        let word: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
         return verdict_from_word(&word);
     }
     AuthVerdict::Unknown
@@ -155,9 +158,7 @@ pub fn evaluate_trust_decision(
     }
     // DMARC pass is the strongest single signal (it checks From-alignment);
     // otherwise require BOTH DKIM and SPF to pass.
-    if a.dmarc == AuthVerdict::Pass
-        || (a.dkim == AuthVerdict::Pass && a.spf == AuthVerdict::Pass)
-    {
+    if a.dmarc == AuthVerdict::Pass || (a.dkim == AuthVerdict::Pass && a.spf == AuthVerdict::Pass) {
         return TrustDecision::VerifiedTrust;
     }
     TrustDecision::TrustedUnverified
@@ -296,7 +297,8 @@ mod tests {
         // Force a quarantine verdict via the body.
         let mut phish = e.clone();
         phish.body =
-            "Your account has been suspended. Verify your account and confirm your identity.".into();
+            "Your account has been suspended. Verify your account and confirm your identity."
+                .into();
         let triage = triage_inbound(&phish);
         assert_eq!(triage.action, InboundAction::Quarantine);
         let annotated = annotate_sender_policy(triage, &phish, &["acme.com".to_string()]);
@@ -382,7 +384,11 @@ mod tests {
         // A trusted-domain From with FAILING auth = spoof → quarantine even
         // though the body itself scored Deliver.
         let mut t = trusted_triage(Some("mx; spf=fail; dkim=fail; dmarc=fail"));
-        assert_eq!(t.action, InboundAction::Deliver, "benign body scores Deliver");
+        assert_eq!(
+            t.action,
+            InboundAction::Deliver,
+            "benign body scores Deliver"
+        );
         let out = apply_trust_policy(&mut t, true, false);
         assert_eq!(out, Some(TrustPolicyOutcome::EscalatedSpoof));
         assert_eq!(t.action, InboundAction::Quarantine);
@@ -397,7 +403,11 @@ mod tests {
         t.action = InboundAction::ReviewQueue; // force a borderline
         let out = apply_trust_policy(&mut t, true, false);
         assert_eq!(out, Some(TrustPolicyOutcome::NoChange));
-        assert_eq!(t.action, InboundAction::ReviewQueue, "no relax without the flag");
+        assert_eq!(
+            t.action,
+            InboundAction::ReviewQueue,
+            "no relax without the flag"
+        );
     }
 
     #[test]
@@ -417,20 +427,28 @@ mod tests {
         t.tiebreak = Some(crate::email::inbound::TiebreakVerdict::Phishing);
         let out = apply_trust_policy(&mut t, true, true);
         assert_eq!(out, Some(TrustPolicyOutcome::NoChange));
-        assert_eq!(t.action, InboundAction::ReviewQueue, "tie-break verdict stands");
+        assert_eq!(
+            t.action,
+            InboundAction::ReviewQueue,
+            "tie-break verdict stands"
+        );
     }
 
     #[test]
     fn relax_never_downgrades_a_quarantine() {
         // A real threat from a verified-trust sender STAYS quarantined.
         let mut e = email_with("ceo@acme.com", Some("mx; spf=pass; dkim=pass; dmarc=pass"));
-        e.body =
-            "Your account has been suspended. Verify your account and confirm your identity.".into();
+        e.body = "Your account has been suspended. Verify your account and confirm your identity."
+            .into();
         let t = triage_inbound(&e);
         let mut t = annotate_sender_policy(t, &e, &["acme.com".to_string()]);
         assert_eq!(t.action, InboundAction::Quarantine);
         let out = apply_trust_policy(&mut t, true, true);
         assert_eq!(out, Some(TrustPolicyOutcome::NoChange));
-        assert_eq!(t.action, InboundAction::Quarantine, "trust never frees a real threat");
+        assert_eq!(
+            t.action,
+            InboundAction::Quarantine,
+            "trust never frees a real threat"
+        );
     }
 }

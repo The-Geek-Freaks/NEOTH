@@ -123,7 +123,8 @@ pub fn aggregate_recent_feedback(
                 break;
             }
             if dec.header.event_type == EVENT_TYPE_OPERATOR_FEEDBACK {
-                if let Some(ts) = ingest_feedback_payload(dec.payload, cutoff, &mut pattern_counts) {
+                if let Some(ts) = ingest_feedback_payload(dec.payload, cutoff, &mut pattern_counts)
+                {
                     corrections += 1;
                     latest_unix = Some(latest_unix.map_or(ts, |cur| cur.max(ts)));
                 }
@@ -243,7 +244,10 @@ mod tests {
             top_patterns: vec![("too_verbose".into(), 4)],
             latest_unix: Some(1000),
         };
-        assert!(propose_from_feedback(&low).is_none(), "elevated ⇒ no auto-proposal");
+        assert!(
+            propose_from_feedback(&low).is_none(),
+            "elevated ⇒ no auto-proposal"
+        );
 
         let high = FeedbackSummary {
             window_secs: 86400,
@@ -255,7 +259,10 @@ mod tests {
         assert_eq!(p.kind, ProposalKind::SwitchPreset);
         assert_eq!(p.target, "lowkey");
         assert!(p.confidence >= 0.4 && p.confidence <= 0.7);
-        assert!(p.reason.contains("wrong_answer"), "reason cites the top pattern");
+        assert!(
+            p.reason.contains("wrong_answer"),
+            "reason cites the top pattern"
+        );
         // Same episode ⇒ same id (deduped).
         assert_eq!(propose_from_feedback(&high).unwrap().id, p.id);
     }
@@ -281,15 +288,17 @@ mod tests {
                 "ts_unix": ts,
             }))
             .unwrap();
-            let header =
-                HeaderBuilder::new(EVENT_TYPE_OPERATOR_FEEDBACK, &payload).build();
+            let header = HeaderBuilder::new(EVENT_TYPE_OPERATOR_FEEDBACK, &payload).build();
             w.append(header, payload).await.unwrap();
         }
         drop(w);
         let _ = join.await;
 
         let summary = aggregate_recent_feedback(dir.path(), 3600, now);
-        assert_eq!(summary.corrections, 2, "only the 2 in-window frames counted");
+        assert_eq!(
+            summary.corrections, 2,
+            "only the 2 in-window frames counted"
+        );
         // too_verbose appeared twice, off_topic once.
         assert_eq!(summary.top_patterns[0], ("too_verbose".to_string(), 2));
         assert_eq!(summary.latest_unix, Some(now - 10));

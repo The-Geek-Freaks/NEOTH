@@ -975,7 +975,10 @@ mod tests {
         // Initial snapshot holds all three.
         rebuild_index(&conn, &hnsw_snapshot_path(home)).unwrap();
         assert_eq!(
-            EmbeddingIndex::load(&hnsw_snapshot_path(home)).unwrap().unwrap().len(),
+            EmbeddingIndex::load(&hnsw_snapshot_path(home))
+                .unwrap()
+                .unwrap()
+                .len(),
             3
         );
         // GDPR forget wipes the two "secret" embedding rows from SQLite.
@@ -983,14 +986,24 @@ mod tests {
         assert_eq!(wiped, 2);
         // Snapshot is now STALE (still 3) until we purge it.
         assert_eq!(
-            EmbeddingIndex::load(&hnsw_snapshot_path(home)).unwrap().unwrap().len(),
+            EmbeddingIndex::load(&hnsw_snapshot_path(home))
+                .unwrap()
+                .unwrap()
+                .len(),
             3,
             "snapshot still holds forgotten vectors before the rebuild"
         );
         let rebuilt = rebuild_snapshot_if_present(&conn, home).unwrap();
-        assert_eq!(rebuilt, Some(1), "snapshot rebuilt with only the surviving vector");
         assert_eq!(
-            EmbeddingIndex::load(&hnsw_snapshot_path(home)).unwrap().unwrap().len(),
+            rebuilt,
+            Some(1),
+            "snapshot rebuilt with only the surviving vector"
+        );
+        assert_eq!(
+            EmbeddingIndex::load(&hnsw_snapshot_path(home))
+                .unwrap()
+                .unwrap()
+                .len(),
             1,
             "forgotten vectors purged from the searchable snapshot"
         );
@@ -1000,7 +1013,10 @@ mod tests {
     fn rebuild_snapshot_if_present_is_noop_without_a_snapshot() {
         let conn = open_with_schema();
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(rebuild_snapshot_if_present(&conn, dir.path()).unwrap(), None);
+        assert_eq!(
+            rebuild_snapshot_if_present(&conn, dir.path()).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -1165,7 +1181,10 @@ mod tests {
         let q = q8(1.0, 0.5);
         let hits =
             find_similar_dispatch(&conn, &q, Some("image"), 10, Some(path.as_path())).unwrap();
-        assert!(!hits.is_empty(), "kind-filtered brute-force must find conn rows");
+        assert!(
+            !hits.is_empty(),
+            "kind-filtered brute-force must find conn rows"
+        );
         assert!(
             hits.iter().all(|h| h.source_kind == "image"),
             "kind-filtered result must contain ONLY image hits (brute-force on conn), \

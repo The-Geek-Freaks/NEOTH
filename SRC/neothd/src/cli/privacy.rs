@@ -269,7 +269,10 @@ pub fn audit_posture(cfg: &FreedomConfig, creds: &Credentials) -> Vec<PrivacyFin
     // ── Provider ──────────────────────────────────────────────────────
     // COR-13: ProviderKind::as_str() is the canonical wire slug (== serde),
     // replacing the prior serde_json round-trip workaround.
-    let provider = cfg.provider_kind.map(|p| p.as_str()).unwrap_or("local_qwen");
+    let provider = cfg
+        .provider_kind
+        .map(|p| p.as_str())
+        .unwrap_or("local_qwen");
     let cloud_provider = !crate::providers::is_local_provider(provider);
     out.push(PrivacyFinding {
         category: "provider",

@@ -58,13 +58,17 @@ pub(crate) fn check_okf_export(home: &Path) -> CheckOutcome {
         CheckOutcome {
             name: "okf export",
             status: CheckStatus::Pass,
-            detail: "knowledge bundle dir writable — `neoth okf export` / `okf sync --vault`".into(),
+            detail: "knowledge bundle dir writable — `neoth okf export` / `okf sync --vault`"
+                .into(),
         }
     } else {
         CheckOutcome {
             name: "okf export",
             status: CheckStatus::Warn,
-            detail: format!("neoth home not writable ({}) — okf export will fail", home.display()),
+            detail: format!(
+                "neoth home not writable ({}) — okf export will fail",
+                home.display()
+            ),
         }
     }
 }
@@ -125,7 +129,8 @@ pub(crate) fn check_wal_audit_health(_home: &Path) -> CheckOutcome {
         return CheckOutcome {
             name: "wal audit",
             status: CheckStatus::Pass,
-            detail: "WAL dir absent (daemon hasn't run yet) — created on first `neoth serve`".into(),
+            detail: "WAL dir absent (daemon hasn't run yet) — created on first `neoth serve`"
+                .into(),
         };
     }
     let segments = std::fs::read_dir(&wal_dir)
@@ -139,7 +144,9 @@ pub(crate) fn check_wal_audit_health(_home: &Path) -> CheckOutcome {
         CheckOutcome {
             name: "wal audit",
             status: CheckStatus::Pass,
-            detail: format!("{segments} WAL segment(s) — audit chain present (0xC0 MCP, gate frames)"),
+            detail: format!(
+                "{segments} WAL segment(s) — audit chain present (0xC0 MCP, gate frames)"
+            ),
         }
     } else {
         CheckOutcome {
@@ -172,7 +179,8 @@ pub(crate) fn check_self_improve(home: &Path) -> CheckOutcome {
     } else {
         (
             CheckStatus::Pass,
-            "off (optional) — `neoth self-improve enable` to let NEOTH evolve its skills".to_string(),
+            "off (optional) — `neoth self-improve enable` to let NEOTH evolve its skills"
+                .to_string(),
         )
     };
     CheckOutcome {

@@ -12,8 +12,6 @@ pub mod adr;
 pub mod agents;
 pub mod arxiv;
 pub mod arxiv_ingest_task;
-/// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller cron.
-pub mod rss_feed_task;
 pub mod backup;
 pub mod catalog;
 pub mod channel;
@@ -21,72 +19,72 @@ pub mod chat;
 pub mod chat_display;
 pub mod cloud;
 pub mod cloud_sync_task;
+/// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller cron.
+pub mod rss_feed_task;
 // GOLD-SEC-16: `neoth cluster` CLI surface gated with the `cluster` feature.
+pub mod autonomy;
+/// EM-02b — `neoth calendar` CalDAV calendar (VEVENT) list/add surface.
+pub mod calendar;
+pub mod checkpoint;
 #[cfg(feature = "cluster")]
 pub mod cluster;
 pub mod code;
 pub mod code_map;
 pub mod completions;
+pub mod computer_use;
 pub mod connect;
 pub mod consent;
 pub mod cost;
 pub mod council;
+pub mod credential;
+pub mod cron;
 pub mod ctx;
 pub mod docgen;
 pub mod doctor;
-pub mod edit;
+pub mod dream;
 pub mod dreaming_task;
+pub mod ecology;
+pub mod edit;
+pub mod editor;
+pub mod email;
 pub mod events;
 pub mod export;
 pub mod fact_check;
-pub mod risk_confirm;
+pub mod feedback;
 pub mod fetch;
 pub mod fs;
 pub mod github;
 pub mod glossary;
+pub mod goal;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
-pub mod autonomy;
-/// EM-02b — `neoth calendar` CalDAV calendar (VEVENT) list/add surface.
-pub mod calendar;
-pub mod checkpoint;
-pub mod computer_use;
-pub mod credential;
-pub mod self_improve;
-pub mod cron;
-pub mod dream;
-pub mod ecology;
-pub mod editor;
-pub mod email;
-pub mod identity;
-pub mod transfer;
 pub mod gui;
-pub mod n8n;
-pub mod okf;
 pub mod gui_stream;
 pub mod hardware;
 pub mod hemispheres;
 pub mod hooks;
 pub mod hysteria;
+pub mod identity;
 pub mod import;
 pub mod ingest;
 pub mod init;
 pub mod installer;
 pub mod jobs;
-pub mod feedback;
 pub mod kanban;
 pub mod keys;
 pub mod lease;
 pub mod mcp;
 pub mod memory;
 pub mod meter;
-pub mod moral_core;
 pub mod migrate;
 pub mod mode;
-pub mod monitor;
 pub mod models;
+pub mod monitor;
+pub mod moral_core;
+pub mod n8n;
 pub mod obsidian;
 pub mod obsidian_sync_task;
+pub mod okf;
 pub mod os;
 pub mod ouro;
 pub mod paperless;
@@ -98,18 +96,18 @@ pub mod proactive;
 pub mod profile;
 pub mod providers;
 pub mod quota;
-pub mod goal;
 pub mod recall;
+pub mod recall_score;
 pub mod recipe;
 pub mod recon;
-pub mod reflect;
-pub mod review;
-pub mod recall_score;
 pub mod recover;
+pub mod reflect;
 pub mod refusal;
 /// MAR-02 — `neoth release {keygen, sign, pubkey}` DAU-friendly release signing.
 pub mod release;
 pub mod reload;
+pub mod review;
+pub mod risk_confirm;
 pub mod rollback;
 pub mod schema;
 pub mod search;
@@ -119,6 +117,7 @@ pub mod search;
 pub mod security;
 pub mod self_dev;
 pub mod self_dev_outbox;
+pub mod self_improve;
 pub mod serve;
 pub mod serve_pipeline;
 pub mod serve_tasks;
@@ -130,8 +129,9 @@ pub mod streaming_buffer;
 pub mod supervisor;
 pub mod telemetry;
 pub mod todo;
-pub mod trust;
 pub mod tour;
+pub mod transfer;
+pub mod trust;
 pub mod tts;
 pub mod tweaks;
 pub mod undo;
@@ -1043,7 +1043,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 autonomy::AutonomyArgs {
                     // `neoth sudomode` is the interactive CLI shortcut → no GUI
                     // pre-confirm; it still runs the TTY y/N gate.
-                    action: autonomy::AutonomyAction::FullAuto { gui_confirmed: false },
+                    action: autonomy::AutonomyAction::FullAuto {
+                        gui_confirmed: false,
+                    },
                 },
                 global_output,
             )

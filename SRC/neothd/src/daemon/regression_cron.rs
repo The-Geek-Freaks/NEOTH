@@ -210,8 +210,8 @@ pub fn spawn_regression_cron_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::embed::EmbedResponse;
     use crate::providers::Completion;
+    use crate::providers::embed::EmbedResponse;
     use crate::wal::events::EVENT_TYPE_REGRESSION_ALERT;
     use async_trait::async_trait;
     use std::time::Duration;
@@ -279,7 +279,10 @@ mod tests {
             RegressionAnchorConfig::default().interval_secs,
             7 * 24 * 3600
         );
-        assert_eq!(crate::config::DEFAULT_REGRESSION_INTERVAL_SECS, 7 * 24 * 3600);
+        assert_eq!(
+            crate::config::DEFAULT_REGRESSION_INTERVAL_SECS,
+            7 * 24 * 3600
+        );
     }
 
     // ── mock provider + embed for the emit-site tick test ────────────────────
@@ -364,8 +367,12 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
 
-        let provider = MockProvider { reply: "I am something else now" };
-        let embed = MockEmbed { vector: vec![0.0, 1.0] };
+        let provider = MockProvider {
+            reply: "I am something else now",
+        };
+        let embed = MockEmbed {
+            vector: vec![0.0, 1.0],
+        };
         let cfg = RegressionAnchorConfig {
             enabled: true,
             threshold: 0.70,
@@ -394,8 +401,12 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
         // Mock embed returns the SAME direction ⇒ cosine 1.0 ⇒ no regression.
-        let provider = MockProvider { reply: "same as before" };
-        let embed = MockEmbed { vector: vec![1.0, 0.0] };
+        let provider = MockProvider {
+            reply: "same as before",
+        };
+        let embed = MockEmbed {
+            vector: vec![1.0, 0.0],
+        };
         let cfg = RegressionAnchorConfig {
             enabled: true,
             threshold: 0.70,

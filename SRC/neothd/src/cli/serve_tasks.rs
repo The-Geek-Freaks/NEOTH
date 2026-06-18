@@ -57,7 +57,9 @@ pub(crate) fn spawn_cloud_archive(
     let interval = config
         .cloud_archive_auto_sync_secs
         .map(std::time::Duration::from_secs);
-    Some(crate::cli::cloud_sync_task::spawn(None, dest, subdir, interval))
+    Some(crate::cli::cloud_sync_task::spawn(
+        None, dest, subdir, interval,
+    ))
 }
 
 /// EL-02 — arXiv topic-feed ingest. Spawned when `freedom.yaml::arxiv.enabled` is
@@ -70,7 +72,10 @@ pub(crate) fn spawn_arxiv_ingest(
     shared_provider: &Option<Arc<dyn Provider>>,
 ) -> Option<JoinHandle<anyhow::Result<()>>> {
     if config.arxiv.enabled && !config.arxiv.topics.is_empty() {
-        info!(topics = config.arxiv.topics.len(), "arxiv ingest task enabled");
+        info!(
+            topics = config.arxiv.topics.len(),
+            "arxiv ingest task enabled"
+        );
         Some(crate::cli::arxiv_ingest_task::spawn(
             FreedomConfig::default_neoth_home(),
             config.arxiv.topics.clone(),
@@ -300,8 +305,10 @@ pub(crate) fn spawn_resource_watch(
     config: &FreedomConfig,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle =
-        crate::daemon::resource_watch::spawn_resource_watch_loop(config.resource_watch.clone(), writer);
+    let handle = crate::daemon::resource_watch::spawn_resource_watch_loop(
+        config.resource_watch.clone(),
+        writer,
+    );
     if handle.is_some() {
         info!(
             interval_secs = config.resource_watch.interval_secs,
@@ -400,8 +407,7 @@ pub(crate) fn spawn_watchdog_cron(
     if handle.is_some() {
         info!(
             interval_secs = config.watchdog.interval_secs,
-            restart_allowed,
-            "watchdog cron loop spawned (GOLD-FEAT-09)"
+            restart_allowed, "watchdog cron loop spawned (GOLD-FEAT-09)"
         );
     }
     handle
@@ -1135,8 +1141,7 @@ pub(crate) fn spawn_usage_export() -> JoinHandle<()> {
     const EXPORT_INTERVAL_SECS: u64 = 10;
     let path = FreedomConfig::default_neoth_home().join("usage_meter.json");
     tokio::spawn(async move {
-        let mut tick =
-            tokio::time::interval(std::time::Duration::from_secs(EXPORT_INTERVAL_SECS));
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(EXPORT_INTERVAL_SECS));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
@@ -1162,8 +1167,7 @@ pub(crate) fn spawn_snapshot_refresh(config: &FreedomConfig) -> Option<JoinHandl
     const REFRESH_INTERVAL_SECS: u64 = 1800; // 30 min
     let home = FreedomConfig::default_neoth_home();
     let handle = tokio::spawn(async move {
-        let mut tick =
-            tokio::time::interval(std::time::Duration::from_secs(REFRESH_INTERVAL_SECS));
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(REFRESH_INTERVAL_SECS));
         // A slow rebuild must not bunch up missed ticks into a burst.
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -1538,7 +1542,10 @@ pub(crate) fn spawn_channel_adapters(
                     homeserver,
                     user_id,
                     creds.matrix_password.clone(),
-                    creds.matrix_store_path.clone().map(std::path::PathBuf::from),
+                    creds
+                        .matrix_store_path
+                        .clone()
+                        .map(std::path::PathBuf::from),
                 );
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
@@ -2399,7 +2406,10 @@ pub(crate) async fn shutdown_background_tasks(
             let mut js = dispatch_join.lock().await;
             while js.join_next().await.is_some() {}
         };
-        if tokio::time::timeout(DISPATCH_DRAIN_TIMEOUT, drain).await.is_err() {
+        if tokio::time::timeout(DISPATCH_DRAIN_TIMEOUT, drain)
+            .await
+            .is_err()
+        {
             warn!(
                 timeout_s = DISPATCH_DRAIN_TIMEOUT.as_secs(),
                 "COR-34: webhook dispatch drain timed out — aborting remaining \
@@ -2612,7 +2622,6 @@ pub(crate) async fn shutdown_background_tasks(
         Err(e) => warn!(error = %e, "WAL writer task panicked during drain"),
     }
 }
-
 
 pub(crate) fn build_boot_payload(config: &FreedomConfig) -> anyhow::Result<Vec<u8>> {
     // Boot payload = minimal JSON: {operator_id, provider_kind, daemon_version}
@@ -2935,8 +2944,14 @@ mod tests {
     #[test]
     fn all_wal_free_spawns_are_none_for_default_config() {
         let cfg = FreedomConfig::default();
-        assert!(spawn_obsidian_sync(&cfg).is_none(), "no obsidian_vault → None");
-        assert!(spawn_cloud_archive(&cfg).is_none(), "no cloud_archive_dest → None");
+        assert!(
+            spawn_obsidian_sync(&cfg).is_none(),
+            "no obsidian_vault → None"
+        );
+        assert!(
+            spawn_cloud_archive(&cfg).is_none(),
+            "no cloud_archive_dest → None"
+        );
         assert!(
             spawn_arxiv_ingest(&cfg, &None).is_none(),
             "arxiv disabled → None"

@@ -170,7 +170,15 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
     let cost_col = format!("cost_{}", currency.code().to_lowercase());
     println!(
         "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>12} {:>8} {:>8} {:>8}",
-        "provider", "calls", "ok", "err", "in_tok", "out_tok", cost_col, "mean_ms", "p50_ms",
+        "provider",
+        "calls",
+        "ok",
+        "err",
+        "in_tok",
+        "out_tok",
+        cost_col,
+        "mean_ms",
+        "p50_ms",
         "p90_ms"
     );
     for p in &roll.per_provider {

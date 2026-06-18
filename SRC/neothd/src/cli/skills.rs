@@ -352,7 +352,10 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
 /// real loaded skill, then persist the toggle to `freedom.yaml::skills.{enabled,
 /// disabled}` (atomic, secret-stripped). Mirrors the `neoth council suppress`
 /// load→mutate→write pattern. Bails when no freedom.yaml exists (init first).
-async fn run_skill_toggle(args: &SkillsArgs, skills: &[crate::skills::schema::Skill]) -> Result<()> {
+async fn run_skill_toggle(
+    args: &SkillsArgs,
+    skills: &[crate::skills::schema::Skill],
+) -> Result<()> {
     let (id, turn_on) = match (&args.enable, &args.disable) {
         (Some(id), _) => (id.as_str(), true),
         (_, Some(id)) => (id.as_str(), false),
@@ -364,9 +367,7 @@ async fn run_skill_toggle(args: &SkillsArgs, skills: &[crate::skills::schema::Sk
     // Validate against the loaded set so a typo'd id fails loudly instead of
     // silently writing a no-op override.
     if !skills.iter().any(|s| s.id().to_lowercase() == id_lc) {
-        anyhow::bail!(
-            "no skill with id '{id}' — run `neoth skills --list` to see installed ids"
-        );
+        anyhow::bail!("no skill with id '{id}' — run `neoth skills --list` to see installed ids");
     }
 
     let yaml = FreedomConfig::default_neoth_home().join("freedom.yaml");
@@ -459,7 +460,10 @@ mod tests {
             ..SkillsConfig::default()
         };
         apply_skill_toggle(&mut s, "pm-retro", false);
-        assert!(s.enabled.is_empty(), "mixed-case enable entry must be cleared");
+        assert!(
+            s.enabled.is_empty(),
+            "mixed-case enable entry must be cleared"
+        );
         assert_eq!(s.disabled, vec!["pm-retro".to_string()]);
     }
 }

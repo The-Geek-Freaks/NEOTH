@@ -98,7 +98,10 @@ mod tests {
     fn channel_message_replies_to_channel() {
         let m = map_irc_privmsg("#dev", "hi team", Some("alice"), "neoth", 100).unwrap();
         assert_eq!(m.channel, ChannelKind::Irc);
-        assert_eq!(m.chat_id, "#dev", "a channel message replies to the channel");
+        assert_eq!(
+            m.chat_id, "#dev",
+            "a channel message replies to the channel"
+        );
         assert_eq!(m.sender_id, "alice");
         assert_eq!(m.text.as_deref(), Some("hi team"));
         assert_eq!(m.channel_ts_unix, 100);
@@ -108,7 +111,10 @@ mod tests {
     fn dm_replies_to_sender_not_self() {
         // target == our own nick → a private message; reply goes to the sender.
         let m = map_irc_privmsg("neoth", "ping", Some("bob"), "neoth", 5).unwrap();
-        assert_eq!(m.chat_id, "bob", "a DM replies to the sender, never to ourselves");
+        assert_eq!(
+            m.chat_id, "bob",
+            "a DM replies to the sender, never to ourselves"
+        );
         assert_eq!(m.sender_id, "bob");
     }
 

@@ -86,8 +86,8 @@ pub(super) fn build_causal_mask(
     let mask: Vec<f32> = (0..tgt_len)
         .flat_map(|i| (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 }))
         .collect();
-    let mask =
-        Tensor::from_slice(&mask, (tgt_len, tgt_len), device).context("causal mask: build tensor")?;
+    let mask = Tensor::from_slice(&mask, (tgt_len, tgt_len), device)
+        .context("causal mask: build tensor")?;
     let mask = if seqlen_offset > 0 {
         let mask0 = Tensor::zeros((tgt_len, seqlen_offset), DType::F32, device)
             .context("causal mask: build offset prefix")?;
@@ -143,17 +143,32 @@ mod tests {
         let cfg = tiny_cfg_q8();
         let (h, i) = (cfg.hidden_size, cfg.intermediate_size);
         let mut map: HashMap<String, Tensor> = HashMap::new();
-        map.insert("model.embed_tokens.weight".into(), det_tensor(cfg.vocab_size, h, dev, 1));
+        map.insert(
+            "model.embed_tokens.weight".into(),
+            det_tensor(cfg.vocab_size, h, dev, 1),
+        );
         for l in 0..cfg.num_hidden_layers {
             let p = format!("model.layers.{l}");
             let mut salt = 2 + l * 10;
             for proj in ["q_proj", "k_proj", "v_proj", "o_proj"] {
-                map.insert(format!("{p}.self_attn.{proj}.weight"), det_tensor(h, h, dev, salt));
+                map.insert(
+                    format!("{p}.self_attn.{proj}.weight"),
+                    det_tensor(h, h, dev, salt),
+                );
                 salt += 1;
             }
-            map.insert(format!("{p}.mlp.gate_proj.weight"), det_tensor(i, h, dev, salt));
-            map.insert(format!("{p}.mlp.up_proj.weight"), det_tensor(i, h, dev, salt + 1));
-            map.insert(format!("{p}.mlp.down_proj.weight"), det_tensor(h, i, dev, salt + 2));
+            map.insert(
+                format!("{p}.mlp.gate_proj.weight"),
+                det_tensor(i, h, dev, salt),
+            );
+            map.insert(
+                format!("{p}.mlp.up_proj.weight"),
+                det_tensor(i, h, dev, salt + 1),
+            );
+            map.insert(
+                format!("{p}.mlp.down_proj.weight"),
+                det_tensor(h, i, dev, salt + 2),
+            );
             for norm in ["norm_pre", "norm_mid", "norm_post"] {
                 map.insert(
                     format!("{p}.{norm}.weight"),
@@ -161,8 +176,14 @@ mod tests {
                 );
             }
         }
-        map.insert("model.norm.weight".into(), Tensor::ones((h,), DType::F32, dev).unwrap());
-        map.insert("lm_head.weight".into(), det_tensor(cfg.vocab_size, h, dev, 99));
+        map.insert(
+            "model.norm.weight".into(),
+            Tensor::ones((h,), DType::F32, dev).unwrap(),
+        );
+        map.insert(
+            "lm_head.weight".into(),
+            det_tensor(cfg.vocab_size, h, dev, 99),
+        );
         VarBuilderArgs::from_tensors(map, DType::F32, dev)
     }
 
@@ -205,9 +226,14 @@ mod tests {
         // Context-sensitivity guard: degenerate weights would make this
         // parity vacuous.
         native.clear_kv_cache();
-        let l_other = logits_vec(&OuroForward::forward(&mut native, &input_ids(&dev, &[4, 3, 2, 1]), 0).unwrap());
+        let l_other = logits_vec(
+            &OuroForward::forward(&mut native, &input_ids(&dev, &[4, 3, 2, 1]), 0).unwrap(),
+        );
         assert!(
-            l_native.iter().zip(&l_other).any(|(a, b)| (a - b).abs() > 1e-3),
+            l_native
+                .iter()
+                .zip(&l_other)
+                .any(|(a, b)| (a - b).abs() > 1e-3),
             "non-zero weights must be context-sensitive"
         );
 
@@ -219,7 +245,10 @@ mod tests {
         let nq: f32 = l_q8.iter().map(|b| b * b).sum::<f32>().sqrt();
         let cosine = dot / (na * nq);
         let argmax = |v: &[f32]| {
-            v.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).map(|(i, _)| i)
+            v.iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(i, _)| i)
         };
         let max_diff = l_native
             .iter()

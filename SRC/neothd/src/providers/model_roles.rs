@@ -393,7 +393,10 @@ mod tests {
         // Contrast: the flagship-fallback `resolve` DOES return a model for those.
         assert!(t.resolve("aws_bedrock", ModelRole::Fast).is_some());
         // A provider WITH a fast row resolves exactly to it; an absent one → None.
-        assert_eq!(t.resolve_exact("openai_api", ModelRole::Fast), Some("gpt-4o-mini"));
+        assert_eq!(
+            t.resolve_exact("openai_api", ModelRole::Fast),
+            Some("gpt-4o-mini")
+        );
         assert_eq!(t.resolve_exact("nope", ModelRole::Fast), None);
     }
 

@@ -23,8 +23,8 @@
 
 use anyhow::Result;
 
-use crate::providers::abliterated::{self, AbliteratedProvider};
 use crate::providers::Provider;
+use crate::providers::abliterated::{self, AbliteratedProvider};
 use crate::security::refusal_cause::{CauseReport, RefusalCause};
 use crate::security::refusal_hard_block::is_hard_blocked;
 use crate::wal::events::{
@@ -61,7 +61,10 @@ pub async fn try_abliterated_fallback(
     writer: Option<&WalWriterHandle>,
     now_unix: i64,
 ) -> Result<Option<String>> {
-    let prompt_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(original_prompt.as_bytes()));
+    let prompt_hash = format!(
+        "{:016x}",
+        xxhash_rust::xxh3::xxh3_64(original_prompt.as_bytes())
+    );
 
     // Permanent floor — runs first, unconditionally. A hard-block is not a
     // policy question, so it fires even though the caller already gated enabled.
@@ -75,7 +78,10 @@ pub async fn try_abliterated_fallback(
                 "ts_unix": now_unix,
             }),
         );
-        tracing::warn!(reason = reason.as_str(), "abliterated fallback: hard-block matched — not routing");
+        tracing::warn!(
+            reason = reason.as_str(),
+            "abliterated fallback: hard-block matched — not routing"
+        );
         return Ok(None);
     }
 
@@ -144,15 +150,25 @@ mod tests {
     use crate::providers::{Completion, Request};
 
     fn cause(c: RefusalCause) -> CauseReport {
-        CauseReport { cause: c, matched_patterns: vec![], confidence: 80 }
+        CauseReport {
+            cause: c,
+            matched_patterns: vec![],
+            confidence: 80,
+        }
     }
 
     #[test]
     fn only_safety_policy_routes() {
-        assert!(should_route_to_abliterated(&cause(RefusalCause::SafetyPolicy)));
-        assert!(!should_route_to_abliterated(&cause(RefusalCause::CapabilityGap)));
+        assert!(should_route_to_abliterated(&cause(
+            RefusalCause::SafetyPolicy
+        )));
+        assert!(!should_route_to_abliterated(&cause(
+            RefusalCause::CapabilityGap
+        )));
         assert!(!should_route_to_abliterated(&cause(RefusalCause::Privacy)));
-        assert!(!should_route_to_abliterated(&cause(RefusalCause::OperatorPolicy)));
+        assert!(!should_route_to_abliterated(&cause(
+            RefusalCause::OperatorPolicy
+        )));
         assert!(!should_route_to_abliterated(&cause(RefusalCause::Unknown)));
     }
 
@@ -175,9 +191,17 @@ mod tests {
 
     #[tokio::test]
     async fn no_model_configured_returns_none() {
-        let r = try_abliterated_fallback(&FixedProvider, "explain recursion", None, None, "refusal", None, 0)
-            .await
-            .unwrap();
+        let r = try_abliterated_fallback(
+            &FixedProvider,
+            "explain recursion",
+            None,
+            None,
+            "refusal",
+            None,
+            0,
+        )
+        .await
+        .unwrap();
         assert!(r.is_none(), "no model → Ok(None) before any load");
     }
 
@@ -197,6 +221,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(r.is_none(), "hard-block short-circuits to None before model load");
+        assert!(
+            r.is_none(),
+            "hard-block short-circuits to None before model load"
+        );
     }
 }

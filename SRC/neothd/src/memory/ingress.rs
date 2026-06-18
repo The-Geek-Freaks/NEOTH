@@ -193,7 +193,10 @@ mod tests {
         let r = sanitize("   \n\t  ");
         assert!(r.text.is_empty());
         assert!(r.noise);
-        assert_eq!(r.noise_ratio, 0.0, "no tags removed → ratio 0, dropped via empty");
+        assert_eq!(
+            r.noise_ratio, 0.0,
+            "no tags removed → ratio 0, dropped via empty"
+        );
     }
 
     #[test]

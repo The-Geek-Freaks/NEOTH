@@ -302,7 +302,10 @@ fn claim_filename(dedup_key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(dedup_key.as_bytes());
     let out = hasher.finalize();
-    format!("{}.claimed", out.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!(
+        "{}.claimed",
+        out.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
 }
 
 /// Write an atomic claim file for `item` BEFORE the channel send.
@@ -316,7 +319,10 @@ fn claim_filename(dedup_key: &str) -> String {
 /// so a crash mid-write leaves a `.pid.tmp` orphan, NOT a partial
 /// `.claimed` file.  The eviction scan only reads `*.claimed` files,
 /// so orphan temps are harmlessly ignored.
-fn write_inflight_claim(home: &Path, item: &crate::proactive::ProactiveItem) -> std::io::Result<()> {
+fn write_inflight_claim(
+    home: &Path,
+    item: &crate::proactive::ProactiveItem,
+) -> std::io::Result<()> {
     let dir = home.join(PROACTIVE_INFLIGHT_DIR);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(claim_filename(&item.dedup_key));
@@ -329,7 +335,9 @@ fn write_inflight_claim(home: &Path, item: &crate::proactive::ProactiveItem) -> 
 /// (success, transport error, suppressed — anything except a process
 /// crash). Missing file is not an error (idempotent).
 fn delete_inflight_claim(home: &Path, dedup_key: &str) {
-    let path = home.join(PROACTIVE_INFLIGHT_DIR).join(claim_filename(dedup_key));
+    let path = home
+        .join(PROACTIVE_INFLIGHT_DIR)
+        .join(claim_filename(dedup_key));
     // Best-effort: a delete failure here means the next tick's eviction
     // will pick it up as crash_recovered, which is slightly wrong but
     // safe (the item was already removed from the queue by the completed
@@ -956,7 +964,13 @@ mod tests {
         // channel config.
         let cfg = cfg_with_telegram(AutonomyLevel::Strict);
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Strict, &cfg, &default_rt(), &default_creds()),
+            plan_delivery(
+                "telegram",
+                AutonomyLevel::Strict,
+                &cfg,
+                &default_rt(),
+                &default_creds()
+            ),
             DeliveryRoute::Suppressed
         );
     }
@@ -966,7 +980,13 @@ mod tests {
         // Standard ⇒ Confirm ⇒ not Allow ⇒ suppressed (no daemon TTY).
         let cfg = cfg_with_telegram(AutonomyLevel::Standard);
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Standard, &cfg, &default_rt(), &default_creds()),
+            plan_delivery(
+                "telegram",
+                AutonomyLevel::Standard,
+                &cfg,
+                &default_rt(),
+                &default_creds()
+            ),
             DeliveryRoute::Suppressed
         );
     }
@@ -975,7 +995,13 @@ mod tests {
     fn plan_delivery_elevated_telegram_configured_routes_to_telegram() {
         let cfg = cfg_with_telegram(AutonomyLevel::Elevated);
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg, &default_rt(), &default_creds()),
+            plan_delivery(
+                "telegram",
+                AutonomyLevel::Elevated,
+                &cfg,
+                &default_rt(),
+                &default_creds()
+            ),
             DeliveryRoute::Telegram {
                 chat_id: "123456".to_string()
             }
@@ -989,7 +1015,13 @@ mod tests {
         cfg.autonomy = AutonomyLevel::Elevated;
         // No telegram_token / telegram_user_id set.
         assert_eq!(
-            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg, &default_rt(), &default_creds()),
+            plan_delivery(
+                "telegram",
+                AutonomyLevel::Elevated,
+                &cfg,
+                &default_rt(),
+                &default_creds()
+            ),
             DeliveryRoute::SidecarOnly
         );
     }
@@ -1001,7 +1033,13 @@ mod tests {
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         for ch in ["slack", "discord", "keet", "whatsapp", "cli"] {
             assert_eq!(
-                plan_delivery(ch, AutonomyLevel::Full, &cfg, &default_rt(), &default_creds()),
+                plan_delivery(
+                    ch,
+                    AutonomyLevel::Full,
+                    &cfg,
+                    &default_rt(),
+                    &default_creds()
+                ),
                 DeliveryRoute::SidecarOnly,
                 "channel {ch} with no dest/token must be sidecar-only",
             );
@@ -1176,7 +1214,11 @@ mod tests {
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
             .collect();
-        assert_eq!(claimed.len(), 1, "one .claimed file should exist after write");
+        assert_eq!(
+            claimed.len(),
+            1,
+            "one .claimed file should exist after write"
+        );
         // Content round-trips to the original item.
         let bytes = std::fs::read(claimed[0].path()).unwrap();
         let parsed: ProactiveItem = serde_json::from_slice(&bytes).unwrap();
@@ -1221,7 +1263,10 @@ mod tests {
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
             .collect();
-        assert!(remaining.is_empty(), "claim file must be cleaned up by eviction");
+        assert!(
+            remaining.is_empty(),
+            "claim file must be cleaned up by eviction"
+        );
 
         // Sidecar must have a crash_recovered entry.
         let body = std::fs::read_to_string(&sidecar).unwrap();
@@ -1248,7 +1293,10 @@ mod tests {
         let body = std::fs::read_to_string(&sidecar).unwrap();
         let v: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
         assert_eq!(v["status"], "crash_recovered");
-        assert_eq!(v["was_failure"], true, "is_failure item must set was_failure=true");
+        assert_eq!(
+            v["was_failure"], true,
+            "is_failure item must set was_failure=true"
+        );
         assert_eq!(v["dedup_key"], "critical-alert");
     }
 
@@ -1344,7 +1392,10 @@ mod tests {
 
         // No crash_recovered entry; orphan is untouched (eviction only reads *.claimed).
         assert!(!sidecar.exists());
-        assert!(inflight_dir.join("abc.12345.tmp").exists(), "orphan must be left alone");
+        assert!(
+            inflight_dir.join("abc.12345.tmp").exists(),
+            "orphan must be left alone"
+        );
     }
 
     /// CLAW-01 regression: when a MULTI-item batch crashes before the queue
@@ -1376,7 +1427,10 @@ mod tests {
         evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_010);
 
         // Whole batch evicted — nothing left to re-drain.
-        assert!(queue.is_empty(), "entire batch must be evicted (no re-send)");
+        assert!(
+            queue.is_empty(),
+            "entire batch must be evicted (no re-send)"
+        );
         // All claim files cleaned up.
         let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
         let remaining = std::fs::read_dir(&inflight_dir)
@@ -1387,7 +1441,10 @@ mod tests {
         assert_eq!(remaining, 0, "all claim files cleaned up");
         // Three crash_recovered lines (one per batch item).
         let body = std::fs::read_to_string(&sidecar).unwrap();
-        let recovered = body.lines().filter(|l| l.contains("crash_recovered")).count();
+        let recovered = body
+            .lines()
+            .filter(|l| l.contains("crash_recovered"))
+            .count();
         assert_eq!(recovered, 3, "one crash_recovered per batch item");
         assert!(body.contains("batch-a") && body.contains("batch-b") && body.contains("batch-c"));
     }

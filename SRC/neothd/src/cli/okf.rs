@@ -82,7 +82,11 @@ fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) ->
             skipped += 1;
             continue;
         }
-        let scope = doc.tags.first().cloned().unwrap_or_else(|| "imported".to_string());
+        let scope = doc
+            .tags
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "imported".to_string());
         match groundtruth::insert(&conn, &statement, &Source::ImportSession, &scope, now_ns) {
             Ok(_) => facts += 1,
             Err(_) => skipped += 1,
@@ -141,8 +145,10 @@ fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) ->
                     if let Ok(dst_id) = crate::memory::entities::resolve_or_create_entity_with_attrs(
                         &conn, &dst_name, "entity", &empty, now_unix,
                     ) {
-                        if crate::memory::entities::insert_relation(&conn, src_id, dst_id, &rel, 1.0)
-                            .is_ok()
+                        if crate::memory::entities::insert_relation(
+                            &conn, src_id, dst_id, &rel, 1.0,
+                        )
+                        .is_ok()
                         {
                             relations += 1;
                         }
@@ -217,7 +223,11 @@ fn export(out: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) -> Re
             body: format!(
                 "Corroborating sources: {}\n\nAttributes:\n\n```json\n{}\n```",
                 e.source_count,
-                if e.attributes.trim().is_empty() { "{}" } else { e.attributes.trim() }
+                if e.attributes.trim().is_empty() {
+                    "{}"
+                } else {
+                    e.attributes.trim()
+                }
             ),
             relations,
         };

@@ -22,7 +22,7 @@
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
-use crate::context::compress::ccr::{compute_key, marker_for, CcrStore};
+use crate::context::compress::ccr::{CcrStore, compute_key, marker_for};
 use crate::context::compress::content_detector::ContentType;
 use crate::context::compress::transform::{
     CompressionContext, OffloadOutput, OffloadTransform, TransformError,
@@ -174,7 +174,11 @@ impl OffloadTransform for DiffCompressor {
             let drop_lockfile = self.is_lockfile(&seg.new_path);
             let drop_ws = self.config.drop_whitespace_only_hunks && seg.body_is_whitespace_only();
             if drop_lockfile || drop_ws {
-                let reason = if drop_lockfile { "lockfile" } else { "whitespace-only" };
+                let reason = if drop_lockfile {
+                    "lockfile"
+                } else {
+                    "whitespace-only"
+                };
                 let _ = writeln!(
                     out,
                     "[diff_compressor: {reason} hunk dropped ({} lines) — retrieve {marker}]",
@@ -252,8 +256,18 @@ impl DiffCompressor {
 
 /// Patterns that lift a hunk's relevance independent of the query.
 const PRIORITY_PATTERNS: &[&str] = &[
-    "test", "error", "auth", "security", "token", "permission", "panic", "unsafe", "secret",
-    "crypt", "admin", "fix",
+    "test",
+    "error",
+    "auth",
+    "security",
+    "token",
+    "permission",
+    "panic",
+    "unsafe",
+    "secret",
+    "crypt",
+    "admin",
+    "fix",
 ];
 
 /// Split a file segment's flat body into per-`@@`-hunk slices; each returned
@@ -279,9 +293,16 @@ fn split_into_hunks<'a, 'b>(body: &'b [&'a str]) -> Vec<&'b [&'a str]> {
 fn hunk_score(hunk: &[&str], query_words: &[String]) -> f32 {
     let changes = hunk.iter().filter(|l| is_change_line(l)).count();
     let change_density = (changes as f32 * 3.0).min(30.0) / 100.0;
-    let joined = hunk.iter().map(|l| l.to_ascii_lowercase()).collect::<Vec<_>>().join("\n");
-    let query_overlap =
-        query_words.iter().filter(|w| joined.contains(w.as_str())).count() as f32 * 0.2;
+    let joined = hunk
+        .iter()
+        .map(|l| l.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let query_overlap = query_words
+        .iter()
+        .filter(|w| joined.contains(w.as_str()))
+        .count() as f32
+        * 0.2;
     let pattern_boost = if PRIORITY_PATTERNS.iter().any(|p| joined.contains(p)) {
         0.3
     } else {
@@ -298,8 +319,9 @@ fn select_hunks(hunks: &[&[&str]], query_words: &[String], cap: usize) -> BTreeS
     keep.insert(0);
     keep.insert(n - 1);
     let mid_slots = cap.saturating_sub(keep.len());
-    let mut scored: Vec<(usize, f32)> =
-        (1..n - 1).map(|i| (i, hunk_score(hunks[i], query_words))).collect();
+    let mut scored: Vec<(usize, f32)> = (1..n - 1)
+        .map(|i| (i, hunk_score(hunks[i], query_words)))
+        .collect();
     scored.sort_by(|a, b| b.1.total_cmp(&a.1));
     for (i, _) in scored.into_iter().take(mid_slots) {
         keep.insert(i);
@@ -411,11 +433,17 @@ fn trim_context(body: &[&str], context: usize, marker: &str) -> TrimmedBody {
                 i += 1;
             }
             let dropped = i - start;
-            let _ = writeln!(out, "[… {dropped} context lines trimmed — retrieve {marker} …]");
+            let _ = writeln!(
+                out,
+                "[… {dropped} context lines trimmed — retrieve {marker} …]"
+            );
             trimmed_any = true;
         }
     }
-    TrimmedBody { body: out, trimmed_any }
+    TrimmedBody {
+        body: out,
+        trimmed_any,
+    }
 }
 
 /// One [`Segment`] per `diff --git` header. Lines before the first header are
@@ -473,13 +501,16 @@ fn leading_pre_diff_lines(content: &str) -> String {
 
 /// New-file path from `diff --git a/X b/Y` → `Y` (after the last ` b/`).
 fn parse_new_path(header: &str) -> String {
-    header.rfind(" b/").map(|idx| header[idx + 3..].to_string()).unwrap_or_default()
+    header
+        .rfind(" b/")
+        .map(|idx| header[idx + 3..].to_string())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::compress::ccr::{extract_keys, InMemoryCcrStore};
+    use crate::context::compress::ccr::{InMemoryCcrStore, extract_keys};
 
     fn offload() -> DiffCompressor {
         DiffCompressor::default()
@@ -507,7 +538,9 @@ mod tests {
     /// One file with `hunks` `@@` blocks; the indices in `auth_at` carry an
     /// auth-token change, the rest are generic.
     fn many_hunk_diff(hunks: usize, auth_at: &[usize]) -> String {
-        let mut s = String::from("diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n");
+        let mut s = String::from(
+            "diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n",
+        );
         for i in 0..hunks {
             s.push_str(&format!("@@ -{},2 +{},2 @@\n", i * 10 + 1, i * 10 + 1));
             if auth_at.contains(&i) {
@@ -530,7 +563,11 @@ mod tests {
 
     #[test]
     fn hunk_score_lifts_priority_and_query_hunks() {
-        let auth = ["@@ -1,2 +1,2 @@", "-validate_permission(user)", "+check_permission(user, role)"];
+        let auth = [
+            "@@ -1,2 +1,2 @@",
+            "-validate_permission(user)",
+            "+check_permission(user, role)",
+        ];
         let generic = ["@@ -1,2 +1,2 @@", "-let x = 1;", "+let x = 2;"];
         // The priority pattern ("permission") lifts the auth hunk with no query.
         assert!(hunk_score(&auth, &[]) > hunk_score(&generic, &[]));
@@ -588,7 +625,10 @@ mod tests {
             .expect("compresses");
         assert!(r.bytes_saved > 0);
         assert!(r.output.contains("lockfile hunk dropped"));
-        assert!(r.output.contains("foo = \"2\""), "real manifest change survives");
+        assert!(
+            r.output.contains("foo = \"2\""),
+            "real manifest change survives"
+        );
         assert_eq!(store.get(&r.cache_key).as_deref(), Some(diff.as_str()));
         assert_eq!(extract_keys(&r.output)[0], r.cache_key);
     }
@@ -639,11 +679,18 @@ mod tests {
     fn file_cap_summarises_the_tail() {
         // 25 small changed files, cap = 20 → 5 summarised.
         let files: Vec<(String, Vec<String>)> = (0..25)
-            .map(|i| (format!("src/f{i}.rs"), vec![format!("-a{i}"), format!("+b{i}")]))
+            .map(|i| {
+                (
+                    format!("src/f{i}.rs"),
+                    vec![format!("-a{i}"), format!("+b{i}")],
+                )
+            })
             .collect();
         let mut diff = String::new();
         for (path, body) in &files {
-            diff.push_str(&format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n"));
+            diff.push_str(&format!(
+                "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n"
+            ));
             for b in body {
                 diff.push_str(b);
                 diff.push('\n');

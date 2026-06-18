@@ -113,7 +113,10 @@ fn print_state(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                 Some(g) => {
                     println!("grind: {g}");
                     println!("       ⚠ GRIND ACTIVE — every turn is nudged to keep working until");
-                    println!("         the {}-turn cap. Clear it with `neoth goal off`.", cfg.goal.max_turns);
+                    println!(
+                        "         the {}-turn cap. Clear it with `neoth goal off`.",
+                        cfg.goal.max_turns
+                    );
                 }
                 None => println!("grind: (none)"),
             }
@@ -145,7 +148,10 @@ mod tests {
         // an empty config that would hide an active goal/grind as "(none)".
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("nope.yaml");
-        assert!(load_for_show(&missing).is_ok(), "missing config → fresh-install default");
+        assert!(
+            load_for_show(&missing).is_ok(),
+            "missing config → fresh-install default"
+        );
 
         let bad = dir.path().join("freedom.yaml");
         std::fs::write(&bad, "{ broken: [unclosed").unwrap();

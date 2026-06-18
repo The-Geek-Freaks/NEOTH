@@ -45,23 +45,25 @@ pub mod tag_protector;
 pub mod transform;
 
 pub use ccr::{
-    compute_key, extract_keys, marker_for, retrieve, stash, CcrStore, InMemoryCcrStore,
-    DEFAULT_CAPACITY, DEFAULT_TTL,
+    CcrStore, DEFAULT_CAPACITY, DEFAULT_TTL, InMemoryCcrStore, compute_key, extract_keys,
+    marker_for, retrieve, stash,
 };
-pub use ccr_file::{default_ccr_dir, read_savings, record_savings, FileCcrStore, Savings};
-pub use content_detector::{detect_content_type, is_json_array_of_dicts, ContentType, DetectionResult};
+pub use ccr_file::{FileCcrStore, Savings, default_ccr_dir, read_savings, record_savings};
+pub use content_detector::{
+    ContentType, DetectionResult, detect_content_type, is_json_array_of_dicts,
+};
+pub use diff_compressor::{DiffCompressor, DiffCompressorConfig};
+pub use log_compressor::{LogOffload, LogOffloadConfig, line_importance};
+pub use log_template::{LogTemplate, LogTemplateConfig};
 pub use pipeline::{
-    default_pipeline, in_live_zone, target_bytes_for_budget, CompressionPipeline,
-    CompressionPipelineBuilder, CompressionRuntime, CompressionSkip, Gate, PipelineResult,
-    Thresholds, BYTES_PER_TOKEN_ESTIMATE,
+    BYTES_PER_TOKEN_ESTIMATE, CompressionPipeline, CompressionPipelineBuilder, CompressionRuntime,
+    CompressionSkip, Gate, PipelineResult, Thresholds, default_pipeline, in_live_zone,
+    target_bytes_for_budget,
 };
+pub use search_compressor::{SearchOffload, SearchOffloadConfig};
+pub use smart_crusher::{JsonMinifier, SmartCrusher, SmartCrusherConfig};
+pub use tag_protector::{has_protected_regions, is_fence_delimiter, protected_line_mask};
 pub use transform::{
     CompressionContext, OffloadOutput, OffloadTransform, ReformatOutput, ReformatTransform,
     TransformError,
 };
-pub use diff_compressor::{DiffCompressor, DiffCompressorConfig};
-pub use log_compressor::{line_importance, LogOffload, LogOffloadConfig};
-pub use log_template::{LogTemplate, LogTemplateConfig};
-pub use search_compressor::{SearchOffload, SearchOffloadConfig};
-pub use smart_crusher::{JsonMinifier, SmartCrusher, SmartCrusherConfig};
-pub use tag_protector::{has_protected_regions, is_fence_delimiter, protected_line_mask};

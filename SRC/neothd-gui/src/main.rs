@@ -245,7 +245,10 @@ fn main() -> Result<()> {
     {
         let level = panel_logic::read_complexity_level(&neoth_dir);
         let pv = panel_logic::panels_for(level);
-        info!(complexity = level.as_str(), "GU-03: applied persona-adaptive panel visibility");
+        info!(
+            complexity = level.as_str(),
+            "GU-03: applied persona-adaptive panel visibility"
+        );
         window.set_settings_show_hemispheres(pv.show_hemispheres);
         window.set_settings_show_channels(pv.show_channels);
         window.set_settings_show_skills(pv.show_skills);
@@ -522,7 +525,14 @@ fn main() -> Result<()> {
                     // Buddy reflects the outcome: a win lights it green, a
                     // failure shows the error face. It holds that state until
                     // the next message resets it to "thinking".
-                    buddy(&w, if succeeded { GuiActivity::ChatDone } else { GuiActivity::ChatError });
+                    buddy(
+                        &w,
+                        if succeeded {
+                            GuiActivity::ChatDone
+                        } else {
+                            GuiActivity::ChatError
+                        },
+                    );
                 }
             });
         });
@@ -1620,7 +1630,10 @@ fn main() -> Result<()> {
         if let Some(w) = weak_skills_route.upgrade() {
             match result {
                 Ok(_) => {
-                    info!(enabled, "skills: always_embed_route rewritten + reload sentinel dropped");
+                    info!(
+                        enabled,
+                        "skills: always_embed_route rewritten + reload sentinel dropped"
+                    );
                     let verb = if enabled { "on" } else { "off" };
                     w.set_status_line(
                         format!("Skill auto-routing {verb}. Daemon reloading within 2s.").into(),
@@ -2543,7 +2556,9 @@ fn fetch_skills() -> Vec<panel_logic::SkillSummary> {
         .arg("json")
         .output()
     {
-        Ok(o) if o.status.success() => panel_logic::parse_skills(&String::from_utf8_lossy(&o.stdout)),
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_skills(&String::from_utf8_lossy(&o.stdout))
+        }
         _ => Vec::new(),
     }
 }
@@ -2575,7 +2590,9 @@ fn fetch_plugins() -> Vec<panel_logic::PluginSummary> {
         .arg("json")
         .output()
     {
-        Ok(o) if o.status.success() => panel_logic::parse_plugins(&String::from_utf8_lossy(&o.stdout)),
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_plugins(&String::from_utf8_lossy(&o.stdout))
+        }
         _ => Vec::new(),
     }
 }
@@ -4635,8 +4652,7 @@ mod tests {
              security:\n  dangerous_commands: deny\n",
         )
         .unwrap();
-        let cfg = read_freedom_yaml(&path)
-            .expect("fully-expanded freedom.yaml must parse");
+        let cfg = read_freedom_yaml(&path).expect("fully-expanded freedom.yaml must parse");
         assert_eq!(cfg.operator_id, "n");
         assert_eq!(cfg.autonomy, "full");
     }

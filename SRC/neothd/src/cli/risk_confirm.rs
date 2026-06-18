@@ -79,7 +79,12 @@ pub async fn run_risk_confirm(args: RiskConfirmArgs) -> Result<()> {
     let mut store = LeaseStore::load(&path).context("load leases.json")?;
     let mut granted: Vec<CapabilityLease> = Vec::new();
     if do_dangerous {
-        let l = CapabilityLease::new(RISK_LEASE_SUBJECT, LeaseScope::DangerousCommand, ttl_secs, now);
+        let l = CapabilityLease::new(
+            RISK_LEASE_SUBJECT,
+            LeaseScope::DangerousCommand,
+            ttl_secs,
+            now,
+        );
         store.grant(l.clone());
         granted.push(l);
     }
@@ -193,7 +198,9 @@ async fn emit_risk_confirm_granted(
             drop(writer);
             let _ = join.await;
         }
-        Err(e) => tracing::warn!(error = %e, "could not spawn one-shot WAL writer for risk-confirm audit"),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not spawn one-shot WAL writer for risk-confirm audit")
+        }
     }
 }
 
@@ -250,8 +257,14 @@ mod tests {
         }
 
         assert!(r.is_ok(), "{r:?}");
-        assert!(dangerous.is_some(), "dangerous_command lease must be active");
-        assert!(egress.is_some(), "egress lease must be active with --egress");
+        assert!(
+            dangerous.is_some(),
+            "dangerous_command lease must be active"
+        );
+        assert!(
+            egress.is_some(),
+            "egress lease must be active with --egress"
+        );
         // TTL ~ 600s.
         assert!(dangerous.unwrap().ttl_remaining_secs(now) > 500);
     }

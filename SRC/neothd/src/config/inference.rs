@@ -1589,7 +1589,11 @@ model: claude-opus-4-7
             min_interval_secs: Some(900),
             budget_multiplier: Some(5.0),
             convene_on_high_complexity: Some(false),
-            extra_dissent_markers: vec!["Threat Model".into(), "  ".into(), "migration plan".into()],
+            extra_dissent_markers: vec![
+                "Threat Model".into(),
+                "  ".into(),
+                "migration plan".into(),
+            ],
         };
         let p = cfg.to_policy();
         assert_eq!(p.min_complex_prompt_chars, 200);
@@ -1599,7 +1603,10 @@ model: claude-opus-4-7
         // Markers are lowercased + trimmed; blank-only entries dropped.
         assert_eq!(p.extra_markers, vec!["threat model", "migration plan"]);
         // Untouched fields stay at the built-in defaults.
-        assert_eq!(p.dissent_markers, crate::council::TriggerPolicy::default().dissent_markers);
+        assert_eq!(
+            p.dissent_markers,
+            crate::council::TriggerPolicy::default().dissent_markers
+        );
     }
 
     #[test]
@@ -1631,6 +1638,9 @@ trigger:
         assert_eq!(p.min_complex_prompt_chars, 150);
         assert_eq!(p.extra_markers, vec!["rollback plan"]);
         // Absent knobs keep defaults.
-        assert_eq!(p.budget_multiplier, crate::council::TriggerPolicy::default().budget_multiplier);
+        assert_eq!(
+            p.budget_multiplier,
+            crate::council::TriggerPolicy::default().budget_multiplier
+        );
     }
 }

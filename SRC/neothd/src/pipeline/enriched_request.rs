@@ -226,7 +226,10 @@ mod tests {
         inputs.operator_context = Some("Operator: Alex.");
         let out = build_enriched_request(inputs);
         let system = out.system.expect("system present");
-        assert!(system.starts_with("[MORAL CORE]"), "moral core leads: {system:?}");
+        assert!(
+            system.starts_with("[MORAL CORE]"),
+            "moral core leads: {system:?}"
+        );
         let moral_pos = system.find("[MORAL CORE]").unwrap();
         let ctx_pos = system.find("Operator: Alex.").unwrap();
         assert!(moral_pos < ctx_pos, "moral core precedes operator context");

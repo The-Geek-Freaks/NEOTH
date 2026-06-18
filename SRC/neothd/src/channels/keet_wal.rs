@@ -74,7 +74,8 @@ impl KeetIngressPayload {
         // GOLD-SEC-25 / A-48: fail loud rather than write an EMPTY payload
         // into the WAL on a serialization failure. This payload is POD
         // (strings/ints, no floats), so serde_json is infallible here.
-        serde_json::to_vec(self).expect("keet WAL payload is POD; serde_json serialization is infallible")
+        serde_json::to_vec(self)
+            .expect("keet WAL payload is POD; serde_json serialization is infallible")
     }
 }
 
@@ -120,7 +121,8 @@ impl KeetEgressPayload {
         // GOLD-SEC-25 / A-48: fail loud rather than write an EMPTY payload
         // into the WAL on a serialization failure. This payload is POD
         // (strings/ints, no floats), so serde_json is infallible here.
-        serde_json::to_vec(self).expect("keet WAL payload is POD; serde_json serialization is infallible")
+        serde_json::to_vec(self)
+            .expect("keet WAL payload is POD; serde_json serialization is infallible")
     }
 }
 

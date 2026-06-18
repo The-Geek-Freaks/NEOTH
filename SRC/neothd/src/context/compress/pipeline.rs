@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::context::compress::ccr::{CcrStore, InMemoryCcrStore};
-use crate::context::compress::content_detector::{detect_content_type, ContentType};
+use crate::context::compress::content_detector::{ContentType, detect_content_type};
 use crate::context::compress::transform::{
     CompressionContext, OffloadTransform, ReformatTransform, TransformError,
 };
@@ -252,7 +252,9 @@ impl CompressionRuntime {
     /// (json/log/diff/search) is shrunk. Records savings on the persistent path.
     pub fn compress_for_llm(&self, text: &str) -> (String, usize) {
         let ctx = CompressionContext::default();
-        let result = self.pipeline.compress_block(text, usize::MAX, &self.gate, &ctx, self.store.as_ref());
+        let result =
+            self.pipeline
+                .compress_block(text, usize::MAX, &self.gate, &ctx, self.store.as_ref());
         if result.skipped.is_some() || result.bytes_saved == 0 {
             (text.to_string(), 0)
         } else {
@@ -456,7 +458,10 @@ impl CompressionPipelineBuilder {
     pub fn with_reformat<T: ReformatTransform + 'static>(mut self, transform: T) -> Self {
         let arc: Arc<dyn ReformatTransform> = Arc::new(transform);
         for ct in arc.applies_to().to_vec() {
-            self.reformats_by_type.entry(ct).or_default().push(arc.clone());
+            self.reformats_by_type
+                .entry(ct)
+                .or_default()
+                .push(arc.clone());
         }
         self
     }
@@ -464,7 +469,10 @@ impl CompressionPipelineBuilder {
     pub fn with_offload<T: OffloadTransform + 'static>(mut self, transform: T) -> Self {
         let arc: Arc<dyn OffloadTransform> = Arc::new(transform);
         for ct in arc.applies_to().to_vec() {
-            self.offloads_by_type.entry(ct).or_default().push(arc.clone());
+            self.offloads_by_type
+                .entry(ct)
+                .or_default()
+                .push(arc.clone());
         }
         self
     }
@@ -608,7 +616,11 @@ mod tests {
             let half = &content[..content.len() / 2];
             let key = format!("test_{}_key", self.name);
             store.put(&key, content);
-            Ok(OffloadOutput::from_lengths(content.len(), half.to_string(), key))
+            Ok(OffloadOutput::from_lengths(
+                content.len(),
+                half.to_string(),
+                key,
+            ))
         }
         fn confidence(&self) -> f32 {
             0.5
@@ -618,7 +630,10 @@ mod tests {
     #[test]
     fn offload_runs_when_bloat_above_threshold() {
         let p = CompressionPipeline::builder()
-            .with_offload(TestOffload { score: 0.9, name: "high" })
+            .with_offload(TestOffload {
+                score: 0.9,
+                name: "high",
+            })
             .build();
         let s = store();
         let r = p.run(&"x".repeat(100), ContentType::PlainText, &ctx(), &s);
@@ -630,7 +645,10 @@ mod tests {
     #[test]
     fn offload_skipped_when_score_zero() {
         let p = CompressionPipeline::builder()
-            .with_offload(TestOffload { score: 0.0, name: "low" })
+            .with_offload(TestOffload {
+                score: 0.0,
+                name: "low",
+            })
             .build();
         let s = store();
         let r = p.run(&"x".repeat(100), ContentType::PlainText, &ctx(), &s);
@@ -642,7 +660,10 @@ mod tests {
     fn offload_runs_as_fallback_when_reformat_underwhelms() {
         // No reformat → ratio 1.0 > 0.85 fallback, score 0.2 > 0 → runs.
         let p = CompressionPipeline::builder()
-            .with_offload(TestOffload { score: 0.2, name: "fallback" })
+            .with_offload(TestOffload {
+                score: 0.2,
+                name: "fallback",
+            })
             .build();
         let s = store();
         let r = p.run(&"x".repeat(100), ContentType::PlainText, &ctx(), &s);
@@ -675,7 +696,9 @@ mod tests {
 
     #[test]
     fn offload_internal_error_does_not_panic_and_yields_input() {
-        let p = CompressionPipeline::builder().with_offload(AlwaysInternalError).build();
+        let p = CompressionPipeline::builder()
+            .with_offload(AlwaysInternalError)
+            .build();
         let s = store();
         let r = p.run(&"x".repeat(100), ContentType::PlainText, &ctx(), &s);
         assert!(r.steps_applied.is_empty());
@@ -692,13 +715,18 @@ mod tests {
             &[ContentType::PlainText]
         }
         fn apply(&self, content: &str) -> Result<ReformatOutput, TransformError> {
-            Ok(ReformatOutput::from_lengths(content.len(), content[..content.len() / 2].to_string()))
+            Ok(ReformatOutput::from_lengths(
+                content.len(),
+                content[..content.len() / 2].to_string(),
+            ))
         }
     }
 
     #[test]
     fn reformat_runs_and_records_step() {
-        let p = CompressionPipeline::builder().with_reformat(HalfReformat).build();
+        let p = CompressionPipeline::builder()
+            .with_reformat(HalfReformat)
+            .build();
         let s = store();
         let r = p.run(&"x".repeat(100), ContentType::PlainText, &ctx(), &s);
         assert_eq!(r.steps_applied, vec!["half".to_string()]);
@@ -709,7 +737,10 @@ mod tests {
     #[test]
     fn builder_dispatches_by_applies_to() {
         let p = CompressionPipeline::builder()
-            .with_offload(TestOffload { score: 0.9, name: "x" })
+            .with_offload(TestOffload {
+                score: 0.9,
+                name: "x",
+            })
             .build();
         let s = store();
         // Offload only applies to PlainText — a JsonArray block ignores it.
@@ -721,12 +752,21 @@ mod tests {
     #[test]
     fn builder_preserves_registration_order_for_offloads() {
         let p = CompressionPipeline::builder()
-            .with_offload(TestOffload { score: 0.9, name: "first" })
-            .with_offload(TestOffload { score: 0.9, name: "second" })
+            .with_offload(TestOffload {
+                score: 0.9,
+                name: "first",
+            })
+            .with_offload(TestOffload {
+                score: 0.9,
+                name: "second",
+            })
             .build();
         let s = store();
         let r = p.run(&"x".repeat(100), ContentType::PlainText, &ctx(), &s);
-        assert_eq!(r.steps_applied, vec!["first".to_string(), "second".to_string()]);
+        assert_eq!(
+            r.steps_applied,
+            vec!["first".to_string(), "second".to_string()]
+        );
     }
 
     // ── End-to-end with the real HR-04 log transforms ─────────────────
@@ -753,7 +793,11 @@ mod tests {
         log.push_str("ERROR disk full on /var\n");
         log.push_str("ERROR retry exhausted\n");
         for i in 0..100 {
-            log.push_str(&format!("INFO worker-{} processing heartbeat batch-{}\n", 100 + i, 100 + i));
+            log.push_str(&format!(
+                "INFO worker-{} processing heartbeat batch-{}\n",
+                100 + i,
+                100 + i
+            ));
         }
 
         let r = p.compress_block(&log, 50, &Gate::enabled(2048, 3), &ctx(), &s);
@@ -771,7 +815,10 @@ mod tests {
         // Structured: a 300-row JSON array shrinks + the original is stored.
         let json = format!(
             "[{}]",
-            (0..300).map(|i| format!(r#"{{"id":{i},"v":{}}}"#, i * 2)).collect::<Vec<_>>().join(",")
+            (0..300)
+                .map(|i| format!(r#"{{"id":{i},"v":{}}}"#, i * 2))
+                .collect::<Vec<_>>()
+                .join(",")
         );
         let (out, saved) = rt.compress_for_llm(&json);
         assert!(saved > 0 && out.len() < json.len());
@@ -789,14 +836,18 @@ mod tests {
         let gate = Gate::enabled(512, 3);
 
         // Log → BuildOutput.
-        let log: String = (0..200).map(|i| format!("INFO worker-{i} heartbeat\n")).collect();
+        let log: String = (0..200)
+            .map(|i| format!("INFO worker-{i} heartbeat\n"))
+            .collect();
         let s = store();
         let r = p.compress_block(&log, 50, &gate, &ctx(), &s);
         assert_eq!(r.skipped, None);
         assert!(r.bytes_saved > 0, "log should compress");
 
         // Clustered search → SearchResults.
-        let search: String = (0..100).map(|i| format!("utils.py:{}:def fn_{i}\n", i + 1)).collect();
+        let search: String = (0..100)
+            .map(|i| format!("utils.py:{}:def fn_{i}\n", i + 1))
+            .collect();
         let s2 = store();
         let r2 = p.compress_block(&search, 50, &gate, &ctx(), &s2);
         assert!(r2.bytes_saved > 0, "clustered search should compress");
@@ -804,7 +855,10 @@ mod tests {
         // Big JSON array → JsonArray.
         let json = format!(
             "[{}]",
-            (0..300).map(|i| format!(r#"{{"id":{i},"v":{}}}"#, i * 2)).collect::<Vec<_>>().join(",")
+            (0..300)
+                .map(|i| format!(r#"{{"id":{i},"v":{}}}"#, i * 2))
+                .collect::<Vec<_>>()
+                .join(",")
         );
         let s3 = store();
         let r3 = p.compress_block(&json, 50, &gate, &ctx(), &s3);

@@ -303,7 +303,10 @@ mod tests {
     #[test]
     fn new_trims_trailing_slash_from_homeserver() {
         let a = MatrixChannel::new("https://matrix.org/", "@bot:matrix.org", None, None);
-        assert_eq!(a.homeserver, "https://matrix.org", "trailing slash stripped");
+        assert_eq!(
+            a.homeserver, "https://matrix.org",
+            "trailing slash stripped"
+        );
     }
 
     #[test]

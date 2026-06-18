@@ -146,7 +146,9 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // forgotten memory can be cascaded (else they dangle as graph endpoints).
     let forgotten_event_ids: Vec<i64> = {
         let mut stmt = conn
-            .prepare("SELECT event_id FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'")
+            .prepare(
+                "SELECT event_id FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            )
             .context("prepare event_id pre-collect for link cascade")?;
         stmt.query_map(rusqlite::params![pattern], |r| r.get::<_, i64>(0))
             .context("query event_ids for link cascade")?
@@ -221,8 +223,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
 
     // GOLD-ADAPT-MEM-02 — cascade the GDPR wipe into the contradiction ledger so
     // a revoked fact never lingers as a live leg of a pair.
-    let contradiction_rows =
-        crate::memory::contradiction::forget_for_ids(conn, &revoked_gt_ids)?;
+    let contradiction_rows = crate::memory::contradiction::forget_for_ids(conn, &revoked_gt_ids)?;
 
     // GOLD-SEC-28 — in-flight profile extractions. A pending delta or a queued
     // outbox frame mentioning the topic would re-materialise the forgotten data
@@ -604,7 +605,11 @@ mod tests {
         // wildcard — otherwise it would wipe the entire memory store.
         let conn = seed_db();
         let report = forget_by_topic(&conn, "%", 0).unwrap();
-        assert_eq!(report.total(), 0, "`%` must match literally, not everything");
+        assert_eq!(
+            report.total(),
+            0,
+            "`%` must match literally, not everything"
+        );
         // The real rows are untouched.
         let episodes: i64 = conn
             .query_row("SELECT COUNT(*) FROM idx_episode", [], |r| r.get(0))
@@ -628,7 +633,10 @@ mod tests {
         )
         .unwrap();
         let report = forget_by_topic(&conn, "AcmeCorp", 0).unwrap();
-        assert_eq!(report.profile_rows, 1, "the AcmeCorp profile claim is deleted");
+        assert_eq!(
+            report.profile_rows, 1,
+            "the AcmeCorp profile claim is deleted"
+        );
         let acme: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM idx_profile WHERE value_json LIKE '%AcmeCorp%'",
@@ -669,8 +677,14 @@ mod tests {
         .unwrap();
 
         let report = forget_by_topic(&conn, "AcmeCorp", 0).unwrap();
-        assert_eq!(report.profile_pending_rows, 1, "pending AcmeCorp delta deleted");
-        assert_eq!(report.profile_outbox_rows, 1, "outbox AcmeCorp frame deleted");
+        assert_eq!(
+            report.profile_pending_rows, 1,
+            "pending AcmeCorp delta deleted"
+        );
+        assert_eq!(
+            report.profile_outbox_rows, 1,
+            "outbox AcmeCorp frame deleted"
+        );
 
         let pending_left: i64 = conn
             .query_row("SELECT COUNT(*) FROM idx_profile_pending", [], |r| r.get(0))
@@ -687,7 +701,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(acme_pending, 0, "no AcmeCorp pending delta survives erasure");
+        assert_eq!(
+            acme_pending, 0,
+            "no AcmeCorp pending delta survives erasure"
+        );
     }
 
     #[tokio::test]

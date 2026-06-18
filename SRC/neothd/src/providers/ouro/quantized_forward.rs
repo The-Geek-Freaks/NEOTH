@@ -295,23 +295,47 @@ mod tests {
         let cfg = tiny_cfg();
         let (h, i) = (cfg.hidden_size, cfg.intermediate_size);
         let mut map: HashMap<String, Tensor> = HashMap::new();
-        map.insert("model.embed_tokens.weight".into(), det_tensor(cfg.vocab_size, h, dev, 1));
+        map.insert(
+            "model.embed_tokens.weight".into(),
+            det_tensor(cfg.vocab_size, h, dev, 1),
+        );
         for l in 0..cfg.num_hidden_layers {
             let p = format!("model.layers.{l}");
             let mut salt = 2 + l * 10;
             for proj in ["q_proj", "k_proj", "v_proj", "o_proj"] {
-                map.insert(format!("{p}.self_attn.{proj}.weight"), det_tensor(h, h, dev, salt));
+                map.insert(
+                    format!("{p}.self_attn.{proj}.weight"),
+                    det_tensor(h, h, dev, salt),
+                );
                 salt += 1;
             }
-            map.insert(format!("{p}.mlp.gate_proj.weight"), det_tensor(i, h, dev, salt));
-            map.insert(format!("{p}.mlp.up_proj.weight"), det_tensor(i, h, dev, salt + 1));
-            map.insert(format!("{p}.mlp.down_proj.weight"), det_tensor(h, i, dev, salt + 2));
+            map.insert(
+                format!("{p}.mlp.gate_proj.weight"),
+                det_tensor(i, h, dev, salt),
+            );
+            map.insert(
+                format!("{p}.mlp.up_proj.weight"),
+                det_tensor(i, h, dev, salt + 1),
+            );
+            map.insert(
+                format!("{p}.mlp.down_proj.weight"),
+                det_tensor(h, i, dev, salt + 2),
+            );
             for norm in ["norm_pre", "norm_mid", "norm_post"] {
-                map.insert(format!("{p}.{norm}.weight"), Tensor::ones((h,), DType::F32, dev).unwrap());
+                map.insert(
+                    format!("{p}.{norm}.weight"),
+                    Tensor::ones((h,), DType::F32, dev).unwrap(),
+                );
             }
         }
-        map.insert("model.norm.weight".into(), Tensor::ones((h,), DType::F32, dev).unwrap());
-        map.insert("lm_head.weight".into(), det_tensor(cfg.vocab_size, h, dev, 99));
+        map.insert(
+            "model.norm.weight".into(),
+            Tensor::ones((h,), DType::F32, dev).unwrap(),
+        );
+        map.insert(
+            "lm_head.weight".into(),
+            det_tensor(cfg.vocab_size, h, dev, 99),
+        );
         VarBuilderArgs::from_tensors(map, DType::F32, dev)
     }
 
@@ -332,7 +356,10 @@ mod tests {
         model.clear_kv_cache();
         let other = lv(&model.forward(&input_ids(&dev, &[4, 3, 2, 1]), 0).unwrap());
         assert!(
-            baseline.iter().zip(&other).any(|(a, b)| (a - b).abs() > 1e-3),
+            baseline
+                .iter()
+                .zip(&other)
+                .any(|(a, b)| (a - b).abs() > 1e-3),
             "non-zero quantized weights must be context-sensitive"
         );
 
@@ -361,11 +388,18 @@ mod tests {
         let lv = |t: &Tensor| -> Vec<f32> { t.flatten_all().unwrap().to_vec1().unwrap() };
 
         model.clear_kv_cache();
-        let baseline = lv(&model.forward(&input_ids(&dev, &[1, 2, 3, 4, 5]), 0).unwrap());
+        let baseline = lv(&model
+            .forward(&input_ids(&dev, &[1, 2, 3, 4, 5]), 0)
+            .unwrap());
         model.clear_kv_cache();
-        let other = lv(&model.forward(&input_ids(&dev, &[5, 4, 3, 2, 1]), 0).unwrap());
+        let other = lv(&model
+            .forward(&input_ids(&dev, &[5, 4, 3, 2, 1]), 0)
+            .unwrap());
         assert!(
-            baseline.iter().zip(&other).any(|(a, b)| (a - b).abs() > 1e-3),
+            baseline
+                .iter()
+                .zip(&other)
+                .any(|(a, b)| (a - b).abs() > 1e-3),
             "non-zero quantized weights must be context-sensitive"
         );
 
@@ -375,7 +409,9 @@ mod tests {
         let _ = model.forward(&input_ids(&dev, prefix), 0).unwrap();
         let snap = model.snapshot_all_kv();
         model.restore_all_kv(snap.clone());
-        let kv01 = lv(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+        let kv01 = lv(&model
+            .forward(&input_ids(&dev, suffix), prefix.len())
+            .unwrap());
 
         assert_eq!(baseline.len(), kv01.len());
         for (i, (b, k)) in baseline.iter().zip(&kv01).enumerate() {
@@ -386,9 +422,14 @@ mod tests {
         }
         // Reusability: the snapshot must survive the suffix forward unmutated.
         model.restore_all_kv(snap);
-        let kv01_again = lv(&model.forward(&input_ids(&dev, suffix), prefix.len()).unwrap());
+        let kv01_again = lv(&model
+            .forward(&input_ids(&dev, suffix), prefix.len())
+            .unwrap());
         for (i, (a, b)) in kv01.iter().zip(&kv01_again).enumerate() {
-            assert!((a - b).abs() < 1e-6, "quantized snapshot mutated at logit[{i}]");
+            assert!(
+                (a - b).abs() < 1e-6,
+                "quantized snapshot mutated at logit[{i}]"
+            );
         }
     }
 

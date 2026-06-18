@@ -286,36 +286,91 @@ mod tests {
 
     #[test]
     fn pressure_pct_is_used_over_total() {
-        assert!((VramReading { used_mib: 4096, total_mib: 8192 }.pressure_pct() - 50.0).abs() < 1e-9);
+        assert!(
+            (VramReading {
+                used_mib: 4096,
+                total_mib: 8192
+            }
+            .pressure_pct()
+                - 50.0)
+                .abs()
+                < 1e-9
+        );
         // Degenerate / no-GPU total=0 → 0.0, never a div-by-zero.
-        assert_eq!(VramReading { used_mib: 100, total_mib: 0 }.pressure_pct(), 0.0);
+        assert_eq!(
+            VramReading {
+                used_mib: 100,
+                total_mib: 0
+            }
+            .pressure_pct(),
+            0.0
+        );
     }
 
     #[test]
     fn evaluate_pressure_fires_at_or_over_threshold() {
         // 7400/8192 = 90.3% >= 90 → Some.
-        assert!(evaluate_pressure(VramReading { used_mib: 7400, total_mib: 8192 }, 90).is_some());
+        assert!(
+            evaluate_pressure(
+                VramReading {
+                    used_mib: 7400,
+                    total_mib: 8192
+                },
+                90
+            )
+            .is_some()
+        );
         // 4096/8192 = 50% < 90 → None.
-        assert!(evaluate_pressure(VramReading { used_mib: 4096, total_mib: 8192 }, 90).is_none());
+        assert!(
+            evaluate_pressure(
+                VramReading {
+                    used_mib: 4096,
+                    total_mib: 8192
+                },
+                90
+            )
+            .is_none()
+        );
         // Exactly at threshold (90/100) → Some (>=).
-        let at = evaluate_pressure(VramReading { used_mib: 90, total_mib: 100 }, 90)
-            .expect("exactly-at-threshold fires");
+        let at = evaluate_pressure(
+            VramReading {
+                used_mib: 90,
+                total_mib: 100,
+            },
+            90,
+        )
+        .expect("exactly-at-threshold fires");
         assert_eq!(at.threshold_pct, 90);
         assert!((at.pct - 90.0).abs() < 1e-9);
         // total=0 → never fires.
-        assert!(evaluate_pressure(VramReading { used_mib: 5, total_mib: 0 }, 90).is_none());
+        assert!(
+            evaluate_pressure(
+                VramReading {
+                    used_mib: 5,
+                    total_mib: 0
+                },
+                90
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn parse_vram_line_handles_real_and_malformed() {
         assert_eq!(
             parse_vram_used_total("1234, 8192"),
-            Some(VramReading { used_mib: 1234, total_mib: 8192 })
+            Some(VramReading {
+                used_mib: 1234,
+                total_mib: 8192
+            })
         );
         // nvidia-smi nounits with no space after comma.
         assert_eq!(
             parse_vram_used_total("500,2000"),
-            Some(VramReading { used_mib: 500, total_mib: 2000 })
+            Some(VramReading {
+                used_mib: 500,
+                total_mib: 2000
+            })
         );
         assert!(parse_vram_used_total("garbage").is_none());
         assert!(parse_vram_used_total("").is_none());
@@ -389,7 +444,10 @@ mod tests {
         let out = run_resource_watch_tick(
             &enabled_config(90),
             &writer,
-            Some(VramReading { used_mib: 4096, total_mib: 8192 }),
+            Some(VramReading {
+                used_mib: 4096,
+                total_mib: 8192,
+            }),
         )
         .await
         .unwrap();
@@ -405,7 +463,10 @@ mod tests {
         let alert = run_resource_watch_tick(
             &enabled_config(90),
             &writer,
-            Some(VramReading { used_mib: 7900, total_mib: 8192 }),
+            Some(VramReading {
+                used_mib: 7900,
+                total_mib: 8192,
+            }),
         )
         .await
         .unwrap()
@@ -433,8 +494,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("rw.wal");
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
-        let handle = spawn_resource_watch_loop(enabled_config(90), writer)
-            .expect("enabled → join handle");
+        let handle =
+            spawn_resource_watch_loop(enabled_config(90), writer).expect("enabled → join handle");
         handle.abort();
     }
 }

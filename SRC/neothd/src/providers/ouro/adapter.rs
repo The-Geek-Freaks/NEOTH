@@ -541,7 +541,11 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
             .get(cache_key)
             .map(|e| (e.snapshot.clone(), e.prefix_ids.clone()));
         if let Some((snap, cached_prefix)) = hit {
-            debug_assert_eq!(prefix_ids, cached_prefix.as_slice(), "KV-01 prefix mismatch");
+            debug_assert_eq!(
+                prefix_ids,
+                cached_prefix.as_slice(),
+                "KV-01 prefix mismatch"
+            );
             loaded.model.restore_all_kv(snap);
         } else {
             // MISS: full prefill of the prefix at offset 0, then snapshot + cache.

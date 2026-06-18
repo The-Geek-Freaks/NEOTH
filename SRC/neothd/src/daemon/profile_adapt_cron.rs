@@ -262,16 +262,24 @@ mod tests {
         }
 
         // First tick queues the feedback proposal.
-        let n1 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer, ProfilePreset::Lowkey)
-            .await
-            .expect("tick must not error");
-        assert!(n1 >= 1, "high pushback must queue a self-dev proposal, got {n1}");
+        let n1 =
+            run_profile_adapt_tick(home.path(), wal_dir.path(), &writer, ProfilePreset::Lowkey)
+                .await
+                .expect("tick must not error");
+        assert!(
+            n1 >= 1,
+            "high pushback must queue a self-dev proposal, got {n1}"
+        );
 
         // Second tick is idempotent — the proposal is deduped by stable id.
-        let n2 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer, ProfilePreset::Lowkey)
-            .await
-            .expect("tick must not error");
-        assert_eq!(n2, 0, "the feedback proposal must not re-queue on the next tick");
+        let n2 =
+            run_profile_adapt_tick(home.path(), wal_dir.path(), &writer, ProfilePreset::Lowkey)
+                .await
+                .expect("tick must not error");
+        assert_eq!(
+            n2, 0,
+            "the feedback proposal must not re-queue on the next tick"
+        );
 
         drop(writer);
         let _ = join.await;

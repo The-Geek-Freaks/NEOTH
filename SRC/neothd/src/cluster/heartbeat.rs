@@ -604,9 +604,9 @@ mod tests {
 
     #[test]
     fn gossip_frame_round_trips_on_the_wire() {
+        use super::super::PeerPubkey;
         use super::super::gossip::GossipTag;
         use super::super::gossip_wire::{GossipFrame, VectorClock};
-        use super::super::PeerPubkey;
         let mut vc = VectorClock::new();
         vc.tick(&PeerPubkey::new("node-a"));
         let frame = WireFrame {

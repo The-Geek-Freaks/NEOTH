@@ -50,7 +50,10 @@ pub struct CorrelationSignal {
 /// Find every maximal run of consecutive same-provider winners whose length is
 /// at least `min_streak`. PURE — the caller does the WAL IO. Records are in
 /// chronological (WAL) order; a "run" is adjacency in that order.
-pub fn detect_winner_streaks(records: &[WinnerRecord], min_streak: usize) -> Vec<CorrelationSignal> {
+pub fn detect_winner_streaks(
+    records: &[WinnerRecord],
+    min_streak: usize,
+) -> Vec<CorrelationSignal> {
     let min_streak = min_streak.max(1);
     let mut signals = Vec::new();
     let mut i = 0usize;
@@ -197,14 +200,7 @@ mod tests {
     #[test]
     fn two_separate_streaks_and_threshold() {
         // a×3, b×1, a×2 — with min 2 → two signals (a:3, a:2); b never qualifies.
-        let recs = vec![
-            rec("a"),
-            rec("a"),
-            rec("a"),
-            rec("b"),
-            rec("a"),
-            rec("a"),
-        ];
+        let recs = vec![rec("a"), rec("a"), rec("a"), rec("b"), rec("a"), rec("a")];
         let s = detect_winner_streaks(&recs, 2);
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].streak_len, 3);
@@ -235,7 +231,10 @@ mod tests {
         // A pre-mode frame defaults to "unknown" rather than dropping the record.
         let no_mode = br#"{"depth":0,"role":"left","provider":"x","score":0.5}"#;
         assert_eq!(parse_winner_payload(no_mode).unwrap().mode, "unknown");
-        assert!(parse_winner_payload(nested).is_none(), "nested must be skipped");
+        assert!(
+            parse_winner_payload(nested).is_none(),
+            "nested must be skipped"
+        );
         assert!(parse_winner_payload(b"not json").is_none());
         assert!(
             parse_winner_payload(br#"{"depth":0,"provider":""}"#).is_none(),
@@ -261,11 +260,9 @@ mod tests {
                 "depth": 0, "role": "left", "provider": provider, "score": 0.9
             }))
             .unwrap();
-            let header = crate::wal::HeaderBuilder::new(
-                EVENT_TYPE_COUNCIL_WINNER_SELECTED,
-                &payload,
-            )
-            .build();
+            let header =
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_COUNCIL_WINNER_SELECTED, &payload)
+                    .build();
             writer.append(header, payload).await.unwrap();
         }
         drop(writer);

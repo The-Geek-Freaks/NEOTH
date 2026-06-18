@@ -19,7 +19,7 @@
 //! recall to find.
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use crate::providers::{Provider, Request};
 
@@ -64,7 +64,10 @@ pub fn build_summary_prompt(events: &[(i64, String)]) -> String {
 /// Summarize one day's retained events via the (local) provider. Async — call
 /// it from the async consolidation pass, NEVER from inside a `spawn_blocking`
 /// closure (see the module note on the nested-`block_on` deadlock).
-pub async fn summarize_day_batch(provider: &dyn Provider, events: &[(i64, String)]) -> Result<String> {
+pub async fn summarize_day_batch(
+    provider: &dyn Provider,
+    events: &[(i64, String)],
+) -> Result<String> {
     let req = Request {
         prompt: build_summary_prompt(events),
         system: Some("You are a terse memory summarizer.".to_string()),
@@ -103,10 +106,7 @@ pub fn needs_summary(conn: &Connection, day: &str) -> Result<bool> {
 /// the rows migrated this pass, but every retained row for that day across all
 /// prior passes. This is the source that `summarize_day_batch` must receive so
 /// that multi-pass days get a summary covering their full warm-tier history.
-pub fn load_day_for_summary(
-    conn: &Connection,
-    day: &str,
-) -> Result<Option<Vec<(i64, String)>>> {
+pub fn load_day_for_summary(conn: &Connection, day: &str) -> Result<Option<Vec<(i64, String)>>> {
     if !needs_summary(conn, day)? {
         return Ok(None);
     }
@@ -117,7 +117,9 @@ pub fn load_day_for_summary(
          ORDER BY id ASC",
     )?;
     let rows = stmt
-        .query_map(params![day], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .query_map(params![day], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("load retained rows for day summary")?;
     Ok(Some(rows))
@@ -229,13 +231,25 @@ mod tests {
     #[test]
     fn needs_summary_requires_two_retained_and_no_existing_summary() {
         let conn = mem_conn();
-        assert!(!needs_summary(&conn, "2026-06-15").unwrap(), "no rows → no summary");
+        assert!(
+            !needs_summary(&conn, "2026-06-15").unwrap(),
+            "no rows → no summary"
+        );
         insert_retained(&conn, "2026-06-15", 1, "a");
-        assert!(!needs_summary(&conn, "2026-06-15").unwrap(), "one row → not worth it");
+        assert!(
+            !needs_summary(&conn, "2026-06-15").unwrap(),
+            "one row → not worth it"
+        );
         insert_retained(&conn, "2026-06-15", 2, "b");
-        assert!(needs_summary(&conn, "2026-06-15").unwrap(), "two rows → summarize");
+        assert!(
+            needs_summary(&conn, "2026-06-15").unwrap(),
+            "two rows → summarize"
+        );
         insert_summary_row(&conn, "2026-06-15", "rollup", 9).unwrap();
-        assert!(!needs_summary(&conn, "2026-06-15").unwrap(), "already summarised → skip");
+        assert!(
+            !needs_summary(&conn, "2026-06-15").unwrap(),
+            "already summarised → skip"
+        );
     }
 
     #[test]
@@ -256,7 +270,10 @@ mod tests {
 
     #[tokio::test]
     async fn summarize_day_batch_trims_the_provider_reply() {
-        let events = vec![(1, "did a thing".to_string()), (2, "did another".to_string())];
+        let events = vec![
+            (1, "did a thing".to_string()),
+            (2, "did another".to_string()),
+        ];
         let summary = summarize_day_batch(&StubSummarizer, &events).await.unwrap();
         assert_eq!(summary, "Alex shipped Nostr and OP-01.", "trimmed");
     }
@@ -268,8 +285,14 @@ mod tests {
         let huge = "x".repeat(MAX_SUMMARY_INPUT_CHARS + 500);
         let p = build_summary_prompt(&[(1, huge)]);
         let body = p.split("\n\n").nth(1).unwrap_or("");
-        assert!(!body.trim().is_empty(), "long first event must seed a non-empty body");
-        assert!(body.chars().count() <= MAX_SUMMARY_INPUT_CHARS + 1, "and stay capped");
+        assert!(
+            !body.trim().is_empty(),
+            "long first event must seed a non-empty body"
+        );
+        assert!(
+            body.chars().count() <= MAX_SUMMARY_INPUT_CHARS + 1,
+            "and stay capped"
+        );
     }
 
     #[test]

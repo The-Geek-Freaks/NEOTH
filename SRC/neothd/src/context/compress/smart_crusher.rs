@@ -23,7 +23,7 @@ use std::fmt::Write;
 
 use serde_json::Value;
 
-use crate::context::compress::ccr::{compute_key, marker_for, CcrStore};
+use crate::context::compress::ccr::{CcrStore, compute_key, marker_for};
 use crate::context::compress::content_detector::ContentType;
 use crate::context::compress::transform::{
     CompressionContext, OffloadOutput, OffloadTransform, ReformatOutput, ReformatTransform,
@@ -58,7 +58,10 @@ impl ReformatTransform for JsonMinifier {
             .map_err(|e| TransformError::internal(MINIFIER_NAME, e.to_string()))?;
         // Never inflate.
         if minified.len() >= content.len() {
-            return Ok(ReformatOutput::from_lengths(content.len(), content.to_string()));
+            return Ok(ReformatOutput::from_lengths(
+                content.len(),
+                content.to_string(),
+            ));
         }
         Ok(ReformatOutput::from_lengths(content.len(), minified))
     }
@@ -173,9 +176,10 @@ impl OffloadTransform for SmartCrusher {
         let marker = marker_for(&key);
 
         // Schema: keys of the first object row (tabular hint for the model).
-        let schema = arr.iter().find_map(|v| v.as_object()).map(|o| {
-            o.keys().cloned().collect::<Vec<_>>().join(",")
-        });
+        let schema = arr
+            .iter()
+            .find_map(|v| v.as_object())
+            .map(|o| o.keys().cloned().collect::<Vec<_>>().join(","));
 
         let mut out = String::with_capacity(content.len() / 4);
         match &schema {
@@ -268,7 +272,9 @@ impl SmartCrusher {
 fn optimal_k(rows: &[Value], min_k: usize, max_k: usize) -> usize {
     let mut templates: BTreeSet<String> = BTreeSet::new();
     for v in rows {
-        templates.insert(digit_template(&serde_json::to_string(v).unwrap_or_default()));
+        templates.insert(digit_template(
+            &serde_json::to_string(v).unwrap_or_default(),
+        ));
         if templates.len() >= max_k {
             break; // already at the cap — counting further can't raise k
         }
@@ -376,7 +382,7 @@ fn detect_outliers(items: &[Value]) -> BTreeSet<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::compress::ccr::{extract_keys, InMemoryCcrStore};
+    use crate::context::compress::ccr::{InMemoryCcrStore, extract_keys};
 
     // ── JsonMinifier ──────────────────────────────────────────────────
 
@@ -394,7 +400,10 @@ mod tests {
             JsonMinifier.apply("{not: valid"),
             Err(TransformError::InvalidInput { .. })
         ));
-        assert!(matches!(JsonMinifier.apply(""), Err(TransformError::Skipped { .. })));
+        assert!(matches!(
+            JsonMinifier.apply(""),
+            Err(TransformError::Skipped { .. })
+        ));
     }
 
     #[test]
@@ -469,7 +478,13 @@ mod tests {
 
     #[test]
     fn crush_scalar_array_without_schema() {
-        let input = format!("[{}]", (0..100).map(|i| i.to_string()).collect::<Vec<_>>().join(","));
+        let input = format!(
+            "[{}]",
+            (0..100)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         let store = InMemoryCcrStore::new();
         let r = crusher()
             .apply(&input, &CompressionContext::default(), &store)
@@ -508,7 +523,10 @@ mod tests {
             "red", "green", "blue", "cyan", "magenta", "yellow", "black", "white", "gray", "pink",
             "orange", "purple",
         ];
-        let rows: Vec<Value> = colors.iter().map(|c| serde_json::json!({"color": c})).collect();
+        let rows: Vec<Value> = colors
+            .iter()
+            .map(|c| serde_json::json!({"color": c}))
+            .collect();
         // 12 distinct templates → clamp(12, [3,20]) = 12 (above the floor).
         assert_eq!(optimal_k(&rows, 3, 20), 12);
     }
@@ -517,12 +535,17 @@ mod tests {
     fn detect_outliers_pins_rare_categorical_value() {
         // 99 status=ok, 1 status=error → the error row is a must-keep outlier;
         // the `id` field (every value unique) must NOT be treated as categorical.
-        let mut rows: Vec<Value> =
-            (0..100).map(|i| serde_json::json!({"id": i, "status": "ok"})).collect();
+        let mut rows: Vec<Value> = (0..100)
+            .map(|i| serde_json::json!({"id": i, "status": "ok"}))
+            .collect();
         rows[37] = serde_json::json!({"id": 37, "status": "error"});
         let outliers = detect_outliers(&rows);
         assert!(outliers.contains(&37), "rare status=error row pinned");
-        assert_eq!(outliers.len(), 1, "the unique-id field must not over-flag the tail");
+        assert_eq!(
+            outliers.len(),
+            1,
+            "the unique-id field must not over-flag the tail"
+        );
     }
 
     #[test]
@@ -535,8 +558,9 @@ mod tests {
     #[test]
     fn crush_keeps_the_rare_error_row_end_to_end() {
         // The strided sampler alone would drop index 37; HR-05 pins it.
-        let mut items: Vec<String> =
-            (0..100).map(|i| format!(r#"{{"id":{i},"status":"ok"}}"#)).collect();
+        let mut items: Vec<String> = (0..100)
+            .map(|i| format!(r#"{{"id":{i},"status":"ok"}}"#))
+            .collect();
         items[37] = r#"{"id":37,"status":"error"}"#.to_string();
         let input = format!("[{}]", items.join(","));
         let store = InMemoryCcrStore::new();

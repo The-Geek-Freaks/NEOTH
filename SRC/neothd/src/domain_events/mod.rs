@@ -290,10 +290,9 @@ pub fn init_global() -> bool {
                         // provider response lands, so the GUI / `neoth meter`
                         // subprocess can read it without sharing the bus.
                         if ev.kind() == "provider_responded" {
-                            if let Err(e) = write_meter_snapshot(
-                                &meter_path,
-                                &meter_for_task.snapshot(),
-                            ) {
+                            if let Err(e) =
+                                write_meter_snapshot(&meter_path, &meter_for_task.snapshot())
+                            {
                                 tracing::debug!(
                                     error = %e,
                                     path = %meter_path.display(),
@@ -351,8 +350,7 @@ pub fn meter_snapshot_path() -> PathBuf {
 /// half-written JSON file. Errors are best-effort: the meter keeps running
 /// even if the disk is temporarily unwritable.
 pub fn write_meter_snapshot(path: &Path, snapshot: &UsageSnapshot) -> std::io::Result<()> {
-    let body = serde_json::to_vec_pretty(snapshot)
-        .map_err(std::io::Error::other)?;
+    let body = serde_json::to_vec_pretty(snapshot).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, body)?;
     std::fs::rename(&tmp, path)?;
@@ -634,7 +632,10 @@ mod tests {
             meter.absorb(&ev);
         }
         let s = meter.snapshot();
-        assert_eq!(s.provider_responses, 3, "meter received every council hemisphere event");
+        assert_eq!(
+            s.provider_responses, 3,
+            "meter received every council hemisphere event"
+        );
         assert_eq!(s.input_tokens_total, 300);
         assert_eq!(s.output_tokens_total, 120);
     }

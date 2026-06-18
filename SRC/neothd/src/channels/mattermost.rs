@@ -28,9 +28,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{info, warn};
 
 use super::mattermost_api::{
-    auth_challenge_frame, decode_frame, fetch_me_user_id, mm_ws_url, send_post, MmFrame,
+    MmFrame, auth_challenge_frame, decode_frame, fetch_me_user_id, mm_ws_url, send_post,
 };
-use super::slack_socket::{dispatch_inbound, OutboundSender};
+use super::slack_socket::{OutboundSender, dispatch_inbound};
 use super::{Channel, ChannelError, MessageId, OutboundMessage, PipelineHandler};
 use crate::secret::SecretString;
 

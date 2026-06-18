@@ -545,9 +545,16 @@ mod tests {
     #[tokio::test]
     async fn one_pass_returns_empty_report_for_missing_views_db() {
         let dir = tempdir().unwrap();
-        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS, None)
-            .await
-            .unwrap();
+        let report = run_one_pass(
+            dir.path(),
+            None,
+            None,
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(report.events_considered, 0);
         assert_eq!(report.dreams_written, 0);
         assert_eq!(report.path_taken, DreamingPath::Deterministic);
@@ -564,9 +571,16 @@ mod tests {
                 (2, n - 1800 * 1_000_000_000, "second event"),
             ],
         );
-        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS, None)
-            .await
-            .unwrap();
+        let report = run_one_pass(
+            dir.path(),
+            None,
+            None,
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(report.events_considered, 2);
         assert_eq!(report.dreams_written, 1);
         assert_eq!(report.path_taken, DreamingPath::Deterministic);
@@ -798,9 +812,16 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
 
-        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS, None)
-            .await
-            .unwrap();
+        let report = run_one_pass(
+            dir.path(),
+            None,
+            None,
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(report.dreams_written, 1);
 
         drop(writer);

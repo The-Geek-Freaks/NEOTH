@@ -238,7 +238,10 @@ mod npm_gate_tests {
         .expect_err("a MAL-* verdict must block");
         let msg = err.to_string();
         assert!(msg.contains("MALWARE"), "error names malware: {msg}");
-        assert!(msg.contains("MAL-2024-1"), "error names the advisory: {msg}");
+        assert!(
+            msg.contains("MAL-2024-1"),
+            "error names the advisory: {msg}"
+        );
     }
 
     #[test]

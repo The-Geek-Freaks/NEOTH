@@ -170,7 +170,9 @@ pub fn spawn_ecology_cron_loop(
                      review via `neoth self-dev review`",
                 ),
                 Ok(false) => {
-                    tracing::debug!("ecology scheduler: no fire (no streak signal / no new proposals)")
+                    tracing::debug!(
+                        "ecology scheduler: no fire (no streak signal / no new proposals)"
+                    )
                 }
                 Err(e) => tracing::error!(error = %e, "ecology scheduler tick failed"),
             }
@@ -233,7 +235,8 @@ mod tests {
             }))
             .unwrap();
             let header =
-                crate::wal::HeaderBuilder::new(EVENT_TYPE_COUNCIL_WINNER_SELECTED, &payload).build();
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_COUNCIL_WINNER_SELECTED, &payload)
+                    .build();
             writer.append(header, payload).await.unwrap();
         }
     }

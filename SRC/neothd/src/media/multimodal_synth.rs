@@ -120,7 +120,10 @@ impl MultimodalSynthesizer for AnthropicVisionClient {
     async fn synthesize(&self, request: &MultimodalRequest) -> Result<String, String> {
         let client = http_client::build_client().map_err(|e| format!("http client: {e}"))?;
         let resp = client
-            .post(format!("{}/v1/messages", self.base_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/v1/messages",
+                self.base_url.trim_end_matches('/')
+            ))
             .header("x-api-key", self.api_key.expose())
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
@@ -131,7 +134,10 @@ impl MultimodalSynthesizer for AnthropicVisionClient {
         if !resp.status().is_success() {
             return Err(format!("anthropic vision returned HTTP {}", resp.status()));
         }
-        let body = resp.bytes().await.map_err(|e| format!("anthropic body: {e}"))?;
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("anthropic body: {e}"))?;
         parse_anthropic_text(&body)
     }
 }
@@ -197,7 +203,10 @@ impl MultimodalSynthesizer for OpenAiVisionClient {
     async fn synthesize(&self, request: &MultimodalRequest) -> Result<String, String> {
         let client = http_client::build_client().map_err(|e| format!("http client: {e}"))?;
         let resp = client
-            .post(format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/v1/chat/completions",
+                self.base_url.trim_end_matches('/')
+            ))
             .bearer_auth(self.api_key.expose())
             .json(&openai_body(request))
             .send()
@@ -206,7 +215,10 @@ impl MultimodalSynthesizer for OpenAiVisionClient {
         if !resp.status().is_success() {
             return Err(format!("openai vision returned HTTP {}", resp.status()));
         }
-        let body = resp.bytes().await.map_err(|e| format!("openai body: {e}"))?;
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("openai body: {e}"))?;
         parse_openai_text(&body)
     }
 }
@@ -304,7 +316,10 @@ impl MultimodalSynthesizer for GeminiVisionClient {
         if !resp.status().is_success() {
             return Err(format!("gemini vision returned HTTP {}", resp.status()));
         }
-        let body = resp.bytes().await.map_err(|e| format!("gemini body: {e}"))?;
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("gemini body: {e}"))?;
         parse_gemini_text(&body)
     }
 }
@@ -327,7 +342,11 @@ pub fn make_multimodal_synth(
             provider.as_str()
         ));
     }
-    let key = || api_key.clone().ok_or_else(|| format!("{} requires an api key", provider.as_str()));
+    let key = || {
+        api_key
+            .clone()
+            .ok_or_else(|| format!("{} requires an api key", provider.as_str()))
+    };
     match provider {
         MultimodalProvider::AnthropicClaude => Ok(Box::new(AnthropicVisionClient::new(key()?))),
         MultimodalProvider::OpenAiGpt4o => Ok(Box::new(OpenAiVisionClient::new(key()?))),
@@ -341,8 +360,8 @@ pub fn make_multimodal_synth(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::video_frames::FrameFormat;
+    use super::*;
 
     fn frame(byte: u8) -> Frame {
         Frame {
@@ -384,7 +403,12 @@ mod tests {
         assert_eq!(content.len(), 3, "1 text + 2 image_url");
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[1]["type"], "image_url");
-        assert!(content[1]["image_url"]["url"].as_str().unwrap().starts_with("data:image/jpeg;base64,"));
+        assert!(
+            content[1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/jpeg;base64,")
+        );
     }
 
     #[test]
@@ -413,26 +437,41 @@ mod tests {
 
     #[test]
     fn parse_gemini_joins_parts() {
-        let body = br#"{"candidates":[{"content":{"parts":[{"text":"sunset "},{"text":"over sea"}]}}]}"#;
+        let body =
+            br#"{"candidates":[{"content":{"parts":[{"text":"sunset "},{"text":"over sea"}]}}]}"#;
         assert_eq!(parse_gemini_text(body).unwrap(), "sunset over sea");
         assert!(parse_gemini_text(br#"{"candidates":[]}"#).is_err());
     }
 
     fn vision_on() -> crate::config::MediaConfig {
-        crate::config::MediaConfig { cloud_vision_enabled: true, ..Default::default() }
+        crate::config::MediaConfig {
+            cloud_vision_enabled: true,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn factory_returns_right_provider_or_deferral() {
         let on = vision_on();
         assert_eq!(
-            make_multimodal_synth(MultimodalProvider::AnthropicClaude, Some(SecretString::from("k")), &on)
-                .unwrap()
-                .provider(),
+            make_multimodal_synth(
+                MultimodalProvider::AnthropicClaude,
+                Some(SecretString::from("k")),
+                &on
+            )
+            .unwrap()
+            .provider(),
             MultimodalProvider::AnthropicClaude
         );
         assert!(make_multimodal_synth(MultimodalProvider::OpenAiGpt4o, None, &on).is_err());
-        assert!(make_multimodal_synth(MultimodalProvider::LocalLlava, Some(SecretString::from("k")), &on).is_err());
+        assert!(
+            make_multimodal_synth(
+                MultimodalProvider::LocalLlava,
+                Some(SecretString::from("k")),
+                &on
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -447,16 +486,28 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(err.contains("cloud vision") && err.contains("LEAVE the device"), "got: {err}");
+        assert!(
+            err.contains("cloud vision") && err.contains("LEAVE the device"),
+            "got: {err}"
+        );
         // LocalLlava: deferred error, not the cloud-vision gate.
-        let local = make_multimodal_synth(MultimodalProvider::LocalLlava, None, &off).err().unwrap();
-        assert!(local.contains("deferred") && !local.contains("cloud vision"), "got: {local}");
+        let local = make_multimodal_synth(MultimodalProvider::LocalLlava, None, &off)
+            .err()
+            .unwrap();
+        assert!(
+            local.contains("deferred") && !local.contains("cloud vision"),
+            "got: {local}"
+        );
     }
 
     #[tokio::test]
     async fn synthesize_surfaces_error_on_unreachable_host() {
-        let c = AnthropicVisionClient::new(SecretString::from("k")).with_base_url("http://127.0.0.1:1");
+        let c =
+            AnthropicVisionClient::new(SecretString::from("k")).with_base_url("http://127.0.0.1:1");
         let err = c.synthesize(&req(1)).await.unwrap_err();
-        assert!(err.contains("anthropic"), "expected an anthropic error, got: {err}");
+        assert!(
+            err.contains("anthropic"),
+            "expected an anthropic error, got: {err}"
+        );
     }
 }

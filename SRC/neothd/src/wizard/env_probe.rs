@@ -130,12 +130,7 @@ pub fn probe_and_classify() -> EnvironmentClass {
     let has_display = probe_has_display();
     let dmi = probe_dmi_product_name();
     let ci_env = probe_ci_env();
-    classify(
-        ssh_session,
-        has_display,
-        dmi.as_deref(),
-        ci_env,
-    )
+    classify(ssh_session, has_display, dmi.as_deref(), ci_env)
 }
 
 /// Probe whether the current process is running inside an SSH session.
@@ -197,7 +192,7 @@ fn is_server_dmi(name: &str) -> bool {
     let cloud_keywords = [
         "amazon ec2",
         "google compute engine",
-        "google",           // GCE often just says "Google"
+        "google",                // GCE often just says "Google"
         "microsoft corporation", // Azure VMs
         "azure",
         "vmware",
@@ -206,7 +201,7 @@ fn is_server_dmi(name: &str) -> bool {
         "qemu",
         "xen",
         "hvm",
-        "standard pc",      // QEMU default
+        "standard pc", // QEMU default
         "bochs",
         "digital ocean",
         "linode",
@@ -279,13 +274,23 @@ mod tests {
 
     #[test]
     fn dmi_google_compute_engine_classifies_as_server() {
-        let cls = classify(Some(false), None, Some("Google Compute Engine"), Some(false));
+        let cls = classify(
+            Some(false),
+            None,
+            Some("Google Compute Engine"),
+            Some(false),
+        );
         assert_eq!(cls, EnvironmentClass::Server);
     }
 
     #[test]
     fn dmi_vmware_classifies_as_server() {
-        let cls = classify(Some(false), Some(true), Some("VMware Virtual Platform"), Some(false));
+        let cls = classify(
+            Some(false),
+            Some(true),
+            Some("VMware Virtual Platform"),
+            Some(false),
+        );
         // VMware takes priority even if DISPLAY is set (VM on laptop is
         // still "server-class" for the wizard's purposes).
         assert_eq!(cls, EnvironmentClass::Server);
@@ -293,7 +298,12 @@ mod tests {
 
     #[test]
     fn dmi_standard_pc_qemu_classifies_as_server() {
-        let cls = classify(Some(false), Some(false), Some("Standard PC (Q35 + ICH9, 2009)"), Some(false));
+        let cls = classify(
+            Some(false),
+            Some(false),
+            Some("Standard PC (Q35 + ICH9, 2009)"),
+            Some(false),
+        );
         assert_eq!(cls, EnvironmentClass::Server);
     }
 

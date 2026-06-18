@@ -582,7 +582,10 @@ pub fn render_topology_table(rows: &[TopologyRow]) -> String {
         "pub_key", "label", "addr", "via", "last_seen", "status", "rtt", "stability"
     ));
     for r in rows {
-        let rtt = r.rtt_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "---".to_string());
+        let rtt = r
+            .rtt_ms
+            .map(|ms| format!("{ms}ms"))
+            .unwrap_or_else(|| "---".to_string());
         out.push_str(&format!(
             "{:<16} {:<24} {:<22} {:<12} {:<12} {:<12} {:<8} {:.0}%\n",
             r.pub_key_short,
@@ -931,8 +934,11 @@ fn run_status(output: &OutputFormat) -> Result<()> {
     let peer_count = status_peer_count(&home)?;
     let (mdns_enabled, announce_policy) =
         crate::cluster::policy::load_policy_from_freedom(&home.join("freedom.yaml"));
-    let (mode, policy_name) =
-        status_mode_policy(identity.enabled, mdns_enabled, announce_policy.announce_on_untrusted_wifi);
+    let (mode, policy_name) = status_mode_policy(
+        identity.enabled,
+        mdns_enabled,
+        announce_policy.announce_on_untrusted_wifi,
+    );
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -1380,7 +1386,10 @@ mod tests {
             other => panic!("expected ByHostname, got {other:?}"),
         }
         // Peer is gone; a second revoke is a clean no-op.
-        assert!(!crate::cluster::registry::is_paired(dir.path(), &peer.pub_key_hex));
+        assert!(!crate::cluster::registry::is_paired(
+            dir.path(),
+            &peer.pub_key_hex
+        ));
         assert_eq!(
             revoke_peer(dir.path(), "workstation-7").unwrap(),
             RevokeOutcome::NoMatch
@@ -1420,8 +1429,14 @@ mod tests {
             other => panic!("expected ByKey precedence, got {other:?}"),
         }
         // A removed (key prefix), B survives (hostname not consulted).
-        assert!(!crate::cluster::registry::is_paired(dir.path(), &a.pub_key_hex));
-        assert!(crate::cluster::registry::is_paired(dir.path(), &b.pub_key_hex));
+        assert!(!crate::cluster::registry::is_paired(
+            dir.path(),
+            &a.pub_key_hex
+        ));
+        assert!(crate::cluster::registry::is_paired(
+            dir.path(),
+            &b.pub_key_hex
+        ));
     }
 
     // ── SL-02 topology view ───────────────────────────────────────────────
@@ -1476,7 +1491,10 @@ mod tests {
         let out = render_topology_table(&rows);
         assert!(out.contains("37ms"), "rtt rendered: {out}");
         assert!(out.contains("83%"), "stability % rendered: {out}");
-        assert!(out.contains("rtt") && out.contains("stability"), "headers: {out}");
+        assert!(
+            out.contains("rtt") && out.contains("stability"),
+            "headers: {out}"
+        );
         // A peer with no RTT renders the placeholder.
         let none_rows = build_topology_rows(&[peer("vps", 0)], TNOW);
         assert!(render_topology_table(&none_rows).contains("---"));

@@ -132,7 +132,10 @@ mod tests {
         assert_eq!(g.check(&c), GuardVerdict::Allow);
         assert_eq!(g.check(&c), GuardVerdict::Allow);
         assert_eq!(g.check(&c), GuardVerdict::Allow);
-        assert!(matches!(g.check(&c), GuardVerdict::BlockedConsecutive { count: 4, .. }));
+        assert!(matches!(
+            g.check(&c),
+            GuardVerdict::BlockedConsecutive { count: 4, .. }
+        ));
     }
 
     #[test]
@@ -159,16 +162,28 @@ mod tests {
             assert_eq!(g.check(&c), GuardVerdict::Allow, "call {i}");
         }
         let c = call("sh", "exec", serde_json::json!({ "cmd": 99 }));
-        assert!(matches!(g.check(&c), GuardVerdict::BlockedCeiling { count: 4, .. }));
+        assert!(matches!(
+            g.check(&c),
+            GuardVerdict::BlockedCeiling { count: 4, .. }
+        ));
     }
 
     #[test]
     fn per_tool_counts_are_independent() {
         let mut g = ToolRepetitionGuard::new(None, Some(2));
-        assert_eq!(g.check(&call("a", "x", serde_json::json!({}))), GuardVerdict::Allow);
-        assert_eq!(g.check(&call("a", "x", serde_json::json!({}))), GuardVerdict::Allow);
+        assert_eq!(
+            g.check(&call("a", "x", serde_json::json!({}))),
+            GuardVerdict::Allow
+        );
+        assert_eq!(
+            g.check(&call("a", "x", serde_json::json!({}))),
+            GuardVerdict::Allow
+        );
         // Different tool starts its own count.
-        assert_eq!(g.check(&call("b", "y", serde_json::json!({}))), GuardVerdict::Allow);
+        assert_eq!(
+            g.check(&call("b", "y", serde_json::json!({}))),
+            GuardVerdict::Allow
+        );
         // 3rd call to a::x trips its ceiling.
         assert!(g.check(&call("a", "x", serde_json::json!({}))).is_blocked());
     }

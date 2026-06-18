@@ -720,7 +720,11 @@ mod tests {
         assert!(!header.starts_with("sha256="), "no Meta-style prefix");
         assert!(!header.starts_with("v0="), "no Slack-style prefix");
         assert_eq!(header.len(), 44, "32-byte HMAC → 44-char standard base64");
-        assert!(base64::engine::general_purpose::STANDARD.decode(&header).is_ok());
+        assert!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&header)
+                .is_ok()
+        );
     }
 
     // --- helpers ---

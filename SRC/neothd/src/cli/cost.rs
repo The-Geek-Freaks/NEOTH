@@ -239,8 +239,10 @@ pub fn top_sessions(
     by_session: &BTreeMap<String, SessionCost>,
     limit: usize,
 ) -> Vec<(String, SessionCost)> {
-    let mut rows: Vec<(String, SessionCost)> =
-        by_session.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut rows: Vec<(String, SessionCost)> = by_session
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     rows.sort_by(|a, b| {
         b.1.total_tokens()
             .cmp(&a.1.total_tokens())
@@ -377,9 +379,11 @@ mod tests {
             payload["session_id"] = serde_json::json!(s);
         }
         let bytes = serde_json::to_vec(&payload).unwrap();
-        let header =
-            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE, &bytes)
-                .build();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+            &bytes,
+        )
+        .build();
         writer.append(header, bytes).await.unwrap();
     }
 
@@ -407,7 +411,10 @@ mod tests {
         assert_eq!(rows[0].0, "sess-B"); // 500
         assert_eq!(rows[1].0, "sess-A"); // 300
         assert_eq!(rows[2].0, UNATTRIBUTED); // 15
-        assert_eq!(rows[0].1.models.iter().cloned().collect::<Vec<_>>(), vec!["gpt"]);
+        assert_eq!(
+            rows[0].1.models.iter().cloned().collect::<Vec<_>>(),
+            vec!["gpt"]
+        );
     }
 
     #[tokio::test]

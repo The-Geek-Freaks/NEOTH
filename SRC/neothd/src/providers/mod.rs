@@ -472,9 +472,10 @@ fn build_utility_config(config: &FreedomConfig) -> Option<FreedomConfig> {
     // model. GR-076: with `resolve_exact`, a missing `fast` row genuinely leaves
     // `provider_model` unset (the prior `resolve` always returned the flagship).
     if !is_local_provider(kind.as_str()) {
-        if let Some(fast) = crate::providers::model_roles::default_table()
-            .resolve_exact(kind.as_str(), crate::providers::model_roles::ModelRole::Fast)
-        {
+        if let Some(fast) = crate::providers::model_roles::default_table().resolve_exact(
+            kind.as_str(),
+            crate::providers::model_roles::ModelRole::Fast,
+        ) {
             synthetic.provider_model = Some(fast.to_string());
         }
     }
@@ -534,7 +535,11 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 .clone()
                 .unwrap_or_else(|| "claude".to_string());
             let model = config.provider_model.clone().unwrap_or_else(|| {
-                default_model("claude_cli", model_roles::ModelRole::Flagship, "claude-opus-4-7")
+                default_model(
+                    "claude_cli",
+                    model_roles::ModelRole::Flagship,
+                    "claude-opus-4-7",
+                )
             });
             // B-6 Item 2: thread freedom.yaml::claude_cli.* through.
             // `to_provider()` lowers the config-layer backend tag into
@@ -865,7 +870,7 @@ mod tests {
         // `default_table` value wins for every role; an absent provider falls
         // back to the per-arm hardcoded string. PROG-14 layers a catalog
         // override for Flagship ON TOP — exercised in the second half.
-        use model_roles::{default_table, ModelRole};
+        use model_roles::{ModelRole, default_table};
 
         // PROG-14: isolate NEOTH_HOME to an empty dir so default_model's catalog
         // read finds nothing → the pre-PROG-14 default_table behaviour holds. The
@@ -910,7 +915,9 @@ mod tests {
         cat.providers.insert(
             "anthropic_api".to_string(),
             crate::models::catalog::ProviderCatalog {
-                models: vec![crate::models::catalog::ModelEntry::new("claude-opus-4-9-NEW")],
+                models: vec![crate::models::catalog::ModelEntry::new(
+                    "claude-opus-4-9-NEW",
+                )],
                 ..Default::default()
             },
         );
@@ -1085,8 +1092,7 @@ mod tests {
         // gemini kind — proven by a gemini/key-related build error rather than
         // a clean ClaudeCli construction.
         let mut cfg = base_config();
-        cfg.inference.utility_provider =
-            Some(crate::config::inference::InferenceProvider::Gemini);
+        cfg.inference.utility_provider = Some(crate::config::inference::InferenceProvider::Gemini);
         let result = from_config_for_utility(&cfg).await;
         if let Err(e) = result {
             let s = e.to_string().to_lowercase();
@@ -1102,11 +1108,20 @@ mod tests {
     fn utility_pins_the_fast_model_id_per_provider() {
         // The cost guarantee: the utility builder pins each cloud provider's
         // FAST (cheapest) model from the default role table.
-        use crate::providers::model_roles::{default_table, ModelRole};
+        use crate::providers::model_roles::{ModelRole, default_table};
         let t = default_table();
-        assert_eq!(t.resolve("claude_cli", ModelRole::Fast), Some("claude-haiku-4-5-20251001"));
-        assert_eq!(t.resolve("openai_api", ModelRole::Fast), Some("gpt-4o-mini"));
-        assert_eq!(t.resolve("gemini_api", ModelRole::Fast), Some("gemini-3-flash-lite"));
+        assert_eq!(
+            t.resolve("claude_cli", ModelRole::Fast),
+            Some("claude-haiku-4-5-20251001")
+        );
+        assert_eq!(
+            t.resolve("openai_api", ModelRole::Fast),
+            Some("gpt-4o-mini")
+        );
+        assert_eq!(
+            t.resolve("gemini_api", ModelRole::Fast),
+            Some("gemini-3-flash-lite")
+        );
     }
 
     #[test]
@@ -1161,7 +1176,10 @@ mod tests {
         cfg.inference.utility_provider = Some(InferenceProvider::AwsBedrock);
         let s = build_utility_config(&cfg).expect("built");
         assert_eq!(s.provider_kind, Some(ProviderKind::AwsBedrock));
-        assert_eq!(s.provider_model, None, "no fast row → no flagship pin (GR-026)");
+        assert_eq!(
+            s.provider_model, None,
+            "no fast row → no flagship pin (GR-026)"
+        );
 
         // GR-028: a LOCAL utility provider must NOT be pinned the table's bare
         // local `fast` id (an invalid HF repo path) — the local adapter manages

@@ -105,7 +105,12 @@ impl ReleaseKeypair {
     /// Sign `data` into a minisign `.minisig` (the prehashed `"ED"` variant the
     /// verify path requires). `untrusted_comment` is cosmetic; `trusted_comment`
     /// is covered by the global signature.
-    pub fn sign_minisig(&self, data: &[u8], untrusted_comment: &str, trusted_comment: &str) -> String {
+    pub fn sign_minisig(
+        &self,
+        data: &[u8],
+        untrusted_comment: &str,
+        trusted_comment: &str,
+    ) -> String {
         // minisign modern variant signs BLAKE2b-512(data), not data.
         let prehash = Blake2b512::digest(data);
         let sig = self.signing_key.sign(prehash.as_slice());
@@ -167,7 +172,8 @@ fn write_secret_0600(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
         .mode(0o600)
         .open(path)
         .with_context(|| format!("create {} (mode 0600)", path.display()))?;
-    f.write_all(bytes).with_context(|| format!("write {}", path.display()))?;
+    f.write_all(bytes)
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
 
@@ -224,7 +230,8 @@ mod tests {
         let signer = ReleaseKeypair::generate().unwrap();
         let other = ReleaseKeypair::generate().unwrap();
         let minisig = signer.sign_minisig(b"data", "c", "t");
-        let other_pub = minisign_verify::PublicKey::from_base64(&other.public_key_base64()).unwrap();
+        let other_pub =
+            minisign_verify::PublicKey::from_base64(&other.public_key_base64()).unwrap();
         let sig = minisign_verify::Signature::decode(&minisig).unwrap();
         // A signature from a different key must NOT verify against this pubkey.
         assert!(other_pub.verify(b"data", &sig, false).is_err());

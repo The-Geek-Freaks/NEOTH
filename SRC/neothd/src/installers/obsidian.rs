@@ -15,8 +15,6 @@
 //! command to the operator before running (no surprise spawn —
 //! honours the "operator GO per command" rule).
 
-
-
 /// One of three OS-specific install paths. Pinned exhaustively
 /// per Linux/macOS/Windows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

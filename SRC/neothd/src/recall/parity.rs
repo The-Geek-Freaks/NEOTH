@@ -342,7 +342,10 @@ mod tests {
         let a = [0u8, 1, 2, 3, 4, 5, 0, 2, 4, 1];
         let b = [1u8, 1, 3, 3, 5, 5, 0, 3, 4, 2];
         let k = cohen_kappa_within1(&a, &b).unwrap();
-        assert!(k > 0.0 && k <= 1.0, "within-1 agreement ⇒ positive kappa: {k}");
+        assert!(
+            k > 0.0 && k <= 1.0,
+            "within-1 agreement ⇒ positive kappa: {k}"
+        );
     }
 
     #[test]
@@ -374,8 +377,14 @@ mod tests {
             (0.607, 1.0), // brevity
         ];
         let agg = parity_aggregate(&dims).unwrap();
-        assert!((agg - 0.611).abs() < 0.005, "SPEC example ⇒ ~0.611, got {agg}");
-        assert!(agg < PARITY_PASS_THRESHOLD, "the SPEC example FAILS the gate");
+        assert!(
+            (agg - 0.611).abs() < 0.005,
+            "SPEC example ⇒ ~0.611, got {agg}"
+        );
+        assert!(
+            agg < PARITY_PASS_THRESHOLD,
+            "the SPEC example FAILS the gate"
+        );
     }
 
     #[test]
@@ -387,7 +396,10 @@ mod tests {
     #[test]
     fn parity_kappa_dim_is_mean_times_kappa() {
         let pk = parity_kappa_dim(&[0.8, 0.9, 1.0], 0.5).unwrap();
-        assert!((pk - 0.45).abs() < 1e-9, "mean 0.9 * kappa 0.5 = 0.45, got {pk}");
+        assert!(
+            (pk - 0.45).abs() < 1e-9,
+            "mean 0.9 * kappa 0.5 = 0.45, got {pk}"
+        );
     }
 
     #[test]

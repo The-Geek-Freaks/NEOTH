@@ -243,8 +243,11 @@ pub fn ranking_score_with_access(
 /// [`ranking_score_with_access`] so JV-MEM-09 can combine a PROMOTED tier's
 /// weight with the row's true AGE-tier recency curve.
 pub fn recency_factor(tier: Tier, days_since_access: f64, access_count: u32) -> f64 {
-    let half_life =
-        effective_half_life_days(tier.recency_half_life_days(), access_count, days_since_access);
+    let half_life = effective_half_life_days(
+        tier.recency_half_life_days(),
+        access_count,
+        days_since_access,
+    );
     let t = (days_since_access / half_life).max(0.0);
     (-std::f64::consts::LN_2 * t.powf(tier.decay_beta())).exp()
 }
@@ -418,13 +421,23 @@ pub fn hebbian_weaken_at_tier(
     let old: Option<f64> = conn
         .query_row(select_sql, params![event_id], |r| r.get::<_, f64>(0))
         .optional()
-        .with_context(|| format!("lookup {} row for hebbian weaken, event_id={event_id}", tier.as_str()))?;
+        .with_context(|| {
+            format!(
+                "lookup {} row for hebbian weaken, event_id={event_id}",
+                tier.as_str()
+            )
+        })?;
     let Some(old) = old else {
         return Ok(None);
     };
     let new = hebbian_weaken_value(old, penalty);
     conn.execute(update_sql, params![new, now_ns as i64, event_id])
-        .with_context(|| format!("update {} importance after downvote, event_id={event_id}", tier.as_str()))?;
+        .with_context(|| {
+            format!(
+                "update {} importance after downvote, event_id={event_id}",
+                tier.as_str()
+            )
+        })?;
     Ok(Some(ReinforceOutcome { old, new, tier }))
 }
 
@@ -477,7 +490,10 @@ mod tests {
         // (which only adds k·(1−0.5) < 0.10 for every tier coefficient < 0.2).
         let reinforced = hebbian_reinforce_value(0.5, Tier::Hot);
         let weakened = hebbian_weaken_value(0.5, HEBBIAN_HARMFUL_PENALTY);
-        assert!(0.5 - weakened >= reinforced - 0.5, "harmful penalty ≥ helpful bump");
+        assert!(
+            0.5 - weakened >= reinforced - 0.5,
+            "harmful penalty ≥ helpful bump"
+        );
     }
 
     #[test]
@@ -492,13 +508,19 @@ mod tests {
         assert!((outcome.old - 0.6).abs() < 1e-9);
         assert!((outcome.new - 0.5).abs() < 1e-9);
         let imp: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 42", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 42",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((imp - 0.5).abs() < 1e-9, "downvote persisted");
         // An absent event_id weakens nothing.
-        assert!(hebbian_weaken_across_tiers(&conn, 999, HEBBIAN_HARMFUL_PENALTY, 3_000)
-            .unwrap()
-            .is_none());
+        assert!(
+            hebbian_weaken_across_tiers(&conn, 999, HEBBIAN_HARMFUL_PENALTY, 3_000)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -569,7 +591,10 @@ mod tests {
         // GOLD-ADAPT-JV-MEM-04 — Weibull recency replaces the old linear cliff.
         // Day-0 score is `importance · tier.weight()` (recency factor = 1).
         let hot_today = ranking_score(0.8, Tier::Hot, 0.0);
-        assert!((hot_today - 0.8 * Tier::Hot.weight()).abs() < 1e-9, "got {hot_today}");
+        assert!(
+            (hot_today - 0.8 * Tier::Hot.weight()).abs() < 1e-9,
+            "got {hot_today}"
+        );
         // The defining Weibull property: at `days == recency_half_life_days` the
         // recency factor is exactly 0.5, so the score halves — for ANY β.
         let hot_half = ranking_score(0.8, Tier::Hot, Tier::Hot.recency_half_life_days());
@@ -596,7 +621,10 @@ mod tests {
         let once = effective_half_life_days(base, 1, 0.0);
         let many = effective_half_life_days(base, 50, 0.0);
         assert!(once > base, "one access already extends: {once} vs {base}");
-        assert!(many > once, "more accesses extend further: {many} vs {once}");
+        assert!(
+            many > once,
+            "more accesses extend further: {many} vs {once}"
+        );
         // … but capped at 3× the base no matter how hammered.
         let hammered = effective_half_life_days(base, 100_000, 0.0);
         assert!(hammered <= base * 3.0 + 1e-9, "capped at 3×: {hammered}");

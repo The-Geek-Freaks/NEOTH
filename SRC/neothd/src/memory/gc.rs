@@ -151,18 +151,26 @@ pub fn enforce_size_cap(conn: &mut Connection, max_sources: usize) -> Result<usi
 
     let tx = conn.transaction().context("begin size-cap tx")?;
     let victim_ids: Vec<i64> = {
-        let mut stmt = tx.prepare("SELECT id FROM sources ORDER BY indexed_ts ASC, id ASC LIMIT ?1")?;
+        let mut stmt =
+            tx.prepare("SELECT id FROM sources ORDER BY indexed_ts ASC, id ASC LIMIT ?1")?;
         let rows = stmt.query_map(params![overflow], |r| r.get::<_, i64>(0))?;
         rows.filter_map(|r| r.ok()).collect()
     };
     for id in &victim_ids {
         let _ = tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![id]);
-        let _ = tx.execute("DELETE FROM chunks_trigram WHERE source_id = ?1", params![id]);
+        let _ = tx.execute(
+            "DELETE FROM chunks_trigram WHERE source_id = ?1",
+            params![id],
+        );
     }
     let dropped = if victim_ids.is_empty() {
         0
     } else {
-        let placeholders = victim_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let placeholders = victim_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
         tx.execute(
             &format!("DELETE FROM sources WHERE id IN ({placeholders})"),
             rusqlite::params_from_iter(victim_ids.iter().copied()),
@@ -282,13 +290,18 @@ mod tests {
         let r = run_pass(&mut conn, now, DEFAULT_TTL_NS).unwrap();
         assert_eq!(r.sources_dropped, 2, "both old rss entries drop");
         // The fresh rss entry + the operator doc survive.
-        let mut stmt = conn.prepare("SELECT label FROM sources ORDER BY label").unwrap();
+        let mut stmt = conn
+            .prepare("SELECT label FROM sources ORDER BY label")
+            .unwrap();
         let labels: Vec<String> = stmt
             .query_map([], |r| r.get::<_, String>(0))
             .unwrap()
             .filter_map(|x| x.ok())
             .collect();
-        assert_eq!(labels, vec!["authoritative".to_string(), "rss:hn:def".to_string()]);
+        assert_eq!(
+            labels,
+            vec!["authoritative".to_string(), "rss:hn:def".to_string()]
+        );
     }
 
     #[test]

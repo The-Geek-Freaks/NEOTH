@@ -99,7 +99,10 @@ impl AzureTtsClient {
     }
 
     fn endpoint(&self) -> String {
-        format!("{}/cognitiveservices/v1", self.base_url.trim_end_matches('/'))
+        format!(
+            "{}/cognitiveservices/v1",
+            self.base_url.trim_end_matches('/')
+        )
     }
 }
 
@@ -115,7 +118,10 @@ impl TtsProvider for AzureTtsClient {
             .post(self.endpoint())
             .header("Ocp-Apim-Subscription-Key", self.api_key.expose())
             .header("Content-Type", "application/ssml+xml")
-            .header("X-Microsoft-OutputFormat", azure_output_format(request.format))
+            .header(
+                "X-Microsoft-OutputFormat",
+                azure_output_format(request.format),
+            )
             .header("User-Agent", "neoth")
             .body(azure_ssml(request))
             .send()
@@ -308,8 +314,14 @@ mod tests {
 
     #[test]
     fn azure_output_format_maps_each_format() {
-        assert_eq!(azure_output_format(TtsFormat::Wav), "riff-24khz-16bit-mono-pcm");
-        assert_eq!(azure_output_format(TtsFormat::Mp3), "audio-24khz-48kbitrate-mono-mp3");
+        assert_eq!(
+            azure_output_format(TtsFormat::Wav),
+            "riff-24khz-16bit-mono-pcm"
+        );
+        assert_eq!(
+            azure_output_format(TtsFormat::Mp3),
+            "audio-24khz-48kbitrate-mono-mp3"
+        );
         assert!(azure_output_format(TtsFormat::Opus).contains("opus"));
         assert!(azure_output_format(TtsFormat::PcmS16le).contains("raw"));
     }
@@ -319,7 +331,10 @@ mod tests {
         let s = azure_ssml(&req("Tom & <Jerry>", "de-DE-KatjaNeural", TtsFormat::Wav));
         assert!(s.contains("xml:lang='de-DE'"));
         assert!(s.contains("name='de-DE-KatjaNeural'"));
-        assert!(s.contains("Tom &amp; &lt;Jerry&gt;"), "text must be XML-escaped");
+        assert!(
+            s.contains("Tom &amp; &lt;Jerry&gt;"),
+            "text must be XML-escaped"
+        );
         assert!(s.starts_with("<speak") && s.ends_with("</speak>"));
     }
 
@@ -349,7 +364,10 @@ mod tests {
     }
 
     fn cloud_on() -> crate::config::MediaConfig {
-        crate::config::MediaConfig { cloud_tts_enabled: true, ..Default::default() }
+        crate::config::MediaConfig {
+            cloud_tts_enabled: true,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -362,9 +380,14 @@ mod tests {
             TtsProviderKind::SystemNative
         );
         assert_eq!(
-            make_tts_provider(TtsProviderKind::ElevenLabs, Some(SecretString::from("k")), None, &on)
-                .unwrap()
-                .kind(),
+            make_tts_provider(
+                TtsProviderKind::ElevenLabs,
+                Some(SecretString::from("k")),
+                None,
+                &on
+            )
+            .unwrap()
+            .kind(),
             TtsProviderKind::ElevenLabs
         );
         assert_eq!(
@@ -380,7 +403,15 @@ mod tests {
         );
         // Missing creds + deferred engines → clear errors.
         assert!(make_tts_provider(TtsProviderKind::ElevenLabs, None, None, &on).is_err());
-        assert!(make_tts_provider(TtsProviderKind::AzureTts, Some(SecretString::from("k")), None, &on).is_err());
+        assert!(
+            make_tts_provider(
+                TtsProviderKind::AzureTts,
+                Some(SecretString::from("k")),
+                None,
+                &on
+            )
+            .is_err()
+        );
         assert!(make_tts_provider(TtsProviderKind::Piper, None, None, &on).is_err());
         assert!(make_tts_provider(TtsProviderKind::Coqui, None, None, &on).is_err());
     }
@@ -390,19 +421,29 @@ mod tests {
         // P0 — cloud_tts_enabled OFF (default): a cloud voice cannot be built even
         // with valid creds. `system_native` (local) is unaffected by the gate.
         let off = crate::config::MediaConfig::default();
-        let err = make_tts_provider(TtsProviderKind::ElevenLabs, Some(SecretString::from("k")), None, &off)
-            .err()
-            .unwrap();
-        assert!(err.contains("cloud TTS") && err.contains("LEAVES the device"), "got: {err}");
-        assert!(make_tts_provider(
-            TtsProviderKind::AzureTts,
+        let err = make_tts_provider(
+            TtsProviderKind::ElevenLabs,
             Some(SecretString::from("k")),
-            Some("eastus".into()),
+            None,
             &off,
         )
         .err()
-        .unwrap()
-        .contains("cloud TTS"));
+        .unwrap();
+        assert!(
+            err.contains("cloud TTS") && err.contains("LEAVES the device"),
+            "got: {err}"
+        );
+        assert!(
+            make_tts_provider(
+                TtsProviderKind::AzureTts,
+                Some(SecretString::from("k")),
+                Some("eastus".into()),
+                &off,
+            )
+            .err()
+            .unwrap()
+            .contains("cloud TTS")
+        );
         // Local stays constructible regardless of the flag.
         assert!(make_tts_provider(TtsProviderKind::SystemNative, None, None, &off).is_ok());
     }
@@ -412,8 +453,14 @@ mod tests {
         // Point at a closed local port → connection refused → Err (no real
         // network call to a cloud endpoint).
         let c = ElevenLabsClient::new(SecretString::from("k")).with_base_url("http://127.0.0.1:1");
-        let err = c.synth(&req("hi", "Rachel", TtsFormat::Mp3)).await.unwrap_err();
-        assert!(err.contains("elevenlabs"), "expected an elevenlabs error, got: {err}");
+        let err = c
+            .synth(&req("hi", "Rachel", TtsFormat::Mp3))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("elevenlabs"),
+            "expected an elevenlabs error, got: {err}"
+        );
     }
 
     struct MockTts;
@@ -446,7 +493,9 @@ mod tests {
         let seg = dir.path().join("tts.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
         let r = req("secret spoken words", "Rachel", TtsFormat::Mp3);
-        let resp = synth_and_audit(&MockTts, &r, Some(&writer), false).await.unwrap();
+        let resp = synth_and_audit(&MockTts, &r, Some(&writer), false)
+            .await
+            .unwrap();
         assert_eq!(resp.audio_bytes.len(), 2048);
         drop(writer);
         let _ = join.await;
@@ -467,7 +516,10 @@ mod tests {
                 assert_eq!(v["audio_bytes"], 2048);
                 assert_eq!(
                     v["input_hash"],
-                    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"secret spoken words"))
+                    format!(
+                        "{:016x}",
+                        xxhash_rust::xxh3::xxh3_64(b"secret spoken words")
+                    )
                 );
                 assert!(
                     !dec.payload.windows(6).any(|w| w == b"secret"),

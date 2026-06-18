@@ -220,13 +220,7 @@ mod tests {
     async fn check_package_fails_open_on_unreachable_host() {
         // Reserved-for-docs TEST-NET-1 (RFC 5737) on a dead port → connection
         // error → fail open (never block an install on a network blip).
-        let v = check_package_at(
-            "http://192.0.2.1:1/v1/query",
-            "anything",
-            "npm",
-            None,
-        )
-        .await;
+        let v = check_package_at("http://192.0.2.1:1/v1/query", "anything", "npm", None).await;
         assert!(
             matches!(v, OsvVerdict::Unknown { .. }),
             "an unreachable OSV host must fail open: {v:?}"

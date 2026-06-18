@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 /// A stored entity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -198,7 +198,9 @@ fn one_hop(conn: &Connection, id: i64) -> Result<Vec<(i64, String)>> {
          UNION \
          SELECT src_id, relation FROM idx_relations WHERE dst_id = ?1",
     )?;
-    let rows = stmt.query_map(params![id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+    let rows = stmt.query_map(params![id], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
@@ -255,16 +257,19 @@ pub fn get_neighbors(conn: &Connection, name: &str, max_depth: u32) -> Result<Ve
 /// Returns `(entities_deleted, relations_deleted)`.
 pub fn forget_entities_like(conn: &Connection, like_pattern: &str) -> Result<(i64, i64)> {
     let victim_ids: Vec<i64> = {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM idx_entities WHERE name COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM idx_entities WHERE name COLLATE NOCASE LIKE ?1 ESCAPE '\\'")?;
         let rows = stmt.query_map(params![like_pattern], |r| r.get::<_, i64>(0))?;
         rows.filter_map(|r| r.ok()).collect()
     };
     if victim_ids.is_empty() {
         return Ok((0, 0));
     }
-    let placeholders = victim_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let placeholders = victim_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let rels = conn.execute(
         &format!("DELETE FROM idx_relations WHERE src_id IN ({placeholders}) OR dst_id IN ({placeholders})"),
         rusqlite::params_from_iter(victim_ids.iter().chain(victim_ids.iter()).copied()),
@@ -295,8 +300,7 @@ pub struct Extraction {
     pub relations: Vec<(String, String, String)>,
 }
 
-const EXTRACTION_SYSTEM: &str =
-    "You are a precise knowledge-graph extractor. Output STRICT JSON only — no prose, \
+const EXTRACTION_SYSTEM: &str = "You are a precise knowledge-graph extractor. Output STRICT JSON only — no prose, \
      no markdown fences. Extract ONLY entities + relations explicitly stated in the text.";
 
 /// Build the extraction prompt. Pure — testable without a provider.
@@ -395,7 +399,10 @@ pub fn parse_extraction(response: &str) -> Result<Extraction> {
             )
         })
         .collect();
-    Ok(Extraction { entities, relations })
+    Ok(Extraction {
+        entities,
+        relations,
+    })
 }
 
 /// Run the LLM extraction for `text` through `provider`. Temperature 0 for
@@ -420,7 +427,11 @@ pub async fn entity_extract(
 /// Persist an [`Extraction`]: resolve/create every entity, then insert each
 /// relation (auto-creating any endpoint entity the entities list omitted).
 /// Returns `(entities_seen, relations_inserted)`.
-pub fn persist_extraction(conn: &Connection, ex: &Extraction, now_unix: i64) -> Result<(usize, usize)> {
+pub fn persist_extraction(
+    conn: &Connection,
+    ex: &Extraction,
+    now_unix: i64,
+) -> Result<(usize, usize)> {
     use std::collections::HashMap;
     let mut ids: HashMap<String, i64> = HashMap::new();
     for ef in &ex.entities {
@@ -488,7 +499,11 @@ mod tests {
         let a2 = resolve_or_create_entity(&c, "alice", "person", 200).unwrap(); // case-insensitive
         assert_eq!(a1, a2, "same entity");
         let sc: i64 = c
-            .query_row("SELECT source_count FROM idx_entities WHERE id = ?1", params![a1], |r| r.get(0))
+            .query_row(
+                "SELECT source_count FROM idx_entities WHERE id = ?1",
+                params![a1],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(sc, 2, "source_count bumped on re-resolve");
         assert!(resolve_or_create_entity(&c, "  ", "x", 1).is_err());
@@ -519,7 +534,10 @@ mod tests {
         insert_relation(&c, b, cc, "r", 1.0).unwrap();
         // depth 1 from A → only B.
         let d1 = get_neighbors(&c, "A", 1).unwrap();
-        assert_eq!(d1.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(), vec!["B"]);
+        assert_eq!(
+            d1.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(),
+            vec!["B"]
+        );
         // depth 2 from A → B then C.
         let d2 = get_neighbors(&c, "A", 2).unwrap();
         assert_eq!(d2.len(), 2);
@@ -534,7 +552,11 @@ mod tests {
         insert_relation(&c, a, b, "r", 1.0).unwrap();
         insert_relation(&c, a, b, "r", 0.5).unwrap();
         let w: f64 = c
-            .query_row("SELECT weight FROM idx_relations WHERE src_id=?1 AND dst_id=?2", params![a, b], |r| r.get(0))
+            .query_row(
+                "SELECT weight FROM idx_relations WHERE src_id=?1 AND dst_id=?2",
+                params![a, b],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((w - 1.5).abs() < 1e-9, "weight accumulates");
     }
@@ -555,7 +577,10 @@ mod tests {
         assert_eq!(ents, 1);
         assert_eq!(rels, 1, "the knows edge touching Alice is gone");
         assert!(resolve_entity_id(&c, "Alice").unwrap().is_none());
-        assert!(resolve_entity_id(&c, "Bob").unwrap().is_some(), "Bob survives");
+        assert!(
+            resolve_entity_id(&c, "Bob").unwrap().is_some(),
+            "Bob survives"
+        );
     }
 
     #[test]
@@ -569,7 +594,10 @@ mod tests {
         assert_eq!(ex.entities[1].name, "Mozilla");
         assert_eq!(ex.entities[1].etype, "unknown", "missing type → unknown");
         assert_eq!(ex.relations.len(), 1, "empty-src relation dropped");
-        assert_eq!(ex.relations[0], ("Alice".into(), "works at".into(), "Mozilla".into()));
+        assert_eq!(
+            ex.relations[0],
+            ("Alice".into(), "works at".into(), "Mozilla".into())
+        );
     }
 
     // ── MEM-14: attribute merge + source_count credibility ──────────────────
@@ -581,7 +609,11 @@ mod tests {
         a.insert("city".to_string(), "Berlin".to_string());
         let merged = merge_attributes("{\"role\":\"intern\"}", &a);
         let back: BTreeMap<String, String> = serde_json::from_str(&merged).unwrap();
-        assert_eq!(back.get("role").unwrap(), "engineer", "existing key overwritten");
+        assert_eq!(
+            back.get("role").unwrap(),
+            "engineer",
+            "existing key overwritten"
+        );
         assert_eq!(back.get("city").unwrap(), "Berlin", "new key added");
         // Unparseable existing → treated as empty, new keys still applied.
         let from_garbage = merge_attributes("not json", &a);
@@ -603,7 +635,11 @@ mod tests {
         assert_eq!(e.source_count, 2, "credibility bumped on re-sighting");
         let attrs: BTreeMap<String, String> = serde_json::from_str(&e.attributes).unwrap();
         assert_eq!(attrs.get("role").unwrap(), "engineer", "first attr kept");
-        assert_eq!(attrs.get("city").unwrap(), "Berlin", "second attr merged in");
+        assert_eq!(
+            attrs.get("city").unwrap(),
+            "Berlin",
+            "second attr merged in"
+        );
     }
 
     #[test]

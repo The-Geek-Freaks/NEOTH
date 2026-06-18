@@ -106,11 +106,17 @@ mod tests {
         // On a sane machine both are the same real nanosecond clock (within a
         // small call-to-call skew) and the i64 form is a real positive value
         // (the i64-nanos overflow is ~year 2262, far past any test machine).
-        assert!(ns_i > 1_700_000_000_000_000_000, "i64 nanos look real: {ns_i}");
+        assert!(
+            ns_i > 1_700_000_000_000_000_000,
+            "i64 nanos look real: {ns_i}"
+        );
         let diff = (ns_i as i128 - ns_u as i128).abs();
         // 60s window: a unit/sign bug is off by ≥1e3 or negative; the wide window
         // only tolerates scheduler stalls under heavy parallel test load.
-        assert!(diff < 60_000_000_000, "i64 + u64 nanos agree within 60s: {diff}");
+        assert!(
+            diff < 60_000_000_000,
+            "i64 + u64 nanos agree within 60s: {diff}"
+        );
     }
 
     #[test]
@@ -129,11 +135,23 @@ mod tests {
         // ms / 1000 == seconds within a generous 60s call-window skew (wide
         // enough to never flake under heavy parallel load; a unit bug is off by
         // orders of magnitude so the window size doesn't weaken the check).
-        assert!(ms / 1000 >= s - 60 && ms / 1000 <= s + 60, "ms u64 tracks secs: {ms}");
-        assert!(ms128 / 1000 >= (s as u128) - 60, "ms u128 tracks secs: {ms128}");
-        assert!(ns128 / 1_000_000_000 >= (s as u128) - 60, "ns u128 tracks secs: {ns128}");
+        assert!(
+            ms / 1000 >= s - 60 && ms / 1000 <= s + 60,
+            "ms u64 tracks secs: {ms}"
+        );
+        assert!(
+            ms128 / 1000 >= (s as u128) - 60,
+            "ms u128 tracks secs: {ms128}"
+        );
+        assert!(
+            ns128 / 1_000_000_000 >= (s as u128) - 60,
+            "ns u128 tracks secs: {ns128}"
+        );
         // The u64 and u128 millis forms are the same clock within skew.
         let diff = (ms128 as i128 - ms as i128).abs();
-        assert!(diff < 60_000, "ms u64 + u128 forms agree within 60s: {diff}");
+        assert!(
+            diff < 60_000,
+            "ms u64 + u128 forms agree within 60s: {diff}"
+        );
     }
 }

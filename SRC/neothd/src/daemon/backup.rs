@@ -273,7 +273,11 @@ mod tests {
         let home = dir.join("neoth");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(home.join("freedom.yaml"), "operator_id: sam\n").unwrap();
-        std::fs::write(home.join("credentials.yaml"), "anthropic_api_key: sk-secret\n").unwrap();
+        std::fs::write(
+            home.join("credentials.yaml"),
+            "anthropic_api_key: sk-secret\n",
+        )
+        .unwrap();
         std::fs::write(home.join("views.db"), b"\x00not really sqlite").unwrap();
         std::fs::write(home.join("tweaks.toml"), "banner = \"x\"\n").unwrap();
         let archive = home.join("archive").join("sessions").join("2026-05-14");
@@ -374,7 +378,10 @@ mod tests {
         std::fs::write(home.join("freedom.yaml"), "only this file").unwrap();
         let out = dir.path().join("backup.tar.gz");
         let n = write_backup(&home, &out, false, true).unwrap();
-        assert_eq!(n.included, 1, "only freedom.yaml is present in this fixture");
+        assert_eq!(
+            n.included, 1,
+            "only freedom.yaml is present in this fixture"
+        );
         assert!(!n.included_plaintext_credentials);
     }
 

@@ -215,8 +215,8 @@ pub async fn send_post(
 ) -> std::result::Result<String, ChannelError> {
     let base = base.trim_end_matches('/');
     let url = format!("{base}/api/v4/posts");
-    let client =
-        http_client::build_client().map_err(|e| ChannelError::Transport(format!("http client: {e}")))?;
+    let client = http_client::build_client()
+        .map_err(|e| ChannelError::Transport(format!("http client: {e}")))?;
     let payload = serde_json::to_vec(&serde_json::json!({
         "channel_id": channel_id,
         "message": message,
@@ -308,7 +308,10 @@ mod tests {
 
     #[test]
     fn ws_url_bare_host_defaults_to_tls() {
-        assert_eq!(mm_ws_url("mm.example.com"), "wss://mm.example.com/api/v4/websocket");
+        assert_eq!(
+            mm_ws_url("mm.example.com"),
+            "wss://mm.example.com/api/v4/websocket"
+        );
         assert_eq!(mm_ws_url("wss://x.io"), "wss://x.io/api/v4/websocket");
     }
 
@@ -371,7 +374,10 @@ mod tests {
     #[test]
     fn system_post_is_ignored() {
         assert!(matches!(
-            decode_frame(&posted_frame("u_alice", "alice joined", "system_join_channel"), "u_bot"),
+            decode_frame(
+                &posted_frame("u_alice", "alice joined", "system_join_channel"),
+                "u_bot"
+            ),
             MmFrame::Ignored
         ));
     }
@@ -427,7 +433,10 @@ mod tests {
 
     #[test]
     fn garbage_frame_is_parse_error() {
-        assert!(matches!(decode_frame("not json", "u_bot"), MmFrame::ParseError(_)));
+        assert!(matches!(
+            decode_frame("not json", "u_bot"),
+            MmFrame::ParseError(_)
+        ));
     }
 
     #[test]

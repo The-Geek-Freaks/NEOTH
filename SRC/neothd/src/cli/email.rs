@@ -92,17 +92,25 @@ pub async fn run_email(args: EmailArgs) -> Result<()> {
             port,
             dry_run,
             include_seen,
-        } => run_fetch(args.output, limit, username, host, port, dry_run, include_seen).await,
+        } => {
+            run_fetch(
+                args.output,
+                limit,
+                username,
+                host,
+                port,
+                dry_run,
+                include_seen,
+            )
+            .await
+        }
         EmailAction::Trust { action } => run_email_trust(action, args.output),
     }
 }
 
 /// Pure: apply an add/remove to a trusted-domains list (lowercased, trimmed,
 /// dedup-on-add). Returns the new list — the caller does the IO.
-fn apply_domain_op(
-    mut domains: Vec<String>,
-    op: &EmailTrustAction,
-) -> (Vec<String>, &'static str) {
+fn apply_domain_op(mut domains: Vec<String>, op: &EmailTrustAction) -> (Vec<String>, &'static str) {
     match op {
         EmailTrustAction::Add { domain } => {
             let d = domain.trim().trim_start_matches('.').to_ascii_lowercase();
@@ -187,8 +195,8 @@ fn write_trusted_domains(domains: &[String]) -> Result<()> {
     use std::io::Write;
     let path = crate::config::FreedomConfig::default_path();
     let mut root: serde_yaml::Value = if path.exists() {
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?
     } else {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
@@ -219,8 +227,8 @@ fn write_trusted_domains(domains: &[String]) -> Result<()> {
     }
     let tmp = path.with_extension("yaml.tmp");
     {
-        let mut f = std::fs::File::create(&tmp)
-            .with_context(|| format!("create {}", tmp.display()))?;
+        let mut f =
+            std::fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
         f.write_all(body.as_bytes())
             .with_context(|| format!("write {}", tmp.display()))?;
     }
@@ -240,10 +248,12 @@ async fn run_fetch(
 ) -> Result<()> {
     let username = username
         .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("NEOTH_IMAP_USERNAME").ok().filter(|s| !s.is_empty()))
-        .context(
-            "no IMAP username — pass --username <email> or set NEOTH_IMAP_USERNAME",
-        )?;
+        .or_else(|| {
+            std::env::var("NEOTH_IMAP_USERNAME")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+        .context("no IMAP username — pass --username <email> or set NEOTH_IMAP_USERNAME")?;
     let auth = resolve_auth(&username).await?;
     let cfg = ImapConnectionConfig {
         host,
@@ -365,7 +375,11 @@ async fn fetch_and_triage(
     // deterministic ReviewQueue verdict stands). No call is made for any
     // non-ReviewQueue email, so there is zero LLM cost on a clean inbox.
     let fcfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
-    if fcfg.email.llm_tiebreak && triaged.iter().any(|t| t.action == InboundAction::ReviewQueue) {
+    if fcfg.email.llm_tiebreak
+        && triaged
+            .iter()
+            .any(|t| t.action == InboundAction::ReviewQueue)
+    {
         // GOLD-ADOPT-21 — threat-level tiebreak is a classify-grade utility call;
         // route it to the fast/cheap `inference.utility_provider` when set.
         match crate::providers::from_config_for_utility(&fcfg).await {
@@ -447,7 +461,9 @@ async fn fetch_and_triage(
         }
         OutputFormat::Table => {
             if skipped > 0 {
-                println!("({skipped} already-seen message(s) skipped — pass --include-seen to re-triage)");
+                println!(
+                    "({skipped} already-seen message(s) skipped — pass --include-seen to re-triage)"
+                );
             }
             if triaged.is_empty() {
                 println!("(no new unseen messages)");
@@ -622,10 +638,14 @@ mod tests {
     use super::*;
 
     fn add(d: &str) -> EmailTrustAction {
-        EmailTrustAction::Add { domain: d.to_string() }
+        EmailTrustAction::Add {
+            domain: d.to_string(),
+        }
     }
     fn remove(d: &str) -> EmailTrustAction {
-        EmailTrustAction::Remove { domain: d.to_string() }
+        EmailTrustAction::Remove {
+            domain: d.to_string(),
+        }
     }
 
     #[test]
@@ -646,7 +666,8 @@ mod tests {
 
     #[test]
     fn trust_remove_reports_presence() {
-        let (d, verb) = apply_domain_op(vec!["acme.com".into(), "x.org".into()], &remove("acme.com"));
+        let (d, verb) =
+            apply_domain_op(vec!["acme.com".into(), "x.org".into()], &remove("acme.com"));
         assert_eq!(d, vec!["x.org"]);
         assert_eq!(verb, "removed");
         let (d2, verb2) = apply_domain_op(d, &remove("absent.com"));

@@ -122,8 +122,7 @@ pub fn load_channel_weights(home: &Path) -> ChannelWeights {
 pub fn save_channel_weights(home: &Path, weights: &ChannelWeights) -> Result<()> {
     let path = weights_path(home);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let body = serde_json::to_vec_pretty(weights).context("serialise channel_weights.json")?;
     let tmp = path.with_extension("json.tmp");
@@ -234,7 +233,8 @@ pub fn record_channel_acceptance_scoped(
     match row_index(&weights, channel, topic_hash) {
         Some(idx) => {
             let row = &mut weights.rows[idx];
-            row.success_count = apply_channel_decay(row.success_count, row.decay_anchor_unix, now_unix);
+            row.success_count =
+                apply_channel_decay(row.success_count, row.decay_anchor_unix, now_unix);
             row.success_count = (row.success_count + delta).min(MAX_CHANNEL_SUCCESS_COUNT);
             row.decay_anchor_unix = now_unix;
         }
@@ -295,7 +295,10 @@ mod tests {
             "a non-operator must NOT move the ranking under operator_only"
         );
         // No uuid on the inbound + operator pinned → not the operator → skip.
-        assert_eq!(learn_factor(S::OperatorOnly, None, Some("op"), &allow), None);
+        assert_eq!(
+            learn_factor(S::OperatorOnly, None, Some("op"), &allow),
+            None
+        );
     }
 
     #[test]
@@ -344,9 +347,22 @@ mod tests {
         record_channel_acceptance_scoped(dir.path(), "telegram", 2, 1000, NON_OPERATOR_TINY_FACTOR)
             .unwrap();
         let w = load_channel_weights(dir.path());
-        let full = w.rows.iter().find(|r| r.topic_hash == 1).unwrap().success_count;
-        let tiny = w.rows.iter().find(|r| r.topic_hash == 2).unwrap().success_count;
-        assert!(full > tiny, "full-factor delta must exceed the tiny-factor delta");
+        let full = w
+            .rows
+            .iter()
+            .find(|r| r.topic_hash == 1)
+            .unwrap()
+            .success_count;
+        let tiny = w
+            .rows
+            .iter()
+            .find(|r| r.topic_hash == 2)
+            .unwrap()
+            .success_count;
+        assert!(
+            full > tiny,
+            "full-factor delta must exceed the tiny-factor delta"
+        );
         assert!((tiny - MAX_CHANNEL_WEIGHT_DELTA * NON_OPERATOR_TINY_FACTOR).abs() < 1e-6);
     }
 
@@ -385,7 +401,10 @@ mod tests {
         }
         let fresh = load_channel_weight(dir.path(), "telegram", 7, 1000);
         let stale = load_channel_weight(dir.path(), "telegram", 7, 1000 + 60 * DAY);
-        assert!(stale < fresh, "60-day-stale weight {stale} must be < fresh {fresh}");
+        assert!(
+            stale < fresh,
+            "60-day-stale weight {stale} must be < fresh {fresh}"
+        );
     }
 
     #[test]
@@ -436,7 +455,11 @@ mod tests {
     #[test]
     fn wrong_schema_loads_empty() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(weights_path(dir.path()), br#"{"schema_version":999,"rows":[]}"#).unwrap();
+        std::fs::write(
+            weights_path(dir.path()),
+            br#"{"schema_version":999,"rows":[]}"#,
+        )
+        .unwrap();
         assert!(load_channel_weights(dir.path()).rows.is_empty());
     }
 

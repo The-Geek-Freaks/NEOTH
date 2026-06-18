@@ -71,8 +71,13 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        if let Err(e) =
-            run_once(&db_path, vault.clone(), wal_writer.as_ref(), provider.clone()).await
+        if let Err(e) = run_once(
+            &db_path,
+            vault.clone(),
+            wal_writer.as_ref(),
+            provider.clone(),
+        )
+        .await
         {
             tracing::warn!(
                 db = %db_path.display(),
@@ -211,7 +216,8 @@ pub async fn run_once(
     // so a nested `block_on` would deadlock. Local providers only (no cloud
     // billing for background consolidation); best-effort, never fails the pass.
     if let Some(p) = provider.as_ref() {
-        if crate::providers::is_local_provider(p.name()) && !report.days_needing_summary.is_empty() {
+        if crate::providers::is_local_provider(p.name()) && !report.days_needing_summary.is_empty()
+        {
             summarize_consolidated_days(db_path, p.as_ref(), &report.days_needing_summary).await;
         }
     }
@@ -261,15 +267,15 @@ async fn summarize_consolidated_days(
             None => continue,
         };
 
-        let summary = match crate::memory::warm_summarize::summarize_day_batch(provider, &all_events).await
-        {
-            Ok(s) if !s.is_empty() => s,
-            Ok(_) => continue,
-            Err(e) => {
-                tracing::debug!(error = %e, day = %day, "warm summarize failed (non-fatal)");
-                continue;
-            }
-        };
+        let summary =
+            match crate::memory::warm_summarize::summarize_day_batch(provider, &all_events).await {
+                Ok(s) if !s.is_empty() => s,
+                Ok(_) => continue,
+                Err(e) => {
+                    tracing::debug!(error = %e, day = %day, "warm summarize failed (non-fatal)");
+                    continue;
+                }
+            };
 
         let db = db_path.to_path_buf();
         let day_c = day.clone();

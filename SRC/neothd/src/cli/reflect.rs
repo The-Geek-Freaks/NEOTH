@@ -114,7 +114,9 @@ impl ReflectTopics {
 pub async fn run_reflect(args: ReflectArgs, output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     match args.action {
-        ReflectAction::TechNews { limit, max_gaps } => tech_news(&home, limit, max_gaps, output).await,
+        ReflectAction::TechNews { limit, max_gaps } => {
+            tech_news(&home, limit, max_gaps, output).await
+        }
         ReflectAction::Ignore { term } => add_topic(&home, &term, true, output),
         ReflectAction::Pin { term } => add_topic(&home, &term, false, output),
         ReflectAction::Forget { term } => forget_topic(&home, &term, output),
@@ -154,7 +156,9 @@ fn set_cadence(
         &topics,
         output,
         &if on {
-            format!("{label} ENABLED (daemon archives it + writes the {vault_note} if a vault is set)")
+            format!(
+                "{label} ENABLED (daemon archives it + writes the {vault_note} if a vault is set)"
+            )
         } else {
             format!("{label} disabled")
         },
@@ -172,13 +176,19 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
         DigestPeriod::Daily => (PeriodKind::Daily, date_tag_from_unix(now_unix), 1, 5),
         DigestPeriod::Yearly => (PeriodKind::Yearly, year_tag_from_unix(now_unix), 365, 10),
     };
-    let topics = crate::reflection::top_topics_in_days(&conn, now_ns, window, n)
-        .context("topic query")?;
+    let topics =
+        crate::reflection::top_topics_in_days(&conn, now_ns, window, n).context("topic query")?;
     let Some(refl) = periodic::build_reflection(kind, &tag, &topics, now_unix) else {
         if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
-            println!("{}", serde_json::json!({ "kind": kind.as_str(), "tag": tag, "written": false }));
+            println!(
+                "{}",
+                serde_json::json!({ "kind": kind.as_str(), "tag": tag, "written": false })
+            );
         } else {
-            println!("{} reflection {tag}: no topics in the window — nothing to summarise.", kind.vault_subdir());
+            println!(
+                "{} reflection {tag}: no topics in the window — nothing to summarise.",
+                kind.vault_subdir()
+            );
         }
         return Ok(());
     };
@@ -189,8 +199,9 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
     if let Ok(cfg) = FreedomConfig::load_from_default_path() {
         if let Some(vault) = cfg.obsidian_vault.as_deref() {
             let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
-            let o = periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
-                .context("Obsidian sync")?;
+            let o =
+                periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
+                    .context("Obsidian sync")?;
             if o.written {
                 obsidian_path = Some(o.target_path.display().to_string());
             }
@@ -294,13 +305,21 @@ fn add_topic(home: &std::path::Path, term: &str, ignore: bool, output: OutputFor
         anyhow::bail!("empty topic");
     }
     let mut topics = ReflectTopics::load(home);
-    let list = if ignore { &mut topics.ignore } else { &mut topics.pin };
+    let list = if ignore {
+        &mut topics.ignore
+    } else {
+        &mut topics.pin
+    };
     if !list.iter().any(|x| x.eq_ignore_ascii_case(&t)) {
         list.push(t.clone());
         list.sort();
     }
     topics.save(home)?;
-    emit_topics(&topics, output, &format!("{} `{t}`", if ignore { "ignoring" } else { "pinned" }));
+    emit_topics(
+        &topics,
+        output,
+        &format!("{} `{t}`", if ignore { "ignoring" } else { "pinned" }),
+    );
     Ok(())
 }
 
@@ -310,12 +329,20 @@ fn forget_topic(home: &std::path::Path, term: &str, output: OutputFormat) -> Res
     topics.ignore.retain(|x| !x.eq_ignore_ascii_case(&t));
     topics.pin.retain(|x| !x.eq_ignore_ascii_case(&t));
     topics.save(home)?;
-    emit_topics(&topics, output, &format!("forgot `{t}` (removed from ignore + pin)"));
+    emit_topics(
+        &topics,
+        output,
+        &format!("forgot `{t}` (removed from ignore + pin)"),
+    );
     Ok(())
 }
 
 fn show_topics(home: &std::path::Path, output: OutputFormat) -> Result<()> {
-    emit_topics(&ReflectTopics::load(home), output, "tech-currency topic lists");
+    emit_topics(
+        &ReflectTopics::load(home),
+        output,
+        "tech-currency topic lists",
+    );
     Ok(())
 }
 
@@ -335,23 +362,43 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
     println!("{headline}");
     println!(
         "  ignore: {}",
-        if topics.ignore.is_empty() { "—".to_string() } else { topics.ignore.join(", ") }
+        if topics.ignore.is_empty() {
+            "—".to_string()
+        } else {
+            topics.ignore.join(", ")
+        }
     );
     println!(
         "  pin   : {}",
-        if topics.pin.is_empty() { "—".to_string() } else { topics.pin.join(", ") }
+        if topics.pin.is_empty() {
+            "—".to_string()
+        } else {
+            topics.pin.join(", ")
+        }
     );
     println!(
         "  weekly: {}",
-        if topics.weekly_refresh { "on" } else { "off — `neoth reflect weekly`" }
+        if topics.weekly_refresh {
+            "on"
+        } else {
+            "off — `neoth reflect weekly`"
+        }
     );
     println!(
         "  daily : {}",
-        if topics.daily_notes { "on" } else { "off — `neoth reflect daily`" }
+        if topics.daily_notes {
+            "on"
+        } else {
+            "off — `neoth reflect daily`"
+        }
     );
     println!(
         "  yearly: {}",
-        if topics.yearly_summary { "on" } else { "off — `neoth reflect yearly`" }
+        if topics.yearly_summary {
+            "on"
+        } else {
+            "off — `neoth reflect yearly`"
+        }
     );
 }
 

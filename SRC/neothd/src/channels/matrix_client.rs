@@ -71,9 +71,8 @@ pub async fn login_or_restore(
     if session_file.exists() {
         let raw = std::fs::read_to_string(&session_file)
             .with_context(|| format!("read matrix session {}", session_file.display()))?;
-        let session: MatrixSession = serde_json::from_str(&raw).context(
-            "parse persisted matrix session (delete the file to force a fresh login)",
-        )?;
+        let session: MatrixSession = serde_json::from_str(&raw)
+            .context("parse persisted matrix session (delete the file to force a fresh login)")?;
         client
             .matrix_auth()
             .restore_session(session, matrix_sdk::store::RoomLoadSettings::default())

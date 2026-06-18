@@ -25,11 +25,11 @@ pub mod payloads_u04;
 pub mod payloads_w08;
 pub mod proof_bundle;
 pub mod recovery;
-/// KF-03 — operator proof-bundle signing key (ed25519, DAU-safe auto-managed).
-pub mod signing;
 pub mod redact;
 pub mod scan;
 pub mod segment_header;
+/// KF-03 — operator proof-bundle signing key (ed25519, DAU-safe auto-managed).
+pub mod signing;
 pub mod snapshot;
 pub mod types;
 /// Round-3 v0.4 QU-08 — derived read-only views over the WAL

@@ -7,11 +7,15 @@ use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
 use super::{
-    k4b_telegram_prompt_text, WizardStep, validate_telegram_token,
-    write_credential_import_sidecar, InitArgs, WizardState,
+    InitArgs, WizardState, WizardStep, k4b_telegram_prompt_text, validate_telegram_token,
+    write_credential_import_sidecar,
 };
 
-pub(crate) async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) async fn step6_channel(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 6: channel");
 
     // K-4b (Session 21): probe `pear` once so the prompt copy reflects
@@ -476,7 +480,11 @@ pub(crate) async fn step6e_n8n_install(
 /// later `neoth-migrate apply --confirm` knows where to look. Never
 /// auto-applies — importing prior memory is heavyweight + irreversible
 /// once the WAL frames land.
-pub(crate) fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step6f_import_memory(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 6f: prior-ai memory import intent");
 
     let path = if !interactive {
@@ -576,7 +584,11 @@ pub(crate) fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &m
 ///
 /// Non-interactive runs skip the step entirely — credential
 /// import requires explicit operator intent.
-pub(crate) async fn step6g_credential_import(args: &InitArgs, interactive: bool, neoth_dir: &std::path::Path) {
+pub(crate) async fn step6g_credential_import(
+    args: &InitArgs,
+    interactive: bool,
+    neoth_dir: &std::path::Path,
+) {
     debug!("wizard step 6g: credential import (C-05)");
     if !interactive || args.non_interactive {
         debug!("skipping credential import in non-interactive mode");
@@ -710,7 +722,11 @@ pub(crate) async fn step6g_credential_import(args: &InitArgs, interactive: bool,
 /// Non-interactive runs skip entirely. Operators who want to
 /// audit the chain without prompts use
 /// `neoth wizard install --dry-run` (CLI surface in W-05b).
-pub(crate) fn step6h_install_recommended(args: &InitArgs, interactive: bool, neoth_dir: &std::path::Path) {
+pub(crate) fn step6h_install_recommended(
+    args: &InitArgs,
+    interactive: bool,
+    neoth_dir: &std::path::Path,
+) {
     debug!("wizard step 6h: install-command preview (W-05)");
     if !interactive || args.non_interactive {
         debug!("skipping install-command preview in non-interactive mode");

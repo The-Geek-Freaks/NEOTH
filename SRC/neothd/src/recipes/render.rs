@@ -26,7 +26,10 @@ pub struct RenderedRecipe {
 
 /// Validate the supplied params against the spec, resolve defaults, type-check,
 /// and substitute. `supplied` is the operator's `k=v` map.
-pub fn render(spec: &RecipeSpec, supplied: &BTreeMap<String, String>) -> Result<RenderedRecipe, RecipeError> {
+pub fn render(
+    spec: &RecipeSpec,
+    supplied: &BTreeMap<String, String>,
+) -> Result<RenderedRecipe, RecipeError> {
     spec.validate_structure()?;
 
     // Resolve + type-check each declared parameter into the substitution map.
@@ -166,19 +169,25 @@ mod tests {
     use super::*;
 
     fn params(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn renders_required_param() {
-        let spec = RecipeSpec::parse("name: g\nprompt: \"Hi {{who}}!\"\nparameters:\n  - key: who\n").unwrap();
+        let spec =
+            RecipeSpec::parse("name: g\nprompt: \"Hi {{who}}!\"\nparameters:\n  - key: who\n")
+                .unwrap();
         let r = render(&spec, &params(&[("who", "Alex")])).unwrap();
         assert_eq!(r.prompt, "Hi Alex!");
     }
 
     #[test]
     fn missing_required_errors() {
-        let spec = RecipeSpec::parse("name: g\nprompt: \"{{who}}\"\nparameters:\n  - key: who\n").unwrap();
+        let spec =
+            RecipeSpec::parse("name: g\nprompt: \"{{who}}\"\nparameters:\n  - key: who\n").unwrap();
         assert_eq!(
             render(&spec, &params(&[])).unwrap_err(),
             RecipeError::MissingRequired("who".into())
@@ -192,7 +201,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(render(&spec, &params(&[])).unwrap().prompt, "depth 3");
-        assert_eq!(render(&spec, &params(&[("d", "9")])).unwrap().prompt, "depth 9");
+        assert_eq!(
+            render(&spec, &params(&[("d", "9")])).unwrap().prompt,
+            "depth 9"
+        );
     }
 
     #[test]
@@ -214,8 +226,14 @@ mod tests {
             "name: g\nprompt: \"{{b}}\"\nparameters:\n  - key: b\n    input_type: boolean\n",
         )
         .unwrap();
-        assert_eq!(render(&spec, &params(&[("b", "YES")])).unwrap().prompt, "true");
-        assert_eq!(render(&spec, &params(&[("b", "0")])).unwrap().prompt, "false");
+        assert_eq!(
+            render(&spec, &params(&[("b", "YES")])).unwrap().prompt,
+            "true"
+        );
+        assert_eq!(
+            render(&spec, &params(&[("b", "0")])).unwrap().prompt,
+            "false"
+        );
         assert!(render(&spec, &params(&[("b", "maybe")])).is_err());
     }
 
@@ -225,7 +243,10 @@ mod tests {
             "name: g\nprompt: \"{{m}}\"\nparameters:\n  - key: m\n    input_type: select\n    options: [fast, thorough]\n",
         )
         .unwrap();
-        assert_eq!(render(&spec, &params(&[("m", "fast")])).unwrap().prompt, "fast");
+        assert_eq!(
+            render(&spec, &params(&[("m", "fast")])).unwrap().prompt,
+            "fast"
+        );
         assert!(matches!(
             render(&spec, &params(&[("m", "medium")])).unwrap_err(),
             RecipeError::BadSelect(..)
@@ -245,8 +266,13 @@ mod tests {
 
     #[test]
     fn spaced_token_form_substitutes() {
-        let spec = RecipeSpec::parse("name: g\nprompt: \"Hi {{ who }}!\"\nparameters:\n  - key: who\n").unwrap();
-        assert_eq!(render(&spec, &params(&[("who", "Bob")])).unwrap().prompt, "Hi Bob!");
+        let spec =
+            RecipeSpec::parse("name: g\nprompt: \"Hi {{ who }}!\"\nparameters:\n  - key: who\n")
+                .unwrap();
+        assert_eq!(
+            render(&spec, &params(&[("who", "Bob")])).unwrap().prompt,
+            "Hi Bob!"
+        );
     }
 
     #[test]
@@ -268,7 +294,10 @@ mod tests {
         )
         .unwrap();
         let r = render(&spec, &params(&[("a", "{{b}}"), ("b", "X")])).unwrap();
-        assert_eq!(r.prompt, "{{b}}-X", "a's value must stay literal, not become X-X");
+        assert_eq!(
+            r.prompt, "{{b}}-X",
+            "a's value must stay literal, not become X-X"
+        );
     }
 
     #[test]

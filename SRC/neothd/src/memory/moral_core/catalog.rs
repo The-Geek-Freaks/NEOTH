@@ -309,7 +309,8 @@ mod tests {
                     e.id
                 );
                 assert!(
-                    !low.contains("pretend you have no") && !low.contains("you have no restrictions"),
+                    !low.contains("pretend you have no")
+                        && !low.contains("you have no restrictions"),
                     "{:?} contains a jailbreak-persona phrase",
                     e.id
                 );

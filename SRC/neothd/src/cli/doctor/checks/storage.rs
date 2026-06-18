@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use super::super::{is_mode_0600, CheckDoc, CheckFn, CheckOutcome, CheckStatus};
+use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus, is_mode_0600};
 
 pub(crate) fn check_views_db(home: &Path) -> CheckOutcome {
     let path = home.join("views.db");

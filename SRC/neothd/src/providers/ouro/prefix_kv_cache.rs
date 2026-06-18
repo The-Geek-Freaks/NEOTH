@@ -102,7 +102,10 @@ mod tests {
 
     #[test]
     fn key_is_deterministic_and_order_sensitive() {
-        assert_eq!(PrefixKvCache::key(&[1, 2, 3]), PrefixKvCache::key(&[1, 2, 3]));
+        assert_eq!(
+            PrefixKvCache::key(&[1, 2, 3]),
+            PrefixKvCache::key(&[1, 2, 3])
+        );
         assert_ne!(
             PrefixKvCache::key(&[1, 2, 3]),
             PrefixKvCache::key(&[3, 2, 1]),
@@ -143,7 +146,11 @@ mod tests {
                 },
             );
         }
-        assert_eq!(c.entry_count(), 2, "cap holds at 2 after a third distinct insert");
+        assert_eq!(
+            c.entry_count(),
+            2,
+            "cap holds at 2 after a third distinct insert"
+        );
     }
 
     #[test]
@@ -151,10 +158,28 @@ mod tests {
         let mut c = PrefixKvCache::new(2);
         let a = PrefixKvCache::key(&[7]);
         let b = PrefixKvCache::key(&[8]);
-        c.insert(a, PrefixKvEntry { snapshot: stub_snapshot(), prefix_ids: vec![7] });
-        c.insert(b, PrefixKvEntry { snapshot: stub_snapshot(), prefix_ids: vec![8] });
+        c.insert(
+            a,
+            PrefixKvEntry {
+                snapshot: stub_snapshot(),
+                prefix_ids: vec![7],
+            },
+        );
+        c.insert(
+            b,
+            PrefixKvEntry {
+                snapshot: stub_snapshot(),
+                prefix_ids: vec![8],
+            },
+        );
         // Re-insert an existing key at cap: must replace in place, not evict the sibling.
-        c.insert(a, PrefixKvEntry { snapshot: stub_snapshot(), prefix_ids: vec![7] });
+        c.insert(
+            a,
+            PrefixKvEntry {
+                snapshot: stub_snapshot(),
+                prefix_ids: vec![7],
+            },
+        );
         assert_eq!(c.entry_count(), 2);
         assert!(c.get(a).is_some() && c.get(b).is_some());
     }

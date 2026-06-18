@@ -200,11 +200,10 @@ pub fn parse_safe_mode(json: &str) -> SafeModeSnapshot {
                 .collect()
         })
         .unwrap_or_default();
-    let engaged_count = v
-        .get("engaged_count")
-        .and_then(|c| c.as_i64())
-        .unwrap_or_else(|| rails.iter().filter(|r| r.engaged).count() as i64)
-        as i32;
+    let engaged_count =
+        v.get("engaged_count")
+            .and_then(|c| c.as_i64())
+            .unwrap_or_else(|| rails.iter().filter(|r| r.engaged).count() as i64) as i32;
     let total = v
         .get("total")
         .and_then(|t| t.as_i64())
@@ -273,7 +272,11 @@ pub fn parse_trust(json: &str) -> TrustSnapshot {
     let gated_examples = v
         .pointer("/autonomy/gated_examples")
         .and_then(|x| x.as_array())
-        .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     // Privacy switches: a flat object of mixed bool/string values — render each
@@ -423,7 +426,11 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
         .map(|r| TrustRow {
             label: r.label,
             // cached_models values are bools (on/off) → cached/missing.
-            value: if r.value == "on" { "cached".to_string() } else { "not cached".to_string() },
+            value: if r.value == "on" {
+                "cached".to_string()
+            } else {
+                "not cached".to_string()
+            },
         })
         .collect();
 
@@ -491,10 +498,14 @@ pub fn parse_cluster_topology(json: &str) -> Vec<ClusterPeerRow> {
                 None => "---".to_string(),
             };
             let stability_pct = {
-                let score = p.get("stability_score").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                let score = p
+                    .get("stability_score")
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0);
                 format!("{:.0}%", (score * 100.0).clamp(0.0, 100.0))
             };
-            let last_seen = fmt_peer_last_seen(p.get("last_seen_age_secs").and_then(|x| x.as_i64()));
+            let last_seen =
+                fmt_peer_last_seen(p.get("last_seen_age_secs").and_then(|x| x.as_i64()));
             ClusterPeerRow {
                 label,
                 addr: s("addr"),
@@ -616,7 +627,11 @@ pub fn parse_council_budget(json: &str) -> CouncilBudgetPanel {
                 },
                 TrustRow {
                     label: "exhausted last message".to_string(),
-                    value: if r.get("exhausted_last_msg").and_then(|x| x.as_bool()).unwrap_or(false) {
+                    value: if r
+                        .get("exhausted_last_msg")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false)
+                    {
                         "yes".to_string()
                     } else {
                         "no".to_string()
@@ -886,14 +901,20 @@ pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
     }
     let creds: MinimalCreds = serde_yaml::from_str(yaml).unwrap_or_default();
     let present = |o: &Option<String>| o.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
-    let row = |name: &str, connected: bool| ChannelStatus { name: name.into(), connected };
+    let row = |name: &str, connected: bool| ChannelStatus {
+        name: name.into(),
+        connected,
+    };
     vec![
         row("telegram", present(&creds.telegram_token)),
         row("whatsapp", present(&creds.whatsapp_token)),
         row("slack", present(&creds.slack_bot_token)),
         row("discord", present(&creds.discord_bot_token)),
         row("signal", present(&creds.signal_phone_number)),
-        row("matrix", present(&creds.matrix_access_token) || present(&creds.matrix_password)),
+        row(
+            "matrix",
+            present(&creds.matrix_access_token) || present(&creds.matrix_password),
+        ),
         row("line", present(&creds.line_channel_access_token)),
         row("irc", present(&creds.irc_server)),
         row("mattermost", present(&creds.mattermost_token)),
@@ -972,7 +993,10 @@ pub fn parse_profile_presets(json: &str) -> Vec<ProfilePresetRow> {
                             .and_then(|d| d.as_str())
                             .unwrap_or("")
                             .to_string(),
-                        recommended: p.get("recommended").and_then(|r| r.as_bool()).unwrap_or(false),
+                        recommended: p
+                            .get("recommended")
+                            .and_then(|r| r.as_bool())
+                            .unwrap_or(false),
                         active: p.get("active").and_then(|a| a.as_bool()).unwrap_or(false),
                     })
                 })
@@ -997,7 +1021,11 @@ pub fn parse_provider_ids(json: &str) -> Vec<String> {
         return Vec::new();
     };
     arr.iter()
-        .filter(|p| p.get("implemented").and_then(|i| i.as_bool()).unwrap_or(true))
+        .filter(|p| {
+            p.get("implemented")
+                .and_then(|i| i.as_bool())
+                .unwrap_or(true)
+        })
         .filter_map(|p| p.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
         .collect()
 }
@@ -1025,7 +1053,11 @@ pub fn parse_catalog_model_ids(json: &str, provider: &str) -> Vec<String> {
     };
     models
         .iter()
-        .filter(|m| !m.get("deprecated").and_then(|d| d.as_bool()).unwrap_or(false))
+        .filter(|m| {
+            !m.get("deprecated")
+                .and_then(|d| d.as_bool())
+                .unwrap_or(false)
+        })
         .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
         .collect()
 }
@@ -1066,7 +1098,10 @@ mod tests {
         ]}}}"#;
         assert_eq!(
             parse_catalog_model_ids(json, "anthropic_api"),
-            vec!["claude-opus-4-8".to_string(), "claude-sonnet-4-6".to_string()]
+            vec![
+                "claude-opus-4-8".to_string(),
+                "claude-sonnet-4-6".to_string()
+            ]
         );
     }
 
@@ -1076,15 +1111,24 @@ mod tests {
             "anthropic_api":{"models":[{"id":"old","deprecated":true},{"id":"new","deprecated":false}]},
             "gemini_api":{"models":[{"id":"g"}]}
         }}"#;
-        assert_eq!(parse_catalog_model_ids(json, "anthropic_api"), vec!["new".to_string()]);
-        assert_eq!(parse_catalog_model_ids(json, "gemini_api"), vec!["g".to_string()]);
+        assert_eq!(
+            parse_catalog_model_ids(json, "anthropic_api"),
+            vec!["new".to_string()]
+        );
+        assert_eq!(
+            parse_catalog_model_ids(json, "gemini_api"),
+            vec!["g".to_string()]
+        );
     }
 
     #[test]
     fn parse_catalog_model_ids_empty_on_malformed_or_absent() {
         assert!(parse_catalog_model_ids("not json", "anthropic_api").is_empty());
         assert!(parse_catalog_model_ids(r#"{"providers":{}}"#, "anthropic_api").is_empty());
-        assert!(parse_catalog_model_ids(r#"{"providers":{"x":{"models":[{"id":"m"}]}}}"#, "absent").is_empty());
+        assert!(
+            parse_catalog_model_ids(r#"{"providers":{"x":{"models":[{"id":"m"}]}}}"#, "absent")
+                .is_empty()
+        );
     }
 
     // ── local model recommend parser (Hemispheres model picker) ───────────
@@ -1130,15 +1174,45 @@ mod tests {
         assert!(t.autonomy_behavior.contains("Allow"));
         assert_eq!(t.gated_examples.len(), 2);
         // privacy: bool→on/off, string verbatim; sorted by key.
-        assert_eq!(t.privacy[0], TrustRow { label: "channel_weight_scope".into(), value: "operator_only".into() });
-        assert!(t.privacy.iter().any(|r| r.label == "omi_ingest" && r.value == "off"));
-        assert!(t.privacy.iter().any(|r| r.label == "live_delivery_edits" && r.value == "on"));
+        assert_eq!(
+            t.privacy[0],
+            TrustRow {
+                label: "channel_weight_scope".into(),
+                value: "operator_only".into()
+            }
+        );
+        assert!(
+            t.privacy
+                .iter()
+                .any(|r| r.label == "omi_ingest" && r.value == "off")
+        );
+        assert!(
+            t.privacy
+                .iter()
+                .any(|r| r.label == "live_delivery_edits" && r.value == "on")
+        );
         // recovery: *_present → present/missing.
-        assert!(t.recovery.iter().any(|r| r.label == "hmac_key_present" && r.value == "present"));
-        assert!(t.recovery.iter().any(|r| r.label == "proof_key_present" && r.value == "missing"));
+        assert!(
+            t.recovery
+                .iter()
+                .any(|r| r.label == "hmac_key_present" && r.value == "present")
+        );
+        assert!(
+            t.recovery
+                .iter()
+                .any(|r| r.label == "proof_key_present" && r.value == "missing")
+        );
         // ledger numbers render as strings.
-        assert!(t.ledger.iter().any(|r| r.label == "segments" && r.value == "787"));
-        assert!(t.ledger.iter().any(|r| r.label == "bad_frames" && r.value == "1"));
+        assert!(
+            t.ledger
+                .iter()
+                .any(|r| r.label == "segments" && r.value == "787")
+        );
+        assert!(
+            t.ledger
+                .iter()
+                .any(|r| r.label == "bad_frames" && r.value == "1")
+        );
     }
 
     #[test]
@@ -1147,7 +1221,13 @@ mod tests {
         assert_eq!(parse_trust("{}"), TrustSnapshot::default());
         // A future switch the CLI adds shows up generically (forward-compatible).
         let t = parse_trust(r#"{"privacy_switches":{"some_future_switch":true}}"#);
-        assert_eq!(t.privacy, vec![TrustRow { label: "some_future_switch".into(), value: "on".into() }]);
+        assert_eq!(
+            t.privacy,
+            vec![TrustRow {
+                label: "some_future_switch".into(),
+                value: "on".into()
+            }]
+        );
     }
 
     // ── SL-03 resource panel parser ───────────────────────────────────────
@@ -1162,21 +1242,34 @@ mod tests {
             "cached_models":{"qwen2_5_3b":true,"clip_vit_b32":false}
         }"#;
         let h = parse_hardware(json);
-        assert_eq!(h.cpu, "AMD Ryzen Threadripper PRO 5965WX — 24c/48t @ 4700 MHz");
+        assert_eq!(
+            h.cpu,
+            "AMD Ryzen Threadripper PRO 5965WX — 24c/48t @ 4700 MHz"
+        );
         assert_eq!(h.memory, "224 / 255 GiB available");
         assert_eq!(h.accelerator, "cuda — GPU path active");
         assert_eq!(h.vram, "1405 / 24576 MiB used (5%)");
         assert!((h.vram_fraction - 0.057169).abs() < 1e-4);
         assert!(h.disk.starts_with("108 / 1675 GiB free (C:"));
-        assert!(h.models.iter().any(|r| r.label == "qwen2_5_3b" && r.value == "cached"));
-        assert!(h.models.iter().any(|r| r.label == "clip_vit_b32" && r.value == "not cached"));
+        assert!(
+            h.models
+                .iter()
+                .any(|r| r.label == "qwen2_5_3b" && r.value == "cached")
+        );
+        assert!(
+            h.models
+                .iter()
+                .any(|r| r.label == "clip_vit_b32" && r.value == "not cached")
+        );
     }
 
     #[test]
     fn parse_hardware_robust_and_no_gpu() {
         assert_eq!(parse_hardware("nope"), HardwareSnapshot::default());
         // No vram node → explicit "(no GPU detected)".
-        let h = parse_hardware(r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#);
+        let h = parse_hardware(
+            r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#,
+        );
         assert_eq!(h.vram, "(no GPU detected)");
         assert_eq!(h.accelerator, "");
         // No vram node → fraction 0.0 (meter hidden).
@@ -1269,7 +1362,8 @@ mod tests {
     #[test]
     fn parse_council_budget_with_and_without_runtime() {
         // No debate yet → headlines set, no runtime rows.
-        let b = parse_council_budget(r#"{"configured_cap":15,"daily_usd_cap":null,"runtime":null}"#);
+        let b =
+            parse_council_budget(r#"{"configured_cap":15,"daily_usd_cap":null,"runtime":null}"#);
         assert_eq!(b.configured_cap, "15 calls / message");
         assert_eq!(b.daily_usd_cap, "no daily USD cap");
         assert!(b.last_debate.is_empty());
@@ -1280,9 +1374,21 @@ mod tests {
         );
         assert_eq!(b.configured_cap, "3 calls / message");
         assert_eq!(b.daily_usd_cap, "$5.00 / day");
-        assert!(b.last_debate.iter().any(|r| r.label == "used last message" && r.value == "2 / 3"));
-        assert!(b.last_debate.iter().any(|r| r.label == "exhausted last message" && r.value == "no"));
-        assert!(b.last_debate.iter().any(|r| r.label == "exhaustions (rolling)" && r.value == "1"));
+        assert!(
+            b.last_debate
+                .iter()
+                .any(|r| r.label == "used last message" && r.value == "2 / 3")
+        );
+        assert!(
+            b.last_debate
+                .iter()
+                .any(|r| r.label == "exhausted last message" && r.value == "no")
+        );
+        assert!(
+            b.last_debate
+                .iter()
+                .any(|r| r.label == "exhaustions (rolling)" && r.value == "1")
+        );
     }
 
     /// GR-061: above the defensive cap the exponent label and the computed
@@ -1308,7 +1414,11 @@ mod tests {
         assert!(flat.depth_cost_warning.is_empty());
 
         let deep = parse_council_budget(r#"{"configured_cap":3,"max_recursion_depth":4}"#);
-        assert!(deep.depth_cost_warning.contains("81"), "{}", deep.depth_cost_warning);
+        assert!(
+            deep.depth_cost_warning.contains("81"),
+            "{}",
+            deep.depth_cost_warning
+        );
         assert!(deep.depth_cost_warning.contains("council depth 4"));
 
         // Missing field → no warning (robust default).
@@ -1326,7 +1436,15 @@ mod tests {
         ]"#;
         let rows = parse_profile_presets(json);
         assert_eq!(rows.len(), 2, "name-less entry skipped");
-        assert_eq!(rows[0], ProfilePresetRow { name: "lowkey".into(), description: "casual".into(), recommended: true, active: true });
+        assert_eq!(
+            rows[0],
+            ProfilePresetRow {
+                name: "lowkey".into(),
+                description: "casual".into(),
+                recommended: true,
+                active: true
+            }
+        );
         assert_eq!(rows[1].name, "formal");
         assert!(!rows[1].active && !rows[1].recommended);
     }
@@ -1342,7 +1460,10 @@ mod tests {
     fn parse_known_and_unknown() {
         assert_eq!(parse_complexity_level("minimal"), ComplexityLevel::Minimal);
         assert_eq!(parse_complexity_level("  FULL "), ComplexityLevel::Full);
-        assert_eq!(parse_complexity_level("standard"), ComplexityLevel::Standard);
+        assert_eq!(
+            parse_complexity_level("standard"),
+            ComplexityLevel::Standard
+        );
         assert_eq!(parse_complexity_level(""), ComplexityLevel::Standard);
         assert_eq!(parse_complexity_level("garbage"), ComplexityLevel::Standard);
     }
@@ -1357,7 +1478,10 @@ mod tests {
     fn minimal_shows_only_beginner_essentials() {
         let p = panels_for(ComplexityLevel::Minimal);
         // Shown: the 3 a beginner needs.
-        assert!(p.show_channels, "beginner needs channels to connect Telegram");
+        assert!(
+            p.show_channels,
+            "beginner needs channels to connect Telegram"
+        );
         assert!(p.show_privacy, "autonomy level is beginner-critical");
         assert!(p.show_config, "provider choice is beginner-critical");
         // Hidden: everything advanced.
@@ -1428,8 +1552,14 @@ mod tests {
         };
         let (mf, sf, ff) = (fields(&m), fields(&s), fields(&f));
         for i in 0..mf.len() {
-            assert!(!mf[i] || sf[i], "Standard hides a panel Minimal showed (idx {i})");
-            assert!(!sf[i] || ff[i], "Full hides a panel Standard showed (idx {i})");
+            assert!(
+                !mf[i] || sf[i],
+                "Standard hides a panel Minimal showed (idx {i})"
+            );
+            assert!(
+                !sf[i] || ff[i],
+                "Full hides a panel Standard showed (idx {i})"
+            );
         }
     }
 
@@ -1553,14 +1683,19 @@ mod tests {
         assert_eq!(s.bindings[0].model, "sonnet");
         assert!(s.bindings[0].has_key);
         assert_eq!(s.bindings[1].model, "", "null model -> empty");
-        assert_eq!(s.bindings[2].provider, "(unset)", "null provider -> (unset)");
+        assert_eq!(
+            s.bindings[2].provider, "(unset)",
+            "null provider -> (unset)"
+        );
     }
 
     #[test]
     fn parse_hemispheres_malformed_is_empty() {
         assert_eq!(parse_hemispheres("nope"), HemispheresSnapshot::default());
         // role-less entry skipped.
-        let s = parse_hemispheres(r#"{"mode":"single","roles":[{"provider":"x"},{"role":"left","provider":"y"}]}"#);
+        let s = parse_hemispheres(
+            r#"{"mode":"single","roles":[{"provider":"x"},{"role":"left","provider":"y"}]}"#,
+        );
         assert_eq!(s.bindings.len(), 1);
         assert_eq!(s.bindings[0].role, "left");
     }
@@ -1585,7 +1720,10 @@ mod tests {
     #[test]
     fn parse_skills_malformed_and_non_array_is_empty() {
         assert!(parse_skills("nope").is_empty());
-        assert!(parse_skills(r#"{"id":"x"}"#).is_empty(), "object, not array -> empty");
+        assert!(
+            parse_skills(r#"{"id":"x"}"#).is_empty(),
+            "object, not array -> empty"
+        );
         // id-less entry skipped.
         let rows = parse_skills(r#"[{"description":"no id"},{"id":"ok"}]"#);
         assert_eq!(rows.len(), 1);
@@ -1612,7 +1750,10 @@ mod tests {
     #[test]
     fn parse_plugins_malformed_is_empty() {
         assert!(parse_plugins("nope").is_empty());
-        assert!(parse_plugins(r#"{"id":"x"}"#).is_empty(), "object not array");
+        assert!(
+            parse_plugins(r#"{"id":"x"}"#).is_empty(),
+            "object not array"
+        );
         assert_eq!(parse_plugins(r#"[{"name":"no id"},{"id":"ok"}]"#).len(), 1);
     }
 
@@ -1633,7 +1774,9 @@ mod tests {
 
     #[test]
     fn parse_memory_size_derives_total_and_skips_pathless() {
-        let s = parse_memory_size(r#"{"blocks":[{"source":"x","path":"/p","bytes":5},{"source":"y","bytes":9}]}"#);
+        let s = parse_memory_size(
+            r#"{"blocks":[{"source":"x","path":"/p","bytes":5},{"source":"y","bytes":9}]}"#,
+        );
         assert_eq!(s.blocks.len(), 1, "path-less block skipped");
         assert_eq!(s.total_bytes, 5, "derived from present blocks");
         assert_eq!(parse_memory_size("nope"), MemorySnapshot::default());
@@ -1652,9 +1795,23 @@ mod tests {
         assert!(!by("whatsapp"), "absent -> disconnected");
         assert!(!by("keet"));
         // Every canonical messaging ChannelKind has a row (whatsapp collapsed).
-        for ch in ["telegram", "whatsapp", "slack", "discord", "signal", "matrix",
-                   "line", "irc", "mattermost", "twitch", "keet"] {
-            assert!(rows.iter().any(|c| c.name == ch), "missing channel row: {ch}");
+        for ch in [
+            "telegram",
+            "whatsapp",
+            "slack",
+            "discord",
+            "signal",
+            "matrix",
+            "line",
+            "irc",
+            "mattermost",
+            "twitch",
+            "keet",
+        ] {
+            assert!(
+                rows.iter().any(|c| c.name == ch),
+                "missing channel row: {ch}"
+            );
         }
         // The connected bool is all that's exposed — no token value in the struct.
         assert_eq!(rows.len(), 11);
@@ -1663,8 +1820,14 @@ mod tests {
     #[test]
     fn channel_status_empty_token_is_disconnected_and_malformed_is_all_off() {
         let rows = channel_status_from_credentials_yaml("telegram_token: \"  \"\n");
-        assert!(!rows.iter().find(|c| c.name == "telegram").unwrap().connected,
-            "whitespace-only token -> disconnected");
+        assert!(
+            !rows
+                .iter()
+                .find(|c| c.name == "telegram")
+                .unwrap()
+                .connected,
+            "whitespace-only token -> disconnected"
+        );
         // Malformed YAML -> all disconnected, never a panic.
         let all = channel_status_from_credentials_yaml("%%% not yaml %%%");
         assert!(all.iter().all(|c| !c.connected));
@@ -1710,13 +1873,20 @@ mod tests {
             {"id":"openai_api","description":"z","implemented":true}
         ]"#;
         let ids = parse_provider_ids(json);
-        assert_eq!(ids, vec!["claude_cli", "openai_api"], "stub provider excluded");
+        assert_eq!(
+            ids,
+            vec!["claude_cli", "openai_api"],
+            "stub provider excluded"
+        );
     }
 
     #[test]
     fn parse_provider_ids_malformed_and_missing_flag() {
         assert!(parse_provider_ids("nope").is_empty());
-        assert!(parse_provider_ids(r#"{"id":"x"}"#).is_empty(), "object not array");
+        assert!(
+            parse_provider_ids(r#"{"id":"x"}"#).is_empty(),
+            "object not array"
+        );
         // Missing `implemented` defaults to included (forward-compat).
         let ids = parse_provider_ids(r#"[{"id":"a"},{"description":"no id"}]"#);
         assert_eq!(ids, vec!["a"]);

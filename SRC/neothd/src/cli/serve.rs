@@ -22,9 +22,9 @@ use crate::config::FreedomConfig;
 use crate::memory::store;
 use crate::providers::{self, Provider};
 use crate::shutdown;
+use crate::wal::EventFlags;
 use crate::wal::events::EVENT_TYPE_BOOT;
 use crate::wal::writer::WalWriterHandle;
-use crate::wal::EventFlags;
 
 // GOLD-ARCH-01: the channel-side inbound pipeline now lives in `serve_pipeline`.
 
@@ -56,10 +56,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // single-instance PID lock (BS-12). `--one-shot` skips isolation + PID.
     // The PidGuard is bound HERE (named `_pid_guard`, not bare `_`) for the
     // daemon lifetime — its Drop releases the lock at run_serve fn-end.
-    let _pid_guard = crate::cli::serve_tasks::run_preflight_guards(
-        args.one_shot,
-        args.allow_clock_rollback,
-    )?;
+    let _pid_guard =
+        crate::cli::serve_tasks::run_preflight_guards(args.one_shot, args.allow_clock_rollback)?;
 
     // ── 1. Load config ──────────────────────────────────────────────────────
     let config = match &args.config {
@@ -530,8 +528,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // A topic fetch failure logs + skips; a pass failure logs + retries
     // next tick — never crashes the daemon.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let arxiv_ingest_task =
-        crate::cli::serve_tasks::spawn_arxiv_ingest(&config, &shared_provider);
+    let arxiv_ingest_task = crate::cli::serve_tasks::spawn_arxiv_ingest(&config, &shared_provider);
 
     // ── 5b-ter. RSS / Atom / JSON-Feed poller — GOLD-ADOPT-26 ──────────────
     //
@@ -542,7 +539,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // is aborted BEFORE the WAL writer drains (see shutdown below).
     let rss_feed_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
         if config.feeds.enabled && !config.feeds.entries.is_empty() {
-            info!(feeds = config.feeds.entries.len(), "rss feed poller enabled");
+            info!(
+                feeds = config.feeds.entries.len(),
+                "rss feed poller enabled"
+            );
             Some(crate::cli::rss_feed_task::spawn(
                 crate::config::FreedomConfig::default_neoth_home(),
                 config.feeds.entries.clone(),
@@ -625,8 +625,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // 256 KiB body cap. Default OFF — operator opts in + runs
     // `neoth n8n token` first to generate the bearer.
     let n8n_api_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    let n8n_api_task =
-        crate::cli::serve_tasks::spawn_n8n_api(&config, &writer, &n8n_api_shutdown);
+    let n8n_api_task = crate::cli::serve_tasks::spawn_n8n_api(&config, &writer, &n8n_api_shutdown);
 
     // ── 5c-bis. Spawn /healthz + /metrics listener — Phase 33c BS-1 ────────
     //
@@ -695,7 +694,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // CLI. The `neoth` daemon's own self-replacement stays manual
     // (`neoth update --self --apply`).
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let cli_autoupdate_task = crate::cli::serve_tasks::spawn_cli_autoupdate(&config, writer.clone());
+    let cli_autoupdate_task =
+        crate::cli::serve_tasks::spawn_cli_autoupdate(&config, writer.clone());
 
     // ── 5d.d. neoth-self STAGING loop — MV-01b #5 (Session 28c) ──────────
     //
@@ -743,8 +743,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // delivery semantics — the daemon-side drain stays channel-
     // agnostic.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let proactive_dispatcher_handle =
-        crate::cli::serve_tasks::spawn_proactive_dispatcher(&writer);
+    let proactive_dispatcher_handle = crate::cli::serve_tasks::spawn_proactive_dispatcher(&writer);
 
     // ── 5d-quartus. G-02 surfacing cron — "Knows things about you you
     //               don't know" producer (Round-3 v0.4) ──
@@ -768,8 +767,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // default — `spawn_*` returns None when `drift_alert.enabled = false`
     // so opt-out operators carry no idle tokio task.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let drift_alert_cron_handle =
-        crate::cli::serve_tasks::spawn_drift_alert_cron(&config, &writer);
+    let drift_alert_cron_handle = crate::cli::serve_tasks::spawn_drift_alert_cron(&config, &writer);
 
     // ── 5d-sextus. Regression-anchor cron — ADV-14. Weekly re-asks the
     // anchor queries, re-embeds the fresh answers, and emits `0x3F
@@ -884,20 +882,48 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let worker_watch_handle: Option<tokio::task::JoinHandle<()>> = if config.monitor.enabled {
         use crate::daemon::worker_watch::WatchedWorker;
         let watched: Vec<WatchedWorker> = [
-            cron_task.as_ref().map(|h| WatchedWorker::new("cron_scheduler", h.abort_handle())),
-            updater_self_task.as_ref().map(|h| WatchedWorker::new("updater_self", h.abort_handle())),
-            updater_cli_task.as_ref().map(|h| WatchedWorker::new("updater_cli", h.abort_handle())),
-            updater_skill_task.as_ref().map(|h| WatchedWorker::new("updater_skill", h.abort_handle())),
-            cli_autoupdate_task.as_ref().map(|h| WatchedWorker::new("cli_autoupdate", h.abort_handle())),
-            self_stage_task.as_ref().map(|h| WatchedWorker::new("self_stage", h.abort_handle())),
-            doctor_cron_task.as_ref().map(|h| WatchedWorker::new("doctor_cron", h.abort_handle())),
-            resource_watch_handle.as_ref().map(|h| WatchedWorker::new("resource_watch", h.abort_handle())),
-            monitor_cron_handle.as_ref().map(|h| WatchedWorker::new("monitor_cron", h.abort_handle())),
-            omi_handle.as_ref().map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),
-            profile_adapt_cron_handle.as_ref().map(|h| WatchedWorker::new("profile_adapt_cron", h.abort_handle())),
-            ecology_cron_handle.as_ref().map(|h| WatchedWorker::new("ecology_scheduler", h.abort_handle())),
-            pattern_cron_handle.as_ref().map(|h| WatchedWorker::new("pattern_cron", h.abort_handle())),
-            snapshot_refresh_handle.as_ref().map(|h| WatchedWorker::new("snapshot_refresh", h.abort_handle())),
+            cron_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("cron_scheduler", h.abort_handle())),
+            updater_self_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("updater_self", h.abort_handle())),
+            updater_cli_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("updater_cli", h.abort_handle())),
+            updater_skill_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("updater_skill", h.abort_handle())),
+            cli_autoupdate_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("cli_autoupdate", h.abort_handle())),
+            self_stage_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("self_stage", h.abort_handle())),
+            doctor_cron_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("doctor_cron", h.abort_handle())),
+            resource_watch_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("resource_watch", h.abort_handle())),
+            monitor_cron_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("monitor_cron", h.abort_handle())),
+            omi_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),
+            profile_adapt_cron_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("profile_adapt_cron", h.abort_handle())),
+            ecology_cron_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("ecology_scheduler", h.abort_handle())),
+            pattern_cron_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("pattern_cron", h.abort_handle())),
+            snapshot_refresh_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("snapshot_refresh", h.abort_handle())),
         ]
         .into_iter()
         .flatten()
@@ -970,54 +996,55 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // is bypassed. The handle lives for the daemon lifetime (Router shuts down
     // on drop at `run_serve` exit).
     #[cfg(feature = "cluster-iroh")]
-    let iroh_transport_handle: Option<std::sync::Arc<crate::cluster::iroh_transport::IrohTransport>> =
-        if crate::cluster::policy::load_transport_from_freedom(
-            &crate::config::FreedomConfig::default_path(),
-        ) == crate::cluster::policy::ClusterTransport::Iroh
-            && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_some()
+    let iroh_transport_handle: Option<
+        std::sync::Arc<crate::cluster::iroh_transport::IrohTransport>,
+    > = if crate::cluster::policy::load_transport_from_freedom(
+        &crate::config::FreedomConfig::default_path(),
+    ) == crate::cluster::policy::ClusterTransport::Iroh
+        && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_some()
+    {
+        let gs = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::cluster::wal_sync::GossipState::new(),
+        ));
+        match crate::cluster::iroh_transport::IrohTransport::bind(
+            crate::cluster::iroh_transport::gossip_handler(gs),
+        )
+        .await
         {
-            let gs = std::sync::Arc::new(std::sync::Mutex::new(
-                crate::cluster::wal_sync::GossipState::new(),
-            ));
-            match crate::cluster::iroh_transport::IrohTransport::bind(
-                crate::cluster::iroh_transport::gossip_handler(gs),
-            )
-            .await
-            {
-                Ok(t) => {
-                    let t = std::sync::Arc::new(t);
-                    // Seed outbound peers from cluster.peers (inbound peers are
-                    // learned automatically on connect).
-                    let seeded = crate::cluster::policy::load_iroh_peers_from_freedom(
-                        &crate::config::FreedomConfig::default_path(),
-                    );
-                    let mut n_seeded = 0;
-                    for p in &seeded {
-                        if t.add_peer_id(p) {
-                            n_seeded += 1;
-                        }
+            Ok(t) => {
+                let t = std::sync::Arc::new(t);
+                // Seed outbound peers from cluster.peers (inbound peers are
+                // learned automatically on connect).
+                let seeded = crate::cluster::policy::load_iroh_peers_from_freedom(
+                    &crate::config::FreedomConfig::default_path(),
+                );
+                let mut n_seeded = 0;
+                for p in &seeded {
+                    if t.add_peer_id(p) {
+                        n_seeded += 1;
                     }
-                    // Outbound gossip broadcast tick (WAL tail → peers, dial-by-key).
-                    // Detached: daemon-lifetime; process exit reaps it.
-                    let _broadcast = crate::cluster::iroh_transport::spawn_gossip_broadcast(
-                        std::sync::Arc::clone(&t),
-                        segment_path.clone(),
-                    );
-                    info!(
-                        node = %t.node_id(),
-                        seeded_peers = n_seeded,
-                        "cluster: iroh transport ACTIVE (dial-by-key; gossip_handler intake + outbound broadcast) — peeroxide bypassed"
-                    );
-                    Some(t)
                 }
-                Err(e) => {
-                    warn!(error = %e, "cluster: iroh transport failed to start; using peeroxide");
-                    None
-                }
+                // Outbound gossip broadcast tick (WAL tail → peers, dial-by-key).
+                // Detached: daemon-lifetime; process exit reaps it.
+                let _broadcast = crate::cluster::iroh_transport::spawn_gossip_broadcast(
+                    std::sync::Arc::clone(&t),
+                    segment_path.clone(),
+                );
+                info!(
+                    node = %t.node_id(),
+                    seeded_peers = n_seeded,
+                    "cluster: iroh transport ACTIVE (dial-by-key; gossip_handler intake + outbound broadcast) — peeroxide bypassed"
+                );
+                Some(t)
             }
-        } else {
-            None
-        };
+            Err(e) => {
+                warn!(error = %e, "cluster: iroh transport failed to start; using peeroxide");
+                None
+            }
+        }
+    } else {
+        None
+    };
     #[cfg(feature = "cluster-iroh")]
     let iroh_active = iroh_transport_handle.is_some();
     #[cfg(all(feature = "cluster", not(feature = "cluster-iroh")))]

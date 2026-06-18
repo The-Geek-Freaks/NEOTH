@@ -61,11 +61,19 @@ mod tests {
     #[tokio::test]
     async fn missing_binary_yields_none() {
         // A binary that cannot possibly exist must probe to None, not panic.
-        assert!(cli_version("neoth-definitely-not-a-real-binary-xyz").await.is_none());
         assert!(
-            cli_version_args("neoth-definitely-not-a-real-binary-xyz", &["--version"], None)
+            cli_version("neoth-definitely-not-a-real-binary-xyz")
                 .await
                 .is_none()
+        );
+        assert!(
+            cli_version_args(
+                "neoth-definitely-not-a-real-binary-xyz",
+                &["--version"],
+                None
+            )
+            .await
+            .is_none()
         );
     }
 }

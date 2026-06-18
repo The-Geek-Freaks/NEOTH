@@ -56,6 +56,8 @@ mod token;
 mod tests;
 
 pub use client::{AuditRpcClientError, enforce_required_audit, is_reachable, try_post_audit_frame};
-pub use server::{ALLOWED_CLIENT_EVENT_TYPES, AuditRpcState, bind_and_serve, is_allowed_client_event};
+pub use server::{
+    ALLOWED_CLIENT_EVENT_TYPES, AuditRpcState, bind_and_serve, is_allowed_client_event,
+};
 pub use sidecar::{SidecarGuard, read_sidecar, remove_sidecar, sidecar_path, write_sidecar};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};

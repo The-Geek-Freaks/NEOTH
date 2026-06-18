@@ -853,11 +853,7 @@ mod tests {
     /// Unique provider-id per test so the global registry's state
     /// from a previous test cannot bleed into the next.
     fn unique_provider_id(suffix: &str) -> String {
-        format!(
-            "gr04-test-{}-{}",
-            suffix,
-            crate::time::now_unix_ns_u128()
-        )
+        format!("gr04-test-{}-{}", suffix, crate::time::now_unix_ns_u128())
     }
 
     #[tokio::test]

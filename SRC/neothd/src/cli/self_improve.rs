@@ -51,13 +51,9 @@ pub enum SelfImproveAction {
     /// List staged proposals + their diffs (review before adopting).
     Review,
     /// Adopt a proposal into its skill file (backs up the replaced content).
-    Accept {
-        id: String,
-    },
+    Accept { id: String },
     /// Restore a previously accepted proposal's backup (undo the change).
-    Rollback {
-        id: String,
-    },
+    Rollback { id: String },
     /// Contribute an ACCEPTED improvement to a BUNDLED skill back to NEOTH:
     /// prepare a PR bundle (improved file + PR body + submit script). `--submit`
     /// runs it via the operator's authenticated `gh`.
@@ -112,11 +108,15 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
             why,
             risk,
             dry_run,
-        } => run_pass(&home, autonomy, &persona, skill, from, why, risk, dry_run, output),
+        } => run_pass(
+            &home, autonomy, &persona, skill, from, why, risk, dry_run, output,
+        ),
         SelfImproveAction::Review => review(&home, output),
         SelfImproveAction::Accept { id } => {
             si::accept_proposal(&home, &id)?;
-            println!("✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo).");
+            println!(
+                "✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo)."
+            );
             offer_upstream_pr_if_bundled(&home, &id);
             Ok(())
         }
@@ -158,22 +158,38 @@ fn status(
     println!(
         "  switch    : {}{}",
         if cfg.enabled {
-            if cfg.auto { "ENABLED (nightly auto)" } else { "ENABLED (manual)" }
+            if cfg.auto {
+                "ENABLED (nightly auto)"
+            } else {
+                "ENABLED (manual)"
+            }
         } else {
             "off — `neoth self-improve enable`"
         },
-        if implied { " — implied by full-auto mode" } else { "" }
+        if implied {
+            " — implied by full-auto mode"
+        } else {
+            ""
+        }
     );
     println!(
         "  SkillOpt  : {}",
-        if installed { "installed" } else { "NOT installed — `pip install skillopt`" }
+        if installed {
+            "installed"
+        } else {
+            "NOT installed — `pip install skillopt`"
+        }
     );
     match last {
         Some(r) => println!(
             "  last      : {} — \"{}\" ({})",
             r.skill,
             r.summary,
-            if r.accepted { "improved ✓" } else { "no change kept" }
+            if r.accepted {
+                "improved ✓"
+            } else {
+                "no change kept"
+            }
         ),
         None => println!("  last      : — (no runs yet)"),
     }
@@ -194,7 +210,9 @@ fn run_pass(
 ) -> Result<()> {
     let cfg = si::SelfImproveConfig::load(home).effective(autonomy);
     if !cfg.enabled && !dry_run {
-        println!("self-improvement is disabled — enable it first: `neoth self-improve enable` (or set full-auto mode)");
+        println!(
+            "self-improvement is disabled — enable it first: `neoth self-improve enable` (or set full-auto mode)"
+        );
         return Ok(());
     }
     // Resolve the production skill file (explicit, else <skills>/<persona>/skill.md).
@@ -274,7 +292,10 @@ fn run_pass(
         },
     )?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
-        println!("{}", serde_json::json!({ "staged": id, "skill": skill_path.display().to_string() }));
+        println!(
+            "{}",
+            serde_json::json!({ "staged": id, "skill": skill_path.display().to_string() })
+        );
     } else {
         println!(
             "staged proposal {id} (skill file UNCHANGED). Review: `neoth self-improve review` · adopt: `neoth self-improve accept {id}`"
@@ -297,7 +318,10 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
         .iter()
         .filter(|p| p.status == si::ProposalStatus::Pending)
         .count();
-    println!("Self-improvement proposals ({} total, {pending} pending):", props.len());
+    println!(
+        "Self-improvement proposals ({} total, {pending} pending):",
+        props.len()
+    );
     for p in props.iter().rev().take(10) {
         println!(
             "\n  [{}] {} — {:?} — {}",
@@ -413,7 +437,10 @@ fn pr(home: &std::path::Path, id: &str, submit: bool, output: OutputFormat) -> R
         .status()
         .with_context(|| format!("run {}", script.display()))?;
     if !status.success() {
-        anyhow::bail!("submit.sh exited with {status} — bundle preserved at {}", prepared.dir.display());
+        anyhow::bail!(
+            "submit.sh exited with {status} — bundle preserved at {}",
+            prepared.dir.display()
+        );
     }
     println!("✓ PR opened against {}.", si::NEOTH_REPO);
     Ok(())

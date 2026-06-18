@@ -140,8 +140,15 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
             // domain from 0xC8 TODO_WRITE). Metadata only: provider/action/uid +
             // a HASH of the title + start/end. Never the raw summary, never
             // credentials. Mirrors the todo path (audits regardless of outcome).
-            emit_calendar_write("caldav_calendar", "add", &uid, summary, start, &event.end_rfc3339)
-                .await;
+            emit_calendar_write(
+                "caldav_calendar",
+                "add",
+                &uid,
+                summary,
+                start,
+                &event.end_rfc3339,
+            )
+            .await;
 
             match outcome {
                 CreateOutcome::Created => {

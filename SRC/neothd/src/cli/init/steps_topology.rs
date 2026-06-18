@@ -8,10 +8,10 @@ use tracing::{debug, info, warn};
 #[cfg(feature = "wizard")]
 use super::apply_local_multi_preset_interactive;
 use super::{
-    apply_local_only_preset, collect_ollama_model_refs, inference_uses_local_qwen,
-    parse_topology_mode_arg, prompt_hemisphere_model, prompt_inference_provider,
-    recommended_provider_for_role, render_council_depth_cost_warning, WizardStep,
-    topology_default_idx_for_probe, InitArgs, WizardState,
+    InitArgs, WizardState, WizardStep, apply_local_only_preset, collect_ollama_model_refs,
+    inference_uses_local_qwen, parse_topology_mode_arg, prompt_hemisphere_model,
+    prompt_inference_provider, recommended_provider_for_role, render_council_depth_cost_warning,
+    topology_default_idx_for_probe,
 };
 
 /// Step 5b — inference topology (D14b).
@@ -462,7 +462,10 @@ pub(crate) fn step5b_inference_topology(
 /// local-multi hemispheres. Offers to install Ollama (if absent) and pull each
 /// model. Non-interactive just prints the commands (no surprise multi-GB network
 /// pulls in CI / scripted installs). No-op when no Ollama models are configured.
-pub(crate) async fn step5b2_ollama_provision(interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) async fn step5b2_ollama_provision(
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     let refs = collect_ollama_model_refs(&state.inference);
     if refs.is_empty() {
         return Ok(());
@@ -485,16 +488,17 @@ pub(crate) async fn step5b2_ollama_provision(interactive: bool, state: &mut Wiza
 
         // Install Ollama if it isn't already on PATH.
         if ollama::check_ollama_available().await.is_none() {
-            let install = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt(format!(
-                    // GR-086 — show the ACTUAL command (e.g. `curl … | sh`), not
-                    // the terse `upstream_script` tag, so consent is informed.
-                    "Ollama not found. Install it now? This runs:  {}",
-                    ollama::InstallPath::for_host().display_command()
-                ))
-                .default(true)
-                .interact()
-                .context("ollama install confirm")?;
+            let install =
+                dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt(format!(
+                        // GR-086 — show the ACTUAL command (e.g. `curl … | sh`), not
+                        // the terse `upstream_script` tag, so consent is informed.
+                        "Ollama not found. Install it now? This runs:  {}",
+                        ollama::InstallPath::for_host().display_command()
+                    ))
+                    .default(true)
+                    .interact()
+                    .context("ollama install confirm")?;
             if install {
                 match ollama::install_for_host().await {
                     Ok(()) => println!("  ✓ Ollama installed"),
@@ -677,7 +681,10 @@ pub(crate) async fn step5c_qwen_weights(
 /// continue. No prompt — operator can opt out later via
 /// `neoth profile migrate-require-approval --disable` if they
 /// genuinely want auto-apply.
-pub(crate) fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> Result<()> {
+pub(crate) fn step5d_profile_approval_gate(
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
     debug!("wizard step 5d: profile approval gate awareness");
     if interactive {
         println!();

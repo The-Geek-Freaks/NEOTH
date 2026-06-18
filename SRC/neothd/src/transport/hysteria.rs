@@ -176,7 +176,8 @@ pub fn render_yaml_config(cfg: &HysteriaConfig) -> String {
     // `:` + space — silently corrupting the sidecar config. Control chars
     // are already rejected by `sanitize`, so escaping `\` and `"` yields a
     // valid double-quoted scalar.
-    let yaml_quote = |s: &str| -> String { format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")) };
+    let yaml_quote =
+        |s: &str| -> String { format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")) };
     format!(
         "server: {}\nauth: {}\nsocks5:\n  listen: 127.0.0.1:{}\n",
         yaml_quote(&sanitize(&cfg.server)),
@@ -391,7 +392,8 @@ mod tests {
         assert!(s.contains("server: \"*anchor: trap\""));
         assert!(s.contains("auth: \" leading-space\""));
         // The rendered config round-trips through a YAML parser cleanly.
-        let parsed: serde_yaml::Value = serde_yaml::from_str(&s).expect("rendered config is valid YAML");
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&s).expect("rendered config is valid YAML");
         assert_eq!(parsed["server"].as_str(), Some("*anchor: trap"));
         assert_eq!(parsed["auth"].as_str(), Some(" leading-space"));
     }

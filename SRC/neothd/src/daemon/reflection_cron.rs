@@ -103,7 +103,10 @@ pub fn run_reflection_tick_once(home: &std::path::Path, now_unix: i64) -> Result
 /// refused under Strict autonomy. This is the ONLY network egress in the
 /// reflection cron; the offline G-01-mini weekly reflection stays free +
 /// quota-safe. Returns `Ok(true)` when a fresh item was enqueued.
-async fn run_tech_currency_tick_once(home: &std::path::Path, now_unix: i64) -> Result<bool, String> {
+async fn run_tech_currency_tick_once(
+    home: &std::path::Path,
+    now_unix: i64,
+) -> Result<bool, String> {
     use crate::cli::reflect::{ReflectTopics, collect_covered};
     use crate::proactive::ProactiveQueue;
     use crate::sources::hackernews::{
@@ -169,7 +172,10 @@ async fn run_tech_currency_tick_once(home: &std::path::Path, now_unix: i64) -> R
 fn obsidian_target() -> Option<(PathBuf, String)> {
     let cfg = crate::config::FreedomConfig::load_from_default_path().ok()?;
     let vault = cfg.obsidian_vault.clone()?;
-    let subdir = cfg.obsidian_subdir.clone().unwrap_or_else(|| "NEOTH".to_string());
+    let subdir = cfg
+        .obsidian_subdir
+        .clone()
+        .unwrap_or_else(|| "NEOTH".to_string());
     Some((PathBuf::from(vault), subdir))
 }
 
@@ -238,7 +244,9 @@ fn run_period_reflection_tick_once(
                         kind.as_str()
                     ),
                     Ok(_) => {}
-                    Err(e) => warn!(error = %e, "reflection cron: Obsidian {} sync failed", kind.as_str()),
+                    Err(e) => {
+                        warn!(error = %e, "reflection cron: Obsidian {} sync failed", kind.as_str())
+                    }
                 }
             }
             Ok(true)
@@ -307,15 +315,29 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
             use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, year_tag_from_unix};
             let daily_tag = date_tag_from_unix(now_unix);
             if let Err(e) = run_period_reflection_tick_once(
-                &home, now_unix, PeriodKind::Daily, cfg.daily_notes, &daily_tag,
-                "daily-last.txt", 1, 5, obs_ref,
+                &home,
+                now_unix,
+                PeriodKind::Daily,
+                cfg.daily_notes,
+                &daily_tag,
+                "daily-last.txt",
+                1,
+                5,
+                obs_ref,
             ) {
                 warn!(error = %e, "daily reflection tick failed; will retry next interval");
             }
             let yearly_tag = year_tag_from_unix(now_unix);
             if let Err(e) = run_period_reflection_tick_once(
-                &home, now_unix, PeriodKind::Yearly, cfg.yearly_summary, &yearly_tag,
-                "yearly-last.txt", 365, 10, obs_ref,
+                &home,
+                now_unix,
+                PeriodKind::Yearly,
+                cfg.yearly_summary,
+                &yearly_tag,
+                "yearly-last.txt",
+                365,
+                10,
+                obs_ref,
             ) {
                 warn!(error = %e, "yearly reflection tick failed; will retry next interval");
             }
@@ -372,7 +394,9 @@ mod tests {
         let r = run_tech_currency_tick_once(tmp.path(), 1_767_225_600).await;
         assert_eq!(r, Ok(false), "disabled weekly refresh is a clean no-op");
         assert!(
-            !tmp.path().join("reflections/tech-currency-week.txt").exists(),
+            !tmp.path()
+                .join("reflections/tech-currency-week.txt")
+                .exists(),
             "no marker is written when the feature is off"
         );
     }

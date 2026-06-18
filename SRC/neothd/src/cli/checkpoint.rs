@@ -134,8 +134,7 @@ fn load_index(home: &Path) -> Result<Vec<CheckpointEntry>> {
 fn save_index(home: &Path, entries: &[CheckpointEntry]) -> Result<()> {
     let path = index_path(home);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_vec_pretty(entries).context("serialise checkpoint index")?;
@@ -241,7 +240,10 @@ fn run_list(home: &Path, output: OutputFormat) {
     let index = load_index(home).unwrap_or_default();
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::to_string_pretty(&index).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&index).unwrap_or_default()
+            );
         }
         OutputFormat::Table => {
             if index.is_empty() {
@@ -289,7 +291,10 @@ mod tests {
     #[test]
     fn validate_label_accepts_valid_labels() {
         for ok in ["a", "v1", "my-checkpoint", "pre_deploy.2026", "X-_.9", "Z"] {
-            assert!(validate_checkpoint_label(ok).is_ok(), "{ok} should be valid");
+            assert!(
+                validate_checkpoint_label(ok).is_ok(),
+                "{ok} should be valid"
+            );
         }
     }
 
@@ -301,7 +306,10 @@ mod tests {
     #[test]
     fn validate_label_rejects_too_long() {
         let long = "a".repeat(65);
-        assert_eq!(validate_checkpoint_label(&long), Err(CheckpointError::TooLong));
+        assert_eq!(
+            validate_checkpoint_label(&long),
+            Err(CheckpointError::TooLong)
+        );
         // Exactly 64 is allowed.
         assert!(validate_checkpoint_label(&"a".repeat(64)).is_ok());
     }

@@ -166,7 +166,11 @@ impl LiveDelivery {
                     self.last_edit_ms = Some(now_ms);
                     return Ok(SendOutcome::Sent(id));
                 }
-                match self.channel.edit_message(&self.chat_id, &existing, text).await {
+                match self
+                    .channel
+                    .edit_message(&self.chat_id, &existing, text)
+                    .await
+                {
                     Ok(()) => {
                         self.emit_edit(writer, &existing, text).await;
                         self.last_edit_ms = Some(now_ms);
@@ -283,7 +287,11 @@ mod tests {
         }
     }
 
-    fn test_writer() -> (WalWriterHandle, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+    fn test_writer() -> (
+        WalWriterHandle,
+        tokio::task::JoinHandle<()>,
+        tempfile::TempDir,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let (writer, join) = crate::wal::writer::spawn(dir.path().join("ld.wal")).unwrap();
         (writer, join, dir)
@@ -328,8 +336,12 @@ mod tests {
     #[tokio::test]
     async fn first_call_sends_text() {
         let ch = Arc::new(MockChannel::new(false));
-        let mut live =
-            LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Telegram, fast_config());
+        let mut live = LiveDelivery::new(
+            ch.clone(),
+            "c1".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+        );
         let (writer, join, _dir) = test_writer();
 
         assert!(!live.has_sent());
@@ -382,7 +394,11 @@ mod tests {
         // Degrade path = a fresh send with a NEW id, no panic.
         assert_eq!(first, SendOutcome::Sent(MessageId("msg-0".into())));
         assert_eq!(second, SendOutcome::Sent(MessageId("msg-1".into())));
-        assert_eq!(ch.sends.load(Ordering::SeqCst), 2, "edit degraded to a 2nd send");
+        assert_eq!(
+            ch.sends.load(Ordering::SeqCst),
+            2,
+            "edit degraded to a 2nd send"
+        );
 
         drop(writer);
         let _ = join.await;
@@ -428,7 +444,10 @@ mod tests {
             ..fast_config()
         };
         assert!(should_send_edit(&cfg, 10, Some(0), 2, false));
-        assert!(!should_send_edit(&cfg, 10, Some(0), 3, false), "at the cap → coalesce");
+        assert!(
+            !should_send_edit(&cfg, 10, Some(0), 3, false),
+            "at the cap → coalesce"
+        );
     }
 
     #[test]
@@ -460,14 +479,23 @@ mod tests {
         let (writer, join, _dir) = test_writer();
 
         // t=0: first send.
-        let s = live.send_or_edit_at(&writer, 0, "draft", false).await.unwrap();
+        let s = live
+            .send_or_edit_at(&writer, 0, "draft", false)
+            .await
+            .unwrap();
         assert_eq!(s, SendOutcome::Sent(MessageId("msg-0".into())));
         // t=100: too soon → coalesced (no edit hits the wire).
-        let c = live.send_or_edit_at(&writer, 100, "partial", false).await.unwrap();
+        let c = live
+            .send_or_edit_at(&writer, 100, "partial", false)
+            .await
+            .unwrap();
         assert_eq!(c, SendOutcome::Coalesced);
         assert_eq!(ch.edits.load(Ordering::SeqCst), 0, "fast edit dropped");
         // t=200: still too soon, but FINAL → always lands.
-        let f = live.send_or_edit_at(&writer, 200, "final", true).await.unwrap();
+        let f = live
+            .send_or_edit_at(&writer, 200, "final", true)
+            .await
+            .unwrap();
         assert_eq!(f, SendOutcome::Edited(MessageId("msg-0".into())));
         assert_eq!(ch.edits.load(Ordering::SeqCst), 1, "final edit landed");
 
@@ -489,8 +517,16 @@ mod tests {
         let a = live.send_or_edit_at(&writer, 0, "a", false).await.unwrap();
         let b = live.send_or_edit_at(&writer, 1, "b", false).await.unwrap();
         assert_eq!(a, SendOutcome::Sent(MessageId("msg-0".into())));
-        assert_eq!(b, SendOutcome::Sent(MessageId("msg-1".into())), "send-only: never edits");
-        assert_eq!(ch.edits.load(Ordering::SeqCst), 0, "edits disabled → 0 edits");
+        assert_eq!(
+            b,
+            SendOutcome::Sent(MessageId("msg-1".into())),
+            "send-only: never edits"
+        );
+        assert_eq!(
+            ch.edits.load(Ordering::SeqCst),
+            0,
+            "edits disabled → 0 edits"
+        );
 
         drop(writer);
         let _ = join.await;

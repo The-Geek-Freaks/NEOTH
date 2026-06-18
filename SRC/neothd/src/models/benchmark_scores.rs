@@ -100,10 +100,7 @@ pub fn classify(id: &str) -> ModelFamily {
     // Normalise separators to nothing so "llama-3.1", "llama3.1" and
     // "llama_3_1" all collapse to "llama31" for token matching.
     let lo = id.to_ascii_lowercase();
-    let compact: String = lo
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+    let compact: String = lo.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
 
     // DeepSeek FIRST — its releases are commonly distilled onto a Qwen/Llama
     // base whose name also appears in the id (e.g. "DeepSeek-R1-Distill-Qwen2.5").
@@ -173,12 +170,21 @@ mod tests {
 
     #[test]
     fn classifies_llama_generations() {
-        assert_eq!(classify("bartowski/Llama-3.3-70B-Instruct-GGUF"), ModelFamily::Llama33);
-        assert_eq!(classify("x/Meta-Llama-3.1-8B-Instruct-GGUF"), ModelFamily::Llama31);
+        assert_eq!(
+            classify("bartowski/Llama-3.3-70B-Instruct-GGUF"),
+            ModelFamily::Llama33
+        );
+        assert_eq!(
+            classify("x/Meta-Llama-3.1-8B-Instruct-GGUF"),
+            ModelFamily::Llama31
+        );
         assert_eq!(classify("x/Llama-3-8B-Instruct-GGUF"), ModelFamily::Llama3);
         // GR-074 — a bare-3 model sized 3B/1B must stay Llama3, not false-match
         // the 3.3 / 3.1 point releases (the size digit collided in `compact`).
-        assert_eq!(classify("bartowski/Llama-3-3B-Instruct-GGUF"), ModelFamily::Llama3);
+        assert_eq!(
+            classify("bartowski/Llama-3-3B-Instruct-GGUF"),
+            ModelFamily::Llama3
+        );
         assert_eq!(classify("x/Llama-3-1B-Instruct"), ModelFamily::Llama3);
         // Separator-insensitive — the real 3.1 point release still classifies.
         assert_eq!(classify("x/llama3.1-8b"), ModelFamily::Llama31);
@@ -187,11 +193,23 @@ mod tests {
 
     #[test]
     fn classifies_other_families_and_unknown() {
-        assert_eq!(classify("TheBloke/Mistral-7B-Instruct-GGUF"), ModelFamily::Mistral);
+        assert_eq!(
+            classify("TheBloke/Mistral-7B-Instruct-GGUF"),
+            ModelFamily::Mistral
+        );
         assert_eq!(classify("x/Mixtral-8x7B"), ModelFamily::Mistral);
-        assert_eq!(classify("bartowski/gemma-2-9b-it-GGUF"), ModelFamily::Gemma2);
-        assert_eq!(classify("microsoft/Phi-3.5-mini-instruct"), ModelFamily::Phi);
-        assert_eq!(classify("x/DeepSeek-R1-Distill-Qwen-7B-GGUF"), ModelFamily::DeepSeek);
+        assert_eq!(
+            classify("bartowski/gemma-2-9b-it-GGUF"),
+            ModelFamily::Gemma2
+        );
+        assert_eq!(
+            classify("microsoft/Phi-3.5-mini-instruct"),
+            ModelFamily::Phi
+        );
+        assert_eq!(
+            classify("x/DeepSeek-R1-Distill-Qwen-7B-GGUF"),
+            ModelFamily::DeepSeek
+        );
         assert_eq!(classify("totally/Unheard-Of-7B"), ModelFamily::Unknown);
     }
 

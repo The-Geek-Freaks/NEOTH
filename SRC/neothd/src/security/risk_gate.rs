@@ -16,8 +16,8 @@
 //! arguments. Deny outranks Confirm outranks Allow.
 
 use crate::config::{DangerousPolicy, EgressMode, SecurityPolicy};
-use crate::security::dangerous_command::Severity;
 use crate::security::ToolCallRisk;
+use crate::security::dangerous_command::Severity;
 
 /// The gate's verdict for one tool call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,7 +177,9 @@ pub fn evaluate_tool_risk(risk: &ToolCallRisk, policy: &SecurityPolicy) -> RiskG
         let unknown: Vec<&str> = risk
             .egress
             .iter()
-            .filter(|e| !e.domain.is_empty() && !domain_allowed(&e.domain, &policy.egress.allowlist))
+            .filter(|e| {
+                !e.domain.is_empty() && !domain_allowed(&e.domain, &policy.egress.allowlist)
+            })
             .map(|e| e.domain.as_str())
             .collect();
         if !unknown.is_empty() {
@@ -234,15 +236,25 @@ mod tests {
     fn critical_dangerous_denied_by_default() {
         let p = SecurityPolicy::default();
         assert_eq!(p.dangerous_commands, DangerousPolicy::Deny);
-        let v = evaluate_tool_risk(&risk(vec![dangerous("rm_rf_root", Severity::Critical)], vec![]), &p);
+        let v = evaluate_tool_risk(
+            &risk(vec![dangerous("rm_rf_root", Severity::Critical)], vec![]),
+            &p,
+        );
         assert!(matches!(v, RiskGate::Deny(_)));
     }
 
     #[test]
     fn high_severity_never_hard_blocks() {
         let p = SecurityPolicy::default();
-        let v = evaluate_tool_risk(&risk(vec![dangerous("git_force_push", Severity::High)], vec![]), &p);
-        assert_eq!(v, RiskGate::Allow, "High findings warn-only by default, never gate");
+        let v = evaluate_tool_risk(
+            &risk(vec![dangerous("git_force_push", Severity::High)], vec![]),
+            &p,
+        );
+        assert_eq!(
+            v,
+            RiskGate::Allow,
+            "High findings warn-only by default, never gate"
+        );
     }
 
     #[test]
@@ -253,11 +265,20 @@ mod tests {
             confirm_high: true,
             ..Default::default()
         };
-        let v = evaluate_tool_risk(&risk(vec![dangerous("git_force_push", Severity::High)], vec![]), &p);
+        let v = evaluate_tool_risk(
+            &risk(vec![dangerous("git_force_push", Severity::High)], vec![]),
+            &p,
+        );
         assert!(matches!(v, RiskGate::Confirm(_)));
         // A Critical still Denies (outranks the High confirm).
         let v2 = evaluate_tool_risk(
-            &risk(vec![dangerous("rm_rf_root", Severity::Critical), dangerous("git_force_push", Severity::High)], vec![]),
+            &risk(
+                vec![
+                    dangerous("rm_rf_root", Severity::Critical),
+                    dangerous("git_force_push", Severity::High),
+                ],
+                vec![],
+            ),
             &p,
         );
         assert!(matches!(v2, RiskGate::Deny(_)));
@@ -268,12 +289,18 @@ mod tests {
         let mut p = SecurityPolicy::default();
         p.dangerous_commands = DangerousPolicy::Confirm;
         assert!(matches!(
-            evaluate_tool_risk(&risk(vec![dangerous("mkfs_format", Severity::Critical)], vec![]), &p),
+            evaluate_tool_risk(
+                &risk(vec![dangerous("mkfs_format", Severity::Critical)], vec![]),
+                &p
+            ),
             RiskGate::Confirm(_)
         ));
         p.dangerous_commands = DangerousPolicy::Warn;
         assert_eq!(
-            evaluate_tool_risk(&risk(vec![dangerous("mkfs_format", Severity::Critical)], vec![]), &p),
+            evaluate_tool_risk(
+                &risk(vec![dangerous("mkfs_format", Severity::Critical)], vec![]),
+                &p
+            ),
             RiskGate::Allow
         );
     }
@@ -334,7 +361,10 @@ mod tests {
             smart_approve: false,
         };
         let v = evaluate_tool_risk(
-            &risk(vec![dangerous("rm_rf_root", Severity::Critical)], vec![egress("x.com")]),
+            &risk(
+                vec![dangerous("rm_rf_root", Severity::Critical)],
+                vec![egress("x.com")],
+            ),
             &p,
         );
         assert!(matches!(v, RiskGate::Deny(_)));
@@ -355,10 +385,16 @@ mod tests {
         // the entire TLD — `com` must not allow evil.com / attacker.com. Only an
         // exact match is honoured for a single-label entry.
         let allow = vec!["com".to_string()];
-        assert!(!domain_allowed("evil.com", &allow), "bare TLD must not over-match");
+        assert!(
+            !domain_allowed("evil.com", &allow),
+            "bare TLD must not over-match"
+        );
         assert!(!domain_allowed("attacker.com", &allow));
         assert!(!domain_allowed("api.github.com", &allow));
-        assert!(domain_allowed("com", &allow), "exact single-label still matches");
+        assert!(
+            domain_allowed("com", &allow),
+            "exact single-label still matches"
+        );
         // An internal single-label host is still honoured by exact match only.
         let allow_local = vec!["localhost".to_string()];
         assert!(domain_allowed("localhost", &allow_local));
@@ -372,7 +408,10 @@ mod tests {
     #[test]
     fn ip_literal_requires_exact_match_no_suffix() {
         // F3: an IP literal must match exactly — no dot-boundary suffix hole.
-        assert!(domain_allowed("192.168.1.50", &["192.168.1.50".to_string()]));
+        assert!(domain_allowed(
+            "192.168.1.50",
+            &["192.168.1.50".to_string()]
+        ));
         // An allowlist octet/suffix must NOT over-match a full IP.
         assert!(!domain_allowed("10.0.0.1", &["1".to_string()]));
         assert!(!domain_allowed("10.0.0.1", &["0.0.1".to_string()]));
@@ -396,7 +435,10 @@ mod tests {
         let p = SecurityPolicy::default(); // dangerous = Deny
         let r = risk(vec![dangerous("rm_rf_root", Severity::Critical)], vec![]);
         // No lease → still Deny.
-        assert!(matches!(apply_risk_leases(&r, &p, false, false), RiskGate::Deny(_)));
+        assert!(matches!(
+            apply_risk_leases(&r, &p, false, false),
+            RiskGate::Deny(_)
+        ));
         // dangerous_command lease → lifted to Allow.
         assert_eq!(apply_risk_leases(&r, &p, true, false), RiskGate::Allow);
     }
@@ -416,7 +458,10 @@ mod tests {
             vec![dangerous("rm_rf_root", Severity::Critical)],
             vec![egress("evil.com")],
         );
-        assert!(matches!(apply_risk_leases(&r, &p, true, false), RiskGate::Deny(_)));
+        assert!(matches!(
+            apply_risk_leases(&r, &p, true, false),
+            RiskGate::Deny(_)
+        ));
         // Both leased → fully lifted.
         assert_eq!(apply_risk_leases(&r, &p, true, true), RiskGate::Allow);
     }
