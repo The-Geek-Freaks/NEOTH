@@ -43,6 +43,16 @@
 //!                                    Operator-configured channel adapter
 //!                                    that dials Discord's gateway URL after
 //!                                    `gateway.json` discovery.
+//!   - `src/channels/line_api.rs`  — outbound LINE Messaging API REST calls;
+//!                                    operator-configured channel adapter
+//!                                    using the operator's bot token. Same
+//!                                    category as Discord/Slack channel
+//!                                    egress, not unsolicited phone-home.
+//!   - `src/channels/mattermost.rs`
+//!                                  — outbound Mattermost WebSocket dialer
+//!                                    for a self-hosted/operator-configured
+//!                                    server. Same explicit channel-adapter
+//!                                    category as Slack socket mode.
 //!   - `src/channels/pears_bridge.rs`
 //!                                  — LOCALHOST-ONLY HTTP client for the
 //!                                    operator-bundled `pear` runtime
@@ -109,6 +119,13 @@
 //!                                    endpoint (api.omi.me rejected), so the
 //!                                    `reqwest` GET only ever dials the
 //!                                    operator's self-hosted backend.
+//!   - `src/security/osv_check.rs` — supply-chain malware gate for explicit
+//!                                    installer/update flows. It queries OSV
+//!                                    before installing a requested package and
+//!                                    fails open on network errors.
+//!   - `src/sources/hackernews.rs` — explicit self-reflection source fetching
+//!                                    public HN Firebase API stories for tech
+//!                                    currency gap analysis.
 //!
 //! Adding a new allowed path means editing both the codebase AND this
 //! file, which makes the audit trail loud.
@@ -127,6 +144,8 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/channels/slack_socket.rs",
     "src/channels/discord.rs",
     "src/channels/discord_gateway_loop.rs",
+    "src/channels/line_api.rs",
+    "src/channels/mattermost.rs",
     "src/channels/keet_udp.rs",
     "src/channels/pears_bridge.rs",
     "src/telemetry/",
@@ -134,6 +153,8 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/transport/",
     "src/email/imap_fetch.rs",
     "src/daemon/omi_ingest_task.rs",
+    "src/security/osv_check.rs",
+    "src/sources/hackernews.rs",
     // GOLD-ADOPT-26 RSS feed poller — fetches operator-configured feed URLs
     // (production routes through providers::http_client; test bodies build a
     // plain client for the wiremock localhost server).
