@@ -815,7 +815,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("monitor.wal");
-        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
         let scan = WalCrcScanResult {
             recovery_truncated_count: 0,
             compaction_auth_failed_count: 0,
@@ -825,6 +825,8 @@ mod tests {
             .await
             .unwrap();
         assert!(silence_alerted);
+        drop(writer);
+        join.await.unwrap();
         assert_eq!(count_frames(&seg, EVENT_TYPE_CHANNEL_SILENCE_ALERT), 1);
     }
 
