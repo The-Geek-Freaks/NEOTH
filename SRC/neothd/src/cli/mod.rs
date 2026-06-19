@@ -31,6 +31,8 @@ pub mod cluster;
 pub mod code;
 pub mod code_intel;
 pub mod code_map;
+pub mod device_profile;
+pub mod onboarding_status;
 pub mod completions;
 pub mod computer_use;
 pub mod connect;
@@ -851,6 +853,18 @@ pub enum Commands {
     #[command(name = "code-intel")]
     CodeIntel(code_intel::CodeIntelArgs),
 
+    /// OH-04 — detect host RAM / CPU / GPU and recommend a local-AI deployment
+    /// tier (cloud-first / hybrid / local-capable).  No LLM call; purely
+    /// hardware-derived.  Used internally by `onboarding-status`.
+    #[command(name = "device-profile")]
+    DeviceProfile,
+
+    /// OH-02 — compact onboarding readiness snapshot.  Shows provider auth,
+    /// enabled channels, autonomy level, and device tier in one glance.
+    /// `--json` emits machine-readable output.
+    #[command(name = "onboarding-status")]
+    OnboardingStatus(onboarding_status::OnboardingStatusArgs),
+
     /// Council (smartest-wins) configuration + introspection (Pick #14,
     /// Session 14). `show` prints the active config block; `tune`
     /// atomically mutates it (`--selection-mode`, `--self-reflect`,
@@ -1388,6 +1402,21 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::CodeIntel(args) => {
             code_intel::run_code_intel(args).await?;
+        }
+        Commands::DeviceProfile => {
+            let profile = device_profile::detect_device_profile();
+            let tier = device_profile::recommend_tier(profile.total_ram_gb, profile.gpu_present);
+            println!(
+                "RAM: {:.1} GB | CPU cores: {} | GPU: {} | Tier: {} — {}",
+                profile.total_ram_gb,
+                profile.cpu_cores,
+                if profile.gpu_present { "yes" } else { "no" },
+                tier.as_str(),
+                tier.rationale(),
+            );
+        }
+        Commands::OnboardingStatus(args) => {
+            onboarding_status::run_onboarding_status(args).await?;
         }
         Commands::Council(mut args) => {
             args.output = global_output;
