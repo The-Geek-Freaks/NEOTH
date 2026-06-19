@@ -5,12 +5,17 @@
 //! whether memory-tuning helps or regresses.
 //!
 //! Entry point: [`run_memory_eval`].  CLI surface: `neoth memory-eval`.
+//!
+//! GOLD-ADAPT-NN-MEM-07 — contradiction detection rate metric.
+//! [`ContradictionCase`] / [`default_contradiction_suite`] / [`run_contradiction_eval`]
+//! extend the harness to measure how reliably the contradiction detector fires.
 
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 use super::consolidate::run_consolidation_pass;
+use super::contradiction::pair_confidence;
 
 const DAY_NS: i64 = 86_400 * 1_000_000_000;
 
@@ -40,6 +45,22 @@ pub struct EvalReport {
     pub misses: usize,
     /// hits / queries_run, or 0.0 when queries_run == 0.
     pub recall_precision: f64,
+
+    // ── GOLD-ADAPT-NN-MEM-07 — contradiction detection metric ────────────────
+    /// Number of contradiction cases in the suite that were expected to fire.
+    #[serde(default)]
+    pub contradictions_expected: usize,
+    /// Number of expected contradiction pairs that the detector actually caught.
+    #[serde(default)]
+    pub contradictions_caught: usize,
+    /// `contradictions_caught / contradictions_expected`.
+    /// 1.0 (vacuous) when `contradictions_expected == 0` — no cases configured.
+    #[serde(default = "default_one")]
+    pub contradiction_detection_rate: f64,
+}
+
+fn default_one() -> f64 {
+    1.0
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +120,115 @@ pub fn default_eval_suite() -> Vec<EvalCase> {
             expect_substr: "Critical".into(),
         },
     ]
+}
+
+// ---------------------------------------------------------------------------
+// GOLD-ADAPT-NN-MEM-07 — contradiction detection suite
+// ---------------------------------------------------------------------------
+
+/// One contradiction eval case: a BASE statement and a CONTRADICTING statement
+/// that the detector should fire on, plus an `expect_detected` flag.
+///
+/// When `expect_detected = true`  → a non-`None` from `pair_confidence` counts as
+///   a CATCH (true positive); missing it counts as a MISS.
+/// When `expect_detected = false` → a non-`None` from `pair_confidence` would be
+///   a FALSE CATCH (precision error); `None` is correct.  False catches are NOT
+///   counted in `contradictions_caught` or `contradictions_expected`; they are
+///   tracked separately so the caller can surface false-positive rate if desired.
+#[derive(Debug, Clone)]
+pub struct ContradictionCase {
+    pub base_statement: String,
+    pub other_statement: String,
+    /// `true`  → the pair SHOULD trigger detection (true-positive case).
+    /// `false` → the pair must NOT trigger detection (false-positive guard).
+    pub expect_detected: bool,
+}
+
+/// Three built-in contradiction cases for `neoth memory-eval`:
+/// 1. Clear polarity flip  (should fire).
+/// 2. Value divergence     (should fire — different IP addresses).
+/// 3. Unrelated pair       (must NOT fire — precision guard).
+pub fn default_contradiction_suite() -> Vec<ContradictionCase> {
+    vec![
+        // Case C1 — negation / polarity flip: "vpn is up" vs "vpn is not up".
+        // pair_confidence must return Some(PairSignal { negation: true, .. }).
+        ContradictionCase {
+            base_statement: "The VPN is up.".into(),
+            other_statement: "The VPN is not up.".into(),
+            expect_detected: true,
+        },
+        // Case C2 — value divergence: same subject, different IP values.
+        // pair_confidence must return Some(PairSignal { negation: false, .. }).
+        ContradictionCase {
+            base_statement: "The NAS is at 192.168.1.10.".into(),
+            other_statement: "The NAS is at 192.168.1.20.".into(),
+            expect_detected: true,
+        },
+        // Case C3 — unrelated statements: completely different subjects.
+        // pair_confidence MUST return None (no false-positive).
+        ContradictionCase {
+            base_statement: "The operator's favourite editor is Helix.".into(),
+            other_statement: "The NAS is at 192.168.1.10.".into(),
+            expect_detected: false,
+        },
+    ]
+}
+
+/// Run the contradiction-detection dimension of the eval harness.
+///
+/// Uses `pair_confidence` directly (the same synchronous Jaccard gate that
+/// `groundtruth::insert` calls at insert time) — no DB round-trip required for
+/// the pure pairwise signal, keeping this eval fast and side-effect free.
+///
+/// Rate computation:
+/// - `contradiction_detection_rate = caught / expected`.
+/// - When `expected == 0` (no true-positive cases in the suite) the rate is
+///   returned as `1.0` (vacuous) — logged in the struct doc above.
+///
+/// False-positive guards (`expect_detected = false`) are checked but do NOT
+/// contribute to `contradictions_expected` or `contradictions_caught`; a
+/// violation is silent at this layer (the caller or test asserts on it).
+pub fn run_contradiction_eval(cases: &[ContradictionCase]) -> ContradictionReport {
+    let mut expected: usize = 0;
+    let mut caught: usize = 0;
+    let mut false_catches: usize = 0;
+
+    for case in cases {
+        let fired = pair_confidence(&case.base_statement, &case.other_statement).is_some();
+        if case.expect_detected {
+            expected += 1;
+            if fired {
+                caught += 1;
+            }
+        } else if fired {
+            false_catches += 1;
+        }
+    }
+
+    let rate = if expected == 0 {
+        1.0 // vacuous: no true-positive cases configured
+    } else {
+        caught as f64 / expected as f64
+    };
+
+    ContradictionReport {
+        contradictions_expected: expected,
+        contradictions_caught: caught,
+        contradiction_detection_rate: rate,
+        false_catches,
+    }
+}
+
+/// Result of [`run_contradiction_eval`].
+#[derive(Debug, Clone)]
+pub struct ContradictionReport {
+    pub contradictions_expected: usize,
+    pub contradictions_caught: usize,
+    /// `caught / expected`, or 1.0 when `expected == 0`.
+    pub contradiction_detection_rate: f64,
+    /// Cases where `expect_detected = false` but the detector fired anyway
+    /// (false-positive count — not included in the rate formula).
+    pub false_catches: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,12 +309,18 @@ pub fn run_memory_eval(conn: &mut Connection, seed_cases: &[EvalCase]) -> Result
         hits as f64 / queries_run as f64
     };
 
+    // ── 4. Contradiction detection dimension (GOLD-ADAPT-NN-MEM-07) ─────────
+    let cd = run_contradiction_eval(&default_contradiction_suite());
+
     Ok(EvalReport {
         episodes_injected,
         queries_run,
         hits,
         misses,
         recall_precision,
+        contradictions_expected: cd.contradictions_expected,
+        contradictions_caught: cd.contradictions_caught,
+        contradiction_detection_rate: cd.contradiction_detection_rate,
     })
 }
 
@@ -309,5 +445,79 @@ mod tests {
         assert_eq!(report.queries_run, default_eval_suite().len());
         // We don't assert precision here — this is a smoke test that the
         // harness doesn't crash on the built-in suite.
+    }
+
+    // ── GOLD-ADAPT-NN-MEM-07: contradiction detection tests ─────────────────
+
+    /// A clear polarity flip ("vpn is up" vs "vpn is not up") MUST be caught.
+    #[test]
+    fn contradiction_eval_polarity_flip_is_caught() {
+        let cases = vec![ContradictionCase {
+            base_statement: "The VPN is up.".into(),
+            other_statement: "The VPN is not up.".into(),
+            expect_detected: true,
+        }];
+        let report = run_contradiction_eval(&cases);
+        assert_eq!(report.contradictions_expected, 1);
+        assert_eq!(
+            report.contradictions_caught, 1,
+            "polarity flip must be detected; pair_confidence returned None"
+        );
+        assert_eq!(report.contradiction_detection_rate, 1.0);
+        assert_eq!(report.false_catches, 0);
+    }
+
+    /// An unrelated statement pair must NOT be flagged as a contradiction
+    /// (precision guard — editor preference ≠ NAS address share no subject).
+    #[test]
+    fn contradiction_eval_unrelated_pair_not_flagged() {
+        let cases = vec![ContradictionCase {
+            base_statement: "The operator's favourite editor is Helix.".into(),
+            other_statement: "The NAS is at 192.168.1.10.".into(),
+            expect_detected: false,
+        }];
+        let report = run_contradiction_eval(&cases);
+        // No true-positive cases → vacuous rate of 1.0.
+        assert_eq!(report.contradictions_expected, 0);
+        assert_eq!(report.contradiction_detection_rate, 1.0);
+        assert_eq!(
+            report.false_catches, 0,
+            "unrelated pair must not trigger the contradiction detector"
+        );
+    }
+
+    /// The default contradiction suite must produce a detection rate of 1.0
+    /// (both true-positive cases caught, no false catches on the precision guard).
+    #[test]
+    fn default_contradiction_suite_passes() {
+        let report = run_contradiction_eval(&default_contradiction_suite());
+        assert_eq!(
+            report.contradictions_caught, report.contradictions_expected,
+            "all true-positive cases in the default suite must be caught"
+        );
+        assert_eq!(
+            report.contradiction_detection_rate, 1.0,
+            "default suite must yield 100 % detection rate"
+        );
+        assert_eq!(
+            report.false_catches, 0,
+            "no false catches expected on the default precision guard"
+        );
+    }
+
+    /// `run_memory_eval` propagates contradiction metrics into `EvalReport`.
+    #[test]
+    fn run_memory_eval_includes_contradiction_metrics() {
+        let (_dir, mut conn) = open_temp();
+        let report = run_memory_eval(&mut conn, &default_eval_suite()).unwrap();
+        // The default contradiction suite has 2 true-positive cases.
+        assert!(
+            report.contradictions_expected > 0,
+            "run_memory_eval must populate contradictions_expected"
+        );
+        assert!(
+            report.contradiction_detection_rate > 0.0,
+            "contradiction_detection_rate must be > 0 when cases are present"
+        );
     }
 }

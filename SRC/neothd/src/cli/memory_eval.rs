@@ -46,12 +46,26 @@ pub async fn run_memory_eval_cmd(args: MemoryEvalArgs) -> Result<()> {
             report.recall_precision * 100.0
         );
         println!();
+        println!(
+            "  contradiction detection ({}/{}) : {:.1}%",
+            report.contradictions_caught,
+            report.contradictions_expected,
+            report.contradiction_detection_rate * 100.0
+        );
+        println!();
         if report.recall_precision >= 0.8 {
             println!("  PASS — recall precision ≥ 80 %");
         } else {
             println!(
                 "  WARN — recall precision {:.1}% < 80 % (check decay thresholds / FTS config)",
                 report.recall_precision * 100.0
+            );
+        }
+        if report.contradiction_detection_rate < 1.0 && report.contradictions_expected > 0 {
+            println!(
+                "  WARN — contradiction detection rate {:.1}% < 100 % ({} missed)",
+                report.contradiction_detection_rate * 100.0,
+                report.contradictions_expected - report.contradictions_caught,
             );
         }
         println!();
