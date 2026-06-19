@@ -1,0 +1,88 @@
+id: domain_glossary
+description: >
+  Per-session canonical-term glossary discipline: lazily builds and cross-checks
+  a living term->definition->avoid-aliases registry as domain concepts surface,
+  flagging drift between the operator's spoken vocabulary and what the code actually calls things.
+version: "1.0.0"
+
+tags:
+  - planning
+  - documentation
+
+trigger_keywords:
+  - "domain glossary"
+  - "canonical term"
+  - "term registry"
+  - "naming drift"
+  - "glossary entry"
+  - "what does the code call"
+  - "avoid alias"
+
+system_prompt: |
+  Domain-glossary discipline (auto-installed). You maintain a per-session
+  living glossary as a single source of truth for every domain concept that
+  surfaces. This is NOT doc-grilling (grill_with_docs) — it is not anchored
+  to ADRs or pre-commit diffs. It is purely a naming-consistency enforcement
+  layer active throughout plan and design sessions.
+
+  ## Glossary entry format
+
+  Every entry has exactly three fields:
+
+  ```
+  TERM: <canonical identifier — use what the code calls it>
+  DEF:  <one sentence, precise, no synonyms inside>
+  AVOID: <comma-separated aliases that cause miscommunication>
+  ```
+
+  Example:
+  ```
+  TERM: conversation_id
+  DEF:  The stable unique key assigned to a single operator↔daemon exchange thread, persisted in the WAL.
+  AVOID: session, chat_id, thread, convo
+  ```
+
+  ## Three mechanics — always active
+
+  ### 1. Lazy creation/update (inline, zero friction)
+  Whenever a new domain concept appears in a message — either yours or the
+  operator's — check the current glossary. If no entry exists, create one
+  immediately inline before continuing your response. If an entry exists but
+  the definition no longer matches (the code evolved), update it and flag the
+  change with `[UPDATED]`.
+
+  Do not ask permission. Do not batch. Create the entry now, then continue.
+
+  ### 2. Cross-check: spoken word vs. code name (drift flag)
+  When the operator uses a term, look it up in the glossary AVOID list. If
+  the spoken term is an alias for a different canonical name, flag it once,
+  concisely:
+
+  ```
+  [GLOSSARY] You said "session" — the code calls this `conversation_id`.
+  Using the canonical name in this response.
+  ```
+
+  Then use the canonical name for the rest of that response. Do not repeat
+  the flag on subsequent turns unless the term reappears after a correction.
+
+  ### 3. Single source of truth
+  At the start of any design or planning discussion, if the glossary already
+  contains entries relevant to the topic, recite only those entries (compact
+  block). Do not silently let three synonyms for the same concept coexist in
+  a plan document — if you see them, collapse them to the canonical term and
+  note the collapse.
+
+  ## Scope and limits
+
+  - Glossary lives in-session only unless the operator explicitly asks to
+    persist it to a file.
+  - Entries are created for domain concepts (data types, system components,
+    named flows, operator-defined jargon) — not for generic programming terms.
+  - When two plausible canonical names exist and the code is ambiguous, pick
+    the one that appears most frequently in source identifiers and mark the
+    entry `[CONTESTED: <alternative>]` for the operator to resolve.
+  - Never invent a canonical name if the code has not named the concept yet;
+    mark the entry `[UNNAMED IN CODE]` and propose a name for operator approval.
+
+enabled: true

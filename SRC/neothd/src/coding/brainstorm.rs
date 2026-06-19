@@ -40,6 +40,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// GRILL-04 — maximum brainstorm rounds before a [`Decision::Deadlock`]
+/// is returned. Prevents infinite Q&A loops when operator and model
+/// cannot converge on a spec within a bounded session.
+pub const MAX_BRAINSTORM_ROUNDS: u32 = 6;
+
 /// QM-4: gate decision. The coding workflow (`cli::code`) consults
 /// this BEFORE decomposition so the operator either:
 ///   - skips brainstorming entirely (bug fix / refactor /
@@ -48,6 +53,8 @@ use serde::{Deserialize, Serialize};
 ///     spec marker)
 ///   - proceeds to decomposition (spec already attached via the
 ///     SpecReady path)
+///   - receives a Deadlock after [`MAX_BRAINSTORM_ROUNDS`] rounds
+///     without convergence (GRILL-04)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Decision {
@@ -63,6 +70,12 @@ pub enum Decision {
     /// section headers detected). The gate hands the typed spec
     /// off to downstream.
     SpecReady { spec: Box<BrainstormSpec> },
+    /// GRILL-04 — brainstorm loop exhausted [`MAX_BRAINSTORM_ROUNDS`]
+    /// without reaching a `SpecReady` decision. The `unresolved`
+    /// list names the open issues that blocked convergence.
+    /// Downstream code (e.g. `cli::code`) MUST surface these to
+    /// the operator and halt — do NOT proceed to decomposition.
+    Deadlock { unresolved: Vec<String> },
 }
 
 impl Decision {
@@ -74,6 +87,58 @@ impl Decision {
     }
     pub fn is_spec_ready(&self) -> bool {
         matches!(self, Decision::SpecReady { .. })
+    }
+    /// GRILL-04: true when the brainstorm loop hit its round ceiling.
+    pub fn is_deadlock(&self) -> bool {
+        matches!(self, Decision::Deadlock { .. })
+    }
+}
+
+/// GRILL-04 — brainstorm-loop evaluator with a round ceiling.
+///
+/// Drives a stateless classification loop: on each round it evaluates
+/// the current `prompt` and returns either a final decision or
+/// `NeedsBrainstorm` (meaning the caller should present the rationale
+/// to the operator, collect a revised prompt, and call again).
+///
+/// When `round` reaches [`MAX_BRAINSTORM_ROUNDS`] without returning
+/// [`Decision::SpecReady`] or [`Decision::Skip`], this function returns
+/// [`Decision::Deadlock`] with the `unresolved` list populated from the
+/// last `NeedsBrainstorm` rationale.
+///
+/// # Arguments
+///
+/// * `prompt`  — the current operator prompt (may be revised each round)
+/// * `round`   — 1-based round number (caller increments between calls)
+/// * `unresolved` — open issues accumulated so far (append rationale on
+///                  each `NeedsBrainstorm` round, pass the vec through)
+///
+/// # Returns
+///
+/// The [`Decision`] for this round. When `Deadlock` is returned the
+/// caller MUST stop the loop.
+pub fn evaluate_with_rounds(
+    prompt: &str,
+    round: u32,
+    unresolved: Vec<String>,
+) -> Decision {
+    let decision = evaluate(prompt);
+    match decision {
+        // Terminal decisions — return immediately.
+        Decision::Skip { .. } | Decision::SpecReady { .. } => decision,
+        // Not yet approved — check the ceiling.
+        Decision::NeedsBrainstorm { ref rationale } => {
+            if round >= MAX_BRAINSTORM_ROUNDS {
+                let mut issues = unresolved;
+                issues.push(rationale.clone());
+                Decision::Deadlock { unresolved: issues }
+            } else {
+                decision
+            }
+        }
+        // Already a Deadlock — pass through (shouldn't happen in
+        // normal usage, but be safe).
+        Decision::Deadlock { .. } => decision,
     }
 }
 
@@ -504,5 +569,87 @@ Plain line two.
         let back: Decision = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
         assert!(json.contains("\"kind\":\"skip\""));
+    }
+
+    // ── GRILL-04 ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn deadlock_variant_is_not_skip_or_spec_ready() {
+        let d = Decision::Deadlock {
+            unresolved: vec!["Scope unclear".into()],
+        };
+        assert!(!d.is_skip());
+        assert!(!d.needs_brainstorm());
+        assert!(!d.is_spec_ready());
+        assert!(d.is_deadlock());
+    }
+
+    #[test]
+    fn deadlock_round_trips_through_json() {
+        let d = Decision::Deadlock {
+            unresolved: vec!["a".into(), "b".into()],
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: Decision = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+        assert!(json.contains("\"kind\":\"deadlock\""));
+    }
+
+    /// Calling `evaluate_with_rounds` on a feature prompt MAX times
+    /// without an approved spec must return Deadlock.
+    #[test]
+    fn evaluate_with_rounds_returns_deadlock_at_max_without_approval() {
+        // A plain feature request will always produce NeedsBrainstorm
+        // from the pure `evaluate` path.
+        let prompt = "Build a new dashboard for cost tracking";
+        let mut unresolved: Vec<String> = Vec::new();
+
+        let mut final_decision = Decision::Skip {
+            reason: "sentinel".into(),
+        };
+        for round in 1..=MAX_BRAINSTORM_ROUNDS {
+            let d = evaluate_with_rounds(prompt, round, unresolved.clone());
+            match &d {
+                Decision::NeedsBrainstorm { rationale } => {
+                    // Still within budget — accumulate.
+                    unresolved.push(rationale.clone());
+                }
+                Decision::Deadlock { .. } => {
+                    final_decision = d;
+                    break;
+                }
+                other => panic!("unexpected decision mid-loop: {other:?}"),
+            }
+        }
+        assert!(
+            final_decision.is_deadlock(),
+            "loop must end in Deadlock; got {final_decision:?}"
+        );
+        if let Decision::Deadlock { unresolved } = &final_decision {
+            assert!(
+                !unresolved.is_empty(),
+                "Deadlock unresolved list must be populated"
+            );
+        }
+    }
+
+    /// Below MAX_ROUNDS a feature prompt returns NeedsBrainstorm (not Deadlock).
+    #[test]
+    fn evaluate_with_rounds_no_deadlock_before_max() {
+        let prompt = "Build a new dashboard for cost tracking";
+        for round in 1..MAX_BRAINSTORM_ROUNDS {
+            let d = evaluate_with_rounds(prompt, round, vec![]);
+            assert!(
+                !d.is_deadlock(),
+                "round {round} must not deadlock before MAX_BRAINSTORM_ROUNDS"
+            );
+        }
+    }
+
+    /// A Skip prompt resolves immediately even at round 1.
+    #[test]
+    fn evaluate_with_rounds_skip_resolves_immediately() {
+        let d = evaluate_with_rounds("Fix the panic when WAL is empty", 1, vec![]);
+        assert!(d.is_skip());
     }
 }

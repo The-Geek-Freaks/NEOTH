@@ -65,6 +65,7 @@ pub mod feed;
 /// `NEOTH_NO_AUTO_CODE=1` env var.
 pub mod intent;
 pub mod model_profile;
+pub mod plan_review;
 pub mod plan_writer;
 pub mod provider_worker;
 pub mod retry;

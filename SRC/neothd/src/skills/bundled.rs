@@ -146,6 +146,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "dispatching_parallel_agents",
         include_str!("../../assets/skills/dispatching_parallel_agents/skill.yaml"),
     ),
+    // GOLD-ADAPT-GRILL-05 (2026-06-19) — per-session domain glossary discipline.
+    (
+        "domain_glossary",
+        include_str!("../../assets/skills/domain_glossary/skill.yaml"),
+    ),
     // GOLD-ADAPT-SKILL-01 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
     (
         "doubt_driven_development",

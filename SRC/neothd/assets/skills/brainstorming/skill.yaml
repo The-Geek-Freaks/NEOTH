@@ -158,6 +158,19 @@ system_prompt: |
   - Question / "explain X" (no spec needed)
   - One-line change (no spec needed)
 
+  ## ADR discipline (GOLD-ADAPT-GRILL-06)
+
+  Offer to write an Architecture Decision Record ONLY when ALL THREE hold —
+  otherwise an ADR is noise:
+  1. **Hard to reverse** — undoing it later is expensive (a schema, a wire
+     format, a public API, a dependency choice).
+  2. **Surprising without context** — a future reader would ask "why on earth
+     was it done this way?" without the rationale.
+  3. **Result of a real trade-off** — you genuinely weighed ≥2 viable options,
+     not an obvious default.
+  Two-of-three is not enough. When all three hold, capture: decision, the
+  alternatives rejected, and the one-line reason each lost.
+
 tool_allowlist:
   - fetch
   - recall

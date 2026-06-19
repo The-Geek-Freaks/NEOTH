@@ -37,6 +37,74 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// GRILL-03 — one round of adversarial plan review.
+///
+/// Each round records what the reviewer critiqued, how the plan author
+/// responded, and the reviewer's final verdict for that round
+/// (`REVISE` or `APPROVED`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanReviewRound {
+    /// 1-based round number.
+    pub round: u32,
+    /// Reviewer's critique text for this round.
+    pub critique: String,
+    /// Author's response / updated plan digest for this round.
+    pub response: String,
+    /// Reviewer verdict: `"APPROVED"` or `"REVISE"`.
+    pub verdict: String,
+}
+
+/// GRILL-03 — append-only log of plan-review rounds.
+///
+/// Grows one entry per review round. Serialises as a JSON array so the
+/// full history is inspectable by downstream tooling and the operator.
+/// Use [`PlanReviewLog::append`] to add rounds — never mutate existing
+/// entries (the slice is the authoritative ordered history).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanReviewLog {
+    rounds: Vec<PlanReviewRound>,
+}
+
+impl PlanReviewLog {
+    /// Create an empty log.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append one completed review round. The round number is taken
+    /// from `round.round`; callers are responsible for incrementing.
+    pub fn append(&mut self, round: PlanReviewRound) {
+        self.rounds.push(round);
+    }
+
+    /// Ordered slice of all recorded rounds (oldest first).
+    pub fn rounds(&self) -> &[PlanReviewRound] {
+        &self.rounds
+    }
+
+    /// Number of rounds recorded.
+    pub fn len(&self) -> usize {
+        self.rounds.len()
+    }
+
+    /// True when no rounds have been recorded yet.
+    pub fn is_empty(&self) -> bool {
+        self.rounds.is_empty()
+    }
+
+    /// Serialize to a compact JSON string. Returns Err on the
+    /// (unreachable-in-practice) case that the value is not
+    /// serialisable.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    /// Deserialize from a JSON string produced by [`PlanReviewLog::to_json`].
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
 /// QM-4: one row in a plan. Operator emits N of these from a
 /// `BrainstormSpec` decomposition (mirrors the `to_issues` skill's
 /// tracer-bullet doctrine — each row a vertical slice through the
@@ -379,5 +447,57 @@ mod tests {
         // change in this test — the list is the operator-visible
         // contract.
         assert_eq!(PLACEHOLDER_TOKENS.len(), 15);
+    }
+
+    // ── GRILL-03 ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn plan_review_log_two_rounds_serialise_and_round_trip() {
+        let mut log = PlanReviewLog::new();
+        assert!(log.is_empty());
+
+        log.append(PlanReviewRound {
+            round: 1,
+            critique: "Scope is too wide — split the auth slice.".into(),
+            response: "Acknowledged; extracted auth into T-02.".into(),
+            verdict: "REVISE".into(),
+        });
+        log.append(PlanReviewRound {
+            round: 2,
+            critique: "Revised plan looks good.".into(),
+            response: "No changes needed.".into(),
+            verdict: "APPROVED".into(),
+        });
+
+        assert_eq!(log.len(), 2);
+
+        // Serialise → deserialise → structural equality.
+        let json = log.to_json().expect("serialisation must not fail");
+        let back = PlanReviewLog::from_json(&json).expect("deserialisation must not fail");
+        assert_eq!(log, back, "round-trip must preserve all fields");
+
+        // Ordering: round 1 before round 2.
+        let rounds = back.rounds();
+        assert_eq!(rounds[0].round, 1);
+        assert_eq!(rounds[0].verdict, "REVISE");
+        assert_eq!(rounds[1].round, 2);
+        assert_eq!(rounds[1].verdict, "APPROVED");
+    }
+
+    #[test]
+    fn plan_review_log_preserves_insertion_order() {
+        let mut log = PlanReviewLog::new();
+        for i in 1..=5u32 {
+            log.append(PlanReviewRound {
+                round: i,
+                critique: format!("critique {i}"),
+                response: format!("response {i}"),
+                verdict: if i < 5 { "REVISE" } else { "APPROVED" }.into(),
+            });
+        }
+        let rounds = log.rounds();
+        for (idx, r) in rounds.iter().enumerate() {
+            assert_eq!(r.round as usize, idx + 1);
+        }
     }
 }
