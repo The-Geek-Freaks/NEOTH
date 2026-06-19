@@ -38,6 +38,10 @@ pub enum Source {
     /// GOLD-ADAPT-VIEW-04 — distilled from an imported foreign-agent SESSION
     /// transcript (claude-code / codex / gemini). Candidate until corroborated.
     ImportSession,
+    /// GOLD-ADAPT-JV-IMP-06 — imported from an Obsidian vault note that carries
+    /// no managed `source: openclaw-*` / `source: neoth-*` frontmatter (i.e. a
+    /// note the operator wrote by hand, not a round-trip-managed file).
+    ImportObsidian,
     /// Operator pasted a markdown file; the bulk-text extractor produced
     /// this claim.
     BulkText,
@@ -59,6 +63,7 @@ impl Source {
             Source::ImportOpenhuman => "import:openhuman",
             Source::ImportVeronica => "import:veronica",
             Source::ImportSession => "import:session",
+            Source::ImportObsidian => "import:obsidian",
             Source::BulkText => "bulk-text",
             Source::Omi => "omi",
         }

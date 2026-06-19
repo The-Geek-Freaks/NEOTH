@@ -22,6 +22,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::groundtruth::Source;
 
@@ -261,6 +262,224 @@ pub fn read_veronica_jsonl(path: &Path, import_source: Source) -> Result<Vec<Imp
     Ok(out)
 }
 
+// ── OpenClaw memory-index (JV-IMP-01 reader 1 of 3) ─────────────────────────
+
+/// Parse an OpenClaw `index.json` whose top-level `memories` array holds
+/// memory entries with a `text` or `content` field (and an optional `scope`).
+/// Each entry becomes one `ImportedClaim` tagged `Source::ImportOpenclaw`.
+///
+/// Defensive: missing / malformed entries are skipped; absent or unreadable
+/// file returns `Ok(vec![])`.
+pub fn read_openclaw_memory_index(path: &Path) -> Result<Vec<ImportedClaim>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let body = std::fs::read_to_string(path)
+        .with_context(|| format!("read openclaw memory index {}", path.display()))?;
+    if body.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root: Value = serde_json::from_str(&body)
+        .with_context(|| format!("parse openclaw memory index {}", path.display()))?;
+    let entries = match root.get("memories").and_then(|v| v.as_array()) {
+        Some(arr) => arr.clone(),
+        None => {
+            tracing::debug!(
+                path = %path.display(),
+                "openclaw memory index: no 'memories' array found"
+            );
+            return Ok(Vec::new());
+        }
+    };
+    let mut out = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        // Accept either "text" or "content" as the statement field.
+        let text = entry
+            .get("text")
+            .or_else(|| entry.get("content"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        if text.is_empty() {
+            tracing::debug!(index = i, "skipping openclaw memory entry with empty text");
+            continue;
+        }
+        let scope = entry
+            .get("scope")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("global")
+            .to_string();
+        out.push(ImportedClaim {
+            statement: text.to_string(),
+            scope,
+            source: Source::ImportOpenclaw,
+        });
+    }
+    Ok(out)
+}
+
+// neoth: JV-IMP-01 reader 2 — read_openclaw_mempalace(path: &Path)
+// Plan: parse nodes + hebbianLinks, replay hebbian_reinforce.
+// Status: UNIMPLEMENTED — the mempalace node/hebbianLinks schema is not
+// specified in the GOLD plan (no file:line reference, no field list).
+// Implement once the exact JSON shape is extracted from QUELLEN/JARVIS_LIVE/.
+
+// neoth: JV-IMP-01 reader 3 — read_openclaw_memory_db(path: &Path)
+// Plan: SQLite `summaries.learned+completed` → groundtruth.
+// Status: UNIMPLEMENTED — the `summaries` table DDL (column names, types)
+// is not specified in the GOLD plan. Implement once extracted from
+// QUELLEN/JARVIS_LIVE/ or `~/.openclaw/memory.db` schema.
+
+// ── Obsidian vault manual-note import (JV-IMP-06) ───────────────────────────
+
+/// Map an Obsidian folder prefix to a scope tag.
+/// Mirrors the folder→scope table from GOLD-ADAPT-JV-IMP-06.
+fn obsidian_folder_scope(folder: &str) -> &'static str {
+    match folder {
+        "05-Personen" => "people",
+        "06-Regeln" => "rules",
+        "09-Dokumente" => "documents",
+        "00-MOCs" => "moc",
+        _ => "global",
+    }
+}
+
+/// Read an Obsidian vault directory and import every `.md` note that does
+/// NOT carry a managed `source: openclaw-*` or `source: neoth-*` YAML
+/// frontmatter line. Notes with those source tags are round-trip-managed by
+/// the OpenClaw / NEOTH sync pipeline and must not be double-imported.
+///
+/// For each qualifying note the YAML frontmatter is stripped and the body
+/// text becomes the claim statement. The note title (filename without `.md`)
+/// is prepended as context so operators can trace back the origin.
+///
+/// Folder → scope mapping: `05-Personen`→people, `06-Regeln`→rules,
+/// `09-Dokumente`→documents, `00-MOCs`→moc, everything else → global.
+///
+/// Empty or absent `dir` returns `Ok(vec![])`.
+pub fn read_obsidian_manual_notes(dir: &Path) -> Result<Vec<ImportedClaim>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    visit_obsidian_dir(dir, dir, &mut out)?;
+    Ok(out)
+}
+
+fn visit_obsidian_dir(
+    root: &Path,
+    current: &Path,
+    out: &mut Vec<ImportedClaim>,
+) -> Result<()> {
+    let entries = std::fs::read_dir(current)
+        .with_context(|| format!("read obsidian dir {}", current.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("dir entry in {}", current.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            // Recurse; ignore hidden dirs (`.obsidian`, `.git`, etc.)
+            let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !dir_name.starts_with('.') {
+                visit_obsidian_dir(root, &path, out)?;
+            }
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "md" {
+            continue;
+        }
+        let body = match std::fs::read_to_string(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping unreadable obsidian note");
+                continue;
+            }
+        };
+        // Detect managed-source frontmatter: any line `source: openclaw-*`
+        // or `source: neoth-*` inside the leading YAML block disqualifies
+        // the note from manual import.
+        if is_managed_obsidian_note(&body) {
+            continue;
+        }
+        // Strip YAML frontmatter and collect the body.
+        let content = strip_yaml_frontmatter(&body);
+        let content = content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        // Title = filename without extension.
+        let title = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("untitled");
+        // Scope from the immediate parent folder name relative to the vault root.
+        let scope = {
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            let folder = rel
+                .parent()
+                .and_then(|p| p.components().next())
+                .and_then(|c| {
+                    use std::path::Component;
+                    if let Component::Normal(n) = c { n.to_str() } else { None }
+                })
+                .unwrap_or("");
+            obsidian_folder_scope(folder).to_string()
+        };
+        let statement = format!("[{title}] {content}");
+        out.push(ImportedClaim {
+            statement,
+            scope,
+            source: Source::ImportObsidian,
+        });
+    }
+    Ok(())
+}
+
+/// Return `true` when the note's YAML frontmatter contains a `source:` line
+/// whose value starts with `openclaw-` or `neoth-`.
+fn is_managed_obsidian_note(body: &str) -> bool {
+    // Frontmatter is delimited by a leading `---` line.
+    let inner = if let Some(rest) = body.strip_prefix("---") {
+        // Find the closing `---`.
+        if let Some(end) = rest.find("\n---") {
+            &rest[..end]
+        } else {
+            // Malformed or no closing delimiter — treat as no frontmatter.
+            return false;
+        }
+    } else {
+        return false;
+    };
+    for line in inner.lines() {
+        let trimmed = line.trim();
+        if let Some(val) = trimmed.strip_prefix("source:") {
+            let val = val.trim();
+            if val.starts_with("openclaw-") || val.starts_with("neoth-") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Strip the leading YAML frontmatter block (`---…---`) and return the body.
+fn strip_yaml_frontmatter(body: &str) -> &str {
+    if !body.starts_with("---") {
+        return body;
+    }
+    let rest = &body[3..];
+    // Skip the leading newline after the opening `---` if present.
+    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    if let Some(end_pos) = rest.find("\n---") {
+        // end_pos points at the `\n` before `---`; skip past `---` + optional newline.
+        let after = &rest[end_pos + 4..]; // 4 = len("\n---")
+        after.strip_prefix('\n').unwrap_or(after)
+    } else {
+        body
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,5 +659,139 @@ not even json
         // pattern works for arbitrary JSONL sources.
         let hermes = read_veronica_jsonl(&path, Source::ImportHermes).unwrap();
         assert_eq!(hermes[0].source, Source::ImportHermes);
+    }
+
+    // ── JV-IMP-01 tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn memory_index_parses_two_entries_and_sets_source() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("index.json");
+        std::fs::write(
+            &path,
+            r#"{"memories":[
+                {"text":"Operator runs NEOTH on Windows","scope":"host:primary"},
+                {"content":"Never reboot Cube remotely"}
+            ]}"#,
+        )
+        .unwrap();
+        let claims = read_openclaw_memory_index(&path).unwrap();
+        assert_eq!(claims.len(), 2);
+        assert!(claims
+            .iter()
+            .any(|c| c.statement.contains("NEOTH on Windows") && c.scope == "host:primary"));
+        assert!(claims
+            .iter()
+            .any(|c| c.statement.contains("Never reboot Cube") && c.scope == "global"));
+        for c in &claims {
+            assert_eq!(c.source, Source::ImportOpenclaw);
+        }
+    }
+
+    #[test]
+    fn memory_index_skips_malformed_entry_missing_text() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("index.json");
+        // Entry 1: valid; entry 2: no text/content (should be skipped).
+        std::fs::write(
+            &path,
+            r#"{"memories":[
+                {"text":"valid claim"},
+                {"scope":"global","importance":0.9}
+            ]}"#,
+        )
+        .unwrap();
+        let claims = read_openclaw_memory_index(&path).unwrap();
+        assert_eq!(claims.len(), 1, "entry without text/content must be skipped");
+        assert_eq!(claims[0].statement, "valid claim");
+    }
+
+    #[test]
+    fn memory_index_absent_file_returns_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let claims = read_openclaw_memory_index(&path).unwrap();
+        assert!(claims.is_empty());
+    }
+
+    // ── JV-IMP-06 tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn obsidian_imports_manual_note_and_skips_managed() {
+        let dir = tempdir().unwrap();
+        // Manual note — no managed frontmatter.
+        std::fs::write(
+            dir.path().join("my-note.md"),
+            "# Hello\n\nThis is a manual note.\n",
+        )
+        .unwrap();
+        // Managed note — has `source: openclaw-memory`; must be skipped.
+        std::fs::write(
+            dir.path().join("managed.md"),
+            "---\nsource: openclaw-memory\ntitle: managed\n---\n\nshould be ignored\n",
+        )
+        .unwrap();
+        let claims = read_obsidian_manual_notes(dir.path()).unwrap();
+        assert_eq!(claims.len(), 1, "managed note must be skipped");
+        assert!(claims[0].statement.contains("This is a manual note"));
+        assert_eq!(claims[0].source, Source::ImportObsidian);
+    }
+
+    #[test]
+    fn obsidian_strips_frontmatter_from_manual_note() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("note.md"),
+            "---\ntitle: My Note\ntags: [a, b]\n---\n\nBody text here.\n",
+        )
+        .unwrap();
+        let claims = read_obsidian_manual_notes(dir.path()).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert!(
+            claims[0].statement.contains("Body text here"),
+            "frontmatter must be stripped; got: {}",
+            claims[0].statement
+        );
+        assert!(
+            !claims[0].statement.contains("title:"),
+            "frontmatter keys must not appear in statement"
+        );
+    }
+
+    #[test]
+    fn obsidian_folder_to_scope_mapping() {
+        let dir = tempdir().unwrap();
+        // Create one note in each mapped folder.
+        for folder in ["05-Personen", "06-Regeln", "09-Dokumente", "00-MOCs", "07-Other"] {
+            std::fs::create_dir(dir.path().join(folder)).unwrap();
+            std::fs::write(
+                dir.path().join(folder).join("note.md"),
+                format!("content from {folder}\n"),
+            )
+            .unwrap();
+        }
+        let claims = read_obsidian_manual_notes(dir.path()).unwrap();
+        assert_eq!(claims.len(), 5);
+        let scope_for = |folder: &str| -> &'static str { obsidian_folder_scope(folder) };
+        assert_eq!(scope_for("05-Personen"), "people");
+        assert_eq!(scope_for("06-Regeln"), "rules");
+        assert_eq!(scope_for("09-Dokumente"), "documents");
+        assert_eq!(scope_for("00-MOCs"), "moc");
+        assert_eq!(scope_for("07-Other"), "global");
+        // Verify claims carry the right scope.
+        let has_scope = |s: &str| claims.iter().any(|c| c.scope == s);
+        assert!(has_scope("people"));
+        assert!(has_scope("rules"));
+        assert!(has_scope("documents"));
+        assert!(has_scope("moc"));
+        assert!(has_scope("global"));
+    }
+
+    #[test]
+    fn obsidian_absent_dir_returns_empty() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("no_such_vault");
+        let claims = read_obsidian_manual_notes(&missing).unwrap();
+        assert!(claims.is_empty());
     }
 }

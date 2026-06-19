@@ -108,11 +108,12 @@ pub enum GroundtruthAction {
     /// Import ground-truth rows from another agent's memory store.
     /// Phase 28c R-24 GT-8.
     ///
-    /// Supported sources: hermes (SQLite), openclaw (markdown dir),
+    /// Supported sources: hermes (SQLite), openclaw (markdown dir or index.json),
     /// openhuman (SQLite triple store), veronica (JSONL), jsonl (generic
-    /// JSONL with the Veronica shape).
+    /// JSONL with the Veronica shape), obsidian (vault dir of manual notes).
     ImportAgent {
-        /// Which foreign agent format. `hermes | openclaw | openhuman | veronica | jsonl`.
+        /// Which foreign agent format.
+        /// `hermes | openclaw | openclaw-index | openhuman | veronica | jsonl | obsidian`.
         kind: String,
         /// Path to the foreign store. SQLite files for hermes/openhuman,
         /// markdown directory for openclaw, JSONL file for veronica/jsonl.
@@ -218,6 +219,8 @@ fn import_agent(
                 fi::read_openclaw_layer(path)?
             }
         }
+        // JV-IMP-01: OpenClaw memory-index JSON (`memories[]` array).
+        "openclaw-index" => fi::read_openclaw_memory_index(path)?,
         "openhuman" => fi::read_openhuman_db(path)?,
         "veronica" => {
             fi::read_veronica_jsonl(path, crate::memory::groundtruth::Source::ImportVeronica)?
@@ -229,8 +232,12 @@ fn import_agent(
             // trail says where the format came from.
             crate::memory::groundtruth::Source::ImportVeronica,
         )?,
+        // JV-IMP-06: Obsidian vault — walk the dir and import manual notes
+        // (i.e. notes WITHOUT `source: openclaw-*` / `source: neoth-*` frontmatter).
+        "obsidian" => fi::read_obsidian_manual_notes(path)?,
         other => anyhow::bail!(
-            "unknown agent kind '{other}'. Expected: hermes | openclaw | openhuman | veronica | jsonl"
+            "unknown agent kind '{other}'. \
+             Expected: hermes | openclaw | openclaw-index | openhuman | veronica | jsonl | obsidian"
         ),
     };
 
