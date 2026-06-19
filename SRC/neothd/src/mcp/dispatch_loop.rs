@@ -163,6 +163,16 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // once. No-op when no hint files exist (e.g. the channel/daemon cwd).
     let mut hint_tracker = hints_enabled.then(crate::mcp::hints::SubdirHintTracker::new);
     let hint_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    // GOLD-ADAPT-HARNESS-02 — trajectory session id (wall-clock + pid so
+    // concurrent sessions in the same home don't collide).
+    let harness_session_id = format!(
+        "{}-{}",
+        crate::time::now_unix_i64(),
+        std::process::id()
+    );
+    // GOLD-ADAPT-HARNESS-04 — one-shot: the token guard fires at most once
+    // per session (not per turn) to avoid nagging the model every turn.
+    let mut harness_token_nudge_fired = false;
 
     loop {
         iterations += 1;
@@ -172,9 +182,62 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         if iterations > 1 {
             prompt = compact_if_needed(driver, prompt, &compaction, writer, iterations).await;
         }
+        // GOLD-ADAPT-HARNESS-04 — per-turn input token guard: if the estimated
+        // prompt size exceeds the threshold, inject a one-time stop/compact
+        // nudge into the prompt before the completion so the model is aware.
+        // Uses count_tokens (char/4 estimator) — same signal as compact_if_needed
+        // (GOLD-ADOPT-19). Fires at most once per session (harness_token_nudge_fired).
+        // // neoth wire-note: when CompletionDriver is extended to surface
+        // Option<u32> input_tokens from the provider Completion struct, replace
+        // count_tokens with the observed value for higher accuracy.
+        if !harness_token_nudge_fired {
+            let estimated_tokens =
+                crate::tokens::budget::count_tokens(&prompt);
+            if let Some(nudge) =
+                crate::mcp::harness::input_token_guard(estimated_tokens, crate::mcp::harness::INPUT_TOKEN_GUARD_THRESHOLD)
+            {
+                warn!(
+                    iteration = iterations,
+                    estimated_tokens,
+                    threshold = crate::mcp::harness::INPUT_TOKEN_GUARD_THRESHOLD,
+                    "HARNESS-04: context large — injecting stop/compact nudge"
+                );
+                prompt = format!("{prompt}\n\n[system note: {nudge}]");
+                harness_token_nudge_fired = true;
+            }
+        }
         current_text = driver.complete(&prompt).await?;
         let extraction = extract_tool_calls(&current_text);
         if extraction.is_empty() {
+            // GOLD-ADAPT-HARNESS-01 — leaked tool-call retry: if the model
+            // returned no proper fenced call but the reply looks like it
+            // described one as free text (XML tag or bare JSON), re-prompt
+            // once with a corrective nudge. Bound to ONE retry per turn.
+            if crate::mcp::harness::detect_leaked_tool_call(&current_text)
+                && iterations < max_iterations
+            {
+                warn!(
+                    iteration = iterations,
+                    "HARNESS-01: leaked tool-call detected — re-prompting once with corrective nudge"
+                );
+                let nudge_prompt = format!(
+                    "{prompt}\n\n{current_text}\n\n{}",
+                    crate::mcp::harness::LEAKED_CALL_NUDGE
+                );
+                let retry_text = driver.complete(&nudge_prompt).await?;
+                if !extract_tool_calls(&retry_text).is_empty() {
+                    // Retry produced a proper fenced call. Re-run the loop on the
+                    // nudge_prompt so the next iteration parses + dispatches the
+                    // call through the normal path (one extra iteration consumed;
+                    // current_text is reassigned at the loop head, so retry_text
+                    // here was only the probe that a nudge yields a clean fence).
+                    prompt = nudge_prompt;
+                    continue;
+                }
+                // Retry still no fence — fall through to clean-exit with retry text.
+                current_text = retry_text;
+            }
+
             // No tool calls → the model thinks it's done. GOLD-ADOPT-22: if a
             // goal/grind is active and we're under the cap, inject one nudge and
             // keep going; otherwise stop.
@@ -459,7 +522,39 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         if let Some(runtime) = compression.as_ref() {
             compress_tool_results(&mut tool_result_blocks, runtime, iterations, writer).await;
         }
+        // GOLD-ADAPT-HARNESS-02 — capture the current-turn prompt fingerprint
+        // BEFORE build_next_prompt overwrites `prompt` with the next turn's content.
+        let harness_turn_prompt_hash = crate::mcp::harness::prompt_hash(&prompt);
+        let harness_turn_prompt_len = prompt.len();
         prompt = build_next_prompt(&prompt, &current_text, &tool_result_blocks, &hint_blocks);
+        // GOLD-ADAPT-HARNESS-02 — append a per-turn replay record to
+        // ~/.neoth/trajectories/<session_id>.jsonl + the .json snapshot.
+        // Best-effort: a write failure is logged inside append_trajectory and
+        // the loop continues normally. Only fired on tool-call turns (turns
+        // that exit clean have no tool_result_blocks and land in the break
+        // path above before reaching here).
+        {
+            let tool_call_labels: Vec<String> = extraction
+                .calls
+                .iter()
+                .map(|c| format!("{}/{}", c.server, c.tool))
+                .collect();
+            let verdict = if !iteration_had_success && !extraction.calls.is_empty() {
+                "all_failed"
+            } else {
+                "tool_calls"
+            };
+            let record = crate::mcp::harness::TurnRecord {
+                turn: iterations,
+                prompt_hash: harness_turn_prompt_hash,
+                prompt_len: harness_turn_prompt_len,
+                tool_calls: tool_call_labels,
+                verdict: verdict.to_string(),
+                ts_unix: crate::time::now_unix_i64(),
+            };
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            crate::mcp::harness::append_trajectory(&home, &harness_session_id, record);
+        }
     }
 
     Ok(LoopOutcome {
