@@ -142,8 +142,15 @@ pub struct RecallArgs {
     /// and the number of distinct links touching it. Useful for finding
     /// "hub" memories that were co-recalled with many other memories.
     /// Bypasses search. Defaults to `--limit` for the result count.
-    #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard"])]
+    #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard", "communities"])]
     pub hubs: bool,
+
+    /// GOLD-ADAPT-GRAPH-03 — detect communities in the association graph using
+    /// one level of Louvain modularity optimisation and print each community
+    /// (index, size, member node ids). Isolated nodes (no links) are omitted.
+    /// Bypasses search.
+    #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard", "hubs"])]
+    pub communities: bool,
 
     /// Populated from the global `--output` flag.
     #[arg(skip)]
@@ -416,6 +423,49 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                     println!("top {} memory hub(s) by association degree:", hubs.len());
                     for (id, deg) in &hubs {
                         println!("  event {id:>8}  degree {deg}");
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // GOLD-ADAPT-GRAPH-03 — Louvain community detection short-circuit.
+    if args.communities {
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
+        let communities = crate::memory::assoc_graph::detect_communities(&conn)
+            .context("detect_communities query")?;
+        match args.output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+                let rows: Vec<_> = communities
+                    .iter()
+                    .enumerate()
+                    .map(|(i, members)| {
+                        serde_json::json!({
+                            "community": i,
+                            "size": members.len(),
+                            "members": members,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::json!({ "communities": rows }));
+            }
+            crate::cli::OutputFormat::Table => {
+                if communities.is_empty() {
+                    println!(
+                        "no communities found (run `neoth recall --bootstrap-assoc` to seed \
+                         association links first)"
+                    );
+                } else {
+                    println!("{} community/communities detected:", communities.len());
+                    for (i, members) in communities.iter().enumerate() {
+                        let ids: Vec<String> = members.iter().map(|id| id.to_string()).collect();
+                        println!(
+                            "  community {i:>3}  size {:>4}  members: {}",
+                            members.len(),
+                            ids.join(", ")
+                        );
                     }
                 }
             }
@@ -1715,6 +1765,7 @@ mod tests {
 
         let args = RecallArgs {
             hubs: false,
+            communities: false,
             query: "wifi".to_string(),
             limit: 10,
             db: Some(db.clone()),
@@ -1997,6 +2048,7 @@ mod tests {
         let _ = store::open(&db).unwrap();
         let args = RecallArgs {
             hubs: false,
+            communities: false,
             query: "   ".to_string(), // whitespace-only treated as empty
             limit: 5,
             db: Some(db),
@@ -2034,6 +2086,7 @@ mod tests {
         let _ = store::open(&db).unwrap();
         let args = RecallArgs {
             hubs: false,
+            communities: false,
             query: String::new(),
             limit: 5,
             db: Some(db),
@@ -2071,6 +2124,7 @@ mod tests {
         let _ = store::open(&db).unwrap();
         let args = RecallArgs {
             hubs: false,
+            communities: false,
             query: String::new(),
             limit: 5,
             db: Some(db),
@@ -2285,6 +2339,7 @@ mod tests {
 
         let args = RecallArgs {
             hubs: false,
+            communities: false,
             query: String::new(),
             limit: 20,
             db: Some(db.clone()),

@@ -287,6 +287,173 @@ pub fn bootstrap_co_occurrence(conn: &Connection, window_ns: u64, now_unix: i64)
     Ok(created)
 }
 
+// ── GOLD-ADAPT-GRAPH-03 — Louvain community detection ────────────────────────
+
+/// One level of Louvain modularity optimisation over a weighted undirected graph.
+///
+/// Input: list of canonical `(lo, hi, weight)` edges (lo < hi). Isolated nodes
+/// (nodes that appear in no edge) are not represented in the input and are omitted
+/// from the output — the caller is responsible for deciding what to do with them
+/// (here: omit, documented in [`detect_communities`]).
+///
+/// Algorithm (greedy single-level Louvain):
+/// 1. Assign every node its own community.
+/// 2. Iterate over nodes in ascending id order (deterministic).
+/// 3. For each node, compute the modularity gain of moving it into each neighbouring
+///    community; pick the best gain. Accept only when gain > 0.
+/// 4. Repeat until a full pass yields no improvement.
+///
+/// Modularity gain for moving node `i` from its current community `c_i` into
+/// community `c_j`:
+///   ΔQ = [k_{i,c_j} / m] − [k_i · Σ_{c_j} / (2m²)]
+/// where `k_{i,c_j}` = sum of weights from `i` to nodes in `c_j`, `m` = total
+/// edge weight sum, `k_i` = weighted degree of `i`, `Σ_{c_j}` = sum of weighted
+/// degrees of all nodes in `c_j`.
+///
+/// Returns communities as `Vec<Vec<node_id>>`, each inner vec sorted ascending,
+/// outer sorted by size desc then min-id asc. Empty input → empty output.
+pub fn louvain(edges: &[(i64, i64, f64)]) -> Vec<Vec<i64>> {
+    if edges.is_empty() {
+        return Vec::new();
+    }
+
+    // Collect sorted unique node ids so iteration is deterministic.
+    let mut node_set: Vec<i64> = {
+        let mut s = std::collections::BTreeSet::new();
+        for &(lo, hi, _) in edges {
+            s.insert(lo);
+            s.insert(hi);
+        }
+        s.into_iter().collect()
+    };
+    node_set.sort_unstable();
+    let n = node_set.len();
+
+    // Index: node_id → 0-based position.
+    let idx: std::collections::HashMap<i64, usize> = node_set
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| (id, i))
+        .collect();
+
+    // Build adjacency: adj[u] = Vec<(v, weight)>.
+    let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+    let mut total_weight = 0.0f64;
+    for &(lo, hi, w) in edges {
+        let u = idx[&lo];
+        let v = idx[&hi];
+        adj[u].push((v, w));
+        adj[v].push((u, w));
+        total_weight += w; // each edge counted once here
+    }
+    // total_weight = m (sum of all edge weights, each edge once)
+    let m = total_weight;
+    if m <= 0.0 {
+        // All weights are zero or negative — treat as one community per node.
+        return node_set.into_iter().map(|id| vec![id]).collect();
+    }
+
+    // Weighted degree of each node.
+    let k: Vec<f64> = adj
+        .iter()
+        .map(|neighbours| neighbours.iter().map(|(_, w)| w).sum())
+        .collect();
+
+    // Community assignment: comm[u] = community id (0-based, initially u itself).
+    let mut comm: Vec<usize> = (0..n).collect();
+
+    // sigma_tot[c] = sum of weighted degrees of nodes in community c.
+    let mut sigma_tot: Vec<f64> = k.clone();
+
+    let mut improved = true;
+    while improved {
+        improved = false;
+        for u in 0..n {
+            let c_u = comm[u];
+
+            // k_{u, c} = sum of edge weights from u to nodes in community c.
+            let mut k_u_c: std::collections::HashMap<usize, f64> =
+                std::collections::HashMap::new();
+            for &(v, w) in &adj[u] {
+                *k_u_c.entry(comm[v]).or_insert(0.0) += w;
+            }
+
+            // Remove u from its current community for the gain calculation.
+            sigma_tot[c_u] -= k[u];
+
+            // Staying in c_u is evaluated as one of the candidate communities
+            // below (c_u appears in k_u_c when u has a neighbour in its own
+            // community), so the move only fires on a strictly better target.
+            // Best gain: try every neighbouring community + staying in c_u.
+            let mut best_gain = 0.0f64; // only move if strictly positive
+            let mut best_comm = c_u;
+
+            // Candidate communities: neighbours' communities + current.
+            let mut candidates: Vec<usize> = k_u_c.keys().copied().collect();
+            candidates.sort_unstable(); // deterministic tie-breaking
+            candidates.dedup();
+
+            for c_t in candidates {
+                let k_u_ct = k_u_c.get(&c_t).copied().unwrap_or(0.0);
+                // ΔQ = k_{u,c_t}/m − k_u · sigma_tot[c_t] / (2m²)
+                let gain = k_u_ct / m - k[u] * sigma_tot[c_t] / (2.0 * m * m);
+                if gain > best_gain {
+                    best_gain = gain;
+                    best_comm = c_t;
+                }
+            }
+
+            // Put u back / move u.
+            sigma_tot[best_comm] += k[u];
+            if best_comm != c_u {
+                comm[u] = best_comm;
+                improved = true;
+            } else {
+                // Undo: sigma_tot[c_u] was already reduced above; restore.
+                // (We put u back into c_u via best_comm = c_u, already done.)
+            }
+        }
+    }
+
+    // Collect communities: label → members.
+    let mut groups: std::collections::HashMap<usize, Vec<i64>> =
+        std::collections::HashMap::new();
+    for (u, &c) in comm.iter().enumerate() {
+        groups.entry(c).or_default().push(node_set[u]);
+    }
+
+    // Sort each community's members, then sort communities: size desc, min_id asc.
+    let mut result: Vec<Vec<i64>> = groups
+        .into_values()
+        .map(|mut v| {
+            v.sort_unstable();
+            v
+        })
+        .collect();
+    result.sort_by(|a, b| {
+        b.len().cmp(&a.len()).then_with(|| a[0].cmp(&b[0]))
+    });
+    result
+}
+
+/// GOLD-ADAPT-GRAPH-03 — detect communities in the association graph using one
+/// level of Louvain modularity optimisation over the `idx_memory_links` edge set.
+///
+/// Loads all `(lo_id, hi_id, weight)` rows, runs [`louvain`], and returns the
+/// communities as `Vec<Vec<i64>>` (each inner vec sorted asc, outer sorted by
+/// size desc then min-id asc). Isolated nodes (nodes with no edges in the table)
+/// are omitted — they never appear in `idx_memory_links` and therefore cannot be
+/// assigned to any graph community. An empty table returns an empty vec.
+pub fn detect_communities(conn: &Connection) -> rusqlite::Result<Vec<Vec<i64>>> {
+    let mut stmt =
+        conn.prepare("SELECT lo_id, hi_id, weight FROM idx_memory_links WHERE weight > 0")?;
+    let edges: Vec<(i64, i64, f64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(louvain(&edges))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -598,5 +765,86 @@ mod tests {
         let (_d, c) = conn();
         let hubs = memory_hubs(&c, 10).unwrap();
         assert!(hubs.is_empty(), "no links → no hubs");
+    }
+
+    // ── GOLD-ADAPT-GRAPH-03: Louvain community detection ─────────────────
+
+    /// Fully-connected triad: {1,2,3}. All three are in the same community.
+    #[test]
+    fn louvain_single_clique_returns_one_community() {
+        let edges = vec![(1, 2, 1.0), (1, 3, 1.0), (2, 3, 1.0)];
+        let communities = louvain(&edges);
+        assert_eq!(communities.len(), 1, "one tight clique → one community");
+        let mut members = communities[0].clone();
+        members.sort_unstable();
+        assert_eq!(members, vec![1, 2, 3]);
+    }
+
+    /// Two dense clusters {1,2,3} and {4,5,6} connected by a single weak
+    /// bridge edge (3,4). Louvain must separate them.
+    #[test]
+    fn louvain_two_clusters_separated_by_weak_bridge() {
+        let edges = vec![
+            // cluster A
+            (1, 2, 3.0),
+            (1, 3, 3.0),
+            (2, 3, 3.0),
+            // cluster B
+            (4, 5, 3.0),
+            (4, 6, 3.0),
+            (5, 6, 3.0),
+            // weak bridge
+            (3, 4, 0.1),
+        ];
+        let communities = louvain(&edges);
+        assert_eq!(communities.len(), 2, "two clusters → two communities");
+        // Outer is sorted by size desc then min-id asc: both size 3, so {1,2,3} first.
+        assert_eq!(communities[0], vec![1, 2, 3]);
+        assert_eq!(communities[1], vec![4, 5, 6]);
+    }
+
+    /// Empty edge list → empty result (no panic).
+    #[test]
+    fn louvain_empty_edges_returns_empty() {
+        let communities = louvain(&[]);
+        assert!(communities.is_empty(), "no edges → empty communities");
+    }
+
+    /// DB-level smoke test: insert links via reinforce_co_access and verify that
+    /// detect_communities groups them correctly.
+    #[test]
+    fn detect_communities_groups_two_clusters() {
+        let (_d, c) = conn();
+        // cluster A: 1-2-3 fully linked
+        reinforce_co_access(&c, &[1, 2, 3], 1).unwrap();
+        reinforce_co_access(&c, &[1, 2, 3], 2).unwrap();
+        reinforce_co_access(&c, &[1, 2, 3], 3).unwrap();
+        // cluster B: 4-5-6 fully linked
+        reinforce_co_access(&c, &[4, 5, 6], 4).unwrap();
+        reinforce_co_access(&c, &[4, 5, 6], 5).unwrap();
+        reinforce_co_access(&c, &[4, 5, 6], 6).unwrap();
+        // weak bridge (manually insert a low-weight edge so it doesn't swamp the
+        // intra-cluster weights, which are at 3.0 after 3 reinforcements).
+        c.execute(
+            "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access) \
+             VALUES (3, 4, 0.1, 7) ON CONFLICT(lo_id, hi_id) DO NOTHING",
+            [],
+        )
+        .unwrap();
+
+        let communities = detect_communities(&c).unwrap();
+        assert_eq!(communities.len(), 2, "two dense clusters → two communities");
+        let a = &communities[0];
+        let b = &communities[1];
+        assert_eq!(a, &vec![1, 2, 3], "cluster A is {{1,2,3}}");
+        assert_eq!(b, &vec![4, 5, 6], "cluster B is {{4,5,6}}");
+    }
+
+    /// Empty table → empty communities (no panic, no error).
+    #[test]
+    fn detect_communities_empty_table_returns_empty() {
+        let (_d, c) = conn();
+        let communities = detect_communities(&c).unwrap();
+        assert!(communities.is_empty(), "no links → no communities");
     }
 }
