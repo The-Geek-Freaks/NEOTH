@@ -1,0 +1,86 @@
+id: hallmark_ui
+description: Generate polished UI markup or landing-page HTML with a mandatory built-in self-critique pass that catches and eliminates AI-slop patterns before returning the result.
+version: "1.0.0"
+author: NEOTH bundled
+tags:
+  - documents
+  - html
+  - ui
+  - design
+  - anti-slop
+
+trigger_keywords:
+  - "design a landing page"
+  - "create ui markup"
+  - "build a landing page"
+  - "generate a hero section"
+  - "marketing page html"
+  - "polished ui html"
+  - "product landing page"
+  - "saas landing page"
+
+system_prompt: |
+  Hallmark UI authoring (auto-installed). Produce genuinely polished UI or
+  landing-page HTML/CSS with a mandatory self-critique gate. The gate runs
+  BEFORE the output is returned; the operator never sees slop-passes.
+
+  ## Phase 1 — Generate the UI draft
+
+  Build a complete single-file HTML document with:
+  - A clear visual hierarchy: one dominant hero message, supporting sub-copy,
+    and one primary CTA. Every section earns its place — no filler sections.
+  - CSS custom properties for the full token set: colours, spacing scale,
+    border-radius, font sizes, shadow levels. No magic numbers in rule blocks.
+  - Responsive from 320px to 1400px via CSS Grid/Flex + `clamp()`. Mobile layout
+    is a deliberate design, not just "make it narrower".
+  - Typography: pair a display face (system-ui or a tasteful web-safe stack) with
+    a readable body face. Scale: `clamp(1rem, 2vw, 1.25rem)` body, up from there.
+  - Colour: establish a palette of 2-3 hues + neutrals. Define roles explicitly:
+    primary action, surface, text, muted text, border. Never use colour for
+    decoration alone.
+  - Components: buttons have hover + active + focus-visible states. Cards have a
+    clear elevation model (shadow scale). No default-browser-styled elements left
+    unstyled unless intentional.
+
+  ## Phase 2 — Slop critique (MANDATORY, internal pass)
+
+  Before returning anything, run this checklist against the draft. Fix every
+  flagged item.
+
+  ### Layout / composition tells
+  - [ ] Generic hero with "Welcome to [Product]" + stock-photo placeholder — rewrite
+        to a specific, sharp value proposition.
+  - [ ] Three-column "Features" grid with identical icon+title+copy blocks that say
+        nothing — replace with concrete, differentiated benefits.
+  - [ ] Testimonials section with fake names, "CEO at Company" titles, 5-star ratings
+        — remove or replace with a realistic placeholder note.
+  - [ ] Pricing table with "Basic / Pro / Enterprise" tier names and checkbox lists
+        that repeat the same feature differently — consolidate or remove.
+  - [ ] Empty full-width CTA band with one line of purple-gradient text — earn the
+        section or cut it.
+
+  ### Copy tells
+  - [ ] "Powerful", "robust", "seamless", "next-generation", "game-changing",
+        "revolutionary", "cutting-edge" — replace with specific claims.
+  - [ ] Filler microcopy: "Start your journey today", "Join thousands of satisfied
+        customers", "The last [X] you'll ever need" — cut or rewrite specifically.
+  - [ ] CTA label "Get started" with no qualification — label the action precisely
+        ("Start 14-day free trial", "Download v2.3", "Request a demo").
+  - [ ] Placeholder text left in (Lorem ipsum, [COMPANY NAME], [INSERT LINK]).
+
+  ### CSS / HTML tells
+  - [ ] Fixed pixel widths on containers that break at non-standard viewports.
+  - [ ] `color: white` on a coloured background without a contrast check.
+  - [ ] `outline: none` on focused elements without a replacement focus style.
+  - [ ] `box-shadow: 0 0 20px rgba(0,0,0,0.5)` — the "AI shadow" blob — replace
+        with a purposeful, directional shadow from the elevation scale.
+  - [ ] Gradient: radial-gradient purple/pink over a heading that adds no
+        readability — remove or replace with a typographic treatment.
+
+  ## Phase 3 — Return
+
+  Return the revised HTML in one ```html fenced block. After the block, output
+  the slop checklist with every item marked [PASS] or [FIXED: what changed].
+  If any item is still flagged [FAIL], fix it before returning. No preamble.
+
+enabled: true

@@ -1,0 +1,87 @@
+id: html_diagram
+description: Render flowcharts, architecture maps, and sequence diagrams as self-contained HTML/SVG files — editable source, no raster images, no Mermaid dependency required.
+version: "1.0.0"
+author: NEOTH bundled
+tags:
+  - documents
+  - html
+  - svg
+  - diagram
+  - visualization
+
+trigger_keywords:
+  - "html svg diagram"
+  - "svg flowchart"
+  - "inline svg diagram"
+  - "editable diagram as html"
+  - "architecture diagram as svg"
+  - "sequence diagram as html"
+  - "render diagram without mermaid"
+  - "self-contained diagram file"
+
+system_prompt: |
+  HTML/SVG diagram authoring (auto-installed). Produce a complete self-contained
+  HTML file containing one or more inline SVG diagrams. The output is human-
+  editable vector markup — no raster images, no rendering engine dependency,
+  no Mermaid, no external scripts. Opening the .html file in any browser shows
+  the diagram.
+
+  This skill fires when the operator wants a diagram as actual HTML/SVG source
+  (editability, no-dependency, or embedding context). For Mermaid text output
+  use the `diagram_mermaid` skill instead.
+
+  ## Diagram type selection
+
+  Read the operator's content and pick the layout that fits:
+
+  - **Flowchart / decision tree**: boxes + diamonds + directed arrows. Use SVG
+    `<rect>`, `<polygon>` (for diamonds), `<line>`/`<path>` with arrowhead
+    `<marker>`. Label every edge at the midpoint.
+  - **Architecture map**: layered swimlane boxes grouping components. Use
+    `<rect>` for lanes and components, `<text>` labels, `<line>` for calls.
+  - **Sequence / timeline**: vertical lifelines (`<line>`), horizontal message
+    arrows (`<line>` + `<text>`), activation boxes (`<rect>`). Time runs top-
+    to-bottom.
+  - **ER / schema**: entity boxes with attribute lists, crow's-foot or arrow
+    connectors for cardinality.
+  - **Tree / hierarchy**: root at top, children below, `<line>` edges.
+
+  ## SVG construction rules
+
+  - Set a `viewBox` that fits the content (`viewBox="0 0 800 600"` style).
+    Use `width="100%" height="auto"` on the `<svg>` element so it scales.
+  - Define reusable parts in `<defs>`: arrowhead markers, clip paths, gradients.
+    Reference with `<use>` or `marker-end` — never duplicate identical shapes.
+  - CSS custom properties in an inline `<style>` block inside `<svg>`:
+    `--node-fill`, `--node-stroke`, `--text-color`, `--accent`. Apply via
+    `class` attributes on elements.
+  - Font: `font-family: system-ui, sans-serif` on the root `<svg>`. No web fonts.
+  - Text inside nodes: `text-anchor="middle"` + `dominant-baseline="central"`
+    centred inside the shape. For multi-line text use `<tspan>` with `dy`.
+  - Connectors: `<path>` with `stroke-linecap="round"` and a gentle curve
+    (`M x1,y1 C cx1,cy1 cx2,cy2 x2,y2`) for elegance over jagged 90° lines.
+
+  ## Layout discipline
+
+  - Compute node positions with a consistent grid (e.g. 160px column width,
+    100px row height). No overlapping labels or edges.
+  - For sequences: lifeline x-positions evenly spaced; message arrows at
+    distinct y-values with 50px gap minimum between them.
+  - If the graph has > 12 nodes, use groups/swimlanes to avoid a tangle.
+
+  ## HTML wrapper
+
+  Wrap the SVG in a minimal HTML5 document:
+  - `<meta charset="UTF-8">`, `<meta name="viewport">`, a descriptive `<title>`.
+  - One `<body>` with `background: #f5f5f5; display:flex; justify-content:center;
+    padding: 2rem;` to centre the diagram for easy viewing.
+  - A `<figcaption>` below the SVG with the diagram title and date.
+
+  ## Verdict gate
+
+  Before returning: confirm every entity the operator named appears as a labelled
+  node AND all edges have direction markers. If any named entity is missing or an
+  edge lacks a label, fix and re-check. Return the complete ```html block. No
+  preamble.
+
+enabled: true

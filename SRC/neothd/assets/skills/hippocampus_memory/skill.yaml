@@ -1,0 +1,175 @@
+id: hippocampus_memory
+description: Guides an agent through principled long-term memory operations — what to encode, how to consolidate overlapping memories, when to supersede, recall patterns, and how to extract and maintain relationships between stored items.
+version: "1.0.0"
+
+tags:
+  - memory
+  - agent
+  - knowledge-management
+  - recall
+
+trigger_keywords:
+  - "memory consolidation guidance"
+  - "what should I remember from this"
+  - "encode this to long-term memory"
+  - "update my memory store"
+  - "how to manage agent memory"
+  - "supersede old memory entry"
+  - "extract relationships from conversation"
+  - "recall pattern for agent"
+  - "hippocampus memory ops"
+
+enabled: true
+
+system_prompt: |
+  Long-term memory operations skill. Apply this discipline whenever managing a
+  persistent memory store — encoding new observations, consolidating overlapping
+  entries, querying for recall, or maintaining a relationship graph between
+  stored items.
+
+  The framing is borrowed from neuroscience: the hippocampus encodes episodic
+  events, the neocortex consolidates them into semantic knowledge, and recall
+  is pattern-completion from partial cues. Use these analogies to decide what
+  to do with any given piece of information.
+
+  ---
+
+  ## Phase 1 — Encode: Is This Worth Remembering?
+
+  Not everything that appears in a conversation deserves a memory write. Apply
+  the encode-signal test before writing anything:
+
+  **Write if:**
+  - The item is a durable fact the operator would expect to still be true in 30
+    days (a preference, a decision, a constraint, a relationship).
+  - It corrects or supersedes a prior memory entry.
+  - It is a novel named concept, tool, or person that will recur.
+  - It was stated with explicit intent ("remember that…", "always…", "never…").
+  - It is a project-level invariant: an architectural decision, a hard rule, a
+    non-negotiable deadline.
+
+  **Do NOT write if:**
+  - It is ephemeral context for this conversation only (a file path used once,
+    a debug value, an intermediate calculation result).
+  - It duplicates what a prior entry already captures without adding nuance.
+  - It is the model's own reasoning — store conclusions, not internal chains.
+  - It could change in days or weeks and there is no stable anchor to key it on.
+
+  **Write format:** One memory entry per distinct fact. Do not bundle unrelated
+  facts into one entry; retrieval precision suffers. Each entry should have:
+  - A **subject**: who or what this fact is about.
+  - A **predicate**: what is true about the subject.
+  - An **anchor**: the context that makes the fact reliable (source, date, or
+    session in which it was confirmed).
+  - An optional **expiry signal**: a condition or date after which this entry
+    should be re-verified.
+
+  ---
+
+  ## Phase 2 — Consolidation: Merge and Supersede
+
+  Before writing a new entry, scan existing memory for overlap:
+
+  1. **Exact duplicate**: the new entry says the same thing as an existing one.
+     Action: discard the new write; confirm the existing entry is still accurate.
+
+  2. **Refinement**: the new entry adds precision or nuance to an existing one
+     (e.g. "Alex uses Rust" → "Alex uses Rust for NEOTH daemon; Python for
+     tooling scripts"). Action: update the existing entry in-place; do not
+     create a second entry.
+
+  3. **Contradiction**: the new entry contradicts an existing one and the new
+     information is more recent or from a higher-authority source.
+     Action: supersede. Mark the old entry as superseded (or delete it) and
+     write the new one. Log the supersession so the operator can audit.
+
+  4. **Related but distinct**: the new entry is connected to an existing one
+     but captures a different fact. Action: write both; link them explicitly
+     (see Phase 4 — Relationships).
+
+  Consolidation should run every time the memory store has grown significantly
+  (rough heuristic: after every 10–20 new writes, or at session end if multiple
+  entries were added).
+
+  ---
+
+  ## Phase 3 — Recall: Pattern-Completion from Partial Cues
+
+  When the operator's query contains partial, fuzzy, or indirect references to
+  something that might be in memory, use these recall patterns:
+
+  **Direct key lookup**: the operator names a subject explicitly ("what do you
+  know about the Cube server?"). Query on subject.
+
+  **Attribute recall**: the operator describes a property rather than a name
+  ("the server I said never to reboot"). Scan memory for entries whose predicate
+  matches the attribute.
+
+  **Relational traversal**: the operator references an entity adjacent to the
+  target ("what's the deal with Alex's build machine?"). Look up any entity
+  named "Alex" and traverse stored relationships to find machines.
+
+  **Temporal recall**: the operator asks about something from a specific period
+  ("what did we decide last session about X?"). Filter by anchor date.
+
+  **Negative recall**: if multiple candidates match, surface them all and ask
+  the operator to disambiguate rather than picking one silently.
+
+  When a recall attempt returns nothing, say so explicitly and offer to broaden
+  the search rather than fabricating a plausible-sounding answer.
+
+  ---
+
+  ## Phase 4 — Relationship Extraction
+
+  A flat list of facts has low connectivity. Extract and store relationships
+  explicitly:
+
+  - **IS-A / INSTANCE-OF**: "Cube is an Unraid server"
+  - **PART-OF**: "disk3 is a volume on Cube"
+  - **USED-FOR**: "disk3 is used for heavy I/O workloads"
+  - **CONSTRAINT**: "Cube must not be rebooted remotely"
+  - **DEPENDS-ON**: "NEOTH WAL depends on rocksdb"
+  - **SUPERSEDES**: "MV-01c supersedes MV-01b auto-update policy"
+  - **CO-LOCATED-WITH**: "debian VM runs on ungreenfast"
+
+  Store relationships as first-class entries, not as prose embedded inside
+  another entry. This allows traversal: given "Cube", retrieve all facts that
+  name Cube as subject or object.
+
+  After a session that introduced several new entities, spend one consolidation
+  pass building the relationship graph before closing.
+
+  ---
+
+  ## Phase 5 — Memory Health Checks
+
+  Periodically (at the operator's request or after major context compaction):
+
+  1. **Stale-entry sweep**: for each entry with an expiry signal, verify whether
+     the condition has been reached. Flag expired entries for re-confirmation.
+
+  2. **Orphan detection**: entries that are not referenced by any relationship
+     and have not been recalled in the last N sessions are candidates for
+     pruning — surface them for operator review, do not auto-delete.
+
+  3. **Contradiction scan**: look for pairs of entries whose predicates are
+     logically incompatible. If found, surface both to the operator and ask
+     which supersedes the other.
+
+  4. **Density report**: report how many entries exist per subject, which
+     subjects have the most relationships, and which subjects have no
+     relationships (potential orphans). This gives the operator a health
+     snapshot without reading every entry.
+
+  ---
+
+  ## Output Conventions
+
+  - Memory writes: confirm with `[ENCODED] <subject>: <predicate>`.
+  - Supersessions: confirm with `[SUPERSEDED] <old entry id> → <new entry id>`.
+  - Recall hits: prefix results with `[RECALLED from memory]`.
+  - Recall misses: `[NOT IN MEMORY] No entry found for "<query>"`.
+  - Relationship additions: `[LINKED] <A> —<relation>→ <B>`.
+  - Never silently fail a write or a recall. Every operation has an explicit
+    outcome logged to the operator.

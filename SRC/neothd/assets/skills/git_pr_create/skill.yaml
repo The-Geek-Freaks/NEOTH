@@ -1,0 +1,123 @@
+id: git_pr_create
+description: Analyzes commits between a base branch and HEAD, synthesizes a PR title and structured body (summary, change list, test plan), then creates the pull request — operator confirms before push.
+version: "1.0.0"
+
+tags:
+  - git
+  - workflow
+  - pull-request
+  - engineering
+
+trigger_keywords:
+  - "open a pull request"
+  - "create a PR"
+  - "open PR for this branch"
+  - "submit these changes as a PR"
+  - "make a pull request"
+  - "push and open PR"
+  - "create pull request from this branch"
+  - "prepare PR description"
+
+enabled: true
+
+system_prompt: |
+  Pull request creation workflow. When the operator asks to open a PR, execute
+  the steps below in order. Do not skip analysis and jump straight to creation —
+  a well-formed PR body prevents back-and-forth during review.
+
+  ## Step 1 — Determine Base Branch
+
+  If the operator specifies a base branch, use it. Otherwise:
+  - Check `git remote show origin` for the default branch (usually `main` or
+    `master`).
+  - If the current branch is already tracking a remote, use the upstream's
+    base as the merge target.
+  - When ambiguous, ask the operator before proceeding.
+
+  ## Step 2 — Analyse the Commit Range
+
+  Run the following to understand what is being proposed:
+
+      git log <base>..HEAD --oneline
+      git diff <base>..HEAD --stat
+      git diff <base>..HEAD
+
+  From this output, derive:
+  - **Scope**: which files and modules changed.
+  - **Intent**: are these new features, bug fixes, refactors, documentation,
+    tests, or a mix?
+  - **Risk**: are there schema migrations, dependency bumps, unsafe code
+    changes, or publicly visible API changes that reviewers must flag?
+  - **Test evidence**: are new tests added alongside new logic? Is coverage
+    maintained?
+
+  ## Step 3 — Draft PR Title
+
+  Rules for the title:
+  - Under 70 characters.
+  - Follows conventional-commit style: `feat:`, `fix:`, `refactor:`, `docs:`,
+    `test:`, `chore:`, `perf:`, `ci:` prefix.
+  - Describes the user-visible or system-level effect, not the mechanical
+    change ("feat: add ed25519 channel signing" not "add files to auth module").
+  - Does not restate the branch name.
+
+  ## Step 4 — Draft PR Body
+
+  Use this template:
+
+  ```
+  ## Summary
+  <2–4 bullet points. Each bullet = one logical change. Lead with the verb.>
+
+  ## Changes
+  <Per-file or per-module breakdown of what changed and why.
+   Flag any migration, API break, or unsafe change with a ⚠ prefix.>
+
+  ## Test Plan
+  - [ ] <Specific test to run or scenario to verify — not "run tests".>
+  - [ ] <Second scenario.>
+  - [ ] <Edge case or regression check.>
+
+  ## Notes for Reviewers
+  <Optional. Anything that needs context not obvious from the diff:
+   design trade-offs made, follow-up items deferred, related issues.>
+  ```
+
+  ## Step 5 — Show Draft to Operator
+
+  Present the proposed title and body to the operator. Explicitly ask:
+  "Does this look correct? Shall I push the branch and create the PR?"
+
+  Do NOT push or create anything until the operator confirms.
+
+  ## Step 6 — Push and Create
+
+  After confirmation:
+
+  1. Push the branch if it has no upstream yet:
+         git push -u origin <branch>
+
+  2. Create the PR using the GitHub CLI:
+         gh pr create \
+           --title "<title>" \
+           --body "<body>" \
+           --base <base-branch>
+
+     If the operator uses a different forge (GitLab, Gitea), adapt the command
+     accordingly. For GitLab: `glab mr create`. For plain git forges without
+     CLI tooling, output the body as formatted text for manual submission.
+
+  3. Return the PR URL to the operator.
+
+  ## Hard Rules
+
+  - Never force-push to main or master.
+  - Never create a PR against a protected branch without the operator's explicit
+    instruction after seeing the branch name.
+  - If `git diff <base>..HEAD` is empty, tell the operator there is nothing to
+    PR and stop.
+  - If the branch has unpushed commits AND local uncommitted changes, warn the
+    operator about the uncommitted changes before pushing — do not silently
+    include them.
+  - The PR body must contain a test plan with at least one actionable checkbox.
+    An empty test plan is a process failure.

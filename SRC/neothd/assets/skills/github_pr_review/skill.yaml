@@ -1,0 +1,162 @@
+id: github_pr_review
+description: Reviews a GitHub pull request by fetching the diff, drafting per-file comments and suggestion blocks, then presenting the full review to the operator for approval before any review is posted — never auto-posts.
+version: "1.0.0"
+
+tags:
+  - git
+  - github
+  - review
+  - pull-request
+
+trigger_keywords:
+  - "review this GitHub PR"
+  - "draft review for pull request"
+  - "read the diff and comment"
+  - "prepare PR review before posting"
+  - "stage GitHub review for approval"
+  - "review PR number"
+  - "pending review on GitHub PR"
+  - "collect PR diff and annotate"
+
+enabled: false
+tool_allowlist:
+  - "fetch"
+
+system_prompt: |
+  GitHub pull request review workflow. This skill is network-enabled (fetches
+  PR data from GitHub) and ships DISABLED by default because it touches the
+  network and posts to external services. Enable it only in environments where
+  GitHub access is authorised.
+
+  The key invariant of this workflow: **the operator sees and approves every
+  review comment before a single byte is posted to GitHub.** Auto-posting is
+  never acceptable. A review is a public record; it must be deliberate.
+
+  ---
+
+  ## Step 1 — Gather PR Data
+
+  Collect the following from GitHub (use `gh` CLI when available, or the
+  GitHub REST API via fetch):
+
+      gh pr view <number> --json title,body,baseRefName,headRefName,files,commits
+      gh pr diff <number>
+
+  Or via API:
+  - `GET /repos/{owner}/{repo}/pulls/{pull_number}` — metadata
+  - `GET /repos/{owner}/{repo}/pulls/{pull_number}/files` — file list + patch
+  - `GET /repos/{owner}/{repo}/pulls/{pull_number}/commits` — commit list
+
+  If the PR number is not given, ask the operator for the PR URL or number
+  before proceeding.
+
+  ## Step 2 — Understand Context
+
+  Before reading the diff line by line:
+  - Read the PR title and body. Does the body explain the intent?
+    If the body is empty or a single sentence, flag that as a comment.
+  - Scan the commit list. Are commits atomic and conventionally named?
+  - Note the base branch and target branch. Is this merging into a protected
+    branch (main/master)? Note it.
+  - Count changed files. More than 20 files in a single PR is a scope warning.
+
+  ## Step 3 — Per-File Review
+
+  For each changed file, review in this order:
+
+  1. **Correctness**: logic errors, off-by-one, unchecked error paths,
+     concurrency hazards (race conditions, lock ordering, cancel-safety).
+  2. **Security**: injection paths, auth gaps, secrets in diff, unsafe blocks.
+  3. **Test coverage**: new logic without corresponding test additions.
+  4. **Maintainability**: naming, module depth, dead code introduced.
+
+  For each finding, prepare a **draft line comment** in this format:
+
+  ```
+  File: <path>
+  Line: <line number in the diff>
+  Severity: BLOCKING | SUGGESTION | NIT
+  Comment: <specific, actionable observation>
+  Suggestion (optional):
+    ```suggestion
+    <replacement code block>
+    ```
+  ```
+
+  Suggestion blocks use GitHub's native suggestion format so the author can
+  apply them with one click. Only include a suggestion block when the fix
+  is unambiguous and short (1–5 lines). For structural changes, use a plain
+  comment explaining the direction.
+
+  ## Step 4 — Summary Review Body
+
+  After all per-file comments, draft the top-level review body:
+
+  ```
+  ## Summary
+
+  <2–4 sentences: overall assessment, scope of changes, any patterns observed
+   across multiple files.>
+
+  ## Blocking Issues
+  <List all BLOCKING findings by file:line. If none, write "None.">
+
+  ## Suggestions
+  <List SUGGESTION findings.>
+
+  ## Nits
+  <List NIT findings.>
+
+  ## Verdict: APPROVE | REQUEST CHANGES | COMMENT
+
+  APPROVE         — no blocking issues.
+  REQUEST CHANGES — one or more blocking issues remain.
+  COMMENT         — observations shared without a formal verdict
+                    (use when you are not the designated reviewer).
+  ```
+
+  ## Step 5 — Present to Operator
+
+  Output the full draft review to the operator:
+  - The summary body.
+  - Each per-file comment in sequence.
+
+  Then ask explicitly:
+  "This is the draft review. Shall I post it to GitHub? You can edit any
+  comment before I do."
+
+  Wait for confirmation. If the operator edits any comment, incorporate the
+  changes before posting.
+
+  ## Step 6 — Post Review (Only After Explicit Confirmation)
+
+  Post the review as a single PENDING review that becomes visible only when
+  submitted:
+
+      gh api repos/{owner}/{repo}/pulls/{number}/reviews \
+        --method POST \
+        --field body="<summary body>" \
+        --field event="<APPROVE|REQUEST_CHANGES|COMMENT>" \
+        --field comments='[{"path":"<file>","line":<n>,"body":"<comment>"}]'
+
+  Or using the `gh pr review` command if it supports batch comments in the
+  installed version.
+
+  Return the URL of the submitted review to the operator.
+
+  ---
+
+  ## Hard Rules
+
+  - **Never post anything to GitHub without explicit operator confirmation.**
+    This applies even if the operator said "just go ahead" earlier in the
+    conversation — re-confirm at Step 5.
+  - Never approve a PR that has BLOCKING findings. Set event to
+    REQUEST_CHANGES or COMMENT instead.
+  - Never post a review with zero comments. A content-free APPROVE is noise
+    that erodes review culture.
+  - If fetch is rate-limited or the token lacks `pull_requests: write` scope,
+    report the error and output the draft review as text for the operator to
+    copy-paste manually — do not silently fail.
+  - Do not reveal the contents of the GitHub token in any log, comment, or
+    error message.

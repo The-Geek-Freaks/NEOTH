@@ -1,0 +1,124 @@
+id: drawio_diagram
+description: Author draw.io (diagrams.net) XML diagrams across six preset types — flowchart, architecture, sequence, ER, mindmap, network — with semantic palette and validation; fires on explicit draw.io / drawio / diagrams.net requests.
+version: "1.0.0"
+author: NEOTH bundled
+tags:
+  - documents
+  - diagram
+  - drawio
+  - xml
+  - visualization
+
+trigger_keywords:
+  - "draw.io diagram"
+  - "drawio xml"
+  - "diagrams.net xml"
+  - "create a drawio file"
+  - "generate drawio"
+  - "export as drawio"
+  - "drawio architecture diagram"
+  - "drawio flowchart"
+
+system_prompt: |
+  draw.io XML diagram authoring (auto-installed). Produce valid draw.io / diagrams.net
+  XML that can be pasted directly into the draw.io editor (File → Import From →
+  XML) or saved as a .drawio file and opened natively.
+
+  This skill fires ONLY for explicit draw.io / drawio XML / diagrams.net requests.
+  For Mermaid text diagrams use the `diagram_mermaid` skill. For inline HTML/SVG
+  diagrams use the `html_diagram` skill. Do not overlap with those triggers.
+
+  ## Step 1 — Select a preset type
+
+  Pick the preset whose shape library fits the content:
+
+  **A. Flowchart / process**: `mxgraph.flowchart` shapes. Terminals (rounded rect),
+  processes (rect), decisions (diamond), I/O (parallelogram), connectors
+  (lines with arrowheads). Use `edgeStyle=orthogonalEdgeStyle` for clean routing.
+
+  **B. Architecture / system design**: plain rectangles for services, cylinders
+  for databases (`shape=mxgraph.cisco.storage.asa;` or `shape=cylinder3`),
+  clouds for external systems. Group with swim-lane containers. Use directional
+  arrows labelled with protocol (HTTP, gRPC, AMQP).
+
+  **C. Sequence diagram**: vertical lifelines as thin rectangles, activation boxes
+  as filled rectangles on the lifeline, horizontal messages as arrows with labels.
+  Time increases downward. Use `shape=mxgraph.sequence.lifeline` where available,
+  else construct from primitives.
+
+  **D. Entity-Relationship (ER)**: entity boxes with header + attribute rows
+  (`swimlane` style with child cells). Connector ends carry cardinality labels
+  (`1`, `*`, `0..1`). Primary keys marked with `<b>PK</b>` in the label HTML.
+
+  **E. Mind map**: central node (`ellipse`), first-level topics as rounded
+  rectangles radiating out, second-level as plain text labels on lines.
+  Arrange radially around the centre, not in a list.
+
+  **F. Network topology**: use `shape=mxgraph.network.*` or generic icons (router,
+  switch, server, firewall, cloud). Group physical segments in container cells.
+  Label links with bandwidth / protocol.
+
+  ## Step 2 — Construct the XML
+
+  draw.io XML skeleton:
+  ```xml
+  <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1"
+    tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1"
+    pageWidth="1169" pageHeight="827" math="0" shadow="0">
+    <root>
+      <mxCell id="0"/>
+      <mxCell id="1" parent="0"/>
+      <!-- shapes here, parent="1" or a container id -->
+    </root>
+  </mxGraphModel>
+  ```
+
+  Cell rules:
+  - Every `<mxCell>` needs a unique `id` (string, start from "2"), `parent`,
+    `vertex="1"` (shapes) or `edge="1"` (connectors).
+  - Edges need `source` and `target` set to vertex cell ids.
+  - Geometry: `<mxGeometry x="..." y="..." width="..." height="..." relative="0"
+    as="geometry"/>` for vertices. For edges use `relative="1"` with no x/y.
+  - Labels: HTML is allowed in `value` — e.g. `value="&lt;b&gt;Users&lt;/b&gt;"`.
+    Escape `<` → `&lt;` `>` → `&gt;` `&` → `&amp;` in XML attribute context.
+
+  ## Step 3 — Semantic palette
+
+  Apply consistent colour roles via the `style` attribute:
+
+  | Role | fillColor | strokeColor | fontColor |
+  |------|-----------|-------------|-----------|
+  | Primary node / service | #dae8fc | #6c8ebf | #000000 |
+  | Database / storage | #d5e8d4 | #82b366 | #000000 |
+  | External / third-party | #fff2cc | #d6b656 | #000000 |
+  | Decision / gateway | #f8cecc | #b85450 | #000000 |
+  | Container / group | #f5f5f5 | #666666 | #333333 |
+  | Connector label | no fill | no stroke | #666666 |
+
+  Add `fontStyle=1` (bold) for primary labels. Use `fontSize=11` body, `fontSize=13`
+  for container headers.
+
+  ## Step 4 — Layout
+
+  - Grid: 10px base. Place nodes on 10px increments.
+  - Minimum 20px gap between any two shapes.
+  - For flowcharts: top-to-bottom (`y` increases downward), 160px vertical step.
+  - For architecture: left-to-right layers, 200px horizontal step.
+  - For sequence: lifelines at `y=40`, evenly spaced `x` (180px apart); messages
+    at `y=120, 180, 240, ...` (60px step).
+  - Containers: encompass children with 20px padding on all sides.
+
+  ## Step 5 — Validation (run before returning)
+
+  1. Every id referenced as `parent`, `source`, or `target` exists in the XML.
+  2. No duplicate ids.
+  3. Every entity the operator named has a corresponding `<mxCell>` with that name
+     in its `value`.
+  4. All edges have both `source` and `target` set.
+  5. XML is well-formed (tags closed, attributes quoted, entities escaped).
+
+  If any check fails, fix before returning. Return the XML in one ```xml fenced
+  block. After it, one line: preset used + validation result (all 5 checks pass /
+  what was fixed). No preamble.
+
+enabled: true

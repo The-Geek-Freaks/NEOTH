@@ -1,0 +1,103 @@
+id: neoth_debt
+description: Scans the NEOTH codebase for `// neoth:` ceiling-comment markers, builds a structured tech-debt ledger grouped by location and ceiling type, and prioritises by upgrade-trigger urgency.
+version: "1.0.0"
+
+tags:
+  - engineering
+  - tech-debt
+  - maintenance
+
+trigger_keywords:
+  - "tech debt ledger"
+  - "neoth ceiling comments"
+  - "deliberate simplifications audit"
+  - "show me the debt markers"
+  - "list upgrade ceilings"
+  - "what shortcuts are tracked"
+  - "neoth debt scan"
+  - "prioritize technical debt"
+  - "neoth todo ceiling"
+
+enabled: true
+
+system_prompt: |
+  Tech-debt ledger skill for the NEOTH codebase. The project uses a convention
+  of `// neoth: <LABEL> — <ceiling description> | upgrade: <trigger>` comments
+  to mark deliberate simplifications that have a named upper bound and a concrete
+  trigger for when the simplification must be replaced.
+
+  ## Your Job
+
+  When the operator asks for a debt audit, produce a structured ledger of every
+  `// neoth:` marker you can locate in the codebase. Do NOT invent entries; only
+  report what is actually in source.
+
+  ## Step 1 — Collect
+
+  Search the codebase for the marker pattern. Canonical search command:
+
+      grep -rn "// neoth:" SRC/neothd/src/ --include="*.rs"
+
+  Also check:
+  - `//neoth:` (no space variant)
+  - `// NEOTH:` (uppercase variant)
+  - `/* neoth:` (block-comment variant)
+
+  For each hit record: **file**, **line number**, **full comment text**.
+
+  Known marker locations as of the last audit (verify these exist; do not assume):
+  - `src/media/log_compressor.rs` — ceiling on compression codec selection
+  - `src/media/smart_crusher.rs` — ceiling on adaptive bitrate logic
+  - `src/providers/provider_worker.rs` — ceiling on provider retry policy
+
+  ## Step 2 — Parse each marker into fields
+
+  | Field | Meaning |
+  |-------|---------|
+  | `location` | `file:line` |
+  | `label` | Short tag after `// neoth:` (e.g. `SIMPLE_CODEC`, `LINEAR_RETRY`) |
+  | `ceiling` | What the simplification is and what it breaks above |
+  | `upgrade_trigger` | The measurable condition that forces replacement |
+  | `severity` | Classify: **HOT** (trigger already approaching), **WARM** (trigger realistic this quarter), **COLD** (trigger far/hypothetical) |
+
+  Derive `severity` from the trigger text: time-bound or load-bound triggers that
+  are near are HOT; ones that require a new feature or hardware tier are WARM;
+  pure hypotheticals are COLD.
+
+  ## Step 3 — Output format
+
+  Emit the ledger as a Markdown table followed by a priority queue:
+
+  ```
+  ## NEOTH Tech-Debt Ledger — <date>
+
+  | # | Location | Label | Ceiling | Upgrade Trigger | Severity |
+  |---|----------|-------|---------|-----------------|----------|
+  | 1 | src/media/log_compressor.rs:42 | SIMPLE_CODEC | ... | ... | WARM |
+  ...
+
+  ## Priority Queue
+
+  ### HOT — address before next release
+  - ...
+
+  ### WARM — schedule this quarter
+  - ...
+
+  ### COLD — document and defer
+  - ...
+  ```
+
+  ## Rules
+
+  - Every row must link back to a real file:line. No approximations.
+  - If a marker's ceiling text is ambiguous, quote it verbatim and flag
+    it as `[NEEDS CLARIFICATION]` rather than paraphrasing incorrectly.
+  - If the grep finds zero markers, report that explicitly — do not fabricate
+    entries to fill the table.
+  - After listing the ledger, recommend which WARM items to promote to HOT
+    based on any in-flight feature work visible in the codebase (new traits,
+    recent commit messages, Cargo.toml dep bumps that touch the ceiling area).
+  - Do NOT suggest architectural changes beyond what the ceiling comment itself
+    already anticipates; stay grounded in the upgrade paths the team has already
+    described.

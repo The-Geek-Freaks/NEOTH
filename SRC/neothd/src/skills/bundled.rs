@@ -76,6 +76,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "brainstorming",
         include_str!("../../assets/skills/brainstorming/skill.yaml"),
     ),
+    // GOLD-ADAPT-SKILL2-06 (2026-06-19) — bundled skill.
+    (
+        "code_review_and_quality",
+        include_str!("../../assets/skills/code_review_and_quality/skill.yaml"),
+    ),
     // GOLD-ADAPT-SKILL-04 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
     (
         "code_simplification",
@@ -114,10 +119,20 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "cybersec_threat_modeling",
         include_str!("../../assets/skills/cybersec_threat_modeling/skill.yaml"),
     ),
+    // GOLD-ADAPT-SKILL2-01 (2026-06-19) — bundled skill.
+    (
+        "debugging_and_error_recovery",
+        include_str!("../../assets/skills/debugging_and_error_recovery/skill.yaml"),
+    ),
     // GOLD-ADAPT-SKILL-06 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
     (
         "deprecation_migration",
         include_str!("../../assets/skills/deprecation_migration/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DESIGN-01 (2026-06-19) — bundled skill.
+    (
+        "design_eng",
+        include_str!("../../assets/skills/design_eng/skill.yaml"),
     ),
     (
         "diagnose",
@@ -135,6 +150,16 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "doubt_driven_development",
         include_str!("../../assets/skills/doubt_driven_development/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DRAW-01 (2026-06-19) — bundled skill.
+    (
+        "drawio_diagram",
+        include_str!("../../assets/skills/drawio_diagram/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL2-08 (2026-06-19) — bundled skill.
+    (
+        "efficient_frontier",
+        include_str!("../../assets/skills/efficient_frontier/skill.yaml"),
     ),
     (
         "engineering_code_review",
@@ -173,6 +198,16 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "finishing_a_development_branch",
         include_str!("../../assets/skills/finishing_a_development_branch/skill.yaml"),
     ),
+    // GOLD-ADAPT-GITPR-02 (2026-06-19) — bundled skill.
+    (
+        "git_pr_create",
+        include_str!("../../assets/skills/git_pr_create/skill.yaml"),
+    ),
+    // GOLD-ADAPT-GITPR-03 (2026-06-19) — bundled skill.
+    (
+        "github_pr_review",
+        include_str!("../../assets/skills/github_pr_review/skill.yaml"),
+    ),
     (
         "grill_me",
         include_str!("../../assets/skills/grill_me/skill.yaml"),
@@ -180,6 +215,41 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "grill_with_docs",
         include_str!("../../assets/skills/grill_with_docs/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DOC-03 (2026-06-19) — bundled skill.
+    (
+        "hallmark_ui",
+        include_str!("../../assets/skills/hallmark_ui/skill.yaml"),
+    ),
+    // GOLD-ADAPT-JV-IMP-07 (2026-06-19) — bundled skill.
+    (
+        "hippocampus_memory",
+        include_str!("../../assets/skills/hippocampus_memory/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DOC-02 (2026-06-19) — bundled skill.
+    (
+        "html_diagram",
+        include_str!("../../assets/skills/html_diagram/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DOC-02 (2026-06-19) — bundled skill.
+    (
+        "html_page",
+        include_str!("../../assets/skills/html_page/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DOC-02 (2026-06-19) — bundled skill.
+    (
+        "html_plan",
+        include_str!("../../assets/skills/html_plan/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DESIGN-02 (2026-06-19) — bundled skill.
+    (
+        "impeccable",
+        include_str!("../../assets/skills/impeccable/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL2-07 (2026-06-19) — bundled skill.
+    (
+        "improve_advisor",
+        include_str!("../../assets/skills/improve_advisor/skill.yaml"),
     ),
     (
         "improve_codebase_architecture",
@@ -211,9 +281,24 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "max_plus_plus",
         include_str!("../../assets/skills/max_plus_plus/skill.yaml"),
     ),
+    // GOLD-ADAPT-PONY-01 (2026-06-19) — bundled skill.
+    (
+        "neoth_debt",
+        include_str!("../../assets/skills/neoth_debt/skill.yaml"),
+    ),
     (
         "omega_prime",
         include_str!("../../assets/skills/omega_prime/skill.yaml"),
+    ),
+    // GOLD-ADAPT-KBD-01 (2026-06-19) — bundled skill.
+    (
+        "paper_review",
+        include_str!("../../assets/skills/paper_review/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL2-03 (2026-06-19) — bundled skill.
+    (
+        "performance_optimization",
+        include_str!("../../assets/skills/performance_optimization/skill.yaml"),
     ),
     (
         "pm-ab-test-analysis",
@@ -504,19 +589,49 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "requesting_code_review",
         include_str!("../../assets/skills/requesting_code_review/skill.yaml"),
     ),
+    // GOLD-ADAPT-SKILL2-02 (2026-06-19) — bundled skill.
+    (
+        "security_and_hardening",
+        include_str!("../../assets/skills/security_and_hardening/skill.yaml"),
+    ),
     // GOLD-ADAPT-SKILL-08 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
     (
         "ship_review",
         include_str!("../../assets/skills/ship_review/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL2-04 (2026-06-19) — bundled skill.
+    (
+        "shipping_and_launch",
+        include_str!("../../assets/skills/shipping_and_launch/skill.yaml"),
+    ),
+    // GOLD-ADAPT-KIT-01 (2026-06-19) — bundled skill.
+    (
+        "skill_security_review",
+        include_str!("../../assets/skills/skill_security_review/skill.yaml"),
     ),
     // GOLD-ADAPT-SKILL-03 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
     (
         "source_driven_development",
         include_str!("../../assets/skills/source_driven_development/skill.yaml"),
     ),
+    // GOLD-ADAPT-SKILL2-05 (2026-06-19) — bundled skill.
+    (
+        "spec_driven_development",
+        include_str!("../../assets/skills/spec_driven_development/skill.yaml"),
+    ),
+    // GOLD-ADAPT-SKILL2-09 (2026-06-19) — bundled skill.
+    (
+        "stay_within_limits",
+        include_str!("../../assets/skills/stay_within_limits/skill.yaml"),
+    ),
     (
         "systematic_debugging",
         include_str!("../../assets/skills/systematic_debugging/skill.yaml"),
+    ),
+    // GOLD-ADAPT-DESIGN-03 (2026-06-19) — bundled skill.
+    (
+        "taste",
+        include_str!("../../assets/skills/taste/skill.yaml"),
     ),
     (
         "test_driven_development",
@@ -541,6 +656,36 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "verification_before_completion",
         include_str!("../../assets/skills/verification_before_completion/skill.yaml"),
+    ),
+    // GOLD-ADAPT-WEBQ-01 (2026-06-19) — bundled skill.
+    (
+        "webq_a11y",
+        include_str!("../../assets/skills/webq_a11y/skill.yaml"),
+    ),
+    // GOLD-ADAPT-WEBQ-02 (2026-06-19) — bundled skill.
+    (
+        "webq_best_practices",
+        include_str!("../../assets/skills/webq_best_practices/skill.yaml"),
+    ),
+    // GOLD-ADAPT-WEBQ-03 (2026-06-19) — bundled skill.
+    (
+        "webq_core_web_vitals",
+        include_str!("../../assets/skills/webq_core_web_vitals/skill.yaml"),
+    ),
+    // GOLD-ADAPT-WEBQ-04 (2026-06-19) — bundled skill.
+    (
+        "webq_performance",
+        include_str!("../../assets/skills/webq_performance/skill.yaml"),
+    ),
+    // GOLD-ADAPT-WEBQ-05 (2026-06-19) — bundled skill.
+    (
+        "webq_seo",
+        include_str!("../../assets/skills/webq_seo/skill.yaml"),
+    ),
+    // GOLD-ADAPT-WEBQ-06 (2026-06-19) — bundled skill.
+    (
+        "webq_web_quality_audit",
+        include_str!("../../assets/skills/webq_web_quality_audit/skill.yaml"),
     ),
     (
         "writing_plans",
@@ -586,6 +731,11 @@ mod tests {
             if id.starts_with("pm-") {
                 pm += 1;
                 assert!(!m.enabled, "pm-* skill `{id}` must ship disabled");
+            } else if *id == "github_pr_review" {
+                // GOLD-ADAPT-GITPR-03: the GitHub PR-review skill touches the
+                // network (tool_allowlist: [fetch]) so it ships DISABLED — the
+                // operator enables it explicitly. Documented non-pm exception.
+                assert!(!m.enabled, "github_pr_review must ship disabled (network)");
             } else {
                 assert!(m.enabled, "non-pm bundled skill `{id}` must ship enabled");
             }

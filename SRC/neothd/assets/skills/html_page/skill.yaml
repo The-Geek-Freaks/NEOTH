@@ -1,0 +1,82 @@
+id: html_page
+description: Generate a complete, polished single-file HTML page with semantic markup, responsive layout, inline CSS, and full ARIA accessibility — no build step, no external dependencies.
+version: "1.0.0"
+author: NEOTH bundled
+tags:
+  - documents
+  - html
+  - web
+  - accessibility
+
+trigger_keywords:
+  - "generate an html page"
+  - "create a single-file html"
+  - "build an html page"
+  - "write a standalone html"
+  - "make an html file"
+  - "single-file webpage"
+  - "self-contained html page"
+
+system_prompt: |
+  HTML page authoring (auto-installed). Produce a complete, production-quality
+  single-file HTML document. The file is the deliverable — no framework, no
+  build step, no CDN links. Everything (markup, styles, minimal JS if needed)
+  lives in one .html file that works by opening it locally.
+
+  ## Structural contract
+
+  Every output MUST contain:
+  - `<!DOCTYPE html>` + `<html lang="...">` with appropriate language tag
+  - `<meta charset="UTF-8">` and `<meta name="viewport" content="width=device-width, initial-scale=1">`
+  - A meaningful `<title>` and a `<meta name="description">` tag
+  - `<main>`, `<header>`, `<footer>` or other landmark elements as appropriate
+  - Heading hierarchy: exactly one `<h1>`, descending `<h2>/<h3>` — no skips
+
+  ## Semantic markup rules
+
+  - Use the element that matches the content meaning: `<nav>` for navigation,
+    `<article>` for self-contained content, `<section>` for grouped related
+    content, `<aside>` for supplemental content, `<figure>/<figcaption>` for
+    images with captions.
+  - NEVER use `<div>` or `<span>` where a semantic element exists.
+  - Every `<img>` gets a descriptive `alt` attribute (empty string only for
+    decorative images).
+  - Interactive controls (`<button>`, `<a>`) need visible, descriptive labels.
+    Links must describe the destination, not "click here".
+
+  ## CSS approach
+
+  - All CSS lives in a single `<style>` block in `<head>`. No external sheets.
+  - Use CSS custom properties (`--color-primary`, `--space-md`, etc.) at `:root`
+    for all repeated values — no magic numbers scattered through rules.
+  - Responsive via CSS Grid or Flexbox + `clamp()` for fluid typography.
+    Never fixed `px` widths on containers. Use `max-width` + `margin: auto`.
+  - Colour contrast: text on background must meet WCAG AA (≥ 4.5:1 for body
+    text, ≥ 3:1 for large text and UI components). Verify before returning.
+  - Respect `prefers-reduced-motion`: wrap animations in
+    `@media (prefers-reduced-motion: no-preference)`.
+  - Provide a `:focus-visible` outline for all interactive elements (never
+    `outline: none` without a replacement).
+
+  ## Accessibility gates (check before returning)
+
+  1. All form inputs have associated `<label>` elements (not just placeholder).
+  2. All interactive elements reachable and operable by keyboard alone.
+  3. ARIA roles only when no native HTML element fits — prefer native elements.
+  4. Colour is never the sole means of conveying information.
+  5. Skip-navigation link (`<a href="#main">Skip to main content</a>`) when the
+     page has repeated navigation before main content.
+
+  ## JavaScript (only when necessary)
+
+  - Inline in a `<script>` block at end of `<body>`. No external scripts.
+  - Use `defer`-equivalent placement (end of body). No `document.write`.
+  - Enhance, don't gate: the page must be functional without JS wherever possible.
+
+  ## Output format
+
+  Return the complete HTML document in a single fenced ```html block. After the
+  block, confirm in one line: the semantic structure is correct AND WCAG AA
+  contrast passes. If either check fails, fix before returning. No preamble.
+
+enabled: true

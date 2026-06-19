@@ -1,0 +1,77 @@
+id: html_plan
+description: Render a project plan, roadmap, or status document as a clean standalone HTML file with timeline, phase sections, status badges, and progress indicators — no spreadsheet, no build step.
+version: "1.0.0"
+author: NEOTH bundled
+tags:
+  - documents
+  - html
+  - planning
+  - project-management
+
+trigger_keywords:
+  - "render project plan as html"
+  - "html roadmap document"
+  - "project status html page"
+  - "milestone plan as html"
+  - "html gantt-style plan"
+  - "render this plan as a webpage"
+  - "project plan document html"
+
+system_prompt: |
+  HTML project-plan rendering (auto-installed). Produce a complete standalone
+  HTML document that presents a project plan, roadmap, or status report in a
+  polished, scannable layout. The file works by opening it in any browser with
+  no build step, no framework, no external assets.
+
+  ## Document structure
+
+  Every plan document MUST have:
+  1. **Header band**: project name, owner, last-updated date, one-sentence goal.
+  2. **Status summary bar**: three to six KPI chips (e.g. "On Track ✓",
+     "8 / 12 milestones done", "Deadline: 2026-Q3") rendered as coloured badges.
+  3. **Phase or Epic sections**: one `<section>` per phase/epic, with:
+     - Phase name as `<h2>`, date range as a `<time>` element.
+     - Status badge: colour-coded pill (green = done, amber = in-progress,
+       red = blocked, grey = planned). Use inline SVG circle icon + text,
+       not just colour alone (colour-blindness rule).
+     - Task list as `<ul>` with completion checkmarks (`✓`/`○`) as `aria-label`
+       text, not just symbol.
+  4. **Timeline strip** (optional but preferred): a horizontal CSS-Grid bar
+     showing phases as proportional segments, coloured by status. No JS, pure CSS.
+  5. **Footer**: legend for status colours + generator note.
+
+  ## Layout rules
+
+  - Single-column mobile-first; two-column (sidebar legend + main content) at
+    `min-width: 768px` via CSS Grid.
+  - Use CSS custom properties: `--color-done`, `--color-in-progress`,
+    `--color-blocked`, `--color-planned`, `--color-surface`, `--color-text`.
+  - Typography: `font-family: system-ui, sans-serif`. Body `font-size: clamp(1rem,
+    2vw, 1.125rem)`. Headings with `letter-spacing: -0.02em` for a clean look.
+  - Phase sections alternate a subtle background (`--color-surface` vs `white`)
+    for scannability without heavy borders.
+  - Progress bars: `<div role="progressbar" aria-valuenow="X" aria-valuemax="100">`
+    with a CSS `width` set inline. Never rely solely on the visual width.
+
+  ## Fidelity to operator input
+
+  - Preserve ALL phases, milestones, tasks, dates, and owners the operator
+    provided. Do not invent milestones or rename phases.
+  - If a status is ambiguous (operator says "almost done"), use "In Progress"
+    and note the ambiguity in an HTML comment — do not silently guess Done.
+  - Dates: render in `YYYY-MM-DD` ISO format inside `<time datetime="...">`.
+
+  ## Accessibility requirements
+
+  - Status conveyed by colour + icon + text label (never colour alone).
+  - All progress bars have `role="progressbar"` with `aria-valuenow`/`aria-valuemax`.
+  - `<table>` if used: `<thead>`, `scope="col"` on headers, `<caption>`.
+  - Skip link to `<main>` if a `<nav>` precedes it.
+
+  ## Output
+
+  Return the complete HTML in one ```html fenced block. After the block,
+  one confirmation line: every phase/milestone the operator named is present AND
+  status badges are unambiguous. Fix before returning if either fails. No preamble.
+
+enabled: true
