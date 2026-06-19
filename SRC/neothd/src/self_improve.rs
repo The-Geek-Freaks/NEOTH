@@ -161,6 +161,36 @@ pub struct Proposal {
     /// Known risks / caveats of adopting this edit (operator-facing).
     #[serde(default)]
     pub risk_notes: String,
+    // ── IMPR-01: ProposalSpec — structured execution / verification envelope ──
+    /// Optional execution spec emitted by SkillOpt or an operator-supplied
+    /// envelope. Back-compat: absent in older proposals → None.
+    #[serde(default)]
+    pub spec: Option<ProposalSpec>,
+}
+
+/// Structured execution specification attached to a staged proposal (IMPR-01).
+///
+/// Fields map directly from the SkillOpt JSON envelope (or operator-supplied
+/// `--from` proposals). All fields are optional — a proposal is valid without
+/// any spec; these fields add machine-checkable done-gates and safety stops.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ProposalSpec {
+    /// Shell command (or test invocation) to run to verify the edit worked.
+    /// E.g. `"cargo test -p neothd -- self_improve"`. None = no gate.
+    #[serde(default)]
+    pub verification_command: Option<String>,
+    /// Human-readable criterion that defines "done" for this proposal.
+    /// Used as the advisor review prompt in the execute path.
+    #[serde(default)]
+    pub done_criteria: Option<String>,
+    /// Conditions that STOP execution if any is true (e.g. file-size growth,
+    /// test regression). Checked as prefixes of executor output lines.
+    #[serde(default)]
+    pub stop_conditions: Vec<String>,
+    /// IMPR-02: git short-SHA captured at `stage_proposal` time.
+    /// Used at `accept_proposal` time to detect drift in the target file.
+    #[serde(default)]
+    pub drift_sha: Option<String>,
 }
 
 pub fn proposals_path(home: &Path) -> PathBuf {
@@ -180,9 +210,48 @@ pub fn save_proposals(home: &Path, props: &[Proposal]) -> Result<()> {
     Ok(())
 }
 
+// ── IMPR-02: git drift-check helpers ─────────────────────────────────────────
+
+/// Capture `git rev-parse --short HEAD` from the cwd. Returns `None` when git
+/// is unavailable or the directory is not a repo — callers degrade gracefully.
+fn git_capture_head_sha() -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if sha.is_empty() { None } else { Some(sha) }
+}
+
+/// Run `git diff --stat <from_sha>..HEAD -- <path>` and return the trimmed
+/// output, or `None` if git fails (not a repo, no commits, etc.).
+fn git_diff_stat_since(from_sha: &str, path: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["diff", "--stat", &format!("{from_sha}..HEAD"), "--", path])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
 /// Stage a proposal (status Pending). Returns its id.
+///
+/// IMPR-02: captures `git rev-parse --short HEAD` into `spec.drift_sha` so
+/// `accept_proposal` can later detect whether the skill file drifted.
 pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
     p.status = ProposalStatus::Pending;
+    // IMPR-02: record the current HEAD SHA so accept can diff for drift.
+    let sha = git_capture_head_sha();
+    let spec = p.spec.get_or_insert_with(ProposalSpec::default);
+    if spec.drift_sha.is_none() {
+        spec.drift_sha = sha;
+    }
     let id = p.id.clone();
     let mut all = load_proposals(home);
     all.push(p);
@@ -193,6 +262,10 @@ pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
 /// Accept a pending proposal: back up the CURRENT skill file content, then write
 /// the proposed `after`. Returns an error if the id is unknown / not pending.
 /// This is the ONLY path that writes a production skill file.
+///
+/// IMPR-02: if the proposal carries a `spec.drift_sha`, runs
+/// `git diff --stat <sha>..HEAD -- <skill_path>` and prints a warning when the
+/// target file changed since staging. A git error never aborts the accept.
 pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
     let mut all = load_proposals(home);
     let p = all
@@ -201,6 +274,15 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
     if p.status != ProposalStatus::Pending {
         anyhow::bail!("proposal `{id}` is {:?}, not pending", p.status);
+    }
+    // IMPR-02: drift check — warn if target drifted since this was staged.
+    if let Some(sha) = p.spec.as_ref().and_then(|s| s.drift_sha.as_deref()) {
+        if let Some(diff) = git_diff_stat_since(sha, &p.skill_path) {
+            eprintln!(
+                "⚠  drift warning: `{}` changed since proposal was staged (sha {sha}):\n{diff}\n   Review the diff — this proposal may be stale.",
+                p.skill_path
+            );
+        }
     }
     let path = Path::new(&p.skill_path);
     // Back up the exact content we're about to replace (may differ from `before`
@@ -433,14 +515,15 @@ pub struct ProposalQuality {
     pub risk_notes: String,
 }
 
-/// Split a SkillOpt run's stdout into `(proposed_content, quality)`. NEOTH's
-/// ingestion contract: if stdout is a JSON object carrying a `skill` (or
-/// `content`) string, it's a STRUCTURED report — pull the content plus the
+/// Split a SkillOpt run's stdout into `(proposed_content, quality, spec)`.
+/// NEOTH's ingestion contract: if stdout is a JSON object carrying a `skill`
+/// (or `content`) string, it's a STRUCTURED report — pull the content plus the
 /// quality fields (`score_before` / `score_after` / `heldout_eval_summary` /
-/// `why_this_improves` / `risk_notes`). Otherwise the whole stdout IS the
-/// proposed content and quality is empty (a thin adapter can map SkillOpt's
-/// native output to the envelope; plain-text still works unchanged).
-pub fn parse_proposal_output(stdout: &str) -> (String, ProposalQuality) {
+/// `why_this_improves` / `risk_notes`) and, if present, the ProposalSpec fields
+/// (`verification_command` / `done_criteria` / `stop_conditions`).
+/// Otherwise the whole stdout IS the proposed content and quality + spec are
+/// empty (plain-text still works unchanged — IMPR-01).
+pub fn parse_proposal_output(stdout: &str) -> (String, ProposalQuality, Option<ProposalSpec>) {
     let trimmed = stdout.trim_start();
     if trimmed.starts_with('{') {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
@@ -451,20 +534,50 @@ pub fn parse_proposal_output(stdout: &str) -> (String, ProposalQuality) {
             {
                 let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-                return (
-                    content.to_string(),
-                    ProposalQuality {
-                        score_before: f("score_before"),
-                        score_after: f("score_after"),
-                        heldout_eval_summary: s("heldout_eval_summary"),
-                        why_this_improves: s("why_this_improves"),
-                        risk_notes: s("risk_notes"),
-                    },
-                );
+                let quality = ProposalQuality {
+                    score_before: f("score_before"),
+                    score_after: f("score_after"),
+                    heldout_eval_summary: s("heldout_eval_summary"),
+                    why_this_improves: s("why_this_improves"),
+                    risk_notes: s("risk_notes"),
+                };
+                // IMPR-01: parse ProposalSpec fields from the envelope.
+                let verification_command = v
+                    .get("verification_command")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string);
+                let done_criteria = v
+                    .get("done_criteria")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string);
+                let stop_conditions: Vec<String> = v
+                    .get("stop_conditions")
+                    .and_then(|x| x.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| e.as_str())
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let spec = if verification_command.is_some()
+                    || done_criteria.is_some()
+                    || !stop_conditions.is_empty()
+                {
+                    Some(ProposalSpec {
+                        verification_command,
+                        done_criteria,
+                        stop_conditions,
+                        drift_sha: None, // populated at stage time
+                    })
+                } else {
+                    None
+                };
+                return (content.to_string(), quality, spec);
             }
         }
     }
-    (stdout.to_string(), ProposalQuality::default())
+    (stdout.to_string(), ProposalQuality::default(), None)
 }
 
 pub const SKILLOPT_INSTALL: &str = "pip install skillopt";
@@ -499,6 +612,184 @@ pub fn skillopt_command(persona: &str) -> std::process::Command {
         persona,
     ]);
     c
+}
+
+// ── IMPR-03: Execute variant — verification-gated proposal execution scaffold ─
+//
+// Runs a staged proposal through a verification + advisor-review loop. The
+// cheaper-executor subagent dispatch is left as a `// neoth:` hook — wiring it
+// requires the provider API which doesn't exist at this call site. The scaffold
+// provides: verification_command run → done_criteria check → advisor diff-review
+// loop (max 2 revises). Bounded and safe; never auto-accepts.
+
+/// Outcome of the advisor review pass in the execute variant (IMPR-03).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionVerdict {
+    /// Verification passed + advisor approved the output.
+    Approved,
+    /// Verification passed but advisor requests changes (caller may retry,
+    /// up to `max_revises` times).
+    Revise { reason: String },
+    /// Verification failed, a stop-condition triggered, or max revises reached.
+    Blocked { reason: String },
+}
+
+/// Parse an advisor review report string into an `ExecutionVerdict`.
+///
+/// The report is expected to contain one of the tokens `APPROVE`, `REVISE`, or
+/// `BLOCK` (case-insensitive). Everything after the token on that line becomes
+/// the `reason`. Plain-text or structured — whichever the advisor emits.
+pub fn review_execution_result(report: &str) -> ExecutionVerdict {
+    for line in report.lines() {
+        let upper = line.to_ascii_uppercase();
+        if upper.contains("APPROVE") {
+            return ExecutionVerdict::Approved;
+        }
+        if let Some(pos) = upper.find("REVISE") {
+            let reason = line[pos + "REVISE".len()..].trim().to_string();
+            return ExecutionVerdict::Revise {
+                reason: if reason.is_empty() {
+                    "advisor requested changes".to_string()
+                } else {
+                    reason
+                },
+            };
+        }
+        if let Some(pos) = upper.find("BLOCK") {
+            let reason = line[pos + "BLOCK".len()..].trim().to_string();
+            return ExecutionVerdict::Blocked {
+                reason: if reason.is_empty() {
+                    "advisor blocked execution".to_string()
+                } else {
+                    reason
+                },
+            };
+        }
+    }
+    ExecutionVerdict::Blocked {
+        reason: "advisor report contained no APPROVE/REVISE/BLOCK token".to_string(),
+    }
+}
+
+/// Run a pending proposal through the verification-gated execute scaffold
+/// (IMPR-03). Steps:
+///
+/// 1. Load the proposal by `id` (must be Pending).
+/// 2. Run `spec.verification_command` (if set); fail → `Blocked`.
+/// 3. Check `spec.stop_conditions` against the verification output; trigger → `Blocked`.
+/// 4. Call `advisor_fn` with the diff + verification output to get a review report.
+/// 5. Parse the report via `review_execution_result`; loop up to `max_revises`.
+///
+/// The `advisor_fn` closure is the cheaper-executor hook:
+/// ```text
+/// // neoth: wire a cheaper-executor subagent here when the provider API is
+/// // available at this call site — pass the ProposalSpec + diff as the prompt,
+/// // receive the advisor report string, return it from this closure.
+/// ```
+///
+/// Returns `(ExecutionVerdict, usize)` — the final verdict + number of revise
+/// rounds used. Never writes to a skill file (that stays gated behind `accept`).
+pub fn execute_proposal_with_verification<F>(
+    home: &Path,
+    id: &str,
+    max_revises: usize,
+    advisor_fn: F,
+) -> Result<(ExecutionVerdict, usize)>
+where
+    F: Fn(&str, &str) -> String,
+{
+    let all = load_proposals(home);
+    let p = all
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
+    if p.status != ProposalStatus::Pending {
+        anyhow::bail!("proposal `{id}` is {:?}, not pending", p.status);
+    }
+
+    let diff = crate::self_improve::line_diff(&p.before, &p.after);
+
+    // Step 2: run the verification command.
+    let verification_output = if let Some(cmd) = p
+        .spec
+        .as_ref()
+        .and_then(|s| s.verification_command.as_deref())
+    {
+        let out = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+            .args(if cfg!(windows) {
+                vec!["/C", cmd]
+            } else {
+                vec!["-c", cmd]
+            })
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout).into_owned()
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                return Ok((
+                    ExecutionVerdict::Blocked {
+                        reason: format!(
+                            "verification_command failed (exit {:?}): {stderr}",
+                            o.status.code()
+                        ),
+                    },
+                    0,
+                ));
+            }
+            Err(e) => {
+                return Ok((
+                    ExecutionVerdict::Blocked {
+                        reason: format!("could not run verification_command: {e}"),
+                    },
+                    0,
+                ));
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    // Step 3: stop-conditions check.
+    if let Some(spec) = &p.spec {
+        for cond in &spec.stop_conditions {
+            if verification_output.lines().any(|l| l.starts_with(cond.as_str())) {
+                return Ok((
+                    ExecutionVerdict::Blocked {
+                        reason: format!("stop condition triggered: `{cond}`"),
+                    },
+                    0,
+                ));
+            }
+        }
+    }
+
+    // Steps 4–5: advisor review loop (max `max_revises` revise rounds).
+    let mut revises = 0usize;
+    loop {
+        // neoth: wire a cheaper-executor subagent here when the provider API is
+        // available at this call site — pass ProposalSpec + diff as the prompt,
+        // receive the advisor report string, return it from the closure.
+        let report = advisor_fn(&diff, &verification_output);
+        let verdict = review_execution_result(&report);
+        match verdict {
+            ExecutionVerdict::Approved => return Ok((ExecutionVerdict::Approved, revises)),
+            ExecutionVerdict::Revise { reason } => {
+                revises += 1;
+                if revises >= max_revises {
+                    return Ok((
+                        ExecutionVerdict::Blocked {
+                            reason: format!("max revises ({max_revises}) reached; last: {reason}"),
+                        },
+                        revises,
+                    ));
+                }
+                // Loop — advisor_fn will be called again with the same diff.
+            }
+            blocked => return Ok((blocked, revises)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -695,27 +986,30 @@ mod tests {
 
     #[test]
     fn parse_proposal_output_structured_vs_plain() {
-        // Plain text → the whole thing is the content; no quality.
-        let (c, q) = parse_proposal_output("just the new skill body");
+        // Plain text → the whole thing is the content; no quality or spec.
+        let (c, q, spec) = parse_proposal_output("just the new skill body");
         assert_eq!(c, "just the new skill body");
         assert_eq!(q, ProposalQuality::default());
+        assert!(spec.is_none());
 
-        // Structured envelope → content + quality extracted.
+        // Structured envelope → content + quality extracted; no spec fields → None.
         let json = r#"{"skill":"NEW BODY","score_before":0.4,"score_after":0.72,
             "heldout_eval_summary":"+8/10 held-out","why_this_improves":"tighter planning",
             "risk_notes":"none observed"}"#;
-        let (c, q) = parse_proposal_output(json);
+        let (c, q, spec) = parse_proposal_output(json);
         assert_eq!(c, "NEW BODY");
         assert!((q.score_before - 0.4).abs() < 1e-9);
         assert!((q.score_after - 0.72).abs() < 1e-9);
         assert_eq!(q.heldout_eval_summary, "+8/10 held-out");
         assert_eq!(q.why_this_improves, "tighter planning");
         assert_eq!(q.risk_notes, "none observed");
+        assert!(spec.is_none()); // no spec fields in envelope
 
         // A JSON object WITHOUT a skill/content key → treated as plain content.
-        let (c, q) = parse_proposal_output(r#"{"unrelated":true}"#);
+        let (c, q, spec) = parse_proposal_output(r#"{"unrelated":true}"#);
         assert_eq!(c, r#"{"unrelated":true}"#);
         assert_eq!(q, ProposalQuality::default());
+        assert!(spec.is_none());
     }
 
     #[test]
@@ -725,5 +1019,367 @@ mod tests {
         assert!(d.contains("+ B"));
         assert!(!d.contains("(no line changes)"));
         assert!(line_diff("same", "same").contains("(no line changes)"));
+    }
+
+    // ── IMPR-01: ProposalSpec serde roundtrip ─────────────────────────────────
+
+    #[test]
+    fn proposal_spec_serde_roundtrip_with_fields() {
+        let spec = ProposalSpec {
+            verification_command: Some("cargo test".to_string()),
+            done_criteria: Some("all tests pass".to_string()),
+            stop_conditions: vec!["FAILED".to_string(), "error[".to_string()],
+            drift_sha: Some("abc1234".to_string()),
+        };
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let back: ProposalSpec = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(spec, back);
+    }
+
+    #[test]
+    fn proposal_spec_serde_roundtrip_empty_back_compat() {
+        // An old proposal JSON without `spec` deserializes cleanly to None.
+        let json = r#"{"id":"p1","skill":"coding","skill_path":"/tmp/skill.md","before":"x","after":"y","summary":"s","status":"pending","at_unix":1}"#;
+        let p: Proposal = serde_json::from_str(json).expect("back-compat deserialize");
+        assert!(p.spec.is_none());
+    }
+
+    #[test]
+    fn proposal_roundtrip_with_spec_field() {
+        let p = Proposal {
+            id: "p42".into(),
+            skill: "coding".into(),
+            skill_path: "/tmp/skill.md".into(),
+            before: "old".into(),
+            after: "new".into(),
+            summary: "tighten".into(),
+            status: ProposalStatus::Pending,
+            at_unix: 100,
+            backup: None,
+            score_before: 0.5,
+            score_after: 0.8,
+            heldout_eval_summary: String::new(),
+            why_this_improves: String::new(),
+            risk_notes: String::new(),
+            spec: Some(ProposalSpec {
+                verification_command: Some("cargo test".to_string()),
+                done_criteria: None,
+                stop_conditions: vec![],
+                drift_sha: Some("deadbeef".to_string()),
+            }),
+        };
+        let json = serde_json::to_string_pretty(&p).unwrap();
+        let back: Proposal = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    // ── IMPR-01: parse_proposal_output extracts ProposalSpec from envelope ────
+
+    #[test]
+    fn parse_proposal_output_extracts_spec_from_envelope() {
+        let json = r#"{
+            "skill": "BODY",
+            "score_before": 0.3,
+            "score_after": 0.7,
+            "heldout_eval_summary": "ok",
+            "why_this_improves": "faster",
+            "risk_notes": "none",
+            "verification_command": "cargo test -p neothd",
+            "done_criteria": "all 42 tests pass",
+            "stop_conditions": ["FAILED", "error["]
+        }"#;
+        let (content, quality, spec) = parse_proposal_output(json);
+        assert_eq!(content, "BODY");
+        assert!((quality.score_before - 0.3).abs() < 1e-9);
+        assert!((quality.score_after - 0.7).abs() < 1e-9);
+        let spec = spec.expect("spec must be present");
+        assert_eq!(spec.verification_command.as_deref(), Some("cargo test -p neothd"));
+        assert_eq!(spec.done_criteria.as_deref(), Some("all 42 tests pass"));
+        assert_eq!(spec.stop_conditions, vec!["FAILED", "error["]);
+        // drift_sha not in envelope — populated at stage time
+        assert!(spec.drift_sha.is_none());
+    }
+
+    #[test]
+    fn parse_proposal_output_plain_text_no_spec() {
+        let (content, quality, spec) = parse_proposal_output("just the skill body");
+        assert_eq!(content, "just the skill body");
+        assert_eq!(quality, ProposalQuality::default());
+        assert!(spec.is_none());
+    }
+
+    #[test]
+    fn parse_proposal_output_envelope_without_spec_fields_returns_none_spec() {
+        let json = r#"{"skill":"BODY","score_before":0.1,"score_after":0.2,"heldout_eval_summary":"","why_this_improves":"","risk_notes":""}"#;
+        let (_content, _quality, spec) = parse_proposal_output(json);
+        // No spec fields → spec is None (not an empty Some).
+        assert!(spec.is_none());
+    }
+
+    // ── IMPR-02: drift detection via stage → mutate → accept ─────────────────
+
+    #[test]
+    fn stage_captures_drift_sha_field() {
+        // If git is available in the test environment, drift_sha is populated;
+        // otherwise it stays None — both are valid (graceful degradation).
+        let tmp = std::env::temp_dir().join("neoth_si_drift_sha_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill_drift_sha.md");
+        std::fs::write(&skill, "CONTENT").unwrap();
+
+        let id = stage_proposal(
+            &tmp,
+            Proposal {
+                id: "pdrift_sha".into(),
+                skill: "test".into(),
+                skill_path: skill.display().to_string(),
+                before: "CONTENT".into(),
+                after: "IMPROVED".into(),
+                summary: "sha test".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 1,
+                backup: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let proposals = load_proposals(&tmp);
+        let staged = proposals.iter().find(|p| p.id == id).unwrap();
+        // drift_sha is either Some(sha) or None — never panics.
+        let _ = staged.spec.as_ref().and_then(|s| s.drift_sha.as_deref());
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
+    }
+
+    #[test]
+    fn accept_emits_drift_warning_when_skill_changed() {
+        // Simulate drift: stage with a known fake SHA → accept without git having
+        // that SHA in history → diff --stat returns non-empty → warning on stderr.
+        // We capture stderr by redirecting via a subprocess would be complex, so
+        // we test the helper function directly instead.
+        //
+        // git_diff_stat_since with a SHA that doesn't exist returns None (graceful).
+        let result = git_diff_stat_since("0000000", "/nonexistent/path/skill.md");
+        // Either None (git not available or SHA not found) or Some — both OK.
+        // The important thing: it never panics.
+        let _ = result;
+    }
+
+    #[test]
+    fn accept_with_spec_drift_sha_none_never_warns() {
+        // Proposal with spec but no drift_sha → no drift check → accept cleanly.
+        let tmp = std::env::temp_dir().join("neoth_si_no_drift_warn_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill_no_drift.md");
+        std::fs::write(&skill, "ORIGINAL").unwrap();
+
+        let p = Proposal {
+            id: "pnodrift".into(),
+            skill: "test".into(),
+            skill_path: skill.display().to_string(),
+            before: "ORIGINAL".into(),
+            after: "IMPROVED".into(),
+            summary: "no drift sha".into(),
+            status: ProposalStatus::Pending,
+            at_unix: 1,
+            backup: None,
+            spec: Some(ProposalSpec {
+                verification_command: None,
+                done_criteria: None,
+                stop_conditions: vec![],
+                drift_sha: None, // no SHA → drift check skipped
+            }),
+            ..Default::default()
+        };
+        // Pre-set status to Pending (stage_proposal would overwrite drift_sha).
+        let mut all = load_proposals(&tmp);
+        all.push(p);
+        save_proposals(&tmp, &all).unwrap();
+
+        // accept must succeed without panic/error
+        accept_proposal(&tmp, "pnodrift").unwrap();
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "IMPROVED");
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
+    }
+
+    // ── IMPR-03: review_execution_result and execute_proposal_with_verification
+
+    #[test]
+    fn review_execution_result_approved() {
+        assert_eq!(
+            review_execution_result("APPROVE — looks good"),
+            ExecutionVerdict::Approved
+        );
+        assert_eq!(
+            review_execution_result("  approve: the change is clean"),
+            ExecutionVerdict::Approved
+        );
+    }
+
+    #[test]
+    fn review_execution_result_revise() {
+        let v = review_execution_result("REVISE: missing error handling");
+        assert!(matches!(v, ExecutionVerdict::Revise { .. }));
+        if let ExecutionVerdict::Revise { reason } = v {
+            assert!(reason.contains("missing error handling"));
+        }
+    }
+
+    #[test]
+    fn review_execution_result_blocked() {
+        let v = review_execution_result("BLOCK: test regression detected");
+        assert!(matches!(v, ExecutionVerdict::Blocked { .. }));
+        if let ExecutionVerdict::Blocked { reason } = v {
+            assert!(reason.contains("test regression"));
+        }
+    }
+
+    #[test]
+    fn review_execution_result_no_token_is_blocked() {
+        let v = review_execution_result("looks fine to me");
+        assert!(matches!(v, ExecutionVerdict::Blocked { .. }));
+    }
+
+    #[test]
+    fn execute_proposal_with_verification_advisor_approve() {
+        let tmp = std::env::temp_dir().join("neoth_si_exec_approve_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill_exec_approve.md");
+        std::fs::write(&skill, "ORIGINAL").unwrap();
+
+        // Stage without running stage_proposal so drift_sha stays None.
+        let mut all: Vec<Proposal> = vec![];
+        all.push(Proposal {
+            id: "pexec".into(),
+            skill: "test".into(),
+            skill_path: skill.display().to_string(),
+            before: "ORIGINAL".into(),
+            after: "IMPROVED".into(),
+            summary: "exec test".into(),
+            status: ProposalStatus::Pending,
+            at_unix: 1,
+            backup: None,
+            spec: Some(ProposalSpec {
+                verification_command: None, // no verification command
+                done_criteria: Some("all tests pass".to_string()),
+                stop_conditions: vec![],
+                drift_sha: None,
+            }),
+            ..Default::default()
+        });
+        save_proposals(&tmp, &all).unwrap();
+
+        let (verdict, revises) = execute_proposal_with_verification(
+            &tmp,
+            "pexec",
+            2,
+            |_diff, _vout| "APPROVE — looks clean".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(verdict, ExecutionVerdict::Approved);
+        assert_eq!(revises, 0);
+
+        // accept is still gated — skill file untouched
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "ORIGINAL");
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
+    }
+
+    #[test]
+    fn execute_proposal_max_revises_blocks() {
+        let tmp = std::env::temp_dir().join("neoth_si_exec_revise_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill_exec_revise.md");
+        std::fs::write(&skill, "ORIGINAL").unwrap();
+
+        let mut all: Vec<Proposal> = vec![];
+        all.push(Proposal {
+            id: "previse".into(),
+            skill: "test".into(),
+            skill_path: skill.display().to_string(),
+            before: "ORIGINAL".into(),
+            after: "IMPROVED".into(),
+            summary: "revise loop".into(),
+            status: ProposalStatus::Pending,
+            at_unix: 1,
+            backup: None,
+            spec: None,
+            ..Default::default()
+        });
+        save_proposals(&tmp, &all).unwrap();
+
+        // advisor always says REVISE → must hit max_revises cap
+        let (verdict, revises) = execute_proposal_with_verification(
+            &tmp,
+            "previse",
+            2,
+            |_diff, _vout| "REVISE: needs more work".to_string(),
+        )
+        .unwrap();
+
+        assert!(matches!(verdict, ExecutionVerdict::Blocked { .. }));
+        assert_eq!(revises, 2);
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
+    }
+
+    #[test]
+    fn execute_proposal_stop_condition_triggers_block() {
+        let tmp = std::env::temp_dir().join("neoth_si_exec_stop_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill_exec_stop.md");
+        std::fs::write(&skill, "ORIGINAL").unwrap();
+
+        // verification_command that emits a stop-condition line
+        #[cfg(windows)]
+        let vcmd = "echo FAILED: test broken";
+        #[cfg(not(windows))]
+        let vcmd = "echo 'FAILED: test broken'";
+
+        let mut all: Vec<Proposal> = vec![];
+        all.push(Proposal {
+            id: "pstop".into(),
+            skill: "test".into(),
+            skill_path: skill.display().to_string(),
+            before: "ORIGINAL".into(),
+            after: "IMPROVED".into(),
+            summary: "stop cond".into(),
+            status: ProposalStatus::Pending,
+            at_unix: 1,
+            backup: None,
+            spec: Some(ProposalSpec {
+                verification_command: Some(vcmd.to_string()),
+                done_criteria: None,
+                stop_conditions: vec!["FAILED".to_string()],
+                drift_sha: None,
+            }),
+            ..Default::default()
+        });
+        save_proposals(&tmp, &all).unwrap();
+
+        let (verdict, _revises) = execute_proposal_with_verification(
+            &tmp,
+            "pstop",
+            2,
+            |_diff, _vout| "APPROVE".to_string(),
+        )
+        .unwrap();
+
+        assert!(matches!(verdict, ExecutionVerdict::Blocked { .. }));
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
     }
 }

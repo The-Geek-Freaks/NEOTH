@@ -178,7 +178,7 @@ fn self_improve_auto_pass_blocking(home: &Path) {
         .join(persona)
         .join("skill.md");
     let before = std::fs::read_to_string(&skill_path).unwrap_or_default();
-    let (after, quality) = match si::skillopt_command(persona).output() {
+    let (after, quality, parsed_spec) = match si::skillopt_command(persona).output() {
         Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
         Err(e) => {
             warn!(error = %e, "self-improve auto-pass: SkillOpt run failed");
@@ -207,6 +207,7 @@ fn self_improve_auto_pass_blocking(home: &Path) {
             heldout_eval_summary: quality.heldout_eval_summary,
             why_this_improves: quality.why_this_improves,
             risk_notes: quality.risk_notes,
+            spec: parsed_spec, // IMPR-01: carry parsed spec; drift_sha added inside stage_proposal
         },
     ) {
         Ok(_) => info!(proposal = %id, "self-improve auto-pass staged a proposal for review"),

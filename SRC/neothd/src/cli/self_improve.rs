@@ -65,6 +65,10 @@ pub enum SelfImproveAction {
     },
     /// Print the improvement ledger (what changed, when, accepted or not).
     Log,
+    /// IMPR-03: run a pending proposal through the verification-gated execute
+    /// scaffold (verification_command + advisor diff-review loop, max 2 revises).
+    /// Does NOT write the skill file — accept is still gated by the operator.
+    Execute { id: String },
 }
 
 pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<()> {
@@ -127,6 +131,11 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
         }
         SelfImproveAction::Pr { id, submit } => pr(&home, &id, submit, output),
         SelfImproveAction::Log => log(&home, output),
+        // IMPR-03: execute scaffold — no provider API at this call site, so the
+        // advisor_fn is a stub that reads operator input via stdin for now.
+        // neoth: replace the stdin advisor with a cheaper-executor subagent dispatch
+        // once the provider API is available at the CLI layer.
+        SelfImproveAction::Execute { id } => execute(&home, &id, output),
     }
 }
 
@@ -226,10 +235,10 @@ fn run_pass(
     // Proposed content + quality. `--from` is operator-supplied (no engine
     // eval); the engine path may emit a structured envelope (content + scores +
     // rationale), else its stdout is treated as plain content.
-    let (after, mut quality) = if let Some(from) = from {
+    let (after, mut quality, parsed_spec) = if let Some(from) = from {
         let content =
             std::fs::read_to_string(&from).with_context(|| format!("read {}", from.display()))?;
-        (content, si::ProposalQuality::default())
+        (content, si::ProposalQuality::default(), None)
     } else if si::is_installed() {
         println!("running SkillOpt for `{persona}` (this can take a while)…");
         match si::skillopt_command(persona).output() {
@@ -289,6 +298,8 @@ fn run_pass(
             heldout_eval_summary: quality.heldout_eval_summary,
             why_this_improves: quality.why_this_improves,
             risk_notes: quality.risk_notes,
+            // IMPR-01: carry the parsed spec (drift_sha populated inside stage_proposal).
+            spec: parsed_spec,
         },
     )?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
@@ -337,6 +348,21 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
                 &p.risk_notes,
             );
             print!("{q}");
+            // IMPR-01: render ProposalSpec fields when present.
+            if let Some(spec) = &p.spec {
+                if let Some(vcmd) = &spec.verification_command {
+                    println!("    verify: {vcmd}");
+                }
+                if let Some(done) = &spec.done_criteria {
+                    println!("    done  : {done}");
+                }
+                if !spec.stop_conditions.is_empty() {
+                    println!("    stops : {}", spec.stop_conditions.join(", "));
+                }
+                if let Some(sha) = &spec.drift_sha {
+                    println!("    staged: @{sha}");
+                }
+            }
             let diff = si::line_diff(&p.before, &p.after);
             for l in diff.lines().take(24) {
                 println!("    {l}");
@@ -394,6 +420,66 @@ fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) {
             p.skill
         );
     }
+}
+
+/// IMPR-03: verification-gated execute scaffold for a pending proposal.
+///
+/// Runs the ProposalSpec's `verification_command` (if any), checks
+/// `stop_conditions`, then enters a 2-round advisor diff-review loop. The
+/// advisor prompt is printed to stdout and the operator's response is read from
+/// stdin — this is the placeholder until a cheaper-executor subagent is wired in.
+///
+/// The skill file is NEVER written here; `accept` remains the only write path.
+fn execute(home: &std::path::Path, id: &str, output: OutputFormat) -> Result<()> {
+    use si::ExecutionVerdict;
+
+    // neoth: replace this stdin advisor with a cheaper-executor subagent dispatch
+    // once the provider API is accessible at the CLI layer. The closure below is
+    // the hook point: receive `(diff, verification_output)`, return a report
+    // string containing APPROVE / REVISE: <reason> / BLOCK: <reason>.
+    let advisor_fn = |diff: &str, vout: &str| -> String {
+        println!("\n── Advisor review (IMPR-03) ──");
+        println!("Diff:\n{diff}");
+        if !vout.is_empty() {
+            println!("Verification output:\n{vout}");
+        }
+        println!("Enter verdict (APPROVE / REVISE: <reason> / BLOCK: <reason>):");
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            return "BLOCK: could not read advisor input".to_string();
+        }
+        line.trim().to_string()
+    };
+
+    let (verdict, revises) =
+        si::execute_proposal_with_verification(home, id, 2, advisor_fn)?;
+
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        let (verdict_str, reason) = match &verdict {
+            ExecutionVerdict::Approved => ("approved", String::new()),
+            ExecutionVerdict::Revise { reason } => ("revise", reason.clone()),
+            ExecutionVerdict::Blocked { reason } => ("blocked", reason.clone()),
+        };
+        println!(
+            "{}",
+            serde_json::json!({ "id": id, "verdict": verdict_str, "revises": revises, "reason": reason })
+        );
+    } else {
+        match verdict {
+            ExecutionVerdict::Approved => {
+                println!(
+                    "✓ proposal {id} passed verification + advisor review ({revises} revise rounds).\n  → `neoth self-improve accept {id}` to adopt."
+                );
+            }
+            ExecutionVerdict::Revise { reason } => {
+                println!("⚠  proposal {id} REVISE after {revises} rounds: {reason}");
+            }
+            ExecutionVerdict::Blocked { reason } => {
+                println!("✗  proposal {id} BLOCKED: {reason}");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn pr(home: &std::path::Path, id: &str, submit: bool, output: OutputFormat) -> Result<()> {
