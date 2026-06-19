@@ -28,6 +28,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod cbm;
 pub mod detect;
 pub mod faccam_family;
 pub mod ffmpeg;

@@ -214,6 +214,66 @@ impl McpServerConfig {
     }
 }
 
+/// GOLD-ADAPT-CBM-02 — hardened default registration for codebase-memory-mcp.
+///
+/// Returns a [`McpServerConfig`] the wizard can append to the operator's
+/// `mcp_servers.yaml` as the safe starting point for the CBM code-graph rail.
+///
+/// Security defaults:
+/// - `enabled: false`   — operator must opt in explicitly.
+/// - `trust_all_tools: false` — no legacy "trust the server's full catalogue".
+/// - `allow_tools`      — ONLY the 12 read-only tools. `index_repository` and
+///   `delete_project` (write / destructive) are deliberately absent; the
+///   operator must add them to the allowlist by hand if needed.
+/// - `smart_approve: false` — CBM tools auto-approve via their own
+///   `readOnlyHint` annotations once allowed by `allow_tools` (F5 design);
+///   no name-pattern exemption is needed here.
+///
+/// Binary invocation: `codebase-memory-mcp` launched with no arguments acts
+/// as the MCP stdio server (JSON-RPC 2.0 over stdin/stdout).
+/// Source: README § Architecture — "Entry point (MCP stdio server + CLI …)".
+// neoth: binary name confirmed from release asset names (v0.8.1, 2026-06-19):
+// codebase-memory-mcp-windows-amd64.zip / codebase-memory-mcp-linux-amd64.tar.gz.
+// No explicit `mcp` subcommand documented; bare binary == stdio server.
+// Confirm with `codebase-memory-mcp --help` after install before shipping.
+pub fn cbm_recommended_config() -> McpServerConfig {
+    McpServerConfig {
+        id: "codebase-memory".into(),
+        description: Some(
+            "codebase-memory-mcp: persistent code-graph MCP server (read-only rail). \
+             Run `codebase-memory-mcp install` first, then set enabled: true."
+                .into(),
+        ),
+        // Bare binary invocation — the process IS the stdio MCP server.
+        command: "codebase-memory-mcp".into(),
+        args: vec![],
+        env: std::collections::HashMap::new(),
+        // Operator must explicitly enable after installing and verifying.
+        enabled: false,
+        // 12 read-only CBM tools (v0.8.1, 14 total tools minus the 2
+        // write/destructive ones: index_repository + delete_project).
+        allow_tools: Some(vec![
+            "search_graph".into(),
+            "query_graph".into(),
+            "trace_path".into(),
+            "get_code_snippet".into(),
+            "get_architecture".into(),
+            "search_code".into(),
+            "list_projects".into(),
+            "index_status".into(),
+            "detect_changes".into(),
+            "get_graph_schema".into(),
+            "manage_adr".into(),
+            "ingest_traces".into(),
+        ]),
+        // Secure-by-default: deny anything outside allow_tools.
+        trust_all_tools: false,
+        // SmartApprove off — readOnlyHint on CBM tools handles auto-approval
+        // via the F5 annotation path once the tool is in allow_tools.
+        smart_approve: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,5 +509,59 @@ servers:
         assert!(r2.contains("opt-out"));
         assert!(r3.contains("auto-on"));
         assert!(r4.contains("auto-off"));
+    }
+
+    // --- GOLD-ADAPT-CBM-02: cbm_recommended_config tests ---
+
+    #[test]
+    fn cbm_config_allow_tools_contains_read_only_tools() {
+        let cfg = cbm_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert!(
+            tools.iter().any(|t| t == "search_graph"),
+            "allow_tools must contain search_graph"
+        );
+        assert!(
+            tools.iter().any(|t| t == "query_graph"),
+            "allow_tools must contain query_graph"
+        );
+        assert!(
+            tools.iter().any(|t| t == "trace_path"),
+            "allow_tools must contain trace_path"
+        );
+        assert!(
+            tools.iter().any(|t| t == "get_graph_schema"),
+            "allow_tools must contain get_graph_schema"
+        );
+    }
+
+    #[test]
+    fn cbm_config_excludes_write_and_destructive_tools() {
+        let cfg = cbm_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert!(
+            !tools.iter().any(|t| t == "index_repository"),
+            "allow_tools must NOT contain index_repository (write tool)"
+        );
+        assert!(
+            !tools.iter().any(|t| t == "delete_project"),
+            "allow_tools must NOT contain delete_project (destructive tool)"
+        );
+    }
+
+    #[test]
+    fn cbm_config_is_secure_by_default() {
+        let cfg = cbm_recommended_config();
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+    }
+
+    #[test]
+    fn cbm_config_id_and_command_are_stable() {
+        let cfg = cbm_recommended_config();
+        assert_eq!(cfg.id, "codebase-memory");
+        assert_eq!(cfg.command, "codebase-memory-mcp");
+        assert!(cfg.args.is_empty(), "no args for bare stdio server mode");
     }
 }
