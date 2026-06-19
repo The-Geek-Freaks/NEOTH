@@ -155,6 +155,15 @@ pub const MIGRATIONS: &[Migration] = &[
                       detection ledger over ground-truth facts",
         run: migration_v18_to_v19,
     },
+    Migration {
+        from: 19,
+        to: 20,
+        description: "v20: idx_groundtruth.{confidence,evidence,maturity,confirmed_count} \
+                      (JV-SELF-01 confidence loop / NN-MEM-03 evidence trails / NN-MEM-04 \
+                      maturity labels) + idx_memory_links.{feedback_success,feedback_failure} \
+                      (JV-MEM-08 Hebbian feedback)",
+        run: migration_v19_to_v20,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -320,6 +329,41 @@ fn migration_v18_to_v19(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("v18->v19: create idx_contradictions (contradiction ledger)")?;
+    Ok(())
+}
+
+/// v19 → v20: fact-richness columns on `idx_groundtruth` (JV-SELF-01 confidence,
+/// NN-MEM-03 evidence backlinks JSON, NN-MEM-04 maturity + confirmed_count) and
+/// Hebbian feedback counters on `idx_memory_links` (JV-MEM-08). Existing rows
+/// take the DEFAULTs (confidence 0.5, evidence '[]', maturity 'emerging',
+/// counts 0) so nothing already stored changes meaning. Mirrors the canonical
+/// columns in `store::apply_schema`. Idempotent (the `let _` swallows a
+/// duplicate-column error on a re-run against a partially-migrated db).
+fn migration_v19_to_v20(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_groundtruth ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE idx_groundtruth ADD COLUMN evidence TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE idx_groundtruth ADD COLUMN maturity TEXT NOT NULL DEFAULT 'emerging'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE idx_groundtruth ADD COLUMN confirmed_count INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE idx_memory_links ADD COLUMN feedback_success INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE idx_memory_links ADD COLUMN feedback_failure INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     Ok(())
 }
 

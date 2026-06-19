@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 19;
+pub const SCHEMA_VERSION: i64 = 20;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -680,7 +680,13 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             -- 'candidate' until corroborated. source_weight is a JSON {source:count}
             -- map; >=2 distinct sources auto-promotes a candidate to verified.
             fact_state      TEXT NOT NULL DEFAULT 'verified',
-            source_weight   TEXT NOT NULL DEFAULT '{}'
+            source_weight   TEXT NOT NULL DEFAULT '{}',
+            -- v20: GOLD-ADAPT-JV-SELF-01 confidence, NN-MEM-03 evidence backlinks
+            -- (JSON [episode_id,...]), NN-MEM-04 maturity + confirmed_count.
+            confidence      REAL NOT NULL DEFAULT 0.5,
+            evidence        TEXT NOT NULL DEFAULT '[]',
+            maturity        TEXT NOT NULL DEFAULT 'emerging',
+            confirmed_count INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_groundtruth_scope    ON idx_groundtruth (scope);
@@ -863,6 +869,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             hi_id          INTEGER NOT NULL,
             weight         REAL NOT NULL DEFAULT 1.0,
             last_co_access INTEGER NOT NULL DEFAULT 0,
+            -- v20: GOLD-ADAPT-JV-MEM-08 Hebbian feedback counters per edge.
+            feedback_success INTEGER NOT NULL DEFAULT 0,
+            feedback_failure INTEGER NOT NULL DEFAULT 0,
             UNIQUE(lo_id, hi_id),
             CHECK(lo_id < hi_id)
         );
