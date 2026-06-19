@@ -159,6 +159,73 @@ fn source_weight_json(map: &std::collections::BTreeMap<String, u32>) -> String {
     serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string())
 }
 
+// ── GOLD-ADAPT-NN-MEM-03/04 + JV-SELF-01 helpers ────────────────────────────
+
+/// GOLD-ADAPT-NN-MEM-04 — derive the maturity label from a corroboration count
+/// (pure, no I/O). Thresholds: 0-1 → "emerging", 2-4 → "working", 5+ → "stable".
+pub fn maturity_for(confirmed_count: u32) -> &'static str {
+    match confirmed_count {
+        0..=1 => "emerging",
+        2..=4 => "working",
+        _ => "stable",
+    }
+}
+
+/// GOLD-ADAPT-JV-SELF-01 — pull `current` confidence toward 1.0 by one
+/// midpoint-averaging step: `(current + 1.0) / 2.0`. Each additional
+/// corroboration cuts the remaining gap to certainty in half.
+/// - Always in [0.0, 1.0] (bounded: if current is in range, result is too).
+/// - Monotonically increasing for positive current values.
+/// - A revocation / contradiction can lower confidence by calling this fn
+///   with a mirrored step — no explicit decrement path exists yet; a
+///   `// neoth: confidence-decrement on contradiction` note marks the gap.
+pub fn bump_confidence(current: f64) -> f64 {
+    (current + 1.0) / 2.0
+}
+
+/// GOLD-ADAPT-NN-MEM-03 — append `episode_id` to the JSON evidence array
+/// stored for `fact_id`. Deduplicates and caps at 50 most-recent entries.
+/// Best-effort: any parse/write failure is a no-op so the caller is never
+/// blocked.
+///
+/// Use this sibling instead of threading `Option<i64>` through every
+/// `groundtruth::insert` call site (those span hot files chat.rs / serve.rs).
+/// Call it right after `insert(...)` when the asserting episode id is known.
+pub fn record_evidence(
+    conn: &Connection,
+    fact_id: i64,
+    episode_id: i64,
+) -> Result<()> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT evidence FROM idx_groundtruth WHERE id = ?1",
+            params![fact_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .context("record_evidence: query evidence")?;
+
+    let Some(raw) = raw else {
+        return Ok(()); // fact_id not found — silent no-op
+    };
+
+    let mut ids: Vec<i64> = serde_json::from_str(&raw).unwrap_or_default();
+    if !ids.contains(&episode_id) {
+        ids.push(episode_id);
+        // Keep only the 50 most-recent (last 50 entries).
+        if ids.len() > 50 {
+            ids.drain(0..ids.len() - 50);
+        }
+    }
+    let json = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "UPDATE idx_groundtruth SET evidence = ?1 WHERE id = ?2",
+        params![json, fact_id],
+    )
+    .context("record_evidence: write")?;
+    Ok(())
+}
+
 /// Scope = "to whom / where" this fact applies. Free-form so operators can
 /// extend with their own tags, but the wizard + scanners use:
 ///   - `global`            — applies anywhere
@@ -182,6 +249,22 @@ pub struct GroundTruth {
     /// GOLD-ADAPT-MEM-01 — JSON `{source: count}` corroboration map.
     #[serde(default = "default_source_weight")]
     pub source_weight: String,
+    /// GOLD-ADAPT-JV-SELF-01 — Bayesian-average confidence [0.0, 1.0]. Each
+    /// corroboration pulls the value toward 1.0 via midpoint averaging
+    /// (`(confidence + 1.0) / 2.0`). Starts at 0.5 for fresh rows.
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
+    /// GOLD-ADAPT-NN-MEM-03 — JSON `[episode_id, ...]` provenance backlinks;
+    /// up to 50 most-recent distinct episode ids that corroborated this fact.
+    #[serde(default = "default_evidence")]
+    pub evidence: String,
+    /// GOLD-ADAPT-NN-MEM-04 — lifecycle label derived from `confirmed_count`:
+    /// "emerging" (0-1), "working" (2-4), "stable" (5+).
+    #[serde(default = "default_maturity")]
+    pub maturity: String,
+    /// GOLD-ADAPT-NN-MEM-04 — number of corroboration events received so far.
+    #[serde(default)]
+    pub confirmed_count: u32,
 }
 
 fn default_fact_state() -> String {
@@ -189,6 +272,15 @@ fn default_fact_state() -> String {
 }
 fn default_source_weight() -> String {
     "{}".to_string()
+}
+fn default_confidence() -> f64 {
+    0.5
+}
+fn default_evidence() -> String {
+    "[]".to_string()
+}
+fn default_maturity() -> String {
+    "emerging".to_string()
 }
 
 impl GroundTruth {
@@ -226,17 +318,18 @@ pub fn insert(
 
     // Corroboration path: an active row with the SAME statement + scope already
     // exists → merge this source instead of creating a duplicate.
-    let existing: Option<(i64, String, String)> = conn
+    let existing: Option<(i64, String, String, f64, u32)> = conn
         .query_row(
-            "SELECT id, fact_state, source_weight FROM idx_groundtruth \
+            "SELECT id, fact_state, source_weight, confidence, confirmed_count \
+             FROM idx_groundtruth \
              WHERE statement = ?1 AND scope = ?2 AND revoked_at IS NULL LIMIT 1",
             params![stmt, scope],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .optional()
         .context("query existing ground-truth")?;
 
-    let id = if let Some((id, state_str, sw_json)) = existing {
+    let id = if let Some((id, state_str, sw_json, confidence, confirmed_count)) = existing {
         let mut weights = parse_source_weight(&sw_json);
         *weights.entry(source.as_str().to_string()).or_insert(0) += 1;
         let mut state = FactState::parse(&state_str).unwrap_or(FactState::Candidate);
@@ -247,20 +340,44 @@ pub fn insert(
         {
             state = FactState::Verified;
         }
+        // GOLD-ADAPT-JV-SELF-01: pull confidence toward 1.0 on every corroboration.
+        let new_confidence = bump_confidence(confidence);
+        // GOLD-ADAPT-NN-MEM-04: increment confirmed_count and recompute maturity.
+        let new_confirmed = confirmed_count.saturating_add(1);
+        let new_maturity = maturity_for(new_confirmed);
         conn.execute(
-            "UPDATE idx_groundtruth SET source_weight = ?1, fact_state = ?2 WHERE id = ?3",
-            params![source_weight_json(&weights), state.as_str(), id],
+            "UPDATE idx_groundtruth \
+             SET source_weight = ?1, fact_state = ?2, \
+                 confidence = ?3, confirmed_count = ?4, maturity = ?5 \
+             WHERE id = ?6",
+            params![
+                source_weight_json(&weights),
+                state.as_str(),
+                new_confidence,
+                new_confirmed,
+                new_maturity,
+                id
+            ],
         )
         .context("corroborate ground-truth")?;
+        // GOLD-ADAPT-NN-MEM-03: evidence backlinks are threaded via the sibling
+        // `record_evidence(conn, id, episode_id)` — call it from the site that
+        // holds the episode_id. The insert fn has no episode_id in its signature
+        // to avoid touching all callers (hot files: chat.rs, serve.rs).
+        // neoth: confidence-decrement on contradiction — not wired here; a
+        // `set_fact_state(Contradicted)` transition is the current mechanism.
         id
     } else {
         let state = source.initial_fact_state();
         let mut weights = std::collections::BTreeMap::new();
         weights.insert(source.as_str().to_string(), 1u32);
+        // New rows start with defaults: confidence 0.5, empty evidence, maturity
+        // "emerging", confirmed_count 0 (no corroboration events yet).
         conn.execute(
             "INSERT INTO idx_groundtruth \
-                (statement, source, scope, asserted_at, revoked_at, fact_state, source_weight) \
-             VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
+                (statement, source, scope, asserted_at, revoked_at, fact_state, source_weight, \
+                 confidence, evidence, maturity, confirmed_count) \
+             VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, 0.5, '[]', 'emerging', 0)",
             params![
                 stmt,
                 source.as_str(),
@@ -311,7 +428,8 @@ pub fn revoke(conn: &Connection, id: i64, now_ns: i64) -> Result<bool> {
 /// verified.
 pub fn list_for_scope(conn: &Connection, scope: &str) -> Result<Vec<GroundTruth>> {
     let mut stmt = conn.prepare(
-        "SELECT id, statement, source, scope, asserted_at, revoked_at, fact_state, source_weight \
+        "SELECT id, statement, source, scope, asserted_at, revoked_at, fact_state, source_weight, \
+                confidence, evidence, maturity, confirmed_count \
          FROM idx_groundtruth \
          WHERE scope = ?1 AND revoked_at IS NULL \
          ORDER BY asserted_at DESC",
@@ -337,7 +455,8 @@ pub fn surface_for_recall(
         "AND fact_state = 'verified' "
     };
     let sql = format!(
-        "SELECT id, statement, source, scope, asserted_at, revoked_at, fact_state, source_weight \
+        "SELECT id, statement, source, scope, asserted_at, revoked_at, fact_state, source_weight, \
+                confidence, evidence, maturity, confirmed_count \
          FROM idx_groundtruth \
          WHERE revoked_at IS NULL {state_filter}\
          ORDER BY asserted_at DESC \
@@ -369,6 +488,12 @@ fn row_to_gt(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroundTruth> {
         revoked_at: r.get(5)?,
         fact_state: r.get(6)?,
         source_weight: r.get(7)?,
+        // GOLD-ADAPT-JV-SELF-01 / NN-MEM-03 / NN-MEM-04 — v20 columns.
+        // Existing rows carry the column DEFAULTs (0.5 / '[]' / 'emerging' / 0).
+        confidence: r.get(8)?,
+        evidence: r.get(9)?,
+        maturity: r.get(10)?,
+        confirmed_count: r.get(11)?,
     })
 }
 
@@ -663,5 +788,134 @@ mod tests {
         assert_eq!(Source::Onboarding.as_str(), "onboarding");
         assert_eq!(Source::ImportHermes.as_str(), "import:hermes");
         assert_eq!(Source::NmapScan.as_str(), "nmap-scan");
+    }
+
+    // ── GOLD-ADAPT-JV-SELF-01 + NN-MEM-03 + NN-MEM-04 ───────────────────────
+
+    #[test]
+    fn maturity_for_boundaries() {
+        assert_eq!(maturity_for(0), "emerging");
+        assert_eq!(maturity_for(1), "emerging", "boundary: 1 still emerging");
+        assert_eq!(maturity_for(2), "working", "boundary: 2 is working");
+        assert_eq!(maturity_for(4), "working", "boundary: 4 still working");
+        assert_eq!(maturity_for(5), "stable", "boundary: 5 is stable");
+        assert_eq!(maturity_for(100), "stable", "large count stays stable");
+    }
+
+    #[test]
+    fn bump_confidence_monotonic_toward_one() {
+        let c0 = 0.5_f64;
+        let c1 = bump_confidence(c0);
+        let c2 = bump_confidence(c1);
+        let c3 = bump_confidence(c2);
+        assert!(c1 > c0, "each bump increases confidence");
+        assert!(c2 > c1);
+        assert!(c3 > c2);
+        assert!(c3 < 1.0, "never reaches 1.0 in finite steps");
+        // Verify the midpoint formula: (0.5 + 1.0) / 2.0 = 0.75.
+        assert!((c1 - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn fresh_row_reads_defaults_confidence_maturity() {
+        let (_dir, conn) = open();
+        let id =
+            insert(&conn, "fresh fact", &Source::OperatorRuntime, "global", 1).unwrap();
+        let rows = list_for_scope(&conn, "global").unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.id, id);
+        // v20 defaults
+        assert!((row.confidence - 0.5).abs() < f64::EPSILON, "default confidence 0.5");
+        assert_eq!(row.evidence, "[]", "default evidence is empty JSON array");
+        assert_eq!(row.maturity, "emerging", "default maturity is emerging");
+        assert_eq!(row.confirmed_count, 0, "default confirmed_count is 0");
+    }
+
+    #[test]
+    fn corroboration_bumps_confirmed_count_confidence_maturity() {
+        let (_dir, conn) = open();
+        // First insert (external source → Candidate).
+        let id = insert(&conn, "proxy is at 10.0.0.1", &Source::Omi, "global", 1).unwrap();
+
+        // First corroboration (second distinct source → promotes to Verified).
+        let id2 = insert(
+            &conn,
+            "proxy is at 10.0.0.1",
+            &Source::ImportHermes,
+            "global",
+            2,
+        )
+        .unwrap();
+        assert_eq!(id, id2, "corroborate does not create a new row");
+
+        let rows = list_for_scope(&conn, "global").unwrap();
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.confirmed_count, 1, "one corroboration event");
+        assert_eq!(r.maturity, "emerging", "1 corroboration → still emerging");
+        // confidence: (0.5 + 1.0) / 2.0 = 0.75
+        assert!((r.confidence - 0.75).abs() < f64::EPSILON, "confidence bumped");
+
+        // Second corroboration (another distinct source → confirmed_count 2).
+        let id3 = insert(
+            &conn,
+            "proxy is at 10.0.0.1",
+            &Source::ImportOpenclaw,
+            "global",
+            3,
+        )
+        .unwrap();
+        assert_eq!(id, id3);
+
+        let rows2 = list_for_scope(&conn, "global").unwrap();
+        let r2 = &rows2[0];
+        assert_eq!(r2.confirmed_count, 2, "two corroboration events");
+        assert_eq!(r2.maturity, "working", "2 corroborations → working");
+        // confidence: (0.75 + 1.0) / 2.0 = 0.875
+        assert!((r2.confidence - 0.875).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn record_evidence_appends_and_deduplicates() {
+        let (_dir, conn) = open();
+        let id = insert(&conn, "dns is 1.1.1.1", &Source::OperatorRuntime, "global", 1).unwrap();
+
+        record_evidence(&conn, id, 42).unwrap();
+        record_evidence(&conn, id, 99).unwrap();
+        // duplicate — must not appear twice
+        record_evidence(&conn, id, 42).unwrap();
+
+        let rows = list_for_scope(&conn, "global").unwrap();
+        let ev: Vec<i64> =
+            serde_json::from_str(&rows[0].evidence).expect("valid JSON array");
+        assert_eq!(ev.len(), 2, "42 deduplicated; only 42 + 99");
+        assert!(ev.contains(&42));
+        assert!(ev.contains(&99));
+    }
+
+    #[test]
+    fn record_evidence_caps_at_50() {
+        let (_dir, conn) = open();
+        let id =
+            insert(&conn, "many-witnesses", &Source::OperatorRuntime, "global", 1).unwrap();
+
+        for ep in 0i64..60 {
+            record_evidence(&conn, id, ep).unwrap();
+        }
+        let rows = list_for_scope(&conn, "global").unwrap();
+        let ev: Vec<i64> =
+            serde_json::from_str(&rows[0].evidence).expect("valid JSON array");
+        assert_eq!(ev.len(), 50, "capped at 50 most-recent");
+        // The oldest 10 (0..10) must have been dropped; last 50 (10..60) survive.
+        assert_eq!(ev[0], 10, "oldest retained is episode 10");
+        assert_eq!(ev[49], 59, "newest is episode 59");
+    }
+
+    #[test]
+    fn record_evidence_noop_on_unknown_id() {
+        let (_dir, conn) = open();
+        // Must not error.
+        record_evidence(&conn, 999_999, 1).unwrap();
     }
 }

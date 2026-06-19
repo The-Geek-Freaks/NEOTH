@@ -701,6 +701,12 @@ fn row_to_gt(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroundTruth> {
         revoked_at: r.get(5)?,
         fact_state: r.get(6)?,
         source_weight: r.get(7)?,
+        // v20 fact-richness fields are not consumed by contradiction detection
+        // (it compares statements); default them rather than widen every query.
+        confidence: 0.5,
+        evidence: "[]".to_string(),
+        maturity: "emerging".to_string(),
+        confirmed_count: 0,
     })
 }
 
@@ -726,6 +732,10 @@ mod tests {
             revoked_at: None,
             fact_state: fact_state.to_string(),
             source_weight: source_weight.to_string(),
+            confidence: 0.5,
+            evidence: "[]".to_string(),
+            maturity: "emerging".to_string(),
+            confirmed_count: 0,
         }
     }
 
