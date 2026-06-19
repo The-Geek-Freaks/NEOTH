@@ -814,21 +814,83 @@ fn apply_patch_via_worktree(
         Ok(false) => {}
     }
 
-    // REPOW pre-edit risk gate — warn before touching high-risk files.
-    // Does NOT block the apply; operator sees the warning in logs/WAL.
+    // REPOW pre-edit risk gate — autonomy-tiered: Warn / RequireConfirm / Block.
+    // Standard → warn only.  Elevated → confirm for risk ≥ 0.85.
+    // Full → block for risk ≥ HIGH_RISK_THRESHOLD unless an override lease covers it.
+    // Block / RequireConfirm: skip the apply (return Err) — NO interactive prompt.
+    // The has_override check reads the lease store from default_neoth_home; a store
+    // load failure is treated as no-override (fail-closed for elevated/full paths).
+    // Git failures inside assess_edit_risk degrade to no-warning (existing behaviour).
     {
+        use crate::code_map::risk::{RiskGateAction, risk_gate_action};
+        use crate::permissions::AutonomyLevel;
+
         let changed = crate::code_map::risk::patch_changed_files(&outcome.patch_path);
-        let warnings =
-            crate::code_map::risk::assess_edit_risk(&cfg.repo_root, &changed);
+        let warnings = crate::code_map::risk::assess_edit_risk(&cfg.repo_root, &changed);
+
+        // Determine override-lease status once (shared across all files in this patch).
+        // Only consulted when autonomy is Elevated or Full — skip the I/O otherwise.
+        let autonomy_level = cfg.autonomy.unwrap_or(AutonomyLevel::Standard);
+        let has_override = match autonomy_level {
+            AutonomyLevel::Elevated | AutonomyLevel::Full => {
+                // neoth: override token = a DangerousCommand lease granted to "operator".
+                // Operator runs: `neoth lease grant operator dangerous_command --ttl 300`
+                let home = crate::config::FreedomConfig::default_neoth_home();
+                let path = crate::permissions::lease::LeaseStore::default_path(&home);
+                let now = crate::time::now_unix_i64();
+                crate::permissions::lease::LeaseStore::load(&path)
+                    .ok()
+                    .and_then(|store| {
+                        store
+                            .find_covering(
+                                crate::security::risk_gate::RISK_LEASE_SUBJECT,
+                                &crate::permissions::lease::LeaseScope::DangerousCommand,
+                                now,
+                            )
+                            .map(|_| true)
+                    })
+                    .unwrap_or(false)
+            }
+            _ => false,
+        };
+
         for w in &warnings {
-            warn!(
-                task_id = task.task_id.raw(),
-                file = %w.file,
-                risk_score = w.risk_score,
-                bus_factor = w.bus_factor,
-                reason = %w.reason,
-                "⚠ editing high-risk file — review carefully",
-            );
+            let action = risk_gate_action(autonomy_level, w.risk_score, has_override);
+            match action {
+                RiskGateAction::Warn => {
+                    warn!(
+                        task_id = task.task_id.raw(),
+                        file = %w.file,
+                        risk_score = w.risk_score,
+                        bus_factor = w.bus_factor,
+                        reason = %w.reason,
+                        autonomy = ?autonomy_level,
+                        "⚠ editing high-risk file — review carefully",
+                    );
+                }
+                RiskGateAction::RequireConfirm | RiskGateAction::Block => {
+                    warn!(
+                        task_id = task.task_id.raw(),
+                        file = %w.file,
+                        risk_score = w.risk_score,
+                        bus_factor = w.bus_factor,
+                        reason = %w.reason,
+                        autonomy = ?autonomy_level,
+                        has_override = has_override,
+                        "⛔ BLOCKED high-risk edit — grant an override lease to allow \
+                         (`neoth lease grant operator dangerous_command --ttl 300`)",
+                    );
+                    return Err(format!(
+                        "risk gate blocked edit of `{}` for task {} \
+                         (risk={:.2}, autonomy={autonomy_level:?}) — \
+                         grant an override lease to allow: \
+                         `neoth lease grant operator dangerous_command --ttl 300`",
+                        w.file,
+                        task.task_id.raw(),
+                        w.risk_score,
+                    ));
+                }
+            }
         }
     }
 

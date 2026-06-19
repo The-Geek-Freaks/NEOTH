@@ -113,6 +113,74 @@ pub fn rank_files(files: &[(String, FileOwnership, u32)]) -> Vec<FileRisk> {
 /// // raise toward 0.80 for calmer operation on large churning repos.
 pub const HIGH_RISK_THRESHOLD: f64 = 0.66;
 
+/// Elevated-autonomy confirm threshold.
+///
+/// At `Elevated` autonomy a risk score at or above this value requires an
+/// operator-granted override lease before the edit is allowed to proceed.
+/// Below this value the gate degrades to Warn (same as Standard).
+///
+/// // neoth: tunable — raise to 0.90 to be more permissive at Elevated level.
+pub const ELEVATED_CONFIRM_THRESHOLD: f64 = 0.85;
+
+// ---------------------------------------------------------------------------
+// Autonomy-tiered risk gate decision
+// ---------------------------------------------------------------------------
+
+/// The action the pre-edit gate should take for a single file at the current
+/// autonomy level.
+///
+/// * [`Warn`]          — emit a log warning and let the edit proceed.
+/// * [`RequireConfirm`] — the edit is SKIPPED; emit a warning telling the
+///   operator to grant an override lease.  Never prompts interactively.
+/// * [`Block`]          — same as `RequireConfirm` but for Full/Autonomous
+///   autonomy; name distinguishes the log message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RiskGateAction {
+    Warn,
+    RequireConfirm,
+    Block,
+}
+
+/// Pure decision function: given an autonomy level, a risk score, and whether
+/// an override lease is active, return the gate action for that file.
+///
+/// Decision table
+/// | Autonomy             | risk_score            | has_override | action         |
+/// |----------------------|-----------------------|--------------|----------------|
+/// | Strict / Standard    | any                   | any          | Warn           |
+/// | Custom               | any                   | any          | Warn           |
+/// | Elevated             | ≥ ELEVATED_CONFIRM_THRESHOLD | false | RequireConfirm |
+/// | Elevated             | ≥ ELEVATED_CONFIRM_THRESHOLD | true  | Warn           |
+/// | Elevated             | < ELEVATED_CONFIRM_THRESHOLD | any   | Warn           |
+/// | Full                 | ≥ HIGH_RISK_THRESHOLD | false        | Block          |
+/// | Full                 | ≥ HIGH_RISK_THRESHOLD | true         | Warn           |
+/// | Full                 | < HIGH_RISK_THRESHOLD | any          | Warn           |
+pub fn risk_gate_action(
+    autonomy: crate::permissions::AutonomyLevel,
+    risk_score: f64,
+    has_override: bool,
+) -> RiskGateAction {
+    use crate::permissions::AutonomyLevel;
+    match autonomy {
+        AutonomyLevel::Elevated => {
+            if risk_score >= ELEVATED_CONFIRM_THRESHOLD && !has_override {
+                RiskGateAction::RequireConfirm
+            } else {
+                RiskGateAction::Warn
+            }
+        }
+        AutonomyLevel::Full => {
+            if risk_score >= HIGH_RISK_THRESHOLD && !has_override {
+                RiskGateAction::Block
+            } else {
+                RiskGateAction::Warn
+            }
+        }
+        // Strict / Standard / Custom — never escalate beyond Warn
+        _ => RiskGateAction::Warn,
+    }
+}
+
 /// One warning emitted by [`assess_edit_risk`] for a single file.
 #[derive(Clone, Debug)]
 pub struct RiskWarning {
@@ -455,5 +523,79 @@ mod tests {
     fn patch_changed_files_returns_empty_for_missing_patch() {
         let files = patch_changed_files(Path::new("/nonexistent/path/x.patch"));
         assert!(files.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // risk_gate_action — autonomy-tiered decision table
+    // -----------------------------------------------------------------------
+
+    use crate::permissions::AutonomyLevel;
+
+    #[test]
+    fn gate_standard_always_warns() {
+        // Standard → Warn regardless of score or override.
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Standard, 0.99, false),
+            RiskGateAction::Warn
+        );
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Standard, 0.99, true),
+            RiskGateAction::Warn
+        );
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Standard, 0.0, false),
+            RiskGateAction::Warn
+        );
+    }
+
+    #[test]
+    fn gate_elevated_high_score_no_override_requires_confirm() {
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Elevated, 0.9, false),
+            RiskGateAction::RequireConfirm
+        );
+    }
+
+    #[test]
+    fn gate_elevated_high_score_with_override_warns() {
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Elevated, 0.9, true),
+            RiskGateAction::Warn
+        );
+    }
+
+    #[test]
+    fn gate_elevated_below_threshold_warns() {
+        // 0.7 < ELEVATED_CONFIRM_THRESHOLD (0.85) → Warn even without override.
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Elevated, 0.7, false),
+            RiskGateAction::Warn
+        );
+    }
+
+    #[test]
+    fn gate_full_above_high_threshold_no_override_blocks() {
+        // 0.7 >= HIGH_RISK_THRESHOLD (0.66) → Block at Full without override.
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Full, 0.7, false),
+            RiskGateAction::Block
+        );
+    }
+
+    #[test]
+    fn gate_full_above_high_threshold_with_override_warns() {
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Full, 0.7, true),
+            RiskGateAction::Warn
+        );
+    }
+
+    #[test]
+    fn gate_full_below_threshold_warns() {
+        // 0.5 < HIGH_RISK_THRESHOLD (0.66) → Warn even without override.
+        assert_eq!(
+            risk_gate_action(AutonomyLevel::Full, 0.5, false),
+            RiskGateAction::Warn
+        );
     }
 }
