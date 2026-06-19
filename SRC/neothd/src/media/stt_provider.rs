@@ -49,6 +49,15 @@ pub trait SttProviderImpl: Send + Sync {
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, String>;
+
+    /// Languages this provider supports (IETF BCP 47 tags). Empty = accept
+    /// any (auto-detect / no restriction), the default. A language-restricted
+    /// backend overrides this so the dispatcher's fallback guard
+    /// (GOLD-ADAPT-HANDY-06) can steer an unsupported request to a safe
+    /// language instead of letting the backend fail.
+    fn supported_languages(&self) -> &'static [&'static str] {
+        &[]
+    }
 }
 
 // ── OpenAI Whisper API (multipart upload) ───────────────────────────────────
@@ -342,7 +351,29 @@ pub async fn transcribe_and_audit(
     // P0 fail-closed pre-flight: under proof-hardline, refuse BEFORE the cloud
     // call when there is no audit sink — never transcribe unprovably.
     crate::media::enforce_cloud_media_audit(required_audit, writer.is_some())?;
-    let result = provider.transcribe(audio, request).await?;
+    // GOLD-ADAPT-HANDY-06 — steer an unsupported requested language to a safe
+    // fallback BEFORE the call instead of letting the backend fail. Providers
+    // that accept any language (the default) never trip this.
+    let resolved = crate::media::stt_dispatch::resolve_language(
+        (!request.language.is_empty()).then_some(request.language.as_str()),
+        provider.supported_languages(),
+    );
+    let mut result = if resolved.fell_back {
+        tracing::warn!(
+            provider = provider.kind().as_str(),
+            requested = resolved.fallback_from.as_deref().unwrap_or(""),
+            chosen = %resolved.language,
+            "stt: requested language unsupported by provider — falling back",
+        );
+        let mut req = request.clone();
+        req.language = resolved.language.clone();
+        provider.transcribe(audio, &req).await?
+    } else {
+        provider.transcribe(audio, request).await?
+    };
+    // GOLD-ADAPT-HANDY-03 — strip filler words + stutters from the transcript
+    // on every transcription (conservative; never deletes content words).
+    result.text = crate::media::stt_postprocess::clean_transcript(&result.text);
     if let Some(w) = writer {
         emit_stt_transcribed(w, provider.kind(), audio.len(), result.text.chars().count()).await;
     }

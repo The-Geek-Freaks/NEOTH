@@ -298,6 +298,88 @@ pub fn rms_energy(samples: &[f32]) -> f32 {
     (sum_sq / samples.len() as f32).sqrt()
 }
 
+// HANDY-03 + HANDY-06 are WIRED in `stt_provider::transcribe_and_audit`:
+// clean_transcript() runs on every `result.text`; resolve_language() (below)
+// steers an unsupported requested language to a safe fallback using each
+// provider's `SttProviderImpl::supported_languages()` (default empty = accept
+// any, so unrestricted backends never trip the guard).
+
+// ── HANDY-06 primitives ─────────────────────────────────────────────────────
+
+/// Result of [`resolve_language`]: either the requested language (if
+/// supported) or a safe fallback, with a flag indicating which path was taken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedLanguage {
+    /// The language tag to use for the transcription request.  Always a
+    /// non-empty BCP-47 tag OR the empty string meaning "auto-detect".
+    pub language: String,
+    /// `true` when the requested language was not in `supported` and a
+    /// fallback was chosen.  Callers log this so operators know their
+    /// language hint was silently substituted.
+    pub fell_back: bool,
+    /// The originally requested tag, present only when `fell_back` is
+    /// `true` (useful for structured log fields).
+    pub fallback_from: Option<String>,
+}
+
+/// Choose the language to send to an STT provider.
+///
+/// - `requested = None` (or empty string) → auto-detect (`""` wire value).
+/// - `requested = Some(tag)` and `supported` is empty → treat as "any
+///   language accepted" and pass through.
+/// - `requested = Some(tag)` and `supported` is non-empty → if the tag
+///   (or its primary subtag, e.g. `"de"` from `"de-DE"`) is in `supported`,
+///   use it; otherwise fall back to `""` (auto-detect) and set `fell_back`.
+///
+/// Matching is case-insensitive and also checks the primary language subtag
+/// (`"de"` from `"de-DE"`) against the supported list so that requesting
+/// `"de-AT"` against a provider that lists only `"de"` succeeds without a
+/// fallback.
+pub fn resolve_language(requested: Option<&str>, supported: &[&str]) -> ResolvedLanguage {
+    let requested = requested.filter(|s| !s.is_empty());
+    match requested {
+        // No preference → auto-detect.
+        None => ResolvedLanguage {
+            language: String::new(),
+            fell_back: false,
+            fallback_from: None,
+        },
+        Some(tag) => {
+            // Empty supported list → provider accepts anything; pass through.
+            if supported.is_empty() {
+                return ResolvedLanguage {
+                    language: tag.to_string(),
+                    fell_back: false,
+                    fallback_from: None,
+                };
+            }
+            let tag_lower = tag.to_lowercase();
+            // Primary subtag: "de" from "de-DE", "en" from "en-US".
+            let primary_lower = tag_lower.split('-').next().unwrap_or(&tag_lower);
+            let is_supported = supported.iter().any(|s| {
+                let sl = s.to_lowercase();
+                sl == tag_lower
+                    || sl == primary_lower
+                    || sl.split('-').next().map(|p| p == primary_lower).unwrap_or(false)
+            });
+            if is_supported {
+                ResolvedLanguage {
+                    language: tag.to_string(),
+                    fell_back: false,
+                    fallback_from: None,
+                }
+            } else {
+                // Requested language not supported → auto-detect fallback.
+                ResolvedLanguage {
+                    language: String::new(), // "" = provider auto-detect
+                    fell_back: true,
+                    fallback_from: Some(tag.to_string()),
+                }
+            }
+        }
+    }
+}
+
 /// Dispatcher config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SttDispatcherConfig {
@@ -515,6 +597,62 @@ mod tests {
         assert_eq!(c.fallback, None);
         assert_eq!(c.default_model_size, WhisperModelSize::Base);
         assert!(c.default_language.is_empty());
+    }
+
+    // ── HANDY-06 resolve_language ─────────────────────────────────
+
+    #[test]
+    fn resolve_supported_language_used_as_is() {
+        let r = resolve_language(Some("de"), &["en", "de", "fr"]);
+        assert_eq!(r.language, "de");
+        assert!(!r.fell_back);
+        assert!(r.fallback_from.is_none());
+    }
+
+    #[test]
+    fn resolve_unsupported_language_falls_back_to_auto() {
+        let r = resolve_language(Some("ja"), &["en", "de", "fr"]);
+        assert_eq!(r.language, ""); // auto-detect
+        assert!(r.fell_back);
+        assert_eq!(r.fallback_from.as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn resolve_none_returns_auto_no_fallback() {
+        let r = resolve_language(None, &["en", "de"]);
+        assert_eq!(r.language, "");
+        assert!(!r.fell_back);
+        assert!(r.fallback_from.is_none());
+    }
+
+    #[test]
+    fn resolve_empty_string_treated_as_none() {
+        let r = resolve_language(Some(""), &["en", "de"]);
+        assert_eq!(r.language, "");
+        assert!(!r.fell_back);
+    }
+
+    #[test]
+    fn resolve_primary_subtag_match_succeeds() {
+        // Requesting "de-AT" when provider only lists "de" → match via primary.
+        let r = resolve_language(Some("de-AT"), &["en", "de", "fr"]);
+        assert_eq!(r.language, "de-AT");
+        assert!(!r.fell_back);
+    }
+
+    #[test]
+    fn resolve_case_insensitive() {
+        let r = resolve_language(Some("DE"), &["en", "de", "fr"]);
+        assert_eq!(r.language, "DE");
+        assert!(!r.fell_back);
+    }
+
+    #[test]
+    fn resolve_empty_supported_list_passes_through_any() {
+        // Empty supported list means "provider accepts anything".
+        let r = resolve_language(Some("zh"), &[]);
+        assert_eq!(r.language, "zh");
+        assert!(!r.fell_back);
     }
 
     // ── serde ─────────────────────────────────────────────────────

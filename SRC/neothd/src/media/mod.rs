@@ -34,6 +34,9 @@ pub mod multimodal_synth;
 pub mod pdf;
 pub mod pdf_forms;
 pub mod stt_dispatch;
+/// HANDY-03 — filler-word removal + stutter collapse for raw STT transcripts.
+/// Called as a post-processing hook before transcript text leaves the pipeline.
+pub mod stt_postprocess;
 /// MM-01b — cloud STT providers (OpenAI Whisper API + Azure Speech) + the
 /// `make_stt_provider` factory. REST via `providers::http_client`. Transcript
 /// text is never WAL-written (privacy).
