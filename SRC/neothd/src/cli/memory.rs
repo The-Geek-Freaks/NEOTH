@@ -118,6 +118,14 @@ pub struct MemoryArgs {
     #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension"])]
     pub rebuild_index: bool,
 
+    /// GOLD-ADAPT-MEMGRAPH-01 — backfill episode embeddings into idx_embedding
+    /// for every hot-tier episode that has no embedding row yet. Runs outside
+    /// the hot ingest path (which is sync-in-tx and cannot call async embed).
+    /// Honours `--limit` (default 20; `--limit 0` = unbounded) and `--db`.
+    /// No-ops cleanly when no embed provider is configured.
+    #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin", "people"])]
+    pub embed_backfill: bool,
+
     /// Max rows for `--tier` recall.
     #[arg(long, default_value = "20")]
     pub limit: usize,
@@ -158,6 +166,9 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     }
     if args.rebuild_index {
         return run_memory_rebuild_index(&args).await;
+    }
+    if args.embed_backfill {
+        return run_memory_embed_backfill(&args).await;
     }
 
     let home = FreedomConfig::default_neoth_home();
@@ -814,6 +825,103 @@ async fn run_memory_rebuild_index(args: &MemoryArgs) -> Result<()> {
     Ok(())
 }
 
+/// GOLD-ADAPT-MEMGRAPH-01 consumer — `neoth memory --embed-backfill`.
+///
+/// Embeds every hot-tier episode that has no `idx_embedding` row yet, populating
+/// the recall vector lane without touching the hot sync-in-tx ingest path.
+/// Respects `--limit` (default 500 via `MemoryArgs::limit`; 0 = unbounded) and
+/// `--db`. Best-effort: a provider failure on one episode skips that episode and
+/// continues (mirroring the `embed_episode_text` contract).
+async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
+    use crate::memory::{embeddings, store};
+
+    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path)
+        .with_context(|| format!("open views.db for embed-backfill: {}", db_path.display()))?;
+
+    // Resolve the embed provider from the operator's freedom.yaml.
+    let config = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml for embed-backfill")?;
+    let provider = match crate::providers::embed_provider_from_config(&config).await {
+        Some(p) => p,
+        None => {
+            println!(
+                "embeddings not configured (set inference embed model in freedom.yaml); nothing to backfill."
+            );
+            return Ok(());
+        }
+    };
+
+    // Fetch un-embedded episodes: hot-tier rows with no matching idx_embedding row.
+    let candidates = unembedded_episode_ids(&conn, args.limit)?;
+    let total_candidates = candidates.len();
+    if total_candidates == 0 {
+        println!("all episodes already embedded; nothing to backfill.");
+        return Ok(());
+    }
+
+    // Embed each candidate best-effort (failures are warned inside embed_episode_text).
+    for (event_id, text) in &candidates {
+        embeddings::embed_episode_text(&conn, *event_id, text, provider.as_ref()).await;
+    }
+
+    // Count how many were actually written vs already present (second-run idempotence).
+    let remaining = unembedded_episode_ids(&conn, 0)?.len();
+    let newly_embedded = total_candidates.saturating_sub(remaining);
+
+    match args.output {
+        crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "embedded": newly_embedded,
+                    "skipped_already_embedded": 0,
+                    "batch_size": total_candidates,
+                }))?
+            );
+        }
+        crate::cli::OutputFormat::Table => {
+            println!(
+                "embedded {newly_embedded} episode(s) ({} already embedded, skipped).",
+                total_candidates.saturating_sub(newly_embedded)
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Return up to `limit` hot-tier episodes with no corresponding `idx_embedding`
+/// row (source_kind='episode'). `limit = 0` returns all.
+///
+/// Extracted as a named helper so tests can verify the shrink-after-embed behaviour
+/// directly without wiring the full `run_memory` dispatch.
+pub(crate) fn unembedded_episode_ids(
+    conn: &rusqlite::Connection,
+    limit: usize,
+) -> Result<Vec<(i64, String)>> {
+    let sql = if limit == 0 {
+        "SELECT event_id, text FROM idx_episode \
+         WHERE event_id NOT IN \
+           (SELECT CAST(source_ref AS INTEGER) FROM idx_embedding WHERE source_kind = 'episode')"
+            .to_string()
+    } else {
+        format!(
+            "SELECT event_id, text FROM idx_episode \
+             WHERE event_id NOT IN \
+               (SELECT CAST(source_ref AS INTEGER) FROM idx_embedding WHERE source_kind = 'episode') \
+             LIMIT {limit}"
+        )
+    };
+
+    let mut stmt = conn.prepare(&sql).context("prepare unembedded_episode_ids")?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .context("query unembedded_episode_ids")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect unembedded_episode_ids")?;
+    Ok(rows)
+}
+
 /// `neoth memory --archive YYYY-MM-DD` — list session MD files for one day.
 async fn run_memory_archive(args: &MemoryArgs, day: &str) -> Result<()> {
     use crate::memory::archive;
@@ -908,6 +1016,7 @@ mod tests {
             dimension: false,
             people: false,
             rebuild_index: false,
+            embed_backfill: false,
             limit: 20,
             db: Some(db),
             output: OutputFormat::Table,
@@ -1076,5 +1185,121 @@ mod tests {
         assert_eq!(summary.segments_touched, 1);
         assert_eq!(summary.frames_redacted, 0);
         assert_eq!(summary.markers_emitted, 0, "no marker without redaction");
+    }
+
+    // ── GOLD-ADAPT-MEMGRAPH-01: embed_backfill tests ───────────────────────
+
+    /// Minimal stub that always returns a fixed unit vector — no real inference
+    /// backend needed in unit tests.
+    struct FixedEmbed2d {
+        x: f32,
+        y: f32,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for FixedEmbed2d {
+        fn name(&self) -> &'static str { "fixed-2d" }
+        fn default_dim(&self) -> usize { 2 }
+        async fn embed(
+            &self,
+            _req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            let n = (self.x * self.x + self.y * self.y).sqrt();
+            Ok(crate::providers::embed::EmbedResponse {
+                vector: vec![self.x / n, self.y / n],
+                model: "fixed-2d".to_string(),
+                latency: std::time::Duration::ZERO,
+            })
+        }
+    }
+
+    fn insert_episode(conn: &rusqlite::Connection, event_id: i64, text: &str) {
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (?1, 1, ?2, ?3, ?4, 0.5, 0)",
+            rusqlite::params![event_id, event_id * 1000, text, format!("h{event_id}")],
+        )
+        .unwrap();
+    }
+
+    /// Two episodes → backfill → both get idx_embedding rows.
+    #[tokio::test]
+    async fn embed_backfill_embeds_all_unembedded_episodes() {
+        use crate::memory::{embeddings, store};
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let conn = store::open(&db_path).unwrap();
+        insert_episode(&conn, 1, "first episode text");
+        insert_episode(&conn, 2, "second episode text");
+
+        // Both episodes start un-embedded.
+        let before = unembedded_episode_ids(&conn, 0).unwrap();
+        assert_eq!(before.len(), 2, "both episodes unembedded before backfill");
+
+        let provider = FixedEmbed2d { x: 1.0, y: 0.0 };
+        for (event_id, text) in &before {
+            embeddings::embed_episode_text(&conn, *event_id, text, &provider).await;
+        }
+
+        let after = unembedded_episode_ids(&conn, 0).unwrap();
+        assert_eq!(after.len(), 0, "no unembedded episodes after backfill");
+
+        // Verify the rows exist in idx_embedding.
+        for id in [1i64, 2] {
+            let found: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM idx_embedding \
+                     WHERE source_kind = 'episode' AND source_ref = ?1",
+                    rusqlite::params![id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(found, "idx_embedding row missing for event_id={id}");
+        }
+    }
+
+    /// Second backfill run after all episodes are already embedded → 0 newly embedded
+    /// (idempotent, already-embedded rows are skipped by the NOT IN query).
+    #[tokio::test]
+    async fn embed_backfill_is_idempotent() {
+        use crate::memory::{embeddings, store};
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let conn = store::open(&db_path).unwrap();
+        insert_episode(&conn, 10, "some memory");
+
+        let provider = FixedEmbed2d { x: 0.0, y: 1.0 };
+
+        // First pass: embeds the episode.
+        let pass1 = unembedded_episode_ids(&conn, 0).unwrap();
+        assert_eq!(pass1.len(), 1);
+        for (eid, text) in &pass1 {
+            embeddings::embed_episode_text(&conn, *eid, text, &provider).await;
+        }
+
+        // Second pass: nothing left to embed.
+        let pass2 = unembedded_episode_ids(&conn, 0).unwrap();
+        assert_eq!(pass2.len(), 0, "idempotent: zero un-embedded on second run");
+    }
+
+    /// `unembedded_episode_ids` respects the `limit` cap.
+    #[test]
+    fn unembedded_episode_ids_respects_limit() {
+        use crate::memory::store;
+
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        for id in 1i64..=5 {
+            insert_episode(&conn, id, "episode");
+        }
+
+        let all = unembedded_episode_ids(&conn, 0).unwrap();
+        assert_eq!(all.len(), 5);
+
+        let capped = unembedded_episode_ids(&conn, 3).unwrap();
+        assert_eq!(capped.len(), 3, "limit=3 caps the result");
     }
 }
