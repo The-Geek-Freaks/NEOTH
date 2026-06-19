@@ -164,6 +164,48 @@ pub fn create_issue(repo: Option<&str>, title: &str, body: &str) -> Result<Strin
     Ok(url)
 }
 
+/// `gh pr create --title <title> --body <body> [--base <base>] [--repo <repo>]
+/// [--draft]`. Uses the current branch as the PR head (gh's default). Returns
+/// the created PR's URL on success. Consumer: `neoth github pr-create` + the
+/// `git_pr_create` skill (GOLD-ADAPT-GITPR-01/02).
+pub fn create_pr(
+    repo: Option<&str>,
+    title: &str,
+    body: &str,
+    base: Option<&str>,
+    draft: bool,
+) -> Result<String> {
+    if title.trim().is_empty() {
+        anyhow::bail!("github: PR title must not be empty");
+    }
+    let mut args: Vec<&str> = vec!["pr", "create"];
+    if let Some(r) = repo {
+        validate_repo(r)?;
+        args.push("--repo");
+        args.push(r);
+    }
+    args.push("--title");
+    args.push(title);
+    args.push("--body");
+    args.push(body);
+    if let Some(b) = base {
+        args.push("--base");
+        args.push(b);
+    }
+    if draft {
+        args.push("--draft");
+    }
+    let stdout = run_gh(&args)?;
+    // gh prints the URL on the first non-empty line.
+    let url = stdout
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("gh pr create returned no URL"))?
+        .trim()
+        .to_string();
+    Ok(url)
+}
+
 /// `gh pr list --repo <repo> --json ...`
 pub fn list_prs(repo: Option<&str>, state: Option<&str>, limit: usize) -> Result<Vec<PullRequest>> {
     let limit_s = limit.clamp(1, 100).to_string();

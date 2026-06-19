@@ -68,6 +68,22 @@ pub enum GithubAction {
         #[arg(long)]
         body: String,
     },
+    /// Open a pull request from the current branch.
+    #[command(name = "pr-create")]
+    PrCreate {
+        #[arg(long, value_name = "OWNER/REPO")]
+        repo: Option<String>,
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "")]
+        body: String,
+        /// Base branch to merge into (gh default if omitted).
+        #[arg(long)]
+        base: Option<String>,
+        /// Open as a draft PR.
+        #[arg(long)]
+        draft: bool,
+    },
 }
 
 pub async fn run_github(args: GithubArgs) -> Result<()> {
@@ -151,6 +167,22 @@ pub async fn run_github(args: GithubArgs) -> Result<()> {
             })?;
             github::review_pr(repo.as_deref(), number, v, &body)?;
             println!("review posted on PR #{number}");
+        }
+        GithubAction::PrCreate {
+            repo,
+            title,
+            body,
+            base,
+            draft,
+        } => {
+            let url = github::create_pr(
+                repo.as_deref(),
+                &title,
+                &body,
+                base.as_deref(),
+                draft,
+            )?;
+            println!("{url}");
         }
     }
     Ok(())
