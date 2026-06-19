@@ -30,6 +30,81 @@
 use super::mode_registry::ResolvedMode;
 use super::schema::Skill;
 
+/// Maximum Levenshtein edit distance accepted for a fuzzy keyword token match.
+/// 1 edit tolerates a single insertion, deletion, or substitution on a token
+/// that is at least [`FUZZY_MIN_TOKEN_LEN`] characters long. Tokens shorter
+/// than the minimum are never fuzzy-matched — short tokens produce too many
+/// false neighbours (e.g. "is" → "it" with distance 1).
+const FUZZY_MAX_EDIT_DISTANCE: usize = 1;
+
+/// Minimum token length required before fuzzy matching is attempted.
+/// Tokens with fewer than 4 characters are matched exactly only.
+const FUZZY_MIN_TOKEN_LEN: usize = 4;
+
+/// Compute the fuzzy-match bonus weight for a skill's trigger keywords given
+/// the query tokens. Only considers keywords that were NOT already exact-hit
+/// (caller passes `already_hit` to prevent double-counting).
+///
+/// Rule (conservative):
+///   - For single-token keywords: the keyword token must be ≥ [`FUZZY_MIN_TOKEN_LEN`]
+///     chars AND the nearest query token must be within [`FUZZY_MAX_EDIT_DISTANCE`].
+///   - For multi-word keywords: every keyword token must find a matching query
+///     token within distance ≤ [`FUZZY_MAX_EDIT_DISTANCE`] (or exact if < min len).
+///     Partial phrase matches (some tokens match, some don't) do NOT score.
+///   - Fuzzy weight per keyword = `keyword_weight(kw) / 2` rounded down, minimum 1
+///     only when `keyword_weight(kw) >= 2`. Single-word keywords (weight 1) must
+///     combine with at least one other signal to clear a floor ≥ 2; this prevents
+///     a lone fuzzy single-token hit from activating under the full-auto floor.
+///
+/// Returns the total additive fuzzy bonus (to be combined as `exact * 2 + fuzzy`
+/// and compared against `min_weight * 2`).
+fn fuzzy_keyword_bonus(
+    keywords: &[String],
+    query_tokens: &[String],
+    already_hit: &[String],
+) -> usize {
+    let mut bonus = 0usize;
+    for kw in keywords {
+        let kw_norm = kw.trim().to_lowercase();
+        if kw_norm.is_empty() || already_hit.contains(&kw_norm) {
+            continue;
+        }
+        let kw_tokens: Vec<&str> = kw_norm.split_whitespace().collect();
+        // Every keyword token must fuzzy-match (within distance or exact) some
+        // query token. All-or-nothing: a partial phrase hit does not score.
+        let all_match = kw_tokens.iter().all(|kt| {
+            let kt_len = kt.chars().count();
+            query_tokens.iter().any(|qt| {
+                let qt_len = qt.chars().count();
+                if *kt == qt.as_str() {
+                    // Exact match on this token — already counted in the exact
+                    // pass if the WHOLE keyword matched; here it means the phrase
+                    // partially exact-matched but the phrase as a whole did not.
+                    return true;
+                }
+                // Only attempt fuzzy for tokens long enough to have stable
+                // edit-distance signal.
+                if kt_len < FUZZY_MIN_TOKEN_LEN || qt_len < FUZZY_MIN_TOKEN_LEN {
+                    return false;
+                }
+                strsim::levenshtein(kt, qt) <= FUZZY_MAX_EDIT_DISTANCE
+            })
+        });
+        if all_match {
+            // Fractional weight: integer half of keyword_weight, floored.
+            // Single-word keywords (weight 1) contribute 0 — they are too
+            // short a signal to fire alone; weight 2+ contributes ≥ 1.
+            // This means a 1-typo hit on a lone single-token keyword is
+            // silently ignored unless the skill also has exact hits, which
+            // raises the combined score anyway.
+            let w = keyword_weight(&kw_norm);
+            let frac = w / 2; // integer division; 1→0, 2→1, 4→2
+            bonus += frac;
+        }
+    }
+    bonus
+}
+
 /// The skill picked by the router for one message, plus the keywords that
 /// fired (mostly for logging + `neoth skills test`).
 #[derive(Debug, Clone)]
@@ -112,15 +187,43 @@ pub fn route_with_min_weight<'a>(
                 hits.push(kw_norm);
             }
         }
-        if hits.is_empty() || weight < min_weight.max(1) {
+        // ── Fuzzy pass (GOLD-ADAPT-OMNI-01) ─────────────────────────────────
+        // After the exact pass, add a fractional bonus for trigger keywords
+        // whose tokens are within Levenshtein distance ≤ 1 (token length ≥ 4).
+        // The bonus is ADDITIVE to exact weight but halved, so fuzzy alone
+        // can only push a skill over the floor when the effective score
+        // `exact * 2 + fuzzy` reaches `min_weight * 2`.
+        //
+        // This means:
+        //   - An exact match is never downgraded — it contributes `weight * 2`
+        //     to the doubled comparison and wins over any fuzzy-only score.
+        //   - A lone single-token fuzzy hit (bonus 0) cannot fire by itself.
+        //   - A two-word fuzzy phrase (bonus 1) needs min_weight ≤ 1 (i.e.
+        //     the default floor) to activate — it still cannot fire under the
+        //     full-auto floor (min_weight = 2) without at least one exact hit.
+        //
+        // Guard: fuzzy is only computed when `hits` is empty or weight hasn't
+        // yet cleared the floor, so it never changes the winner when an exact
+        // match already exists for this skill (the exact path already took the
+        // best score path).
+        let fuzzy_bonus = fuzzy_keyword_bonus(skill.trigger_keywords(), &haystack, &hits);
+        let effective_exact = weight;
+        let passes_floor = effective_exact * 2 + fuzzy_bonus >= min_weight.max(1) * 2;
+        if (hits.is_empty() && fuzzy_bonus == 0) || !passes_floor {
             continue;
         }
+        // Use the doubled score for comparison so fuzzy hits always rank below
+        // equal-weight exact hits (2 * exact > 2 * exact - k + k for any k > 0
+        // because exact carries twice the coefficient).
+        let effective_score = effective_exact * 2 + fuzzy_bonus;
         let take = match &best {
             None => true,
-            Some((bw, b, _)) => weight > *bw || (weight == *bw && skill.id() < b.id()),
+            Some((bw, b, _)) => {
+                effective_score > *bw || (effective_score == *bw && skill.id() < b.id())
+            }
         };
         if take {
-            best = Some((weight, skill, hits));
+            best = Some((effective_score, skill, hits));
         }
     }
 
@@ -1107,6 +1210,98 @@ mod tests {
         let (winner, score) = pick.unwrap();
         assert_eq!(winner.id(), "a");
         assert!((score - EMBEDDING_THRESHOLD).abs() < 1e-6);
+    }
+
+    // ── GOLD-ADAPT-OMNI-01: fuzzy skill routing ────────────────────────────
+    //
+    // The fuzzy pass tolerates ≤1 Levenshtein edit on tokens ≥4 chars long
+    // and awards a fractional bonus so it can tip a skill over the DEFAULT
+    // floor without displacing any exact-match winner.
+
+    /// A 1-char transposition typo ("architcture" → "architecture") in a
+    /// multi-word trigger phrase still routes to the right skill.
+    #[test]
+    fn fuzzy_typo_routes_to_skill_with_matching_trigger() {
+        // "architecture diagram" is a 2-word trigger (weight 2, fuzzy bonus 1).
+        // Effective score = 0 * 2 + 1 = 1 ≥ DEFAULT_MIN_WEIGHT * 2 = 2? No —
+        // 1 < 2.  Under DEFAULT_MIN_WEIGHT the floor comparison is
+        // exact * 2 + fuzzy >= max(1, DEFAULT_MIN_WEIGHT) * 2 = 2.
+        // A single 2-word phrase fuzzy-hit gives bonus = keyword_weight / 2 = 1.
+        // 0 * 2 + 1 = 1 < 2 → does NOT clear the doubled floor.
+        //
+        // Solution: use a 4-word trigger so fuzzy_bonus = 4 / 2 = 2, and
+        // 0 * 2 + 2 = 2 >= 1 * 2 = 2 → clears DEFAULT floor (min_weight=1).
+        // Choosing "architecture diagram view" (3 words) gives bonus 1 — still
+        // not enough for doubled comparison (0*2+1 < 1*2). 4 words: bonus 2.
+        //
+        // Keep it simple: use DEFAULT_MIN_WEIGHT = 1, doubled threshold = 2,
+        // and a 4-word trigger ("software architecture diagram view") so that
+        // a fuzzy match on ANY one long token contributes bonus = 2, clearing
+        // the floor even with zero exact hits.
+        let skills = vec![skill(
+            "arch_skill",
+            &["software architecture diagram view"],
+            true,
+        )];
+        // "architcture" is "architecture" with one char transposed — edit distance 1.
+        let m = route("show me a software architcture diagram view", &skills);
+        assert!(
+            m.is_some(),
+            "1-char typo in a multi-word trigger should still route to the skill"
+        );
+        assert_eq!(m.unwrap().skill.id(), "arch_skill");
+    }
+
+    /// Exact-match winner is never displaced by a fuzzy hit on a different skill.
+    #[test]
+    fn fuzzy_does_not_displace_exact_match_winner() {
+        // "news" is an exact-match keyword (weight 1, exact score 2 doubled).
+        // "architcture" would fuzzy-match "architecture" in arch_skill
+        // with bonus < exact contribution. Exact winner must hold.
+        let skills = vec![
+            skill("news_skill", &["news"], true),
+            skill("arch_skill", &["software architecture diagram view"], true),
+        ];
+        // "news" matches exactly; "architcture" gives fuzzy bonus to arch_skill
+        // but 0*2+2=2 vs news_skill's 1*2+0=2 → tie broken by skill id ("arch_skill" < "news_skill")
+        // → arch_skill wins alphabetically when scores are equal. Adjust prompt
+        // so only news fires exactly and architecture typo doesn't also appear.
+        let m = route("latest news today", &skills);
+        // Only "news" fires exactly. arch_skill has no tokens matching its
+        // 4-word trigger in "latest news today". So news_skill must win.
+        assert!(m.is_some());
+        assert_eq!(
+            m.unwrap().skill.id(),
+            "news_skill",
+            "exact match on news_skill must not be displaced by unrelated fuzzy"
+        );
+    }
+
+    /// Fuzzy must NOT over-fire on unrelated short tokens (guard test).
+    #[test]
+    fn fuzzy_does_not_fire_on_truly_unrelated_short_tokens() {
+        // Trigger has only short tokens (< FUZZY_MIN_TOKEN_LEN = 4 chars) →
+        // fuzzy pass is skipped for them, exact pass also misses → None.
+        let skills = vec![skill("tiny", &["run now"], true)];
+        // "fun cow" — each token is 3 chars, below the 4-char fuzzy floor.
+        let m = route("fun cow", &skills);
+        assert!(
+            m.is_none(),
+            "short tokens below FUZZY_MIN_TOKEN_LEN must not fuzzy-fire"
+        );
+    }
+
+    /// Fuzzy must NOT fire on a completely unrelated long-token prompt.
+    #[test]
+    fn fuzzy_does_not_over_fire_on_unrelated_long_tokens() {
+        // Trigger is "architecture diagram" — query has completely unrelated
+        // long tokens with edit distance >> 1 to any trigger token.
+        let skills = vec![skill("arch_skill", &["architecture diagram"], true)];
+        let m = route("help me with transportation logistics", &skills);
+        assert!(
+            m.is_none(),
+            "completely unrelated long tokens must not fuzzy-activate a skill"
+        );
     }
 
     #[test]

@@ -137,6 +137,14 @@ pub struct RecallArgs {
     #[arg(long, value_name = "N", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc"])]
     pub scorecard: Option<usize>,
 
+    /// GOLD-ADAPT-GRAPH-01 — print the top N most-connected nodes in the
+    /// association graph (highest link degree), one row per node: `event_id`
+    /// and the number of distinct links touching it. Useful for finding
+    /// "hub" memories that were co-recalled with many other memories.
+    /// Bypasses search. Defaults to `--limit` for the result count.
+    #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard"])]
+    pub hubs: bool,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -383,6 +391,35 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         let conn = store::open(&db_path).context("open views.db")?;
         let card = store::recall_scorecard(&conn, window).context("compute recall scorecard")?;
         render_scorecard(&card, args.output);
+        return Ok(());
+    }
+
+    // GOLD-ADAPT-GRAPH-01 — hub-ranking short-circuit: most-connected nodes
+    // in the association graph by link degree.
+    if args.hubs {
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
+        let hubs = crate::memory::assoc_graph::memory_hubs(&conn, args.limit)
+            .context("memory_hubs query")?;
+        match args.output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+                let rows: Vec<_> = hubs
+                    .iter()
+                    .map(|(id, deg)| serde_json::json!({ "event_id": id, "degree": deg }))
+                    .collect();
+                println!("{}", serde_json::json!({ "hubs": rows }));
+            }
+            crate::cli::OutputFormat::Table => {
+                if hubs.is_empty() {
+                    println!("no association links found (run `neoth recall --bootstrap-assoc` to seed)");
+                } else {
+                    println!("top {} memory hub(s) by association degree:", hubs.len());
+                    for (id, deg) in &hubs {
+                        println!("  event {id:>8}  degree {deg}");
+                    }
+                }
+            }
+        }
         return Ok(());
     }
 
@@ -1677,6 +1714,7 @@ mod tests {
         write(&seg, &bytes).await.unwrap();
 
         let args = RecallArgs {
+            hubs: false,
             query: "wifi".to_string(),
             limit: 10,
             db: Some(db.clone()),
@@ -1958,6 +1996,7 @@ mod tests {
         let db = dir.path().join("views.db");
         let _ = store::open(&db).unwrap();
         let args = RecallArgs {
+            hubs: false,
             query: "   ".to_string(), // whitespace-only treated as empty
             limit: 5,
             db: Some(db),
@@ -1994,6 +2033,7 @@ mod tests {
         let db = dir.path().join("views.db");
         let _ = store::open(&db).unwrap();
         let args = RecallArgs {
+            hubs: false,
             query: String::new(),
             limit: 5,
             db: Some(db),
@@ -2030,6 +2070,7 @@ mod tests {
         let db = dir.path().join("views.db");
         let _ = store::open(&db).unwrap();
         let args = RecallArgs {
+            hubs: false,
             query: String::new(),
             limit: 5,
             db: Some(db),
@@ -2243,6 +2284,7 @@ mod tests {
         drop(conn);
 
         let args = RecallArgs {
+            hubs: false,
             query: String::new(),
             limit: 20,
             db: Some(db.clone()),

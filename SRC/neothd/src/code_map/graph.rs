@@ -261,6 +261,97 @@ impl CallGraph {
         out
     }
 
+    /// Detect cycles in the call graph using iterative DFS with
+    /// grey/black node colouring. Returns up to `limit` distinct
+    /// cycles, each represented as an ordered list of symbol names.
+    ///
+    /// Each cycle is normalised by rotating it so its
+    /// lexicographically-smallest member is first, then the full
+    /// collection is deduplicated (same cycle reached from different
+    /// entry-points appears only once). Self-edges are excluded by
+    /// `CallGraph::build`, so all returned cycles have length ≥ 2.
+    pub fn find_cycles(&self, limit: usize) -> Vec<Vec<String>> {
+        // Build a name-level forward-adjacency map from the raw edges.
+        // A symbol may be defined in multiple files; we merge all
+        // outgoing edges by name so the cycle scan is file-agnostic.
+        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        for edge in &self.edges {
+            adj.entry(edge.from_symbol.clone())
+                .or_default()
+                .push(edge.to_name.clone());
+        }
+        // Ensure every node that only appears as a callee is also
+        // present as a key (with an empty adjacency list) so the DFS
+        // visits it.
+        let all_nodes: Vec<String> = {
+            let mut names: std::collections::BTreeSet<String> = BTreeSet::new();
+            for edge in &self.edges {
+                names.insert(edge.from_symbol.clone());
+                names.insert(edge.to_name.clone());
+            }
+            names.into_iter().collect()
+        };
+
+        // Colouring: 0 = white (unseen), 1 = grey (on stack), 2 = black (done).
+        let mut colour: HashMap<String, u8> = HashMap::new();
+        // Stack entries: (node_name, iterator_index_into_adjacency_list).
+        // We store the adjacency list locally so we can index it by position
+        // without borrowing `adj` through the stack.
+        let mut path: Vec<String> = Vec::new();
+        let mut found: std::collections::BTreeSet<Vec<String>> = std::collections::BTreeSet::new();
+        let mut result: Vec<Vec<String>> = Vec::new();
+
+        for start in &all_nodes {
+            if result.len() >= limit {
+                break;
+            }
+            if colour.get(start.as_str()).copied().unwrap_or(0) == 2 {
+                continue;
+            }
+            // Iterative DFS. Each stack frame holds:
+            //   (node, child_index) — child_index tracks which neighbour to visit next.
+            let mut stack: Vec<(String, usize)> = Vec::new();
+            stack.push((start.clone(), 0));
+            colour.insert(start.clone(), 1);
+            path.push(start.clone());
+
+            while let Some((node, child_idx)) = stack.last_mut() {
+                let node_name = node.clone();
+                let neighbours = adj.get(&node_name).map(|v| v.as_slice()).unwrap_or(&[]);
+                if *child_idx < neighbours.len() {
+                    let next = neighbours[*child_idx].clone();
+                    *child_idx += 1;
+                    let next_colour = colour.get(&next).copied().unwrap_or(0);
+                    if next_colour == 1 {
+                        // Back-edge: `next` is on the current path → cycle found.
+                        // Extract the cycle from `path` starting at `next`.
+                        if let Some(cycle_start) = path.iter().position(|n| n == &next) {
+                            let raw: Vec<String> = path[cycle_start..].to_vec();
+                            let normalised = rotate_to_min(raw);
+                            if found.insert(normalised.clone()) {
+                                result.push(normalised);
+                                if result.len() >= limit {
+                                    break;
+                                }
+                            }
+                        }
+                    } else if next_colour == 0 {
+                        colour.insert(next.clone(), 1);
+                        path.push(next.clone());
+                        stack.push((next, 0));
+                    }
+                    // next_colour == 2 → already fully processed, skip.
+                } else {
+                    // All children visited; paint black and pop.
+                    colour.insert(node_name.clone(), 2);
+                    stack.pop();
+                    path.pop();
+                }
+            }
+        }
+        result
+    }
+
     /// BFS forward: every symbol name that the scope (file_path,
     /// source_symbol) (transitively) reaches within `max_depth`
     /// hops. The source itself is not included.
@@ -313,6 +404,25 @@ pub struct CallerEntry {
 pub struct CalleeEntry {
     pub name: String,
     pub depth: usize,
+}
+
+/// Rotate `cycle` so its lexicographically-smallest element is first.
+/// This normalises the same cycle reached from different entry points
+/// into a canonical form for deduplication.
+fn rotate_to_min(cycle: Vec<String>) -> Vec<String> {
+    if cycle.is_empty() {
+        return cycle;
+    }
+    let min_pos = cycle
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.cmp(b))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let mut out = Vec::with_capacity(cycle.len());
+    out.extend_from_slice(&cycle[min_pos..]);
+    out.extend_from_slice(&cycle[..min_pos]);
+    out
 }
 
 /// Extract the line-range from `src` that covers `[start_line .. end_line)`
@@ -857,6 +967,45 @@ def caller():
         assert!(g.callers_of("nonexistent", 5).is_empty());
     }
 
+    /// GOLD-ADAPT-GRAPH-02 (cont.): a 3-cycle a→b→c→a is detected and
+    /// normalised to ["a","b","c"]; the acyclic tail d→e produces no
+    /// cycle entry.
+    #[test]
+    fn find_cycles_detects_three_cycle_and_ignores_acyclic_tail() {
+        // a→b, b→c, c→a  (3-cycle)
+        // d→e             (acyclic)
+        let src = r#"
+fn a() { b(); }
+fn b() { c(); }
+fn c() { a(); }
+fn d() { e(); }
+fn e() {}
+"#;
+        let g = CallGraph::build(&[rust_file("three_cycle.rs", src)]);
+        let cycles = g.find_cycles(10);
+
+        // Exactly one cycle must be found.
+        assert_eq!(cycles.len(), 1, "expected exactly 1 cycle, got: {cycles:?}");
+
+        // After rotation to lex-smallest ("a"), the cycle is ["a","b","c"].
+        let cycle = &cycles[0];
+        assert_eq!(
+            cycle.as_slice(),
+            &["a".to_string(), "b".to_string(), "c".to_string()],
+            "3-cycle should normalise to [\"a\",\"b\",\"c\"], got: {cycle:?}"
+        );
+
+        // d and e must not appear in any cycle.
+        assert!(
+            cycles.iter().all(|c| !c.contains(&"d".to_string())),
+            "acyclic node d must not appear in any cycle"
+        );
+        assert!(
+            cycles.iter().all(|c| !c.contains(&"e".to_string())),
+            "acyclic node e must not appear in any cycle"
+        );
+    }
+
     // Reference to Symbol to silence the unused-import lint.
     #[test]
     fn symbol_kind_is_carried_through_def() {
@@ -865,5 +1014,49 @@ def caller():
             kind: SymbolKind::Function,
             line: 1,
         };
+    }
+
+    /// GOLD-ADAPT-GRAPH-02: find_cycles detects back-edges and returns
+    /// normalised, deduplicated cycle lists. A mutual-call pair a↔b is
+    /// a cycle of length 2; the acyclic edge c→d must not appear.
+    #[test]
+    fn find_cycles_detects_mutual_call_and_ignores_acyclic_edge() {
+        // Build a graph where:
+        //   a calls b  (a→b)
+        //   b calls a  (b→a)  ← back-edge, forms cycle [a, b]
+        //   c calls d  (c→d)  ← acyclic, no back-edge
+        //
+        // Rust source: each function calls the next; the graph builder
+        // extracts the edges via its regex call-site scan.
+        let src = r#"
+fn a() { b(); }
+fn b() { a(); }
+fn c() { d(); }
+fn d() {}
+"#;
+        let g = CallGraph::build(&[rust_file("cycle_test.rs", src)]);
+        let cycles = g.find_cycles(10);
+
+        // Exactly one cycle must be found.
+        assert_eq!(cycles.len(), 1, "expected exactly 1 cycle, got: {cycles:?}");
+
+        // After normalisation (rotate to lex-smallest), the cycle is ["a", "b"].
+        let cycle = &cycles[0];
+        assert_eq!(
+            cycle.as_slice(),
+            &["a".to_string(), "b".to_string()],
+            "cycle should be [\"a\", \"b\"] after rotation, got: {cycle:?}"
+        );
+
+        // Verify d is NOT part of any cycle (it has no outgoing calls).
+        assert!(
+            cycles.iter().all(|c| !c.contains(&"d".to_string())),
+            "acyclic node d must not appear in any cycle"
+        );
+        // Verify c is NOT part of any cycle (c→d is one-way).
+        assert!(
+            cycles.iter().all(|c| !c.contains(&"c".to_string())),
+            "acyclic node c must not appear in any cycle"
+        );
     }
 }

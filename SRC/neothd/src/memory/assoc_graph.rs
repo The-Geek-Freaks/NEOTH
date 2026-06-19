@@ -134,6 +134,28 @@ pub fn decay_links(conn: &Connection, factor: f64, floor: f64) -> Result<usize> 
     Ok(pruned)
 }
 
+/// GOLD-ADAPT-GRAPH-01 — return the most-connected nodes in the association
+/// graph, sorted by degree descending. Degree = number of distinct links that
+/// touch a node (either as `lo_id` or `hi_id`). Returns up to `limit` entries
+/// as `(memory_id, degree)` pairs. A node with no links has degree 0 and never
+/// appears; the result is empty when the table is empty.
+pub fn memory_hubs(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<(i64, u32)>> {
+    let mut stmt = conn.prepare(
+        "SELECT node_id, COUNT(*) AS degree FROM ( \
+             SELECT lo_id AS node_id FROM idx_memory_links \
+             UNION ALL \
+             SELECT hi_id AS node_id FROM idx_memory_links \
+         ) GROUP BY node_id ORDER BY degree DESC LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![limit as i64], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? as u32))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(rows)
+}
+
 /// GDPR forget cascade: delete every link touching `event_id`. Called from
 /// `memory::forget` for each forgotten episode so no link dangles. Returns rows
 /// deleted.
@@ -526,5 +548,55 @@ mod tests {
             0,
             "dense window skipped"
         );
+    }
+
+    // ── GOLD-ADAPT-GRAPH-01: memory_hubs ─────────────────────────────────
+
+    #[test]
+    fn memory_hubs_returns_most_connected_node_first() {
+        let (_d, c) = conn();
+        // Build a star topology around id=1: co-access with 2, 3, 4, 5.
+        // id=1 appears in 4 links (degree 4); ids 2..5 each appear in 1 link
+        // (degree 1). id=2 and id=3 share one additional pair (degree 2 each).
+        //   links after reinforce_co_access([1,2,3,4,5]):
+        //     (1,2),(1,3),(1,4),(1,5),(2,3),(2,4),(2,5),(3,4),(3,5),(4,5) → 10 links
+        //   C(5,2)=10: degrees:
+        //     1 → 4 links, 2 → 4 links, 3 → 4 links, 4 → 4 links, 5 → 4 links
+        // Use smaller, unequal sets so one node clearly wins.
+        // co-access [1,2]: links (1,2)
+        // co-access [1,3]: links (1,3)
+        // co-access [1,4]: links (1,4)
+        // → id=1 has degree 3; ids 2,3,4 each have degree 1.
+        reinforce_co_access(&c, &[1, 2], 1).unwrap();
+        reinforce_co_access(&c, &[1, 3], 2).unwrap();
+        reinforce_co_access(&c, &[1, 4], 3).unwrap();
+
+        let hubs = memory_hubs(&c, 10).unwrap();
+        assert!(!hubs.is_empty(), "at least one hub must be returned");
+
+        // id=1 must rank first with degree 3.
+        assert_eq!(hubs[0].0, 1, "id=1 has highest degree (3 links)");
+        assert_eq!(hubs[0].1, 3, "degree of id=1 is 3");
+
+        // All other nodes (2, 3, 4) must have degree 1.
+        for &(node_id, degree) in &hubs[1..] {
+            assert!(
+                [2i64, 3, 4].contains(&node_id),
+                "unexpected node in hub list: {node_id}"
+            );
+            assert_eq!(degree, 1, "node {node_id} must have degree 1");
+        }
+
+        // limit is honoured: requesting top-1 returns exactly one row.
+        let top1 = memory_hubs(&c, 1).unwrap();
+        assert_eq!(top1.len(), 1);
+        assert_eq!(top1[0].0, 1, "top-1 hub must be id=1");
+    }
+
+    #[test]
+    fn memory_hubs_empty_table_returns_empty_vec() {
+        let (_d, c) = conn();
+        let hubs = memory_hubs(&c, 10).unwrap();
+        assert!(hubs.is_empty(), "no links → no hubs");
     }
 }
