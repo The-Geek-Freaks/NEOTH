@@ -101,6 +101,19 @@ pub fn open(path: &Path) -> Result<Connection> {
         .context("set SQLite synchronous=NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")
         .context("set SQLite foreign_keys=ON")?;
+    // TRAIL-01/05: matching hardening pragmas (see memory/store.rs for rationale).
+    conn.pragma_update(None, "busy_timeout", 5_000i64)
+        .context("set SQLite busy_timeout=5000")?;
+    conn.pragma_update(None, "wal_autocheckpoint", 1_000i64)
+        .context("set SQLite wal_autocheckpoint=1000")?;
+    conn.pragma_update(None, "mmap_size", 67_108_864i64)
+        .context("set SQLite mmap_size=64MiB")?;
+    conn.pragma_update(None, "cache_size", -8_000i64)
+        .context("set SQLite cache_size=-8000")?;
+    conn.pragma_update(None, "temp_store", 2i64)
+        .context("set SQLite temp_store=MEMORY")?;
+    conn.pragma_update(None, "journal_size_limit", 209_715_200i64)
+        .context("set SQLite journal_size_limit=200MiB")?;
 
     if is_new {
         apply_schema(&conn)?;

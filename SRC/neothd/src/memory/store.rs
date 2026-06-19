@@ -68,6 +68,26 @@ pub fn open(path: &Path) -> Result<Connection> {
         .context("set SQLite synchronous=NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")
         .context("set SQLite foreign_keys=ON")?;
+    // TRAIL-01: prevent SQLITE_BUSY under concurrent daemon access.
+    conn.pragma_update(None, "busy_timeout", 5_000i64)
+        .context("set SQLite busy_timeout=5000")?;
+    // TRAIL-01: checkpoint every 1000 WAL frames (SQLite default=1000; explicit
+    // to survive config inheritance from the process environment).
+    conn.pragma_update(None, "wal_autocheckpoint", 1_000i64)
+        .context("set SQLite wal_autocheckpoint=1000")?;
+    // TRAIL-01: 64 MiB memory-mapped I/O — reduces syscall overhead on Windows.
+    conn.pragma_update(None, "mmap_size", 67_108_864i64)
+        .context("set SQLite mmap_size=64MiB")?;
+    // TRAIL-01: negative = KiB; -8000 ≈ 8 MiB page cache per connection.
+    conn.pragma_update(None, "cache_size", -8_000i64)
+        .context("set SQLite cache_size=-8000")?;
+    // TRAIL-01: temp tables/indexes go to RAM, not a temp file on disk.
+    conn.pragma_update(None, "temp_store", 2i64)
+        .context("set SQLite temp_store=MEMORY")?;
+    // TRAIL-05: cap -wal growth to 200 MiB — guards against AV-stalled
+    // checkpoints on Windows leaving the WAL file unbounded.
+    conn.pragma_update(None, "journal_size_limit", 209_715_200i64)
+        .context("set SQLite journal_size_limit=200MiB")?;
 
     // Pick #34 (Session 14, architect audit-fix): force WAL recovery
     // BEFORE any migration query runs. On Windows, a hard kill
@@ -1077,5 +1097,45 @@ mod tests {
         );
         assert!(sc.data_sufficient);
         assert_eq!(sc.latency_p50_ms, 42.0);
+    }
+
+    /// TRAIL-01 + TRAIL-05: verify hardening pragmas are actually applied.
+    /// Reads each pragma back from SQLite and asserts the expected value,
+    /// proving `open()` isn't silently swallowing the `pragma_update` errors.
+    #[test]
+    fn hardening_pragmas_are_set() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hardening_test.db");
+        let conn = open(&path).expect("open");
+
+        let busy: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .expect("busy_timeout");
+        assert_eq!(busy, 5_000, "busy_timeout must be 5000 ms");
+
+        let autockpt: i64 = conn
+            .query_row("PRAGMA wal_autocheckpoint", [], |r| r.get(0))
+            .expect("wal_autocheckpoint");
+        assert_eq!(autockpt, 1_000, "wal_autocheckpoint must be 1000 frames");
+
+        let mmap: i64 = conn
+            .query_row("PRAGMA mmap_size", [], |r| r.get(0))
+            .expect("mmap_size");
+        assert_eq!(mmap, 67_108_864, "mmap_size must be 64 MiB");
+
+        let cache: i64 = conn
+            .query_row("PRAGMA cache_size", [], |r| r.get(0))
+            .expect("cache_size");
+        assert_eq!(cache, -8_000, "cache_size must be -8000 KiB");
+
+        let temp: i64 = conn
+            .query_row("PRAGMA temp_store", [], |r| r.get(0))
+            .expect("temp_store");
+        assert_eq!(temp, 2, "temp_store must be 2 (MEMORY)");
+
+        let jsl: i64 = conn
+            .query_row("PRAGMA journal_size_limit", [], |r| r.get(0))
+            .expect("journal_size_limit");
+        assert_eq!(jsl, 209_715_200, "journal_size_limit must be 200 MiB");
     }
 }
