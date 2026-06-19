@@ -814,6 +814,24 @@ fn apply_patch_via_worktree(
         Ok(false) => {}
     }
 
+    // REPOW pre-edit risk gate — warn before touching high-risk files.
+    // Does NOT block the apply; operator sees the warning in logs/WAL.
+    {
+        let changed = crate::code_map::risk::patch_changed_files(&outcome.patch_path);
+        let warnings =
+            crate::code_map::risk::assess_edit_risk(&cfg.repo_root, &changed);
+        for w in &warnings {
+            warn!(
+                task_id = task.task_id.raw(),
+                file = %w.file,
+                risk_score = w.risk_score,
+                bus_factor = w.bus_factor,
+                reason = %w.reason,
+                "⚠ editing high-risk file — review carefully",
+            );
+        }
+    }
+
     let patch_hash = crate::coding::worktree::patch_hash(&outcome.patch_path)
         .unwrap_or_else(|_| "(unhashable)".to_string());
 
