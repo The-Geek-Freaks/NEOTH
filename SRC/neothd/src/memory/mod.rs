@@ -22,6 +22,10 @@ pub mod assoc_graph;
 pub mod bulk_text;
 pub mod channel_weights;
 pub mod consolidate;
+/// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory eval harness.
+/// `neoth memory-eval` runs a synthetic recall benchmark against a fresh
+/// temp DB and reports precision so CI can detect memory-tuning regressions.
+pub mod eval_harness;
 /// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
 pub mod context_inject;
 /// GOLD-ADAPT-MEM-02 — contradiction detection + ledger over ground-truth facts.

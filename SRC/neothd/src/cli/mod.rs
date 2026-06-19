@@ -78,6 +78,7 @@ pub mod keys;
 pub mod lease;
 pub mod mcp;
 pub mod memory;
+pub mod memory_eval;
 pub mod meter;
 pub mod migrate;
 pub mod mode;
@@ -853,6 +854,14 @@ pub enum Commands {
     #[command(name = "code-intel")]
     CodeIntel(code_intel::CodeIntelArgs),
 
+    /// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory recall benchmark.
+    /// Seeds a fresh temp DB with synthetic episodes, runs the
+    /// decay/consolidation pass, and reports recall precision.  Safe to run
+    /// at any time — never touches the real operator memory DB.
+    /// `neoth memory-eval [--json]`
+    #[command(name = "memory-eval")]
+    MemoryEval(memory_eval::MemoryEvalArgs),
+
     /// OH-04 — detect host RAM / CPU / GPU and recommend a local-AI deployment
     /// tier (cloud-first / hybrid / local-capable).  No LLM call; purely
     /// hardware-derived.  Used internally by `onboarding-status`.
@@ -1402,6 +1411,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::CodeIntel(args) => {
             code_intel::run_code_intel(args).await?;
+        }
+        Commands::MemoryEval(args) => {
+            memory_eval::run_memory_eval_cmd(args).await?;
         }
         Commands::DeviceProfile => {
             let profile = device_profile::detect_device_profile();
