@@ -31,6 +31,7 @@ pub mod cluster;
 pub mod code;
 pub mod code_intel;
 pub mod code_map;
+pub mod distill;
 pub mod demo;
 pub mod device_profile;
 pub mod onboarding_status;
@@ -855,6 +856,13 @@ pub enum Commands {
     #[command(name = "code-intel")]
     CodeIntel(code_intel::CodeIntelArgs),
 
+    /// GOLD-ADAPT-KB-03 — scan session trajectory files for repeated
+    /// tool-call sequences and surface them as candidate skills to distill.
+    ///
+    /// `neoth distill [--min-occurrences 3] [--min-len 2] [--json]`
+    #[command(name = "distill")]
+    Distill(distill::DistillArgs),
+
     /// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory recall benchmark.
     /// Seeds a fresh temp DB with synthetic episodes, runs the
     /// decay/consolidation pass, and reports recall precision.  Safe to run
@@ -1421,6 +1429,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::CodeIntel(args) => {
             code_intel::run_code_intel(args).await?;
+        }
+        Commands::Distill(args) => {
+            distill::run_distill(args).await?;
         }
         Commands::MemoryEval(args) => {
             memory_eval::run_memory_eval_cmd(args).await?;
