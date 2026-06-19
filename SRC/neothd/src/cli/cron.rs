@@ -9,7 +9,9 @@
 //!
 //! All mutating commands call `Job::validate()` (JV-PRO-01) before saving and
 //! surface `preflight()` warnings (JV-PRO-04). `add` also surfaces collision
-//! warnings via `schedule_collides()` (JV-PRO-09). Saves are atomic (tmp+rename).
+//! warnings via `schedule_collides()` (JV-PRO-09). Both `add` and `edit` call
+//! `JobsFile::validate_waves()` (JV-PRO-03) to reject cyclic/unknown depends_on
+//! before saving. Saves are atomic (tmp+rename).
 //!
 //! Refuses while `neoth serve` is live for `run` only — CRUD operations on
 //! jobs.yaml are safe at any time (the scheduler re-reads on restart).
@@ -234,20 +236,28 @@ fn cron_add(
         prompt,
         timeout_seconds: timeout.unwrap_or(600),
         delivery,
+        depends_on: vec![],
     };
 
     // JV-PRO-01: validate before saving
     job.validate()?;
 
-    // JV-PRO-04: delivery pre-flight warnings
+    // JV-PRO-04: delivery pre-flight warnings (before pushing, job is still owned)
     let pf = preflight(&job);
     print_warnings(&pf, "preflight");
 
-    // JV-PRO-09: collision warnings
+    // JV-PRO-09: collision warnings (existing jobs before the new one)
     let collisions = schedule_collides(&job.schedule, &jf.jobs, 48);
     print_warnings(&collisions, "collision");
 
+    // JV-PRO-03: validate the depends_on DAG (cycle + unknown-dep check).
+    // Push speculatively; on error pop and propagate so the file is never written.
     jf.jobs.push(job);
+    if let Err(e) = jf.validate_waves() {
+        jf.jobs.pop();
+        return Err(e);
+    }
+
     jf.save_to_path(&path)
         .with_context(|| format!("save {}", path.display()))?;
     println!("added job `{id}` to {}", path.display());
@@ -312,9 +322,12 @@ fn cron_edit(
     // JV-PRO-01: validate the mutated job
     job.validate()?;
 
-    // JV-PRO-04: surface warnings
+    // JV-PRO-04: surface warnings (borrow job before the wave check drops it)
     let pf = preflight(job);
     print_warnings(&pf, "preflight");
+
+    // JV-PRO-03: validate the depends_on DAG across all jobs after the edit
+    jf.validate_waves()?;
 
     jf.save_to_path(&path)
         .with_context(|| format!("save {}", path.display()))?;

@@ -116,6 +116,7 @@ mod tests {
             prompt: "hi".to_string(),
             timeout_seconds: 60,
             delivery: None,
+            depends_on: vec![],
         }
     }
 

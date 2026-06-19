@@ -376,6 +376,7 @@ mod workstream_c_tests {
             prompt: "Summarise overnight activity.".into(),
             timeout_seconds: 30,
             delivery: None,
+            depends_on: vec![],
         }
     }
 

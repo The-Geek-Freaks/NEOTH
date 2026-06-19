@@ -7,12 +7,20 @@
 //! - `CronRole` + `classify_role(job)` — keyword/schedule heuristic (JV-PRO-05)
 //! - `schedule_collides(new, existing, horizon_hours)` — collision detection (JV-PRO-09)
 //! - `JobsFile::save_to_path()` — atomic YAML write (HERMES-01)
+//!
+//! JV-PRO-03 additions (wave/dependency scheduler):
+//! - `Job::depends_on` — ordered dependency list (back-compat: absent → empty)
+//! - `WaveError` — cycle / unknown-dep errors from the DAG validator
+//! - `topo_order(jobs)` — Kahn topological sort; returns ids in dependency order
+//! - `ready_jobs(jobs, completed, now, last_run, freshness)` — 4h-default freshness gate
+//! - `JobsFile::validate_waves()` — DAG validation seam called by add/edit CLI guards
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +45,11 @@ pub struct Job {
     pub timeout_seconds: u32,
     #[serde(default)]
     pub delivery: Option<Delivery>,
+    /// Ids of jobs that must have completed (within the freshness window) before
+    /// this job is considered READY. Absent in YAML → empty → independent job.
+    /// JV-PRO-03
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +285,186 @@ pub fn schedule_collides(
         }
     }
     collisions
+}
+
+// ── JV-PRO-03: wave / dependency scheduler ───────────────────────────────────
+
+/// Default freshness window: a dependency completion older than this makes the
+/// downstream job NOT ready (the whole chain must re-run). Tunable per call.
+pub const DEFAULT_FRESHNESS: Duration = Duration::hours(4);
+
+/// Errors produced by the DAG validator / topo-sorter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaveError {
+    /// The depends_on graph contains a cycle. The vec holds the cycle members
+    /// in the order they were detected by Kahn's algorithm.
+    Cycle(Vec<String>),
+    /// A job references a dependency id that does not exist in the job set.
+    UnknownDep {
+        /// The job that declared the bad dependency.
+        job: String,
+        /// The dependency id that was not found.
+        dep: String,
+    },
+}
+
+impl std::fmt::Display for WaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WaveError::Cycle(members) => {
+                write!(f, "dependency cycle detected among jobs: {}", members.join(" → "))
+            }
+            WaveError::UnknownDep { job, dep } => {
+                write!(f, "job `{job}` depends on `{dep}` which is not defined")
+            }
+        }
+    }
+}
+
+/// Kahn topological sort over the `depends_on` DAG.
+///
+/// Returns job ids in dependency order (roots first, leaves last) so a wave
+/// scheduler can fire batches in sequence. Pure — does not read from disk.
+///
+/// # Errors
+/// - `WaveError::UnknownDep` if any `depends_on` entry names a job id not
+///   present in `jobs`.
+/// - `WaveError::Cycle` if the graph contains a cycle; the returned vec lists
+///   the jobs that were never scheduled (all cycle members plus anything that
+///   depended on them).
+pub fn topo_order(jobs: &[Job]) -> Result<Vec<String>, WaveError> {
+    // Build id → index map for O(1) lookup.
+    let id_set: HashSet<&str> = jobs.iter().map(|j| j.id.as_str()).collect();
+
+    // Validate all dependency references before building adjacency.
+    for job in jobs {
+        for dep in &job.depends_on {
+            if !id_set.contains(dep.as_str()) {
+                return Err(WaveError::UnknownDep {
+                    job: job.id.clone(),
+                    dep: dep.clone(),
+                });
+            }
+        }
+    }
+
+    // Compute in-degree and successor lists.
+    // `successors[id]` = list of jobs that list `id` as a dependency (edges
+    // flow from dependency → dependent, which is the Kahn direction).
+    let mut in_degree: HashMap<&str, usize> = jobs.iter().map(|j| (j.id.as_str(), 0)).collect();
+    let mut successors: HashMap<&str, Vec<&str>> = jobs.iter().map(|j| (j.id.as_str(), vec![])).collect();
+
+    for job in jobs {
+        for dep in &job.depends_on {
+            *in_degree.entry(job.id.as_str()).or_insert(0) += 1;
+            successors.entry(dep.as_str()).or_default().push(job.id.as_str());
+        }
+    }
+
+    // Seed the queue with every job that has no dependencies (in-degree 0).
+    let mut queue: VecDeque<&str> = in_degree
+        .iter()
+        .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
+        .collect();
+    // Sort for deterministic output order.
+    let mut queue_vec: Vec<&str> = queue.drain(..).collect();
+    queue_vec.sort_unstable();
+    queue.extend(queue_vec);
+
+    let mut order: Vec<String> = Vec::with_capacity(jobs.len());
+
+    while let Some(id) = queue.pop_front() {
+        order.push(id.to_string());
+        if let Some(succs) = successors.get(id) {
+            let mut next_batch: Vec<&str> = succs
+                .iter()
+                .filter_map(|&succ| {
+                    let deg = in_degree.get_mut(succ)?;
+                    *deg -= 1;
+                    if *deg == 0 { Some(succ) } else { None }
+                })
+                .collect();
+            next_batch.sort_unstable();
+            queue.extend(next_batch);
+        }
+    }
+
+    if order.len() != jobs.len() {
+        // Some nodes were never dequeued — they are part of a cycle.
+        let remaining: Vec<String> = jobs
+            .iter()
+            .map(|j| j.id.as_str())
+            .filter(|id| !order.contains(&id.to_string()))
+            .map(str::to_string)
+            .collect();
+        return Err(WaveError::Cycle(remaining));
+    }
+
+    Ok(order)
+}
+
+/// Return the subset of `jobs` that are READY to fire right now.
+///
+/// A job is READY when **all** of the following hold:
+/// 1. `job.enabled` is `true`.
+/// 2. Every id in `job.depends_on` is present in `completed`.
+/// 3. Every dependency completed **within** `freshness` before `now`
+///    (stale dependency → not ready; the whole chain must re-run).
+///
+/// Independent jobs (empty `depends_on`) satisfy conditions 2 and 3
+/// trivially and are ready as long as they are enabled.
+///
+/// Returns job ids in the same order as `topo_order` would produce so
+/// callers can fire waves in sequence. Pure — does not read from disk.
+///
+/// # Wire point
+/// // neoth: integrate into `run_scheduler` tick by maintaining a
+/// `completed: HashSet<String>` and `last_run: HashMap<String, DateTime<Utc>>`
+/// in the scheduler state, calling `ready_jobs` each tick, and spawning only
+/// the returned ids instead of the current unconditional loop.
+pub fn ready_jobs(
+    jobs: &[Job],
+    completed: &HashSet<String>,
+    now: DateTime<Utc>,
+    last_run: &HashMap<String, DateTime<Utc>>,
+    freshness: Duration,
+) -> Vec<String> {
+    jobs.iter()
+        .filter(|job| {
+            if !job.enabled {
+                return false;
+            }
+            for dep in &job.depends_on {
+                // Condition 2: dependency must have completed.
+                if !completed.contains(dep) {
+                    return false;
+                }
+                // Condition 3: dependency completion must be within the freshness window.
+                match last_run.get(dep) {
+                    Some(&completed_at) => {
+                        if now - completed_at > freshness {
+                            return false;
+                        }
+                    }
+                    // Completed but no timestamp recorded — treat as stale.
+                    None => return false,
+                }
+            }
+            true
+        })
+        .map(|job| job.id.clone())
+        .collect()
+}
+
+impl JobsFile {
+    /// Validate the `depends_on` DAG across all jobs.
+    ///
+    /// Called by `neoth cron add` and `cron edit` after `Job::validate()` so
+    /// a cyclic or broken `depends_on` is rejected before saving. JV-PRO-03
+    pub fn validate_waves(&self) -> Result<()> {
+        topo_order(&self.jobs).map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(())
+    }
 }
 
 impl JobsFile {
@@ -527,6 +720,21 @@ jobs:
             prompt: prompt.to_string(),
             timeout_seconds: 600,
             delivery: None,
+            depends_on: vec![],
+        }
+    }
+
+    /// Build a daily_job with explicit depends_on list. JV-PRO-03 helper.
+    fn dep_job(id: &str, deps: &[&str]) -> Job {
+        Job {
+            id: id.to_string(),
+            name: id.to_string(),
+            enabled: true,
+            schedule: Schedule { cron: "0 7 * * *".to_string(), tz: None },
+            prompt: "do something meaningful please".to_string(),
+            timeout_seconds: 600,
+            delivery: None,
+            depends_on: deps.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -657,5 +865,111 @@ jobs:
             collisions.is_empty(),
             "expected no collision for staggered schedules, got: {collisions:?}"
         );
+    }
+
+    // ── JV-PRO-03: topo_order + ready_jobs ───────────────────────────────────
+
+    #[test]
+    fn topo_order_linear_chain_a_b_c() {
+        // a → b → c  (a must run first, then b, then c)
+        let jobs = vec![
+            dep_job("c", &["b"]),
+            dep_job("b", &["a"]),
+            dep_job("a", &[]),
+        ];
+        let order = topo_order(&jobs).expect("linear chain is acyclic");
+        // a before b, b before c
+        let pos: HashMap<&str, usize> = order.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+        assert!(pos["a"] < pos["b"], "a must come before b");
+        assert!(pos["b"] < pos["c"], "b must come before c");
+    }
+
+    #[test]
+    fn topo_order_diamond_resolves() {
+        // Diamond: a → {b, c} → d
+        let jobs = vec![
+            dep_job("a", &[]),
+            dep_job("b", &["a"]),
+            dep_job("c", &["a"]),
+            dep_job("d", &["b", "c"]),
+        ];
+        let order = topo_order(&jobs).expect("diamond is acyclic");
+        let pos: HashMap<&str, usize> = order.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+        assert!(pos["a"] < pos["b"]);
+        assert!(pos["a"] < pos["c"]);
+        assert!(pos["b"] < pos["d"]);
+        assert!(pos["c"] < pos["d"]);
+        assert_eq!(order.len(), 4);
+    }
+
+    #[test]
+    fn topo_order_cycle_a_b_a_returns_wave_error() {
+        // a depends on b, b depends on a → cycle
+        let jobs = vec![dep_job("a", &["b"]), dep_job("b", &["a"])];
+        let err = topo_order(&jobs).unwrap_err();
+        assert!(
+            matches!(err, WaveError::Cycle(_)),
+            "expected Cycle, got: {err}"
+        );
+        // Display must mention cycle
+        assert!(err.to_string().contains("cycle"), "{err}");
+    }
+
+    #[test]
+    fn topo_order_unknown_dep_returns_error() {
+        let jobs = vec![dep_job("a", &["nonexistent"])];
+        let err = topo_order(&jobs).unwrap_err();
+        assert!(
+            matches!(&err, WaveError::UnknownDep { job, dep } if job == "a" && dep == "nonexistent"),
+            "expected UnknownDep{{job=a, dep=nonexistent}}, got: {err}"
+        );
+        assert!(err.to_string().contains("nonexistent"), "{err}");
+    }
+
+    #[test]
+    fn ready_jobs_independent_job_is_ready() {
+        let jobs = vec![dep_job("solo", &[])];
+        let completed: HashSet<String> = HashSet::new();
+        let last_run: HashMap<String, DateTime<Utc>> = HashMap::new();
+        let now = Utc::now();
+        let ready = ready_jobs(&jobs, &completed, now, &last_run, Duration::hours(4));
+        assert_eq!(ready, vec!["solo".to_string()]);
+    }
+
+    #[test]
+    fn ready_jobs_dep_completed_fresh_is_ready() {
+        let jobs = vec![dep_job("b", &["a"]), dep_job("a", &[])];
+        let mut completed: HashSet<String> = HashSet::new();
+        completed.insert("a".to_string());
+        let now = Utc::now();
+        // a completed 1 hour ago — well within 4h freshness
+        let mut last_run: HashMap<String, DateTime<Utc>> = HashMap::new();
+        last_run.insert("a".to_string(), now - Duration::hours(1));
+        let ready = ready_jobs(&jobs, &completed, now, &last_run, Duration::hours(4));
+        assert!(ready.contains(&"b".to_string()), "b should be ready; got {ready:?}");
+    }
+
+    #[test]
+    fn ready_jobs_dep_stale_is_not_ready() {
+        let jobs = vec![dep_job("b", &["a"])];
+        let mut completed: HashSet<String> = HashSet::new();
+        completed.insert("a".to_string());
+        let now = Utc::now();
+        // a completed 5 hours ago — outside 4h freshness window
+        let mut last_run: HashMap<String, DateTime<Utc>> = HashMap::new();
+        last_run.insert("a".to_string(), now - Duration::hours(5));
+        let ready = ready_jobs(&jobs, &completed, now, &last_run, Duration::hours(4));
+        assert!(!ready.contains(&"b".to_string()), "b must not be ready with stale dep; got {ready:?}");
+    }
+
+    #[test]
+    fn ready_jobs_incomplete_dep_is_not_ready() {
+        let jobs = vec![dep_job("b", &["a"])];
+        // a has NOT run — completed set is empty
+        let completed: HashSet<String> = HashSet::new();
+        let last_run: HashMap<String, DateTime<Utc>> = HashMap::new();
+        let now = Utc::now();
+        let ready = ready_jobs(&jobs, &completed, now, &last_run, Duration::hours(4));
+        assert!(!ready.contains(&"b".to_string()), "b must not be ready when a is incomplete");
     }
 }

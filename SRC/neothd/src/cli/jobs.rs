@@ -333,6 +333,7 @@ mod tests {
             prompt: prompt.into(),
             timeout_seconds: 600,
             delivery: None,
+            depends_on: vec![],
         }
     }
 
