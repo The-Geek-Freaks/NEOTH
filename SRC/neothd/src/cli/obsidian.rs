@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
-use crate::cli::obsidian_sync_util::{DirMtimeCache, WriteCoalescer};
+use crate::cli::obsidian_sync_util::{detect_sync_conflicts, DirMtimeCache, WriteCoalescer};
 use crate::cli::OutputFormat;
 use crate::memory::archive;
 
@@ -508,6 +508,21 @@ pub async fn sync_archive(
             subdir.display()
         )
     })?;
+
+    // neoth(IGNIS-04): detect cloud-sync conflict files before writing.
+    // Warn (do not block) so the operator can resolve collisions at their
+    // own pace while NEOTH continues to sync.
+    {
+        let conflict_report = detect_sync_conflicts(vault);
+        if let Some(msg) = conflict_report.describe() {
+            tracing::warn!(
+                conflict_count = conflict_report.conflicts.len(),
+                "{}",
+                msg
+            );
+        }
+    }
+
     let sessions_root = archive_root.join("sessions");
     if !sessions_root.exists() {
         return Ok(SyncStats::default());

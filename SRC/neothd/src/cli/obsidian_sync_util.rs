@@ -1,6 +1,6 @@
-//! Obsidian vault-sync robustness helpers (GOLD-ADAPT-IGNIS-01/02/03).
+//! Obsidian vault-sync robustness helpers (GOLD-ADAPT-IGNIS-01/02/03/04).
 //!
-//! Three small, independently unit-testable primitives:
+//! Four small, independently unit-testable primitives:
 //!
 //! * [`WriteCoalescer`] — IGNIS-01: batch pending (path, bytes) writes, skip
 //!   files whose disk content is byte-identical to the pending bytes.
@@ -9,6 +9,9 @@
 //! * [`EchoGuard`] — IGNIS-03: ring-buffer guard that tracks recently-written
 //!   (path, content-hash) pairs so a future reverse-sync watcher can ignore
 //!   changes NEOTH itself produced (avoids feedback loops).
+//! * [`detect_sync_conflicts`] / [`SyncConflictReport`] — IGNIS-04: walk the
+//!   vault and detect cloud-sync conflict-marker files left by Syncthing,
+//!   Dropbox, iCloud, or similar.  Call before writing to the vault.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -229,6 +232,111 @@ impl EchoGuard {
 }
 
 // ---------------------------------------------------------------------------
+// IGNIS-04 — SyncConflictReport / detect_sync_conflicts
+// ---------------------------------------------------------------------------
+
+/// Aggregated result of a vault conflict-file scan.
+pub struct SyncConflictReport {
+    /// Paths of conflict-marker files found in the vault.
+    pub conflicts: Vec<PathBuf>,
+    /// Number of file-system entries examined (files + dirs).
+    pub scanned: usize,
+}
+
+impl SyncConflictReport {
+    /// Human-readable operator warning, or `None` when the vault is clean.
+    ///
+    /// Intended for `tracing::warn!` at the sync entry point.
+    pub fn describe(&self) -> Option<String> {
+        if self.conflicts.is_empty() {
+            return None;
+        }
+        let paths = self
+            .conflicts
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!(
+            "{} sync-conflict file(s) detected in the vault — resolve them before \
+             NEOTH writes, or its writes may collide: {}",
+            self.conflicts.len(),
+            paths,
+        ))
+    }
+}
+
+/// Returns `true` when `name` matches a well-known cloud-sync conflict pattern.
+///
+/// Patterns covered:
+/// - Syncthing:  `*.sync-conflict-*`                (e.g. `note.sync-conflict-20240101-ABC.md`)
+/// - Dropbox / iCloud: `* (conflicted copy *)*`     (e.g. `note (conflicted copy 2024-01-01).md`)
+///   Also matches variants without parentheses: `*conflicted copy*`
+/// - Generic:    `*.conflict.*`                      (e.g. `note.conflict.1.md`)
+fn is_conflict_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.contains(".sync-conflict-")
+        || lower.contains("conflicted copy")
+        || {
+            // `*.conflict.*` — must have a dot before AND after "conflict"
+            // to avoid matching file names that merely contain the word.
+            let mut it = lower.splitn(3, ".conflict.");
+            it.next().is_some() && it.next().map(|s| !s.is_empty()).unwrap_or(false)
+        }
+}
+
+/// Walk `vault_dir` and collect every file whose name matches a cloud-sync
+/// conflict pattern (Syncthing, Dropbox, iCloud, …).
+///
+/// Hidden directories (names starting with `.`) are skipped — `.obsidian/`
+/// and `.git/` store metadata that the sync clients may legitimately name with
+/// unusual characters and that the operator should not need to touch.
+///
+/// # Robustness
+/// - Unreadable directories are silently skipped (never panics).
+/// - If `vault_dir` does not exist, returns an empty report.
+/// - No allocation beyond the result `Vec`; the walk is done with a plain
+///   stack (`Vec<PathBuf>`) to avoid a `walkdir` dependency.
+pub fn detect_sync_conflicts(vault_dir: &Path) -> SyncConflictReport {
+    let mut conflicts = Vec::new();
+    let mut scanned = 0usize;
+
+    if !vault_dir.exists() {
+        return SyncConflictReport { conflicts, scanned };
+    }
+
+    // Iterative DFS to avoid stack overflow on deep vaults.
+    let mut stack = vec![vault_dir.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue, // unreadable — skip silently
+        };
+
+        for entry in rd.flatten() {
+            scanned += 1;
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+
+            // Skip hidden directories (`.obsidian`, `.git`, etc.).
+            if name_str.starts_with('.') {
+                continue;
+            }
+
+            match entry.file_type() {
+                Ok(ft) if ft.is_dir() => stack.push(path),
+                Ok(ft) if ft.is_file() && is_conflict_name(&name_str) => conflicts.push(path),
+                _ => {} // non-conflict files / symlinks / errors — ignore
+            }
+        }
+    }
+
+    SyncConflictReport { conflicts, scanned }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -428,6 +536,101 @@ mod tests {
         assert!(
             !guard.is_own_echo(&first_path, bytes),
             "oldest entry must be evicted when ring is full"
+        );
+    }
+
+    // ── IGNIS-04 detect_sync_conflicts ──────────────────────────────────────
+
+    #[test]
+    fn conflict_detector_finds_syncthing_and_dropbox_patterns() {
+        let dir = tempdir().unwrap();
+
+        // Syncthing conflict file.
+        std::fs::write(
+            dir.path().join("note.sync-conflict-20240101-ABCDEF.md"),
+            b"syncthing conflict",
+        )
+        .unwrap();
+
+        // Dropbox / iCloud "conflicted copy" variant.
+        std::fs::write(
+            dir.path().join("report (conflicted copy 2024-01-01).md"),
+            b"dropbox conflict",
+        )
+        .unwrap();
+
+        let report = detect_sync_conflicts(dir.path());
+        assert_eq!(
+            report.conflicts.len(),
+            2,
+            "both conflict files must be detected; got {:?}",
+            report.conflicts
+        );
+        assert!(report.scanned >= 2);
+        assert!(report.describe().is_some());
+        assert!(report.describe().unwrap().contains("2 sync-conflict"));
+    }
+
+    #[test]
+    fn conflict_detector_clean_vault_returns_empty() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("daily-note.md"), b"# 2024-01-01").unwrap();
+        std::fs::write(dir.path().join("todo.md"), b"- [ ] thing").unwrap();
+
+        let report = detect_sync_conflicts(dir.path());
+        assert!(report.conflicts.is_empty(), "clean vault must produce no conflicts");
+        assert!(report.describe().is_none());
+    }
+
+    #[test]
+    fn conflict_detector_skips_hidden_obsidian_dir() {
+        let dir = tempdir().unwrap();
+
+        // Conflict file hidden inside .obsidian — must be skipped.
+        let obsidian = dir.path().join(".obsidian");
+        std::fs::create_dir_all(&obsidian).unwrap();
+        std::fs::write(
+            obsidian.join("core-plugins.sync-conflict-20240101-XYZ.json"),
+            b"{}",
+        )
+        .unwrap();
+
+        // Clean note at the vault root — should not appear in conflicts.
+        std::fs::write(dir.path().join("note.md"), b"# note").unwrap();
+
+        let report = detect_sync_conflicts(dir.path());
+        assert!(
+            report.conflicts.is_empty(),
+            "conflict file inside .obsidian must be skipped; got {:?}",
+            report.conflicts
+        );
+    }
+
+    #[test]
+    fn conflict_detector_absent_vault_returns_empty() {
+        let report = detect_sync_conflicts(
+            std::path::Path::new("/nonexistent/vault/that/does/not/exist"),
+        );
+        assert!(report.conflicts.is_empty());
+        assert_eq!(report.scanned, 0);
+        assert!(report.describe().is_none());
+    }
+
+    #[test]
+    fn conflict_detector_generic_dot_conflict_dot_pattern() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("note.conflict.1.md"), b"generic conflict")
+            .unwrap();
+        // Plain name with "conflict" as a whole word but no surrounding dots — not a match.
+        std::fs::write(dir.path().join("conflict-log.md"), b"not a conflict file")
+            .unwrap();
+
+        let report = detect_sync_conflicts(dir.path());
+        assert_eq!(
+            report.conflicts.len(),
+            1,
+            "only the *.conflict.* pattern should match; got {:?}",
+            report.conflicts
         );
     }
 }
