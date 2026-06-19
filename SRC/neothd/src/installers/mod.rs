@@ -183,6 +183,19 @@ async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
     if let Some(hit) = crate::security::dep_health::typosquat_risk(package, "npm") {
         warn!(package, resembles = %hit.resembles, distance = hit.distance, "{}", hit.describe());
     }
+    // GOLD-ADAPT-SNYK-03b — npm registry metadata health check. Warns on
+    // deprecated or abandoned packages. Fails open (network error → proceed)
+    // so an offline install is never bricked by a registry hiccup.
+    {
+        let rh = crate::security::dep_health::check_registry_health(
+            package,
+            crate::time::now_unix_i64(),
+        )
+        .await;
+        if let Some(msg) = rh.describe() {
+            warn!(package, "{msg}");
+        }
+    }
     info!(package, cli_name, "running `npm install -g {package}`");
     let mut child = spawn_cli("npm", &["install", "-g", package])
         .with_context(|| format!("spawn npm install -g {package}"))?;
