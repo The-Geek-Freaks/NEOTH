@@ -59,18 +59,20 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 
 | Workstream | Total tasks | OPEN | DONE |
 |------------|-------------|------|------|
-| WS-A Security hardening | 35 | **0** | **35 ✅ COMPLETE** |
+| WS-A Security hardening | 35 | 0 | **35 ✅ COMPLETE** |
 | WS-B Honesty / truth-in-advertising | 26 | 0 | 26 |
-| WS-C Correctness / reliability | 36 | **0** | **36 ✅ COMPLETE** |
-| WS-D Feature wiring (unwired modules) | 16 | 2 | 14 |
-| WS-E Architecture debt | 23 | 5 | 18 |
-| WS-F Gold-TODO feature build-out | 23 | 15 | 8 |
-| WS-G Repo adoptions | 28 | 2 | 26 |
-| WS-H PROGRESS carry-forward | 19 | 9 | 10 |
-| **TOTAL** (WS-A…H) | **206** | **33** | **173** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 44 | 165 |
-| WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
-| WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills) | 242 | 131 | 111 |
+| WS-C Correctness / reliability | 36 | 0 | **36 ✅ COMPLETE** |
+| WS-D Feature wiring (unwired modules) | 16 | 0 | **16 ✅ COMPLETE** |
+| WS-E Architecture debt | 21 | 1 | 20 |
+| WS-F Gold-TODO feature build-out | 20 | 8 | 12 |
+| WS-G Repo adoptions | 27 | 2 | 25 |
+| WS-H PROGRESS carry-forward | 19 | 7 | 12 |
+| **TOTAL** (WS-A…H) | **200** | **18** | **182** |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 0¹ | 171 |
+| WS-HR Headroom token-compression port (native Rust) | 12 | 1 | 11 |
+| WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills) | 303 | 192 | 111 |
+
+_¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work._
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
 
