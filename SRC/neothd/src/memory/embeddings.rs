@@ -878,6 +878,71 @@ pub fn rebuild_snapshot_if_present(conn: &Connection, neoth_home: &Path) -> Resu
     Ok(Some(n))
 }
 
+// ── GOLD-ADAPT-MEMGRAPH-01: per-episode text embedding ───────────────────────
+
+/// Embed `text` for the episode identified by `event_id` and upsert the
+/// resulting vector into `idx_embedding` with `source_kind = "episode"` and
+/// `source_ref = event_id.to_string()`.
+///
+/// This is the wiring point for the Recall multi-tier vector lane described in
+/// `recall_lanes.rs`: once every RAW_TEXT episode has an embedding row, the
+/// vector lane can fuse by `event_id` alongside the FTS5 / BM25 lane.
+///
+/// # Contract
+/// - **Best-effort**: any embed failure is logged at `warn!` and the function
+///   returns `()`. Episode ingest is NEVER blocked or rolled back.
+/// - `conn` must already have `idx_embedding` in schema (guaranteed by
+///   `memory::store::open`).
+/// - The vector returned by `provider` is expected to be L2-normalised
+///   (invariant on `EmbedProvider`). If it isn't (degenerate case) we
+///   normalise in place before the upsert so the `debug_assert!` in
+///   `upsert` doesn't fire in debug builds.
+pub async fn embed_episode_text(
+    conn: &Connection,
+    event_id: i64,
+    text: &str,
+    embed_provider: &dyn crate::providers::embed::EmbedProvider,
+) {
+    use crate::providers::embed::{EmbedRequest, l2_normalize};
+
+    if text.is_empty() {
+        return;
+    }
+
+    let req = EmbedRequest::new(text);
+    let resp = match embed_provider.embed(req).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                event_id,
+                error = %e,
+                "embed_episode_text: provider failed; skipping vector lane"
+            );
+            return;
+        }
+    };
+
+    let mut vec = resp.vector;
+    if vec.is_empty() {
+        tracing::warn!(event_id, "embed_episode_text: provider returned empty vector");
+        return;
+    }
+
+    // Defensive normalise — the trait contract requires unit-length output,
+    // but a buggy impl could slip through in production. Normalising here
+    // prevents the debug_assert! in `upsert` from aborting in debug builds.
+    l2_normalize(&mut vec);
+
+    let source_ref = event_id.to_string();
+    if let Err(e) = upsert(conn, "episode", &source_ref, &resp.model, &vec) {
+        tracing::warn!(
+            event_id,
+            error = %e,
+            "embed_episode_text: upsert into idx_embedding failed"
+        );
+    }
+}
+
 fn floats_to_blob(v: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 4);
     for f in v {
@@ -916,6 +981,7 @@ fn unix_seconds_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::OptionalExtension;
 
     fn open_with_schema() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -1536,5 +1602,128 @@ mod tests {
             .expect("load must succeed after rebuild")
             .expect("snapshot must exist");
         assert_eq!(loaded.len(), 1);
+    }
+
+    // ── GOLD-ADAPT-MEMGRAPH-01: embed_episode_text tests ─────────────────
+
+    /// Stub that always returns a fixed unit vector so tests are deterministic
+    /// without a real inference backend.
+    struct FixedEmbed {
+        vector: Vec<f32>,
+    }
+
+    impl FixedEmbed {
+        fn new_unit_2d(x: f32, y: f32) -> Self {
+            let n = (x * x + y * y).sqrt();
+            Self { vector: vec![x / n, y / n] }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for FixedEmbed {
+        fn name(&self) -> &'static str { "fixed-test" }
+        fn default_dim(&self) -> usize { self.vector.len() }
+        async fn embed(
+            &self,
+            _req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            use std::time::Duration;
+            Ok(crate::providers::embed::EmbedResponse {
+                vector: self.vector.clone(),
+                model: "fixed-test".to_string(),
+                latency: Duration::ZERO,
+            })
+        }
+    }
+
+    /// Stub that always returns an error — tests best-effort skip.
+    struct FailEmbed;
+
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for FailEmbed {
+        fn name(&self) -> &'static str { "fail-test" }
+        fn default_dim(&self) -> usize { 2 }
+        async fn embed(
+            &self,
+            _req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            anyhow::bail!("injected embed failure")
+        }
+    }
+
+    /// With a working provider: ingest an episode → idx_embedding must have a
+    /// row keyed to that event_id.
+    #[tokio::test]
+    async fn embed_episode_text_inserts_row_for_event_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+
+        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        embed_episode_text(&conn, 42, "hello world", &provider).await;
+
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT source_kind, source_ref FROM idx_embedding WHERE source_ref = '42'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .unwrap();
+
+        let (kind, sref) = row.expect("row must exist after embed_episode_text");
+        assert_eq!(kind, "episode");
+        assert_eq!(sref, "42");
+    }
+
+    /// With a None/skip provider equivalent: calling embed_episode_text on empty
+    /// text must not insert any row (early return guard).
+    #[tokio::test]
+    async fn embed_episode_text_skips_empty_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+
+        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        embed_episode_text(&conn, 99, "", &provider).await;
+
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_embedding", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "empty text must produce no embedding row");
+    }
+
+    /// Provider failure must not block the caller — no row, no panic.
+    #[tokio::test]
+    async fn embed_episode_text_tolerates_provider_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+
+        let provider = FailEmbed;
+        // Must not panic or propagate an error.
+        embed_episode_text(&conn, 7, "some text", &provider).await;
+
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_embedding", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "failed embed must leave idx_embedding empty");
+    }
+
+    /// Second call for the same event_id must UPSERT (not duplicate).
+    #[tokio::test]
+    async fn embed_episode_text_upserts_not_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+
+        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        embed_episode_text(&conn, 5, "first call", &provider).await;
+        embed_episode_text(&conn, 5, "second call", &provider).await;
+
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_embedding WHERE source_ref = '5'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "repeated embed for same event_id must upsert, not insert two rows");
     }
 }

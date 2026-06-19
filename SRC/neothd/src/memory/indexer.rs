@@ -291,6 +291,13 @@ fn index_frame(
                      VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7, 2)",
                     params![event_id, event_type as i64, ts_ns, text, text_hash, importance, ts_ns],
                 )?;
+                // neoth: GOLD-ADAPT-MEMGRAPH-01 — after this tx commits, call
+                //   crate::memory::embeddings::embed_episode_text(conn, event_id, &text, provider)
+                // from an async context that has an Option<&dyn EmbedProvider>.
+                // index_frame is sync (inside a DB transaction) so async embed
+                // cannot happen here directly. The tail daemon and any caller
+                // with an embed provider should invoke embed_episode_text after
+                // replay_once returns.
             }
         }
         EVENT_TYPE_CHANNEL_INGRESS | EVENT_TYPE_CHANNEL_EGRESS => {
