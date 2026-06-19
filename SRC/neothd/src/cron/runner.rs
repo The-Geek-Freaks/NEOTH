@@ -153,6 +153,42 @@ pub async fn run_job(
         }
     };
 
+    // GOLD-ADAPT-JV-PRO-07 / JV-PRO-06 — surface output quality + failure cause.
+    if ok {
+        // Score the briefing's quality; a thin / filler-heavy proactive output is
+        // worse than none — make it visible so the operator can tune/regenerate.
+        let q = crate::cron::quality_gate::score_briefing(&output_text, 40);
+        if q.should_regenerate() {
+            warn!(
+                job_id = %job.id,
+                score = q.score,
+                words = q.word_count,
+                filler_ratio = q.filler_ratio,
+                "JV-PRO-07: low-quality briefing output — consider regenerating"
+            );
+        }
+    } else {
+        // Classify the failure + emit a retrospective with a recommendation,
+        // instead of a bare error string the operator has to interpret.
+        let exit_kind = if err_text.as_deref().is_some_and(|e| e.contains("timeout")) {
+            "timeout"
+        } else {
+            "error"
+        };
+        let retro = crate::cron::error_retrospective::build_retrospective(
+            err_text.as_deref().unwrap_or(""),
+            exit_kind,
+            1,
+        );
+        warn!(
+            job_id = %job.id,
+            cause = retro.cause.as_str(),
+            risk = retro.risk_score,
+            recommendation = %retro.recommendation,
+            "JV-PRO-06: job failed — retrospective"
+        );
+    }
+
     // ── WAL: SUCCESS / FAILED ──────────────────────────────────────────────
     let outcome_payload = serde_json::to_vec(&json!({
         "job_id": job.id,
