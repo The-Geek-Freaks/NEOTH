@@ -15,6 +15,19 @@
 //!
 //! Adapted from the A-Mem / MemPalace `hebbianLinks` pattern; mirrors the
 //! `memory/entities.rs` SQL idioms (rusqlite + `ON CONFLICT DO UPDATE`).
+//!
+//! ## GOLD-ADAPT-JV-MEM-08 — Hebbian feedback on edges
+//!
+//! Two counters on each `idx_memory_links` row — `feedback_success` and
+//! `feedback_failure` (v20, already in schema) — track how often a co-access
+//! pair led to a *useful* recall outcome versus a bad one.
+//!
+//! Call [`record_link_feedback`] when a recall outcome is known (success = the
+//! pair was useful, failure = the pair was noise). The adjusted weight used for
+//! ranking is computed by [`link_effective_weight`] — positive feedback boosts
+//! the raw co-access weight, negative feedback dampens it.  The 1-hop
+//! neighbourhood query ([`associated`]) applies this adjustment so associations
+//! that repeatedly proved useful surface above ones that never did.
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
@@ -91,28 +104,49 @@ pub fn reinforce_co_access(conn: &Connection, event_ids: &[i64], now_unix: i64) 
 }
 
 /// The 1-hop association neighbourhood of `event_id`: the other endpoint of each
-/// link touching it, ordered by weight DESC, capped at `limit`. A
-/// **dangling-endpoint guard** skips any partner id that no longer exists in a
-/// live tier (`idx_episode` hot or `idx_longterm` cold) — defence-in-depth
-/// against a missed forget cascade so a forgotten memory never resurfaces here.
+/// link touching it, ordered by **feedback-adjusted effective weight** DESC,
+/// capped at `limit`. A **dangling-endpoint guard** skips any partner id that no
+/// longer exists in a live tier (`idx_episode` hot or `idx_longterm` cold) —
+/// defence-in-depth against a missed forget cascade so a forgotten memory never
+/// resurfaces here.
+///
+/// The effective weight is computed via [`link_effective_weight`] using the
+/// `feedback_success` / `feedback_failure` counters on each edge row
+/// (GOLD-ADAPT-JV-MEM-08). A co-access pair that repeatedly proved useful to the
+/// operator ranks above one that never received positive feedback.
 pub fn associated(conn: &Connection, event_id: i64, limit: usize) -> Result<Vec<(i64, f64)>> {
     let mut stmt = conn
         .prepare(
-            "SELECT other_id, weight FROM ( \
-                SELECT CASE WHEN lo_id = ?1 THEN hi_id ELSE lo_id END AS other_id, weight \
+            "SELECT other_id, weight, feedback_success, feedback_failure FROM ( \
+                SELECT CASE WHEN lo_id = ?1 THEN hi_id ELSE lo_id END AS other_id, \
+                       weight, feedback_success, feedback_failure \
                 FROM idx_memory_links WHERE lo_id = ?1 OR hi_id = ?1 \
              ) \
              WHERE EXISTS (SELECT 1 FROM idx_episode WHERE event_id = other_id) \
-                OR EXISTS (SELECT 1 FROM idx_longterm WHERE event_id = other_id) \
-             ORDER BY weight DESC LIMIT ?2",
+                OR EXISTS (SELECT 1 FROM idx_longterm WHERE event_id = other_id)",
         )
         .context("prepare associated query")?;
-    let rows = stmt
-        .query_map(params![event_id, limit as i64], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+    // Collect all live neighbours, apply feedback-adjusted weight, then sort+cap.
+    let mut rows: Vec<(i64, f64)> = stmt
+        .query_map(params![event_id], |r| {
+            let other_id: i64 = r.get(0)?;
+            let raw_weight: f64 = r.get(1)?;
+            let success: i64 = r.get(2)?;
+            let failure: i64 = r.get(3)?;
+            let eff = link_effective_weight(
+                raw_weight,
+                success.max(0) as u32,
+                failure.max(0) as u32,
+            );
+            Ok((other_id, eff))
         })
-        .context("run associated query")?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+        .context("run associated query")?
+        .filter_map(|r| r.ok())
+        .collect();
+    // Sort by effective weight DESC (stable within ties by id for determinism).
+    rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    rows.truncate(limit);
+    Ok(rows)
 }
 
 /// Decay every link weight by `factor` (multiplicative) then prune links that
@@ -167,6 +201,64 @@ pub fn forget_links_for_event(conn: &Connection, event_id: i64) -> Result<i64> {
         )
         .context("forget links for event")? as i64;
     Ok(n)
+}
+
+// ── GOLD-ADAPT-JV-MEM-08 — Hebbian feedback on edges ────────────────────────
+
+/// Compute the feedback-adjusted effective weight for a link.
+///
+/// Formula:
+/// ```text
+/// effective = weight * (1 + (success − failure) / (success + failure + 1))
+/// ```
+/// The correction term is in `(−1, +1)` exclusive:
+/// - All successes → correction near `+1.0` → weight roughly doubled.
+/// - All failures  → correction near `−1.0` → weight approaches zero.
+/// - Balanced / no feedback (success == failure == 0) → correction 0.0 →
+///   weight unchanged.
+///
+/// The result is floored at `0.0` so a heavily-penalised link never goes
+/// negative (it decays toward the prune floor via the normal decay cadence
+/// instead of being silently zeroed here).
+///
+/// This is a **pure** function — no DB access. Call it in row-mappers where
+/// both counters are available.
+pub fn link_effective_weight(weight: f64, success: u32, failure: u32) -> f64 {
+    let correction = (success as f64 - failure as f64) / (success + failure + 1) as f64;
+    (weight * (1.0 + correction)).max(0.0)
+}
+
+/// GOLD-ADAPT-JV-MEM-08 — record operator/signal feedback for the link between
+/// `a_id` and `b_id`.
+///
+/// Canonicalises the pair (`lo < hi`) and increments either `feedback_success`
+/// or `feedback_failure` on the existing row. Returns `true` if the row existed
+/// and was updated, `false` if no such link exists (a link is **never** created
+/// from feedback alone — `reinforce_co_access` owns link creation).
+///
+/// Safe to call multiple times for the same pair; each call adds 1 to the
+/// relevant counter (idempotent-safe in the sense that it never corrupts, but
+/// repeated calls do accumulate — callers must not double-fire per event).
+pub fn record_link_feedback(
+    conn: &Connection,
+    a_id: i64,
+    b_id: i64,
+    success: bool,
+) -> rusqlite::Result<bool> {
+    let (lo, hi) = if a_id < b_id { (a_id, b_id) } else { (b_id, a_id) };
+    let col = if success {
+        "feedback_success"
+    } else {
+        "feedback_failure"
+    };
+    // Build the SQL string with the column name interpolated (safe: col is a
+    // compile-time constant string, never user input).
+    let sql = format!(
+        "UPDATE idx_memory_links SET {col} = {col} + 1 \
+         WHERE lo_id = ?1 AND hi_id = ?2"
+    );
+    let rows_changed = conn.execute(&sql, rusqlite::params![lo, hi])?;
+    Ok(rows_changed > 0)
 }
 
 /// Accumulate all unordered canonical (lo<hi) pairs of one window's episode ids
@@ -846,5 +938,187 @@ mod tests {
         let (_d, c) = conn();
         let communities = detect_communities(&c).unwrap();
         assert!(communities.is_empty(), "no links → no communities");
+    }
+
+    // ── GOLD-ADAPT-JV-MEM-08: Hebbian feedback on edges ─────────────────
+
+    /// `link_effective_weight` — pure formula tests.
+    #[test]
+    fn link_effective_weight_pure_formula() {
+        // Equal feedback (or no feedback) → correction 0 → unchanged.
+        let base = 2.0f64;
+        let eff_none = link_effective_weight(base, 0, 0);
+        assert!(
+            (eff_none - base).abs() < 1e-9,
+            "no feedback → weight unchanged: {eff_none}"
+        );
+        let eff_balanced = link_effective_weight(base, 5, 5);
+        // correction = 0/11 = 0 → weight * 1.0 = base
+        assert!(
+            (eff_balanced - base).abs() < 1e-9,
+            "balanced → weight unchanged: {eff_balanced}"
+        );
+
+        // More successes → effective weight above raw.
+        let eff_success = link_effective_weight(base, 3, 0);
+        assert!(
+            eff_success > base,
+            "success>failure → effective above base: {eff_success}"
+        );
+
+        // More failures → effective weight below raw.
+        let eff_failure = link_effective_weight(base, 0, 3);
+        assert!(
+            eff_failure < base,
+            "failure>success → effective below base: {eff_failure}"
+        );
+
+        // Never negative regardless of extreme failure counts.
+        let eff_extreme = link_effective_weight(1.0, 0, 1_000_000);
+        assert!(
+            eff_extreme >= 0.0,
+            "floored at zero: {eff_extreme}"
+        );
+
+        // All-success approaches weight * 2 as counts grow large.
+        let eff_big_success = link_effective_weight(1.0, 10_000, 0);
+        assert!(
+            eff_big_success > 1.9,
+            "large success count → near 2×: {eff_big_success}"
+        );
+    }
+
+    /// `record_link_feedback` — bumps `feedback_success` on an existing link.
+    #[test]
+    fn record_link_feedback_increments_success_counter() {
+        let (_d, c) = conn();
+        reinforce_co_access(&c, &[1, 2], 1).unwrap(); // creates (1,2)
+
+        let updated = record_link_feedback(&c, 1, 2, true).unwrap();
+        assert!(updated, "existing link → returns true");
+
+        let success: i64 = c
+            .query_row(
+                "SELECT feedback_success FROM idx_memory_links WHERE lo_id = 1 AND hi_id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(success, 1, "feedback_success bumped to 1");
+
+        let failure: i64 = c
+            .query_row(
+                "SELECT feedback_failure FROM idx_memory_links WHERE lo_id = 1 AND hi_id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(failure, 0, "feedback_failure untouched");
+    }
+
+    /// `record_link_feedback` — bumps `feedback_failure` on an existing link.
+    #[test]
+    fn record_link_feedback_increments_failure_counter() {
+        let (_d, c) = conn();
+        reinforce_co_access(&c, &[3, 4], 1).unwrap(); // creates (3,4)
+
+        let updated = record_link_feedback(&c, 4, 3, false).unwrap(); // reversed order → canonical
+        assert!(updated, "existing link (reversed input) → returns true");
+
+        let failure: i64 = c
+            .query_row(
+                "SELECT feedback_failure FROM idx_memory_links WHERE lo_id = 3 AND hi_id = 4",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(failure, 1, "feedback_failure bumped to 1");
+    }
+
+    /// `record_link_feedback` — returns false and creates NO row for unknown pair.
+    #[test]
+    fn record_link_feedback_returns_false_for_absent_link() {
+        let (_d, c) = conn();
+        // No links created at all.
+        let updated = record_link_feedback(&c, 10, 20, true).unwrap();
+        assert!(!updated, "absent link → false returned");
+
+        let count: i64 = c
+            .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "no row created from feedback alone");
+    }
+
+    /// `record_link_feedback` — multiple calls accumulate independently on each counter.
+    #[test]
+    fn record_link_feedback_accumulates_on_repeat_calls() {
+        let (_d, c) = conn();
+        reinforce_co_access(&c, &[5, 6], 1).unwrap();
+
+        record_link_feedback(&c, 5, 6, true).unwrap();
+        record_link_feedback(&c, 5, 6, true).unwrap();
+        record_link_feedback(&c, 5, 6, false).unwrap();
+
+        let (s, f): (i64, i64) = c
+            .query_row(
+                "SELECT feedback_success, feedback_failure \
+                 FROM idx_memory_links WHERE lo_id = 5 AND hi_id = 6",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(s, 2, "two success calls");
+        assert_eq!(f, 1, "one failure call");
+    }
+
+    /// `associated` with positive feedback ranks the boosted link above the plain one.
+    #[test]
+    fn associated_ranks_feedback_boosted_link_higher() {
+        let (_d, c) = conn();
+        for id in [1i64, 2, 3] {
+            seed_episode(&c, id);
+        }
+        // Create two links from node 1: (1,2) with weight 1.0 and (1,3) with weight 1.0.
+        reinforce_co_access(&c, &[1, 2], 1).unwrap();
+        reinforce_co_access(&c, &[1, 3], 2).unwrap();
+
+        // Give (1,2) positive feedback → effective weight boosted above raw 1.0.
+        // (1,3) stays at raw 1.0 effective (no feedback, correction = 0).
+        record_link_feedback(&c, 1, 2, true).unwrap();
+
+        let assoc = associated(&c, 1, 10).unwrap();
+        assert_eq!(assoc.len(), 2);
+        assert_eq!(assoc[0].0, 2, "node 2 (boosted by feedback) should rank first");
+        assert!(
+            assoc[0].1 > assoc[1].1,
+            "boosted eff weight {:.4} must exceed raw eff weight {:.4}",
+            assoc[0].1, assoc[1].1
+        );
+    }
+
+    /// `associated` with negative feedback ranks the penalised link below the plain one.
+    #[test]
+    fn associated_ranks_feedback_penalised_link_lower() {
+        let (_d, c) = conn();
+        for id in [1i64, 2, 3] {
+            seed_episode(&c, id);
+        }
+        reinforce_co_access(&c, &[1, 2], 1).unwrap();
+        reinforce_co_access(&c, &[1, 3], 2).unwrap();
+
+        // Give (1,2) negative feedback → effective weight drops below raw 1.0.
+        record_link_feedback(&c, 1, 2, false).unwrap();
+
+        let assoc = associated(&c, 1, 10).unwrap();
+        assert_eq!(assoc.len(), 2);
+        assert_eq!(
+            assoc[0].0, 3,
+            "node 3 (no feedback, higher eff weight) must rank first"
+        );
+        assert!(
+            assoc[0].1 > assoc[1].1,
+            "plain eff weight {:.4} must exceed penalised eff weight {:.4}",
+            assoc[0].1, assoc[1].1
+        );
     }
 }
