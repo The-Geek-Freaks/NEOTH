@@ -216,6 +216,50 @@ impl CallGraph {
         graph
     }
 
+    /// Reconstruct a graph directly from persisted [`CodeEdge`]s (the
+    /// `code_map_edges` table) instead of re-walking source. Rebuilds the
+    /// caller (`by_callee`) + callee (`by_source`) adjacency the BFS queries
+    /// use; `defs_by_name` stays empty (the callers/callees surface doesn't
+    /// need symbol-definition locations). This is what lets the
+    /// `codegraph_callers` / `codegraph_callees` MCP tools answer from the
+    /// operator's stored `~/.neoth/code_map.db` with zero source re-scan.
+    pub fn from_edges(edges: Vec<CodeEdge>) -> Self {
+        let mut graph = Self::default();
+        let mut seen_defs: BTreeSet<(String, String)> = BTreeSet::new();
+        for edge in edges {
+            let idx = graph.edges.len();
+            graph
+                .by_callee
+                .entry(edge.to_name.clone())
+                .or_default()
+                .push(idx);
+            graph
+                .by_source
+                .entry((edge.from_file.clone(), edge.from_symbol.clone()))
+                .or_default()
+                .push(idx);
+            // Every edge SOURCE is a defined, callable symbol — record it so
+            // `callees_of` can resolve which file to recurse into for
+            // transitive callees. Pure leaves have no outgoing edges, so they
+            // need no def (we never recurse into them). `kind`/`line` are not
+            // recoverable from the edge table; `Function`/`0` are placeholders
+            // the callers/callees surface never reads.
+            if seen_defs.insert((edge.from_symbol.clone(), edge.from_file.clone())) {
+                graph
+                    .defs_by_name
+                    .entry(edge.from_symbol.clone())
+                    .or_default()
+                    .push(SymbolDef {
+                        file_path: edge.from_file.clone(),
+                        kind: SymbolKind::Function,
+                        line: 0,
+                    });
+            }
+            graph.edges.push(edge);
+        }
+        graph
+    }
+
     pub fn edges(&self) -> &[CodeEdge] {
         &self.edges
     }

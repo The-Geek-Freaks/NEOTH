@@ -29,10 +29,12 @@
 //! - `codegraph_callers` — transitive callers of a symbol (inverse BFS)
 //! - `codegraph_callees` — transitive callees of a symbol (forward BFS)
 //!
-//! Each is a pure read against the in-memory [`CallGraph`] built from
-//! source files, or (for relevant_files) against `~/.neoth/code_map.db`.
-//! No mutations, no provider calls, no network. Safe to expose to any
-//! MCP client the operator's autonomy level allows.
+//! Each is a pure read against the operator's persisted code map
+//! (`~/.neoth/code_map.db`): relevant_files ranks stored file rows;
+//! callers/callees reconstruct the [`CallGraph`] from the stored
+//! `code_map_edges` table (no source rescan). No mutations, no provider
+//! calls, no network. Safe to expose to any MCP client the operator's
+//! autonomy level allows.
 
 use std::path::Path;
 
@@ -213,8 +215,8 @@ pub fn dispatch_codegraph_tool(
         "codegraph_extract_identifiers" => tool_extract_identifiers(args),
         "codegraph_path_keywords" => tool_path_keywords(args),
         "codegraph_relevant_files" => tool_relevant_files(db_path, args),
-        "codegraph_callers" => tool_callers(args),
-        "codegraph_callees" => tool_callees(args),
+        "codegraph_callers" => tool_callers(db_path, args),
+        "codegraph_callees" => tool_callees(db_path, args),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
             TOOL_NAMES.join(", "),
@@ -313,26 +315,44 @@ fn default_bfs_depth() -> u32 {
     5
 }
 
-fn tool_callers(args: &serde_json::Value) -> ToolCallResult {
+/// Load the call graph from the operator's persisted code-map DB. A
+/// missing DB yields an EMPTY graph (the operator hasn't built a code map
+/// yet → callers/callees return `[]`, never a hard error — same posture
+/// as `relevant_files`). Reconstructs the graph from the stored
+/// `code_map_edges` table via [`CallGraph::from_edges`] — no source rescan.
+fn graph_from_db(db_path: &Path) -> Result<crate::code_map::graph::CallGraph> {
+    if !db_path.exists() {
+        return Ok(crate::code_map::graph::CallGraph::default());
+    }
+    let conn = crate::code_map::persist::open(db_path)
+        .with_context(|| format!("open {}", db_path.display()))?;
+    let edges = crate::code_map::persist::load_all_edges(&conn)?;
+    Ok(crate::code_map::graph::CallGraph::from_edges(edges))
+}
+
+fn tool_callers(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
     let parsed: CallersArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
     let depth = parsed.depth.clamp(1, 20) as usize;
-    // Empty graph — the dispatch surface returns [] until the follow-up
-    // slice wires in the persisted code-map loader. The BFS logic itself
-    // is fully exercised via callers_inner / callees_inner in tests.
-    let graph = crate::code_map::graph::CallGraph::build(&[]);
+    let graph = match graph_from_db(db_path) {
+        Ok(g) => g,
+        Err(e) => return error_result(format!("codegraph_callers failed: {e:#}")),
+    };
     text_result(callers_inner(&graph, &parsed.symbol, depth))
 }
 
-fn tool_callees(args: &serde_json::Value) -> ToolCallResult {
+fn tool_callees(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
     let parsed: CalleesArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
     let depth = parsed.depth.clamp(1, 20) as usize;
-    let graph = crate::code_map::graph::CallGraph::build(&[]);
+    let graph = match graph_from_db(db_path) {
+        Ok(g) => g,
+        Err(e) => return error_result(format!("codegraph_callees failed: {e:#}")),
+    };
     text_result(callees_inner(&graph, &parsed.file, &parsed.symbol, depth))
 }
 
@@ -714,5 +734,64 @@ fn root() { alpha(); beta(); }
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["name"], "alpha");
         assert_eq!(rows[1]["name"], "beta");
+    }
+
+    /// Seed a real `code_map.db` (root row + persisted edges) for the
+    /// dispatch wiring tests below.
+    fn seed_code_map_db(db: &Path) {
+        let mut conn = crate::code_map::persist::open(db).unwrap();
+        // Edges FK into code_map_roots — seed the root row first.
+        conn.execute(
+            "INSERT INTO code_map_roots \
+             (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped) \
+             VALUES ('x.rs', 0, 1, 0, 3, 0)",
+            [],
+        )
+        .unwrap();
+        let g = graph_from_rust(
+            "x.rs",
+            "fn leaf() {}\nfn middle() { leaf(); }\nfn root() { middle(); }\n",
+        );
+        crate::code_map::persist::persist_edges(&mut conn, "x.rs", g.edges()).unwrap();
+    }
+
+    #[test]
+    fn dispatch_codegraph_callers_reads_persisted_edges() {
+        // The wiring this slice closes: with a real code_map.db that has
+        // stored edges, the dispatch surface returns the ACTUAL transitive
+        // callers — not `[]` (the empty-graph stub the follow-up replaced).
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        seed_code_map_db(&db);
+        let r = dispatch_codegraph_tool(
+            &db,
+            "codegraph_callers",
+            &serde_json::json!({"symbol": "leaf"}),
+        );
+        assert!(!r.is_error, "got: {}", text_content(&r));
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
+        let syms: Vec<&str> = rows
+            .iter()
+            .map(|x| x["symbol"].as_str().unwrap())
+            .collect();
+        assert!(syms.contains(&"middle"), "wiring broken — got: {syms:?}");
+        assert!(syms.contains(&"root"), "wiring broken — got: {syms:?}");
+    }
+
+    #[test]
+    fn dispatch_codegraph_callees_reads_persisted_edges() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        seed_code_map_db(&db);
+        let r = dispatch_codegraph_tool(
+            &db,
+            "codegraph_callees",
+            &serde_json::json!({"symbol": "root", "file": "x.rs"}),
+        );
+        assert!(!r.is_error, "got: {}", text_content(&r));
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
+        let names: Vec<&str> = rows.iter().map(|x| x["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"middle"), "wiring broken — got: {names:?}");
+        assert!(names.contains(&"leaf"), "wiring broken — got: {names:?}");
     }
 }

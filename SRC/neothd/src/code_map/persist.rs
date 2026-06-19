@@ -405,6 +405,42 @@ pub fn load_edges(conn: &Connection, root: &str) -> Result<Vec<crate::code_map::
     Ok(out)
 }
 
+/// Load EVERY stored edge across all roots. The `codegraph_callers` /
+/// `codegraph_callees` MCP tools query by symbol name globally (a symbol
+/// can be called across roots), so they need the whole edge set rather
+/// than one root's slice. Deterministic order for stable BFS output.
+pub fn load_all_edges(conn: &Connection) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \
+             ORDER BY from_file, from_symbol, to_name",
+        )
+        .context("prepare load_all_edges stmt")?;
+    let mut out = Vec::new();
+    let rows = stmt
+        .query_map([], |row| {
+            let from_file: String = row.get(0)?;
+            let from_symbol: String = row.get(1)?;
+            let to_name: String = row.get(2)?;
+            let kind_str: String = row.get(3)?;
+            let kind = match kind_str.as_str() {
+                "references" => crate::code_map::graph::EdgeKind::References,
+                _ => crate::code_map::graph::EdgeKind::Calls,
+            };
+            Ok(crate::code_map::graph::CodeEdge {
+                from_file,
+                from_symbol,
+                to_name,
+                kind,
+            })
+        })
+        .context("query all edges")?;
+    for r in rows {
+        out.push(r.context("read edge row")?);
+    }
+    Ok(out)
+}
+
 /// Tuple shape returned by the `code_map_roots` row query. Named so
 /// clippy's type-complexity lint doesn't trip on the 7-arity raw
 /// tuple, and so a future migration can rename the columns without
