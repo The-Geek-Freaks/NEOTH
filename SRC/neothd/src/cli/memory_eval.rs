@@ -52,6 +52,11 @@ pub async fn run_memory_eval_cmd(args: MemoryEvalArgs) -> Result<()> {
             report.contradictions_expected,
             report.contradiction_detection_rate * 100.0
         );
+        println!(
+            "  hebbian correlation ({} pairs)  : {:.1}%",
+            report.hebbian_pairs_compared,
+            report.hebbian_correlation * 100.0
+        );
         println!();
         if report.recall_precision >= 0.8 {
             println!("  PASS — recall precision ≥ 80 %");
@@ -66,6 +71,12 @@ pub async fn run_memory_eval_cmd(args: MemoryEvalArgs) -> Result<()> {
                 "  WARN — contradiction detection rate {:.1}% < 100 % ({} missed)",
                 report.contradiction_detection_rate * 100.0,
                 report.contradictions_expected - report.contradictions_caught,
+            );
+        }
+        if report.hebbian_correlation < 1.0 && report.hebbian_pairs_compared > 0 {
+            println!(
+                "  WARN — hebbian correlation {:.1}% < 100 % (association graph weight ordering diverges from co-access frequency)",
+                report.hebbian_correlation * 100.0,
             );
         }
         println!();
