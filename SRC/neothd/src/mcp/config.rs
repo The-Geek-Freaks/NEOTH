@@ -274,6 +274,140 @@ pub fn cbm_recommended_config() -> McpServerConfig {
     }
 }
 
+/// Returns the hardened, opt-in `McpServerConfig` for **hex-graph-mcp** — a
+/// semantic code-graph MCP server that builds a tree-sitter AST index stored
+/// in SQLite and exposes read-only query tools (symbol lookup, reference
+/// tracing, dataflow, architecture analysis).
+///
+/// Security defaults:
+/// - `enabled: false`      — operator must opt in explicitly after verifying
+///   the npx package resolves to the expected bundle.
+/// - `trust_all_tools: false` — only the tools in `allow_tools` are reachable.
+/// - `allow_tools`         — READ-ONLY query surface only; no indexing/write
+///   tools are included (operator adds those by hand if needed).
+/// - `smart_approve: false` — no name-pattern exemption.
+///
+/// Binary invocation: `npx -y <pkg>` — npx auto-fetches the package on first
+/// use; no separate install step required.
+// neoth: verify the exact npm package name/launch arg before shipping —
+// @levnikolaevich/hex-graph-mcp (from GOLD-ADAPT-CCS-01; not deep-verified).
+pub fn hex_graph_recommended_config() -> McpServerConfig {
+    McpServerConfig {
+        id: "hex-graph".into(),
+        description: Some(
+            "hex-graph-mcp: tree-sitter AST + SQLite semantic code-graph (read-only rail). \
+             Launched via npx; set enabled: true after verifying the package."
+                .into(),
+        ),
+        command: "npx".into(),
+        // neoth: verify the exact npm package name/launch arg before shipping —
+        // @levnikolaevich/hex-graph-mcp (from GOLD-ADAPT-CCS-01; not deep-verified).
+        args: vec!["-y".into(), "@levnikolaevich/hex-graph-mcp".into()],
+        env: std::collections::HashMap::new(),
+        // Operator must explicitly enable after verifying the npx package.
+        enabled: false,
+        // 5 documented read-only query tools (v0 surface from CCS-01 GOLD plan).
+        // Indexing tools (e.g. `index_repository`) are intentionally absent;
+        // the operator adds them to allow_tools by hand if write access is needed.
+        allow_tools: Some(vec![
+            "find_symbols".into(),
+            "find_references".into(),
+            "trace_paths".into(),
+            "trace_dataflow".into(),
+            "analyze_architecture".into(),
+        ]),
+        // Secure-by-default: deny anything outside allow_tools.
+        trust_all_tools: false,
+        smart_approve: false,
+    }
+}
+
+/// Returns the hardened, opt-in `McpServerConfig` for **hex-line-mcp** — a
+/// hash-verified local file operations MCP server.  Exposes AST outline,
+/// semantic diff, and checksum verification tools.
+///
+/// Security defaults:
+/// - `enabled: false`      — operator must opt in explicitly.
+/// - `trust_all_tools: false` — only the tools in `allow_tools` are reachable.
+/// - `allow_tools`         — READ-ONLY tools only.  `bulk_replace` and any
+///   hash-verified EDIT tool are **deliberately excluded**; the operator must
+///   add them to the allowlist by hand to unlock writes.
+/// - `smart_approve: false` — no name-pattern exemption.
+///
+/// Binary invocation: `npx -y <pkg>` — npx auto-fetches on first use.
+// neoth: verify the exact npm package name/launch arg before shipping —
+// @levnikolaevich/hex-line-mcp (from GOLD-ADAPT-CCS-03; not deep-verified).
+pub fn hex_line_recommended_config() -> McpServerConfig {
+    McpServerConfig {
+        id: "hex-line".into(),
+        description: Some(
+            "hex-line-mcp: hash-verified local file ops (read-only rail). \
+             Write tools (bulk_replace, etc.) are excluded — add them manually \
+             if operator wants write access.  Set enabled: true to activate."
+                .into(),
+        ),
+        command: "npx".into(),
+        // neoth: verify the exact npm package name/launch arg before shipping —
+        // @levnikolaevich/hex-line-mcp (from GOLD-ADAPT-CCS-03; not deep-verified).
+        args: vec!["-y".into(), "@levnikolaevich/hex-line-mcp".into()],
+        env: std::collections::HashMap::new(),
+        enabled: false,
+        // 3 read-only tools: AST overview, semantic diff, checksum check.
+        // `bulk_replace` (write/destructive) is intentionally absent.
+        allow_tools: Some(vec![
+            "outline".into(),
+            "changes".into(),
+            "verify".into(),
+        ]),
+        trust_all_tools: false,
+        smart_approve: false,
+    }
+}
+
+/// Returns the hardened, opt-in `McpServerConfig` for **hex-research-mcp** — a
+/// PLAN-level research-hypothesis tracker that maintains its own SQLite database
+/// for hypotheses, lineage, and goal-alignment audits.
+///
+/// Security defaults:
+/// - `enabled: false`      — operator must opt in explicitly.
+/// - `trust_all_tools: false` — only the tools in `allow_tools` are reachable.
+/// - `allow_tools`         — query/read tools plus `index_hypotheses`
+///   (writes only the server's OWN research DB, not NEOTH code or operator
+///   files; included because it is required to bootstrap the hypothesis store
+///   before queries can return results).  Destructive tools, if any, are absent.
+/// - `smart_approve: false` — no name-pattern exemption.
+///
+/// Binary invocation: `npx -y <pkg>` — npx auto-fetches on first use.
+// neoth: verify the exact npm package name/launch arg before shipping —
+// @levnikolaevich/hex-research-mcp (from GOLD-ADAPT-CCS-05; not deep-verified).
+pub fn hex_research_recommended_config() -> McpServerConfig {
+    McpServerConfig {
+        id: "hex-research".into(),
+        description: Some(
+            "hex-research-mcp: PLAN-level research-hypothesis tracker (own SQLite). \
+             index_hypotheses bootstraps the store (writes only the server's own DB). \
+             Set enabled: true to activate."
+                .into(),
+        ),
+        command: "npx".into(),
+        // neoth: verify the exact npm package name/launch arg before shipping —
+        // @levnikolaevich/hex-research-mcp (from GOLD-ADAPT-CCS-05; not deep-verified).
+        args: vec!["-y".into(), "@levnikolaevich/hex-research-mcp".into()],
+        env: std::collections::HashMap::new(),
+        enabled: false,
+        // Read tools + index_hypotheses (needed to bootstrap the server's own DB;
+        // does NOT touch NEOTH code or operator files).
+        allow_tools: Some(vec![
+            "find_hypotheses".into(),
+            "trace_lineage".into(),
+            "audit_goal_alignment".into(),
+            "index_hypotheses".into(),
+        ]),
+        trust_all_tools: false,
+        smart_approve: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,5 +697,136 @@ servers:
         assert_eq!(cfg.id, "codebase-memory");
         assert_eq!(cfg.command, "codebase-memory-mcp");
         assert!(cfg.args.is_empty(), "no args for bare stdio server mode");
+    }
+
+    // --- GOLD-ADAPT-CCS-01: hex_graph_recommended_config tests ---
+
+    #[test]
+    fn hex_graph_config_id_and_command_are_stable() {
+        let cfg = hex_graph_recommended_config();
+        assert_eq!(cfg.id, "hex-graph");
+        assert_eq!(cfg.command, "npx");
+        assert!(
+            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-graph-mcp"),
+            "args must contain the hex-graph npm package name"
+        );
+    }
+
+    #[test]
+    fn hex_graph_config_allow_tools_contains_read_only_tools() {
+        let cfg = hex_graph_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert!(
+            tools.iter().any(|t| t == "find_symbols"),
+            "allow_tools must contain find_symbols"
+        );
+        assert!(
+            tools.iter().any(|t| t == "find_references"),
+            "allow_tools must contain find_references"
+        );
+        assert!(
+            tools.iter().any(|t| t == "trace_paths"),
+            "allow_tools must contain trace_paths"
+        );
+        assert!(
+            tools.iter().any(|t| t == "analyze_architecture"),
+            "allow_tools must contain analyze_architecture"
+        );
+    }
+
+    #[test]
+    fn hex_graph_config_is_secure_by_default() {
+        let cfg = hex_graph_recommended_config();
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+    }
+
+    // --- GOLD-ADAPT-CCS-03: hex_line_recommended_config tests ---
+
+    #[test]
+    fn hex_line_config_id_and_command_are_stable() {
+        let cfg = hex_line_recommended_config();
+        assert_eq!(cfg.id, "hex-line");
+        assert_eq!(cfg.command, "npx");
+        assert!(
+            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-line-mcp"),
+            "args must contain the hex-line npm package name"
+        );
+    }
+
+    #[test]
+    fn hex_line_config_allow_tools_contains_read_only_tools() {
+        let cfg = hex_line_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert!(
+            tools.iter().any(|t| t == "outline"),
+            "allow_tools must contain outline"
+        );
+        assert!(
+            tools.iter().any(|t| t == "changes"),
+            "allow_tools must contain changes"
+        );
+        assert!(
+            tools.iter().any(|t| t == "verify"),
+            "allow_tools must contain verify"
+        );
+    }
+
+    #[test]
+    fn hex_line_config_excludes_write_tools() {
+        let cfg = hex_line_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert!(
+            !tools.iter().any(|t| t == "bulk_replace"),
+            "allow_tools must NOT contain bulk_replace (write/destructive tool)"
+        );
+    }
+
+    #[test]
+    fn hex_line_config_is_secure_by_default() {
+        let cfg = hex_line_recommended_config();
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+    }
+
+    // --- GOLD-ADAPT-CCS-05: hex_research_recommended_config tests ---
+
+    #[test]
+    fn hex_research_config_id_and_command_are_stable() {
+        let cfg = hex_research_recommended_config();
+        assert_eq!(cfg.id, "hex-research");
+        assert_eq!(cfg.command, "npx");
+        assert!(
+            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-research-mcp"),
+            "args must contain the hex-research npm package name"
+        );
+    }
+
+    #[test]
+    fn hex_research_config_allow_tools_contains_read_tools() {
+        let cfg = hex_research_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert!(
+            tools.iter().any(|t| t == "find_hypotheses"),
+            "allow_tools must contain find_hypotheses"
+        );
+        assert!(
+            tools.iter().any(|t| t == "trace_lineage"),
+            "allow_tools must contain trace_lineage"
+        );
+        assert!(
+            tools.iter().any(|t| t == "audit_goal_alignment"),
+            "allow_tools must contain audit_goal_alignment"
+        );
+    }
+
+    #[test]
+    fn hex_research_config_is_secure_by_default() {
+        let cfg = hex_research_recommended_config();
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
     }
 }
