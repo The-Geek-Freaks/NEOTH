@@ -246,6 +246,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "html_plan",
         include_str!("../../assets/skills/html_plan/skill.yaml"),
     ),
+    // GOLD-ADAPT-HCP-01 (2026-06-19) — IaC security-audit skill (default-disabled).
+    (
+        "iac_security_audit",
+        include_str!("../../assets/skills/iac_security_audit/skill.yaml"),
+    ),
     // GOLD-ADAPT-DESIGN-02 (2026-06-19) — bundled skill.
     (
         "impeccable",
@@ -736,11 +741,12 @@ mod tests {
             if id.starts_with("pm-") {
                 pm += 1;
                 assert!(!m.enabled, "pm-* skill `{id}` must ship disabled");
-            } else if *id == "github_pr_review" {
-                // GOLD-ADAPT-GITPR-03: the GitHub PR-review skill touches the
-                // network (tool_allowlist: [fetch]) so it ships DISABLED — the
-                // operator enables it explicitly. Documented non-pm exception.
-                assert!(!m.enabled, "github_pr_review must ship disabled (network)");
+            } else if *id == "github_pr_review" || *id == "iac_security_audit" {
+                // Documented non-pm DISABLED specialists: github_pr_review
+                // (GITPR-03) touches the network; iac_security_audit (HCP-01) is
+                // a niche IaC pentest checklist. Both ship off; operator enables
+                // explicitly with `neoth skill --enable <id>`.
+                assert!(!m.enabled, "specialist skill `{id}` must ship disabled");
             } else {
                 assert!(m.enabled, "non-pm bundled skill `{id}` must ship enabled");
             }

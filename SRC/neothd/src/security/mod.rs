@@ -8,6 +8,12 @@
 
 pub mod credential_redact;
 pub mod dangerous_command;
+/// GOLD-ADAPT-SNYK-03 — offline typosquatting heuristic for packages about to
+/// be installed. Checks the candidate name against a curated popular-package
+/// list using Levenshtein distance; surfaces a WARNING on a close match.
+/// Does NOT hard-block (heuristic only). Network follow-up (abandoned-package
+/// detection) is tracked as GOLD-ADAPT-SNYK-03b.
+pub mod dep_health;
 pub mod egress;
 pub mod email_sanitizer;
 pub mod email_threat;

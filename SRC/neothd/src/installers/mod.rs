@@ -178,6 +178,11 @@ async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
         package,
         crate::security::osv_check::check_package(package, "npm", None).await,
     )?;
+    // GOLD-ADAPT-SNYK-03 — typosquatting heuristic. Warn-only (heuristic; no
+    // hard block) so a legitimately-named-but-similar package is never bricked.
+    if let Some(hit) = crate::security::dep_health::typosquat_risk(package, "npm") {
+        warn!(package, resembles = %hit.resembles, distance = hit.distance, "{}", hit.describe());
+    }
     info!(package, cli_name, "running `npm install -g {package}`");
     let mut child = spawn_cli("npm", &["install", "-g", package])
         .with_context(|| format!("spawn npm install -g {package}"))?;
