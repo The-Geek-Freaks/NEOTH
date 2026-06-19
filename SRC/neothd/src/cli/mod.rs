@@ -31,6 +31,7 @@ pub mod cluster;
 pub mod code;
 pub mod code_intel;
 pub mod code_map;
+pub mod demo;
 pub mod device_profile;
 pub mod onboarding_status;
 pub mod completions;
@@ -874,6 +875,15 @@ pub enum Commands {
     #[command(name = "onboarding-status")]
     OnboardingStatus(onboarding_status::OnboardingStatusArgs),
 
+    /// Scripted end-to-end smoke test. Runs every safe, read-only NEOTH
+    /// surface in sequence (onboarding-status, device-profile, memory-eval,
+    /// code-intel, doctor, github-availability) and prints a pass/fail
+    /// summary. memory-eval is the only must-pass step; all others are
+    /// environment-tolerant.  No writes, no real PRs, no external network.
+    /// `neoth demo [--json]`
+    #[command(name = "demo")]
+    Demo(demo::DemoArgs),
+
     /// Council (smartest-wins) configuration + introspection (Pick #14,
     /// Session 14). `show` prints the active config block; `tune`
     /// atomically mutates it (`--selection-mode`, `--self-reflect`,
@@ -1429,6 +1439,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::OnboardingStatus(args) => {
             onboarding_status::run_onboarding_status(args).await?;
+        }
+        Commands::Demo(args) => {
+            demo::run_demo(args).await?;
         }
         Commands::Council(mut args) => {
             args.output = global_output;
