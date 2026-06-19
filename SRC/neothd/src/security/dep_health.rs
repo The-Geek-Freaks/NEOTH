@@ -1,4 +1,5 @@
 //! GOLD-ADAPT-SNYK-03 / GOLD-ADAPT-SNYK-03b — dependency-health heuristics gate.
+//! GOLD-ADAPT-SNYK-02 — manifest-change → scan-before-install gate.
 //!
 //! Provides a fast, offline typosquatting detector for packages about to be
 //! installed via `npm install -g`. The check runs BEFORE the install alongside
@@ -19,6 +20,20 @@
 //! install is never bricked. The pure `parse_registry_health` function is
 //! testable without any I/O.
 //!
+//! ## Manifest scan (GOLD-ADAPT-SNYK-02)
+//!
+//! `manifest_packages(path)` — pure — parses a `package.json`
+//! `dependencies` + `devDependencies` object into a package-name list.
+//! `scan_manifest(path, now)` — async — runs each package through all existing
+//! gates (OSV severity + typosquat + registry-health) and collects `DepFinding`s.
+//! This covers the AI-agent-driven `npm install` from a manifest path, which the
+//! per-package wizard gate misses.
+//!
+//! // neoth: wire `scan_manifest` to a `neoth deps scan <manifest>` CLI subcommand
+//! // and/or call it when a manifest-change is detected before a bulk install.
+//! // The building block is shipped here; the CLI dispatch lives in cli/deps.rs
+//! // (not yet wired — add `Deps(deps::DepsArgs)` to Commands enum + mod deps).
+//!
 //! ## Distance thresholds
 //!
 //! | name length | max edit distance |
@@ -33,6 +48,7 @@
 //! surface only when the name is long enough that two edits leave an
 //! unambiguous resemblance.
 
+use std::path::Path;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -102,6 +118,175 @@ impl TyposquatHit {
             self.suspect, self.resembles, self.distance
         )
     }
+}
+
+// ── Manifest scan types (GOLD-ADAPT-SNYK-02) ─────────────────────────────────
+
+/// A security finding for one package in a scanned manifest.
+///
+/// Collected by [`scan_manifest`] and surfaced to the caller for display /
+/// blocking decisions. The caller decides block vs. warn policy per kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DepFinding {
+    /// The package name from the manifest.
+    pub package: String,
+    /// What kind of problem was found.
+    pub kind: DepFindingKind,
+}
+
+/// Classification of a dependency finding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum DepFindingKind {
+    /// OSV reports one or more CVE/GHSA advisories. Contains the advisory IDs
+    /// and the max severity string (e.g. `"Critical"`).
+    Vulnerable {
+        advisory_ids: Vec<String>,
+        max_severity: String,
+    },
+    /// OSV reports a `MAL-*` advisory — this package is flagged as malware.
+    Malware { advisory_ids: Vec<String> },
+    /// The package name is suspicious — looks like a typosquat of a popular name.
+    PossibleTyposquat { resembles: String, distance: usize },
+    /// The package is deprecated or abandoned per the npm registry.
+    RegistryIssue { message: String },
+}
+
+impl DepFinding {
+    /// Single-line human-readable summary suitable for a log line or CLI output.
+    pub fn describe(&self) -> String {
+        match &self.kind {
+            DepFindingKind::Vulnerable {
+                advisory_ids,
+                max_severity,
+            } => format!(
+                "`{}` has {} advisory/ies ({}) — max severity: {}",
+                self.package,
+                advisory_ids.len(),
+                advisory_ids.join(", "),
+                max_severity
+            ),
+            DepFindingKind::Malware { advisory_ids } => format!(
+                "`{}` is flagged as MALWARE by OSV ({})",
+                self.package,
+                advisory_ids.join(", ")
+            ),
+            DepFindingKind::PossibleTyposquat { resembles, distance } => format!(
+                "`{}` looks like a typosquat of `{}` (edit distance {})",
+                self.package, resembles, distance
+            ),
+            DepFindingKind::RegistryIssue { message } => {
+                format!("`{}` registry issue: {}", self.package, message)
+            }
+        }
+    }
+}
+
+/// Parse a `package.json` manifest at `path` and return the list of package
+/// names from `dependencies` + `devDependencies`.
+///
+/// Pure — reads the file and parses JSON; no network. Returns an empty `Vec`
+/// on any I/O or parse error (fail-open posture: a malformed manifest must
+/// never break an install flow). Never panics.
+pub fn manifest_packages(manifest_path: &Path) -> Vec<String> {
+    let content = match std::fs::read_to_string(manifest_path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let doc: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut names = Vec::new();
+    for section in &["dependencies", "devDependencies"] {
+        if let Some(obj) = doc.get(section).and_then(|v| v.as_object()) {
+            for key in obj.keys() {
+                if !key.is_empty() {
+                    names.push(key.clone());
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Scan all packages declared in a manifest through the existing security gates.
+///
+/// For each package name produced by [`manifest_packages`], runs:
+/// 1. OSV advisory lookup (malware + CVE/GHSA severity) — async, fail-open.
+/// 2. Typosquat heuristic — pure, offline.
+/// 3. npm registry health (deprecated / abandoned) — async, fail-open.
+///
+/// Returns one [`DepFinding`] per problem found. A package with no issues
+/// contributes zero entries. Network errors are silently swallowed (fail-open).
+///
+/// `now_unix` — current wall-clock seconds (use `crate::time::now_unix_i64()`
+/// at the call site, or inject a fixed value in tests).
+///
+/// // neoth: call this before any bulk `npm install` triggered from a manifest
+/// // path, and from a future `neoth deps scan <manifest>` CLI subcommand.
+pub async fn scan_manifest(manifest_path: &Path, now_unix: i64) -> Vec<DepFinding> {
+    use crate::security::osv_check::{OsvVerdict, SeverityLevel};
+
+    let packages = manifest_packages(manifest_path);
+    let mut findings = Vec::new();
+
+    for pkg in &packages {
+        // 1. OSV advisory gate (async, fail-open).
+        let verdict = crate::security::osv_check::check_package(pkg, "npm", None).await;
+        match verdict {
+            OsvVerdict::Malicious { advisories } => {
+                findings.push(DepFinding {
+                    package: pkg.clone(),
+                    kind: DepFindingKind::Malware {
+                        advisory_ids: advisories,
+                    },
+                });
+            }
+            OsvVerdict::Vulnerable {
+                advisories,
+                max_severity,
+            } => {
+                let ids = advisories.into_iter().map(|(id, _)| id).collect();
+                let sev_label = format!("{max_severity:?}");
+                // Only surface if not None (no useful data).
+                if max_severity != SeverityLevel::None {
+                    findings.push(DepFinding {
+                        package: pkg.clone(),
+                        kind: DepFindingKind::Vulnerable {
+                            advisory_ids: ids,
+                            max_severity: sev_label,
+                        },
+                    });
+                }
+            }
+            OsvVerdict::Clean | OsvVerdict::Unknown { .. } => {
+                // Unknown → fail-open, no finding.
+            }
+        }
+
+        // 2. Typosquat heuristic (pure, offline).
+        if let Some(hit) = typosquat_risk(pkg, "npm") {
+            findings.push(DepFinding {
+                package: pkg.clone(),
+                kind: DepFindingKind::PossibleTyposquat {
+                    resembles: hit.resembles,
+                    distance: hit.distance,
+                },
+            });
+        }
+
+        // 3. npm registry health (async, fail-open).
+        let rh = check_registry_health(pkg, now_unix).await;
+        if let Some(msg) = rh.describe() {
+            findings.push(DepFinding {
+                package: pkg.clone(),
+                kind: DepFindingKind::RegistryIssue { message: msg },
+            });
+        }
+    }
+
+    findings
 }
 
 // ── Registry-metadata health (GOLD-ADAPT-SNYK-03b) ───────────────────────────
@@ -551,5 +736,100 @@ mod tests {
         );
         assert_eq!(percent_encode_pkg("lodash"), "lodash");
         assert_eq!(percent_encode_pkg("@openai/codex"), "%40openai%2Fcodex");
+    }
+
+    // ── manifest_packages (SNYK-02, pure) ─────────────────────────────────────
+
+    /// A valid package.json with both deps and devDeps yields all names.
+    #[test]
+    fn manifest_packages_parses_deps_and_dev_deps() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("package.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "name": "my-app",
+              "dependencies": {
+                "express": "^4.18.0",
+                "lodash": "^4.17.21"
+              },
+              "devDependencies": {
+                "jest": "^29.0.0",
+                "typescript": "^5.0.0"
+              }
+            }"#,
+        )
+        .unwrap();
+        let mut names = manifest_packages(&path);
+        names.sort();
+        assert_eq!(names, ["express", "jest", "lodash", "typescript"]);
+    }
+
+    /// A package.json with no dep sections yields an empty list (no panic).
+    #[test]
+    fn manifest_packages_no_deps_section() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("package.json");
+        std::fs::write(&path, r#"{"name": "empty-pkg", "version": "1.0.0"}"#).unwrap();
+        assert!(manifest_packages(&path).is_empty());
+    }
+
+    /// A malformed JSON file yields an empty list without panicking.
+    #[test]
+    fn manifest_packages_malformed_json_no_panic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("package.json");
+        std::fs::write(&path, "this is not json {{{").unwrap();
+        assert!(manifest_packages(&path).is_empty());
+    }
+
+    /// A missing file yields an empty list without panicking.
+    #[test]
+    fn manifest_packages_missing_file_no_panic() {
+        let path = std::path::Path::new("/this/path/does/not/exist/package.json");
+        assert!(manifest_packages(path).is_empty());
+    }
+
+    /// DepFinding::describe produces human-readable output for all variants.
+    #[test]
+    fn dep_finding_describe_all_variants() {
+        let vuln = DepFinding {
+            package: "bad-pkg".to_string(),
+            kind: DepFindingKind::Vulnerable {
+                advisory_ids: vec!["CVE-2023-1".to_string()],
+                max_severity: "High".to_string(),
+            },
+        };
+        let d = vuln.describe();
+        assert!(d.contains("bad-pkg"));
+        assert!(d.contains("CVE-2023-1"));
+        assert!(d.contains("High"));
+
+        let malware = DepFinding {
+            package: "evil".to_string(),
+            kind: DepFindingKind::Malware {
+                advisory_ids: vec!["MAL-2024-1".to_string()],
+            },
+        };
+        assert!(malware.describe().contains("MALWARE"));
+        assert!(malware.describe().contains("evil"));
+
+        let typo = DepFinding {
+            package: "expres".to_string(),
+            kind: DepFindingKind::PossibleTyposquat {
+                resembles: "express".to_string(),
+                distance: 1,
+            },
+        };
+        assert!(typo.describe().contains("typosquat"));
+        assert!(typo.describe().contains("express"));
+
+        let reg = DepFinding {
+            package: "old-pkg".to_string(),
+            kind: DepFindingKind::RegistryIssue {
+                message: "npm package is deprecated".to_string(),
+            },
+        };
+        assert!(reg.describe().contains("deprecated"));
     }
 }

@@ -171,12 +171,15 @@ pub async fn install_kind(kind: CliKind) -> Result<()> {
 // not as the local variable — see E0277 on the qwen-metal job for
 // run 26503528842.
 async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
-    // GOLD-ADAPT-GOOSE-01 supply-chain gate — query OSV for MAL-* malware
-    // advisories on this package BEFORE installing it. A confirmed hit aborts;
-    // a lookup error fails open (logged) so an offline install still works.
+    // GOLD-ADAPT-GOOSE-01 + GOLD-ADAPT-SNYK-01 — query OSV for advisories on
+    // this package BEFORE installing it. MAL-* aborts unconditionally; CVE/GHSA
+    // at >= block_threshold also abort; a lookup error fails open (logged).
+    // neoth: replace SeverityLevel::High with SecurityPolicy.dep_vuln_threshold
+    // once config/mod.rs is updated (keep config/mod.rs out of the HOT lane).
     npm_supply_chain_gate(
         package,
         crate::security::osv_check::check_package(package, "npm", None).await,
+        crate::security::osv_check::SeverityLevel::High,
     )?;
     // GOLD-ADAPT-SNYK-03 — typosquatting heuristic. Warn-only (heuristic; no
     // hard block) so a legitimately-named-but-similar package is never bricked.
@@ -215,26 +218,57 @@ async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
     Ok(())
 }
 
-/// GOLD-ADAPT-GOOSE-01 — turn an OSV verdict into a go/no-go for an
-/// `npm install -g`. A confirmed `MAL-*` hit is a HARD block (NEOTH's own
-/// toolchain packages — claude-cli / codex / gemini-cli — have no legitimate
-/// reason to be malware-flagged, so the block is unconditional rather than
-/// autonomy-gated). A lookup that could not complete (`Unknown`) fails OPEN with
-/// a warning so an offline / air-gapped install is never bricked by a network
-/// blip. Pure (modulo the warn log) so it is unit-tested without npm.
+/// GOLD-ADAPT-GOOSE-01 + GOLD-ADAPT-SNYK-01 — turn an OSV verdict into a
+/// go/no-go for an `npm install -g`.
+///
+/// - `MAL-*` → unconditional HARD block (malware is not autonomy-gated).
+/// - `Vulnerable` → block when `max_severity >= block_threshold`, otherwise warn.
+/// - `Unknown` → FAIL OPEN (network blip must not brick an offline install).
+/// - `Clean` → proceed silently.
+///
+/// `block_threshold` is passed by the caller so the config wire can be added
+/// without touching this function's signature.
+/// // neoth: wire `block_threshold` to `SecurityPolicy.dep_vuln_threshold` in
+/// // config/mod.rs (serde-default `High`). Until wired, callers pass
+/// // `SeverityLevel::High` as the default.
+///
+/// Pure (modulo the warn log) so it is unit-tested without npm.
 fn npm_supply_chain_gate(
     package: &str,
     verdict: crate::security::osv_check::OsvVerdict,
+    block_threshold: crate::security::osv_check::SeverityLevel,
 ) -> Result<()> {
-    use crate::security::osv_check::OsvVerdict;
+    use crate::security::osv_check::{OsvVerdict, SeverityLevel};
     match verdict {
         OsvVerdict::Malicious { advisories } => anyhow::bail!(
             "refusing to `npm install -g {package}` — OSV flags it as MALWARE ({}). \
              Supply-chain install aborted (GOLD-ADAPT-GOOSE-01).",
             advisories.join(", ")
         ),
+        OsvVerdict::Vulnerable {
+            ref advisories,
+            max_severity,
+        } => {
+            let ids: Vec<&str> = advisories.iter().map(|(id, _)| id.as_str()).collect();
+            let id_list = ids.join(", ");
+            if max_severity >= block_threshold && block_threshold != SeverityLevel::None {
+                anyhow::bail!(
+                    "refusing to `npm install -g {package}` — OSV reports {max_severity:?} \
+                     advisories ({id_list}). Threshold is {block_threshold:?}. \
+                     Supply-chain install blocked (GOLD-ADAPT-SNYK-01)."
+                );
+            } else {
+                warn!(
+                    package,
+                    %id_list,
+                    ?max_severity,
+                    "OSV reports vulnerability advisories — proceeding (below block threshold)"
+                );
+                Ok(())
+            }
+        }
         OsvVerdict::Unknown { reason } => {
-            warn!(package, %reason, "OSV malware check could not complete — proceeding (fail-open)");
+            warn!(package, %reason, "OSV check could not complete — proceeding (fail-open)");
             Ok(())
         }
         OsvVerdict::Clean => Ok(()),
@@ -244,7 +278,7 @@ fn npm_supply_chain_gate(
 #[cfg(test)]
 mod npm_gate_tests {
     use super::npm_supply_chain_gate;
-    use crate::security::osv_check::OsvVerdict;
+    use crate::security::osv_check::{OsvVerdict, SeverityLevel};
 
     #[test]
     fn malicious_verdict_blocks_install() {
@@ -253,6 +287,7 @@ mod npm_gate_tests {
             OsvVerdict::Malicious {
                 advisories: vec!["MAL-2024-1".to_string()],
             },
+            SeverityLevel::High,
         )
         .expect_err("a MAL-* verdict must block");
         let msg = err.to_string();
@@ -265,7 +300,7 @@ mod npm_gate_tests {
 
     #[test]
     fn clean_verdict_allows_install() {
-        assert!(npm_supply_chain_gate("jquery", OsvVerdict::Clean).is_ok());
+        assert!(npm_supply_chain_gate("jquery", OsvVerdict::Clean, SeverityLevel::High).is_ok());
     }
 
     #[test]
@@ -276,10 +311,91 @@ mod npm_gate_tests {
                 "pkg",
                 OsvVerdict::Unknown {
                     reason: "network down".to_string()
-                }
+                },
+                SeverityLevel::High,
             )
             .is_ok()
         );
+    }
+
+    // ── SNYK-01 tests ─────────────────────────────────────────────────────────
+
+    /// CRITICAL advisory at default threshold (High) → block.
+    #[test]
+    fn snyk01_critical_above_high_threshold_blocks() {
+        let err = npm_supply_chain_gate(
+            "vuln-pkg",
+            OsvVerdict::Vulnerable {
+                advisories: vec![("CVE-2023-9999".to_string(), SeverityLevel::Critical)],
+                max_severity: SeverityLevel::Critical,
+            },
+            SeverityLevel::High,
+        )
+        .expect_err("Critical >= High must block");
+        assert!(err.to_string().contains("SNYK-01"), "error cites SNYK-01");
+    }
+
+    /// HIGH advisory at threshold High → block.
+    #[test]
+    fn snyk01_high_at_threshold_blocks() {
+        let err = npm_supply_chain_gate(
+            "vuln-pkg",
+            OsvVerdict::Vulnerable {
+                advisories: vec![("CVE-2023-0001".to_string(), SeverityLevel::High)],
+                max_severity: SeverityLevel::High,
+            },
+            SeverityLevel::High,
+        )
+        .expect_err("High >= High must block");
+        assert!(err.to_string().contains("High"));
+    }
+
+    /// LOW advisory below threshold High → warn-only (proceed).
+    #[test]
+    fn snyk01_low_below_high_threshold_proceeds() {
+        assert!(
+            npm_supply_chain_gate(
+                "minor-vuln-pkg",
+                OsvVerdict::Vulnerable {
+                    advisories: vec![("CVE-2023-1111".to_string(), SeverityLevel::Low)],
+                    max_severity: SeverityLevel::Low,
+                },
+                SeverityLevel::High,
+            )
+            .is_ok(),
+            "Low < High must not block"
+        );
+    }
+
+    /// threshold=None → never block even on Critical (warn-only mode).
+    #[test]
+    fn snyk01_threshold_none_never_blocks() {
+        assert!(
+            npm_supply_chain_gate(
+                "critical-pkg",
+                OsvVerdict::Vulnerable {
+                    advisories: vec![("CVE-2023-2222".to_string(), SeverityLevel::Critical)],
+                    max_severity: SeverityLevel::Critical,
+                },
+                SeverityLevel::None,
+            )
+            .is_ok(),
+            "threshold=None must never block (warn-only)"
+        );
+    }
+
+    /// MAL-* blocks unconditionally regardless of threshold.
+    #[test]
+    fn snyk01_malware_blocks_regardless_of_threshold() {
+        let err = npm_supply_chain_gate(
+            "evil",
+            OsvVerdict::Malicious {
+                advisories: vec!["MAL-2025-0001".to_string()],
+            },
+            SeverityLevel::None, // even warn-only threshold doesn't save malware
+        )
+        .expect_err("MAL-* must always block");
+        assert!(err.to_string().contains("MALWARE"));
     }
 }
 
