@@ -277,6 +277,10 @@ pub fn build_tech_currency_item(
         body,
         scheduled_for_unix,
         is_failure: false,
+        // JV-PRO-10 — a tech-currency digest is stale a day after its
+        // scheduled surface; if the daily cap held it back, drop it rather
+        // than fire yesterday's news late.
+        expires_unix: scheduled_for_unix.saturating_add(86_400),
     })
 }
 

@@ -329,6 +329,7 @@ pub fn build_proposal_notification(proposal: &ProposedAction) -> ProactiveItem {
         ),
         scheduled_for_unix: 0,
         is_failure: false,
+        expires_unix: 0, // a pending proposal stays relevant until acted on
     }
 }
 

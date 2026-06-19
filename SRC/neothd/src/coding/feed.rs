@@ -357,6 +357,7 @@ pub(crate) fn build_session_summary_item(
         // GOLD-FEAT-13 — a session that ended with blocked tasks is a
         // partial failure → routing prefers the operator's failure_channel.
         is_failure: outcome.tasks_blocked > 0,
+        expires_unix: 0, // a coding-session summary stays relevant
     }
 }
 

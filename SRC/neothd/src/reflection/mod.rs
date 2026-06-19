@@ -179,6 +179,7 @@ pub fn build_reflection_item(
         body,
         scheduled_for_unix,
         is_failure: false,
+        expires_unix: 0,
     })
 }
 

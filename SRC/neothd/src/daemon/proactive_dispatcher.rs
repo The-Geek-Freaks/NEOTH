@@ -105,10 +105,17 @@ pub fn run_proactive_drain_tick(home: &Path, now_unix: i64) -> Result<usize, Str
     if queue.is_empty() {
         return Ok(0);
     }
+    let len_before = queue.len();
     let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
     if drained.is_empty() {
         // Either daily-budget exhausted OR cap=0 OR every item is
-        // future-scheduled. Persist nothing + return.
+        // future-scheduled. JV-PRO-10: drain may still have pruned expired
+        // items — persist the smaller queue so dead items don't accumulate.
+        if queue.len() < len_before {
+            queue
+                .save_to(&queue_path)
+                .map_err(|e| format!("queue save after ttl-prune failed: {e}"))?;
+        }
         return Ok(0);
     }
 
@@ -496,8 +503,16 @@ pub async fn run_proactive_delivery_tick(
     if queue.is_empty() {
         return Ok(0);
     }
+    let len_before = queue.len();
     let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
     if drained.is_empty() {
+        // JV-PRO-10: drain may have pruned expired items even when nothing
+        // was eligible to fire — persist the smaller queue.
+        if queue.len() < len_before {
+            queue
+                .save_to(&queue_path)
+                .map_err(|e| format!("queue save after ttl-prune failed: {e}"))?;
+        }
         return Ok(0);
     }
 
@@ -830,6 +845,7 @@ mod tests {
             body: format!("test body {key}"),
             scheduled_for_unix: ts,
             is_failure: false,
+            expires_unix: 0,
         }
     }
 

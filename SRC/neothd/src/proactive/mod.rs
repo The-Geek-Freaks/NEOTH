@@ -88,7 +88,21 @@ pub struct ProactiveItem {
     /// field deserialise as non-failure.
     #[serde(default)]
     pub is_failure: bool,
+    /// JV-PRO-10 — TTL. Unix-seconds after which a still-queued item is
+    /// DROPPED on the next `drain` without ever firing (a stale nudge —
+    /// e.g. yesterday's news held back by the daily cap — is worse than no
+    /// nudge). `0` = never expires. `#[serde(default)]` so queue files
+    /// written before this field load as evergreen. Producers of
+    /// time-sensitive items set it; evergreen items leave it `0`.
+    #[serde(default)]
+    pub expires_unix: i64,
 }
+
+/// JV-PRO-10 — items at/above this priority "early-surface": they drain
+/// immediately, bypassing `scheduled_for_unix`. This is the operator-urgent /
+/// signal path (the upstream "DSPM signal" → surface now), matching the
+/// priority-100 "urgent — operator asked for it" convention above.
+pub const URGENT_PRIORITY: i32 = 100;
 
 /// Daily-cap configuration. `max_per_day = 3` is the AGENTER hard-
 /// rule default for proactive messages (operator opt-in beyond
@@ -159,6 +173,11 @@ impl ProactiveQueue {
     /// positions without sleeping; production callers pass the real
     /// wall clock.
     pub fn drain(&mut self, now_unix: i64, cap: usize) -> Vec<ProactiveItem> {
+        // JV-PRO-10 — drop expired items BEFORE anything else (even before
+        // the budget check), so a stale nudge never fires and an exhausted
+        // daily budget can't keep dead items alive on disk.
+        self.items
+            .retain(|i| i.expires_unix == 0 || i.expires_unix > now_unix);
         let cutoff = now_unix.saturating_sub(86_400);
         self.drained_at.retain(|t| *t > cutoff);
         let used_today = self.drained_at.len();
@@ -174,7 +193,9 @@ impl ProactiveQueue {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, i)| i.scheduled_for_unix <= now_unix)
+            // JV-PRO-10 — an item drains once its schedule arrives, OR
+            // immediately if it is operator-urgent (early-surface bypass).
+            .filter(|(_, i)| i.scheduled_for_unix <= now_unix || i.priority >= URGENT_PRIORITY)
             .map(|(idx, _)| idx)
             .collect();
         eligible.sort_by(|a, b| {
@@ -302,7 +323,53 @@ mod tests {
             body: format!("body of {key}"),
             scheduled_for_unix: 0,
             is_failure: false,
+            expires_unix: 0,
         }
+    }
+
+    #[test]
+    fn expired_item_is_dropped_without_firing() {
+        let mut q = ProactiveQueue::new();
+        // expires at t=100; draining at t=200 must drop it, not fire it.
+        q.enqueue(ProactiveItem {
+            expires_unix: 100,
+            ..item(50, "stale-news", "hn_tech_currency")
+        });
+        q.enqueue(item(50, "evergreen", "x")); // expires_unix 0 = never
+        let drained = q.drain(200, 10);
+        assert_eq!(drained.len(), 1, "only the evergreen item should fire");
+        assert_eq!(drained[0].dedup_key, "evergreen");
+        assert_eq!(q.len(), 0, "expired item must be pruned from the queue too");
+    }
+
+    #[test]
+    fn not_yet_expired_item_still_fires() {
+        let mut q = ProactiveQueue::new();
+        q.enqueue(ProactiveItem {
+            expires_unix: 1000,
+            ..item(50, "fresh", "x")
+        });
+        let drained = q.drain(500, 10);
+        assert_eq!(drained.len(), 1, "item expiring later must still fire now");
+    }
+
+    #[test]
+    fn urgent_item_early_surfaces_past_its_schedule() {
+        let mut q = ProactiveQueue::new();
+        // Scheduled far in the future, but URGENT_PRIORITY → drains now.
+        q.enqueue(ProactiveItem {
+            priority: URGENT_PRIORITY,
+            scheduled_for_unix: 9_999,
+            ..item(URGENT_PRIORITY, "urgent-signal", "x")
+        });
+        // A non-urgent future item must NOT early-surface.
+        q.enqueue(ProactiveItem {
+            scheduled_for_unix: 9_999,
+            ..item(50, "later", "x")
+        });
+        let drained = q.drain(0, 10);
+        assert_eq!(drained.len(), 1, "only the urgent item bypasses its schedule");
+        assert_eq!(drained[0].dedup_key, "urgent-signal");
     }
 
     #[test]

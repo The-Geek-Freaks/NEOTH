@@ -116,6 +116,7 @@ pub fn detect_inactivity_gap(
         ),
         scheduled_for_unix: 0,
         is_failure: false,
+        expires_unix: 0,
     })
 }
 
@@ -257,6 +258,7 @@ pub fn detect_query_repeat(
         ),
         scheduled_for_unix: 0,
         is_failure: false,
+        expires_unix: 0,
     })
 }
 
@@ -328,6 +330,7 @@ pub fn detect_topic_burst(
         ),
         scheduled_for_unix: 0,
         is_failure: false,
+        expires_unix: 0,
     })
 }
 
@@ -375,6 +378,7 @@ pub fn detect_time_of_day_shift(
         ),
         scheduled_for_unix: 0,
         is_failure: false,
+        expires_unix: 0,
     })
 }
 

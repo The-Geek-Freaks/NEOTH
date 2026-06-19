@@ -142,6 +142,7 @@ pub fn build_g02_proactive_item(
         body,
         scheduled_for_unix: now_unix,
         is_failure: false,
+        expires_unix: 0,
     }
 }
 
