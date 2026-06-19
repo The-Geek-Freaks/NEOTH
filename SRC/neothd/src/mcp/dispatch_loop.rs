@@ -224,9 +224,32 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 | crate::mcp::tool_inspection::InspectorVerdict::Block {
                     kind:
                         crate::mcp::tool_inspection::BlockKind::Repetition(_)
-                        | crate::mcp::tool_inspection::BlockKind::Risk { .. },
+                        | crate::mcp::tool_inspection::BlockKind::Risk { .. }
+                        | crate::mcp::tool_inspection::BlockKind::SecretEgress { .. },
                     ..
                 } => {}
+            }
+            // GOLD-ADAPT-CAF-01 — a tool call whose payload carries a secret is
+            // NOT dispatched: the credential never leaves the box. Mirrors the
+            // repetition guard (block + surface a corrective result + continue).
+            if let crate::mcp::tool_inspection::InspectorVerdict::Block {
+                kind: crate::mcp::tool_inspection::BlockKind::SecretEgress { pattern, redacted },
+                ..
+            } = &inspection
+            {
+                failed_calls += 1;
+                warn!(
+                    server = %call.server,
+                    tool = %call.tool,
+                    pattern = %pattern,
+                    "secret-egress guard blocked a tool call carrying a credential ({redacted})"
+                );
+                tool_result_blocks.push(format!(
+                    "secret-egress guard: this call was NOT executed — its payload contains what \
+                     looks like a secret ({pattern}: {redacted}). Remove the credential from the \
+                     call. If this is genuinely intended, the operator must approve the egress."
+                ));
+                continue;
             }
             if let crate::mcp::tool_inspection::InspectorVerdict::Block {
                 kind: crate::mcp::tool_inspection::BlockKind::Repetition(verdict),

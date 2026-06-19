@@ -10,8 +10,9 @@
 //! ## Scope (deliberate, security-reviewed)
 //!
 //! The chain DECIDES "is this call blocked, and why" — it computes the
-//! repetition verdict (GOLD-ADOPT-20) and the dangerous-command/egress risk
-//! verdict (GOLD-ADOPT-23). It does NOT perform the NEOTH-specific
+//! repetition verdict (GOLD-ADOPT-20), the dangerous-command/egress risk
+//! verdict (GOLD-ADOPT-23), and the pre-send secret-egress verdict
+//! (GOLD-ADAPT-CAF-01). It does NOT perform the NEOTH-specific
 //! risk-confirm LEASE lift or the distinct WAL audit emits: those are async +
 //! stateful authorization side-effects (filesystem leases, the WAL writer),
 //! not a pure inspection, so they stay in the dispatch loop, driven by the
@@ -24,6 +25,7 @@ use crate::config::SecurityPolicy;
 use crate::mcp::repetition_guard::{GuardVerdict, ToolRepetitionGuard};
 use crate::mcp::tool_call_parser::ParsedToolCall;
 use crate::security::risk_gate::{RiskGate, evaluate_tool_risk};
+use crate::security::secrets_scan::scan_text;
 use crate::security::{ToolCallRisk, inspect_tool_args};
 
 /// One inspector's decision for a prospective tool call.
@@ -45,6 +47,15 @@ pub enum BlockKind {
     /// Dangerous-command / egress risk gate tripped — carries the findings +
     /// the base gate so the loop can run the lease-lift + distinct WAL emit.
     Risk { risk: ToolCallRisk, gate: RiskGate },
+    /// Secret / credential pattern detected in outbound tool-call arguments
+    /// (GOLD-ADAPT-CAF-01). `pattern` is the regex rule name; `redacted` is
+    /// the masked excerpt — safe to surface in logs and LLM error replies.
+    SecretEgress {
+        /// Name of the matched secret pattern (e.g. `"openai_key"`).
+        pattern: &'static str,
+        /// Matched value with first/last 4 chars visible, middle masked.
+        redacted: String,
+    },
 }
 
 /// A pre-dispatch safety check. `Send` so the chain can be held across the
@@ -119,6 +130,52 @@ impl ToolInspector for RiskPolicyInspector {
     }
 }
 
+/// Pre-send credential / secret scanner (GOLD-ADAPT-CAF-01).
+///
+/// Serialises the full `arguments` payload to JSON text and runs
+/// [`scan_text`] from [`crate::security::secrets_scan`] over it. If any
+/// credential-shape regex matches, the call is blocked immediately with
+/// [`BlockKind::SecretEgress`] carrying a redacted excerpt. The raw secret
+/// value never appears in logs or LLM replies.
+///
+/// This is purely additive — it runs AFTER the risk-policy inspector so a
+/// dangerous-command block is still attributed to `risk_policy` (the more
+/// actionable signal for the dispatch loop). Secret exfiltration via tool
+/// arguments is a distinct, unconditional block regardless of risk policy.
+pub struct SecretEgressInspector;
+
+impl ToolInspector for SecretEgressInspector {
+    fn name(&self) -> &'static str {
+        "secret_egress"
+    }
+
+    fn inspect(&mut self, call: &ParsedToolCall, _policy: &SecurityPolicy) -> InspectorVerdict {
+        // Serialise arguments to text. serde_json::to_string can only fail
+        // for types with custom serialisers that return an error; Value
+        // never does.
+        let text = call.arguments.to_string();
+        let findings = scan_text(&text);
+        if let Some(f) = findings.into_iter().next() {
+            tracing::warn!(
+                server = %call.server,
+                tool   = %call.tool,
+                pattern = f.pattern,
+                redacted = %f.redacted,
+                "secret-egress: credential pattern in outbound tool-call arguments — call blocked"
+            );
+            InspectorVerdict::Block {
+                inspector: "secret_egress",
+                kind: BlockKind::SecretEgress {
+                    pattern: f.pattern,
+                    redacted: f.redacted,
+                },
+            }
+        } else {
+            InspectorVerdict::Allow
+        }
+    }
+}
+
 /// Ordered chain of inspectors. The FIRST block wins (historical order:
 /// repetition guard, then risk policy — so a repeated call is never also
 /// risk-inspected, matching the pre-chain `continue`).
@@ -127,12 +184,13 @@ pub struct ToolInspectorChain {
 }
 
 impl ToolInspectorChain {
-    /// The shipped chain: repetition guard (defaults) + risk policy.
+    /// The shipped chain: repetition guard (defaults) + risk policy + secret-egress scan.
     pub fn with_defaults() -> Self {
         Self {
             inspectors: vec![
                 Box::new(RepetitionInspector(ToolRepetitionGuard::with_defaults())),
                 Box::new(RiskPolicyInspector),
+                Box::new(SecretEgressInspector),
             ],
         }
     }
@@ -272,5 +330,75 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // ── GOLD-ADAPT-CAF-01: SecretEgressInspector ─────────────────────────────
+
+    #[test]
+    fn secret_egress_blocks_openai_key_in_payload() {
+        // A fetch/http tool whose body carries a fake OpenAI key must be
+        // blocked before dispatch. The key matches the `openai_key` pattern
+        // (sk- prefix, ≥20 alphanum chars).
+        let mut insp = SecretEgressInspector;
+        let c = call(
+            "http",
+            "fetch",
+            serde_json::json!({
+                "url": "https://example.com/api",
+                "headers": { "Authorization": "Bearer sk-testFAKEkey1234567890ABCDEFGHIJ" }
+            }),
+        );
+        match insp.inspect(&c, &policy()) {
+            InspectorVerdict::Block {
+                inspector,
+                kind: BlockKind::SecretEgress { pattern, redacted },
+            } => {
+                assert_eq!(inspector, "secret_egress");
+                assert_eq!(pattern, "openai_key");
+                // Redacted must not contain the full secret (first 4 + last 4
+                // visible; middle masked). The full key is 30+ chars so the
+                // redacted form must include the masking ellipsis.
+                assert!(redacted.contains('…'), "expected masked redaction, got: {redacted}");
+            }
+            _ => panic!("expected secret_egress block for payload containing an OpenAI key"),
+        }
+    }
+
+    #[test]
+    fn secret_egress_blocks_aws_access_key_in_payload() {
+        // AWS access key IDs follow the AKIA[0-9A-Z]{16} shape.
+        let mut insp = SecretEgressInspector;
+        let c = call(
+            "channel",
+            "send",
+            serde_json::json!({
+                "body": "My key is AKIAIOSFODNN7EXAMPLE and I need help"
+            }),
+        );
+        match insp.inspect(&c, &policy()) {
+            InspectorVerdict::Block {
+                inspector,
+                kind: BlockKind::SecretEgress { pattern, .. },
+            } => {
+                assert_eq!(inspector, "secret_egress");
+                assert_eq!(pattern, "aws_access_key_id");
+            }
+            _ => panic!("expected secret_egress block for payload containing an AWS key"),
+        }
+    }
+
+    #[test]
+    fn secret_egress_allows_clean_payload() {
+        // A normal tool call with no credential-shaped values must pass.
+        let mut insp = SecretEgressInspector;
+        let c = call(
+            "fs",
+            "read_file",
+            serde_json::json!({ "path": "/home/user/notes.md" }),
+        );
+        assert!(
+            matches!(insp.inspect(&c, &policy()), InspectorVerdict::Allow),
+            "clean payload must not be blocked by secret_egress inspector"
+        );
     }
 }

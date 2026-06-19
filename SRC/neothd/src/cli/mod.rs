@@ -84,6 +84,7 @@ pub mod moral_core;
 pub mod n8n;
 pub mod obsidian;
 pub mod obsidian_sync_task;
+pub mod obsidian_sync_util;
 pub mod okf;
 pub mod os;
 pub mod ouro;

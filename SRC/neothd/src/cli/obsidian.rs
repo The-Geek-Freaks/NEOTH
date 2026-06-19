@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
+use crate::cli::obsidian_sync_util::{DirMtimeCache, WriteCoalescer};
 use crate::cli::OutputFormat;
 use crate::memory::archive;
 
@@ -519,6 +520,28 @@ pub async fn sync_archive(
             .with_context(|| format!("create vault subdir {}", dest_root.display()))?;
     }
 
+    // IGNIS-02: mtime cache — skip the file scan for day directories whose
+    // mtime is unchanged since the last sync_archive call on this instance.
+    // Each `sync_archive` call gets a fresh cache (function-scoped), so the
+    // guard only elides redundant within-call re-reads on the same directory.
+    // For cross-call mtime caching, callers can pass a pre-built cache via
+    // the daemon layer (see obsidian_sync_task.rs wiring point).
+    //
+    // neoth: obsidian_sync_task::run should hold a `DirMtimeCache` across
+    // ticks and thread it into sync_archive (requires a signature extension
+    // to `pub async fn sync_archive(…, mtime_cache: &mut DirMtimeCache)`).
+    let mut mtime_cache = DirMtimeCache::new();
+
+    // IGNIS-01: coalesce all writes for this sync pass into a single flush
+    // to avoid one fsync/rename per note on slow or network-mounted vaults.
+    let mut coalescer = WriteCoalescer::new();
+
+    // neoth(IGNIS-03): wire EchoGuard here once reverse-sync watcher lands.
+    // Pattern:
+    //   let guard: &mut EchoGuard = …;          // passed in from daemon state
+    //   guard.register_write(&dst, &src_bytes); // after coalescer.flush()
+    // This prevents the watcher from re-syncing files NEOTH just wrote.
+
     let mut day_rd = tokio::fs::read_dir(&sessions_root)
         .await
         .with_context(|| format!("read archive root {}", sessions_root.display()))?;
@@ -526,15 +549,24 @@ pub async fn sync_archive(
         if !day_entry.file_type().await?.is_dir() {
             continue;
         }
+        let day_src = day_entry.path();
         let day_name = day_entry.file_name().to_string_lossy().into_owned();
         let day_dst = dest_root.join(&day_name);
+
+        // IGNIS-02: skip the per-file scan if the source day directory's
+        // mtime is unchanged AND the destination day dir already exists.
+        // On the very first sync (dest absent) we always walk.
+        if !dry_run && day_dst.exists() && !mtime_cache.is_changed(&day_src) {
+            continue;
+        }
+
         if !dry_run {
             tokio::fs::create_dir_all(&day_dst)
                 .await
                 .with_context(|| format!("create day dir {}", day_dst.display()))?;
         }
 
-        let mut file_rd = tokio::fs::read_dir(day_entry.path()).await?;
+        let mut file_rd = tokio::fs::read_dir(&day_src).await?;
         while let Some(file_entry) = file_rd.next_entry().await? {
             let path = file_entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("md") {
@@ -542,29 +574,37 @@ pub async fn sync_archive(
             }
             stats.considered += 1;
             let dst = day_dst.join(path.file_name().unwrap());
-            if !dry_run && is_identical(&path, &dst).await? {
-                stats.skipped_identical += 1;
-                continue;
-            }
+
             if dry_run {
                 stats.skipped_dry_run += 1;
                 continue;
             }
-            // Atomic copy: write to .tmp + rename so a partial copy
-            // never leaves a torn file in the vault.
-            let tmp = dst.with_extension("md.tmp");
-            tokio::fs::copy(&path, &tmp)
+
+            // IGNIS-01: read the source bytes once and queue into the
+            // coalescer; it will skip files whose vault copy is identical.
+            let src_bytes = tokio::fs::read(&path)
                 .await
-                .with_context(|| format!("copy {} → {}", path.display(), tmp.display()))?;
-            tokio::fs::rename(&tmp, &dst)
-                .await
-                .with_context(|| format!("rename {} → {}", tmp.display(), dst.display()))?;
-            stats.copied += 1;
+                .with_context(|| format!("read {}", path.display()))?;
+            coalescer.push(dst, src_bytes);
         }
     }
+
+    // IGNIS-01: flush all queued writes in one pass. Skipped-identical
+    // entries come back so we can update stats accurately.
+    if !dry_run {
+        let (written, skipped_identical) = coalescer
+            .flush()
+            .context("WriteCoalescer flush")?;
+        stats.copied = written;
+        stats.skipped_identical = skipped_identical;
+    }
+
     Ok(stats)
 }
 
+// IGNIS-01: identity check now handled inside WriteCoalescer::flush; kept
+// for reference and test-helper use.
+#[allow(dead_code)]
 async fn is_identical(src: &Path, dst: &Path) -> Result<bool> {
     if !dst.exists() {
         return Ok(false);
