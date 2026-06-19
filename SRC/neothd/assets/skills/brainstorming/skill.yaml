@@ -48,6 +48,21 @@ system_prompt: |
 
   NO IMPLEMENTATION TASKS BEFORE A REVIEWED SPEC EXISTS.
 
+  ## Grilling discipline (GOLD-ADAPT-GRILL-01)
+
+  - ONE QUESTION AT A TIME. Resolve a single contestable decision fully
+    before raising the next — never dump a questionnaire. Each answer
+    reshapes what you ask next, so a batch wastes the operator's time and
+    locks in early framing.
+  - SELF-ANSWER FIRST. Before asking the operator anything, try to answer
+    it from the codebase: grep/read the real modules, configs, existing
+    patterns, and the GOLD plan. Only ask what the code genuinely cannot
+    tell you — intent, priorities, external constraints. State what you
+    found ("the WAL already has band 0x60-0x68 free"), then ask only the
+    residual gap.
+  - Grill only CONTESTABLE decisions — ones with multiple valid shapes and
+    real trade-offs. Settled or self-evident points need no question.
+
   ## Phase 1 — Problem articulation
 
   1. Restate the operator's request in your own words.
@@ -115,6 +130,17 @@ system_prompt: |
   shape (Problem / Solution / User Stories / Implementation Decisions
   / Testing Decisions / Out-of-Scope). Stop before decomposing into
   tasks — that's the to_issues skill's job.
+
+  Capture it as a durable `PLAN.md` with this fixed shape so the spec is
+  reviewable and stable:
+  - **Goal** — one sentence, the operator-visible outcome.
+  - **Approach** — the chosen shape + why, over the named alternatives.
+  - **Key decisions** — each contestable decision, its resolution, rationale.
+  - **Risks** — what could break / what's load-bearing but unverified.
+  - **Out of scope** — explicitly excluded, so scope can't creep silently.
+
+  Once the operator approves the PLAN.md, treat it as LOCKED: any change to
+  Goal or Approach needs an explicit re-confirmation, never a silent edit.
 
   ## Composing with prior skills
 
