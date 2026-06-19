@@ -311,6 +311,18 @@ pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
         .filter(|s| s.allow_tools.is_none() && !s.trust_all_tools)
         .map(|s| s.id.as_str())
         .collect();
+    // GOLD-ADAPT-SNYK-03 supply-chain surface: npx-launched MCP servers fetch
+    // their package at runtime (e.g. the hex-* servers). Flag any whose package
+    // name looks like a typosquat of a popular npm package so the operator
+    // verifies the source before trusting it.
+    let typosquats: Vec<String> = enabled
+        .iter()
+        .filter(|s| s.command == "npx")
+        .filter_map(|s| {
+            let pkg = s.args.iter().find(|a| !a.starts_with('-'))?;
+            crate::security::dep_health::typosquat_risk(pkg, "npm").map(|h| h.describe())
+        })
+        .collect();
     let detail = if !broken.is_empty() {
         format!(
             "{} enabled — hardened: [{}]; trust_all_tools: [{}]; \
@@ -332,7 +344,15 @@ pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
     // Posture: Pass when every enabled server is either hardened or
     // explicit-trust. Warn when any server is in the broken state
     // (operator's gate denies every call until they opt-in or pin).
-    let status = if broken.is_empty() {
+    let detail = if typosquats.is_empty() {
+        detail
+    } else {
+        format!(
+            "{detail} ⚠ possible typosquat npx package(s): {}",
+            typosquats.join("; "),
+        )
+    };
+    let status = if broken.is_empty() && typosquats.is_empty() {
         CheckStatus::Pass
     } else {
         CheckStatus::Warn

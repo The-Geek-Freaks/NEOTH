@@ -29,6 +29,7 @@ pub mod checkpoint;
 #[cfg(feature = "cluster")]
 pub mod cluster;
 pub mod code;
+pub mod code_intel;
 pub mod code_map;
 pub mod completions;
 pub mod computer_use;
@@ -840,6 +841,16 @@ pub enum Commands {
     /// `~/.neoth/code_map.db` SQLite for recall integration.
     CodeMap(code_map::CodeMapArgs),
 
+    /// REPOW-01/02/03 — git-derived repo intelligence.
+    ///
+    /// Ranks every tracked source file by change-risk (ownership + churn),
+    /// flags single-owner files, and — with `--coupling` — surfaces hidden
+    /// structural coupling (files that co-change without a call edge).
+    ///
+    /// `neoth code-intel [--repo .] [--top 15] [--coupling]`
+    #[command(name = "code-intel")]
+    CodeIntel(code_intel::CodeIntelArgs),
+
     /// Council (smartest-wins) configuration + introspection (Pick #14,
     /// Session 14). `show` prints the active config block; `tune`
     /// atomically mutates it (`--selection-mode`, `--self-reflect`,
@@ -1374,6 +1385,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::CodeMap(mut args) => {
             args.output = global_output;
             code_map::run_code_map(args).await?;
+        }
+        Commands::CodeIntel(args) => {
+            code_intel::run_code_intel(args).await?;
         }
         Commands::Council(mut args) => {
             args.output = global_output;
