@@ -470,6 +470,19 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                     if let Some(t) = hint_tracker.as_mut() {
                         t.record_tool_arguments(&call.arguments, &hint_cwd);
                     }
+                    // GOLD-ADAPT-HARNESS-06 — skeletonize large source-file
+                    // results before they enter the model-facing prompt. The
+                    // full `rendered` text is intentionally NOT stored here
+                    // (WAL / audit paths always hold the unmodified output from
+                    // dispatch_one). Only the copy that goes to `wrap_untrusted`
+                    // → `tool_result_blocks` → the next prompt is skeletonized.
+                    // The Cow::Borrowed fast-path means zero allocation when the
+                    // result is small or does not look like source code.
+                    let prompt_copy =
+                        crate::mcp::harness::maybe_skeletonize(
+                            &rendered,
+                            crate::mcp::harness::SKELETONIZE_THRESHOLD_LINES,
+                        );
                     // GOLD-ADAPT-ODY-18 — tool output is UNTRUSTED external data
                     // (web fetch / search / RAG / third-party MCP results can be
                     // attacker-controlled). Fence it in the untrusted-source
@@ -479,7 +492,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                     // steer the agent (indirect-prompt-injection defense).
                     tool_result_blocks.push(crate::pipeline::untrusted_wrap::wrap_untrusted(
                         &format!("mcp:{}/{}", call.server, call.tool),
-                        &rendered,
+                        &prompt_copy,
                     ));
                 }
                 Err(reason) => {
