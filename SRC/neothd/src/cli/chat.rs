@@ -1826,6 +1826,28 @@ async fn run_post_reply_pipelines(
                                 );
                                 return;
                             }
+                            // MEMGRAPH-01 — auto-embed the freshly-indexed episode(s)
+                            // into the vector recall lane so they join the Multi-tier
+                            // vector search incrementally (no manual `--embed-backfill`).
+                            // Best-effort + bounded (32/turn); only runs when an embed
+                            // provider is configured. Runs here (post-reply pipeline) so
+                            // it never blocks the reply.
+                            if let Some(embed_provider) =
+                                crate::providers::embed_provider_from_config(&config).await
+                            {
+                                let n = crate::memory::embeddings::embed_pending_episodes(
+                                    &conn,
+                                    embed_provider.as_ref(),
+                                    32,
+                                )
+                                .await;
+                                if n > 0 {
+                                    tracing::debug!(
+                                        embedded = n,
+                                        "MEMGRAPH-01: auto-embedded new episodes into the vector lane"
+                                    );
+                                }
+                            }
                             let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
                             let extensions =
                                 crate::profile::extension_registry::TypedExtensionRegistry::load()

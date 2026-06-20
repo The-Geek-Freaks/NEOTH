@@ -987,6 +987,9 @@ pub(crate) async fn spawn_cron_scheduler(
 pub(crate) fn spawn_indexer(
     segment_path: &std::path::Path,
     writer: Option<crate::wal::writer::WalWriterHandle>,
+    // MEMGRAPH-01: threaded into the tail loop so the continuous ingest
+    // auto-embeds new episodes when an embed provider is configured.
+    embed_provider: Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>>,
 ) -> Option<JoinHandle<()>> {
     let conn_path = crate::memory::store::default_path();
     let seg = segment_path.to_path_buf();
@@ -997,6 +1000,7 @@ pub(crate) fn spawn_indexer(
                 seg,
                 std::time::Duration::from_millis(500),
                 writer,
+                embed_provider,
             )
             .await
             {

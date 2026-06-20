@@ -277,7 +277,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     // GR-164: hand the indexer the WAL writer so a tamper-suspect segment emits
     // an auditable 0x5E alert frame instead of a warn-only silent skip.
-    let indexer_task = crate::cli::serve_tasks::spawn_indexer(&segment_path, Some(writer.clone()));
+    // MEMGRAPH-01 — build the embed provider once (when configured) so the
+    // indexer tail auto-embeds newly-ingested episodes into the vector lane.
+    let indexer_embed_provider = crate::providers::embed_provider_from_config(&config).await;
+    let indexer_task = crate::cli::serve_tasks::spawn_indexer(
+        &segment_path,
+        Some(writer.clone()),
+        indexer_embed_provider,
+    );
 
     // ── 5a-kanban. Stale-kanban reapers — HO-02 + GOLD-TASK-04. Best-effort
     // startup sweep of sessions stranded in Planning (crash mid-decompose) and

@@ -141,10 +141,40 @@ pub async fn tail(
     interval: Duration,
     // GR-164: when `Some`, a tamper-suspect segment emits a 0x5E alert frame.
     writer: Option<WalWriterHandle>,
+    // MEMGRAPH-01: when `Some`, episodes indexed this pass are auto-embedded into
+    // the vector recall lane (incremental — no manual `--embed-backfill`).
+    embed_provider: Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>>,
 ) -> Result<()> {
     loop {
         match replay_all_segments_audited(&mut conn, &segment_path, writer.as_ref()).await {
-            Ok(n) if n > 0 => debug!(frames = n, "indexer caught up"),
+            Ok(n) if n > 0 => {
+                debug!(frames = n, "indexer caught up");
+                // MEMGRAPH-01 — auto-embed the new episode(s) this pass added, so
+                // the continuous (channel/daemon) ingest joins the vector lane
+                // without an operator backfill. Bounded per pass; best-effort.
+                // Orchestrated in three phases (sync collect → async embed → sync
+                // store) so NO `&Connection` is held across the `.await` — the
+                // owned `conn` stays parked (Connection is Send), keeping this
+                // spawned tail future `Send`.
+                if let Some(p) = embed_provider.as_ref() {
+                    let pending = crate::memory::embeddings::pending_episode_texts(&conn, 64);
+                    let mut vectors = Vec::with_capacity(pending.len());
+                    for (event_id, text) in pending {
+                        if let Some((model, vec)) =
+                            crate::memory::embeddings::embed_one(&text, p.as_ref()).await
+                        {
+                            vectors.push((event_id, model, vec));
+                        }
+                    }
+                    let embedded = vectors.len();
+                    for (event_id, model, vec) in vectors {
+                        crate::memory::embeddings::store_episode_vector(&conn, event_id, &model, &vec);
+                    }
+                    if embedded > 0 {
+                        debug!(embedded, "indexer auto-embedded new episodes (MEMGRAPH-01)");
+                    }
+                }
+            }
             Ok(_) => {}
             Err(e) => warn!(error = %e, "indexer pass failed; retrying"),
         }

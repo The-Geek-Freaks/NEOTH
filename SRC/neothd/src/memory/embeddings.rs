@@ -943,6 +943,99 @@ pub async fn embed_episode_text(
     }
 }
 
+/// MEMGRAPH-01 auto-embed-on-ingest: embed up to `cap` `idx_episode` rows that
+/// have no `idx_embedding` vector yet, newest first. Called after each
+/// ingest/replay so freshly-indexed episodes join the vector recall lane
+/// incrementally — no manual `neoth memory --embed-backfill` needed. Returns the
+/// number of episodes processed. Best-effort: a provider failure on one row is
+/// logged + skipped, and that row stays pending so the next tick retries it.
+pub async fn embed_pending_episodes(
+    conn: &Connection,
+    embed_provider: &dyn crate::providers::embed::EmbedProvider,
+    cap: usize,
+) -> usize {
+    let pending = pending_episode_texts(conn, cap);
+    let mut processed = 0;
+    for (event_id, text) in pending {
+        if let Some((model, vec)) = embed_one(&text, embed_provider).await {
+            store_episode_vector(conn, event_id, &model, &vec);
+            processed += 1;
+        }
+    }
+    processed
+}
+
+/// The (event_id, text) of up to `cap` `idx_episode` rows that have no
+/// `idx_embedding` vector yet, newest first. Pure + synchronous so callers in a
+/// `Send` future (e.g. the spawned indexer tail) can collect, then `.await` the
+/// embeds WITHOUT holding a `&Connection` across the await (which would make the
+/// future non-`Send`, since `rusqlite::Connection` is `Send` but not `Sync`).
+pub(crate) fn pending_episode_texts(conn: &Connection, cap: usize) -> Vec<(i64, String)> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    let mut stmt = match conn.prepare(
+        "SELECT e.event_id, e.text FROM idx_episode e \
+         WHERE e.text IS NOT NULL AND e.text <> '' \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM idx_embedding x \
+               WHERE x.source_kind = 'episode' \
+                 AND x.source_ref = CAST(e.event_id AS TEXT)) \
+         ORDER BY e.event_id DESC LIMIT ?1",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "pending_episode_texts: prepare failed");
+            return Vec::new();
+        }
+    };
+    match stmt.query_map(rusqlite::params![cap as i64], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    }) {
+        Ok(it) => it.filter_map(|r| r.ok()).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "pending_episode_texts: query failed");
+            Vec::new()
+        }
+    }
+}
+
+/// Embed one text → `(model, unit-normalised vector)`. Async, touches NO DB
+/// connection, so it is safe to `.await` inside a `Send` future while the owned
+/// `Connection` stays parked. `None` on empty text or a provider failure.
+pub(crate) async fn embed_one(
+    text: &str,
+    embed_provider: &dyn crate::providers::embed::EmbedProvider,
+) -> Option<(String, Vec<f32>)> {
+    use crate::providers::embed::{EmbedRequest, l2_normalize};
+    if text.is_empty() {
+        return None;
+    }
+    let resp = match embed_provider.embed(EmbedRequest::new(text)).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "embed_one: provider failed; skipping vector lane");
+            return None;
+        }
+    };
+    let mut vec = resp.vector;
+    if vec.is_empty() {
+        tracing::warn!("embed_one: provider returned empty vector");
+        return None;
+    }
+    l2_normalize(&mut vec);
+    Some((resp.model, vec))
+}
+
+/// Upsert one episode's vector into `idx_embedding` (sync). Pairs with
+/// [`embed_one`] so the embed (`.await`) and the DB write stay on separate sides
+/// of the connection borrow.
+pub(crate) fn store_episode_vector(conn: &Connection, event_id: i64, model: &str, vector: &[f32]) {
+    if let Err(e) = upsert(conn, "episode", &event_id.to_string(), model, vector) {
+        tracing::warn!(event_id, error = %e, "store_episode_vector: upsert failed");
+    }
+}
+
 fn floats_to_blob(v: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 4);
     for f in v {
@@ -1673,6 +1766,41 @@ mod tests {
         let (kind, sref) = row.expect("row must exist after embed_episode_text");
         assert_eq!(kind, "episode");
         assert_eq!(sref, "42");
+    }
+
+    /// MEMGRAPH-01 auto-embed: only `idx_episode` rows WITHOUT a vector get
+    /// embedded; an already-embedded row is skipped; a second pass is a no-op.
+    #[tokio::test]
+    async fn embed_pending_episodes_only_embeds_unembedded_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+        for (id, text) in [(1i64, "first episode"), (2i64, "second episode")] {
+            conn.execute(
+                "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts, trust) \
+                 VALUES (?1, 0, ?1, ?2, ?1, NULL, NULL, NULL, 0.5, ?1, 2)",
+                rusqlite::params![id, text],
+            )
+            .unwrap();
+        }
+        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        // Pre-embed episode 1, leaving episode 2 pending.
+        embed_episode_text(&conn, 1, "first episode", &provider).await;
+
+        let n = embed_pending_episodes(&conn, &provider, 10).await;
+        assert_eq!(n, 1, "only the unembedded episode 2 should be processed");
+
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_embedding WHERE source_kind = 'episode'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 2, "both episodes now have a vector");
+
+        // Idempotent: nothing pending on a second pass.
+        assert_eq!(embed_pending_episodes(&conn, &provider, 10).await, 0);
     }
 
     /// With a None/skip provider equivalent: calling embed_episode_text on empty
