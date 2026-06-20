@@ -84,6 +84,30 @@ system_prompt: |
   acceptance criteria, evidence requirements, and size. The
   `triage` skill moves rows through the lifecycle thereafter.
 
+# GOLD-ADAPT-PWF-03 — research-sink "findings" mode with a 2-action flush rule.
+modes:
+  - id: findings
+    description: Research-sink mode — append durable findings to findings.md with a 2-action flush rule (crash-safe).
+    spectrum: fidelity
+    oversight: low
+    output:
+      format: markdown
+      length_hint: "one dated findings.md bullet per insight"
+    trigger_phrases:
+      - "research findings"
+      - "document findings"
+      - "findings aufschreiben"
+      - "ergebnisse sichern"
+    system_prompt_delta: |
+      Mode: findings (research sink). Treat findings.md as the durable record of
+      what you learn, kept SEPARATE from the plan file. Flush rule: after every 2
+      substantive research actions (a read / search / tool-call that yielded a
+      fact), append the new finding(s) to findings.md — do NOT batch the whole
+      session into one write at the end (crash-safety). Each entry is one bullet:
+      the claim, its source/anchor, and a one-line "why it matters". When the task
+      shifts from research to building, the plan skill takes over from the findings
+      you have accumulated.
+
 tool_allowlist:
   - fetch
   - recall
