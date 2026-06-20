@@ -31,7 +31,6 @@
 //! - Capability scoping like Jarvis (`exec`, `read`, `write`) — that comes
 //!   with the plugin SDK in Phase 17+.
 
-pub mod delivery_queue;
 pub mod error_retrospective;
 pub mod guidance;
 pub mod quality_gate;
