@@ -15,8 +15,8 @@
 //! Tests cover the firing decision in isolation; live scheduler runs are
 //! exercised by the integration smoke test.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -40,6 +40,11 @@ pub async fn run_scheduler(
     writer: WalWriterHandle,
 ) -> Result<()> {
     let mut last_fired: HashMap<String, DateTime<Utc>> = HashMap::new();
+    // JV-PRO-03 — actual completion times (`job_id` → `completed_at`), updated by
+    // each spawned `run_job` task on success. `ready_jobs` reads this so a job
+    // with `depends_on` only fires AFTER its dependencies have COMPLETED (not
+    // merely fired) within the freshness window — the wave/dependency gate.
+    let completed: Arc<Mutex<HashMap<String, DateTime<Utc>>>> = Arc::new(Mutex::new(HashMap::new()));
     let mut ticker = interval(DEFAULT_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -47,8 +52,28 @@ pub async fn run_scheduler(
     loop {
         ticker.tick().await;
         let now = Utc::now();
+        // Snapshot completions (brief lock; never held across an await), then ask
+        // the validated wave scheduler which jobs are dependency-ready this tick.
+        // A job with no `depends_on` is always ready, so no-dependency behaviour
+        // is byte-identical to before.
+        let completed_at: HashMap<String, DateTime<Utc>> = completed.lock().unwrap().clone();
+        let completed_set: HashSet<String> = completed_at.keys().cloned().collect();
+        let ready: HashSet<String> = crate::cron::schema::ready_jobs(
+            &jobs_file.jobs,
+            &completed_set,
+            now,
+            &completed_at,
+            crate::cron::schema::DEFAULT_FRESHNESS,
+        )
+        .into_iter()
+        .collect();
         for job in &jobs_file.jobs {
             if !job.enabled {
+                continue;
+            }
+            // JV-PRO-03 — hold a job whose `depends_on` are unmet or stale, even
+            // if its cron time is due.
+            if !ready.contains(&job.id) {
                 continue;
             }
             if should_fire_now(job, now, last_fired.get(&job.id).copied()) {
@@ -56,11 +81,21 @@ pub async fn run_scheduler(
                 let writer_for_task = writer.clone();
                 let provider_for_task = provider.clone();
                 let job_for_task = job.clone();
+                let completed_for_task = completed.clone();
+                let job_id = job.id.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        run_job(&job_for_task, provider_for_task.as_ref(), &writer_for_task).await
+                    match run_job(&job_for_task, provider_for_task.as_ref(), &writer_for_task).await
                     {
-                        warn!(job_id = %job_for_task.id, error = %e, "job dispatch error");
+                        Ok(_) => {
+                            // Record completion so dependents become ready.
+                            completed_for_task
+                                .lock()
+                                .unwrap()
+                                .insert(job_id, Utc::now());
+                        }
+                        Err(e) => {
+                            warn!(job_id = %job_for_task.id, error = %e, "job dispatch error");
+                        }
                     }
                 });
             }
