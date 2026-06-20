@@ -14,3 +14,6 @@ pub mod ssh_tofu;
 /// Behind the `ssh-tunnel` feature (pulls `russh` with the `ring` backend).
 #[cfg(feature = "ssh-tunnel")]
 pub mod ssh_tunnel;
+/// TERMIX-02 — N-hop SSH jump-host chain (ProxyJump). `ssh-tunnel` feature.
+#[cfg(feature = "ssh-tunnel")]
+pub mod ssh_jump;
