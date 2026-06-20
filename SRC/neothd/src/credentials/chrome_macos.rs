@@ -43,12 +43,17 @@
 
 use std::path::Path;
 
+// GOLD-ARCH-08 — the AES-128-CBC decrypt loop + key derivation moved to
+// `chrome_common`; these aes/cbc/sha1 imports now only feed the test module
+// (the v10/v11 encrypt fixture + the iter=1 drift-guard recompute).
+#[cfg(test)]
 use aes::Aes128;
+#[cfg(test)]
+use cbc::cipher::KeyIvInit;
+#[cfg(test)]
 use cbc::cipher::block_padding::Pkcs7;
-use cbc::cipher::{BlockDecryptMut, KeyIvInit};
+#[cfg(test)]
 use sha1::Sha1;
-
-type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
 // GOLD-ARCH-08 — the row/credential structs + the saltysalt/CBC envelope
 // constants are shared in `chrome_common`; macOS supplies only the PBKDF2
@@ -97,9 +102,9 @@ pub enum ChromeMacosError {
 /// iterations → 16-byte AES-128 key. The iteration count is the
 /// per-platform pinch — macOS uses 1003 where Linux uses 1.
 pub fn derive_chrome_aes_key(password: &[u8]) -> [u8; AES_KEY_BYTES] {
-    let mut key = [0u8; AES_KEY_BYTES];
-    pbkdf2::pbkdf2_hmac::<Sha1>(password, SALTYSALT, PBKDF2_ITERATIONS, &mut key);
-    key
+    // GOLD-ARCH-08 — body shared with Linux in `chrome_common`; macOS supplies
+    // only its `PBKDF2_ITERATIONS` (1003) pinch.
+    crate::credentials::chrome_common::derive_saltysalt_key(password, PBKDF2_ITERATIONS)
 }
 
 /// Decrypt one password BLOB. Strips v10/v11 prefix + runs AES-128-CBC
@@ -109,19 +114,13 @@ pub fn decrypt_chrome_password_macos(
     aes_key: &[u8; AES_KEY_BYTES],
     blob: &[u8],
 ) -> Result<Vec<u8>, ChromeMacosError> {
-    if !(blob.starts_with(V10_PREFIX) || blob.starts_with(V11_PREFIX)) {
-        return Err(ChromeMacosError::UnrecognizedBlob);
-    }
-    let ciphertext = &blob[3..];
-    let mut buf = ciphertext.to_vec();
-    let pt = Aes128CbcDec::new(aes_key.into(), CHROME_CBC_IV.into())
-        .decrypt_padded_mut::<Pkcs7>(&mut buf)
-        .map_err(|_| ChromeMacosError::AesCbcDecrypt)?;
-    let out = pt.to_vec();
-    // Scrub the in-place decrypted buffer (GOLD-SEC-12 / A-32).
-    use zeroize::Zeroize;
-    buf.zeroize();
-    Ok(out)
+    // GOLD-ARCH-08 — shared CBC loop lives in `chrome_common`; macOS maps the
+    // generic error onto its own per-source diagnostic enum.
+    use crate::credentials::chrome_common::ChromeCbcError;
+    crate::credentials::chrome_common::decrypt_chrome_cbc_envelope(aes_key, blob).map_err(|e| match e {
+        ChromeCbcError::UnrecognizedBlob => ChromeMacosError::UnrecognizedBlob,
+        ChromeCbcError::AesCbcDecrypt => ChromeMacosError::AesCbcDecrypt,
+    })
 }
 
 /// Look up the Chrome AES-key password in the operator's Login

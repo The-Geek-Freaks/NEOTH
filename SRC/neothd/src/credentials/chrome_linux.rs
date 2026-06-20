@@ -41,12 +41,15 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+// GOLD-ARCH-08 — the AES-128-CBC decrypt loop + key derivation moved to
+// `chrome_common`; these aes/cbc imports now only feed the v10/v11 encrypt
+// fixture in the test module below.
+#[cfg(test)]
 use aes::Aes128;
+#[cfg(test)]
+use cbc::cipher::KeyIvInit;
+#[cfg(test)]
 use cbc::cipher::block_padding::Pkcs7;
-use cbc::cipher::{BlockDecryptMut, KeyIvInit};
-use sha1::Sha1;
-
-type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
 // GOLD-ARCH-08 — the row/credential structs + the saltysalt/CBC envelope
 // constants are shared in `chrome_common`; Linux supplies only the PBKDF2
@@ -93,9 +96,9 @@ pub enum ChromeLinuxError {
 /// any IO. The PBKDF2 input is the keyring-supplied password (typ
 /// 24 base64 bytes from libsecret) or the `"peanuts"` fallback.
 pub fn derive_chrome_aes_key(password: &[u8]) -> [u8; AES_KEY_BYTES] {
-    let mut key = [0u8; AES_KEY_BYTES];
-    pbkdf2::pbkdf2_hmac::<Sha1>(password, SALTYSALT, PBKDF2_ITERATIONS, &mut key);
-    key
+    // GOLD-ARCH-08 — body shared with macOS in `chrome_common`; Linux supplies
+    // only its `PBKDF2_ITERATIONS` (1) pinch.
+    crate::credentials::chrome_common::derive_saltysalt_key(password, PBKDF2_ITERATIONS)
 }
 
 /// Decrypt one password BLOB from Chrome's `password_value` column.
@@ -107,19 +110,13 @@ pub fn decrypt_chrome_password_linux(
     aes_key: &[u8; AES_KEY_BYTES],
     blob: &[u8],
 ) -> Result<Vec<u8>, ChromeLinuxError> {
-    if !(blob.starts_with(V10_PREFIX) || blob.starts_with(V11_PREFIX)) {
-        return Err(ChromeLinuxError::UnrecognizedBlob);
-    }
-    let ciphertext = &blob[3..];
-    let mut buf = ciphertext.to_vec();
-    let pt = Aes128CbcDec::new(aes_key.into(), CHROME_CBC_IV.into())
-        .decrypt_padded_mut::<Pkcs7>(&mut buf)
-        .map_err(|_| ChromeLinuxError::AesCbcDecrypt)?;
-    let out = pt.to_vec();
-    // Scrub the in-place decrypted buffer (GOLD-SEC-12 / A-32).
-    use zeroize::Zeroize;
-    buf.zeroize();
-    Ok(out)
+    // GOLD-ARCH-08 — shared CBC loop lives in `chrome_common`; Linux maps the
+    // generic error onto its own per-source diagnostic enum.
+    use crate::credentials::chrome_common::ChromeCbcError;
+    crate::credentials::chrome_common::decrypt_chrome_cbc_envelope(aes_key, blob).map_err(|e| match e {
+        ChromeCbcError::UnrecognizedBlob => ChromeLinuxError::UnrecognizedBlob,
+        ChromeCbcError::AesCbcDecrypt => ChromeLinuxError::AesCbcDecrypt,
+    })
 }
 
 /// Look up Chrome's symmetric password in the operator's freedesktop
