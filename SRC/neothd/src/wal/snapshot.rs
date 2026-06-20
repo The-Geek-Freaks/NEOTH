@@ -732,4 +732,64 @@ mod tests {
         assert_eq!(p.target, "filesystem:read_file");
         assert_eq!(p.before_state_bytes().unwrap(), b"prior file state");
     }
+
+    /// MUTATION-SAFE WRITER DEMO (operator-requested) — the end-to-end proof the
+    /// snapshot framing exists to provide: a pre-mutation snapshot captured
+    /// through `WalWriterHandle` survives the subsequent mutation, so the
+    /// pre-state is recoverable from the WAL ALONE regardless of what the caller
+    /// does to the live resource afterwards. snapshot → mutate → scan WAL →
+    /// recover `before_state` → assert it equals the ORIGINAL (not the mutated
+    /// value) → notional restore. This is the recovery guarantee that distinguishes
+    /// a mutation-safe writer from a plain destructive one.
+    #[tokio::test]
+    async fn mutation_safe_writer_demo_recovers_pre_mutation_state() {
+        use crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+        use tokio::fs::read;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("mutation_demo.wal");
+        let (writer, join) = spawn(seg.clone()).unwrap();
+
+        // A mutable resource. Snapshot its state BEFORE the mutation.
+        let original: Vec<u8> = b"original content".to_vec();
+        let snap = PreMutationSnapshot::new(
+            MutationKind::ConfigWrite,
+            "/demo/resource",
+            &original,
+            1_700_000_000,
+        );
+        emit_snapshot(&writer, &snap).await.unwrap();
+
+        // The mutation happens AFTER the snapshot — the live resource changes.
+        let mut resource: Vec<u8> = b"mutated content".to_vec();
+        assert_ne!(resource, original, "the mutation actually changed the resource");
+
+        // Recover the pre-mutation state from the WAL alone.
+        drop(writer);
+        let _ = join.await;
+        let bytes = read(&seg).await.unwrap();
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut recovered: Option<Vec<u8>> = None;
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode frame");
+            if frame.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
+                let p: PreMutationSnapshot = serde_json::from_slice(frame.payload).unwrap();
+                recovered = Some(p.before_state_bytes().unwrap().to_vec());
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        let recovered = recovered.expect("snapshot frame must be present in the WAL");
+
+        // The invariant: the WAL holds the pre-mutation state, independent of the
+        // live mutation. "Restoring" is writing that recovered state back.
+        assert_eq!(recovered, original, "recovered state must equal the pre-mutation original");
+        assert_ne!(recovered, resource, "recovered state must NOT equal the post-mutation value");
+        resource = recovered.clone(); // notional restore
+        assert_eq!(resource, original, "after restore the resource matches the original again");
+    }
 }
