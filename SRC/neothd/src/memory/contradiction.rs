@@ -199,6 +199,14 @@ fn ordered_tokens(s: &str) -> Vec<String> {
 /// the first 3 content tokens. Stopwords (other than the copula delimiter) are
 /// dropped so "the primary nas" and "primary nas" match.
 fn subject_tokens(s: &str) -> HashSet<String> {
+    ordered_subject_tokens(s).into_iter().collect()
+}
+
+/// The subject's content tokens in ORDER (before the first copula, else the
+/// first 3 content tokens). Order is preserved so [`bigram_shingles`] can build
+/// adjacency shingles (JV-MEM-03 v2); [`subject_tokens`] just collects this into
+/// a set.
+fn ordered_subject_tokens(s: &str) -> Vec<String> {
     let toks = ordered_tokens(first_clause(s));
     match toks.iter().position(|t| COPULAS.contains(&t.as_str())) {
         // Everything before the copula (stopwords dropped).
@@ -241,6 +249,29 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
     if union == 0.0 { 0.0 } else { inter / union }
 }
 
+/// Adjacent-token bigram shingles: `["a","b","c"]` → `{"a b","b c"}`. Empty for
+/// fewer than 2 tokens (JV-MEM-03 v2 — adjacency signal for the subject match).
+fn bigram_shingles(toks: &[String]) -> HashSet<String> {
+    toks.windows(2).map(|w| format!("{} {}", w[0], w[1])).collect()
+}
+
+/// Subject similarity (JV-MEM-03 v2): unigram-token Jaccard LIFTED by a bigram-
+/// shingle Jaccard when BOTH subjects carry ≥2 ordered tokens. The shingle term
+/// rewards matching word-ADJACENCY that a bag-of-tokens misses (e.g. "vpn server
+/// down" vs "vpn server up" share the `vpn server` bigram). `max` keeps it
+/// strictly additive — it can only RAISE a borderline pair, never suppress one
+/// the unigram term already accepts, so the existing single-/short-subject
+/// tuning is preserved untouched.
+fn subject_similarity(a: &str, b: &str) -> f32 {
+    let uni = jaccard(&subject_tokens(a), &subject_tokens(b));
+    let ba = bigram_shingles(&ordered_subject_tokens(a));
+    let bb = bigram_shingles(&ordered_subject_tokens(b));
+    if ba.is_empty() || bb.is_empty() {
+        return uni;
+    }
+    uni.max(jaccard(&ba, &bb))
+}
+
 /// Does the statement carry a negation marker? Token-exact for single-word
 /// markers (so "no" matches but "now" does not) + substring for the multi-word
 /// markers ("stimmt nicht").
@@ -280,7 +311,7 @@ pub struct PairSignal {
 /// signal — opposite polarity (negation XOR) OR diverging value tokens.
 /// `confidence = subject_jaccard·0.6 + (negation ? 0.4 : value_diverges ? 0.3 : 0)`.
 pub fn pair_confidence(stmt_a: &str, stmt_b: &str) -> Option<PairSignal> {
-    let subj = jaccard(&subject_tokens(stmt_a), &subject_tokens(stmt_b));
+    let subj = subject_similarity(stmt_a, stmt_b);
     if subj < SUBJECT_SIM_THRESHOLD {
         return None;
     }
@@ -761,6 +792,30 @@ mod tests {
         assert_eq!(jaccard(&a, &b), 1.0);
         let c: HashSet<String> = ["c"].iter().map(|s| s.to_string()).collect();
         assert_eq!(jaccard(&a, &c), 0.0);
+    }
+
+    #[test]
+    fn bigram_shingles_builds_adjacent_pairs() {
+        let toks: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        let sh = bigram_shingles(&toks);
+        assert!(sh.contains("a b") && sh.contains("b c") && sh.len() == 2);
+        // Fewer than 2 tokens → no shingles.
+        assert!(bigram_shingles(&["x".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn subject_similarity_bigram_is_additive_only() {
+        // JV-MEM-03 v2: the bigram term can only LIFT, never lower, the unigram
+        // score, so an identical short subject still scores 1.0 (existing tuning
+        // preserved) and a multi-token subject sharing adjacency is >= its
+        // unigram score.
+        assert_eq!(subject_similarity("nas at 10.0.0.5", "nas at 10.0.0.6"), 1.0);
+        let uni = jaccard(
+            &subject_tokens("vpn server is up"),
+            &subject_tokens("vpn server is down"),
+        );
+        let blended = subject_similarity("vpn server is up", "vpn server is down");
+        assert!(blended >= uni, "bigram blend must never reduce subject sim");
     }
 
     #[test]
