@@ -40,6 +40,14 @@ wasm-plugin-host = ["dep:wasmtime"]
 # operator's email config. rustls-only via tokio-rustls (no native-tls).
 imap_fetch = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mailparse", "dep:futures"]
 
+# TERMIX-01/02 — SSH local-forward tunnel + jump-host chain via `russh` (pure-Rust,
+# `ring` crypto backend → builds on Windows MSVC with NO cmake/nasm; ring ships
+# pre-assembled objects from crates.io). Default OFF (same precedent as
+# `imap_fetch`); release binaries flip ON via cargo-dist. Runtime gated by
+# `freedom.yaml::transport.ssh_tunnels`. The TERMIX-03/04 primitives
+# (`transport::ssh_socks5` / `ssh_tofu`) compile WITHOUT this feature.
+ssh-tunnel = ["dep:russh"]
+
 # PC-01 (clipboard slice) — gated OS clipboard read/write via `arboard`. Default
 # OFF for source builds (same precedent as `wasm-plugin-host` / `imap_fetch`):
 # the clipboard backend is desktop-oriented + platform-specific, so keeping it
@@ -518,6 +526,10 @@ sysinfo             = { version = "0.32", default-features = false, features = [
 # Pin to 0.9 so we share candle-core's transitive `rand` and don't pull a
 # duplicate version into the dep graph.
 rand                = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+# TERMIX-01/02 (feature `ssh-tunnel`, default OFF). `ring` backend (NOT aws-lc-rs)
+# so it builds on Windows MSVC with no cmake/nasm. `russh::keys` (merged-in, no
+# separate russh-keys crate) supplies the ssh-key PublicKey/PrivateKey types.
+russh               = { version = "0.61", default-features = false, features = ["ring", "flate2", "rsa"], optional = true }
 # D14b Phase 2c streaming: wrap a tokio mpsc::Receiver as a Stream.
 tokio-stream        = { version = "0.1", default-features = false }
 # Phase 5C streaming -- async-stream macro builds Stream impls from async {}

@@ -10,3 +10,7 @@ pub mod ssh_socks5;
 /// TERMIX-04 — SSH host-key TOFU store (pure rusqlite; the `ssh-tunnel` feature
 /// modules consume it). Compiles + unit-tests on the default build.
 pub mod ssh_tofu;
+/// TERMIX-01 — SSH local-forward tunnel + TOFU-enforcing russh handler.
+/// Behind the `ssh-tunnel` feature (pulls `russh` with the `ring` backend).
+#[cfg(feature = "ssh-tunnel")]
+pub mod ssh_tunnel;
