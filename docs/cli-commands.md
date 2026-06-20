@@ -285,6 +285,14 @@ V11 coding workflow — autonomous software-engineering entry point
 - `--apply <REPO_ROOT>` — Pick #6 Phase 4 (2026-05-21): also APPLY each worker- produced patch inside a task-scoped git worktree per the Chorus verdict (Strategy B). Requires a dispatch path — EITHER `--dispatch` (fresh decomposed session) OR `--run-pending` (existing Backlog sessions); `--run-pending` is itself a dispatch path, so it accepts `--apply` directly. The value is the operator's repo root; the worktree lands at `<repo_parent>/.neoth-task-<task_id>/` and is left in place on success so the operator can inspect / cherry-pick. Without `--apply` the dispatcher only stores patches (Phase-3 behaviour preserved). The dispatch-path requirement is enforced in `run_code` (clap's `requires` can't express "one of A or B")
 - `--run-pending <RUN_PENDING>` — QU-10b / SP-A1: skip decomposition and instead drive the dispatcher across EVERY session that still has a Backlog task. Picks up pending work created outside a one-shot `neoth code "..."` (deferred dispatch, tasks added to an existing session). Pairs with `--apply <repo>` to apply patches in worktrees just like the single-session path. Operator-driven — no daemon loop
 
+## `neoth code-intel`
+
+REPOW-01/02/03 — git-derived repo intelligence
+
+- `--repo <REPO>` — Path to the git repository root. Defaults to the current directory
+- `--top <TOP>` — Show the top N riskiest files
+- `--coupling <COUPLING>` — Also compute hidden co-change coupling pairs (slower: requires git log of the full commit history). Reads `~/.neoth/code_map.db` for the call-graph edge set; if the DB is absent only commit-frequency coupling is suppressed by an empty graph
+
 ## `neoth code-map`
 
 Repository code-map (K-Repo-Map Phase 1, Session 14 Pick #13). `scan` walks the operator's project root, classifies files by language, counts LOC + bytes. Honours .gitignore / .neothignore. Phase 2 adds tree-sitter symbol extraction; Phase 3 persists into a `~/.neoth/code_map.db` SQLite for recall integration
@@ -492,6 +500,48 @@ Scan a file or directory for committed secrets (AWS / GitHub / OpenAI / Slack / 
 
 Fire a scheduled job NOW, out of band of the daemon scheduler: `cron run <id>` loads jobs.yaml, runs the job through the configured provider (real call + delivery), writing the same WAL frames the scheduler does. Refused while `neoth serve` owns the WAL
 
+### `neoth cron add`
+
+Add a new job to jobs.yaml. Validates the schedule and surfaces delivery warnings before saving. Rejects duplicate ids. HERMES-01 / JV-PRO-01/04/09
+
+- `--id <ID>` — Unique job id (slug, no spaces)
+- `--name <NAME>` — Human-readable job name
+- `--cron <CRON>` — 5-field cron expression, e.g. "0 7 * * *"
+- `--prompt <PROMPT>` — Prompt sent to the configured provider when the job fires
+- `--tz <TZ>` — IANA timezone, e.g. "Europe/Berlin". Defaults to UTC
+- `--channel <CHANNEL>` — Delivery channel name ("telegram", "slack", …)
+- `--recipient <RECIPIENT>` — Delivery recipient (chat_id, user_id, …)
+- `--timeout <TIMEOUT>` — Timeout in seconds. Defaults to 600
+- `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+
+### `neoth cron edit`
+
+Edit an existing job by id. Only supplied flags are updated. Validates the result and surfaces warnings before saving. HERMES-01
+
+- `<ID>` — The job `id` to modify
+- `--name <NAME>` — Replace the job name
+- `--cron <CRON>` — Replace the cron expression
+- `--prompt <PROMPT>` — Replace the prompt
+- `--tz <TZ>` — Replace the timezone (pass "UTC" to clear)
+- `--channel <CHANNEL>` — Replace the delivery channel
+- `--recipient <RECIPIENT>` — Replace the delivery recipient
+- `--timeout <TIMEOUT>` — Replace the timeout in seconds
+- `--enabled <ENABLED>` — Enable or disable the job
+- `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+
+### `neoth cron list`
+
+List all jobs with their schedule, role, and delivery. HERMES-01 / JV-PRO-05
+
+- `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+
+### `neoth cron remove`
+
+Remove a job by id from jobs.yaml. HERMES-01
+
+- `<ID>` — The job `id` to delete
+- `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+
 ### `neoth cron run`
 
 Fire one job by id immediately, out of band of the scheduler. Makes a real provider call and (if the job has a delivery channel) delivers the result. Refused while `neoth serve` is running
@@ -516,6 +566,24 @@ Ctx-mode parity — persistent indexed knowledge with hybrid FTS5 search
 - `--retrieve <KEY>` — GOLD-HR-10 — retrieve a CCR-cached original by its `[0-9a-f]{24}` key (the `<<ccr:KEY>>` marker the compression pipeline left inline). Pulls the byte-exact dropped block back from the persistent store
 - `--savings <SAVINGS>` — GOLD-HR-10 — print cumulative token-compression savings (blocks compressed, bytes before/after, ratio)
 - `--limit <LIMIT>` — Maximum hits returned by `--search`
+
+## `neoth demo`
+
+Scripted end-to-end smoke test. Runs every safe, read-only NEOTH surface in sequence (onboarding-status, device-profile, memory-eval, code-intel, doctor, github-availability) and prints a pass/fail summary. memory-eval is the only must-pass step; all others are environment-tolerant.  No writes, no real PRs, no external network. `neoth demo [--json]`
+
+- `--json <JSON>` — Emit JSON for the final summary instead of a markdown table
+
+## `neoth device-profile`
+
+OH-04 — detect host RAM / CPU / GPU and recommend a local-AI deployment tier (cloud-first / hybrid / local-capable).  No LLM call; purely hardware-derived.  Used internally by `onboarding-status`
+
+## `neoth distill`
+
+GOLD-ADAPT-KB-03 — scan session trajectory files for repeated tool-call sequences and surface them as candidate skills to distill
+
+- `--min-occurrences <MIN_OCCURRENCES>` — Minimum number of times a sequence must appear to be reported
+- `--min-len <MIN_LEN>` — Minimum sequence length (number of tool calls) to consider
+- `--json <JSON>` — Emit JSON array instead of the default table
 
 ## `neoth doctor`
 
@@ -696,6 +764,16 @@ List issues
 - `--state <STATE>`
 - `--limit <LIMIT>`
 
+### `neoth github pr-create`
+
+Open a pull request from the current branch
+
+- `--repo <OWNER/REPO>`
+- `--title <TITLE>`
+- `--body <BODY>`
+- `--base <BASE>` — Base branch to merge into (gh default if omitted)
+- `--draft <DRAFT>` — Open as a draft PR
+
 ### `neoth github pr-review`
 
 Post a review (comment / approve / request-changes)
@@ -780,7 +858,7 @@ GOLD-ADAPT-MEM-02 — list the contradiction ledger (pairs of facts that disagre
 
 Import ground-truth rows from another agent's memory store. Phase 28c R-24 GT-8
 
-- `<KIND>` — Which foreign agent format. `hermes | openclaw | openhuman | veronica | jsonl`
+- `<KIND>` — Which foreign agent format. `hermes | openclaw | openclaw-index | openhuman | veronica | jsonl | obsidian`
 - `<PATH>` — Path to the foreign store. SQLite files for hermes/openhuman, markdown directory for openclaw, JSONL file for veronica/jsonl
 - `--dry-run <DRY_RUN>` — Print parsed claims without inserting any rows
 
@@ -1196,8 +1274,15 @@ Inspect the assembled NEOTH.md operator context
 - `--dimension <DIMENSION>` — Compute the fractal-dimension D_mem across the four memory tiers (EXP-FD-0 from `PLAN/FRACTAL_DIMENSION.md`). Pure read, no behaviour change. Prints the per-tier byte counts + the regressed log-log slope + an honest verdict on whether D_mem is meaningful for this operator's data
 - `--people <PEOPLE>` — GOLD-ADAPT-OH-10 — print the per-person relationship ranking (recency × frequency × reciprocity × depth, clamped). Pure read of `~/.neoth/people.json`, no behaviour change. Honours `--limit` (default 20; `--limit 0` returns the full ranking)
 - `--rebuild-index <REBUILD_INDEX>` — V10-08 — rebuild the HNSW embedding index from scratch by scanning all rows in `idx_embedding`. Writes the snapshot to `<neoth_home>/embeddings.hnsw`. Use after a database restore or when the snapshot is missing or corrupted. Safe to interrupt: the snapshot is written atomically (temp-file + rename)
+- `--embed-backfill <EMBED_BACKFILL>` — GOLD-ADAPT-MEMGRAPH-01 — backfill episode embeddings into idx_embedding for every hot-tier episode that has no embedding row yet. Runs outside the hot ingest path (which is sync-in-tx and cannot call async embed). Honours `--limit` (default 20; `--limit 0` = unbounded) and `--db`. No-ops cleanly when no embed provider is configured
 - `--limit <LIMIT>` — Max rows for `--tier` recall
 - `--db <PATH>` — Override the views.db path for `--tier`
+
+## `neoth memory-eval`
+
+GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory recall benchmark. Seeds a fresh temp DB with synthetic episodes, runs the decay/consolidation pass, and reports recall precision.  Safe to run at any time — never touches the real operator memory DB. `neoth memory-eval [--json]`
+
+- `--json <JSON>` — Emit the report as JSON instead of a human-readable table
 
 ## `neoth meter`
 
@@ -1457,6 +1542,12 @@ Export the OKF bundle straight into an Obsidian vault (under `<vault>/NEOTH-know
 
 - `--vault <PATH>`
 - `--db <PATH>`
+
+## `neoth onboarding-status`
+
+OH-02 — compact onboarding readiness snapshot.  Shows provider auth, enabled channels, autonomy level, and device tier in one glance. `--json` emits machine-readable output
+
+- `--json <JSON>` — Emit JSON instead of markdown
 
 ## `neoth os`
 
@@ -1874,6 +1965,8 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--assoc <EVENT_ID>` — GOLD-ADAPT-MEM-07 — co-access association query: list the memories most frequently recalled ALONGSIDE this `event_id` (1-hop neighbourhood, ordered by link weight DESC). Bypasses search
 - `--bootstrap-assoc <BOOTSTRAP_ASSOC>` — GOLD-ADAPT-MEM-07b — one-shot: bootstrap co-access association edges from episode history (memories in the same time-window get a weak initial link), so a fresh install has associations before live recall accrues. Idempotent — safe to re-run (never touches existing edges)
 - `--scorecard <N>` — GOLD-ADAPT-MEM-15 — print the recall-quality scorecard over the most recent N recall outcomes (hit-rate / result-count / reinforcement-rate / tier mix / latency percentiles) instead of searching. `--scorecard 0` uses the default window (500)
+- `--hubs <HUBS>` — GOLD-ADAPT-GRAPH-01 — print the top N most-connected nodes in the association graph (highest link degree), one row per node: `event_id` and the number of distinct links touching it. Useful for finding "hub" memories that were co-recalled with many other memories. Bypasses search. Defaults to `--limit` for the result count
+- `--communities <COMMUNITIES>` — GOLD-ADAPT-GRAPH-03 — detect communities in the association graph using one level of Louvain modularity optimisation and print each community (index, size, member node ids). Isolated nodes (no links) are omitted. Bypasses search
 
 ## `neoth recall-score`
 
@@ -2222,6 +2315,12 @@ Enable self-improvement. `--auto` also turns on the nightly sleep cycle
 
 - `--auto <AUTO>`
 
+### `neoth self-improve execute`
+
+IMPR-03: run a pending proposal through the verification-gated execute scaffold (verification_command + advisor diff-review loop, max 2 revises). Does NOT write the skill file — accept is still gated by the operator
+
+- `<ID>`
+
 ### `neoth self-improve log`
 
 Print the improvement ledger (what changed, when, accepted or not)
@@ -2403,6 +2502,14 @@ List active (open) tasks
 NOOB-UX-5 first-launch tour. `neoth tour` walks the operator through chat / memory / consent / privacy-audit / where-to-go
 
 - `--step <ID>` — Show one tour stop only. Stops: `chat` / `memory` / `consent` / `audit` / `next`. Without this flag, prints every stop in order (the full guided tour)
+
+## `neoth trace-replay`
+
+GOLD-ADAPT-HARNESS-02 — replay a recorded session trajectory (`~/.neoth/trajectories/<session_id>.jsonl`) as a turn-by-turn table
+
+- `<SESSION_ID>` — Session id to replay (the `<id>` in `trajectories/<id>.jsonl`)
+- `--file <FILE>` — Explicit path to a `.jsonl` trajectory file (overrides the default `~/.neoth/trajectories/<session_id>.jsonl`)
+- `--json <JSON>` — Emit the parsed turns as JSON instead of the narrative table
 
 ## `neoth transfer`
 

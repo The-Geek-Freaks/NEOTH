@@ -32,6 +32,7 @@ pub mod code;
 pub mod code_intel;
 pub mod code_map;
 pub mod distill;
+pub mod trace_replay;
 pub mod demo;
 pub mod device_profile;
 pub mod onboarding_status;
@@ -863,6 +864,13 @@ pub enum Commands {
     #[command(name = "distill")]
     Distill(distill::DistillArgs),
 
+    /// GOLD-ADAPT-HARNESS-02 — replay a recorded session trajectory
+    /// (`~/.neoth/trajectories/<session_id>.jsonl`) as a turn-by-turn table.
+    ///
+    /// `neoth trace-replay <session_id> [--file PATH] [--json]`
+    #[command(name = "trace-replay")]
+    TraceReplay(trace_replay::TraceReplayArgs),
+
     /// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory recall benchmark.
     /// Seeds a fresh temp DB with synthetic episodes, runs the
     /// decay/consolidation pass, and reports recall precision.  Safe to run
@@ -1432,6 +1440,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Distill(args) => {
             distill::run_distill(args).await?;
+        }
+        Commands::TraceReplay(args) => {
+            trace_replay::run_trace_replay(args)?;
         }
         Commands::MemoryEval(args) => {
             memory_eval::run_memory_eval_cmd(args).await?;
