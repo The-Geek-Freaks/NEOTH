@@ -194,6 +194,15 @@ const CURATED: &[(f32, Option<&str>, &str)] = &[
         Some("mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF"),
         "bartowski/Qwen2.5-32B-Instruct-GGUF",
     ),
+    // GOLD-ADAPT-G-03 — huihui-ai Qwen3.6-27B abliterated, the largest curated
+    // abliterated tier (VRAM-gated; pairs with the ODY-13 hwfit scorer). Both
+    // repos HF-API-200 verified 2026-06-20. The official huihui-ai abliterated
+    // GGUF carries the `-MTP-` (multi-token-prediction) suffix in its repo id.
+    (
+        27.0,
+        Some("huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF"),
+        "bartowski/Qwen_Qwen3.6-27B-GGUF",
+    ),
     (
         14.0,
         Some("mradermacher/Qwen2.5-14B-Instruct-abliterated-GGUF"),
