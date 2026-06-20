@@ -235,6 +235,14 @@ pub struct WatchdogConfig {
     pub n8n_port: u16,
     /// TCP port the Ollama service is probed on. Default 11434.
     pub ollama_port: u16,
+    /// Exponential-backoff base between consecutive restarts of the SAME service,
+    /// seconds. The Nth in-window restart must wait at least `base · 2^(N-1)`
+    /// (capped at `restart_backoff_max_secs`) plus a small random jitter since the
+    /// previous restart — so a flapping service is not hammered every tick even
+    /// while restart budget remains. Default 30s. `0` disables backoff.
+    pub restart_backoff_base_secs: u64,
+    /// Cap on the exponential restart backoff, seconds. Default 900 (15 min).
+    pub restart_backoff_max_secs: u64,
 }
 
 /// 1 hour — the watchdog restart-budget window default.
@@ -250,6 +258,8 @@ impl Default for WatchdogConfig {
             window_secs: DEFAULT_WATCHDOG_WINDOW_SECS,
             n8n_port: 5678,
             ollama_port: 11434,
+            restart_backoff_base_secs: 30,
+            restart_backoff_max_secs: 900,
         }
     }
 }
