@@ -268,7 +268,8 @@ fn decode_from_bytes(bytes: Vec<u8>, mime: &str) -> Result<DecodedAudio, Extract
     let resampled = if original_sr == TARGET_SAMPLE_RATE {
         decoded_mono
     } else {
-        linear_resample(&decoded_mono, original_sr, TARGET_SAMPLE_RATE)
+        // HANDY-01 — band-limited sinc (rubato), linear fallback inside.
+        super::resampler::resample_mono(&decoded_mono, original_sr, TARGET_SAMPLE_RATE)
     };
 
     Ok(DecodedAudio {
@@ -277,10 +278,10 @@ fn decode_from_bytes(bytes: Vec<u8>, mime: &str) -> Result<DecodedAudio, Extract
     })
 }
 
-/// Crude linear resampler. Phase 2b will swap to `rubato` (band-limited
-/// sinc) if quality measurably drifts on real operator audio. For the
-/// scaffold the linear path is sufficient to prove the pipeline works.
-fn linear_resample(input: &[f32], src_sr: u32, dst_sr: u32) -> Vec<f32> {
+/// Linear resampler — now the graceful fallback for the rubato sinc path in
+/// `media::resampler` (used only when rubato rejects a degenerate ratio).
+/// `pub(crate)` so the resampler module can reach it.
+pub(crate) fn linear_resample(input: &[f32], src_sr: u32, dst_sr: u32) -> Vec<f32> {
     if input.is_empty() || src_sr == 0 || dst_sr == 0 {
         return Vec::new();
     }

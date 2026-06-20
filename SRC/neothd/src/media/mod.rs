@@ -33,6 +33,8 @@ pub mod frame_decoder;
 pub mod multimodal_synth;
 pub mod pdf;
 pub mod pdf_forms;
+/// HANDY-01 — band-limited sinc resampler (rubato) for the STT capture path.
+pub mod resampler;
 pub mod stt_dispatch;
 /// HANDY-03 — filler-word removal + stutter collapse for raw STT transcripts.
 /// Called as a post-processing hook before transcript text leaves the pipeline.
