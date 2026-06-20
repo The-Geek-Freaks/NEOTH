@@ -223,8 +223,10 @@ pub fn manifest_packages(manifest_path: &Path) -> Vec<String> {
 /// `now_unix` — current wall-clock seconds (use `crate::time::now_unix_i64()`
 /// at the call site, or inject a fixed value in tests).
 ///
-/// // neoth: call this before any bulk `npm install` triggered from a manifest
-/// // path, and from a future `neoth deps scan <manifest>` CLI subcommand.
+/// Consumer: the `neoth deps-scan <manifest>` CLI (`cli/deps.rs`) — an operator
+/// vets a manifest before installing from it.
+/// // neoth: also call this before any bulk `npm install` triggered from a
+/// // manifest path (the install-flow consumer is still a follow-on).
 pub async fn scan_manifest(manifest_path: &Path, now_unix: i64) -> Vec<DepFinding> {
     use crate::security::osv_check::{OsvVerdict, SeverityLevel};
 

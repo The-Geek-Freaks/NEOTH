@@ -417,11 +417,11 @@ pub fn topo_order(jobs: &[Job]) -> Result<Vec<String>, WaveError> {
 /// Returns job ids in the same order as `topo_order` would produce so
 /// callers can fire waves in sequence. Pure — does not read from disk.
 ///
-/// # Wire point
-/// // neoth: integrate into `run_scheduler` tick by maintaining a
-/// `completed: HashSet<String>` and `last_run: HashMap<String, DateTime<Utc>>`
-/// in the scheduler state, calling `ready_jobs` each tick, and spawning only
-/// the returned ids instead of the current unconditional loop.
+/// # Wire point ✅ WIRED (2026-06-20, JV-PRO-03 tick-integration)
+/// `cron::scheduler::run_scheduler` maintains a `completed` map (populated by
+/// each spawned `run_job` on success) + `last_fired`, calls `ready_jobs` every
+/// tick, and only fires the returned ids — so a job with `depends_on` is held
+/// until its deps have COMPLETED within `DEFAULT_FRESHNESS`.
 pub fn ready_jobs(
     jobs: &[Job],
     completed: &HashSet<String>,

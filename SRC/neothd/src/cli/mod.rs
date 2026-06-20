@@ -31,6 +31,7 @@ pub mod cluster;
 pub mod code;
 pub mod code_intel;
 pub mod code_map;
+pub mod deps;
 pub mod distill;
 pub mod trace_replay;
 pub mod demo;
@@ -871,6 +872,14 @@ pub enum Commands {
     #[command(name = "trace-replay")]
     TraceReplay(trace_replay::TraceReplayArgs),
 
+    /// GOLD-ADAPT-SNYK-03 — scan a `package.json` for dependency-health issues
+    /// (OSV advisories, typosquats, abandoned/deprecated packages) before
+    /// installing from it.
+    ///
+    /// `neoth deps-scan <manifest> [--json]`
+    #[command(name = "deps-scan")]
+    DepsScan(deps::DepsScanArgs),
+
     /// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory recall benchmark.
     /// Seeds a fresh temp DB with synthetic episodes, runs the
     /// decay/consolidation pass, and reports recall precision.  Safe to run
@@ -1443,6 +1452,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::TraceReplay(args) => {
             trace_replay::run_trace_replay(args)?;
+        }
+        Commands::DepsScan(args) => {
+            deps::run_deps_scan(args).await?;
         }
         Commands::MemoryEval(args) => {
             memory_eval::run_memory_eval_cmd(args).await?;

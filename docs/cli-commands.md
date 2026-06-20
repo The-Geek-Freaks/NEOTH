@@ -573,6 +573,13 @@ Scripted end-to-end smoke test. Runs every safe, read-only NEOTH surface in sequ
 
 - `--json <JSON>` — Emit JSON for the final summary instead of a markdown table
 
+## `neoth deps-scan`
+
+GOLD-ADAPT-SNYK-03 — scan a `package.json` for dependency-health issues (OSV advisories, typosquats, abandoned/deprecated packages) before installing from it
+
+- `<MANIFEST>` — Path to a `package.json` manifest to scan
+- `--json <JSON>` — Emit the findings as JSON instead of the human table
+
 ## `neoth device-profile`
 
 OH-04 — detect host RAM / CPU / GPU and recommend a local-AI deployment tier (cloud-first / hybrid / local-capable).  No LLM call; purely hardware-derived.  Used internally by `onboarding-status`
