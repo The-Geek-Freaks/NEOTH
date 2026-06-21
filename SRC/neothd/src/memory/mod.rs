@@ -74,6 +74,7 @@ pub mod routing_weights;
 pub mod session_import;
 pub mod session_search;
 pub mod snapshot_refresh;
+pub mod source_weight;
 pub mod store;
 pub mod tiers;
 pub mod transfer_bundle;

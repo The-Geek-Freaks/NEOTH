@@ -996,6 +996,16 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
     // JV-MEM-14: weight by source trust so operator-explicit memories outrank
     // lower-trust external chatter at equal relevance.
     let base = base * tiers::trust_weight(h.trust);
+    // JV-MEM-02: source-weight provenance calibration — multiply in the
+    // 3-table (ref/kind/backend) weight multiplier so memories with more
+    // corroborating sources and better-verified provenance rank higher.
+    let base = base
+        * crate::memory::source_weight::weight_multiplier_for_hit(
+            h.event_type,
+            h.operator_id.as_deref(),
+            h.trust,
+            1, // source_count: default 1 per episode; fact merging will pass higher counts
+        );
     // JV-MEM-07: length normalization — a gentle logarithmic penalty on verbose
     // entries so they don't win on raw keyword density. Entries at/below the
     // 300-char anchor are unpenalised (ratio clamped to 1 → log2(1)=0 → factor
