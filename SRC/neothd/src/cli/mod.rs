@@ -84,6 +84,7 @@ pub mod keys;
 pub mod lease;
 pub mod mcp;
 pub mod memory;
+pub mod eval;
 pub mod memory_eval;
 pub mod meter;
 pub mod migrate;
@@ -894,6 +895,17 @@ pub enum Commands {
     #[command(name = "memory-eval")]
     MemoryEval(memory_eval::MemoryEvalArgs),
 
+    /// GOLD-ADAPT-HARNESS-05 — JSON EvalCase suite runner.
+    ///
+    /// Reads an array of [`EvalCase`] from `<suite.json>`, runs each case
+    /// through deterministic verifiers (`expect_contains` substring check or
+    /// `verify_command` exit-code gate), and writes an [`EvalReport`] + Markdown
+    /// to `~/.neoth/eval-runs/<ts>/`.  Headless and CI-safe — no LLM calls are
+    /// made unless a future live-runner hook is wired.
+    ///
+    /// `neoth eval <suite.json> [--json] [--max-steps N] [--preset <name>]`
+    Eval(eval::EvalArgs),
+
     /// OH-04 — detect host RAM / CPU / GPU and recommend a local-AI deployment
     /// tier (cloud-first / hybrid / local-capable).  No LLM call; purely
     /// hardware-derived.  Used internally by `onboarding-status`.
@@ -1469,6 +1481,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::MemoryEval(args) => {
             memory_eval::run_memory_eval_cmd(args).await?;
+        }
+        Commands::Eval(args) => {
+            eval::run_eval_cmd(args).await?;
         }
         Commands::DeviceProfile => {
             let profile = device_profile::detect_device_profile();
