@@ -48,6 +48,7 @@
 //! via the re-exports below, so the split is internal-only.
 
 mod client;
+mod fullauto_token;
 mod server;
 mod sidecar;
 mod token;
@@ -55,7 +56,11 @@ mod token;
 #[cfg(test)]
 mod tests;
 
-pub use client::{AuditRpcClientError, enforce_required_audit, is_reachable, try_post_audit_frame};
+pub use client::{
+    AuditRpcClientError, consume_fullauto_token, enforce_required_audit, is_reachable,
+    mint_fullauto_token, try_post_audit_frame,
+};
+pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore};
 pub use server::{
     ALLOWED_CLIENT_EVENT_TYPES, AuditRpcState, bind_and_serve, is_allowed_client_event,
 };

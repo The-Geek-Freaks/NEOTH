@@ -148,6 +148,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         token: "tok-valid".into(),
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
 
@@ -193,6 +194,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         token: "tok-valid".into(),
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
     let body = r#"{"event_type":168,"payload_b64":"e30="}"#;
@@ -221,6 +223,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         token: "tok".into(),
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
     // 0x10 (daemon lifecycle) is NOT forwardable.
@@ -249,6 +252,7 @@ async fn client_round_trips_against_a_live_listener() {
         token: token.clone(),
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
     // The test process is alive, so the client's pid-liveness check passes.

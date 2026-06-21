@@ -85,6 +85,10 @@ pub struct AuditRpcState {
     pub token: String,
     pub writer: WalWriterHandle,
     pub cooldown: Arc<AuthCooldown>,
+    /// GR-RESID-D34 — single-use, short-TTL FULL-AUTO tokens. Shared (Arc) so the
+    /// `/fullauto-token/mint` and `/fullauto-token/consume` endpoints (handled on
+    /// separate per-connection tasks) hit the same store.
+    pub fullauto: Arc<super::fullauto_token::FullAutoTokenStore>,
 }
 
 /// Bind `127.0.0.1:0`, return the OS-assigned address + the accept-loop handle.
@@ -217,8 +221,14 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         return Ok(());
     };
 
-    // Only POST /audit.
-    if req.method != "POST" || req.path.split('?').next().unwrap_or("") != "/audit" {
+    // Only POST to a known endpoint (/audit or the D34 FULL-AUTO token verbs).
+    let req_path = req.path.split('?').next().unwrap_or("").to_string();
+    if req.method != "POST"
+        || !matches!(
+            req_path.as_str(),
+            "/audit" | "/fullauto-token/mint" | "/fullauto-token/consume"
+        )
+    {
         let _ = stream
             .write_all(http_response(404, "not found").as_bytes())
             .await;
@@ -249,6 +259,33 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         return Ok(());
     }
     state.cooldown.record_success(&source);
+
+    // GR-RESID-D34 — FULL-AUTO single-use token endpoints (auth already passed).
+    if req_path == "/fullauto-token/mint" {
+        let resp = match state.fullauto.mint(super::fullauto_token::FULLAUTO_TOKEN_TTL) {
+            Some(tok) => {
+                http_response_json(200, &format!("{{\"token\":{:?}}}", tok))
+            }
+            None => http_response(500, "token mint failed (RNG unavailable)"),
+        };
+        let _ = stream.write_all(resp.as_bytes()).await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+    if req_path == "/fullauto-token/consume" {
+        let candidate = serde_json::from_slice::<serde_json::Value>(&req.body)
+            .ok()
+            .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(str::to_string));
+        let ok = candidate
+            .as_deref()
+            .is_some_and(|t| state.fullauto.consume(t, std::time::Instant::now()));
+        let status = if ok { 200 } else { 401 };
+        let _ = stream
+            .write_all(http_response_json(status, &format!("{{\"ok\":{ok}}}")).as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
 
     // Body: {"event_type": u8, "payload_b64": "<base64-standard>"}.
     let parsed: Result<(u8, Vec<u8>), &str> = (|| {

@@ -859,6 +859,10 @@ pub(crate) async fn spawn_audit_rpc(
                 token: token.clone(),
                 writer: writer.clone(),
                 cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+                // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
+                fullauto: std::sync::Arc::new(
+                    crate::daemon::audit_rpc::FullAutoTokenStore::new(),
+                ),
             };
             match crate::daemon::audit_rpc::bind_and_serve(state).await {
                 Ok((addr, task)) => {

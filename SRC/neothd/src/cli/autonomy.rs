@@ -39,6 +39,13 @@ pub enum AutonomyAction {
     /// curated skill set. NEOTH asks before shell commands, channel sends,
     /// out-of-home writes, and costly calls. Clears `skills.enable_all_bundled`.
     Gated,
+    /// GR-RESID-D34 — mint a single-use, short-TTL FULL-AUTO token from the
+    /// running daemon and print it (bare token on stdout). The NEOTH GUI runs
+    /// this after its confirm dialog, then passes the token to `full-auto
+    /// --gui-token <t>`. Hidden — not an operator-facing command; requires a live
+    /// daemon (errors otherwise).
+    #[command(name = "mint-fullauto-token", hide = true)]
+    MintFullautoToken,
     /// FULL-AUTO operating mode: autonomy `full` + the ENTIRE bundled skill
     /// library force-enabled (all 98 skills route proactively) + the router
     /// confidence floor raised so generic triggers can't false-activate. NEOTH
@@ -57,6 +64,12 @@ pub enum AutonomyAction {
         /// interactive + fail-closed (GR-101 accident-protection).
         #[arg(long, hide = true)]
         gui_confirmed: bool,
+        /// GR-RESID-D34 — the single-use, short-TTL token the GUI minted from the
+        /// daemon (via `audit_rpc::mint_fullauto_token`) right after its confirm
+        /// dialog. Required alongside `--gui-confirmed` for the TTY bypass; a
+        /// stale/absent token is refused (it can't be baked into a script).
+        #[arg(long, hide = true)]
+        gui_token: Option<String>,
     },
 }
 
@@ -231,10 +244,12 @@ pub async fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()
     match args.action {
         AutonomyAction::Show => run_show(output),
         AutonomyAction::Set { level } => run_set(&level, output).await,
-        AutonomyAction::Gated => run_set_mode(false, false, output).await,
-        AutonomyAction::FullAuto { gui_confirmed } => {
-            run_set_mode(true, gui_confirmed, output).await
-        }
+        AutonomyAction::Gated => run_set_mode(false, false, None, output).await,
+        AutonomyAction::MintFullautoToken => run_mint_fullauto_token(output).await,
+        AutonomyAction::FullAuto {
+            gui_confirmed,
+            gui_token,
+        } => run_set_mode(true, gui_confirmed, gui_token, output).await,
     }
 }
 
@@ -273,7 +288,36 @@ fn run_show(output: OutputFormat) -> Result<()> {
 /// Headline operating-mode switch: `gated` (safe default) or `full-auto`.
 /// Persists `autonomy` + `skills.enable_all_bundled` atomically, audits the
 /// authority change, and (for full-auto) prints the consequence up front.
-async fn run_set_mode(full_auto: bool, gui_confirmed: bool, output: OutputFormat) -> Result<()> {
+/// GR-RESID-D34 — mint a FULL-AUTO token at the running daemon + print it. The
+/// GUI captures the bare-token stdout, then spawns `neoth autonomy full-auto
+/// --gui-confirmed --gui-token <t>`. Errors (non-zero exit) when no daemon is
+/// reachable — FULL-AUTO via the GUI requires the daemon; the operator can
+/// always enable it at a TTY with `neoth sudomode`.
+async fn run_mint_fullauto_token(output: OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    match crate::daemon::audit_rpc::mint_fullauto_token(&home).await {
+        Some(token) => {
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::json!({ "token": token }))
+                }
+                _ => println!("{token}"),
+            }
+            Ok(())
+        }
+        None => anyhow::bail!(
+            "could not mint a FULL-AUTO token — is the daemon running? The GUI FULL-AUTO bypass \
+             needs a live daemon; otherwise enable it at a TTY with `neoth sudomode`."
+        ),
+    }
+}
+
+async fn run_set_mode(
+    full_auto: bool,
+    gui_confirmed: bool,
+    gui_token: Option<String>,
+    output: OutputFormat,
+) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
     let required = cfg.audit_rpc.required_for_oneshot_permission_events;
@@ -287,18 +331,21 @@ async fn run_set_mode(full_auto: bool, gui_confirmed: bool, output: OutputFormat
     let (next, previous) = apply_mode(cfg, full_auto);
     let applied = next.autonomy;
     let mode = if full_auto { "full-auto" } else { "gated" };
-    // GR-101 — FULL-AUTO is the most permissive mode (NEOTH acts WITHOUT asking:
-    // shell, channel sends, writes, token spend). Require an explicit operator
-    // confirmation BEFORE persisting it. The DEFAULT, un-flagged CLI path fails
-    // closed when stdin is not a TTY, so `neoth autonomy full-auto` from a script
-    // / cron can't silently flip it. The GUI passes the hidden `--gui-confirmed`
-    // flag, which TRUSTS the GUI's own two-step confirm dialog and bypasses the
-    // TTY check — its mere presence is the bypass (D34). Hardening the GUI path
-    // to a daemon-minted single-use TTL token (so the flag can't be baked into a
-    // script either) is tracked in GOLD (D34-TOKEN). Switching back to GATED —
-    // the safe direction — needs no confirmation.
+    // GR-101 / GR-RESID-D34 — FULL-AUTO is the most permissive mode (NEOTH acts
+    // WITHOUT asking: shell, channel sends, writes, token spend). Require an
+    // explicit confirmation BEFORE persisting it. The default un-flagged CLI path
+    // fails closed off a TTY, so `neoth autonomy full-auto` from a script/cron
+    // can't silently flip it. The GUI passes `--gui-confirmed` AND a
+    // `--gui-token` the daemon minted (single-use, short-TTL) right after the
+    // GUI's confirm dialog; we CONSUME it here. Flag presence alone no longer
+    // bypasses — a stale/absent token fails the gate — so the bypass can't be
+    // baked into a script. Switching back to GATED needs no confirmation.
     if full_auto {
-        confirm_full_auto(gui_confirmed)?;
+        let token_ok = match (gui_confirmed, gui_token.as_deref()) {
+            (true, Some(t)) => crate::daemon::audit_rpc::consume_fullauto_token(&home, t).await,
+            _ => false,
+        };
+        confirm_full_auto(gui_confirmed, token_ok)?;
     }
     next.save_public_to_default_path()
         .context("persist the operating mode to freedom.yaml")?;
@@ -369,8 +416,9 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     // no confirmation.
     if applied == AutonomyLevel::Full && previous != AutonomyLevel::Full {
         // The raw `neoth autonomy set full` path stays interactive (no GUI
-        // pre-confirm) — pass false so it fails closed without a TTY.
-        confirm_full_auto(false)?;
+        // pre-confirm, no token) — pass false/false so it fails closed without
+        // a TTY.
+        confirm_full_auto(false, false)?;
     }
     next.save_public_to_default_path()
         .context("persist the new autonomy level to freedom.yaml")?;
@@ -402,28 +450,35 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-/// GR-101 — confirm enabling the most-permissive FULL autonomy before it is
-/// persisted. Prints the consequence, then requires an interactive y/N. The
-/// default (un-flagged) path fails closed when stdin is not a terminal, so the
-/// bare CLI can't enable FULL-AUTO unattended / from a script. A `pre_confirmed`
-/// caller (the GUI, via `--gui-confirmed`) trusts its own confirm dialog and
-/// skips the TTY check — flag presence alone is the bypass (D34); a daemon-
-/// minted single-use token to also gate the GUI path is tracked in GOLD.
-fn confirm_full_auto(pre_confirmed: bool) -> Result<()> {
+/// GR-101 / GR-RESID-D34 — confirm enabling the most-permissive FULL autonomy
+/// before it is persisted. Prints the consequence, then requires an interactive
+/// y/N. The default (un-flagged) path fails closed when stdin is not a terminal,
+/// so the bare CLI can't enable FULL-AUTO unattended / from a script. The GUI
+/// path (`--gui-confirmed`) bypasses the TTY check ONLY when `token_ok` — i.e.
+/// the caller already CONSUMED a daemon-minted, single-use, short-TTL token
+/// (`--gui-token`) at the daemon. Flag presence alone is NO LONGER enough: a
+/// `--gui-confirmed` without a valid fresh token is refused, so the bypass can't
+/// be baked into a script/cron.
+fn confirm_full_auto(pre_confirmed: bool, token_ok: bool) -> Result<()> {
     use std::io::{IsTerminal, Write};
     eprintln!(
         "  ⚠ FULL-AUTO lets NEOTH act WITHOUT asking — shell commands, channel sends, writes,\n\
          \x20   and token spend happen automatically (self-replace / patch-apply / dangerous\n\
          \x20   targets / unsigned plugins stay blocked)."
     );
-    // GOLD-FEAT-01c — a pre-confirmed caller (the NEOTH GUI, which ran its own
-    // explicit two-step confirm dialog BEFORE this call) skips the interactive
-    // TTY y/N: the consequence banner above still printed and the 0xDD audit
-    // frame still fires. The bare CLI path passes pre_confirmed=false, so
-    // `neoth autonomy full-auto` / `set full` stay fail-closed without a TTY
-    // (GR-101 accident-protection preserved for the default, un-flagged path).
+    // GR-RESID-D34 — the GUI bypass now requires a CONSUMED daemon token, not
+    // just the flag. The consequence banner above still printed and the 0xDD
+    // audit frame still fires downstream.
     if pre_confirmed {
-        return Ok(());
+        if token_ok {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "--gui-confirmed now requires a fresh daemon-minted --gui-token (single-use, \
+             short-TTL); the NEOTH GUI mints one after its confirm dialog. A bare \
+             --gui-confirmed no longer bypasses the TTY gate. Run `neoth sudomode` at a TTY, \
+             or enable FULL-AUTO from the GUI."
+        );
     }
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
@@ -471,19 +526,29 @@ mod tests {
         );
     }
 
-    /// GOLD-FEAT-01c: a GUI-pre-confirmed call skips the TTY gate (the GUI ran
-    /// its own explicit two-step confirm), so it must NOT fail closed even
-    /// though the test harness has no TTY.
+    /// GR-RESID-D34: a GUI call bypasses the TTY gate ONLY with a consumed
+    /// daemon token (`token_ok=true`); flag presence alone no longer suffices.
     #[test]
-    fn confirm_full_auto_pre_confirmed_skips_tty_check() {
-        confirm_full_auto(true).expect("pre-confirmed must bypass the TTY gate");
+    fn confirm_full_auto_bypasses_only_with_consumed_token() {
+        confirm_full_auto(true, true).expect("gui-confirmed + valid token must bypass");
+    }
+
+    #[test]
+    fn confirm_full_auto_gui_flag_without_token_is_refused() {
+        // GR-RESID-D34: a bare --gui-confirmed (no fresh daemon token) must be
+        // REFUSED — closes the "bake the flag into a script/cron" bypass.
+        let err = confirm_full_auto(true, false).unwrap_err();
+        assert!(
+            err.to_string().contains("--gui-token"),
+            "must demand a daemon-minted token: {err}"
+        );
     }
 
     #[test]
     fn confirm_full_auto_fails_closed_when_not_a_tty() {
         // GR-101: enabling FULL-AUTO from a non-interactive stdin (the test
         // harness has no TTY) must be REFUSED, never silently persisted.
-        let err = confirm_full_auto(false).unwrap_err();
+        let err = confirm_full_auto(false, false).unwrap_err();
         assert!(
             err.to_string().contains("not a terminal"),
             "must fail closed without a TTY: {err}"

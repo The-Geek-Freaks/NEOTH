@@ -66,6 +66,10 @@ FULL-AUTO operating mode: autonomy `full` + the ENTIRE bundled skill library for
 
 GATED operating mode (the safe default): autonomy `standard` + the curated skill set. NEOTH asks before shell commands, channel sends, out-of-home writes, and costly calls. Clears `skills.enable_all_bundled`
 
+### `neoth autonomy mint-fullauto-token` _(hidden)_
+
+GR-RESID-D34 — mint a single-use, short-TTL FULL-AUTO token from the running daemon and print it (bare token on stdout). The NEOTH GUI runs this after its confirm dialog, then passes the token to `full-auto --gui-token <t>`. Hidden — not an operator-facing command; requires a live daemon (errors otherwise)
+
 ### `neoth autonomy set`
 
 Set the raw autonomy level in freedom.yaml (advanced / power-user path). Persists immediately; takes effect on the next command / daemon reload. Does NOT change the skill-library breadth — use `gated` / `full-auto` for the headline operating-mode switch

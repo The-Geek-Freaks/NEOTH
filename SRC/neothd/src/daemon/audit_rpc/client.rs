@@ -118,3 +118,83 @@ pub async fn try_post_audit_frame(
         Err(AuditRpcClientError::Refused(status))
     }
 }
+
+/// Shared same-uid loopback POST to the daemon's audit-RPC listener (same
+/// sidecar + bearer-token auth + staleness guard as [`try_post_audit_frame`]).
+/// Returns `(status, full_response)`. Used by the D34 FULL-AUTO token verbs.
+async fn post_rpc(
+    home: &Path,
+    path: &str,
+    body: &str,
+) -> std::result::Result<(u16, String), AuditRpcClientError> {
+    let (port, pid) =
+        read_sidecar(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
+    if !crate::daemon::pidfile::pid_is_alive(pid) {
+        return Err(AuditRpcClientError::Unavailable(format!(
+            "stale audit-RPC sidecar (daemon pid {pid} not alive)"
+        )));
+    }
+    let token =
+        read_rpc_token(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
+    let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .map_err(|e| AuditRpcClientError::Unavailable(format!("connect {addr}: {e}")))?;
+    let req = format!(
+        "POST {path} HTTP/1.1\r\n\
+         Host: 127.0.0.1\r\n\
+         Authorization: Bearer {token}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {body}",
+        len = body.len(),
+    );
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .map_err(|e| AuditRpcClientError::Unavailable(format!("write: {e}")))?;
+    let mut resp = String::new();
+    stream
+        .read_to_string(&mut resp)
+        .await
+        .map_err(|e| AuditRpcClientError::Unavailable(format!("read: {e}")))?;
+    let status = resp
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    Ok((status, resp))
+}
+
+/// GR-RESID-D34 — ask the running daemon to mint a single-use, short-TTL
+/// FULL-AUTO token. The GUI calls this AFTER its two-step confirm dialog passes,
+/// then spawns `neoth autonomy full-auto --gui-confirmed --gui-token <t>`.
+/// Returns the token, or `None` if the daemon is unreachable / refuses / the
+/// response carries no token.
+pub async fn mint_fullauto_token(home: &Path) -> Option<String> {
+    let (status, resp) = post_rpc(home, "/fullauto-token/mint", "{}").await.ok()?;
+    if status != 200 {
+        return None;
+    }
+    // The JSON body follows the blank header/body separator.
+    let body = resp.rsplit("\r\n\r\n").next().unwrap_or("");
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("token")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// GR-RESID-D34 — validate + CONSUME a FULL-AUTO token at the daemon (the CLI
+/// calls this when `--gui-token` is present). `true` iff the daemon confirmed it
+/// (HTTP 200, single-use). Any failure (unreachable / expired / wrong / already
+/// consumed) → `false`, and the FULL-AUTO bypass is then denied.
+pub async fn consume_fullauto_token(home: &Path, token: &str) -> bool {
+    let body = format!("{{\"token\":{:?}}}", token);
+    matches!(
+        post_rpc(home, "/fullauto-token/consume", &body).await,
+        Ok((200, _))
+    )
+}

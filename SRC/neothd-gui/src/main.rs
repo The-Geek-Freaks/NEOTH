@@ -1554,14 +1554,34 @@ fn main() -> Result<()> {
     window.on_full_auto_confirmed(move || {
         let weak = weak_fa_on.clone();
         std::thread::spawn(move || {
+            // GR-RESID-D34 — a bare `--gui-confirmed` no longer bypasses the TTY
+            // gate. Mint a single-use, short-TTL token from the running daemon
+            // (this in-GUI confirm dialog IS the consent), then pass it to
+            // full-auto. A static flag baked into a script can no longer flip
+            // FULL-AUTO; this live mint→use sequence requires the GUI + daemon.
             let ok = match which_neothd() {
-                Some(bin) => spawn_neothd_plain(&bin)
-                    .arg("autonomy")
-                    .arg("full-auto")
-                    .arg("--gui-confirmed")
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false),
+                Some(bin) => {
+                    let token = spawn_neothd_plain(&bin)
+                        .arg("autonomy")
+                        .arg("mint-fullauto-token")
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .filter(|t| !t.is_empty());
+                    match token {
+                        Some(tok) => spawn_neothd_plain(&bin)
+                            .arg("autonomy")
+                            .arg("full-auto")
+                            .arg("--gui-confirmed")
+                            .arg("--gui-token")
+                            .arg(&tok)
+                            .output()
+                            .map(|o| o.status.success())
+                            .unwrap_or(false),
+                        None => false, // daemon unreachable / mint failed
+                    }
+                }
                 None => false,
             };
             let _ = slint::invoke_from_event_loop(move || {
@@ -1574,7 +1594,8 @@ fn main() -> Result<()> {
                         );
                     } else {
                         w.set_status_line(
-                            "Enabling full-auto failed (is the daemon installed + on PATH?). Still gated."
+                            "Enabling full-auto failed — the daemon must be RUNNING (it mints the \
+                             confirm token) and `neoth` on PATH. Still gated."
                                 .into(),
                         );
                     }
