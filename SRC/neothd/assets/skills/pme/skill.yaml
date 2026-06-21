@@ -36,7 +36,4 @@ system_prompt: |
   - Still complete: minimal is not partial. Don't drop a necessary edge
     case to be brief — just say it tersely.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

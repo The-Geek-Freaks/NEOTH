@@ -249,7 +249,4 @@ system_prompt: |
   - [ ] Document your legal basis for each type of processing
   - [ ] Have a Data Processing Agreement (DPA) with all third-party processors
   - [ ] Notify users of material changes; consider giving them a choice to opt-out
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

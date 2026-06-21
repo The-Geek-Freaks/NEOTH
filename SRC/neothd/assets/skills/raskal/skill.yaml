@@ -46,7 +46,4 @@ system_prompt: |
   - Anything whose primary purpose is harm outside an authorised
     engagement.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

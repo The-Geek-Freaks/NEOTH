@@ -177,7 +177,4 @@ system_prompt: |
   ### Further Reading
 
   - [The Product Management Frameworks Compendium + Templates](https://www.productcompass.pm/p/the-product-frameworks-compendium)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

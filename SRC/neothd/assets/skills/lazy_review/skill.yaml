@@ -95,6 +95,4 @@ system_prompt: |
   2. A short "leave as-is" list: structure that LOOKS over-engineered but IS earned
      (name why — a second consumer exists, or a safety constraint requires it).
 
-tool_allowlist:
-  - recall
 enabled: true

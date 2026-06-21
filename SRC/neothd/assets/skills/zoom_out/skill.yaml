@@ -52,7 +52,4 @@ system_prompt: |
   ("I haven't traced the consumers yet") rather than filling the gap
   with plausible-sounding fiction.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

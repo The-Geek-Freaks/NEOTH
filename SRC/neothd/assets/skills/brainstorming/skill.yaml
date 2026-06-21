@@ -171,7 +171,4 @@ system_prompt: |
   Two-of-three is not enough. When all three hold, capture: decision, the
   alternatives rejected, and the one-line reason each lost.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

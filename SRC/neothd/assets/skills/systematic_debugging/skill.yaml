@@ -98,7 +98,4 @@ system_prompt: |
   obvious", that is the moment to slow down. Simple bugs have root
   causes too.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

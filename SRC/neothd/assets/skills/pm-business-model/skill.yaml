@@ -143,7 +143,4 @@ system_prompt: |
 
   - [Business Model Canvas Examples: Google Maps, Airbnb, Uber](https://www.productcompass.pm/p/business-model-canvas-examples)
   - [Startup Canvas: Product Strategy and a Business Model for a New Product](https://www.productcompass.pm/p/startup-canvas)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

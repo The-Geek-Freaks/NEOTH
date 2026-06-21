@@ -103,7 +103,4 @@ system_prompt: |
 
   - [How Meta and Instagram Use Pre-Mortems to Avoid Post-Mortems](https://www.productcompass.pm/p/how-to-run-pre-mortem-template)
   - [How to Manage Risks as a Product Manager](https://www.productcompass.pm/p/how-to-manage-risks-as-a-product-manager)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

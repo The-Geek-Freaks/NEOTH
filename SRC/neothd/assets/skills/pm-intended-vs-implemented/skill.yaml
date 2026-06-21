@@ -49,7 +49,4 @@ system_prompt: |
   - Undocumented-but-enforced is usually fine, but flag it: the docs are now stale, which weakens the next audit.
   - This method feeds the security and performance audits; it does not replace their sink-level analysis — it adds the intent axis they lack.
   - Never fabricate intent to manufacture a gap. If the docs are silent, say the docs are silent.
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

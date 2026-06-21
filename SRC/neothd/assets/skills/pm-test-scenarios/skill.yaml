@@ -98,7 +98,4 @@ system_prompt: |
   - Observable expected outcomes after each step
   - Edge case and error scenario coverage
   - Ready for QA team execution and documentation
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

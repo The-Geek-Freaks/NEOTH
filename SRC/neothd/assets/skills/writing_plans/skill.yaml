@@ -108,7 +108,4 @@ modes:
       shifts from research to building, the plan skill takes over from the findings
       you have accumulated.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

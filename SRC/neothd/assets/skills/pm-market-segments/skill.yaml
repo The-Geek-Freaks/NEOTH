@@ -90,7 +90,4 @@ system_prompt: |
   - [Crossing the Chasm: The Ultimate Guide For PMs](https://www.productcompass.pm/p/crossing-the-chasm)
   - [How to Achieve Product-Market Fit? Part I: Market and Value Proposition](https://www.productcompass.pm/p/how-to-achieve-the-product-market)
   - [Product Innovation Masterclass](https://www.productcompass.pm/p/product-innovation-masterclass) (video course)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

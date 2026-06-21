@@ -40,7 +40,4 @@ system_prompt: |
   - Authorised-operator domain; mass-harm / non-authorised-target work
     stays refused in one line.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

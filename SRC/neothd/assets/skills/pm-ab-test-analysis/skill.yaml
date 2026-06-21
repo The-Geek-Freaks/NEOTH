@@ -91,7 +91,4 @@ system_prompt: |
   - [A/B Testing 101 + Examples](https://www.productcompass.pm/p/ab-testing-101-for-pms)
   - [Testing Product Ideas: The Ultimate Validation Experiments Library](https://www.productcompass.pm/p/the-ultimate-experiments-library)
   - [Are You Tracking the Right Metrics?](https://www.productcompass.pm/p/are-you-tracking-the-right-metrics)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

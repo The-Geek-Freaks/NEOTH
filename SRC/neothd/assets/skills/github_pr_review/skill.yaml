@@ -19,8 +19,6 @@ trigger_keywords:
   - "collect PR diff and annotate"
 
 enabled: false
-tool_allowlist:
-  - "fetch"
 
 system_prompt: |
   GitHub pull request review workflow. This skill is network-enabled (fetches

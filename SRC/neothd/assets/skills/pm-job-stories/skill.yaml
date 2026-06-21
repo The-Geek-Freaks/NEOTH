@@ -85,7 +85,4 @@ system_prompt: |
   ### Further Reading
 
   - [Jobs-to-be-Done Masterclass with Tony Ulwick and Sabeen Sattar](https://www.productcompass.pm/p/jobs-to-be-done-masterclass-with) (video course)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

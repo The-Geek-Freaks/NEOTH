@@ -102,6 +102,4 @@ system_prompt: |
 
   Unless the operator specifies intensity, use lite.
 
-tool_allowlist:
-  - recall
 enabled: true

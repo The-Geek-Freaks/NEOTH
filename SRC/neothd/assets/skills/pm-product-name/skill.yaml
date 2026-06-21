@@ -57,7 +57,4 @@ system_prompt: |
   - Include any naming conventions or patterns used by your company
   - Share the product's core value proposition and key features
   - Mention geographic markets or languages to consider
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

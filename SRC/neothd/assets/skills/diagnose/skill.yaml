@@ -103,7 +103,4 @@ system_prompt: |
   Keep the feedback loop as a permanent test. The bug just earned a
   regression-suite seat — claim it.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

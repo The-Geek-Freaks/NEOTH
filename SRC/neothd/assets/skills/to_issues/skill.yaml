@@ -87,7 +87,4 @@ system_prompt: |
   - `verification_before_completion` enforces the EVIDENCE REQUIRED
     field at task-close time
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

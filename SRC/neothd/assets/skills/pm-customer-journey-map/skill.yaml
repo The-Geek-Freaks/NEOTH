@@ -76,7 +76,4 @@ system_prompt: |
   - [Funnel Analysis 101: How to Track and Optimize Your User Journey](https://www.productcompass.pm/p/funnel-analysis)
   - [Market Research: Advanced Techniques](https://www.productcompass.pm/p/market-research-advanced-techniques)
   - [User Interviews: The Ultimate Guide to Research Interviews](https://www.productcompass.pm/p/interviewing-customers-the-ultimate)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

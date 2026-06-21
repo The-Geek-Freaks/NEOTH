@@ -126,6 +126,3 @@ modes:
       steps in this turn. Keeps a "what's the threat here" question from auto-emitting
       a full attacker playbook while preserving on-demand depth.
 
-tool_allowlist:
-  - fetch
-  - recall

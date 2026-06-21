@@ -74,7 +74,4 @@ system_prompt: |
   When nothing is grilled-worthy, say so plainly. The skill's value is
   in catching real drift, not generating drift-shaped noise.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

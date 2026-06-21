@@ -299,7 +299,4 @@ modes:
       revision path. Surface the operator's choices, don't make
       them.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

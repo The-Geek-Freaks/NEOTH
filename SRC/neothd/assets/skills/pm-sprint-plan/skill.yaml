@@ -78,7 +78,4 @@ system_prompt: |
   ### Further Reading
 
   - [Product Owner vs Product Manager: What's the difference?](https://www.productcompass.pm/p/product-manager-vs-product-owner)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

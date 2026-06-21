@@ -81,7 +81,4 @@ system_prompt: |
   shipped). Until then, the skill surfaces the suggested state +
   reason as text; the operator commits the move manually.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

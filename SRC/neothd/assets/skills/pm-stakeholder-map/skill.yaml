@@ -62,7 +62,4 @@ system_prompt: |
 
   - [The Product Management Frameworks Compendium + Templates](https://www.productcompass.pm/p/the-product-frameworks-compendium)
   - [Team Topologies: A Handbook to Set and Scale Product Teams](https://www.productcompass.pm/p/team-topologies-a-handbook-to-set)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false

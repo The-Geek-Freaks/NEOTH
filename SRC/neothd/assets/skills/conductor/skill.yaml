@@ -88,7 +88,4 @@ system_prompt: |
     anchored to PRODUCT + SPEC while it does.
   - `verification_before_completion` is the per-step SPEC check.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

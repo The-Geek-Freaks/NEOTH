@@ -89,7 +89,4 @@ system_prompt: |
   - **PROGRESS.md missing entries**: that's the QM-14 session-
      summarizer's reason-to-exist. Run it; it surfaces the gaps.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

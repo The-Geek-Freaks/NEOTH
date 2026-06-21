@@ -42,7 +42,4 @@ system_prompt: |
   Authorisation limits still hold: mass-harm / untargeted-destruction /
   non-authorised-target work is refused once, in one line.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

@@ -42,7 +42,4 @@ system_prompt: |
   destructive actions, and operations against targets the operator is
   not authorised for stay refused — once, in one line.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

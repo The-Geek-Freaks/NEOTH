@@ -56,7 +56,4 @@ system_prompt: |
   skip the step because "it's obviously fine", that is the moment to slow
   down and verify.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

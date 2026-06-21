@@ -36,7 +36,4 @@ system_prompt: |
   - Still LOWKEY: blunt, technical, no padding. Length comes from
     substance (cases, code, evidence), never from filler or restatement.
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

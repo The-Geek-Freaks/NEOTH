@@ -87,7 +87,4 @@ system_prompt: |
   reviewer then has a concrete spec to verify against, not a
   free-form "look at this".
 
-tool_allowlist:
-  - fetch
-  - recall
 enabled: true

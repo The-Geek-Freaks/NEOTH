@@ -97,7 +97,4 @@ system_prompt: |
 
   - [How to Write a Product Requirements Document? The Best PRD Template.](https://www.productcompass.pm/p/prd-template)
   - [A Proven AI PRD Template by Miqdad Jaffer (Product Lead @ OpenAI)](https://www.productcompass.pm/p/ai-prd-template)
-tool_allowlist:
-  - fetch
-  - recall
 enabled: false
