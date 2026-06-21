@@ -258,10 +258,30 @@ pub fn parse_azure_speech(body: &[u8], language: &str) -> Result<TranscriptionRe
     })
 }
 
+/// GOLD-ADAPT-HANDY-06 / F66 — primary language subtags Azure Speech-to-Text
+/// supports. The dispatcher's `resolve_language` matches a requested tag's
+/// PRIMARY subtag (e.g. `de` from `de-DE`) against this list, so listing primary
+/// subtags covers every regional variant; a request outside the set (e.g. a
+/// made-up `xx-YY`) steers to provider auto-detect instead of a hard HTTP error.
+/// Representative of Azure's published locale set (not exhaustive — Azure's full
+/// list is ~140 regional locales, all of which collapse to these primaries).
+const AZURE_SPEECH_LANGUAGES: &[&str] = &[
+    "ar", "bg", "ca", "zh", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "gu",
+    "he", "hi", "hu", "id", "it", "ja", "kn", "ko", "lv", "lt", "ms", "mr", "nb", "pl", "pt",
+    "ro", "ru", "sk", "sl", "es", "sv", "ta", "te", "th", "tr", "uk", "vi",
+];
+
 #[async_trait]
 impl SttProviderImpl for AzureSpeechClient {
     fn kind(&self) -> SttProviderKind {
         SttProviderKind::AzureSpeech
+    }
+
+    /// F66 — engage the dispatcher's HANDY-06 fallback guard: Azure rejects an
+    /// unknown locale with an HTTP error, so declare the supported set and let
+    /// `resolve_language` fall an unsupported request back to auto-detect.
+    fn supported_languages(&self) -> &'static [&'static str] {
+        AZURE_SPEECH_LANGUAGES
     }
 
     async fn transcribe(
@@ -590,6 +610,24 @@ mod tests {
                 confidence: None,
             })
         }
+    }
+
+    #[test]
+    fn azure_supported_languages_engages_handy06_fallback() {
+        // F66 — with the Azure list declared, an unsupported requested language
+        // steers to auto-detect; a supported one (incl. a regional variant) passes.
+        let client = AzureSpeechClient::new("westeurope", SecretString::from("k"));
+        let supported = client.supported_languages();
+        assert!(!supported.is_empty(), "Azure must declare a supported set");
+
+        let de = crate::media::stt_dispatch::resolve_language(Some("de-DE"), supported);
+        assert!(!de.fell_back, "de-DE primary 'de' is supported");
+        assert_eq!(de.language, "de-DE");
+
+        let bad = crate::media::stt_dispatch::resolve_language(Some("xx-YY"), supported);
+        assert!(bad.fell_back, "unsupported locale must fall back");
+        assert_eq!(bad.language, "", "fallback = provider auto-detect");
+        assert_eq!(bad.fallback_from.as_deref(), Some("xx-YY"));
     }
 
     #[tokio::test]
