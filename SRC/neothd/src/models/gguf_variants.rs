@@ -120,11 +120,15 @@ fn encode_query(s: &str) -> String {
 /// Build the HF model-search URL for a size + lineage, GGUF-filtered, ordered by
 /// downloads (so the most-adopted release leads).
 pub fn hf_search_url(size_b: f32, class: VariantClass) -> String {
-    let q = encode_query(&format!(
-        "Qwen2.5-{}B-Instruct {} GGUF",
-        fmt_size(size_b),
-        class.search_keyword()
-    ));
+    // F36 — the 27B curated tier is Qwen3.6 (a distinct family); every other
+    // curated size is Qwen2.5-*-Instruct. The old hardcoded family searched
+    // "Qwen2.5-27B-Instruct" for a 27B request and never found the Qwen3.6 repo.
+    let family = if (size_b - 27.0).abs() < 0.01 {
+        "Qwen3.6-27B".to_string()
+    } else {
+        format!("Qwen2.5-{}B-Instruct", fmt_size(size_b))
+    };
+    let q = encode_query(&format!("{family} {} GGUF", class.search_keyword()));
     format!("{HF_API}?search={q}&filter=gguf&sort=downloads&direction=-1&limit=20")
 }
 
@@ -424,6 +428,34 @@ mod tests {
         assert_eq!(tiny.class, VariantClass::Standard);
         // Unmodeled size → None.
         assert!(curated_fallback(99.0, VariantClass::Standard).is_none());
+    }
+
+    #[test]
+    fn curated_27b_abliterated_resolves_and_is_reachable() {
+        // F36/G-03 — the 27B curated tier resolves to the verified huihui repo.
+        let abl = curated_fallback(27.0, VariantClass::Abliterated).unwrap();
+        assert_eq!(abl.repo, "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF");
+        assert_eq!(abl.class, VariantClass::Abliterated);
+        let std = curated_fallback(27.0, VariantClass::Standard).unwrap();
+        assert_eq!(std.repo, "bartowski/Qwen_Qwen3.6-27B-GGUF");
+        // Reachability: a 27.0 request EXACT-matches the curated row (not
+        // nearest-degraded to 32B/14B). The selector now produces 27.0 from its
+        // ladder (asserted in selector.rs::size_ladder_includes_27b), so this row
+        // is no longer dead (F36).
+        assert_eq!(
+            curated_or_nearest(27.0, VariantClass::Abliterated).repo,
+            "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF"
+        );
+    }
+
+    #[test]
+    fn hf_search_url_27b_uses_qwen3_6_family_not_qwen2_5() {
+        // F36 — a 27B live search must target Qwen3.6, not the wrong Qwen2.5-27B.
+        let url = hf_search_url(27.0, VariantClass::Abliterated);
+        assert!(url.contains("Qwen3.6-27B"), "expected Qwen3.6-27B, got: {url}");
+        assert!(!url.contains("Qwen2.5-27B"), "must not search wrong family: {url}");
+        // a non-27 size keeps the Qwen2.5 family.
+        assert!(hf_search_url(14.0, VariantClass::Standard).contains("Qwen2.5-14B-Instruct"));
     }
 
     #[test]

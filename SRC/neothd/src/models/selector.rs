@@ -76,8 +76,11 @@ pub struct QuantOption {
 }
 
 /// The candidate model sizes (billions of params), largest → smallest. The
-/// abliterated / unsloth families ship GGUFs at all of these.
-const SIZE_LADDER_B: &[f32] = &[72.0, 32.0, 14.0, 7.0, 3.0, 1.5, 0.5];
+/// abliterated / unsloth families ship GGUFs at all of these. 27.0 (Qwen3.6-27B)
+/// is included so the curated 27B tier (G-03) is actually reachable — the
+/// selector only ever passes ladder sizes to `curated_or_nearest`, so a curated
+/// row with no matching ladder entry was dead (F36).
+const SIZE_LADDER_B: &[f32] = &[72.0, 32.0, 27.0, 14.0, 7.0, 3.0, 1.5, 0.5];
 
 /// GOLD-ADOPT-11 core: the ranked SHORTLIST of (size, quant) the operator should
 /// choose from for their VRAM — Q8 and Q4 both offered, biggest-best first, so
@@ -268,6 +271,13 @@ pub fn recommended_tier_label(vram_mib: Option<u32>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_ladder_includes_27b() {
+        // F36 — the selector must offer 27.0 so the curated Qwen3.6-27B tier
+        // (G-03) is reachable; without it the curated row was dead code.
+        assert!(SIZE_LADDER_B.contains(&27.0), "27.0 missing from SIZE_LADDER_B");
+    }
 
     #[test]
     fn fit_is_f16_honest_not_quantized_aspirational() {
