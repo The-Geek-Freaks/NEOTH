@@ -1114,7 +1114,7 @@ https://github.com/loadingalias/rscrypto
 - [ ] **GOLD-ADAPT-AWE-PROV-01** OpenRouter-compat `/models` endpoint (wire format, not the service) alongside the existing OpenAI-compat serve adapter -> NEOTH becomes a transparent drop-in for Cline/Continue/OpenCode/Goose clients (adds context_length+pricing metadata). *NEOTH:* serve layer. S (~40 LOC). verify-first: confirm not already served.
 - [ ] **GOLD-ADAPT-AWE-CODE-01** Codex CLI (Rust, Apache-2.0) sandbox read -> extract its per-session tool-allowlist enforcement -> adapt into NEOTHs LeaseScope/allowed_tools consent gate (operator-cron + coding-buddy). *NEOTH:* security/consent. Research->M.
 - [ ] **GOLD-ADAPT-AWE-NANO-01** Nanocoder (local-first Ollama/LM-Studio agent) deep-read -> extract Ollama `/api/chat` streaming adapter contract -> verify/close MV-01 provider-chain gaps for local_qwen/local_ouro. *NEOTH:* providers. Research.
-- [ ] **GOLD-ADAPT-AWE-AIDER-01** Aider repo-map (ctags-based ~2K-token call-graph summary) as a compact code-context builder for coding-buddy prompts (lighter than full graphify) on the 0x13 CODING_INTENT path. *NEOTH:* code_map context builder. M.
+- [x] **GOLD-ADAPT-AWE-AIDER-01** Aider repo-map (ctags-based ~2K-token call-graph summary) as a compact code-context builder for coding-buddy prompts (lighter than full graphify) on the 0x13 CODING_INTENT path. *NEOTH:* code_map context builder. M. **SHIPPED (loop):** `code_map/repo_map.rs` — `build_summary()` produces a token-budgeted (`DEFAULT_TOKEN_BUDGET`) `RepoMapSummary` of top symbols/files from the existing code_map data (no re-parse), lex-tie-break ordering; 15 tests green, clippy-clean. (Salvaged after a reconnect.)
 
 ## WS-V — GOLD Verification Findings (external review 2026-06-11, triaged)
 

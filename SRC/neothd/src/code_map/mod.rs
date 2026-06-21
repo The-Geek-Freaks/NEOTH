@@ -37,6 +37,7 @@ pub mod graph;
 pub mod ownership;
 pub mod persist;
 pub mod recall;
+pub mod repo_map;
 pub mod risk;
 pub mod symbols;
 pub mod walker;
@@ -50,6 +51,8 @@ pub use persist::{
 };
 #[allow(unused_imports)]
 pub use recall::{RelevantFile, relevant_files_for_prompt, render_context_block};
+#[allow(unused_imports)]
+pub use repo_map::{DEFAULT_TOKEN_BUDGET, RepoMapSummary, build_summary};
 #[allow(unused_imports)]
 pub use symbols::{Symbol, SymbolKind, extract_symbols};
 #[allow(unused_imports)]
