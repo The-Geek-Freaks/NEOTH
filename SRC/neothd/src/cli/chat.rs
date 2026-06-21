@@ -804,6 +804,10 @@ struct DispatchOutput {
     writer_join: tokio::task::JoinHandle<()>,
     final_prompt: String,
     final_system: Option<String>,
+    /// F4/D21 — the in-flight turn journal, opened in `dispatch_provider`, closed
+    /// (+ 0x06 anchor) by `run_post_reply_pipelines` after the response is
+    /// recorded. `None` when the journal failed to open (non-fatal).
+    turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -819,6 +823,7 @@ async fn dispatch_provider(
     prompt: &str,
     predicted_cost: &crate::providers::cost::CostEstimate,
     skill_tool_allowlist: Option<Vec<String>>,
+    turn_id: &str,
 ) -> Result<DispatchOutput> {
     let provider_name = provider.name();
     // ── Provider call (sync OR stream) ────────────────────────────────────
@@ -848,6 +853,41 @@ async fn dispatch_provider(
     };
 
     let started = std::time::Instant::now();
+
+    // F4/D21 — open the turn-journal sidecar + WAL 0x05 anchor for mid-turn
+    // crash durability. A journal surviving on disk at next launch = this turn
+    // crashed mid-window → `neoth recover` surfaces it. Best-effort: a journal
+    // error never blocks the turn. Closed (+0x06) at the single clean-completion
+    // point below; any bail/crash before that leaves the file as a crash candidate.
+    let mut journal = {
+        use crate::recovery::turn_journal::{TurnEvent, TurnJournal, opened_payload};
+        let neoth_dir = FreedomConfig::default_neoth_home();
+        match TurnJournal::open(&neoth_dir, turn_id) {
+            Ok(mut j) => {
+                let ts = crate::time::now_unix_i64();
+                let payload = opened_payload(turn_id, j.path(), ts);
+                let header = crate::wal::make_header(
+                    crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED,
+                    &payload,
+                );
+                let _ = writer.append(header, payload).await;
+                let _ = j.append(&TurnEvent::Started {
+                    ts_unix: ts,
+                    prompt_excerpt: final_prompt.chars().take(160).collect(),
+                });
+                let _ = j.append(&TurnEvent::ProviderRequest {
+                    ts_unix: ts,
+                    provider: provider_name.to_string(),
+                    model: args.model.clone().unwrap_or_default(),
+                });
+                Some(j)
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "turn-journal open failed (non-fatal)");
+                None
+            }
+        }
+    };
 
     // AP-2: every local-inference call (stream OR non-stream) leaves a WAL
     // START + END trace pair. Hoisted out of the branch arms so the same
@@ -962,6 +1002,16 @@ async fn dispatch_provider(
                         }
                         acc.push_str(&chunk.delta);
                         chunk_count += 1;
+                        // F4/D21 — journal the partial chunk so a mid-stream crash
+                        // leaves a recoverable partial answer (best-effort).
+                        if let Some(j) = journal.as_mut() {
+                            let _ = j.append(
+                                &crate::recovery::turn_journal::TurnEvent::ProviderChunk {
+                                    ts_unix: crate::time::now_unix_i64(),
+                                    text: chunk.delta.clone(),
+                                },
+                            );
+                        }
                         emit_stream_chunk(&writer, provider.name(), &chunk, chunk_count).await?;
                     }
                     if chunk.done {
@@ -1390,6 +1440,12 @@ async fn dispatch_provider(
             tracing::warn!(error = %e, "quota.json save after success failed (best-effort)");
         }
     }
+    // F4/D21 — the journal stays OPEN past dispatch: per the module contract the
+    // durability window runs until the PROVIDER_RESPONSE frame is written, which
+    // happens in `run_post_reply_pipelines`. The open journal is handed back so
+    // that phase closes it (+ emits the 0x06 anchor) after recording the
+    // response. A crash anywhere before that leaves the sidecar on disk for
+    // `neoth recover`.
     Ok(DispatchOutput {
         response_text,
         final_input_tokens,
@@ -1400,6 +1456,7 @@ async fn dispatch_provider(
         writer_join,
         final_prompt,
         final_system,
+        turn_journal: journal,
     })
 }
 
@@ -1434,6 +1491,7 @@ async fn run_post_reply_pipelines(
     chat_ts_unix: i64,
     current_session_id: String,
     prompt_token_estimate: u32,
+    turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
 ) -> Result<()> {
     // ── TOML hooks: PostProviderCall (Phase 29 R-15) ─────────────────────
     // Last chance to mutate or block the model's reply before it lands in
@@ -1483,6 +1541,32 @@ async fn run_post_reply_pipelines(
         .append(resp_header, resp_payload)
         .await
         .context("write PROVIDER_RESPONSE WAL frame")?;
+
+    // F4/D21 — the PROVIDER_RESPONSE frame is now durably recorded, which closes
+    // the turn-journal's durability window (module contract: open until the
+    // provider_response frame is written). Record the final response in the
+    // sidecar, emit the 0x06 CLOSED anchor, then delete it. A crash before this
+    // point left the journal on disk for `neoth recover`.
+    if let Some(mut j) = turn_journal {
+        use crate::recovery::turn_journal::{TurnEvent, closed_payload};
+        let turn_id = format!("{raw_event_id:016x}");
+        let ts = crate::time::now_unix_i64();
+        let _ = j.append(&TurnEvent::ProviderResponse {
+            ts_unix: ts,
+            provider: provider.name().to_string(),
+            model: model_used.clone(),
+            input_tokens: final_input_tokens.unwrap_or(0),
+            output_tokens: final_output_tokens.unwrap_or(0),
+        });
+        let line_count = std::fs::read_to_string(j.path())
+            .map(|b| b.lines().filter(|l| !l.is_empty()).count())
+            .unwrap_or(0);
+        let payload = closed_payload(&turn_id, ts, line_count);
+        let header =
+            crate::wal::make_header(crate::wal::events::EVENT_TYPE_TURN_JOURNAL_CLOSED, &payload);
+        let _ = writer.append(header, payload).await;
+        let _ = j.close();
+    }
 
     // ── Mirror-refusal Schicht-0 detection (SPEC_mirror_refusal §1) ────────
     // Pure-deterministic classifier — no LLM call, no meta-decision-making.
@@ -2450,6 +2534,7 @@ pub async fn run_chat_with(
         writer_join,
         final_prompt,
         final_system,
+        turn_journal,
     } = dispatch_provider(
         final_prompt,
         final_system,
@@ -2462,6 +2547,8 @@ pub async fn run_chat_with(
         &prompt,
         &predicted_cost,
         skill_tool_allowlist,
+        // F4/D21 — turn id = the WAL event id, hex; filesystem-safe + unique/turn.
+        &format!("{raw_event_id:016x}"),
     )
     .await?;
 
@@ -2487,6 +2574,7 @@ pub async fn run_chat_with(
         chat_ts_unix,
         current_session_id,
         prompt_token_estimate,
+        turn_journal,
     )
     .await
 }
@@ -5326,6 +5414,14 @@ mod tests {
         );
 
         let rest = &rest[perm.header.total_len as usize..];
+        // F4/D21: the turn-journal OPENED (0x05) anchor is emitted at the start of
+        // provider dispatch — between the gate audit and the council-skip frame.
+        let opened = decode_frame(rest).expect("decode TURN_JOURNAL_OPENED frame");
+        assert_eq!(
+            opened.header.event_type,
+            crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED,
+        );
+        let rest = &rest[opened.header.total_len as usize..];
         // B-1 (Session 13): COUNCIL_SKIP frame sits between
         // PERMISSION_GRANTED and PROVIDER_RESPONSE whenever the council
         // smart-trigger evaluates to Skip — true for this test (short
@@ -5715,6 +5811,14 @@ mod tests {
             crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED,
         );
         let rest = &rest[perm.header.total_len as usize..];
+
+        // F4/D21: turn-journal OPENED (0x05) anchor at provider-dispatch start.
+        let opened = decode_frame(rest).expect("TURN_JOURNAL_OPENED (streaming)");
+        assert_eq!(
+            opened.header.event_type,
+            crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED,
+        );
+        let rest = &rest[opened.header.total_len as usize..];
 
         // B-1 follow-up (Session 13): streaming branch now emits a
         // COUNCIL_SKIP frame with reason `streaming_mode_disables_council`
