@@ -1,0 +1,45 @@
+[
+  {
+    "id": "gold-smoke-version",
+    "description": "neothd --version runs and exits 0 (binary links + clap parses)",
+    "prompt": "neothd --version",
+    "verify_command": "neothd --version"
+  },
+  {
+    "id": "gold-smoke-help",
+    "description": "neothd --help renders the top-level command tree (clap derive intact)",
+    "prompt": "neothd --help",
+    "verify_command": "neothd --help"
+  },
+  {
+    "id": "gold-smoke-capabilities-json",
+    "description": "neothd capabilities --output json — self-wiki map renders (JV-MODE-03 consumer), config-free",
+    "prompt": "neothd capabilities --output json",
+    "verify_command": "neothd capabilities --output json"
+  },
+  {
+    "id": "gold-smoke-capabilities-cron",
+    "description": "neothd capabilities --kind cron — self-wiki kind filter works",
+    "prompt": "neothd capabilities --kind cron",
+    "verify_command": "neothd capabilities --kind cron"
+  },
+  {
+    "id": "gold-smoke-capabilities-search",
+    "description": "neothd capabilities --search memory — self-wiki description search works",
+    "prompt": "neothd capabilities --search memory",
+    "verify_command": "neothd capabilities --search memory"
+  },
+  {
+    "id": "gold-smoke-fact-check",
+    "description": "neothd fact-check — deterministic no-LLM claim classifier runs (GOLD-WIRE-11)",
+    "prompt": "neothd fact-check NEOTH-runs-fully-locally",
+    "verify_command": "neothd fact-check NEOTH-runs-fully-locally"
+  },
+  {
+    "id": "gold-smoke-harness-selfcheck",
+    "description": "eval harness substring verifier self-check (no binary needed — proves the runner itself)",
+    "prompt": "harness self-check",
+    "answer": "the eval harness performs a case-insensitive substring containment check",
+    "expect_contains": "substring containment"
+  }
+]

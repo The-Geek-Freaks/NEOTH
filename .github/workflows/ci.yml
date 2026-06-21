@@ -305,6 +305,11 @@ jobs:
           # a headless Linux runner (the pure-Rust backends need no display libs
           # at build time; default-OFF in source so this matrix entry is its check).
           - { os: ubuntu-24.04, feature: os-clipboard }
+          # GR-RESID-IROH — the experimental iroh QUIC cluster transport. Compile-
+          # verifies the full iroh dep tree gates cleanly (default-OFF in source;
+          # the unit tests run elsewhere — the loopback round-trip is #[ignore]
+          # because it needs a live relay/discovery network).
+          - { os: ubuntu-24.04, feature: cluster-iroh }
     steps:
       - uses: actions/checkout@v4
 
@@ -334,3 +339,56 @@ jobs:
         if: matrix.feature != 'qwen-cuda' || hashFiles('/usr/local/cuda/bin/nvcc', '/usr/bin/nvcc') != ''
         working-directory: SRC
         run: cargo check -p neothd --features ${{ matrix.feature }}
+
+  # ──────────────────────────────────────────────────────────────────
+  # HARNESS-05 — committed gold-smoke eval suite. Builds neothd and runs
+  # `neothd eval` over the deterministic, no-LLM, config-free smoke suite
+  # (version/help/capabilities/fact-check + harness self-check). The suite
+  # exits non-zero on any case failure → this job gates the build. The
+  # report.json + report.md are uploaded as artifacts (even on failure) so
+  # a maintainer can see exactly which smoke case broke.
+  # The `check` job above already build+tests default + neoth-gui + the mcp
+  # core via `cargo {build,test} --workspace --release`; the feature-matrix
+  # job above adds cluster-iroh — together these cover the requested
+  # default + cluster-iroh + gui + mcp matrix.
+  # ──────────────────────────────────────────────────────────────────
+  gold-smoke:
+    name: gold-smoke eval suite
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-gold-smoke-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-gold-smoke-cargo-
+
+      - name: Build neothd (release)
+        working-directory: SRC
+        run: cargo build -p neothd --bin neothd --release
+
+      - name: Run gold-smoke eval suite
+        working-directory: SRC
+        run: |
+          export PATH="$PWD/target/release:$PATH"
+          neothd eval neothd/eval-suites/gold-smoke.json --out-dir "$GITHUB_WORKSPACE/eval-report"
+
+      - name: Upload eval report (report.json + report.md)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gold-smoke-report
+          path: |
+            eval-report/report.json
+            eval-report/report.md
+          if-no-files-found: error
