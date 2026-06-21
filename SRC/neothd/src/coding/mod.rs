@@ -76,6 +76,7 @@ pub mod store;
 /// across every session with a Backlog task (`neoth code --run-pending`).
 pub mod task_executor;
 pub mod tdd_preflight;
+pub mod tokenjuice_rules;
 pub mod tool_router;
 pub mod types;
 pub mod validate;
