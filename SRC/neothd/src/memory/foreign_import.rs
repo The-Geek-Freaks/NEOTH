@@ -319,17 +319,211 @@ pub fn read_openclaw_memory_index(path: &Path) -> Result<Vec<ImportedClaim>> {
     Ok(out)
 }
 
-// neoth: JV-IMP-01 reader 2 — read_openclaw_mempalace(path: &Path)
-// Plan: parse nodes + hebbianLinks, replay hebbian_reinforce.
-// Status: UNIMPLEMENTED — the mempalace node/hebbianLinks schema is not
-// specified in the GOLD plan (no file:line reference, no field list).
-// Implement once the exact JSON shape is extracted from QUELLEN/JARVIS_LIVE/.
+// ── OpenClaw MemPalace (JV-IMP-01 reader 2) ─────────────────────────────────
 
-// neoth: JV-IMP-01 reader 3 — read_openclaw_memory_db(path: &Path)
-// Plan: SQLite `summaries.learned+completed` → groundtruth.
-// Status: UNIMPLEMENTED — the `summaries` table DDL (column names, types)
-// is not specified in the GOLD plan. Implement once extracted from
-// QUELLEN/JARVIS_LIVE/ or `~/.openclaw/memory.db` schema.
+/// OpenClaw MemPalace node as parsed from the JSON array.
+///
+/// Known observed shapes:
+/// ```json
+/// {
+///   "id": "abc123",
+///   "text": "the claim text",
+///   "importance": 0.6,
+///   "scope": "host:primary",
+///   "hebbianLinks": [{"targetId":"def456","strength":0.8}, ...]
+/// }
+/// ```
+/// `text` (or `content`) is the statement. `hebbianLinks` tells us how many
+/// times this node was Hebbian-reinforced by other nodes recalling it; we
+/// replay that many `hebbian_reinforce_value` passes on the initial importance
+/// and embed the result in the statement so the operator can inspect it.
+/// Missing `hebbianLinks` → treat as zero reinforcements.
+#[derive(Debug, Deserialize)]
+struct MempalaceNode {
+    #[serde(alias = "content")]
+    text: Option<String>,
+    #[serde(default = "default_importance")]
+    importance: f64,
+    scope: Option<String>,
+    #[serde(default)]
+    hebbian_links: Vec<Value>,
+    // Accept camelCase from JSON as well.
+    #[serde(rename = "hebbianLinks", default)]
+    hebbian_links_camel: Vec<Value>,
+}
+
+fn default_importance() -> f64 {
+    0.5
+}
+
+impl MempalaceNode {
+    /// Total number of hebbian links across both field spellings.
+    fn link_count(&self) -> usize {
+        self.hebbian_links.len() + self.hebbian_links_camel.len()
+    }
+}
+
+/// Read an OpenClaw MemPalace JSON file.
+///
+/// The file is expected to be a JSON object with a top-level `"nodes"` array
+/// (or bare array) of node objects. Each node with a non-empty `text`/`content`
+/// field becomes one `ImportedClaim`. The initial `importance` is Hebbian-
+/// reinforced once per `hebbianLink` entry (using the Hot-tier coefficient)
+/// so the final value reflects the original recall weight, and is appended to
+/// the statement as `(importance→X.XX)` for operator visibility.
+///
+/// Absent or empty file returns `Ok(vec![])`.
+pub fn read_openclaw_mempalace(path: &Path) -> Result<Vec<ImportedClaim>> {
+    use crate::memory::tiers::{hebbian_reinforce_value, Tier};
+
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let body = std::fs::read_to_string(path)
+        .with_context(|| format!("read openclaw mempalace {}", path.display()))?;
+    if body.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root: Value = serde_json::from_str(&body)
+        .with_context(|| format!("parse openclaw mempalace {}", path.display()))?;
+
+    // Accept either `{"nodes":[...]}` or a bare `[...]`.
+    let node_array = if let Some(arr) = root.get("nodes").and_then(|v| v.as_array()) {
+        arr.clone()
+    } else if root.is_array() {
+        root.as_array().cloned().unwrap_or_default()
+    } else {
+        tracing::debug!(
+            path = %path.display(),
+            "openclaw mempalace: no 'nodes' array found"
+        );
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::new();
+    for (i, raw) in node_array.iter().enumerate() {
+        let node: MempalaceNode = match serde_json::from_value(raw.clone()) {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(index = i, error = %e, "skipping malformed mempalace node");
+                continue;
+            }
+        };
+        let text = node.text.as_deref().map(str::trim).unwrap_or("").to_string();
+        if text.is_empty() {
+            tracing::debug!(index = i, "skipping mempalace node with empty text");
+            continue;
+        }
+        // Replay Hebbian reinforcement: one pass per hebbianLink present.
+        let reinforced_importance = {
+            let mut imp = node.importance.clamp(0.0, 1.0);
+            for _ in 0..node.link_count() {
+                imp = hebbian_reinforce_value(imp, Tier::Hot);
+            }
+            imp
+        };
+        let scope = node
+            .scope
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("global")
+            .to_string();
+        let statement = format!("{text} (importance→{reinforced_importance:.2})");
+        out.push(ImportedClaim {
+            statement,
+            scope,
+            source: Source::ImportOpenclaw,
+        });
+    }
+    Ok(out)
+}
+
+// ── OpenClaw memory.db (JV-IMP-01 reader 3) ──────────────────────────────────
+
+/// Read OpenClaw's `memory.db` SQLite file.
+///
+/// The `summaries` table holds two kinds of rows distinguished by the `type`
+/// column:
+///
+/// * `"learned"` — facts the agent distilled from conversations.
+/// * `"completed"` — goals / tasks that were accomplished.
+///
+/// Both become `ImportedClaim`s tagged `Source::ImportOpenclaw`. The scope is
+/// set to `"learned"` or `"completed"` respectively so operators can filter by
+/// kind. A `subject` column (if present) is prepended to the statement.
+///
+/// Schema tolerance: the query selects by `type IN ('learned','completed')`; if
+/// the `summaries` table does not exist the error is surfaced normally. If the
+/// `subject` column is absent the value is simply `None` and the statement is
+/// the plain `content`.
+///
+/// Absent or unreadable file returns `Err`.
+pub fn read_openclaw_memory_db(path: &Path) -> Result<Vec<ImportedClaim>> {
+    let conn = Connection::open(path)
+        .with_context(|| format!("open openclaw memory.db at {}", path.display()))?;
+
+    // Try to detect whether the `subject` column exists. If the column is
+    // missing we fall back to the two-column query gracefully.
+    let has_subject: bool = {
+        let mut check = conn
+            .prepare("PRAGMA table_info(summaries)")
+            .context("PRAGMA table_info(summaries)")?;
+        check
+            .query_map([], |r| r.get::<_, String>(1))
+            .context("read table_info")?
+            .any(|col| col.as_deref() == Ok("subject"))
+    };
+
+    let rows: Vec<(String, String, Option<String>)> = if has_subject {
+        let mut stmt = conn
+            .prepare(
+                "SELECT content, type, subject \
+                 FROM summaries \
+                 WHERE type IN ('learned','completed') \
+                   AND content IS NOT NULL AND TRIM(content) != ''",
+            )
+            .context("prepare summaries SELECT (with subject)")?;
+        stmt.query_map([], |r| {
+            let content: String = r.get(0)?;
+            let kind: String = r.get(1)?;
+            let subject: Option<String> = r.get(2).ok();
+            Ok((content, kind, subject))
+        })
+        .context("query summaries (with subject)")?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT content, type \
+                 FROM summaries \
+                 WHERE type IN ('learned','completed') \
+                   AND content IS NOT NULL AND TRIM(content) != ''",
+            )
+            .context("prepare summaries SELECT (no subject)")?;
+        stmt.query_map([], |r| {
+            let content: String = r.get(0)?;
+            let kind: String = r.get(1)?;
+            Ok((content, kind, None::<String>))
+        })
+        .context("query summaries (no subject)")?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    Ok(rows
+        .into_iter()
+        .map(|(content, kind, subject)| {
+            let statement = match subject.filter(|s| !s.trim().is_empty()) {
+                Some(subj) => format!("[{subj}] {}", content.trim()),
+                None => content.trim().to_string(),
+            };
+            ImportedClaim {
+                statement,
+                scope: kind,
+                source: Source::ImportOpenclaw,
+            }
+        })
+        .collect())
+}
 
 // ── Obsidian vault manual-note import (JV-IMP-06) ───────────────────────────
 
@@ -712,6 +906,182 @@ not even json
         let path = dir.path().join("nonexistent.json");
         let claims = read_openclaw_memory_index(&path).unwrap();
         assert!(claims.is_empty());
+    }
+
+    // ── JV-IMP-01 reader 2: mempalace tests ─────────────────────────────────
+
+    /// Minimal helper: write a mempalace JSON file and return its path.
+    fn mempalace_fixture(dir: &Path, json: &str) -> std::path::PathBuf {
+        let path = dir.join("mempalace.json");
+        std::fs::write(&path, json).unwrap();
+        path
+    }
+
+    #[test]
+    fn mempalace_parses_nodes_array_from_nodes_key() {
+        let dir = tempdir().unwrap();
+        let json = r#"{
+            "nodes": [
+                {"text": "Operator prefers terse output", "importance": 0.6, "scope": "global", "hebbianLinks": []},
+                {"content": "Server is on unraid", "scope": "host:primary"}
+            ]
+        }"#;
+        let path = mempalace_fixture(dir.path(), json);
+        let claims = read_openclaw_mempalace(&path).unwrap();
+        assert_eq!(claims.len(), 2);
+        assert!(claims.iter().any(|c| c.statement.contains("terse output") && c.scope == "global"));
+        assert!(claims.iter().any(|c| c.statement.contains("Server is on unraid") && c.scope == "host:primary"));
+        for c in &claims {
+            assert_eq!(c.source, Source::ImportOpenclaw);
+        }
+    }
+
+    #[test]
+    fn mempalace_accepts_bare_array() {
+        let dir = tempdir().unwrap();
+        let json = r#"[
+            {"text": "bare node one"},
+            {"text": "bare node two", "scope": "project:neoth"}
+        ]"#;
+        let path = mempalace_fixture(dir.path(), json);
+        let claims = read_openclaw_mempalace(&path).unwrap();
+        assert_eq!(claims.len(), 2);
+        assert!(claims.iter().any(|c| c.statement.contains("bare node one") && c.scope == "global"));
+        assert!(claims.iter().any(|c| c.scope == "project:neoth"));
+    }
+
+    #[test]
+    fn mempalace_replays_hebbian_links_in_statement() {
+        use crate::memory::tiers::{hebbian_reinforce_value, Tier};
+        let dir = tempdir().unwrap();
+        // 2 hebbianLinks on a node with importance 0.5 → two reinforce passes.
+        let json = r#"{"nodes":[
+            {"text":"reinforced claim","importance":0.5,"hebbianLinks":[{"targetId":"x"},{"targetId":"y"}]}
+        ]}"#;
+        let path = mempalace_fixture(dir.path(), json);
+        let claims = read_openclaw_mempalace(&path).unwrap();
+        assert_eq!(claims.len(), 1);
+        let mut expected = 0.5f64;
+        expected = hebbian_reinforce_value(expected, Tier::Hot);
+        expected = hebbian_reinforce_value(expected, Tier::Hot);
+        let expected_str = format!("(importance→{expected:.2})");
+        assert!(
+            claims[0].statement.contains(&expected_str),
+            "expected '{}' in statement '{}'",
+            expected_str,
+            claims[0].statement
+        );
+    }
+
+    #[test]
+    fn mempalace_skips_empty_text_nodes() {
+        let dir = tempdir().unwrap();
+        let json = r#"{"nodes":[
+            {"text":"valid"},
+            {"scope":"global"},
+            {"text":"  "}
+        ]}"#;
+        let path = mempalace_fixture(dir.path(), json);
+        let claims = read_openclaw_mempalace(&path).unwrap();
+        assert_eq!(claims.len(), 1, "empty/missing text nodes must be dropped");
+        assert!(claims[0].statement.contains("valid"));
+    }
+
+    #[test]
+    fn mempalace_absent_file_returns_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("no_mempalace.json");
+        let claims = read_openclaw_mempalace(&path).unwrap();
+        assert!(claims.is_empty());
+    }
+
+    // ── JV-IMP-01 reader 3: memory_db tests ──────────────────────────────────
+
+    fn memory_db_fixture(dir: &Path, with_subject: bool) -> std::path::PathBuf {
+        let path = dir.join("memory.db");
+        let conn = Connection::open(&path).unwrap();
+        if with_subject {
+            conn.execute_batch(
+                "CREATE TABLE summaries (
+                    id      INTEGER PRIMARY KEY,
+                    content TEXT,
+                    type    TEXT,
+                    subject TEXT
+                );
+                INSERT INTO summaries (content, type, subject)
+                    VALUES ('Rust is memory-safe', 'learned', 'programming');
+                INSERT INTO summaries (content, type, subject)
+                    VALUES ('Finished neoth v0.3', 'completed', 'project:neoth');
+                INSERT INTO summaries (content, type, subject)
+                    VALUES ('  ', 'learned', NULL);
+                INSERT INTO summaries (content, type, subject)
+                    VALUES ('irrelevant draft', 'draft', 'misc');",
+            )
+            .unwrap();
+        } else {
+            conn.execute_batch(
+                "CREATE TABLE summaries (
+                    id      INTEGER PRIMARY KEY,
+                    content TEXT,
+                    type    TEXT
+                );
+                INSERT INTO summaries (content, type)
+                    VALUES ('Rust is memory-safe', 'learned');
+                INSERT INTO summaries (content, type)
+                    VALUES ('Finished neoth v0.3', 'completed');
+                INSERT INTO summaries (content, type)
+                    VALUES ('irrelevant draft', 'draft');",
+            )
+            .unwrap();
+        }
+        path
+    }
+
+    #[test]
+    fn memory_db_imports_learned_and_completed_with_subject() {
+        let dir = tempdir().unwrap();
+        let path = memory_db_fixture(dir.path(), true);
+        let claims = read_openclaw_memory_db(&path).unwrap();
+        // blank-content + draft rows must be excluded
+        assert_eq!(claims.len(), 2, "only learned+completed with content; got {claims:?}");
+        let learned = claims.iter().find(|c| c.scope == "learned").unwrap();
+        assert!(learned.statement.contains("Rust is memory-safe"));
+        assert!(learned.statement.contains("[programming]"));
+        let completed = claims.iter().find(|c| c.scope == "completed").unwrap();
+        assert!(completed.statement.contains("Finished neoth v0.3"));
+        assert!(completed.statement.contains("[project:neoth]"));
+        for c in &claims {
+            assert_eq!(c.source, Source::ImportOpenclaw);
+        }
+    }
+
+    #[test]
+    fn memory_db_imports_without_subject_column() {
+        let dir = tempdir().unwrap();
+        let path = memory_db_fixture(dir.path(), false);
+        let claims = read_openclaw_memory_db(&path).unwrap();
+        assert_eq!(claims.len(), 2, "draft row must be excluded; got {claims:?}");
+        assert!(claims.iter().any(|c| c.scope == "learned" && c.statement == "Rust is memory-safe"));
+        assert!(claims.iter().any(|c| c.scope == "completed" && c.statement == "Finished neoth v0.3"));
+    }
+
+    #[test]
+    fn memory_db_excludes_blank_content_and_wrong_type() {
+        let dir = tempdir().unwrap();
+        // Only one valid row, one blank, one wrong type.
+        let path = dir.path().join("memory.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE summaries (id INTEGER PRIMARY KEY, content TEXT, type TEXT);
+             INSERT INTO summaries VALUES (1, 'keep me', 'learned');
+             INSERT INTO summaries VALUES (2, '   ', 'completed');
+             INSERT INTO summaries VALUES (3, 'ignore', 'raw');",
+        )
+        .unwrap();
+        let claims = read_openclaw_memory_db(&path).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].statement, "keep me");
+        assert_eq!(claims[0].scope, "learned");
     }
 
     // ── JV-IMP-06 tests ─────────────────────────────────────────────────────
