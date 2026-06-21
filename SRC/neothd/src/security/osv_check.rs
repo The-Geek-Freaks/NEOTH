@@ -66,10 +66,13 @@ impl SeverityLevel {
         if let Ok(n) = score_str.trim().parse::<f64>() {
             return Self::from_cvss_score(n);
         }
-        // For full CVSS vectors, look for the numeric after the last component.
-        // api.osv.dev often emits severity[].score as the full vector string.
-        // We don't implement a full CVSS parser here — instead, map via the
-        // qualitative label embedded in `database_specific.severity` if available.
+        // F39 — api.osv.dev emits `severity[].score` as the full CVSS v3 VECTOR
+        // string (not a number), so a High/Critical CVE expressed only as a
+        // vector previously bucketed to `None` and never blocked. Compute the
+        // CVSS v3.0/3.1 base score from the vector per the spec formula.
+        if let Some(score) = cvss_base_score_from_vector(score_str.trim()) {
+            return Self::from_cvss_score(score);
+        }
         Self::None
     }
 
@@ -86,6 +89,96 @@ impl SeverityLevel {
             Self::None
         }
     }
+}
+
+/// F39 — CVSS v3.0/3.1 base-score impact sub-metric weight (C/I/A).
+fn cvss_impact_weight(v: &str) -> Option<f64> {
+    match v {
+        "H" => Some(0.56),
+        "L" => Some(0.22),
+        "N" => Some(0.0),
+        _ => None,
+    }
+}
+
+/// F39 — compute the CVSS v3.0/3.1 base score from a vector string per the
+/// first.org spec formula. Returns `None` if it isn't a v3 vector or a required
+/// base metric is missing/invalid. (v2 vectors are not scored — rare in OSV's
+/// CVE/GHSA feed; they fall back to `SeverityLevel::None`.)
+fn cvss_base_score_from_vector(vector: &str) -> Option<f64> {
+    if !(vector.starts_with("CVSS:3.0/") || vector.starts_with("CVSS:3.1/")) {
+        return None;
+    }
+    let (mut av, mut ac, mut ui, mut scope_changed) = (None, None, None, None);
+    let (mut c, mut i, mut a, mut pr_raw) = (None, None, None, None);
+    for part in vector.split('/').skip(1) {
+        let (k, v) = part.split_once(':')?;
+        match k {
+            "AV" => {
+                av = Some(match v {
+                    "N" => 0.85,
+                    "A" => 0.62,
+                    "L" => 0.55,
+                    "P" => 0.2,
+                    _ => return None,
+                })
+            }
+            "AC" => {
+                ac = Some(match v {
+                    "L" => 0.77,
+                    "H" => 0.44,
+                    _ => return None,
+                })
+            }
+            "UI" => {
+                ui = Some(match v {
+                    "N" => 0.85,
+                    "R" => 0.62,
+                    _ => return None,
+                })
+            }
+            "S" => {
+                scope_changed = Some(match v {
+                    "U" => false,
+                    "C" => true,
+                    _ => return None,
+                })
+            }
+            "C" => c = Some(cvss_impact_weight(v)?),
+            "I" => i = Some(cvss_impact_weight(v)?),
+            "A" => a = Some(cvss_impact_weight(v)?),
+            "PR" => pr_raw = Some(v.to_string()),
+            _ => {} // temporal / environmental / unknown metrics: ignored
+        }
+    }
+    let (av, ac, ui, scope_changed) = (av?, ac?, ui?, scope_changed?);
+    let (c, i, a) = (c?, i?, a?);
+    // Privileges-Required weight depends on Scope (changed scope raises L/H).
+    let pr = match (pr_raw?.as_str(), scope_changed) {
+        ("N", _) => 0.85,
+        ("L", false) => 0.62,
+        ("L", true) => 0.68,
+        ("H", false) => 0.27,
+        ("H", true) => 0.5,
+        _ => return None,
+    };
+    let iss = 1.0 - (1.0 - c) * (1.0 - i) * (1.0 - a);
+    let impact = if scope_changed {
+        7.52 * (iss - 0.029) - 3.25 * (iss - 0.02).powi(15)
+    } else {
+        6.42 * iss
+    };
+    if impact <= 0.0 {
+        return Some(0.0);
+    }
+    let exploitability = 8.22 * av * ac * pr * ui;
+    let raw = if scope_changed {
+        (1.08 * (impact + exploitability)).min(10.0)
+    } else {
+        (impact + exploitability).min(10.0)
+    };
+    // CVSS "roundup": smallest one-decimal value >= raw.
+    Some((raw * 10.0).ceil() / 10.0)
 }
 
 /// Classify the maximum severity of non-MAL advisories in an OSV response body.
@@ -433,6 +526,36 @@ mod tests {
         assert_eq!(SeverityLevel::from_cvss_score(5.0), SeverityLevel::Medium);
         assert_eq!(SeverityLevel::from_cvss_score(2.0), SeverityLevel::Low);
         assert_eq!(SeverityLevel::from_cvss_score(0.0), SeverityLevel::None);
+    }
+
+    #[test]
+    fn severity_from_cvss_vector_string_computes_base_score() {
+        // F39 — a full CVSS v3 vector (what OSV emits) must score, not return None.
+        // AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H = 9.8 (Critical, the classic RCE).
+        assert_eq!(
+            (cvss_base_score_from_vector("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H").unwrap()
+                * 10.0)
+                .round(),
+            98.0
+        );
+        assert_eq!(
+            SeverityLevel::from_cvss("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
+            SeverityLevel::Critical,
+            "a vector-string High/Critical CVE must NOT fall through to None"
+        );
+        // AV:N/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N = low-end → Low/None bucket.
+        assert!(
+            SeverityLevel::from_cvss("CVSS:3.0/AV:N/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N")
+                <= SeverityLevel::Medium
+        );
+        // Scope-changed raises the score (S:C path exercised).
+        assert_eq!(
+            SeverityLevel::from_cvss("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"),
+            SeverityLevel::Critical
+        );
+        // Garbage / non-v3 → None (graceful).
+        assert!(cvss_base_score_from_vector("not-a-vector").is_none());
+        assert!(cvss_base_score_from_vector("CVSS:2.0/AV:N/AC:L/Au:N/C:P/I:P/A:P").is_none());
     }
 
     /// SeverityLevel ordering must be Low < Medium < High < Critical.
