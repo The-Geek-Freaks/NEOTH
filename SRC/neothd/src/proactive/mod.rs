@@ -98,10 +98,13 @@ pub struct ProactiveItem {
     pub expires_unix: i64,
 }
 
-/// JV-PRO-10 — items at/above this priority "early-surface": they drain
-/// immediately, bypassing `scheduled_for_unix`. This is the operator-urgent /
-/// signal path (the upstream "DSPM signal" → surface now), matching the
-/// priority-100 "urgent — operator asked for it" convention above.
+/// JV-PRO-10 — items at/above this priority "early-surface": they bypass
+/// `scheduled_for_unix` (drain before their scheduled time). NOTE (D53): this
+/// bypasses only the SCHEDULE, not the daily cap — `take_n = cap.min(budget_left)`
+/// still applies, so once the per-day budget is exhausted even an urgent item
+/// drains nothing until the next day. This is the operator-urgent / signal path
+/// (the upstream "DSPM signal" → surface now), matching the priority-100
+/// "urgent — operator asked for it" convention above.
 pub const URGENT_PRIORITY: i32 = 100;
 
 /// Daily-cap configuration. `max_per_day = 3` is the AGENTER hard-

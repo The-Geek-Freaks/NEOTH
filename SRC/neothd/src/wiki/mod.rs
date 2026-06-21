@@ -6,9 +6,10 @@
 //!
 //! Slice 1 (this module): [`sources`] discovery + [`renderer`] page/index
 //! layout + [`writer`] plan/dry-run/write, surfaced via
-//! `neoth obsidian wiki-build [--dry-run]`. Later slices add the
-//! groundtruth ingest pass + the background rebuild cron (those need a WAL
-//! event byte + `SelfWikiConfig`, deferred to keep slice 1 disjoint).
+//! `neoth obsidian wiki-build [--dry-run] [--ingest]`. The groundtruth ingest
+//! pass IS shipped (`ingest_sources`, wired live via `--ingest`); only the
+//! background rebuild cron + `SelfWikiConfig` remain deferred (those need a
+//! WAL event byte).
 
 pub mod ingest;
 pub mod renderer;

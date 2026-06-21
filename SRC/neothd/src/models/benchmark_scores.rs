@@ -121,8 +121,9 @@ pub fn classify(id: &str) -> ModelFamily {
     }
     // Llama — 3.3 / 3.1 before the bare 3.0. GR-074: a bare-3 model whose SIZE is
     // 3B ("Llama-3-3B" → compact "llama33b") must NOT false-match the 3.3 family.
-    // The point release "3.3" is always followed by a size token ("3.3-70B" →
-    // "llama3370b"), never by the bare "b" of a 3B size, so `llama33b`/`llama31b`
+    // In practice the point release "3.3" is followed by a size token ("3.3-70B"
+    // → "llama3370b"), not the bare "b" of a 3B size — an HF naming CONVENTION
+    // (third-party, not a code-enforced invariant), so `llama33b`/`llama31b`
     // (= the 3B/1B size of a bare-3 model) are excluded. Using `compact` (not the
     // dotted `lo`) keeps separator-insensitivity — "Llama_3_1_8B" stays 3.1.
     if compact.contains("llama33") && !compact.contains("llama33b") {

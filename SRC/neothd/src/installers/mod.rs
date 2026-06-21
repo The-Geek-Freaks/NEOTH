@@ -71,9 +71,14 @@ pub enum InstallStrategy {
     /// `npm install -g <package>`. Requires Node + npm on PATH.
     Npm { package: &'static str },
     /// Vendor-hosted shell-script piped to the host shell. Operator
-    /// trust boundary is "operator chose this CLI in the wizard" —
-    /// identical to the npm-strategy trust boundary, just a different
-    /// distribution channel.
+    /// trust boundary is "operator chose this CLI in the wizard", and the
+    /// install URLs are HARDCODED to vetted vendor endpoints (not operator-
+    /// or config-supplied). NOTE (D12): this is NOT identical to the npm
+    /// strategy's gating — `install_via_npm` ADDITIONALLY runs an OSV
+    /// supply-chain + dep-health pre-flight before installing, which the
+    /// shell path cannot (there is no package name to scan, only a script
+    /// URL). The shell path's defence is the hardcoded-vetted-URL allowlist;
+    /// the npm channel is the more strongly gated of the two.
     ShellScript {
         /// `curl -fsSL <unix_url> | sh` invocation target.
         unix_url: &'static str,
