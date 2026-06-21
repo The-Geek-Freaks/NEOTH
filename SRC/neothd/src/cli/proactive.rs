@@ -213,6 +213,12 @@ fn run_route(
             anyhow::bail!("unknown channel '{ch}' (use telegram/slack/discord/whatsapp/keet)");
         }
     } else if let (Some(src), Some(ch)) = (source.as_ref(), channel.as_ref()) {
+        // F54 — validate the channel name like the --dest branch does, so a
+        // typo (`--channel telegrm`) is rejected at config time instead of
+        // being stored and silently routed to SidecarOnly at send time.
+        if !crate::channels::routing::is_known_channel(ch) {
+            anyhow::bail!("unknown channel '{ch}' (use telegram/slack/discord/whatsapp/keet)");
+        }
         routing.by_source.insert(src.clone(), ch.clone());
         println!("route: source '{src}' -> {ch}");
         changed = true;

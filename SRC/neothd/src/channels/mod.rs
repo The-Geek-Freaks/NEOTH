@@ -101,6 +101,73 @@ pub fn shared_rate_limiter() -> std::sync::Arc<rate_limit::RateLimiter> {
     std::sync::Arc::new(rate_limit::RateLimiter::with_defaults())
 }
 
+/// D2 — shared sender-allowlist gate for the dial-out adapters (Matrix, IRC,
+/// Nostr, Mattermost) whose native sender ids are strings. Mirrors Telegram's
+/// numeric `sender_blocked_by_allowlist` so EVERY channel honours the module
+/// contract (step 2: "Filters via operator-configured allowlist") — before this
+/// the four new adapters passed every sender ungated into the pipeline. Returns
+/// `true` when the sender is blocked (caller drops the inbound) and emits a
+/// best-effort `0x3B CHANNEL_GATE_REJECTED` audit frame. An open allowlist
+/// (`None`) never blocks; a blocked sender is never replied to (info-leak).
+pub(crate) async fn sender_blocked_by_allowlist(
+    allowed: Option<&str>,
+    from_id: &str,
+    gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    channel: &str,
+) -> bool {
+    let Some(allowed) = allowed else {
+        return false;
+    };
+    if from_id == allowed {
+        return false;
+    }
+    tracing::warn!(
+        from_id,
+        allowed,
+        channel,
+        "channel sender not on allowlist — dropped"
+    );
+    emit_gate_rejected(gate_writer, from_id, channel).await;
+    true
+}
+
+/// Best-effort `0x3B CHANNEL_GATE_REJECTED` audit frame for an allowlist-rejected
+/// string-id sender (D2). No-op without a writer; never fails the caller. Carries
+/// only the sender id + channel + reason — no message text (the gate fires before
+/// the text is read).
+pub(crate) async fn emit_gate_rejected(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    sender_id: &str,
+    channel: &str,
+) {
+    let Some(w) = writer else {
+        return;
+    };
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "channel": channel,
+        "sender_id": sender_id,
+        "reason": "not_on_allowlist",
+        "ts_unix": ts_unix,
+    })) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "serialize CHANNEL_GATE_REJECTED failed");
+            return;
+        }
+    };
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED,
+        &payload,
+    );
+    if let Err(e) = w.append(header, payload).await {
+        tracing::warn!(error = %e, "CHANNEL_GATE_REJECTED append failed (non-fatal)");
+    }
+}
+
 /// Concrete messenger family. SP-5 C-prime: replaces the previous
 /// `&'static str` `channel` field so adapters cannot diverge on naming.
 /// Add a variant when a new adapter ships. `as_str()` returns the stable
@@ -663,6 +730,25 @@ mod tests {
         assert_eq!(ChannelKind::Keet.as_str(), "keet");
         let json = serde_json::to_string(&ChannelKind::Slack).unwrap();
         assert_eq!(json, "\"slack\"");
+    }
+
+    #[tokio::test]
+    async fn shared_sender_allowlist_gates_string_ids() {
+        // D2 — the dial-out adapters' allowlist gate: open (None) never blocks,
+        // a matching sender passes, a non-matching sender is blocked. (The 0x3B
+        // emit path is structurally identical to telegram's tested one.)
+        assert!(
+            !sender_blocked_by_allowlist(None, "@eve:x", None, "matrix").await,
+            "open allowlist must not block"
+        );
+        assert!(
+            !sender_blocked_by_allowlist(Some("@me:x"), "@me:x", None, "matrix").await,
+            "the allowed sender must pass"
+        );
+        assert!(
+            sender_blocked_by_allowlist(Some("@me:x"), "@eve:x", None, "matrix").await,
+            "a non-listed sender must be blocked"
+        );
     }
 
     #[test]

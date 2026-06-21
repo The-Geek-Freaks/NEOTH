@@ -102,6 +102,10 @@ pub struct Credentials {
     /// sync state persist across restarts). Defaults to `~/.neoth/matrix_store/`
     /// when unset. Not a secret (a path).
     pub matrix_store_path: Option<String>,
+    /// D2 — operator sender allowlist for Matrix (`@user:server`). `None` ⇒ open
+    /// (any sender reaches the pipeline); set ⇒ only this id is accepted, others
+    /// dropped + audited `0x3B CHANNEL_GATE_REJECTED`. Not a secret.
+    pub matrix_allowed_user_id: Option<String>,
     /// GOLD-FEAT-10 — LINE long-lived channel access token (Messaging API tab in
     /// the LINE Developers console). Bearer token for the push send API. Secret.
     pub line_channel_access_token: Option<SecretString>,
@@ -126,12 +130,20 @@ pub struct Credentials {
     pub irc_channels: Option<String>,
     /// GOLD-FEAT-10 — use TLS for the IRC connection. `None` ⇒ true.
     pub irc_tls: Option<bool>,
+    /// D2 — operator sender allowlist for IRC (a nick). `None` ⇒ open; set ⇒
+    /// only this nick is accepted (others dropped + audited 0x3B). Best-effort:
+    /// IRC nicks aren't authenticated without SASL. Not a secret.
+    pub irc_allowed_nick: Option<String>,
     /// GOLD-FEAT-10 — Mattermost server base URL (e.g. `https://mm.example.com`).
     /// NEOTH dials out to the WebSocket API, so no public URL is needed. Not a
     /// secret.
     pub mattermost_url: Option<String>,
     /// GOLD-FEAT-10 — Mattermost personal-access or bot token. Secret.
     pub mattermost_token: Option<SecretString>,
+    /// D2 — operator sender allowlist for Mattermost (a user UUID). `None` ⇒
+    /// open; set ⇒ only this user id is accepted (others dropped + audited 0x3B).
+    /// Not a secret.
+    pub mattermost_allowed_user_id: Option<String>,
     /// GOLD-FEAT-10 — Twitch bot username (the account NEOTH chats as).
     /// Lowercased at connect. Not a secret.
     pub twitch_username: Option<String>,
@@ -146,6 +158,10 @@ pub struct Credentials {
     /// GOLD-FEAT-10 — comma-separated Nostr relay WSS URLs the adapter connects
     /// to (e.g. `wss://relay.damus.io,wss://nos.lol`). Not a secret.
     pub nostr_relays: Option<String>,
+    /// D2 — operator sender allowlist for Nostr (a 64-char hex pubkey). `None` ⇒
+    /// open; set ⇒ only this pubkey is accepted (others dropped + audited 0x3B).
+    /// Not a secret.
+    pub nostr_allowed_pubkey: Option<String>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -288,6 +304,7 @@ impl Credentials {
             matrix_password,
             matrix_access_token,
             matrix_store_path,
+            matrix_allowed_user_id,
             line_channel_access_token,
             line_channel_secret,
             line_webhook_port,
@@ -297,13 +314,16 @@ impl Credentials {
             irc_password,
             irc_channels,
             irc_tls,
+            irc_allowed_nick,
             mattermost_url,
             mattermost_token,
+            mattermost_allowed_user_id,
             twitch_username,
             twitch_oauth_token,
             twitch_channels,
             nostr_secret_key,
             nostr_relays,
+            nostr_allowed_pubkey,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -339,6 +359,7 @@ impl Credentials {
             && matrix_password.is_none()
             && matrix_access_token.is_none()
             && matrix_store_path.is_none()
+            && matrix_allowed_user_id.is_none()
             && line_channel_access_token.is_none()
             && line_channel_secret.is_none()
             && line_webhook_port.is_none()
@@ -348,13 +369,16 @@ impl Credentials {
             && irc_password.is_none()
             && irc_channels.is_none()
             && irc_tls.is_none()
+            && irc_allowed_nick.is_none()
             && mattermost_url.is_none()
             && mattermost_token.is_none()
+            && mattermost_allowed_user_id.is_none()
             && twitch_username.is_none()
             && twitch_oauth_token.is_none()
             && twitch_channels.is_none()
             && nostr_secret_key.is_none()
             && nostr_relays.is_none()
+            && nostr_allowed_pubkey.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

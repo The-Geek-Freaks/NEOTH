@@ -79,9 +79,13 @@ pub async fn run_recon(args: ReconArgs, output: OutputFormat) -> Result<()> {
 /// Recon is an external/active capability — refused under Strict autonomy.
 /// Returns the live autonomy level so the caller can stamp it into the audit.
 fn gate() -> Result<AutonomyLevel> {
-    let autonomy = FreedomConfig::load_from_default_path()
-        .map(|c| c.autonomy)
-        .unwrap_or_default();
+    // Fail CLOSED: a missing/corrupt/unreadable freedom.yaml must NOT
+    // silently drop to the Standard default and let an external/active
+    // recon run — assume the strictest level so the gate below refuses.
+    let autonomy = match FreedomConfig::load_from_default_path() {
+        Ok(c) => c.autonomy,
+        Err(_) => AutonomyLevel::Strict,
+    };
     if autonomy == AutonomyLevel::Strict {
         anyhow::bail!(
             "recon is refused under Strict autonomy — raise it (`neoth autonomy set standard`) to allow external recon"

@@ -1497,7 +1497,8 @@ pub(crate) fn spawn_channel_adapters(
         shared_provider.as_ref(),
     ) {
         (Some(url), Some(token), Some(provider)) => {
-            let channel = crate::channels::mattermost::MattermostChannel::new(url, token);
+            let channel = crate::channels::mattermost::MattermostChannel::new(url, token)
+                .with_allowlist(creds.mattermost_allowed_user_id.clone(), writer.clone());
             let handler: PipelineHandler = build_channel_handler(
                 provider.clone(),
                 config,
@@ -1550,7 +1551,8 @@ pub(crate) fn spawn_channel_adapters(
                         .matrix_store_path
                         .clone()
                         .map(std::path::PathBuf::from),
-                );
+                )
+                .with_allowlist(creds.matrix_allowed_user_id.clone(), writer.clone());
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
                     config,
@@ -1600,7 +1602,8 @@ pub(crate) fn spawn_channel_adapters(
                     creds.irc_password.clone(),
                     creds.irc_channels.clone().unwrap_or_default(),
                     creds.irc_tls.unwrap_or(true),
-                );
+                )
+                .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone());
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
                     config,
@@ -1690,7 +1693,8 @@ pub(crate) fn spawn_channel_adapters(
             shared_provider.as_ref(),
         ) {
             (Some(secret_key), Some(relays), Some(provider)) => {
-                let channel = crate::channels::nostr::NostrChannel::new(secret_key, relays);
+                let channel = crate::channels::nostr::NostrChannel::new(secret_key, relays)
+                    .with_allowlist(creds.nostr_allowed_pubkey.clone(), writer.clone());
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
                     config,

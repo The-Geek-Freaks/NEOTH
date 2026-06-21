@@ -45,6 +45,10 @@ pub struct IrcChannel {
     nick: String,
     sender: tokio::sync::OnceCell<Sender>,
     kind: ChannelKind,
+    /// D2 — operator sender allowlist (a nick). `None` ⇒ open.
+    allowed_nick: Option<String>,
+    /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
+    gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
 
 impl IrcChannel {
@@ -81,7 +85,21 @@ impl IrcChannel {
             nick,
             sender: tokio::sync::OnceCell::new(),
             kind: ChannelKind::Irc,
+            allowed_nick: None,
+            gate_writer: None,
         }
+    }
+
+    /// D2 — bind the operator sender allowlist + the gate's audit writer. An
+    /// unset allowlist (`None`) leaves the channel open (any sender).
+    pub fn with_allowlist(
+        mut self,
+        allowed_nick: Option<String>,
+        gate_writer: crate::wal::writer::WalWriterHandle,
+    ) -> Self {
+        self.allowed_nick = allowed_nick;
+        self.gate_writer = Some(gate_writer);
+        self
     }
 
     /// Configure this adapter for **Twitch chat** — which is IRC under the hood
@@ -161,6 +179,18 @@ impl Channel for IrcChannel {
             // Twitch chat reuses the IRC mapping; stamp the real channel family so
             // routing / formatting / WAL see "twitch", not "irc".
             inbound.channel = self.kind;
+            // D2 — drop + audit a sender not on the operator allowlist before
+            // the pipeline sees the message (open when None).
+            if super::sender_blocked_by_allowlist(
+                self.allowed_nick.as_deref(),
+                &inbound.sender_id,
+                self.gate_writer.as_ref(),
+                self.kind.as_str(),
+            )
+            .await
+            {
+                continue;
+            }
             let reply_to = inbound.chat_id.clone();
             match handler(inbound).await {
                 Ok(Some(out)) => {

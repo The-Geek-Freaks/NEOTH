@@ -49,6 +49,10 @@ pub struct NostrChannel {
     secret_key: SecretString,
     relays: Vec<String>,
     client: tokio::sync::OnceCell<Client>,
+    /// D2 — operator sender allowlist (a 64-char hex pubkey). `None` ⇒ open.
+    allowed_pubkey: Option<String>,
+    /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
+    gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
 
 impl NostrChannel {
@@ -67,7 +71,21 @@ impl NostrChannel {
             secret_key,
             relays,
             client: tokio::sync::OnceCell::new(),
+            allowed_pubkey: None,
+            gate_writer: None,
         }
+    }
+
+    /// D2 — bind the operator sender allowlist + the gate's audit writer. An
+    /// unset allowlist (`None`) leaves the channel open (any sender).
+    pub fn with_allowlist(
+        mut self,
+        allowed_pubkey: Option<String>,
+        gate_writer: crate::wal::writer::WalWriterHandle,
+    ) -> Self {
+        self.allowed_pubkey = allowed_pubkey;
+        self.gate_writer = Some(gate_writer);
+        self
     }
 
     /// Parse the operator's secret key (accepts `nsec1…` bech32 or 64-char hex).
@@ -134,6 +152,18 @@ impl Channel for NostrChannel {
                 }
             };
             let sender = unwrapped.sender;
+            // D2 — drop + audit a sender not on the operator allowlist before
+            // the pipeline sees the message (open when None).
+            if super::sender_blocked_by_allowlist(
+                self.allowed_pubkey.as_deref(),
+                &sender.to_hex(),
+                self.gate_writer.as_ref(),
+                "nostr",
+            )
+            .await
+            {
+                continue;
+            }
             let rumor = unwrapped.rumor;
             let rumor_ts = rumor.created_at.as_secs();
             if rumor_ts < start_ts {

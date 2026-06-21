@@ -61,6 +61,10 @@ pub struct MatrixChannel {
     password: Option<SecretString>,
     store_path: PathBuf,
     client: tokio::sync::OnceCell<Client>,
+    /// D2 — operator sender allowlist (`@user:server`). `None` ⇒ open.
+    allowed_user_id: Option<String>,
+    /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
+    gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
 
 impl MatrixChannel {
@@ -79,7 +83,21 @@ impl MatrixChannel {
             password,
             store_path: store_path.unwrap_or_else(matrix_client::default_store_path),
             client: tokio::sync::OnceCell::new(),
+            allowed_user_id: None,
+            gate_writer: None,
         }
+    }
+
+    /// D2 — bind the operator sender allowlist + the gate's audit writer. An
+    /// unset allowlist (`None`) leaves the channel open (any sender).
+    pub fn with_allowlist(
+        mut self,
+        allowed_user_id: Option<String>,
+        gate_writer: crate::wal::writer::WalWriterHandle,
+    ) -> Self {
+        self.allowed_user_id = allowed_user_id;
+        self.gate_writer = Some(gate_writer);
+        self
     }
 
     /// Lazily build + authenticate the shared client. On error the cell stays
@@ -198,9 +216,16 @@ impl Channel for MatrixChannel {
         // (matrix-sdk clones the handler per event; `PipelineHandler` itself
         // is not `Clone`).
         let handler = Arc::new(handler);
+        // D2 — capture the operator allowlist + audit writer into the per-event
+        // closure (matrix-sdk clones the closure per event, so these must be
+        // owned/Clone like `handler`).
+        let allowed_user_id = self.allowed_user_id.clone();
+        let gate_writer = self.gate_writer.clone();
         client.add_event_handler(
             move |ev: OriginalSyncRoomMessageEvent, room: Room, client: Client| {
                 let handler = handler.clone();
+                let allowed_user_id = allowed_user_id.clone();
+                let gate_writer = gate_writer.clone();
                 async move {
                     // Only joined rooms (skip invited/left/knocked).
                     if room.state() != RoomState::Joined {
@@ -211,6 +236,18 @@ impl Channel for MatrixChannel {
                         if ev.sender.as_str() == me.as_str() {
                             return;
                         }
+                    }
+                    // D2 — drop + audit a sender not on the operator allowlist
+                    // before the pipeline sees the message (open when None).
+                    if crate::channels::sender_blocked_by_allowlist(
+                        allowed_user_id.as_deref(),
+                        ev.sender.as_str(),
+                        gate_writer.as_ref(),
+                        "matrix",
+                    )
+                    .await
+                    {
+                        return;
                     }
                     // Text only for now (media/threads/edits are follow-ups).
                     let MessageType::Text(text) = &ev.content.msgtype else {

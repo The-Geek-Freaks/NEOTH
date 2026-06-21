@@ -43,6 +43,10 @@ const MAX_RECONNECT_BACKOFF_SECS: u64 = 60;
 pub struct MattermostChannel {
     base_url: String,
     token: SecretString,
+    /// D2 — operator sender allowlist (a Mattermost user UUID). `None` ⇒ open.
+    allowed_user_id: Option<String>,
+    /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit frame on a drop.
+    gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
 
 impl MattermostChannel {
@@ -50,7 +54,21 @@ impl MattermostChannel {
         Self {
             base_url: base_url.into(),
             token,
+            allowed_user_id: None,
+            gate_writer: None,
         }
+    }
+
+    /// D2 — bind the operator sender allowlist + the gate's audit writer. An
+    /// unset allowlist (`None`) leaves the channel open (any sender).
+    pub fn with_allowlist(
+        mut self,
+        allowed_user_id: Option<String>,
+        gate_writer: crate::wal::writer::WalWriterHandle,
+    ) -> Self {
+        self.allowed_user_id = allowed_user_id;
+        self.gate_writer = Some(gate_writer);
+        self
     }
 }
 
@@ -91,6 +109,8 @@ impl Channel for MattermostChannel {
                 &bot_user_id,
                 Arc::clone(&handler),
                 Arc::clone(&sender),
+                self.allowed_user_id.as_deref(),
+                self.gate_writer.as_ref(),
             )
             .await
             {
@@ -131,12 +151,15 @@ impl Channel for MattermostChannel {
 
 /// One connect → authenticate → read loop cycle. Returns `Ok` on a clean peer
 /// close (caller reconnects) and `Err` on a transport failure.
+#[allow(clippy::too_many_arguments)]
 async fn run_one_session(
     base_url: &str,
     token: &SecretString,
     bot_user_id: &str,
     handler: Arc<PipelineHandler>,
     sender: OutboundSender,
+    allowed_user_id: Option<&str>,
+    gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> Result<()> {
     let ws_url = mm_ws_url(base_url);
     let host = ws_url.split('/').nth(2).unwrap_or("?").to_string();
@@ -154,6 +177,18 @@ async fn run_one_session(
         match msg {
             Ok(Message::Text(frame)) => match decode_frame(&frame, bot_user_id) {
                 MmFrame::Posted(inbound) => {
+                    // D2 — drop + audit any sender not on the operator allowlist
+                    // before the pipeline sees the message (open when None).
+                    if super::sender_blocked_by_allowlist(
+                        allowed_user_id,
+                        &inbound.sender_id,
+                        gate_writer,
+                        "mattermost",
+                    )
+                    .await
+                    {
+                        continue;
+                    }
                     dispatch_inbound(*inbound, Arc::clone(&handler), Arc::clone(&sender)).await;
                 }
                 MmFrame::Ignored => {}

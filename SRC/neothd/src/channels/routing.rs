@@ -85,6 +85,23 @@ impl ChannelDestinations {
     }
 }
 
+/// True for a canonical proactive channel name (the exact set
+/// [`ChannelDestinations::set_for_channel`] accepts). Used to validate the
+/// `--source --channel` routing branch before it's stored, so a typo'd channel
+/// (e.g. `telegrm`) isn't silently saved and then routed to `SidecarOnly` (F54).
+pub fn is_known_channel(channel: &str) -> bool {
+    matches!(
+        channel,
+        "telegram"
+            | "slack"
+            | "discord"
+            | "whatsapp"
+            | "whatsapp_business"
+            | "whatsapp_baileys"
+            | "keet"
+    )
+}
+
 /// GOLD-FEAT-13 routing config. Persisted to `~/.neoth/channel_routing.json`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelRouting {
@@ -278,5 +295,24 @@ mod tests {
             !d.set_for_channel("nonsense", "x".into()),
             "unknown channel name → false (caller warns)"
         );
+    }
+
+    #[test]
+    fn is_known_channel_matches_set_for_channel_names() {
+        // F54 — the --source --channel branch validates against this; it must
+        // accept exactly the canonical names set_for_channel routes.
+        for ch in [
+            "telegram",
+            "slack",
+            "discord",
+            "whatsapp",
+            "whatsapp_business",
+            "whatsapp_baileys",
+            "keet",
+        ] {
+            assert!(is_known_channel(ch), "{ch} must be known");
+        }
+        assert!(!is_known_channel("telegrm"), "typo rejected");
+        assert!(!is_known_channel(""), "empty rejected");
     }
 }
