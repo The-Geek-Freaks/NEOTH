@@ -1562,8 +1562,24 @@ async fn run_post_reply_pipelines(
     // refusal-recovery path, so profile extraction can skip the
     // operator_preferences category for it (the recovered "preferences"
     // are about the reframing, not the operator).
+    // D23 — the permanent hard-block floor (CSAM / bio-chem weapon / mass-
+    // casualty) runs BEFORE any refusal recovery. Both the reframing pipeline
+    // (try_recover_multi) and the abliterated fallback below are suppressed when
+    // it fires, so neither can be used to "recover" a genuinely refused request.
+    // The floor previously gated only the abliterated tier, which the reframing
+    // pipeline reached first and ungated. (The abliterated path also re-checks
+    // internally via the same gate for non-chat callers — no double-emit here
+    // because both blocks are skipped when `hard_blocked`.)
+    let hard_blocked = crate::security::refusal_abliterated::hard_block_gate(
+        &final_prompt,
+        Some(&writer),
+        now_unix() as i64,
+    )
+    .is_some();
+
     let mut derived_from_mirror_pipeline = false;
-    if config.refusal_recovery.enabled
+    if !hard_blocked
+        && config.refusal_recovery.enabled
         && std::env::var("NEOTH_REFUSAL_RECOVERY_DISABLE")
             .map(|v| !(v == "1" || v.eq_ignore_ascii_case("true")))
             .unwrap_or(true)
@@ -1649,7 +1665,7 @@ async fn run_post_reply_pipelines(
     // local abliterated model (operator-owned hardware — NOT provider-
     // deception). The orchestrator runs the permanent hard-block floor first
     // and emits WAL 0x26/0x27/0x28 internally. Best-effort; never bails a turn.
-    if config.refusal_recovery.abliterated_fallback_enabled {
+    if !hard_blocked && config.refusal_recovery.abliterated_fallback_enabled {
         let t3_report = crate::security::refusal_detect::classify(&response_text);
         if t3_report.is_refusal()
             && crate::security::refusal_abliterated::should_route_to_abliterated(
