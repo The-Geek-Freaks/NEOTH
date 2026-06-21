@@ -4443,6 +4443,18 @@ pub(crate) fn evaluate_council_trigger(
 ///      to the "[council split — operator decision needed]" message.
 ///   4. Verdict::QuorumFailed → return diagnostic text "[council quorum
 ///      failed — N/M hemispheres responded]".
+/// GOLD-ADAPT-LOWKEY-04 wiring — the MIF pre-step decision, extracted pure so
+/// it is unit-testable without spawning a provider. Returns `Some(message)`
+/// when MIF is enabled AND the prompt's intent is `Conflicted` (contradictory
+/// goals the council must NOT debate); `None` otherwise (disabled, or a
+/// `Stated`/`Inferred` prompt the council should answer normally).
+fn mif_disambiguation(config: &FreedomConfig, prompt: &str) -> Option<String> {
+    if !config.council.mif_enabled {
+        return None;
+    }
+    crate::council::motive_ident::classify_motive(prompt).disambiguation_message()
+}
+
 pub(crate) async fn dispatch_council_with_recovery(
     req: &crate::providers::Request,
     config: &FreedomConfig,
@@ -4454,6 +4466,16 @@ pub(crate) async fn dispatch_council_with_recovery(
     // regardless of ingress channel.
     let prompt_hash_pre = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
     let _ = emit_council_diversity_warning_if_needed(writer, prompt_hash_pre, config).await;
+    // GOLD-ADAPT-LOWKEY-04 — MIF motive pre-step (opt-in). Classify operator
+    // intent BEFORE the hemisphere fan-out: a Conflicted prompt is NOT debated
+    // (would only produce a confused answer) — surface a disambiguation request
+    // and skip the council entirely (no provider cost). Audited as a
+    // COUNCIL_SKIP so the WAL trace shows why the debate didn't run.
+    if let Some(message) = mif_disambiguation(config, &req.prompt) {
+        let _ = emit_council_skip(writer, prompt_hash_pre, "mif_conflicted_disambiguation").await;
+        tracing::info!("MIF: conflicted intent — council skipped, disambiguation surfaced");
+        return Ok(message);
+    }
     let outcome = run_council_debate(config, req).await?;
     // KF-01 (COR-17): persist verbatim hemisphere transcripts (opt-in) so
     // `neoth council replay` can show the actual prose. No-op unless
@@ -5126,6 +5148,31 @@ mod tests {
         assert!(
             matches!(decision, crate::council::TriggerDecision::Skip { .. }),
             "a durably-suppressed council must not be force-convened by NEOTH_COUNCIL_ENABLE=1"
+        );
+    }
+
+    // GOLD-ADAPT-LOWKEY-04 — the MIF pre-step caller decision (the wiring that
+    // makes the motive classifier runtime-complete in dispatch_council_with_recovery).
+    #[test]
+    fn mif_disambiguation_gated_off_by_default_and_conflict_aware() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        // Default off → inert even on a contradictory prompt.
+        assert!(
+            mif_disambiguation(&cfg, "Give me a brief summary but explain every detail.").is_none(),
+            "MIF must be inert when council.mif_enabled is false"
+        );
+        cfg.council.mif_enabled = true;
+        // Enabled + Conflicted → a disambiguation message is surfaced (council skipped).
+        let msg = mif_disambiguation(&cfg, "Give me a brief summary but explain every detail.")
+            .expect("conflicted prompt must surface a disambiguation message");
+        assert!(
+            msg.to_lowercase().contains("clarify"),
+            "message must ask the operator to clarify: {msg}"
+        );
+        // Enabled + a clean imperative → council proceeds normally (no block).
+        assert!(
+            mif_disambiguation(&cfg, "Summarise the last 10 commits.").is_none(),
+            "a Stated prompt must not be blocked"
         );
     }
 

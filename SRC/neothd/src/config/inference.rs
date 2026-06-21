@@ -568,6 +568,15 @@ pub struct CouncilConfig {
     #[serde(default)]
     pub transparent_core: bool,
 
+    /// GOLD-ADAPT-LOWKEY-04 — MIF motive pre-step. When `true`, the
+    /// council classifies operator intent BEFORE the hemisphere fan-out;
+    /// a `Conflicted` prompt (contradictory goals) is NOT debated — a
+    /// disambiguation request is surfaced instead. Default `false` —
+    /// opt-in, because the classifier is conservative but a
+    /// false-`Conflicted` would block a valid answer.
+    #[serde(default)]
+    pub mif_enabled: bool,
+
     /// Weight multiplier on cross-outer dissent score for the
     /// `QualityScore.diversity_bonus` component. `None` → use
     /// [`DEFAULT_DIVERSITY_BONUS_WEIGHT`]. Operator-tunable so a
