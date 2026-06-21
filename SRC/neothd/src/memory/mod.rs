@@ -84,6 +84,11 @@ pub mod store;
 pub mod tiers;
 pub mod transfer_bundle;
 pub mod views;
+/// GOLD-ADAPT-SPEAKR-01 — 5-layer prompt composition for summarization
+/// (override/append/tag/folder/user/admin/hardcoded) + `{{var}}` substitution.
+/// Standalone, no I/O; wired to `freedom.yaml::skills.meeting_summary.prompt_layers`
+/// as a follow-up once the ingress summarise path consumes it.
+pub mod summarize_prompt;
 pub mod warm_summarize;
 
 /// Escape SQLite `LIKE` wildcards (`\`, `%`, `_`) in an untrusted string
