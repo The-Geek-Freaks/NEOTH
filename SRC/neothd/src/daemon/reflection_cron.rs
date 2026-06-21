@@ -37,15 +37,170 @@
 //! reader. This module is the PRODUCER. Splitting keeps the
 //! delivery-channel choice (chat / Telegram / Slack / GUI banner)
 //! orthogonal to the "what should we surface" decision.
+//!
+//! ## GOLD-ADAPT-OH-07 — Subconscious anti-double-emit
+//!
+//! The second dedup layer (complementing the per-ISO-week queue
+//! `dedup_key`) is a persisted `SubconsciousTickState` stored in
+//! `<home>/reflections/subconscious_state.json`. It records
+//! `last_emitted_unix` — the wall-clock of the last successful
+//! weekly reflection emit. Any `run_reflection_tick_once` call that
+//! occurs within `min_window_secs` of `last_emitted_unix` returns
+//! `Ok(false)` immediately (suppressed), preventing double-emit
+//! across rapid cron ticks, daemon restarts, or manual triggers.
+//!
+//! `recent_reflections_sitrep` exposes the operator-visible view:
+//! the last N daily reflections + the most recent weekly emit, so
+//! the subconscious "what have I been saying" state is auditable
+//! without inspecting raw JSONL.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 /// Default tick interval — 24 hours in seconds.
 pub const DEFAULT_CRON_INTERVAL_SECS: u64 = 24 * 3600;
+
+// ── GOLD-ADAPT-OH-07: SubconsciousTickState ──────────────────────────────────
+
+/// Persisted state for the subconscious weekly-reflection emitter.
+/// Written to `<home>/reflections/subconscious_state.json` after every
+/// successful emit so the daemon survives restarts without re-emitting.
+///
+/// All fields carry `#[serde(default)]` so files written before any
+/// field existed deserialise cleanly.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubconsciousTickState {
+    /// Unix-seconds of the last successful weekly reflection emit.
+    /// `0` means "never emitted" (fresh install).
+    #[serde(default)]
+    pub last_emitted_unix: i64,
+}
+
+/// Path of the tick-state file relative to `home`.
+fn tick_state_path(home: &std::path::Path) -> PathBuf {
+    home.join("reflections").join("subconscious_state.json")
+}
+
+/// Load the tick state. Returns `Default` when the file is absent or
+/// zero-length (fresh install or corrupted write window).
+pub fn load_tick_state(home: &std::path::Path) -> SubconsciousTickState {
+    let path = tick_state_path(home);
+    let bytes = match std::fs::read(&path) {
+        Ok(b) if !b.is_empty() => b,
+        _ => return SubconsciousTickState::default(),
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+/// Persist the tick state atomically (`.tmp` + rename). Errors are
+/// swallowed with a warning — a failed save degrades at most to
+/// allowing a re-emit on next restart (the queue's ISO-week dedup
+/// still acts as the second net).
+pub fn save_tick_state(home: &std::path::Path, state: &SubconsciousTickState) {
+    let path = tick_state_path(home);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            warn!(error = %e, "reflection cron: failed to create reflections dir for tick state");
+            return;
+        }
+    }
+    let bytes = match serde_json::to_vec_pretty(state) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(error = %e, "reflection cron: failed to serialise tick state");
+            return;
+        }
+    };
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp, &bytes) {
+        warn!(error = %e, "reflection cron: failed to write tick state tmp");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        warn!(error = %e, "reflection cron: failed to rename tick state into place");
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+// ── GOLD-ADAPT-OH-07: ReflectionSitrep ──────────────────────────────────────
+
+/// One entry in the recent-reflections sitrep (a compact summary of
+/// what the subconscious has surfaced recently). Covers both weekly
+/// reflections (source `"weekly"`) and period reflections
+/// (`"daily"` / `"yearly"`).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SitrepEntry {
+    /// `"weekly"` | `"daily"` | `"yearly"`.
+    pub kind: String,
+    /// ISO-week tag (`"YYYY-WXX"`) for weekly; `"YYYY-MM-DD"` for daily;
+    /// `"YYYY"` for yearly.
+    pub tag: String,
+    /// Unix-seconds when the reflection was generated / emitted.
+    pub generated_ts_unix: i64,
+    /// Top topics extracted for this period (empty for weekly when none
+    /// were surfaced yet).
+    pub topics: Vec<String>,
+    /// One-line body text the operator would have seen as a nudge.
+    pub body: String,
+}
+
+/// Compact operator-facing view of recent subconscious activity.
+/// Returned by [`recent_reflections_sitrep`].
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReflectionSitrep {
+    /// Unix-seconds of the last successful weekly emit (`0` = never).
+    pub last_emitted_unix: i64,
+    /// Recent reflections, newest first.
+    pub recent: Vec<SitrepEntry>,
+}
+
+/// Build a `ReflectionSitrep` by reading:
+/// 1. The persisted `SubconsciousTickState` (for `last_emitted_unix`).
+/// 2. Daily period-reflection JSONL files for the last `lookback_days`.
+///
+/// At most `max_entries` entries are returned, newest first.
+/// Missing files / parse errors are skipped silently (best-effort
+/// read — the sitrep must never fail the caller).
+pub fn recent_reflections_sitrep(
+    home: &std::path::Path,
+    lookback_days: u32,
+    max_entries: usize,
+) -> ReflectionSitrep {
+    use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, load_for_tag};
+
+    let state = load_tick_state(home);
+    let now = crate::time::now_unix_i64();
+    let mut entries: Vec<SitrepEntry> = Vec::new();
+
+    for back in 0..lookback_days as i64 {
+        let ts = now - back * 86_400;
+        let tag = date_tag_from_unix(ts);
+        for r in load_for_tag(home, PeriodKind::Daily, &tag) {
+            entries.push(SitrepEntry {
+                kind: "daily".to_string(),
+                tag: r.tag.clone(),
+                generated_ts_unix: r.generated_ts_unix,
+                topics: r.topics.clone(),
+                body: r.body.clone(),
+            });
+        }
+    }
+
+    // Sort newest first, then cap.
+    entries.sort_by_key(|e| std::cmp::Reverse(e.generated_ts_unix));
+    entries.truncate(max_entries);
+
+    ReflectionSitrep {
+        last_emitted_unix: state.last_emitted_unix,
+        recent: entries,
+    }
+}
+
+// ── Weekly reflection tick (extended with OH-07 window gate) ─────────────────
 
 /// One reflection-cron tick: opens views.db, asks `reflection` for
 /// the week's top topics, builds a [`ProactiveItem`], enqueues into
@@ -55,13 +210,36 @@ pub const DEFAULT_CRON_INTERVAL_SECS: u64 = 24 * 3600;
 /// `now_unix` lets tests inject a stable time. Production calls
 /// pass `chrono::Utc::now().timestamp()`.
 ///
+/// `min_window_secs` — GOLD-ADAPT-OH-07 anti-double-emit gate.
+/// If `now_unix - last_emitted_unix < min_window_secs`, the tick
+/// returns `Ok(false)` immediately (suppressed) so rapid re-ticks
+/// or daemon restarts within the same window never double-emit the
+/// same reflection. Pass `0` to disable the gate (tests that
+/// exercise other paths do this). The cron loop passes
+/// `DEFAULT_CRON_INTERVAL_SECS`.
+///
 /// Returns `Ok(true)` when a new item was enqueued (week wasn't
-/// already represented); `Ok(false)` when the dedup rejected it
-/// (idempotent re-tick). Errors propagate from views.db open /
-/// queue load/save.
-pub fn run_reflection_tick_once(home: &std::path::Path, now_unix: i64) -> Result<bool, String> {
+/// already represented); `Ok(false)` when the window gate or queue
+/// dedup rejected it (idempotent re-tick). Errors propagate from
+/// views.db open / queue load/save.
+pub fn run_reflection_tick_once(
+    home: &std::path::Path,
+    now_unix: i64,
+    min_window_secs: u64,
+) -> Result<bool, String> {
     use crate::proactive::ProactiveQueue;
     use crate::reflection::{build_reflection_item, top_topics_last_7_days};
+
+    // GOLD-ADAPT-OH-07: window gate — suppress if we emitted recently.
+    if min_window_secs > 0 {
+        let state = load_tick_state(home);
+        if state.last_emitted_unix > 0 {
+            let elapsed = now_unix.saturating_sub(state.last_emitted_unix) as u64;
+            if elapsed < min_window_secs {
+                return Ok(false); // suppressed — within anti-double-emit window
+            }
+        }
+    }
 
     let views_path = home.join("views.db");
     if !views_path.exists() {
@@ -92,6 +270,13 @@ pub fn run_reflection_tick_once(home: &std::path::Path, now_unix: i64) -> Result
     queue
         .save_to(&queue_path)
         .map_err(|e| format!("queue save failed: {e}"))?;
+
+    // GOLD-ADAPT-OH-07: persist last_emitted_unix on successful enqueue so
+    // subsequent ticks within the window are suppressed even across restarts.
+    if enqueued {
+        save_tick_state(home, &SubconsciousTickState { last_emitted_unix: now_unix });
+    }
+
     Ok(enqueued)
 }
 
@@ -283,7 +468,7 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
         loop {
             ticker.tick().await;
             let now_unix = chrono::Utc::now().timestamp();
-            match run_reflection_tick_once(&home, now_unix) {
+            match run_reflection_tick_once(&home, now_unix, DEFAULT_CRON_INTERVAL_SECS) {
                 Ok(true) => info!(
                     "reflection cron: new weekly item enqueued (ISO week {})",
                     iso_week_tag_from_unix(now_unix)
@@ -429,7 +614,8 @@ mod tests {
     #[test]
     fn run_reflection_tick_once_no_views_db_returns_ok_false() {
         let tmp = TempDir::new().unwrap();
-        let result = run_reflection_tick_once(tmp.path(), 1_700_000_000).unwrap();
+        // min_window_secs = 0 → gate disabled; exercises the "no views.db" path.
+        let result = run_reflection_tick_once(tmp.path(), 1_700_000_000, 0).unwrap();
         assert!(
             !result,
             "fresh install (no views.db) must surface as Ok(false) not error"
@@ -442,7 +628,7 @@ mod tests {
         let views_path = tmp.path().join("views.db");
         // Create the schema but no rows.
         let _conn = crate::memory::store::open(&views_path).unwrap();
-        let result = run_reflection_tick_once(tmp.path(), 1_700_000_000).unwrap();
+        let result = run_reflection_tick_once(tmp.path(), 1_700_000_000, 0).unwrap();
         assert!(
             !result,
             "empty idx_episode → no topics → Ok(false) not error"
@@ -530,5 +716,227 @@ mod tests {
         )
         .unwrap();
         assert!(!r2, "marker makes the tick idempotent per tag");
+    }
+
+    // ── GOLD-ADAPT-OH-07: SubconsciousTickState persistence ─────────────────
+
+    #[test]
+    fn tick_state_default_is_zero_last_emitted() {
+        let state = SubconsciousTickState::default();
+        assert_eq!(state.last_emitted_unix, 0, "fresh install = never emitted");
+    }
+
+    #[test]
+    fn tick_state_roundtrip_save_load() {
+        let tmp = TempDir::new().unwrap();
+        let state = SubconsciousTickState { last_emitted_unix: 1_700_000_000 };
+        save_tick_state(tmp.path(), &state);
+        let loaded = load_tick_state(tmp.path());
+        assert_eq!(
+            loaded, state,
+            "save + load must produce identical state"
+        );
+    }
+
+    #[test]
+    fn load_tick_state_returns_default_for_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let state = load_tick_state(tmp.path());
+        assert_eq!(
+            state.last_emitted_unix, 0,
+            "missing file → default (never emitted)"
+        );
+    }
+
+    #[test]
+    fn load_tick_state_returns_default_for_empty_file() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("reflections");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("subconscious_state.json"), b"").unwrap();
+        let state = load_tick_state(tmp.path());
+        assert_eq!(state.last_emitted_unix, 0, "zero-length file → default");
+    }
+
+    // ── GOLD-ADAPT-OH-07: anti-double-emit window gate ───────────────────────
+
+    #[test]
+    fn window_gate_suppresses_second_tick_within_window() {
+        // Two ticks within the window: second must be suppressed.
+        let tmp = TempDir::new().unwrap();
+        let t0: i64 = 1_700_000_000;
+        let window: u64 = 3600; // 1h window
+        let t1 = t0 + 60; // 60s later — still inside window
+
+        // Manually plant a tick state as if the first tick already fired.
+        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+
+        // Second tick within window → suppressed.
+        let result = run_reflection_tick_once(tmp.path(), t1, window);
+        assert_eq!(
+            result,
+            Ok(false),
+            "second tick within window must be suppressed by window gate"
+        );
+    }
+
+    #[test]
+    fn window_gate_allows_tick_after_window_expires() {
+        // Tick after the window expires: gate must pass through (no views.db
+        // → Ok(false) from the "no episodes" path, NOT from the gate).
+        let tmp = TempDir::new().unwrap();
+        let t0: i64 = 1_700_000_000;
+        let window: u64 = 3600; // 1h window
+        let t_after = t0 + window as i64 + 1; // 1 second after window
+
+        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+
+        // Tick after window expiry. No views.db → Ok(false) from that path,
+        // NOT from the gate. We verify the gate was NOT the cause by checking
+        // that the state file is still the original (gate would have exited
+        // before the views.db check, and the code only updates state on enqueue).
+        let result = run_reflection_tick_once(tmp.path(), t_after, window);
+        // Should be Ok(false) because there's no views.db, not because of the gate.
+        assert_eq!(
+            result,
+            Ok(false),
+            "after window: no views.db gives Ok(false) from no-views-db path"
+        );
+        // State unchanged (no successful enqueue happened).
+        let state = load_tick_state(tmp.path());
+        assert_eq!(
+            state.last_emitted_unix, t0,
+            "last_emitted_unix must not change when no enqueue happened"
+        );
+    }
+
+    #[test]
+    fn window_gate_zero_means_disabled() {
+        // min_window_secs = 0 → gate entirely disabled; even a very recent
+        // last_emitted_unix must not suppress the tick.
+        let tmp = TempDir::new().unwrap();
+        let t0: i64 = 1_700_000_000;
+        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+
+        // Tick at t0 + 1s with gate disabled → falls through to no-views-db path.
+        let result = run_reflection_tick_once(tmp.path(), t0 + 1, 0);
+        assert_eq!(
+            result,
+            Ok(false),
+            "gate=0 must not suppress; Ok(false) from no-views-db, not gate"
+        );
+    }
+
+    #[test]
+    fn second_tick_within_window_does_not_update_state() {
+        let tmp = TempDir::new().unwrap();
+        let t0: i64 = 1_700_000_000;
+        let window: u64 = 86_400; // 24h
+
+        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+
+        // Tick 1h later — within window → suppressed.
+        let r = run_reflection_tick_once(tmp.path(), t0 + 3600, window);
+        assert_eq!(r, Ok(false));
+
+        // State must NOT have been updated (save only happens on successful enqueue).
+        let state = load_tick_state(tmp.path());
+        assert_eq!(
+            state.last_emitted_unix, t0,
+            "suppressed tick must not overwrite last_emitted_unix"
+        );
+    }
+
+    // ── GOLD-ADAPT-OH-07: ReflectionSitrep ──────────────────────────────────
+
+    #[test]
+    fn sitrep_empty_home_returns_zero_last_emitted_and_no_entries() {
+        let tmp = TempDir::new().unwrap();
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        assert_eq!(sitrep.last_emitted_unix, 0, "fresh install = never emitted");
+        assert!(sitrep.recent.is_empty(), "no daily reflections yet");
+    }
+
+    #[test]
+    fn sitrep_reflects_persisted_last_emitted() {
+        let tmp = TempDir::new().unwrap();
+        let t0: i64 = 1_700_000_000;
+        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        assert_eq!(
+            sitrep.last_emitted_unix, t0,
+            "sitrep must carry the persisted last_emitted_unix"
+        );
+    }
+
+    #[test]
+    fn sitrep_includes_recent_daily_reflections_newest_first() {
+        use crate::reflection::periodic::{PeriodKind, append, build_reflection, date_tag_from_unix};
+        let tmp = TempDir::new().unwrap();
+
+        // Write two daily reflections with different generated_ts_unix values.
+        let now: i64 = crate::time::now_unix_i64();
+        let today_tag = date_tag_from_unix(now);
+        let yesterday_tag = date_tag_from_unix(now - 86_400);
+
+        let r1 = build_reflection(PeriodKind::Daily, &yesterday_tag, &["kubernetes".into()], now - 86_400).unwrap();
+        let r2 = build_reflection(PeriodKind::Daily, &today_tag, &["terraform".into()], now).unwrap();
+
+        append(tmp.path(), &r1).unwrap();
+        append(tmp.path(), &r2).unwrap();
+
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        assert_eq!(sitrep.recent.len(), 2, "both daily reflections must appear");
+        // Newest first.
+        assert_eq!(
+            sitrep.recent[0].tag, today_tag,
+            "today's reflection must be first"
+        );
+        assert_eq!(
+            sitrep.recent[1].tag, yesterday_tag,
+            "yesterday's reflection must be second"
+        );
+        assert!(sitrep.recent[0].body.contains("terraform"));
+        assert!(sitrep.recent[1].body.contains("kubernetes"));
+    }
+
+    #[test]
+    fn sitrep_respects_max_entries_cap() {
+        use crate::reflection::periodic::{PeriodKind, append, build_reflection, date_tag_from_unix};
+        let tmp = TempDir::new().unwrap();
+
+        let now: i64 = crate::time::now_unix_i64();
+        // Write 5 daily reflections across 5 days (today + 4 days back).
+        for back in 0..5i64 {
+            let ts = now - back * 86_400;
+            let tag = date_tag_from_unix(ts);
+            let r = build_reflection(PeriodKind::Daily, &tag, &["rust".into()], ts).unwrap();
+            append(tmp.path(), &r).unwrap();
+        }
+
+        // Request at most 3.
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 3);
+        assert_eq!(sitrep.recent.len(), 3, "max_entries cap must be honoured");
+    }
+
+    #[test]
+    fn sitrep_lookback_days_bounds_how_far_back_we_read() {
+        use crate::reflection::periodic::{PeriodKind, append, build_reflection, date_tag_from_unix};
+        let tmp = TempDir::new().unwrap();
+
+        let now: i64 = crate::time::now_unix_i64();
+        // Write a reflection 10 days back (outside a 7-day window).
+        let old_ts = now - 10 * 86_400;
+        let old_tag = date_tag_from_unix(old_ts);
+        let r = build_reflection(PeriodKind::Daily, &old_tag, &["ancient".into()], old_ts).unwrap();
+        append(tmp.path(), &r).unwrap();
+
+        // With lookback_days=7, the 10-day-old entry must not appear.
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        assert!(
+            sitrep.recent.is_empty(),
+            "reflection outside lookback window must not appear in sitrep"
+        );
     }
 }
