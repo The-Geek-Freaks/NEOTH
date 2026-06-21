@@ -1055,6 +1055,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     segment_path.clone(),
                     std::sync::Arc::clone(&gs),
                     self_id,
+                    cluster_wal.clone(),
                 );
                 info!(
                     node = %t.node_id(),

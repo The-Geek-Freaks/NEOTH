@@ -36,7 +36,10 @@ use iroh::{
 
 use crate::cluster::discovery::ClusterKey;
 use crate::cluster::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
-use crate::wal::events::{EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED};
+use crate::wal::events::{
+    EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED,
+    EVENT_TYPE_CLUSTER_GOSSIP_SENT,
+};
 use crate::wal::writer::WalWriterHandle;
 
 /// Shared set of known peer endpoint-ids (dial keys). Learned from inbound
@@ -77,6 +80,32 @@ fn emit_gossip_audit(
     let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
     if let Err(e) = w.try_append_sync(header, payload) {
         tracing::debug!(error = %e, "iroh gossip audit append failed");
+    }
+}
+
+/// Send-side gossip audit (`0xED CLUSTER_GOSSIP_SENT`) for the iroh broadcast
+/// tick — the symmetric counterpart to the receive-side `emit_gossip_audit`
+/// and parity with the peeroxide path's `wal_sync::emit_gossip_sent_wal`.
+/// Best-effort + synchronous (runs inside the broadcast task).
+fn emit_gossip_sent(
+    writer: &Option<Arc<WalWriterHandle>>,
+    frame_count: usize,
+    delivered: usize,
+    peer_count: usize,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "frame_count": frame_count,
+        "delivered": delivered,
+        "peer_count": peer_count,
+        "transport": "iroh",
+        "ts_unix": crate::time::now_unix_i64(),
+    })
+    .to_string()
+    .into_bytes();
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_CLUSTER_GOSSIP_SENT, &payload).build();
+    if let Err(e) = w.try_append_sync(header, payload) {
+        tracing::debug!(error = %e, "iroh gossip-sent audit append failed");
     }
 }
 
@@ -413,6 +442,7 @@ pub fn spawn_gossip_broadcast(
     segment_path: std::path::PathBuf,
     state: Arc<Mutex<crate::cluster::wal_sync::GossipState>>,
     self_id: crate::cluster::PeerPubkey,
+    writer: Option<Arc<WalWriterHandle>>,
 ) -> tokio::task::JoinHandle<()> {
     use crate::cluster::gossip::GossipPolicy;
     use crate::cluster::wal_sync::collect_gossipable_frames;
@@ -452,6 +482,8 @@ pub fn spawn_gossip_broadcast(
             let body = &bytes[header_len..];
             let (frames, new_offset) = collect_gossipable_frames(body, last_offset, &policy, 32);
             last_offset = new_offset; // always advance (best-effort)
+            let frame_count = frames.len();
+            let mut delivered = 0usize;
             for (event_type, raw) in frames {
                 let ts = crate::time::now_unix_i64();
                 // F56 — build_outbound ticks + reads the SHARED vector clock.
@@ -463,9 +495,15 @@ pub fn spawn_gossip_broadcast(
                 };
                 if let Some(gframe) = gframe_opt {
                     if let Ok(wire) = serde_json::to_vec(&gframe) {
-                        let _ = transport.broadcast(&wire).await;
+                        delivered += transport.broadcast(&wire).await;
                     }
                 }
+            }
+            // GR-RESID-IROH follow-up — send-side audit (0xED), parity with the
+            // peeroxide gossip-tick. Only when frames actually went out so an
+            // idle tick leaves no noise.
+            if frame_count > 0 {
+                emit_gossip_sent(&writer, frame_count, delivered, transport.peer_count());
             }
         }
     })
@@ -554,6 +592,31 @@ mod tests {
         assert_eq!(
             dropped, 1,
             "a malformed inbound gossip frame writes one 0xEF DROPPED audit"
+        );
+    }
+
+    // GR-RESID-IROH follow-up — the send-side broadcast tick writes a 0xED
+    // CLUSTER_GOSSIP_SENT audit, closing the F19 parity (receive + send).
+    #[tokio::test]
+    async fn emit_gossip_sent_writes_0xed_audit_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let writer = Arc::new(writer);
+        emit_gossip_sent(&Some(Arc::clone(&writer)), 3, 2, 1);
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut sent = 0usize;
+        let _ = crate::wal::scan::for_each_frame(&bytes, |_, d| {
+            if d.header.event_type == EVENT_TYPE_CLUSTER_GOSSIP_SENT {
+                sent += 1;
+            }
+            Ok(())
+        });
+        assert_eq!(
+            sent, 1,
+            "a non-empty broadcast tick writes one 0xED SENT audit"
         );
     }
 }
