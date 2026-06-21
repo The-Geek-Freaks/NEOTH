@@ -34,6 +34,7 @@
 
 pub mod co_change;
 pub mod graph;
+pub mod outline;
 pub mod ownership;
 pub mod persist;
 pub mod recall;
@@ -45,6 +46,8 @@ pub mod walker;
 // Re-exports kept under `allow(unused_imports)` because the CLI
 // subcommand currently uses only a subset — future Phase 2/3 picks
 // will consume `RepoFile` + `ScanReport` directly.
+#[allow(unused_imports)]
+pub use outline::{OutlineEntry, outline_file, outline_source};
 #[allow(unused_imports)]
 pub use persist::{
     CODE_MAP_SCHEMA_VERSION, PersistStats, SymbolHit, load_map, persist_map, search_symbol,

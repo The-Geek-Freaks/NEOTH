@@ -184,6 +184,33 @@ pub fn codegraph_tools() -> Vec<McpTool> {
             }),
             annotations: read_only_annotations(),
         },
+        // GOLD-ADAPT-CCS-04: native AST outline — per-file structural overview
+        // (symbols + line ranges) without any Node.js or tree-sitter dep.
+        McpTool {
+            name: "codegraph_outline".into(),
+            description: Some(
+                "Return a structural outline of a source file: every top-level \
+                 declaration (function, struct, trait, class, …) with its name, \
+                 kind, start line, and estimated end line. \
+                 Replaces reading the whole file to understand its shape — \
+                 typical output is ~95% smaller than the raw source. \
+                 Language is inferred from the file extension. \
+                 Returns `[]` if the file cannot be read or the language has \
+                 no symbol patterns."
+                    .into(),
+            ),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute or relative path to the source file to outline."
+                    }
+                },
+                "required": ["path"]
+            }),
+            annotations: read_only_annotations(),
+        },
     ]
 }
 
@@ -196,6 +223,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "codegraph_path_keywords",
     "codegraph_callers",
     "codegraph_callees",
+    "codegraph_outline",
 ];
 
 /// Dispatch one `tools/call` request. `db_path` points at the
@@ -217,6 +245,7 @@ pub fn dispatch_codegraph_tool(
         "codegraph_relevant_files" => tool_relevant_files(db_path, args),
         "codegraph_callers" => tool_callers(db_path, args),
         "codegraph_callees" => tool_callees(db_path, args),
+        "codegraph_outline" => tool_outline(args),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
             TOOL_NAMES.join(", "),
@@ -405,6 +434,26 @@ pub(crate) fn callees_inner(
     serde_json::to_string(&payload).unwrap_or_else(|_| "[]".into())
 }
 
+// ── GOLD-ADAPT-CCS-04: codegraph_outline ─────────────────────────────────
+
+#[derive(Deserialize)]
+struct OutlineArgs {
+    path: String,
+}
+
+fn tool_outline(args: &serde_json::Value) -> ToolCallResult {
+    let parsed: OutlineArgs = match serde_json::from_value(args.clone()) {
+        Ok(p) => p,
+        Err(e) => return error_result(format!("bad args: {e}")),
+    };
+    let path = std::path::Path::new(&parsed.path);
+    let entries = crate::code_map::outline::outline_file(path);
+    match serde_json::to_string(&entries) {
+        Ok(payload) => text_result(payload),
+        Err(e) => error_result(format!("outline serialisation failed: {e}")),
+    }
+}
+
 fn text_result(text: String) -> ToolCallResult {
     ToolCallResult {
         content: vec![McpContent::Text { text }],
@@ -443,15 +492,17 @@ mod tests {
     }
 
     #[test]
-    fn codegraph_tools_lists_five_canonical_tools() {
+    fn codegraph_tools_lists_six_canonical_tools() {
+        // GOLD-ADAPT-CCS-04: codegraph_outline is the 6th tool.
         let tools = codegraph_tools();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 6);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"codegraph_relevant_files"));
         assert!(names.contains(&"codegraph_extract_identifiers"));
         assert!(names.contains(&"codegraph_path_keywords"));
         assert!(names.contains(&"codegraph_callers"));
         assert!(names.contains(&"codegraph_callees"));
+        assert!(names.contains(&"codegraph_outline"));
     }
 
     #[test]
@@ -793,5 +844,93 @@ fn root() { alpha(); beta(); }
         let names: Vec<&str> = rows.iter().map(|x| x["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"middle"), "wiring broken — got: {names:?}");
         assert!(names.contains(&"leaf"), "wiring broken — got: {names:?}");
+    }
+
+    // ── GOLD-ADAPT-CCS-04: codegraph_outline dispatch tests ───────────────
+
+    #[test]
+    fn dispatch_codegraph_outline_rejects_missing_path() {
+        let dir = tempdir().unwrap();
+        let r = dispatch_codegraph_tool(
+            &dir.path().join("code_map.db"),
+            "codegraph_outline",
+            &serde_json::json!({}),
+        );
+        assert!(r.is_error);
+        assert!(text_content(&r).contains("bad args"));
+    }
+
+    #[test]
+    fn dispatch_codegraph_outline_nonexistent_file_returns_empty_array() {
+        let dir = tempdir().unwrap();
+        let r = dispatch_codegraph_tool(
+            &dir.path().join("code_map.db"),
+            "codegraph_outline",
+            &serde_json::json!({"path": "/this/does/not/exist.rs"}),
+        );
+        assert!(!r.is_error, "missing file must not produce error result");
+        assert_eq!(text_content(&r), "[]");
+    }
+
+    #[test]
+    fn dispatch_codegraph_outline_fixture_lists_fns_with_line_ranges() {
+        // Write a small Rust fixture, run the outline tool, verify the
+        // structural result (names + line numbers).
+        let dir = tempdir().unwrap();
+        let fixture = dir.path().join("fixture.rs");
+        std::fs::write(
+            &fixture,
+            "pub struct Config {}\npub fn init() {}\npub fn run() {\n    // body\n}\n",
+        )
+        .unwrap();
+
+        let r = dispatch_codegraph_tool(
+            &dir.path().join("code_map.db"),
+            "codegraph_outline",
+            &serde_json::json!({"path": fixture.to_str().unwrap()}),
+        );
+        assert!(!r.is_error, "got: {}", text_content(&r));
+
+        let entries: Vec<serde_json::Value> =
+            serde_json::from_str(&text_content(&r)).unwrap();
+        assert_eq!(entries.len(), 3, "expected 3 outline entries: {entries:?}");
+
+        // Config at line 1
+        let cfg = entries.iter().find(|e| e["name"] == "Config").unwrap();
+        assert_eq!(cfg["kind"], "struct");
+        assert_eq!(cfg["line_start"], 1);
+
+        // init at line 2
+        let init = entries.iter().find(|e| e["name"] == "init").unwrap();
+        assert_eq!(init["kind"], "function");
+        assert_eq!(init["line_start"], 2);
+
+        // run at line 3 — last symbol, line_end == total lines (5)
+        let run = entries.iter().find(|e| e["name"] == "run").unwrap();
+        assert_eq!(run["kind"], "function");
+        assert_eq!(run["line_start"], 3);
+        assert_eq!(run["line_end"], 5);
+    }
+
+    #[test]
+    fn dispatch_codegraph_outline_result_has_all_required_json_keys() {
+        let dir = tempdir().unwrap();
+        let fixture = dir.path().join("keys.rs");
+        std::fs::write(&fixture, "fn one() {}\nfn two() {}\n").unwrap();
+
+        let r = dispatch_codegraph_tool(
+            &dir.path().join("code_map.db"),
+            "codegraph_outline",
+            &serde_json::json!({"path": fixture.to_str().unwrap()}),
+        );
+        assert!(!r.is_error);
+        let entries: Vec<serde_json::Value> =
+            serde_json::from_str(&text_content(&r)).unwrap();
+        for e in &entries {
+            assert!(e.get("name").is_some(),       "name missing in {e}");
+            assert!(e.get("kind").is_some(),       "kind missing in {e}");
+            assert!(e.get("line_start").is_some(), "line_start missing in {e}");
+            assert!(e.get("line_end").is_some(),   "line_end missing in {e}");
+        }
     }
 }
