@@ -14,6 +14,7 @@
 //!   - Also available on Homebrew, Scoop, Chocolatey, AUR, npm, PyPI, go install
 //!     (operator may choose any; wizard uses the canonical per-platform path).
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 /// Official one-line installer published by DeusData for macOS / Linux.
@@ -142,9 +143,49 @@ impl InstallPath {
     }
 }
 
+/// GOLD-ADAPT-CBM-02 — run the install argv, streaming the child's stdout/stderr
+/// to the operator's terminal. Errors on an empty argv (the `Manual` path) or a
+/// non-zero exit. Mirrors `installers::ollama::run_command`.
+pub async fn run_command(argv: &[String]) -> anyhow::Result<()> {
+    let (prog, rest) = argv.split_first().context("empty command")?;
+    let status = tokio::process::Command::new(prog)
+        .args(rest)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .await
+        .with_context(|| format!("spawn `{}`", argv.join(" ")))?;
+    if !status.success() {
+        anyhow::bail!("`{}` failed (exit {:?})", argv.join(" "), status.code());
+    }
+    Ok(())
+}
+
+/// GOLD-ADAPT-CBM-02 — install codebase-memory-mcp for this host via the
+/// platform [`InstallPath`]. The `Manual` platform has no automatic command →
+/// returns an error pointing at the releases page. The CALLER (the wizard step)
+/// shows [`InstallPath::consent_text`] and gets explicit operator consent BEFORE
+/// invoking this (a `curl | bash` / `winget install` runs a third-party binary).
+pub async fn install_for_host() -> anyhow::Result<()> {
+    let cmd = InstallPath::for_host().install_command();
+    if cmd.is_empty() {
+        anyhow::bail!(
+            "no automatic codebase-memory-mcp installer for this platform — \
+             download from {CBM_DOWNLOAD_URL}"
+        );
+    }
+    run_command(&cmd).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn run_command_bails_on_empty_argv() {
+        assert!(run_command(&[]).await.is_err());
+    }
 
     #[test]
     fn as_str_variants_are_stable() {

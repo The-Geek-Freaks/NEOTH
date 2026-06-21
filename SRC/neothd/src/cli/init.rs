@@ -97,6 +97,9 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step5d_profile_approval_gate(interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
+    // GOLD-ADAPT-CBM-02 — optional code-intelligence rail (terminal offer, no
+    // resume marker needed; re-derived each run like the ollama provision step).
+    step5e_cbm_offer(interactive).await?;
     step6_channel(&args, interactive, &mut state).await?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step6b_keet_pairing(&args, interactive, &mut state).await?;

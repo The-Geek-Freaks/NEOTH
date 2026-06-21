@@ -538,6 +538,74 @@ pub(crate) async fn step5b2_ollama_provision(
     Ok(())
 }
 
+/// Step 5e — GOLD-ADAPT-CBM-02: offer the OPTIONAL codebase-memory-mcp
+/// code-intelligence rail (indexes repos into a knowledge-graph MCP server).
+/// Default NO — a third-party-binary install is opt-in. On accept: show the
+/// full consent text, run the platform installer, then print the
+/// mcp_servers.yaml registration hint (NEOTH never guesses the serve
+/// invocation — the operator wires it from CBM's README). Non-interactive
+/// (or with the `wizard` feature off): print the install command + skip; never
+/// auto-install a third-party binary without an interactive confirm.
+pub(crate) async fn step5e_cbm_offer(interactive: bool) -> Result<()> {
+    use crate::installers::cbm;
+    if !interactive {
+        println!(
+            "[neoth init] optional code-intelligence rail (codebase-memory-mcp) — install later with:  {}",
+            cbm::InstallPath::for_host().display_command()
+        );
+        return Ok(());
+    }
+    #[cfg(feature = "wizard")]
+    {
+        println!(
+            "\n[5e/9] Code-intelligence rail (optional) — codebase-memory-mcp indexes your repos \
+             into a knowledge-graph MCP server."
+        );
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(format!(
+                "Install the optional codebase-memory-mcp now? This runs:  {}",
+                cbm::InstallPath::for_host().display_command()
+            ))
+            .default(false)
+            .interact()
+            .context("cbm install offer")?;
+        if !want {
+            println!(
+                "  → skipped (install later: {} )",
+                cbm::InstallPath::for_host().display_command()
+            );
+            return Ok(());
+        }
+        // Informed consent: the full third-party-binary disclosure before running.
+        println!("\n{}", cbm::InstallPath::for_host().consent_text());
+        let confirm = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Proceed with the install?")
+            .default(false)
+            .interact()
+            .context("cbm consent confirm")?;
+        if !confirm {
+            println!("  → skipped.");
+            return Ok(());
+        }
+        match cbm::install_for_host().await {
+            Ok(()) => {
+                println!("  ✓ codebase-memory-mcp installed");
+                println!(
+                    "  → enable it: add a stdio MCP-server entry for codebase-memory-mcp to \
+                     ~/.neoth/mcp_servers.yaml (serve command + args are in its README: {})",
+                    cbm::CBM_DOWNLOAD_URL
+                );
+            }
+            Err(e) => println!(
+                "  ! install failed: {e}\n    Install manually from {} then register it in \
+                 mcp_servers.yaml.",
+                cbm::CBM_DOWNLOAD_URL
+            ),
+        }
+    }
+    Ok(())
+}
+
 /// Step 5c — NOOB-UX-6 (Workstream B): Qwen weights pre-download.
 ///
 /// Only meaningful when the operator's inference topology pulls in
