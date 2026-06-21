@@ -20,6 +20,11 @@ pub mod backup_retention;
 pub mod clock_floor;
 pub mod credentials_import_sidecar;
 pub mod detect_complete_sidecar;
+/// NN-MEM-06 — daily contradiction auto-resolution cron. Processes the
+/// `idx_contradictions` backlog: temporal-supersede (newer fact wins) +
+/// semantic-equiv (Jaccard≥0.90 merge) + human-review queue for genuine
+/// conflicts. Off by default (`contradiction_resolve.enabled = false`).
+pub mod contradiction_resolve_cron;
 pub mod doctor_cron;
 /// HO-09b — profile drift-alert cron. Runs the same drift evaluation
 /// as `neoth profile drift report` on a 6h schedule + emits a
