@@ -503,7 +503,7 @@ async fn handle_meta(
                         .unwrap_or_else(|| {
                             format!("{:016x}", xxhash_rust::xxh3::xxh3_64(raw_body.as_bytes()))
                         });
-                    let spool_path = spool_inbound_body(&spool_key, raw_body);
+                    let spool_path = spool_inbound_body(&spool_key, raw_body, "meta");
                     let cfg2 = Arc::clone(&cfg);
                     let dispatch = async move {
                         match DISPATCH_GATE.acquire().await {
@@ -611,6 +611,16 @@ async fn handle_line(
         }
         LineRouteOutcome::Verified { ref raw_body } => match decode_line_payload(raw_body) {
             DecodedLineWebhook::Messages(msgs) => {
+                // GR-012b — spool the verified LINE body before the detached
+                // dispatch (same crash-loss window as Meta); deleted on
+                // completion, re-dispatched on next boot via the "line" decoder.
+                let spool_key = msgs
+                    .first()
+                    .and_then(|m| m.message_id.clone())
+                    .unwrap_or_else(|| {
+                        format!("{:016x}", xxhash_rust::xxh3::xxh3_64(raw_body.as_bytes()))
+                    });
+                let spool_path = spool_inbound_body(&spool_key, raw_body, "line");
                 let cfg2 = Arc::clone(&cfg);
                 let dispatch = async move {
                     match DISPATCH_GATE.acquire().await {
@@ -618,6 +628,9 @@ async fn handle_line(
                         Err(_) => {
                             warn!("webhook dispatch gate closed — dropping LINE fan-out")
                         }
+                    }
+                    if let Some(p) = spool_path {
+                        let _ = std::fs::remove_file(&p);
                     }
                 };
                 match cfg.dispatch_join.as_ref() {
@@ -680,13 +693,15 @@ fn inbound_spool_dir() -> std::path::PathBuf {
 /// content hash. Returns the spool path so the dispatch can delete it on
 /// success. Best-effort: a spool error logs + returns `None` (the dispatch still
 /// runs; durability is simply off for that one message).
-fn spool_inbound_body(key: &str, raw_body: &str) -> Option<std::path::PathBuf> {
+fn spool_inbound_body(key: &str, raw_body: &str, decoder: &str) -> Option<std::path::PathBuf> {
     let dir = inbound_spool_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         warn!(error = %e, "inbound spool: mkdir failed (durability off for this message)");
         return None;
     }
-    let safe: String = key
+    // Prefix the on-disk name with the decoder so two providers can't collide on
+    // the same id-derived key.
+    let safe: String = format!("{decoder}-{key}")
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -705,6 +720,7 @@ fn spool_inbound_body(key: &str, raw_body: &str) -> Option<std::path::PathBuf> {
     let path = dir.join(format!("{safe}.json"));
     let body = serde_json::json!({
         "raw_body": raw_body,
+        "decoder": decoder,
         "ts_unix": crate::time::now_unix_i64(),
     })
     .to_string();
@@ -741,14 +757,32 @@ pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
         let Ok(body) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let raw = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
+        let parsed = serde_json::from_str::<serde_json::Value>(&body).ok();
+        let raw = parsed
+            .as_ref()
             .and_then(|v| v.get("raw_body").and_then(|x| x.as_str()).map(str::to_string));
+        // Decoder tag picks the re-decode path; default "meta" (back-compat with
+        // any pre-tag spool file).
+        let decoder = parsed
+            .as_ref()
+            .and_then(|v| v.get("decoder").and_then(|x| x.as_str()))
+            .unwrap_or("meta")
+            .to_string();
         match raw {
             Some(raw) => {
-                if let DecodedWebhook::Messages(msgs) = decode_payload(&raw) {
-                    dispatch_messages(cfg, msgs).await;
-                    drained += 1;
+                match decoder.as_str() {
+                    "line" => {
+                        if let DecodedLineWebhook::Messages(msgs) = decode_line_payload(&raw) {
+                            dispatch_line_messages(cfg, msgs).await;
+                            drained += 1;
+                        }
+                    }
+                    _ => {
+                        if let DecodedWebhook::Messages(msgs) = decode_payload(&raw) {
+                            dispatch_messages(cfg, msgs).await;
+                            drained += 1;
+                        }
+                    }
                 }
                 let _ = std::fs::remove_file(&path);
             }
@@ -1826,7 +1860,7 @@ mod tests {
         }
 
         let raw = r#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.DRAIN","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
-        let path = spool_inbound_body("wamid.DRAIN", raw).expect("spool write");
+        let path = spool_inbound_body("wamid.DRAIN", raw, "meta").expect("spool write");
         assert!(path.exists(), "spool file must exist before drain");
 
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
