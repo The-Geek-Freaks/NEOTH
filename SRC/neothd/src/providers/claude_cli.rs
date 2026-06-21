@@ -346,9 +346,11 @@ fn build_claude_spawn_args(base: &[&str], resume_session_id: &Option<String>) ->
     if let Some(dir) = super::claude_session::claude_sessions_dir() {
         super::claude_session::strip_dead_resume_args(&args, &dir)
     } else {
-        // No home dir resolvable — keep args verbatim; a stale resume will
-        // surface as a normal claude-cli error rather than being hidden.
-        args
+        // No home dir resolvable — liveness can't be checked, but the
+        // operator-controlled resume id must still pass a UUID-format gate
+        // before reaching the spawn (F71: the field contract promises a
+        // strip pass before ANY spawn; the prior verbatim return skipped it).
+        super::claude_session::strip_format_invalid_resume_args(&args)
     }
 }
 

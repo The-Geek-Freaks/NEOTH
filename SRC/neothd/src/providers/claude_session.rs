@@ -116,6 +116,45 @@ pub fn strip_dead_resume_args(args: &[String], sessions_dir: &Path) -> Vec<Strin
     out
 }
 
+/// Format-only sibling of [`strip_dead_resume_args`] for when the sessions
+/// directory can't be resolved (no HOME/USERPROFILE). Drops
+/// `--resume`/`--session-id` pairs whose value isn't a UUID-shaped token, so an
+/// operator-controlled id never reaches the spawn unvalidated (F71). Well-formed
+/// ids are kept verbatim — without a sessions dir liveness can't be checked, so
+/// the UUID format is the only available gate. Mirrors the contract in the
+/// `resume_session_id` field doc ("passed through strip_dead_resume_args before
+/// any spawn").
+pub fn strip_format_invalid_resume_args(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == RESUME_FLAG_LONG || a == SESSION_ID_FLAG_LONG {
+            match args.get(i + 1) {
+                Some(uuid) if validate_session_uuid(uuid) => {
+                    out.push(a.clone());
+                    out.push(uuid.clone());
+                    i += 2;
+                    continue;
+                }
+                // bad UUID format → drop both tokens.
+                Some(_) => {
+                    i += 2;
+                    continue;
+                }
+                // dangling flag → drop the lone token.
+                None => {
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +163,29 @@ mod tests {
 
     fn write_session(dir: &Path, uuid: &str) {
         fs::write(dir.join(format!("{uuid}.jsonl")), b"{}\n").unwrap();
+    }
+
+    #[test]
+    fn format_strip_keeps_valid_drops_invalid_resume() {
+        // F71 — no-sessions-dir path: well-formed UUID kept, junk dropped.
+        let good = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+        let kept = strip_format_invalid_resume_args(&[
+            "--resume".into(),
+            good.into(),
+            "post".into(),
+        ]);
+        assert_eq!(kept, vec!["--resume".to_string(), good.to_string(), "post".into()]);
+
+        let dropped = strip_format_invalid_resume_args(&[
+            "--resume".into(),
+            "; rm -rf ~".into(),
+            "post".into(),
+        ]);
+        assert_eq!(dropped, vec!["post".to_string()]);
+
+        // dangling flag with no value → dropped.
+        let dangling = strip_format_invalid_resume_args(&["--session-id".into()]);
+        assert!(dangling.is_empty());
     }
 
     // ── UUID format validation ──────────────────────────────────
