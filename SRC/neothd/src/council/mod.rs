@@ -53,6 +53,7 @@ pub mod qa_verdict;
 pub mod quality_score;
 pub mod self_challenge;
 pub mod self_reflect;
+pub mod transparent;
 /// GOLD-ADAPT-KB-02 — independent judge for autonomous-loop stop conditions.
 /// Gates `Action::AgentStop` at autonomy ≥ Elevated through a deterministic,
 /// LLM-free structural check: every declared `done_criterion` must be covered

@@ -4533,6 +4533,18 @@ pub(crate) async fn dispatch_council_with_recovery(
         Some(&rw_read),
         prompt_hash_outer,
     );
+    // GOLD-ADAPT-LOWKEY-07 — transparent-core: surface the council's Layer-B
+    // (verdict, dissent, per-hemisphere provider/score/latency/refusal, what
+    // was injected, the winner) to STDERR when the operator opts in. Off by
+    // default; never touches the Layer-A answer. Covers BOTH the CLI and the
+    // channel council paths (both route through this shared dispatch).
+    crate::council::transparent::maybe_emit_layer_b(
+        config,
+        &outcome,
+        role_agnostic.as_ref().map(|w| w.role),
+        role_agnostic.as_ref().map(|w| w.score),
+        req,
+    );
     if let Some(winner) = role_agnostic {
         let _ = emit_council_winner_selected(
             writer,

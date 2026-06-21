@@ -559,6 +559,15 @@ pub struct CouncilConfig {
     #[serde(default)]
     pub self_reflect_enabled: bool,
 
+    /// GOLD-ADAPT-LOWKEY-07 — transparent-core debug mode. When `true`,
+    /// every council debate prints a Layer-B reasoning surface to STDERR
+    /// (verdict, dissent, per-hemisphere provider/score/latency/refusal,
+    /// what was injected, the winner) in addition to the Layer-A answer.
+    /// Default `false` — opt-in; `NEOTH_COUNCIL_DEBUG=1` is a per-run
+    /// override that does not need a config edit.
+    #[serde(default)]
+    pub transparent_core: bool,
+
     /// Weight multiplier on cross-outer dissent score for the
     /// `QualityScore.diversity_bonus` component. `None` → use
     /// [`DEFAULT_DIVERSITY_BONUS_WEIGHT`]. Operator-tunable so a
