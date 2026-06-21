@@ -6,6 +6,13 @@
 //! command surfaces.
 
 pub mod accelerator;
+/// GOLD-ADAPT-HERMES-03 — Mid-run clarification gate. When a worker hits an
+/// ambiguity it calls [`clarify::ClarificationGate::park`], which parks the
+/// run in `Waiting` state and surfaces a [`clarify::ClarificationRequest`].
+/// An operator (or test) calls [`clarify::ClarificationGate::answer`] to
+/// resume. Unambiguous inputs call [`clarify::ClarificationGate::pass_through`]
+/// and see no state change. Self-contained, no hot-lane deps.
+pub mod clarify;
 /// AUDIT-RPC-01 — loopback audit-RPC listener + client so one-shot CLIs can
 /// forward audit frames to the WAL-owning daemon (bearer-auth, loopback-only,
 /// event-type allowlist). Gated `freedom.yaml::audit_rpc.enabled` (default off).
