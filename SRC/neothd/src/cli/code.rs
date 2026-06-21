@@ -403,7 +403,8 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
                     .clone()
                     .unwrap_or_default();
                 let worker =
-                    ProviderWorker::new(label, Arc::from(p), model_name, patch_root.clone());
+                    ProviderWorker::new(label, Arc::from(p), model_name, patch_root.clone())
+                        .with_autonomy(cfg.autonomy);
                 workers.bind(hemi, Box::new(worker));
                 println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
             }
