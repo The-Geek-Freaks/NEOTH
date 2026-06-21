@@ -347,8 +347,18 @@ pub(crate) fn build_session_summary_item(
     outcome: &crate::coding::dispatcher::DispatchOutcome,
     session_id: i64,
 ) -> crate::proactive::ProactiveItem {
+    let failed = outcome.tasks_blocked > 0;
     crate::proactive::ProactiveItem {
-        priority: SESSION_SUMMARY_PRIORITY,
+        // F37 — a partial-failure coding summary is the genuine URGENT_PRIORITY
+        // producer: it early-surfaces (the `priority >= URGENT_PRIORITY` bypass in
+        // proactive::ProactiveQueue::drain) so a blocked session reaches the
+        // operator on the next tick instead of waiting for its scheduled time. A
+        // clean summary stays low-priority background telemetry.
+        priority: if failed {
+            crate::proactive::URGENT_PRIORITY
+        } else {
+            SESSION_SUMMARY_PRIORITY
+        },
         dedup_key: format!("coding:session-summary:{session_id}"),
         channel: String::new(),
         source: "coding_session".to_string(),
@@ -356,7 +366,7 @@ pub(crate) fn build_session_summary_item(
         scheduled_for_unix: 0,
         // GOLD-FEAT-13 — a session that ended with blocked tasks is a
         // partial failure → routing prefers the operator's failure_channel.
-        is_failure: outcome.tasks_blocked > 0,
+        is_failure: failed,
         expires_unix: 0, // a coding-session summary stays relevant
     }
 }
@@ -723,6 +733,26 @@ mod tests {
             item.body.contains("2/2"),
             "body carries the counts, got: {}",
             item.body
+        );
+    }
+
+    #[test]
+    fn failed_session_summary_is_urgent_priority_producer() {
+        // F37 — a session that ended with blocked tasks is the real
+        // URGENT_PRIORITY producer: it early-surfaces (bypasses the schedule).
+        use crate::coding::dispatcher::DispatchOutcome;
+        let outcome = DispatchOutcome {
+            tasks_attempted: 3,
+            tasks_completed: 1,
+            tasks_blocked: 2,
+            ..Default::default()
+        };
+        let item = build_session_summary_item(&outcome, 7);
+        assert!(item.is_failure, "blocked tasks → failure summary");
+        assert_eq!(
+            item.priority,
+            crate::proactive::URGENT_PRIORITY,
+            "a failure summary must early-surface at URGENT_PRIORITY"
         );
     }
 
