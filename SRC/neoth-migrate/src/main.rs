@@ -31,6 +31,12 @@
 //!     into NEOTH `freedom.yaml` provider stanzas.  API keys are NEVER
 //!     extracted — the output YAML contains a comment instructing the
 //!     operator to add keys to `credentials.yaml` separately.
+//!
+//! neoth-migrate import-crons [--timer <PATH>]... [--crontab <PATH>] [--json]
+//!     Convert systemd `.timer` units and/or a crontab file into NEOTH
+//!     `jobs.yaml` Job entries.  Recognises OnCalendar / OnUnitActiveSec /
+//!     ExecStart in timer units and standard 5-field + @shorthand crontab
+//!     syntax.  Outputs YAML ready to paste into jobs.yaml.
 //! ```
 
 use anyhow::Result;
@@ -38,6 +44,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 mod import_config;
+mod import_crons;
 mod readers;
 
 /// Phase-3 store-migration tool. See module-doc for usage examples.
@@ -69,6 +76,12 @@ enum Command {
     /// to credentials.yaml separately. At least one of --auth-profiles
     /// or --models-providers is required.
     ImportConfig(ImportConfigArgs),
+    /// Convert systemd .timer unit files and/or a crontab file into
+    /// NEOTH jobs.yaml Job entries. Parses OnCalendar / OnUnitActiveSec /
+    /// ExecStart in timer units and 5-field + @shorthand crontab syntax.
+    /// Emits YAML ready to paste into jobs.yaml. At least one of --timer
+    /// or --crontab is required.
+    ImportCrons(ImportCronsArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -111,6 +124,20 @@ struct ImportConfigArgs {
     json: bool,
 }
 
+#[derive(clap::Args, Debug)]
+struct ImportCronsArgs {
+    /// Path to a systemd `.timer` unit file. May be repeated for multiple
+    /// timer units: `--timer foo.timer --timer bar.timer`.
+    #[arg(long, value_name = "PATH", num_args = 1..)]
+    timer: Vec<std::path::PathBuf>,
+    /// Path to a crontab file (as produced by `crontab -l`).
+    #[arg(long, value_name = "PATH")]
+    crontab: Option<std::path::PathBuf>,
+    /// Emit machine-readable JSON instead of YAML (useful for piping).
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -122,6 +149,7 @@ fn main() -> Result<()> {
         Command::DryRun(args) => run_dry_run(args),
         Command::Apply(args) => run_apply(args),
         Command::ImportConfig(args) => run_import_config(args),
+        Command::ImportCrons(args) => run_import_crons(args),
     }
 }
 
@@ -181,6 +209,39 @@ fn run_import_config(args: ImportConfigArgs) -> Result<()> {
         eprintln!(
             "info: {} sensitive field(s) stripped from input (no key material in output)",
             result.sensitive_fields_dropped
+        );
+    }
+    Ok(())
+}
+
+fn run_import_crons(args: ImportCronsArgs) -> Result<()> {
+    let timer_refs: Vec<&std::path::Path> = args.timer.iter().map(|p| p.as_path()).collect();
+    let crontab_ref = args.crontab.as_deref();
+    tracing::info!(
+        timers = args.timer.len(),
+        crontab = crontab_ref
+            .map(|p| p.display().to_string())
+            .as_deref()
+            .unwrap_or("<none>"),
+        "neoth-migrate import-crons"
+    );
+    let result = import_crons::import_crons(&timer_refs, crontab_ref)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("{}", import_crons::render_yaml(&result));
+        if !result.skipped.is_empty() {
+            eprintln!(
+                "warn: {} source(s) could not be converted and were skipped:",
+                result.skipped.len()
+            );
+            for s in &result.skipped {
+                eprintln!("  {s}");
+            }
+        }
+        eprintln!(
+            "info: {} job(s) imported",
+            result.jobs.len()
         );
     }
     Ok(())
