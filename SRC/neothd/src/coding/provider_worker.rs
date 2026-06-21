@@ -62,6 +62,12 @@ pub struct ProviderWorker {
     /// autonomous coding worker. Defaults to `Full` (permissive) so a worker
     /// built without `with_autonomy` is never silently gated.
     autonomy: crate::permissions::AutonomyLevel,
+    /// GR-069b — optional WAL writer so the `PaidProviderCall` gate decision is
+    /// AUDITED (0xA0 PERMISSION_GRANTED / 0xA1 PERMISSION_DENIED), not just
+    /// enforced. `None` (the default + the daemon-live CLI case) enforces the
+    /// gate without a frame — a second writer on the daemon's WAL segment would
+    /// corrupt it, so the CLI only binds one when no daemon owns the WAL.
+    wal_writer: Option<std::sync::Arc<crate::wal::writer::WalWriterHandle>>,
 }
 
 impl ProviderWorker {
@@ -85,6 +91,7 @@ impl ProviderWorker {
             model_name: model_name.into(),
             patch_root: patch_root.into(),
             autonomy: crate::permissions::AutonomyLevel::Full,
+            wal_writer: None,
         }
     }
 
@@ -92,6 +99,17 @@ impl ProviderWorker {
     /// round-trips are gated by `PaidProviderCall` (Strict ⇒ blocked).
     pub fn with_autonomy(mut self, autonomy: crate::permissions::AutonomyLevel) -> Self {
         self.autonomy = autonomy;
+        self
+    }
+
+    /// GR-069b — bind a WAL writer so each gate decision emits its audit frame
+    /// (0xA0/0xA1). Caller is responsible for WAL ownership (never pass a writer
+    /// while the daemon owns the same segment).
+    pub fn with_wal_writer(
+        mut self,
+        writer: std::sync::Arc<crate::wal::writer::WalWriterHandle>,
+    ) -> Self {
+        self.wal_writer = Some(writer);
         self
     }
 
@@ -104,9 +122,11 @@ impl ProviderWorker {
     async fn paid_call_allowed(&self) -> bool {
         use crate::permissions::{Action, Gate};
         let action = Action::PaidProviderCall { eur_estimate: 0.0 };
+        // GR-069b — emit the gate-decision audit frame when a WAL writer is bound
+        // (best-effort; the gate's append failure never blocks the decision).
         Gate::for_level(self.autonomy)
             .with_confirm(Gate::auto_confirm())
-            .check(&action, None)
+            .check(&action, self.wal_writer.as_deref())
             .await
             .is_ok()
     }
@@ -701,6 +721,42 @@ mod tests {
             .with_autonomy(crate::permissions::AutonomyLevel::Standard);
         worker2.execute(&sample_task()).await.unwrap();
         assert_eq!(provider2.count(), 1, "Standard allows the worker provider call");
+    }
+
+    #[tokio::test]
+    async fn gate_decision_is_audited_when_wal_writer_bound() {
+        // GR-069b — a bound WAL writer makes the PaidProviderCall gate emit its
+        // 0xA1 PERMISSION_DENIED frame under Strict (the gate still Denies).
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("gate.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let writer = std::sync::Arc::new(writer);
+        let provider = Arc::new(CountingProvider::new(&["unused"]));
+        let worker = worker_with("", provider.clone())
+            .with_autonomy(crate::permissions::AutonomyLevel::Strict)
+            .with_wal_writer(std::sync::Arc::clone(&writer));
+        let _ = worker.execute(&sample_task()).await; // Strict → Err, but audited
+        assert_eq!(provider.count(), 0, "Strict makes no provider call");
+        drop(worker);
+        drop(writer);
+        let _ = join.await;
+
+        // Scan the WAL for the gate's PERMISSION_DENIED frame.
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut found = false;
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PERMISSION_DENIED {
+                found = true;
+            }
+            cursor += dec.header.total_len as usize;
+        }
+        assert!(found, "GR-069b: gate decision must emit a PERMISSION_DENIED frame");
     }
 
     #[test]

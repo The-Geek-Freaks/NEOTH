@@ -246,7 +246,11 @@ async fn run_dispatch_phase(
         dispatch_session_with_apply,
     };
 
-    let workers = build_worker_set(cfg).await;
+    // GR-069b — bind a one-shot WAL writer (only when no daemon owns the WAL) so
+    // gate decisions + progress/patch frames are audited; drained after dispatch.
+    let audit = coding_audit_writer();
+    let aw = audit.as_ref().map(|(w, _)| std::sync::Arc::clone(w));
+    let workers = build_worker_set(cfg, aw.clone()).await;
     if !workers.has_any() {
         eprintln!("dispatch: no hemisphere has a worker bound — skipping");
         return Ok(());
@@ -257,6 +261,9 @@ async fn run_dispatch_phase(
     // flag, legacy semantics (patch stored, never applied).
     let outcome = if let Some(repo) = apply_repo.as_ref() {
         let mut apply_cfg = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed);
+        if let Some(w) = aw.as_ref() {
+            apply_cfg = apply_cfg.with_wal_writer(std::sync::Arc::clone(w));
+        }
         if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
             apply_cfg = apply_cfg
                 .with_test_cmd(cmd)
@@ -288,6 +295,15 @@ async fn run_dispatch_phase(
             .await
             .context("dispatch_session run")?
     };
+
+    // GR-069b — drop every WAL-writer clone (workers + aw), then drain the writer
+    // task so the gate/progress/patch frames flush before the process exits.
+    drop(workers);
+    drop(aw);
+    if let Some((w, j)) = audit {
+        drop(w);
+        let _ = j.await;
+    }
 
     println!(
         "dispatch: attempted={} completed={} blocked={} unassigned={}{}",
@@ -370,7 +386,39 @@ fn intern_label(label: &str) -> &'static str {
 /// so the single-session dispatch path AND the `--run-pending` controller
 /// share one binding routine. Each role may legitimately fail (operator
 /// bound only one side) — the dispatcher blocks unassigned tasks cleanly.
-async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::HemisphereWorkerSet {
+/// GR-069b — best-effort one-shot WAL writer for the standalone `neoth code`
+/// path so the autonomy-gate decision (0xA0/0xA1) + the dispatcher's progress/
+/// patch frames land in the operator's WAL. Returns `None` (gate still enforces,
+/// no frame) when a daemon is live — a second writer on the daemon's WAL segment
+/// would corrupt it — or when the spawn fails. The caller drains the returned
+/// join handle after dropping every writer clone so the frames flush.
+fn coding_audit_writer() -> Option<(
+    std::sync::Arc<crate::wal::writer::WalWriterHandle>,
+    tokio::task::JoinHandle<()>,
+)> {
+    if crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return None; // daemon owns the WAL — never open a competing writer
+    }
+    let wal_dir = FreedomConfig::default_wal_dir();
+    std::fs::create_dir_all(&wal_dir).ok()?;
+    let seg = wal_dir.join("000001.wal");
+    match crate::wal::writer::spawn(seg) {
+        Ok((w, j)) => Some((std::sync::Arc::new(w), j)),
+        Err(e) => {
+            tracing::warn!(error = %e, "coding: WAL audit writer spawn failed (gate still enforced)");
+            None
+        }
+    }
+}
+
+async fn build_worker_set(
+    cfg: &FreedomConfig,
+    wal_writer: Option<std::sync::Arc<crate::wal::writer::WalWriterHandle>>,
+) -> crate::coding::dispatcher::HemisphereWorkerSet {
     use crate::coding::dispatcher::HemisphereWorkerSet;
     use crate::coding::provider_worker::ProviderWorker;
     use std::sync::Arc;
@@ -402,9 +450,14 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
                     .model
                     .clone()
                     .unwrap_or_default();
-                let worker =
+                let mut worker =
                     ProviderWorker::new(label, Arc::from(p), model_name, patch_root.clone())
                         .with_autonomy(cfg.autonomy);
+                // GR-069b — audit the PaidProviderCall gate when a WAL writer is
+                // available (standalone CLI with no daemon owning the WAL).
+                if let Some(w) = wal_writer.as_ref() {
+                    worker = worker.with_wal_writer(Arc::clone(w));
+                }
                 workers.bind(hemi, Box::new(worker));
                 println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
             }
@@ -437,7 +490,10 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
     let conn = memstore::open(&db_path).context("open views.db")?;
     store::ensure_schema(&conn).context("ensure kanban schema")?;
 
-    let workers = build_worker_set(&cfg).await;
+    // GR-069b — one-shot WAL audit writer (only when no daemon owns the WAL).
+    let audit = coding_audit_writer();
+    let aw = audit.as_ref().map(|(w, _)| std::sync::Arc::clone(w));
+    let workers = build_worker_set(&cfg, aw.clone()).await;
     if !workers.has_any() {
         eprintln!("run-pending: no hemisphere has a worker bound — nothing to drive");
         return Ok(());
@@ -450,6 +506,9 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
                 .with_test_cmd(cmd)
                 .with_test_timeout(std::time::Duration::from_secs(cfg.coding.test_timeout_secs));
         }
+        if let Some(w) = aw.as_ref() {
+            c = c.with_wal_writer(std::sync::Arc::clone(w));
+        }
         c
     });
 
@@ -461,6 +520,15 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
     )
     .await
     .context("run pending sessions")?;
+
+    // GR-069b — flush the audit frames: drop every writer clone, then drain.
+    drop(apply_cfg);
+    drop(workers);
+    drop(aw);
+    if let Some((w, j)) = audit {
+        drop(w);
+        let _ = j.await;
+    }
 
     println!(
         "run-pending: sessions={} dispatched={} attempted={} completed={} blocked={} unassigned={}{}",
