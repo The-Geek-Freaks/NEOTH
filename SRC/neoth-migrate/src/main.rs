@@ -25,12 +25,19 @@
 //!     implemented. Today `apply` validates the manifest then refuses
 //!     and points back to `dry-run`. (When it ships it will append
 //!     frames to the WAL and be replay-only undoable, hence `--confirm`.)
+//!
+//! neoth-migrate import-config [--auth-profiles <PATH>] [--models-providers <PATH>] [--json]
+//!     Convert OpenClaw `auth.profiles` + `models.providers` JSON files
+//!     into NEOTH `freedom.yaml` provider stanzas.  API keys are NEVER
+//!     extracted — the output YAML contains a comment instructing the
+//!     operator to add keys to `credentials.yaml` separately.
 //! ```
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+mod import_config;
 mod readers;
 
 /// Phase-3 store-migration tool. See module-doc for usage examples.
@@ -56,6 +63,12 @@ enum Command {
     /// refuses and points you back at `dry-run`. `--confirm` is reserved
     /// for when apply ships.
     Apply(ApplyArgs),
+    /// Convert OpenClaw auth.profiles + models.providers JSON files into
+    /// NEOTH freedom.yaml provider stanzas. Keys are NEVER extracted
+    /// from the input — the output instructs the operator to add keys
+    /// to credentials.yaml separately. At least one of --auth-profiles
+    /// or --models-providers is required.
+    ImportConfig(ImportConfigArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -83,6 +96,21 @@ struct ApplyArgs {
     confirm: bool,
 }
 
+#[derive(clap::Args, Debug)]
+struct ImportConfigArgs {
+    /// Path to your OpenClaw `auth.profiles` JSON file.
+    /// Typically `~/.openclaw/auth.profiles` or `~/.jarvis/auth.profiles`.
+    #[arg(long, value_name = "PATH")]
+    auth_profiles: Option<std::path::PathBuf>,
+    /// Path to your OpenClaw `models.providers` JSON file.
+    /// Typically `~/.openclaw/models.providers` or similar.
+    #[arg(long, value_name = "PATH")]
+    models_providers: Option<std::path::PathBuf>,
+    /// Emit machine-readable JSON instead of YAML (useful for piping).
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -93,6 +121,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::DryRun(args) => run_dry_run(args),
         Command::Apply(args) => run_apply(args),
+        Command::ImportConfig(args) => run_import_config(args),
     }
 }
 
@@ -127,6 +156,34 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
         "Memory import (apply) is not yet available in this release. Use \
          `neoth-migrate dry-run --manifest <PATH>` to preview your import sources."
     );
+}
+
+fn run_import_config(args: ImportConfigArgs) -> Result<()> {
+    let auth_path = args.auth_profiles.as_deref();
+    let models_path = args.models_providers.as_deref();
+    tracing::info!(
+        auth_profiles = auth_path.map(|p| p.display().to_string()).as_deref().unwrap_or("<none>"),
+        models_providers = models_path.map(|p| p.display().to_string()).as_deref().unwrap_or("<none>"),
+        "neoth-migrate import-config"
+    );
+    let result = import_config::import_config(auth_path, models_path)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("{}", import_config::render_yaml(&result));
+        if !result.skipped.is_empty() {
+            eprintln!(
+                "warn: {} OpenClaw kind(s) had no NEOTH mapping and were skipped: {}",
+                result.skipped.len(),
+                result.skipped.join(", ")
+            );
+        }
+        eprintln!(
+            "info: {} sensitive field(s) stripped from input (no key material in output)",
+            result.sensitive_fields_dropped
+        );
+    }
+    Ok(())
 }
 
 fn default_home() -> std::path::PathBuf {
