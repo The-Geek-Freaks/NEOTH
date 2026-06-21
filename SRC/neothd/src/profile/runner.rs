@@ -425,35 +425,21 @@ pub async fn run_pipeline(
     // would write a claim against a field the operator just forbade. The fresh
     // load + re-check happen atomically under the apply lock, so no redaction
     // committed before apply can be missed.
+    // F70/F38 — the redaction TOCTOU re-check lives INSIDE apply_delta (ADV-04):
+    // it re-looks-up each claim's active redaction under the SAME apply tx and
+    // skips just that claim (emitting PROFILE_REDACT_BLOCKED), applying the rest.
+    // The former Stage-6 `check_with_redactions` pre-check here was redundant AND
+    // harmful: it rejected the WHOLE delta on one freshly-redacted claim (F70 —
+    // a delta of 5 valid + 1 redacted lost all 6) and re-ran the full guard,
+    // double-counting the H5 daily-LLM-call budget for a step that makes NO LLM
+    // call (F38). Apply directly; apply_delta closes the TOCTOU per-claim,
+    // atomically under the same apply lock. (A redaction present BEFORE the run is
+    // still caught at Stage 5; this only governs one that lands during 5b approval.)
     let apply_outcome = {
         let mut g = conn.lock().await;
-        let fresh_redactions = load_active_redactions(g.as_mut())?;
-        match guard.check_with_redactions(guarded.clone(), &attributed, &fresh_redactions, now_unix)
-        {
-            GuardOutcome::Accepted(_) => apply_delta(g.as_mut(), writer, &guarded, now_unix as i64)
-                .await
-                .context("pipeline stage 6: profile.apply")?,
-            GuardOutcome::Rejected {
-                reason,
-                blocked_delta_hash,
-            } => {
-                drop(g); // release before the WAL write + early return
-                let hex_hash = hex::encode(blocked_delta_hash);
-                let reason_str = reason_to_str(&reason);
-                record_blocked(
-                    writer,
-                    &validated.delta.extraction_id,
-                    &reason_str,
-                    &hex_hash,
-                    &validated.delta.guard_version,
-                    now_unix as i64,
-                )
-                .await?;
-                return Ok(PipelineRun::Skipped(PipelineSkip::GuardRejected(
-                    reason_str,
-                )));
-            }
-        }
+        apply_delta(g.as_mut(), writer, &guarded, now_unix as i64)
+            .await
+            .context("pipeline stage 6: profile.apply")?
     };
 
     Ok(PipelineRun::Applied {
