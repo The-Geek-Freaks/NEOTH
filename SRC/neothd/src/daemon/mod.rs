@@ -6,6 +6,13 @@
 //! command surfaces.
 
 pub mod accelerator;
+/// GOLD-ADAPT-HERMES-09 — Lightweight token-throughput (TPS) meter for
+/// provider streaming responses. [`metering::TpsMeter`] wraps a stream:
+/// `start()` → repeated `observe(tokens)` → `finish()` → [`metering::TpsSample`].
+/// [`metering::emit_tps_sample`] writes `0x69 TOKEN_TPS_SAMPLE` to the WAL.
+/// The hot provider stream path is parallel-reserved; wiring the emit there
+/// is a follow-up. Ships standalone with unit + WAL-integration tests.
+pub mod metering;
 /// GOLD-ADAPT-HERMES-03 — Mid-run clarification gate. When a worker hits an
 /// ambiguity it calls [`clarify::ClarificationGate::park`], which parks the
 /// run in `Waiting` state and surfaces a [`clarify::ClarificationRequest`].
