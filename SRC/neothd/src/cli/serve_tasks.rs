@@ -1787,6 +1787,11 @@ pub(crate) fn spawn_channel_adapters(
                 line: None,
             };
             let task = tokio::spawn(async move {
+                // GR-012b — re-dispatch any inbound webhooks spooled before a
+                // prior crash (ACKed 200 to Meta but never provably processed)
+                // BEFORE accepting new ones. Borrow for the drain, then `serve`
+                // consumes the cfg.
+                crate::channels::webhook_listener::drain_inbound_spool(&listener_cfg).await;
                 let shutdown = std::future::pending::<()>();
                 if let Err(e) =
                     crate::channels::webhook_listener::serve(bind, listener_cfg, shutdown).await

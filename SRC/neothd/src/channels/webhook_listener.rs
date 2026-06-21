@@ -491,6 +491,19 @@ async fn handle_meta(
                     // the whole pipeline + double-sending the reply. Hand the
                     // fan-out to a detached, DISPATCH_GATE-bounded task and let
                     // `resp` (200) return immediately below.
+                    //
+                    // GR-012b: spool the verified body to disk BEFORE the detached
+                    // dispatch. A crash between the 200 ACK and the dispatch's
+                    // first WAL write would otherwise LOSE the message (Meta won't
+                    // redeliver an ACKed webhook). The dispatch deletes the spool
+                    // file on completion; a survivor is re-dispatched on next boot.
+                    let spool_key = msgs
+                        .first()
+                        .and_then(|m| m.message_id.clone())
+                        .unwrap_or_else(|| {
+                            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(raw_body.as_bytes()))
+                        });
+                    let spool_path = spool_inbound_body(&spool_key, raw_body);
                     let cfg2 = Arc::clone(&cfg);
                     let dispatch = async move {
                         match DISPATCH_GATE.acquire().await {
@@ -498,6 +511,11 @@ async fn handle_meta(
                             Err(_) => {
                                 warn!("webhook dispatch gate closed — dropping fan-out")
                             }
+                        }
+                        // GR-012b — processed (or gate-dropped): the message is no
+                        // longer at risk → delete its spool entry.
+                        if let Some(p) = spool_path {
+                            let _ = std::fs::remove_file(&p);
                         }
                     };
                     // COR-34: when the daemon wired a shared JoinSet, track the
@@ -644,6 +662,104 @@ async fn append_audit(
         } else {
             warn!(error = %e, "{fail_msg}");
         }
+    }
+}
+
+/// GR-012b — durable inbound spool dir (`~/.neoth/inbound_spool/`). A Meta
+/// webhook is ACKed 200 immediately + dispatched in a DETACHED task, so a crash
+/// between the ACK and the dispatch's first WAL write would LOSE the message
+/// (Meta won't redeliver an ACKed webhook). Each verified body is spooled here
+/// BEFORE the detached dispatch, deleted on successful completion, and any
+/// survivor is re-dispatched on the next daemon start ([`drain_inbound_spool`]).
+fn inbound_spool_dir() -> std::path::PathBuf {
+    crate::config::FreedomConfig::default_neoth_home().join("inbound_spool")
+}
+
+/// Spool the verified webhook body BEFORE its detached dispatch. `key` is the
+/// message id (wamid) when available — idempotent across Meta retries — else a
+/// content hash. Returns the spool path so the dispatch can delete it on
+/// success. Best-effort: a spool error logs + returns `None` (the dispatch still
+/// runs; durability is simply off for that one message).
+fn spool_inbound_body(key: &str, raw_body: &str) -> Option<std::path::PathBuf> {
+    let dir = inbound_spool_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        warn!(error = %e, "inbound spool: mkdir failed (durability off for this message)");
+        return None;
+    }
+    let safe: String = key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(96)
+        .collect();
+    let safe = if safe.is_empty() {
+        "msg".to_string()
+    } else {
+        safe
+    };
+    let path = dir.join(format!("{safe}.json"));
+    let body = serde_json::json!({
+        "raw_body": raw_body,
+        "ts_unix": crate::time::now_unix_i64(),
+    })
+    .to_string();
+    match crate::util::atomic_write::atomic_write(&path, body.as_bytes()) {
+        Ok(()) => Some(path),
+        Err(e) => {
+            warn!(error = %e, "inbound spool: write failed (durability off for this message)");
+            None
+        }
+    }
+}
+
+/// GR-012b — drain leftover spooled inbound webhooks on daemon startup. Each
+/// survivor is a webhook that Meta saw ACKed but whose dispatch did not provably
+/// complete before a crash. Re-decode + re-dispatch + delete (the in-memory
+/// GR-010 dedup ring is empty after a restart, so this is recovery, not a
+/// duplicate). Best-effort throughout — a bad spool file is dropped, never fatal.
+pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
+    let dir = inbound_spool_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            warn!(error = %e, "inbound spool: read_dir failed on startup drain");
+            return;
+        }
+    };
+    let mut drained = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let raw = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("raw_body").and_then(|x| x.as_str()).map(str::to_string));
+        match raw {
+            Some(raw) => {
+                if let DecodedWebhook::Messages(msgs) = decode_payload(&raw) {
+                    dispatch_messages(cfg, msgs).await;
+                    drained += 1;
+                }
+                let _ = std::fs::remove_file(&path);
+            }
+            // Corrupt / unexpected shape → drop it so it can't wedge every boot.
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    if drained > 0 {
+        info!(count = drained, "inbound spool: re-dispatched survivors on startup");
     }
 }
 
@@ -1695,6 +1811,69 @@ mod tests {
 
         let _ = shutdown_tx.send(());
         let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn gr012b_spooled_body_drains_and_redispatches_on_startup() {
+        // GR-012b: a verified webhook body spooled before a (simulated) crash
+        // must be re-dispatched by the startup drain, then its spool file deleted;
+        // a corrupt spool entry is dropped (never wedges the boot).
+        let _env = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        // SAFETY: env access is serialized by the test_env lock above.
+        unsafe {
+            std::env::set_var("NEOTH_HOME", home.path());
+        }
+
+        let raw = r#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.DRAIN","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
+        let path = spool_inbound_body("wamid.DRAIN", raw).expect("spool write");
+        assert!(path.exists(), "spool file must exist before drain");
+
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let c = Arc::clone(&count);
+        let pipeline: PipelineHandler = Box::new(move |_inbound| {
+            let c = Arc::clone(&c);
+            Box::pin(async move {
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(None)
+            })
+        });
+        let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
+            line: None,
+            meta_app_secret: b"x".to_vec(),
+            meta_verify_token: "v".into(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline,
+            whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
+            max_concurrent_connections: None,
+            dispatch_join: None,
+        };
+
+        drain_inbound_spool(&cfg).await;
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "drain must re-dispatch the spooled survivor"
+        );
+        assert!(!path.exists(), "drained spool file must be deleted");
+
+        // A corrupt spool entry is dropped (not re-run, not a boot-wedge).
+        let bad = inbound_spool_dir().join("corrupt.json");
+        std::fs::write(&bad, b"not json").unwrap();
+        drain_inbound_spool(&cfg).await;
+        assert!(!bad.exists(), "corrupt spool file must be dropped");
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "corrupt entry must NOT trigger a dispatch"
+        );
+
+        // SAFETY: serialized by the test_env lock.
+        unsafe {
+            std::env::remove_var("NEOTH_HOME");
+        }
     }
 
     #[tokio::test]
