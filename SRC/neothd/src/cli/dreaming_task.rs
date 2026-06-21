@@ -178,13 +178,16 @@ fn self_improve_auto_pass_blocking(home: &Path) {
         .join(persona)
         .join("skill.md");
     let before = std::fs::read_to_string(&skill_path).unwrap_or_default();
-    let (after, quality, parsed_spec) = match si::skillopt_command(persona).output() {
-        Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
-        Err(e) => {
-            warn!(error = %e, "self-improve auto-pass: SkillOpt run failed");
-            return;
-        }
-    };
+    // F13 — bounded run: a hung/runaway SkillOpt python process must not block
+    // the dreaming tick (best-effort "any miss logs + skips" contract).
+    let (after, quality, parsed_spec) =
+        match si::run_skillopt_capped(persona, si::SKILLOPT_TIMEOUT) {
+            Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
+            Err(e) => {
+                warn!(error = %e, "self-improve auto-pass: SkillOpt run failed/timed out");
+                return;
+            }
+        };
     if after.trim().is_empty() || after == before {
         return; // engine proposed nothing new → don't stage a no-op
     }

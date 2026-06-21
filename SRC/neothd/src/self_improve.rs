@@ -614,6 +614,64 @@ pub fn skillopt_command(persona: &str) -> std::process::Command {
     c
 }
 
+/// F13 — default wall-clock budget for an autonomous SkillOpt run.
+pub const SKILLOPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+/// F13 — per-stream output cap (1 MiB). A runaway engine can't balloon memory;
+/// an over-cap stdout simply fails to parse → treated as a miss (the safe outcome).
+const SKILLOPT_OUTPUT_CAP_BYTES: usize = 1 << 20;
+
+/// F13 — run the SkillOpt engine with a wall-clock timeout + bounded output so a
+/// hung or runaway python process can't stall the dreaming tick (whose contract
+/// is "best-effort: any miss logs + skips"). Sync — runs inside the dreaming
+/// `spawn_blocking`. Reader threads drain stdout/stderr concurrently (no
+/// pipe-buffer deadlock) while the main thread polls for exit; on timeout the
+/// child is killed. stdout/stderr are truncated to the per-stream cap.
+pub fn run_skillopt_capped(
+    persona: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<std::process::Output> {
+    use anyhow::Context;
+    use std::io::Read;
+    let mut child = skillopt_command(persona)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("spawn SkillOpt engine")?;
+    let mut out_pipe = child.stdout.take().expect("stdout piped above");
+    let mut err_pipe = child.stderr.take().expect("stderr piped above");
+    let out_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out_pipe.read_to_end(&mut b);
+        b
+    });
+    let err_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err_pipe.read_to_end(&mut b);
+        b
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        if let Some(s) = child.try_wait().context("poll SkillOpt engine")? {
+            break s;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("SkillOpt engine timed out after {timeout:?} — killed");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    let mut stdout = out_h.join().unwrap_or_default();
+    let mut stderr = err_h.join().unwrap_or_default();
+    stdout.truncate(SKILLOPT_OUTPUT_CAP_BYTES);
+    stderr.truncate(SKILLOPT_OUTPUT_CAP_BYTES);
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 // ── IMPR-03: Execute variant — verification-gated proposal execution scaffold ─
 //
 // Runs a staged proposal through a verification + advisor-review loop. The
