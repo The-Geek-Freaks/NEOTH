@@ -561,6 +561,111 @@ impl CouncilDegradation {
     }
 }
 
+// ─── GOLD-ADAPT-LOWKEY-04 MifIntent ─────────────────────────────────────────
+//
+// Operator-intent classification that runs as a council pre-step BEFORE
+// the hemispheres are queried. Classifying intent first prevents the
+// council from launching against a semantically contradictory prompt —
+// `Conflicted` triggers a disambiguation path so the operator gets a
+// targeted clarification request instead of a confused answer.
+//
+// Design: pure-function, deterministic, LLM-free.  Lives in `types.rs`
+// because `MifIntent` is a first-class council datum alongside `Verdict`,
+// `CouncilDebate`, etc.  The classification logic lives in
+// `council/motive_ident.rs` and is re-exported from `council/mod.rs`.
+
+/// GOLD-ADAPT-LOWKEY-04 — operator-intent classification for the MIF
+/// (Motive Identification Framework) council pre-step.
+///
+/// `Stated`    — the prompt expresses a single, unambiguous intent.
+///              Example: "Summarise this document in three bullet points."
+///
+/// `Inferred`  — no direct statement of intent, but the phrasing
+///              implies a likely goal (interrogative, open-ended,
+///              exploratory).  The council proceeds with the inferred
+///              goal, and the response may surface the assumption.
+///              Example: "What does this diff change?"
+///
+/// `Conflicted` — the prompt contains two or more semantically
+///              contradictory goals that cannot be simultaneously
+///              satisfied (e.g. "be brief but explain every detail",
+///              "do X and don't do X").  The council DOES NOT answer;
+///              instead the caller surfaces a disambiguation request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MifIntent {
+    /// Single, unambiguous directive — the council can proceed directly.
+    Stated,
+    /// Implicit goal inferred from phrasing — council proceeds with
+    /// the most likely interpretation surfaced in the response.
+    Inferred,
+    /// Contradictory goals detected — council must NOT answer;
+    /// surface a disambiguation request to the operator.
+    Conflicted,
+}
+
+impl MifIntent {
+    /// Stable wire id matching serde's `rename_all`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MifIntent::Stated => "stated",
+            MifIntent::Inferred => "inferred",
+            MifIntent::Conflicted => "conflicted",
+        }
+    }
+
+    /// True when the council may proceed without disambiguation.
+    /// Both `Stated` and `Inferred` allow the debate to run;
+    /// only `Conflicted` blocks it.
+    pub fn allows_debate(self) -> bool {
+        !matches!(self, MifIntent::Conflicted)
+    }
+}
+
+/// GOLD-ADAPT-LOWKEY-04 — outcome of one MIF classification pass.
+///
+/// Carried through the council's pre-step so callers can (a) gate the
+/// debate on `allows_debate()` and (b) attach the classification to the
+/// WAL audit frame for observability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MifAnalysis {
+    /// The classified intent.
+    pub intent: MifIntent,
+    /// Human-readable reason for the classification (operator-visible;
+    /// surfaced in disambiguation requests + WAL audit frames).
+    pub reason: String,
+    /// When `intent == Conflicted`, carries the contradiction pairs that
+    /// were detected so the operator's disambiguation request can name
+    /// them explicitly.  Empty for `Stated` and `Inferred`.
+    pub contradictions: Vec<String>,
+}
+
+impl MifAnalysis {
+    /// Convenience: does this analysis block the council debate?
+    pub fn blocks_debate(&self) -> bool {
+        !self.intent.allows_debate()
+    }
+
+    /// Build the operator-visible disambiguation message to surface when
+    /// `Conflicted` was detected.  Returns `None` for non-conflicted
+    /// intents.
+    pub fn disambiguation_message(&self) -> Option<String> {
+        if self.intent != MifIntent::Conflicted {
+            return None;
+        }
+        let pairs = if self.contradictions.is_empty() {
+            String::from("contradictory goals were detected")
+        } else {
+            self.contradictions.join("; ")
+        };
+        Some(format!(
+            "The request contains conflicting goals that cannot be \
+             simultaneously satisfied: {pairs}. \
+             Please clarify which goal takes priority."
+        ))
+    }
+}
+
 /// ADV-10b — substring sniff for a `QuotaError`-derived hemisphere
 /// error diagnostic. Returns `true` when the error string carries one
 /// of the canonical phrases the shipped `providers::quota::QuotaError`
@@ -1280,5 +1385,103 @@ mod tests {
         let s = CouncilVoice::EvidenceCollector.system_prompt_fragment();
         assert!(s.contains("QaVerdict"));
         assert!(s.contains("Pass") || s.contains("Fail") || s.contains("Blocked"));
+    }
+
+    // ── GOLD-ADAPT-LOWKEY-04 MifIntent / MifAnalysis ─────────────────
+
+    #[test]
+    fn mif_intent_as_str_matches_serde_rename() {
+        assert_eq!(MifIntent::Stated.as_str(), "stated");
+        assert_eq!(MifIntent::Inferred.as_str(), "inferred");
+        assert_eq!(MifIntent::Conflicted.as_str(), "conflicted");
+    }
+
+    #[test]
+    fn mif_intent_allows_debate_gates_only_conflicted() {
+        assert!(MifIntent::Stated.allows_debate());
+        assert!(MifIntent::Inferred.allows_debate());
+        assert!(!MifIntent::Conflicted.allows_debate());
+    }
+
+    #[test]
+    fn mif_analysis_blocks_debate_mirrors_intent() {
+        let stated = MifAnalysis {
+            intent: MifIntent::Stated,
+            reason: "clear imperative".into(),
+            contradictions: vec![],
+        };
+        assert!(!stated.blocks_debate());
+
+        let conflicted = MifAnalysis {
+            intent: MifIntent::Conflicted,
+            reason: "contradictory goals".into(),
+            contradictions: vec!["be brief AND explain every detail".into()],
+        };
+        assert!(conflicted.blocks_debate());
+    }
+
+    #[test]
+    fn mif_analysis_disambiguation_message_none_for_non_conflicted() {
+        let a = MifAnalysis {
+            intent: MifIntent::Stated,
+            reason: "ok".into(),
+            contradictions: vec![],
+        };
+        assert!(a.disambiguation_message().is_none());
+
+        let b = MifAnalysis {
+            intent: MifIntent::Inferred,
+            reason: "ok".into(),
+            contradictions: vec![],
+        };
+        assert!(b.disambiguation_message().is_none());
+    }
+
+    #[test]
+    fn mif_analysis_disambiguation_message_present_for_conflicted() {
+        let a = MifAnalysis {
+            intent: MifIntent::Conflicted,
+            reason: "two goals".into(),
+            contradictions: vec!["do X".into(), "don't do X".into()],
+        };
+        let msg = a.disambiguation_message().expect("must produce message");
+        assert!(msg.contains("conflicting goals"));
+        assert!(msg.contains("do X"));
+        assert!(msg.contains("don't do X"));
+        assert!(msg.contains("clarify"));
+    }
+
+    #[test]
+    fn mif_analysis_disambiguation_message_with_empty_contradictions() {
+        let a = MifAnalysis {
+            intent: MifIntent::Conflicted,
+            reason: "generic".into(),
+            contradictions: vec![],
+        };
+        let msg = a.disambiguation_message().expect("must produce message");
+        assert!(msg.contains("contradictory goals were detected"));
+    }
+
+    #[test]
+    fn mif_intent_serde_roundtrip() {
+        for intent in [MifIntent::Stated, MifIntent::Inferred, MifIntent::Conflicted] {
+            let json = serde_json::to_string(&intent).unwrap();
+            let back: MifIntent = serde_json::from_str(&json).unwrap();
+            assert_eq!(intent, back);
+        }
+    }
+
+    #[test]
+    fn mif_analysis_serde_roundtrip() {
+        let a = MifAnalysis {
+            intent: MifIntent::Conflicted,
+            reason: "do X and do not do X".into(),
+            contradictions: vec!["X vs ¬X".into()],
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        let back: MifAnalysis = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.intent, MifIntent::Conflicted);
+        assert_eq!(back.reason, "do X and do not do X");
+        assert_eq!(back.contradictions, vec!["X vs ¬X"]);
     }
 }

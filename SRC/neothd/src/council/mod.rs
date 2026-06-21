@@ -33,6 +33,11 @@ pub mod day_counter;
 pub mod dissent;
 pub mod diversity;
 pub mod eval;
+/// GOLD-ADAPT-LOWKEY-04 — MIF motive-identification pre-step.
+/// Classifies operator intent as Stated / Inferred / Conflicted before
+/// the hemisphere debate runs.  `Conflicted` gates the debate and
+/// surfaces a disambiguation request instead of a confused answer.
+pub mod motive_ident;
 /// Round-3 v0.4 ADV-12 — Council factual-contradiction check using
 /// `[GROUND_TRUTH]…[/GROUND_TRUTH]` tags + ground-truth-based
 /// scoring (not hemisphere agreement). Structural fix that closes
@@ -67,8 +72,10 @@ pub use diversity::{DiversityVerdict, classify_council_diversity};
 #[allow(unused_imports)]
 pub use eval::{EvalOutcome, FIXTURES, FixtureCategory, GroundTruthFixture, verify};
 #[allow(unused_imports)]
+pub use motive_ident::classify_motive;
+#[allow(unused_imports)]
 pub use orchestrator::{run_debate, run_debate_with_depth, run_debate_with_depth_budget};
 #[allow(unused_imports)]
 pub use trigger::{TriggerContext, TriggerDecision, TriggerPolicy, should_convene};
 #[allow(unused_imports)]
-pub use types::{CouncilDebate, HemisphereResponse, Verdict};
+pub use types::{CouncilDebate, HemisphereResponse, MifAnalysis, MifIntent, Verdict};
