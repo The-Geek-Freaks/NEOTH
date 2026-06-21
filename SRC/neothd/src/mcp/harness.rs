@@ -268,7 +268,13 @@ pub enum SourceLang {
 impl SourceLang {
     /// Heuristic detection from the first 4 KB of `src`.
     fn detect(src: &str) -> Self {
-        let sample = &src[..src.len().min(4096)];
+        // char-safe: `src` is arbitrary UTF-8 from tool output (web_fetch,
+        // RAG, foreign MCP servers); a raw `&src[..4096]` byte slice panics
+        // when byte index 4096 lands mid-codepoint.
+        let sample = match src.char_indices().nth(4096) {
+            Some((idx, _)) => &src[..idx],
+            None => src,
+        };
         // Python markers — `def ` / `class ` with a colon-terminated header
         // and no `{` on the same line is the key distinguisher.
         let python_score = sample.lines().filter(|l| {
@@ -757,6 +763,16 @@ mod tests {
         let out = skeletonize_code(&src, 5, SourceLang::Brace);
         // Either the original or a valid skeletonization — not a panic.
         assert!(!out.is_empty(), "must return a non-empty string");
+    }
+
+    #[test]
+    fn detect_no_panic_on_multibyte_over_4kb() {
+        // "€" is 3 bytes; 1400 copies = 4200 bytes so byte index 4096 lands
+        // mid-codepoint — a raw `&src[..4096]` byte slice would panic here.
+        let src = "€".repeat(1400);
+        let _ = SourceLang::detect(&src); // must not panic
+        // And via the public entrypoint with Unknown hint (the live path).
+        let _ = skeletonize_code(&src, 5, SourceLang::Unknown);
     }
 
     #[test]

@@ -117,8 +117,11 @@ pub async fn run_code_intel(args: CodeIntelArgs) -> Result<()> {
         let commits = ow.map(|o| o.total_commits).unwrap_or(0);
 
         let bf_flag = if bus_factor == 1 { "⚠ " } else { "  " };
-        let primary_display = if primary.len() > 30 {
-            format!("{}…", &primary[..29])
+        // char-safe: a git author name can carry multibyte UTF-8 — a raw
+        // `&primary[..29]` byte slice panics on a non-char-boundary cut.
+        let primary_display = if primary.chars().count() > 30 {
+            let head: String = primary.chars().take(29).collect();
+            format!("{head}…")
         } else {
             primary.to_string()
         };
@@ -248,10 +251,17 @@ fn load_graph_from_db() -> CallGraph {
 
 /// Truncate a path string to `max_chars`, adding `…` when truncated.
 fn truncate_path(path: &str, max_chars: usize) -> String {
-    if path.len() <= max_chars {
+    // char-safe: code-intel runs against arbitrary foreign repos, whose
+    // paths can contain multibyte UTF-8 — count + slice on chars, not bytes,
+    // so a cut at the boundary never panics ("byte index is not a char
+    // boundary").
+    let char_count = path.chars().count();
+    if char_count <= max_chars {
         path.to_string()
     } else {
-        format!("…{}", &path[path.len().saturating_sub(max_chars - 1)..])
+        let keep = max_chars.saturating_sub(1);
+        let tail: String = path.chars().skip(char_count - keep).collect();
+        format!("…{tail}")
     }
 }
 
@@ -305,5 +315,14 @@ mod tests {
     fn truncate_path_exact_length_unchanged() {
         let s = "src/foo.rs"; // 10 chars
         assert_eq!(truncate_path(s, 10), s);
+    }
+
+    #[test]
+    fn truncate_path_multibyte_does_not_panic() {
+        // multibyte path — a byte slice at the cut would panic; char-safe must not.
+        let p = "süß/möhre/straße/ünïcödé/datei.rs";
+        let t = truncate_path(p, 10);
+        assert!(t.starts_with('…'));
+        assert_eq!(t.chars().count(), 10);
     }
 }

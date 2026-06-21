@@ -167,9 +167,12 @@ pub fn scan_for_journals(neoth_dir: &Path) -> Result<Vec<JournalReport>> {
     };
     let mut out = Vec::new();
     for entry in entries {
-        let entry = entry?;
+        // Skip — never abort the whole listing — on a per-entry IO error
+        // (a journal can vanish between read_dir and the stat: TOCTOU
+        // NotFound). Mirrors the defensive read_to_string below.
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
-        let ft = entry.file_type()?;
+        let Ok(ft) = entry.file_type() else { continue };
         if !ft.is_file() {
             continue;
         }
@@ -180,7 +183,8 @@ pub fn scan_for_journals(neoth_dir: &Path) -> Result<Vec<JournalReport>> {
         let Some(turn_id) = name.strip_suffix(".jsonl") else {
             continue;
         };
-        let size_bytes = entry.metadata()?.len();
+        let Ok(meta) = entry.metadata() else { continue };
+        let size_bytes = meta.len();
         let line_count = match std::fs::read_to_string(&path) {
             Ok(body) => body.lines().filter(|l| !l.is_empty()).count(),
             Err(_) => 0,
