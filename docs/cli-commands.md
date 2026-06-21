@@ -111,6 +111,13 @@ List VEVENTs in the configured CalDAV calendar collection. Read-only
 
 - `--url <URL>` — Override the calendar collection URL (else `credentials.yaml::caldav_url` / `NEOTH_CALDAV_URL`)
 
+## `neoth capabilities`
+
+GOLD-ADAPT-JV-MODE-03 — list NEOTH's own shipped capabilities (bundled skills, daemon crons, CLI + slash commands) from the self-wiki map. `--kind skill|cron|cli|slash`, `--search <keyword>`, `--output json`
+
+- `--kind <KIND>` — Filter to one kind: `skill` | `cron` | `cli` | `slash`. Omit for all
+- `--search <KEYWORD>` — Case-insensitive substring search across capability descriptions
+
 ## `neoth catalog`
 
 LLM-provider model catalog (K-Models-Discovery, Session 14). `refresh` queries every configured provider's list-models endpoint + caches results at `~/.neoth/models_catalog.json`. `list` / `show` print cached entries. `defaults` reports the recommended model per provider — the wizard reads this on next `neoth init` run. `clear` wipes the cache to force a full rediscovery

@@ -56,6 +56,7 @@ pub mod editor;
 pub mod email;
 pub mod events;
 pub mod export;
+pub mod capabilities;
 pub mod fact_check;
 pub mod feedback;
 pub mod fetch;
@@ -233,6 +234,10 @@ pub enum Commands {
     /// `neoth fact-check "NEOTH was released in 2026."`
     #[command(name = "fact-check")]
     FactCheck(fact_check::FactCheckArgs),
+    /// GOLD-ADAPT-JV-MODE-03 — list NEOTH's own shipped capabilities (bundled
+    /// skills, daemon crons, CLI + slash commands) from the self-wiki map.
+    /// `--kind skill|cron|cli|slash`, `--search <keyword>`, `--output json`.
+    Capabilities(capabilities::CapabilitiesArgs),
 
     /// GOLD-ADOPT-23 — open a TTL-bounded risk-confirm window so the next
     /// risk-gate-blocked tool call proceeds. Sugar over the `operator`
@@ -1057,6 +1062,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::FactCheck(mut args) => {
             args.output = global_output;
             fact_check::run_fact_check(args)?;
+        }
+        Commands::Capabilities(mut args) => {
+            args.output = global_output;
+            capabilities::run_capabilities(args)?;
         }
         Commands::Edit(args) => {
             // The freedom.yaml::tokens.hashline_edits default applies when
