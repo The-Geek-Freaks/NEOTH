@@ -316,7 +316,7 @@ mod tests {
         );
         let pair = pairs
             .iter()
-            .find(|p| (p.a == "a.rs" || p.b == "a.rs"))
+            .find(|p| p.a == "a.rs" || p.b == "a.rs")
             .unwrap();
         assert_eq!(pair.co_changes, 3);
     }

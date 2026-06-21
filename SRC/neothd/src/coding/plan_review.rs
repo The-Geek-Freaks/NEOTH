@@ -246,7 +246,7 @@ mod tests {
     impl DecomposerLlm for MockLlm {
         async fn complete(&self, _prompt: &str) -> Result<String> {
             let mut count = self.call_count.lock().unwrap();
-            let mut replies = self.replies.lock().unwrap();
+            let replies = self.replies.lock().unwrap();
             let idx = *count as usize;
             *count += 1;
             if idx < replies.len() {

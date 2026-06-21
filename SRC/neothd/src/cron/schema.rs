@@ -759,7 +759,7 @@ jobs:
 
     #[test]
     fn validate_rejects_empty_prompt() {
-        let mut j = daily_job("x", "X", "0 7 * * *", "");
+        let j = daily_job("x", "X", "0 7 * * *", "");
         let err = j.validate().unwrap_err();
         assert!(err.to_string().contains("prompt must not be empty"), "{err}");
     }
