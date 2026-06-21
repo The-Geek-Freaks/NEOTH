@@ -33,6 +33,9 @@ pub mod frame_decoder;
 pub mod multimodal_synth;
 pub mod pdf;
 pub mod pdf_forms;
+/// GOLD-ADAPT-HANDY-04 — model download manager: SHA-256 verify, resumable
+/// `Range` downloads, and atomic tmp→dest rename.
+pub mod model_manager;
 /// HANDY-01 — band-limited sinc resampler (rubato) for the STT capture path.
 pub mod resampler;
 pub mod stt_dispatch;
