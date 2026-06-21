@@ -1,9 +1,9 @@
 //! Six v1 endpoint handlers for the localhost API.
 //!
 //! Every handler:
-//! 1. Receives the parsed [`ApiRequestCtx`] from
-//!    [`super::server::dispatch`] (already passed auth + loopback +
-//!    method gating).
+//! 1. Receives the parsed [`ApiRequestCtx`] from [`super::server::serve`]
+//!    (already passed auth + loopback). Path/method routing happens in
+//!    [`route`] (a wrong method falls through to `NotFound`).
 //! 2. Returns a [`HandlerOutcome`] carrying the response shape +
 //!    status code. The server layer wraps the data in the
 //!    [`super::ApiOkResponse`] / [`super::ApiErrorResponse`]
@@ -532,8 +532,8 @@ pub async fn channel_send(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutco
     }
 }
 
-/// Wire — the dispatcher in `server::dispatch` matches the path +
-/// method and forwards here.
+/// Wire — `server::serve` (per-request) calls this; `route` matches the path +
+/// method and forwards to the right handler (wrong method → `NotFound`).
 pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
     match (ctx.method.as_str(), ctx.path.as_str()) {
         ("GET", "/api/health") => health(&ctx, &state),

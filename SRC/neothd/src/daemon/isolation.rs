@@ -1,7 +1,10 @@
 //! Multi-user isolation guard — Phase 33c BS-9.
 //!
-//! Refuse to start if `~/.neoth/` is world-readable (Unix) or has a
-//! non-owner DACL entry (Windows). NEOTH stores operator-private state:
+//! Unix: REFUSE to start if `~/.neoth/` is world-readable (mode != 0700).
+//! Windows: best-effort WARN (never blocks) on a broad-principal DACL entry —
+//! the DACL parse without a windows-crate isn't reliable enough to hard-block,
+//! and a shared `C:\Temp` etc. grants `Everyone` legitimately. NEOTH stores
+//! operator-private state:
 //! WAL frames, ground-truth facts, API keys (mode-0600 inside but in a
 //! shared dir is still a leak via directory listing).
 //!
@@ -171,8 +174,9 @@ mod tests {
     #[test]
     fn icacls_broad_principal_ignores_echoed_path_but_catches_aces() {
         // SEC-29/GR-022: the queried path icacls echoes (contains \Users) must
-        // NOT false-match; a genuine broad-principal ACE IS detected (→ SEC-33
-        // hard-fail). Pure logic, runs on every platform.
+        // NOT false-match; a genuine broad-principal ACE IS detected (→ on
+        // Windows it surfaces a WARN, never blocks startup). Pure logic, runs on
+        // every platform.
         assert_eq!(
             icacls_broad_principal("C:\\Users\\alex\\.neoth NEOTH-PC\\alex:(OI)(CI)(F)\r\n"),
             None,
