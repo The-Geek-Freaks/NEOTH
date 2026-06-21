@@ -280,14 +280,92 @@ fn hard_slice(s: &str, cap: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut start = 0;
     while start < s.len() {
-        let mut end = (start + cap).min(s.len());
-        while end < s.len() && !s.is_char_boundary(end) {
-            end -= 1;
+        let end = char_boundary_truncate(&s[start..], cap);
+        out.push(s[start..start + end].to_string());
+        start += end;
+        if end == 0 {
+            break; // guard against infinite loop on malformed input
         }
-        out.push(s[start..end].to_string());
-        start = end;
     }
     out
+}
+
+// ─── Format-before-truncate (GOLD-ADAPT-SPEAKR-03) ───────────────────────
+
+/// A single timed segment from a transcript (speaker + text + optional
+/// start-time in seconds). Used by [`segments_to_plain_text`].
+#[derive(Debug, Clone)]
+pub struct TranscriptSegment {
+    /// Speaker label, e.g. `"SPEAKER_00"` or a resolved name.
+    pub speaker: String,
+    /// The spoken text. May contain multi-byte Unicode.
+    pub text: String,
+    /// Optional wall-clock offset in seconds from transcript start.
+    pub start_s: Option<f64>,
+}
+
+/// Format a slice of [`TranscriptSegment`]s into a single plain-text string
+/// suitable for passing to an LLM prompt.
+///
+/// Layout per segment:
+/// ```text
+/// [00:01:23] SPEAKER: text here
+/// ```
+/// The timestamp column is omitted when `start_s` is `None`. Segments with
+/// empty (whitespace-only) text are skipped.
+///
+/// **This function must be called BEFORE any byte-level truncation** so that
+/// Unicode characters are never split mid-sequence. Pass the returned `String`
+/// to [`truncate_to_char_boundary`] when you need to cap the byte length.
+pub fn segments_to_plain_text(segments: &[TranscriptSegment]) -> String {
+    let mut out = String::new();
+    for seg in segments {
+        let trimmed = seg.text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(s) = seg.start_s {
+            let total_secs = s as u64;
+            let h = total_secs / 3600;
+            let m = (total_secs % 3600) / 60;
+            let secs = total_secs % 60;
+            out.push_str(&format!("[{h:02}:{m:02}:{secs:02}] "));
+        }
+        out.push_str(&seg.speaker);
+        out.push_str(": ");
+        out.push_str(trimmed);
+        out.push('\n');
+    }
+    out
+}
+
+/// Truncate `s` to at most `cap` **bytes** while guaranteeing the result ends
+/// on a valid UTF-8 character boundary.
+///
+/// Returns the truncated string. If `s.len() <= cap` the original content is
+/// returned unchanged (no allocation beyond the `String` conversion).
+///
+/// # Panics
+/// Never: `is_char_boundary` contracts guarantee we never slice into a
+/// multi-byte sequence.
+pub fn truncate_to_char_boundary(s: &str, cap: usize) -> &str {
+    if s.len() <= cap {
+        return s;
+    }
+    let safe = char_boundary_truncate(s, cap);
+    &s[..safe]
+}
+
+/// Return the largest byte index `i <= cap` such that `s[..i]` is a valid
+/// UTF-8 string. If `cap >= s.len()` returns `s.len()`.
+fn char_boundary_truncate(s: &str, cap: usize) -> usize {
+    let end = cap.min(s.len());
+    // Walk back from `end` until we land on a char boundary.
+    let mut i = end;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 fn bump_vocabulary(tx: &rusqlite::Transaction, body: &str) -> Result<()> {
@@ -746,5 +824,115 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].title.as_deref(), Some("Heading 1"));
         assert_eq!(chunks[1].title.as_deref(), Some("Heading 2"));
+    }
+
+    // ── GOLD-ADAPT-SPEAKR-03 tests ────────────────────────────────────────
+
+    #[test]
+    fn segments_to_plain_text_formats_with_timestamp() {
+        let segs = vec![
+            TranscriptSegment {
+                speaker: "Alice".to_string(),
+                text: "Hello world".to_string(),
+                start_s: Some(90.0),
+            },
+            TranscriptSegment {
+                speaker: "Bob".to_string(),
+                text: "Hi there".to_string(),
+                start_s: Some(3661.0),
+            },
+        ];
+        let out = segments_to_plain_text(&segs);
+        assert!(out.contains("[00:01:30] Alice: Hello world\n"));
+        assert!(out.contains("[01:01:01] Bob: Hi there\n"));
+    }
+
+    #[test]
+    fn segments_to_plain_text_skips_empty_text() {
+        let segs = vec![
+            TranscriptSegment {
+                speaker: "A".to_string(),
+                text: "   ".to_string(),
+                start_s: None,
+            },
+            TranscriptSegment {
+                speaker: "B".to_string(),
+                text: "real content".to_string(),
+                start_s: None,
+            },
+        ];
+        let out = segments_to_plain_text(&segs);
+        assert!(!out.contains("A:"));
+        assert!(out.contains("B: real content\n"));
+    }
+
+    #[test]
+    fn segments_to_plain_text_no_timestamp_when_none() {
+        let segs = vec![TranscriptSegment {
+            speaker: "Eve".to_string(),
+            text: "payload".to_string(),
+            start_s: None,
+        }];
+        let out = segments_to_plain_text(&segs);
+        assert_eq!(out, "Eve: payload\n");
+        assert!(!out.contains('['));
+    }
+
+    /// Core SPEAKR-03 requirement: a string containing é (U+00E9, encoded as
+    /// the two bytes 0xC3 0xA9 in UTF-8) must NEVER be truncated between
+    /// those two bytes.  The format step joins the segment first, and
+    /// truncation only ever lands on a char boundary.
+    #[test]
+    fn truncate_never_splits_multibyte_char() {
+        // "ab\u{00E9}cd" = a(1) b(1) é(0xC3 0xA9 = 2 bytes) c(1) d(1) = 6 bytes total.
+        // é spans byte offsets [2, 4).
+        // Truncating at byte 3 (inside é) must back up to byte 2.
+        let s = "ab\u{00E9}cd"; // a b é c d = 1+1+2+1+1 = 6 bytes
+        assert_eq!(s.len(), 6);
+        // é starts at byte offset 2, ends at byte offset 4.
+        // Truncating at byte 3 (inside é) must back up to byte 2.
+        let truncated = truncate_to_char_boundary(s, 3);
+        assert_eq!(truncated, "ab", "must not split é at byte 3");
+        // Truncating at exactly byte 4 (end of é) is fine.
+        let truncated4 = truncate_to_char_boundary(s, 4);
+        assert_eq!(truncated4, "ab\u{00E9}", "byte 4 is a valid boundary");
+        // Full string when cap >= len.
+        let full = truncate_to_char_boundary(s, 100);
+        assert_eq!(full, s);
+    }
+
+    /// End-to-end: format segments containing é, then truncate; the result
+    /// must be valid UTF-8 and must not contain half of a multi-byte escape.
+    #[test]
+    fn format_then_truncate_no_mid_unicode_cut() {
+        let segs = vec![TranscriptSegment {
+            speaker: "Narrator".to_string(),
+            text: "café résumé naïve".to_string(),
+            start_s: None,
+        }];
+        let plain = segments_to_plain_text(&segs);
+        // plain is valid UTF-8 at this point; now truncate aggressively.
+        for cap in 0..=plain.len() {
+            let t = truncate_to_char_boundary(&plain, cap);
+            // Must parse as valid UTF-8 — from_utf8 errors on bad boundaries.
+            assert!(
+                std::str::from_utf8(t.as_bytes()).is_ok(),
+                "cap={cap} produced invalid UTF-8"
+            );
+        }
+    }
+
+    #[test]
+    fn hard_slice_does_not_split_multibyte() {
+        // Build a string where every other char is é (2-byte).
+        let s: String = "x\u{00E9}".repeat(200); // 400 bytes
+        let slices = hard_slice(&s, 3); // cap=3; each é must not be split
+        for slice in &slices {
+            assert!(
+                std::str::from_utf8(slice.as_bytes()).is_ok(),
+                "hard_slice produced invalid UTF-8: {:?}",
+                slice
+            );
+        }
     }
 }
