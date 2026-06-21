@@ -46,15 +46,20 @@ pub fn ingest_sources(
     now_ns: i64,
 ) -> Result<IngestStats> {
     let mut stats = IngestStats::default();
-    for gt in list_for_scope(conn, WIKI_SCOPE)? {
+    // F46 — revoke-all-then-insert-all must be ATOMIC: without a transaction a
+    // mid-insert failure leaves the old rows already revoked and only part of
+    // the new rows written (the module-doc idempotency claim would hold only on
+    // success). One transaction → commit on success, roll back on any error/drop.
+    let tx = conn.unchecked_transaction()?;
+    for gt in list_for_scope(&tx, WIKI_SCOPE)? {
         if gt.revoked_at.is_none() {
-            revoke(conn, gt.id, now_ns)?;
+            revoke(&tx, gt.id, now_ns)?;
             stats.revoked += 1;
         }
     }
     for src in sources {
         insert(
-            conn,
+            &tx,
             &statement_for(src),
             &Source::BulkText,
             WIKI_SCOPE,
@@ -62,6 +67,7 @@ pub fn ingest_sources(
         )?;
         stats.inserted += 1;
     }
+    tx.commit()?;
     Ok(stats)
 }
 

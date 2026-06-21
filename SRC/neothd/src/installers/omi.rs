@@ -66,8 +66,9 @@ pub fn is_local_endpoint(url: &str) -> Result<(), String> {
     if !is_local_host(&host) {
         return Err(format!(
             "OMI endpoint {url:?} host {host:?} is not loopback or a private address — SC-14 \
-             requires a self-hosted LOCAL backend. Use localhost, 127.0.0.1, ::1, or a private \
-             10./172.16-31./192.168./fc00:: address. See {OMI_SELF_HOST_DOCS_URL}.",
+             requires a self-hosted LOCAL backend. Use localhost, 127.0.0.1, ::1, a private \
+             10./172.16-31./192.168./fc00:: address, or a 100.64/10 (Tailscale/CGNAT) address. \
+             See {OMI_SELF_HOST_DOCS_URL}.",
         ));
     }
     Ok(())

@@ -120,21 +120,37 @@ fn build_review_prompt(plan_text: &str, critique_so_far: &str) -> String {
 /// approving an unreadable reply.
 fn parse_verdict(reply: &str) -> (&'static str, String) {
     // Bound the scan — 4 KB is generous for a structured verdict reply.
-    let scan = if reply.len() > 4096 { &reply[..4096] } else { reply };
+    // char-safe: a raw `&reply[..4096]` byte slice panics on a multibyte
+    // codepoint straddling byte 4096.
+    let scan = match reply.char_indices().nth(4096) {
+        Some((idx, _)) => &reply[..idx],
+        None => reply,
+    };
     let lower = scan.to_lowercase();
-    if lower.contains("approved") {
+    // REVISE wins whenever it appears: a genuine APPROVED reply never
+    // contains "revise", but a "this is NOT approved, REVISE: …" reply
+    // does — so a plain `contains("approved")` would mis-read a *negated*
+    // approval as APPROVED. The prompt requires the verdict token FIRST
+    // with nothing before it, so a real approval LEADS with "approved".
+    let revises = lower.contains("revise");
+    let leads_approved = lower.trim_start().starts_with("approved");
+    if leads_approved && !revises {
         ("APPROVED", reply.trim().to_string())
-    } else {
-        // Extract everything after "REVISE:" if present.
+    } else if revises {
+        // Extract everything after "REVISE:" if present (ASCII token →
+        // the byte offset from `lower` is valid in `scan`).
         let critique = if let Some(pos) = lower.find("revise:") {
-            reply[pos + "revise:".len()..].trim().to_string()
+            scan[pos + "revise:".len()..].trim().to_string()
         } else if let Some(pos) = lower.find("revise") {
-            reply[pos + "revise".len()..].trim().to_string()
+            scan[pos + "revise".len()..].trim().to_string()
         } else {
-            // Couldn't parse — treat the whole reply as the critique.
-            reply.trim().to_string()
+            scan.trim().to_string()
         };
         ("REVISE", critique)
+    } else {
+        // No clear leading verdict — default REVISE: never approve an
+        // unreadable / non-leading reply (fail-safe toward revising).
+        ("REVISE", reply.trim().to_string())
     }
 }
 
@@ -317,5 +333,23 @@ mod tests {
         assert!(outcome.is_approved());
         assert_eq!(mock.calls(), 1);
         assert_eq!(outcome.log().len(), 1);
+    }
+
+    /// A *negated* approval ("NOT approved, REVISE …") must parse as REVISE,
+    /// never APPROVED — the old `contains("approved")` read it as APPROVED.
+    #[test]
+    fn parse_verdict_rejects_negated_approval() {
+        let (v, _) = parse_verdict("This is NOT approved, REVISE: fix the auth gate");
+        assert_eq!(v, "REVISE", "negated approval must be REVISE");
+
+        let (v2, _) = parse_verdict("APPROVED looks good");
+        assert_eq!(v2, "APPROVED", "a leading APPROVED token is the only accepted approval");
+
+        let (v3, _) = parse_verdict("honestly this looks approved to me");
+        assert_eq!(v3, "REVISE", "a non-leading 'approved' falls back to REVISE (fail-safe)");
+
+        let (v4, c4) = parse_verdict("REVISE: race in the writer");
+        assert_eq!(v4, "REVISE");
+        assert!(c4.contains("race"));
     }
 }

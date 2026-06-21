@@ -128,6 +128,10 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
             dry_run,
             ingest,
         } => {
+            // F75 — apply the same path-traversal hardening the `sync` arm uses:
+            // `--subdir` must be a single normal component (no `..` / absolute /
+            // nested / drive-relative) before it is joined onto the vault root.
+            validate_subdir(&subdir)?;
             let out_dir = vault.join(&subdir);
             let (stats, slugs) = crate::wiki::build_wiki(&source_dir, &out_dir, dry_run)?;
             render_wiki_build(&stats, &slugs, &out_dir, args.output);

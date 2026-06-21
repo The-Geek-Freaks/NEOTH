@@ -109,13 +109,16 @@ pub(crate) fn check_mcp_servers(_home: &Path) -> CheckOutcome {
             let enabled = s.servers.iter().filter(|x| x.enabled).count();
             let total = s.servers.len();
             CheckOutcome {
-                name: "mcp servers",
+                // F12 — distinct name from integrations::check_mcp_servers (the
+                // rich analysis keeps "mcp servers"); this simple count was a
+                // duplicate name → double output + --explain shadowing.
+                name: "mcp tool surface",
                 status: CheckStatus::Pass,
                 detail: format!("{enabled}/{total} MCP server(s) enabled (mcp_servers.yaml)"),
             }
         }
         Err(_) => CheckOutcome {
-            name: "mcp servers",
+            name: "mcp tool surface",
             status: CheckStatus::Pass,
             detail: "no mcp_servers.yaml — no external MCP tools configured".into(),
         },
@@ -229,7 +232,7 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               `cluster.transport: iroh` in freedom.yaml to switch the carrier.",
     },
     CheckDoc {
-        name: "mcp servers",
+        name: "mcp tool surface",
         purpose: "Count of registered + enabled MCP servers in \
                   `~/.neoth/mcp_servers.yaml` — the agent's external tool surface.",
         common_failures: "No mcp_servers.yaml; servers disabled.",

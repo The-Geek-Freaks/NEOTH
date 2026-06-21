@@ -2233,7 +2233,7 @@ Inspect the live SQLite schema in `~/.neoth/views.db`. Lists tables + row counts
 Web search via Brave / Tavily (A-20)
 
 - `<QUERY>` — Query string. Optional only when `--stats` is given
-- `--provider <NAME>` — Provider override: `brave` or `tavily`
+- `--provider <NAME>` — Provider override: `brave`, `tavily`, or `searxng` (self-hosted, keyless)
 - `--api-key <KEY>` — API key override. Defaults to `credentials.yaml::web_search_key` or the `NEOTH_WEB_SEARCH_KEY` env variable
 - `--limit <LIMIT>` — Max results (1-20)
 - `--stats <STATS>` — GOLD-ADAPT-ODY-30 — print `web_search` usage analytics (top queries + success/fail/cache-hit counters) instead of running a search

@@ -14,7 +14,7 @@ use crate::tools::web_search::{self, Provider};
 pub struct SearchArgs {
     /// Query string. Optional only when `--stats` is given.
     pub query: Option<String>,
-    /// Provider override: `brave` or `tavily`.
+    /// Provider override: `brave`, `tavily`, or `searxng` (self-hosted, keyless).
     #[arg(long, value_name = "NAME")]
     pub provider: Option<String>,
     /// API key override. Defaults to `credentials.yaml::web_search_key`
