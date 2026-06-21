@@ -303,12 +303,15 @@ impl CredentialImporter for FirefoxImporter {
         let logins = parse_logins_json(&logins_body)?;
 
         let key4_path = profile_path.join("key4.db");
-        // M1 (2026-06-12) — the decrypted master-key blob is sensitive; bind it
-        // `mut` so it can be wiped once the AES key is copied out, and hold the
-        // working AES key in `Zeroizing` so it scrubs on scope exit.
-        let mut master_key =
+        // M1 (2026-06-12, F25) — the decrypted master-key blob is sensitive.
+        // Hold it in `Zeroizing` so it scrubs on EVERY scope exit — including the
+        // legacy-3DES `< 32` early return below, which never copies the key out
+        // and previously dropped the blob un-wiped — and hold the working AES key
+        // in `Zeroizing` too.
+        let master_key = zeroize::Zeroizing::new(
             extract_master_key_from_file(&key4_path, self.primary_password.expose())
-                .map_err(|e| format!("key4.db master-key extract failed: {e}"))?;
+                .map_err(|e| format!("key4.db master-key extract failed: {e}"))?,
+        );
 
         // Modern Firefox uses AES-256-CBC for SECITEM entries; this
         // path requires ≥32 bytes of master-key material. Legacy
@@ -327,8 +330,9 @@ impl CredentialImporter for FirefoxImporter {
                 .try_into()
                 .expect("slice len checked above"),
         );
-        // The 32 bytes we need now live in `aes_key`; wipe the heap blob.
-        zeroize::Zeroize::zeroize(&mut master_key);
+        // The 32 bytes we need now live in `aes_key`; the `master_key` blob
+        // scrubs when its `Zeroizing` drops at end of scope (all exit paths).
+        drop(master_key);
 
         let mut entries = Vec::new();
         let mut warnings = vec![format!(

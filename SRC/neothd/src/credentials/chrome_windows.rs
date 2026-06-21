@@ -281,11 +281,18 @@ pub fn discover_chrome_credentials_windows(
                     username: row.username,
                     password,
                 }),
-                Err(e) => warnings.push(format!(
-                    "skipped {}: password not UTF-8 ({} bytes)",
-                    row.origin_url,
-                    e.into_bytes().len()
-                )),
+                Err(e) => {
+                    // GOLD-SEC-21 (F26) — the decrypted password bytes the
+                    // FromUtf8Error still owns must be WIPED, not merely counted,
+                    // before the error drops. Mirrors firefox::utf8_or_scrub.
+                    let mut leaked = e.into_bytes();
+                    let n = leaked.len();
+                    zeroize::Zeroize::zeroize(&mut leaked);
+                    warnings.push(format!(
+                        "skipped {}: password not UTF-8 ({n} bytes)",
+                        row.origin_url
+                    ));
+                }
             },
             Err(e) => warnings.push(format!("skipped {}: {}", row.origin_url, e)),
         }
