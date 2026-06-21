@@ -289,8 +289,13 @@ async fn run_set_mode(full_auto: bool, gui_confirmed: bool, output: OutputFormat
     let mode = if full_auto { "full-auto" } else { "gated" };
     // GR-101 — FULL-AUTO is the most permissive mode (NEOTH acts WITHOUT asking:
     // shell, channel sends, writes, token spend). Require an explicit operator
-    // confirmation BEFORE persisting it, and fail closed when stdin is not a TTY
-    // so it can never be enabled unattended/scripted. Switching back to GATED —
+    // confirmation BEFORE persisting it. The DEFAULT, un-flagged CLI path fails
+    // closed when stdin is not a TTY, so `neoth autonomy full-auto` from a script
+    // / cron can't silently flip it. The GUI passes the hidden `--gui-confirmed`
+    // flag, which TRUSTS the GUI's own two-step confirm dialog and bypasses the
+    // TTY check — its mere presence is the bypass (D34). Hardening the GUI path
+    // to a daemon-minted single-use TTL token (so the flag can't be baked into a
+    // script either) is tracked in GOLD (D34-TOKEN). Switching back to GATED —
     // the safe direction — needs no confirmation.
     if full_auto {
         confirm_full_auto(gui_confirmed)?;
@@ -398,9 +403,12 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
 }
 
 /// GR-101 — confirm enabling the most-permissive FULL autonomy before it is
-/// persisted. Prints the consequence, then requires an interactive y/N. Fails
-/// closed when stdin is not a terminal so FULL-AUTO can never be enabled
-/// unattended / from a script.
+/// persisted. Prints the consequence, then requires an interactive y/N. The
+/// default (un-flagged) path fails closed when stdin is not a terminal, so the
+/// bare CLI can't enable FULL-AUTO unattended / from a script. A `pre_confirmed`
+/// caller (the GUI, via `--gui-confirmed`) trusts its own confirm dialog and
+/// skips the TTY check — flag presence alone is the bypass (D34); a daemon-
+/// minted single-use token to also gate the GUI path is tracked in GOLD.
 fn confirm_full_auto(pre_confirmed: bool) -> Result<()> {
     use std::io::{IsTerminal, Write};
     eprintln!(
