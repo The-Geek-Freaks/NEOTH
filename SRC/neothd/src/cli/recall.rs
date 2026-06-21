@@ -720,8 +720,10 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     //   (a) reinforce links among the top-K episodic results (these memories
     //       were surfaced together for one query — "fired together, wired
     //       together"), and
-    //   (b) append the 1-hop neighbourhood as a [ASSOCIATED MEMORIES] block.
-    // Both best-effort. The flat-recall output + ranking above are untouched.
+    //   (b) record positive feedback for every recalled pair — returning results
+    //       to the operator IS the downstream usage event (GOLD-ADAPT-JV-MEM-08),
+    //   (c) append the 1-hop neighbourhood as a [ASSOCIATED MEMORIES] block.
+    // All best-effort. The flat-recall output + ranking above are untouched.
     const ASSOC_TOP_K: usize = 6;
     let episodic_ids: Vec<i64> = rows
         .iter()
@@ -737,19 +739,51 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             {
                 tracing::debug!(error = %e, "assoc_graph: co-access reinforce failed (non-fatal)");
             }
-            // neoth: GOLD-ADAPT-JV-MEM-08 — call `assoc_graph::record_link_feedback`
-            // here once a recall-outcome signal exists (e.g. operator thumbs-up/down,
-            // a downstream usage event, or a reinforcement loop that marks a recalled
-            // memory as helpful). At that point, iterate over pairs in `episodic_ids`
-            // and call `record_link_feedback(&conn, a, b, success)` for each pair.
-            // No feedback UI or WAL event of that kind exists today, so the wire is
-            // deferred. The function and the adjusted `associated()` ranking are
-            // already live and will engage as soon as feedback is emitted.
+            // GOLD-ADAPT-JV-MEM-08 — record positive feedback for every pair that
+            // was co-recalled and returned to the operator. Surfacing results together
+            // is a downstream usage signal: each pair that made it into the top-K
+            // proved useful enough to show, so increment `feedback_success`.
+            // Best-effort: a failure here must never fail or re-rank the recall.
+            reinforce_link_feedback(&conn, &episodic_ids);
         }
     }
     append_assoc_facts(&db_path, &episodic_ids, args.output);
 
     Ok(())
+}
+
+/// GOLD-ADAPT-JV-MEM-08 — record positive `feedback_success` for every
+/// unordered pair in `recalled_ids`.
+///
+/// Called immediately after `reinforce_co_access` in the main recall path:
+/// returning a result set to the operator is the downstream usage signal that
+/// the pair proved useful.  Only increments counters on **existing** link rows
+/// (links are always created by `reinforce_co_access` first); a missing row is
+/// silently skipped.  All errors are suppressed — this must never fail or
+/// re-rank the recall output.
+fn reinforce_link_feedback(conn: &rusqlite::Connection, recalled_ids: &[i64]) {
+    if recalled_ids.len() < 2 {
+        return;
+    }
+    for i in 0..recalled_ids.len() {
+        for j in (i + 1)..recalled_ids.len() {
+            let a = recalled_ids[i];
+            let b = recalled_ids[j];
+            if a == b {
+                continue;
+            }
+            if let Err(e) =
+                crate::memory::assoc_graph::record_link_feedback(conn, a, b, true)
+            {
+                tracing::debug!(
+                    error = %e,
+                    a_id = a,
+                    b_id = b,
+                    "assoc_graph: record_link_feedback failed (non-fatal)"
+                );
+            }
+        }
+    }
 }
 
 /// GOLD-ADAPT-MEM-07 Stage-4 — additive: append the 1-hop co-access
@@ -2489,5 +2523,95 @@ mod tests {
             out.contradictions.is_empty(),
             "a 'dismissed' contradiction must NOT surface (pending-only gate)"
         );
+    }
+
+    // ── GR-RESID-F35: reinforce_link_feedback production caller ─────────────
+
+    /// `reinforce_link_feedback` fires for every pair in the recalled set and
+    /// increments `feedback_success` on each existing link row.
+    ///
+    /// Verifies:
+    /// - All C(n,2) pairs receive +1 on `feedback_success`.
+    /// - `feedback_failure` is untouched.
+    /// - A second call accumulates (not idempotent on purpose — each recall is
+    ///   an independent positive signal).
+    #[test]
+    fn reinforce_link_feedback_increments_success_for_all_pairs() {
+        use crate::memory::{assoc_graph, store};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = store::open(&db).unwrap();
+
+        // Create links for a 3-element recalled set {10, 20, 30} — three pairs.
+        let ids = &[10i64, 20, 30];
+        assoc_graph::reinforce_co_access(&conn, ids, 0).unwrap();
+
+        // Verify links exist but counters start at zero.
+        for &(lo, hi) in &[(10i64, 20i64), (10, 30), (20, 30)] {
+            let (succ, fail): (i64, i64) = conn
+                .query_row(
+                    "SELECT feedback_success, feedback_failure \
+                     FROM idx_memory_links WHERE lo_id = ?1 AND hi_id = ?2",
+                    rusqlite::params![lo, hi],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap_or((0, 0));
+            assert_eq!(succ, 0, "pair ({lo},{hi}): feedback_success starts at 0");
+            assert_eq!(fail, 0, "pair ({lo},{hi}): feedback_failure starts at 0");
+        }
+
+        // Fire the production caller once.
+        reinforce_link_feedback(&conn, ids);
+
+        // Every pair must have feedback_success == 1, failure == 0.
+        for &(lo, hi) in &[(10i64, 20i64), (10, 30), (20, 30)] {
+            let (succ, fail): (i64, i64) = conn
+                .query_row(
+                    "SELECT feedback_success, feedback_failure \
+                     FROM idx_memory_links WHERE lo_id = ?1 AND hi_id = ?2",
+                    rusqlite::params![lo, hi],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                succ, 1,
+                "pair ({lo},{hi}): feedback_success must be 1 after one recall"
+            );
+            assert_eq!(
+                fail, 0,
+                "pair ({lo},{hi}): feedback_failure must remain 0"
+            );
+        }
+
+        // A second call accumulates — each recall is an independent positive signal.
+        reinforce_link_feedback(&conn, ids);
+        let succ: i64 = conn
+            .query_row(
+                "SELECT feedback_success FROM idx_memory_links WHERE lo_id = 10 AND hi_id = 20",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(succ, 2, "second call accumulates: feedback_success == 2");
+    }
+
+    /// `reinforce_link_feedback` silently skips a missing link (no panic, no
+    /// error). The pair (100, 200) was never created by `reinforce_co_access`.
+    #[test]
+    fn reinforce_link_feedback_skips_missing_link_silently() {
+        use crate::memory::store;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = store::open(&db).unwrap();
+
+        // No links exist — must not panic.
+        reinforce_link_feedback(&conn, &[100, 200]);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "no link created by feedback alone");
     }
 }
