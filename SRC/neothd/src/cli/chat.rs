@@ -839,9 +839,9 @@ async fn dispatch_provider(
     // block. Idempotent — re-entry from council debate
     // doesn't double-inject. Per
     // `PLAN/QUELLEN_ADOPT_karpathy_2026-05-21.md`.
-    let merged_system = Some(
+    let merged_system = Some(crate::cli::clarify_chat::augment_system(
         crate::providers::context_guards::apply_code_discipline_preamble(final_system.as_deref()),
-    );
+    ));
     let req = Request {
         prompt: final_prompt.clone(),
         system: merged_system.clone(),
@@ -1356,9 +1356,30 @@ async fn dispatch_provider(
                         completion.output_tokens,
                         elapsed_ms,
                     );
-                    println!("{}", completion.text);
+                    // GOLD-ADAPT-HERMES-03 — mid-run clarification (opt-in,
+                    // TTY-only). If the reply carries an ambiguity marker the
+                    // gate parks, asks the operator, and re-issues with the
+                    // answer. `None` (default / non-ambiguous / non-TTY) prints
+                    // the reply unchanged.
+                    let final_text = match crate::cli::clarify_chat::maybe_clarify(
+                        provider,
+                        &final_prompt,
+                        merged_system.as_deref(),
+                        &completion.text,
+                    )
+                    .await
+                    {
+                        Some(resolved) => {
+                            println!("{resolved}");
+                            resolved
+                        }
+                        None => {
+                            println!("{}", completion.text);
+                            completion.text
+                        }
+                    };
                     (
-                        completion.text,
+                        final_text,
                         completion.input_tokens,
                         completion.output_tokens,
                         completion.model,

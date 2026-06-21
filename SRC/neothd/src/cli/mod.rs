@@ -17,6 +17,7 @@ pub mod catalog;
 pub mod channel;
 pub mod chat;
 pub mod chat_display;
+pub mod clarify_chat;
 pub mod cloud;
 pub mod cloud_sync_task;
 /// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller cron.
