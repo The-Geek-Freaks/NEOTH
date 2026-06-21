@@ -24,6 +24,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::MonitorConfig;
+use crate::memory::scorecard::{
+    ScorecardHistory, compute_quality_scorecard, HEALTHY_THRESHOLD,
+};
 use crate::wal::{
     events::{
         EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_CHANNEL_SILENCE_ALERT,
@@ -503,6 +506,49 @@ pub async fn run_monitor_tick_live(
 
 /// Spawn the monitor cron loop. Returns `None` when `config.enabled ==
 /// false` (default) so opt-out operators carry no idle tokio task.
+// ---------------------------------------------------------------------------
+// JV-MEM-15 — quality scorecard integration
+
+/// One scorecard tick: open the store read-only, compute the 5-dim scorecard,
+/// append to history, and log. All failures are warn-logged — the main monitor
+/// loop must not be disrupted by a missing or locked store.
+pub fn run_scorecard_tick(home: &Path, now_unix: i64, history: &mut ScorecardHistory) {
+    let store_path = home.join(".neoth").join("views.db");
+    let conn = match crate::memory::store::open(&store_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "scorecard tick: cannot open memory store");
+            return;
+        }
+    };
+    match compute_quality_scorecard(&conn, now_unix, 200) {
+        Ok(sc) => {
+            let grade = sc.grade;
+            let composite = sc.composite;
+            let is_healthy = sc.is_healthy;
+            history.push(sc);
+            if is_healthy {
+                tracing::debug!(
+                    grade = grade.as_str(),
+                    composite,
+                    "memory scorecard: healthy (JV-MEM-15)",
+                );
+            } else {
+                tracing::warn!(
+                    grade = grade.as_str(),
+                    composite,
+                    threshold = HEALTHY_THRESHOLD,
+                    persistently_unhealthy = history.is_persistently_unhealthy(),
+                    "memory scorecard: below healthy threshold (JV-MEM-15)",
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "scorecard tick: query failed");
+        }
+    }
+}
+
 /// GOLD-ADOPT-27 — at monitor start, probe every channel's config-completeness
 /// and `warn!` any that are actively misconfigured (e.g. one of a required
 /// token pair). Best-effort: a missing config/creds file → no warning. The full
@@ -539,6 +585,8 @@ pub fn spawn_monitor_cron_loop(
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut crash_log_offset = 0u64;
         let mut emit_state = MonitorEmitState::default();
+        // JV-MEM-15 — 7-day scorecard history ring buffer (headless, no DB writes).
+        let mut scorecard_history = ScorecardHistory::default();
         tracing::info!(
             interval_secs = interval.as_secs(),
             min_repeat_alert_secs = config.min_repeat_alert_secs,
@@ -569,6 +617,9 @@ pub fn spawn_monitor_cron_loop(
                 }
                 Err(e) => tracing::error!(error = %e, "monitor tick failed"),
             }
+
+            // JV-MEM-15 — quality scorecard tick (best-effort; never fails the loop).
+            run_scorecard_tick(&home, crate::time::now_unix_i64(), &mut scorecard_history);
         }
     }))
 }

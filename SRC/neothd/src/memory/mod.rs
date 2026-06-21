@@ -78,6 +78,7 @@ pub mod session_search;
 /// structured [`self_wiki::SelfWiki`] the agent can query to reason about
 /// and select its own capabilities. Read-only; no I/O.
 pub mod self_wiki;
+pub mod scorecard;
 pub mod snapshot_refresh;
 pub mod source_weight;
 pub mod store;
