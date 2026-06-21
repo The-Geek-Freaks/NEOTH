@@ -257,8 +257,15 @@ pub fn get_neighbors(conn: &Connection, name: &str, max_depth: u32) -> Result<Ve
 /// Returns `(entities_deleted, relations_deleted)`.
 pub fn forget_entities_like(conn: &Connection, like_pattern: &str) -> Result<(i64, i64)> {
     let victim_ids: Vec<i64> = {
-        let mut stmt = conn
-            .prepare("SELECT id FROM idx_entities WHERE name COLLATE NOCASE LIKE ?1 ESCAPE '\\'")?;
+        // GDPR (F68): match the topic in BOTH the entity name AND its attribute
+        // values — a topic stored only as an attribute value (e.g. an entity
+        // "Alice" with attributes {"employer":"AcmeCorp"}) must also be erased,
+        // mirroring idx_profile's `field … OR value_json …` match in forget.rs.
+        let mut stmt = conn.prepare(
+            "SELECT id FROM idx_entities \
+             WHERE name COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                OR attributes COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        )?;
         let rows = stmt.query_map(params![like_pattern], |r| r.get::<_, i64>(0))?;
         rows.filter_map(|r| r.ok()).collect()
     };
@@ -580,6 +587,27 @@ mod tests {
         assert!(
             resolve_entity_id(&c, "Bob").unwrap().is_some(),
             "Bob survives"
+        );
+    }
+
+    #[test]
+    fn forget_matches_topic_in_attribute_value_not_just_name() {
+        // F68 (GDPR): a topic stored only as an ATTRIBUTE value must also be
+        // erased — name "Alice" doesn't contain the topic, the employer does.
+        let (_d, c) = conn();
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert("employer".to_string(), "AcmeCorp".to_string());
+        resolve_or_create_entity_with_attrs(&c, "Alice", "person", &attrs, 1).unwrap();
+        resolve_or_create_entity(&c, "Bob", "person", 1).unwrap(); // bystander, no match
+        let (ents, _rels) = forget_entities_like(&c, "%AcmeCorp%").unwrap();
+        assert_eq!(ents, 1, "entity matched via attribute value, not name");
+        assert!(
+            resolve_entity_id(&c, "Alice").unwrap().is_none(),
+            "Alice erased via her AcmeCorp attribute"
+        );
+        assert!(
+            resolve_entity_id(&c, "Bob").unwrap().is_some(),
+            "unrelated entity survives"
         );
     }
 

@@ -240,6 +240,36 @@ pub fn record_interaction(home: &Path, ix: &Interaction<'_>, now_unix: u64) -> R
     save_people(home, &people)
 }
 
+/// GDPR (D4) — remove every [`PersonStat`] whose `display` name contains
+/// `topic` (case-insensitive). Held under [`PEOPLE_LOCK`] across
+/// load→filter→save for atomicity. Returns the number of rows removed. A
+/// missing / unreadable / empty people.json returns 0 (best-effort — the file
+/// may simply not exist yet). Rows with no display name are kept: with no
+/// human-readable name they can't match the topic, and `person_key` is an
+/// opaque id, not a re-identifier.
+pub fn forget_people_by_display(home: &Path, topic: &str) -> Result<i64> {
+    let needle = topic.trim().to_lowercase();
+    if needle.is_empty() {
+        return Ok(0);
+    }
+    let _guard = PEOPLE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut people = load_people(home);
+    let before = people.rows.len();
+    people.rows.retain(|row| {
+        row.display
+            .as_deref()
+            .map(|d| !d.to_lowercase().contains(&needle))
+            .unwrap_or(true)
+    });
+    let removed = (before - people.rows.len()) as i64;
+    if removed > 0 {
+        save_people(home, &people)?;
+    }
+    Ok(removed)
+}
+
 /// Exponential recency factor in `[0, 1]`: `1.0` at `last_seen == now`,
 /// halving every [`RECENCY_HALFLIFE_DAYS`].
 fn recency_factor(last_seen_unix: u64, now_unix: u64) -> f32 {
@@ -628,6 +658,47 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         save_people(dir.path(), &People::default()).unwrap();
         assert!(!people_path(dir.path()).with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn forget_people_by_display_removes_matching_names_only() {
+        // D4 (GDPR): wipe rows whose display name contains the topic
+        // (case-insensitive); leave the rest; never wipe everything on empty.
+        let dir = tempfile::tempdir().unwrap();
+        let people = People {
+            schema_version: PEOPLE_SCHEMA_VERSION,
+            rows: vec![
+                PersonStat {
+                    person_key: "1".into(),
+                    channel: "telegram".into(),
+                    display: Some("Alice AcmeCorp".into()),
+                    interaction_count: 1.0,
+                    reply_to_bot_count: 0.0,
+                    msg_len_total: 10.0,
+                    last_seen_unix: 1,
+                    decay_anchor_unix: 1,
+                },
+                PersonStat {
+                    person_key: "2".into(),
+                    channel: "telegram".into(),
+                    display: Some("Bob".into()),
+                    interaction_count: 1.0,
+                    reply_to_bot_count: 0.0,
+                    msg_len_total: 10.0,
+                    last_seen_unix: 1,
+                    decay_anchor_unix: 1,
+                },
+            ],
+        };
+        save_people(dir.path(), &people).unwrap();
+        assert_eq!(forget_people_by_display(dir.path(), "acmecorp").unwrap(), 1);
+        let after = load_people(dir.path());
+        assert_eq!(after.rows.len(), 1);
+        assert_eq!(after.rows[0].display.as_deref(), Some("Bob"));
+        assert_eq!(forget_people_by_display(dir.path(), "nobody").unwrap(), 0);
+        // empty/blank topic must never wipe the store
+        assert_eq!(forget_people_by_display(dir.path(), "   ").unwrap(), 0);
+        assert_eq!(load_people(dir.path()).rows.len(), 1);
     }
 
     #[test]

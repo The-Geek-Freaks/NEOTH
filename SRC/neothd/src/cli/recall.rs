@@ -737,6 +737,14 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             {
                 tracing::debug!(error = %e, "assoc_graph: co-access reinforce failed (non-fatal)");
             }
+            // neoth: GOLD-ADAPT-JV-MEM-08 — call `assoc_graph::record_link_feedback`
+            // here once a recall-outcome signal exists (e.g. operator thumbs-up/down,
+            // a downstream usage event, or a reinforcement loop that marks a recalled
+            // memory as helpful). At that point, iterate over pairs in `episodic_ids`
+            // and call `record_link_feedback(&conn, a, b, success)` for each pair.
+            // No feedback UI or WAL event of that kind exists today, so the wire is
+            // deferred. The function and the adjusted `associated()` ranking are
+            // already live and will engage as soon as feedback is emitted.
         }
     }
     append_assoc_facts(&db_path, &episodic_ids, args.output);

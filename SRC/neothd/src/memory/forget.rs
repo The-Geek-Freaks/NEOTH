@@ -79,6 +79,13 @@ pub struct ForgetReport {
     /// contradicted fact B).
     #[serde(default)]
     pub contradiction_rows: i64,
+    /// D4 (GDPR) — People-scorer entries wiped from `~/.neoth/people.json`
+    /// whose display name matches the forgotten topic. people.json is an
+    /// operator-visible store (`neoth memory --people`) that the SQLite-only
+    /// forget cascade previously never touched (the forget doc claimed "all
+    /// operator-visible paths read from SQLite" — people.json is the exception).
+    #[serde(default)]
+    pub people_rows: i64,
     pub topic: String,
 }
 
@@ -96,6 +103,7 @@ impl ForgetReport {
             + self.relation_rows
             + self.link_rows
             + self.contradiction_rows
+            + self.people_rows
     }
 }
 
@@ -268,6 +276,20 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         link_rows += crate::memory::assoc_graph::forget_links_for_event(conn, *eid)?;
     }
 
+    // D4 (GDPR) — cascade into the operator-visible people-scorer store
+    // (`~/.neoth/people.json`). The people-home is the directory the conn's
+    // views.db lives in (both sit in ~/.neoth/). Match on the human-readable
+    // display name (person_key is opaque). Non-fatal: an in-memory conn or a
+    // missing file → 0.
+    let people_rows = match conn
+        .path()
+        .map(std::path::Path::new)
+        .and_then(|p| p.parent())
+    {
+        Some(home) => crate::memory::people::forget_people_by_display(home, topic).unwrap_or(0),
+        None => 0,
+    };
+
     Ok(ForgetReport {
         episode_rows,
         consolidated_rows,
@@ -281,6 +303,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         relation_rows,
         link_rows,
         contradiction_rows,
+        people_rows,
         topic: topic.to_string(),
     })
 }
@@ -356,18 +379,20 @@ pub async fn forget_by_topic_with_audit(
     writer: &crate::wal::writer::WalWriterHandle,
 ) -> Result<ForgetReport> {
     let report = forget_by_topic(conn, topic, now_unix)?;
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "topic": report.topic,
-        "episode_rows": report.episode_rows,
-        "consolidated_rows": report.consolidated_rows,
-        "longterm_rows": report.longterm_rows,
-        "groundtruth_revoked": report.groundtruth_revoked,
-        "embedding_rows": report.embedding_rows,
-        "profile_rows": report.profile_rows,
-        "ts_unix": now_unix,
-        "source": source,
-    }))
-    .context("serialize TOMBSTONE_REQUESTED payload")?;
+    // F67 — serialize the WHOLE ForgetReport so the tombstone audit frame
+    // proves erasure across EVERY counted category (the old hand-built payload
+    // listed only 6 of the 12 — profile_pending/outbox, entity, relation, link,
+    // contradiction, people were omitted, understating the erasure scope). The
+    // report derives serde::Serialize, so any future field is captured too.
+    let payload = {
+        let mut v = serde_json::to_value(&report).context("serialize ForgetReport")?;
+        let obj = v
+            .as_object_mut()
+            .expect("ForgetReport serializes to a JSON object");
+        obj.insert("ts_unix".into(), serde_json::json!(now_unix));
+        obj.insert("source".into(), serde_json::json!(source));
+        serde_json::to_vec(&v).context("serialize TOMBSTONE_REQUESTED payload")?
+    };
     let header = crate::wal::HeaderBuilder::new(
         crate::wal::events::EVENT_TYPE_TOMBSTONE_REQUESTED,
         &payload,
@@ -510,6 +535,64 @@ mod tests {
         embeddings::upsert(&conn, "image", "AcmeCorp-logo.png", "clip", &v).unwrap();
         embeddings::upsert(&conn, "image", "vacation.png", "clip", &v).unwrap();
         conn
+    }
+
+    #[test]
+    fn forget_report_audit_payload_covers_every_category() {
+        // F67 — the tombstone audit frame serializes the WHOLE ForgetReport, so
+        // every counted category is provable (the old hand-built payload listed
+        // only 6 of 12). This guards the payload-completeness contract.
+        let report = ForgetReport {
+            people_rows: 3,
+            contradiction_rows: 1,
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        let obj = v.as_object().unwrap();
+        for k in [
+            "episode_rows",
+            "consolidated_rows",
+            "longterm_rows",
+            "groundtruth_revoked",
+            "embedding_rows",
+            "profile_rows",
+            "profile_pending_rows",
+            "profile_outbox_rows",
+            "entity_rows",
+            "relation_rows",
+            "link_rows",
+            "contradiction_rows",
+            "people_rows",
+            "topic",
+        ] {
+            assert!(obj.contains_key(k), "audit payload missing category: {k}");
+        }
+        assert_eq!(obj["people_rows"], 3);
+    }
+
+    #[test]
+    fn forget_by_topic_cascades_into_people_json() {
+        // D4 (GDPR) — forget cascades into ~/.neoth/people.json (next to the
+        // conn's views.db, resolved via conn.path().parent()).
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        let people = crate::memory::people::People {
+            schema_version: crate::memory::people::PEOPLE_SCHEMA_VERSION,
+            rows: vec![crate::memory::people::PersonStat {
+                person_key: "k".into(),
+                channel: "telegram".into(),
+                display: Some("Alice AcmeCorp".into()),
+                interaction_count: 1.0,
+                reply_to_bot_count: 0.0,
+                msg_len_total: 10.0,
+                last_seen_unix: 1,
+                decay_anchor_unix: 1,
+            }],
+        };
+        crate::memory::people::save_people(dir.path(), &people).unwrap();
+        let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
+        assert_eq!(report.people_rows, 1, "people.json row erased via the cascade");
+        assert!(crate::memory::people::load_people(dir.path()).rows.is_empty());
     }
 
     #[test]
