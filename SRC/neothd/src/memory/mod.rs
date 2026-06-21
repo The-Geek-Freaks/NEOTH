@@ -73,6 +73,11 @@ pub mod routing_weights;
 /// codex / gemini → ground-truth candidates). `neoth import session`.
 pub mod session_import;
 pub mod session_search;
+/// GOLD-ADAPT-JV-MODE-03 — Self-capability awareness map. Indexes every
+/// bundled skill, daemon cron, CLI command, and slash command into a
+/// structured [`self_wiki::SelfWiki`] the agent can query to reason about
+/// and select its own capabilities. Read-only; no I/O.
+pub mod self_wiki;
 pub mod snapshot_refresh;
 pub mod source_weight;
 pub mod store;
