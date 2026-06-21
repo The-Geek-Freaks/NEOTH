@@ -842,6 +842,22 @@ pub fn read_pending(stage_dir: &Path) -> Option<PendingUpdate> {
 /// recorded `pending.json` could all have been touched on disk after staging,
 /// so neither the recorded `signature_status` nor a stale check is trusted.
 /// Returns the same [`UpdateApplied`] envelope a fresh `apply_update` would.
+/// F55 — a tamper-suspect failure of the staged fast-path: the staged
+/// artifact's minisign signature or SHA-256 did not verify at apply time.
+/// Distinct from an I/O error so the caller can REFUSE (clear the artifact +
+/// audit) instead of silently downloading a fresh copy. `?` converts it into
+/// `anyhow::Error`; the caller recovers the class via `downcast_ref`.
+#[derive(Debug)]
+pub struct IntegrityViolation(pub String);
+
+impl std::fmt::Display for IntegrityViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for IntegrityViolation {}
+
 pub fn apply_from_staged(
     pending: &PendingUpdate,
     install_dir: &Path,
@@ -869,8 +885,19 @@ pub fn apply_from_staged(
         signature_text.as_deref(),
         require_signature,
     )
-    .context("staged self-update signature gate (apply time)")?;
-    // Re-verify integrity (SHA-256) against the recorded hash before any swap.
+    .map_err(|e| {
+        IntegrityViolation(format!(
+            "staged self-update signature gate (apply time): {e:#}"
+        ))
+    })?;
+    // F55 — re-verify integrity (SHA-256) against the recorded hash BEFORE any
+    // swap, mapped to the typed `IntegrityViolation` so the caller can tell a
+    // tamper-suspect failure apart from a benign I/O error and REFUSE (clear +
+    // audit) rather than silently downloading a fresh copy. `apply_downloaded`
+    // re-checks internally too (defence in depth); this typed pre-check fires
+    // first so the failure is classifiable.
+    verify_sha256_bytes(&bytes, &pending.archive_sha256)
+        .map_err(|e| IntegrityViolation(format!("staged sha256 verify failed: {e:#}")))?;
     let companion_text = format!("{}  staged\n", pending.archive_sha256);
     let format = archive_format_for_target(&pending.target_triple);
     // `neothd` is the on-disk binary + the archive member basename (Cargo
@@ -1401,6 +1428,12 @@ mod tests {
             format!("{err:#}").contains("sha256 mismatch"),
             "tampered staged archive must fail SHA re-check: {err:#}"
         );
+        // F55 — must surface as a typed IntegrityViolation so the caller REFUSES
+        // (clear + 0xDE audit) instead of silently falling back to a download.
+        assert!(
+            err.downcast_ref::<IntegrityViolation>().is_some(),
+            "tamper must be a typed IntegrityViolation: {err:#}"
+        );
     }
 
     #[tokio::test]
@@ -1441,6 +1474,11 @@ mod tests {
         assert!(
             format!("{err:#}").contains("signature gate") || format!("{err:#}").contains("pinned"),
             "a required-but-unverifiable staged apply must be refused: {err:#}"
+        );
+        // F55 — typed so the caller refuses (no silent fresh-download fallback).
+        assert!(
+            err.downcast_ref::<IntegrityViolation>().is_some(),
+            "required-but-unverifiable staged apply must be a typed IntegrityViolation: {err:#}"
         );
         // The on-disk binary must be UNTOUCHED — no swap happened.
         assert_eq!(

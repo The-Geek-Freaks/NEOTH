@@ -192,7 +192,34 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
                         return Ok(());
                     }
                     Err(e) => {
-                        warn!(error = %e, "staged apply failed; falling back to fresh download");
+                        if e.downcast_ref::<crate::updater::self_update::IntegrityViolation>()
+                            .is_some()
+                        {
+                            // F55 — the staged artifact failed signature/SHA-256
+                            // re-verification at apply time: tamper-suspect (the
+                            // stage dir is operator-writable). Clear it, audit the
+                            // rejection (0xDE), and REFUSE — do NOT silently fall
+                            // back to a fresh download as if it were an I/O blip.
+                            warn!(
+                                error = %format!("{e:#}"),
+                                "staged self-update FAILED integrity/signature re-verification — refusing (tamper-suspect)"
+                            );
+                            crate::updater::self_update::clear_staged(&stage_dir, &pending);
+                            emit_self_update_rejected(
+                                repo,
+                                &pending,
+                                &format!("{e:#}"),
+                                "manual_from_staged",
+                            )
+                            .await;
+                            return Err(e.context(
+                                "staged self-update failed integrity verification — refusing to apply a tamper-suspect artifact",
+                            ));
+                        }
+                        // Non-security failure (I/O / extraction): clear the broken
+                        // stage and fall back to a fresh download.
+                        warn!(error = %e, "staged apply failed (non-security); clearing stage and falling back to fresh download");
+                        crate::updater::self_update::clear_staged(&stage_dir, &pending);
                     }
                 }
             }
@@ -348,6 +375,65 @@ async fn emit_self_update_applied(
     .build();
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(error = %e, "SELF_UPDATE_APPLIED WAL emit failed (non-fatal)");
+    }
+    drop(writer);
+    let _ = join.await;
+}
+
+/// F55 — audit a tamper-suspect staged-apply rejection (0xDE). Mirrors
+/// [`emit_self_update_applied`]'s daemon-RPC-then-direct-WAL plumbing; the
+/// payload carries the integrity-violation `reason` (message only, never binary
+/// bytes) so the audit chain shows WHY the staged artifact was refused.
+async fn emit_self_update_rejected(
+    repo: &str,
+    pending: &crate::updater::self_update::PendingUpdate,
+    reason: &str,
+    trigger_source: &str,
+) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "to_version": pending.to_version,
+        "repo": repo,
+        "target_triple": pending.target_triple,
+        "archive_sha256": pending.archive_sha256,
+        "reason": reason,
+        "trigger_source": trigger_source,
+        "ts_unix": now_unix_secs(),
+    }))
+    .unwrap_or_default();
+    if let Ok(Some(_pid)) =
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
+    {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+            &home,
+            crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED,
+            &payload,
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "0xDE audit forward skipped (daemon listener unreachable)");
+        }
+        return;
+    }
+    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+    if std::fs::create_dir_all(&wal_dir).is_err() {
+        return;
+    }
+    let seg = wal_dir.join("000001.wal");
+    let (writer, join) = match crate::wal::writer::spawn(seg) {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::warn!(error = %e, "SELF_UPDATE_REJECTED WAL writer spawn failed (non-fatal)");
+            return;
+        }
+    };
+    let header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED,
+        &payload,
+    )
+    .build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "SELF_UPDATE_REJECTED WAL emit failed (non-fatal)");
     }
     drop(writer);
     let _ = join.await;

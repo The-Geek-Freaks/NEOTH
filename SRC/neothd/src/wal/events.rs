@@ -1626,6 +1626,18 @@ pub const EVENT_TYPE_CONSENT_REVOKED: u8 = 0xDC;
 /// `{previous, source, ts_unix}`.
 pub const EVENT_TYPE_SUDOMODE_PRESET_APPLIED: u8 = 0xDD;
 
+/// `0xDE SELF_UPDATE_REJECTED` — F55. The tamper-suspect companion to
+/// `0xD2 SELF_UPDATE_APPLIED`: emitted when the staged fast-path
+/// (`apply_from_staged`) refuses a staged artifact because its minisign
+/// signature or SHA-256 failed to RE-verify at apply time. The artifact is a
+/// tamper-suspect (anyone who can write the stage dir controls it), so the
+/// apply is refused — NOT silently retried via a fresh download — the staged
+/// file is cleared, and this anchor records the security event.
+///
+/// Payload (JSON): `{to_version, repo, target_triple, reason, trigger_source,
+/// ts_unix}`. `reason` is the integrity-violation message (no binary bytes).
+pub const EVENT_TYPE_SELF_UPDATE_REJECTED: u8 = 0xDE;
+
 // ---- 0xE0..=0xEF  Cluster lifecycle (R-7, Session 19; 0xE0..=0xEA assigned) ----
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
@@ -2466,6 +2478,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_CONSENT_REVOKED < 0xD0 || EVENT_TYPE_CONSENT_REVOKED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_SUDOMODE_PRESET_APPLIED < 0xD0
         || EVENT_TYPE_SUDOMODE_PRESET_APPLIED > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_SELF_UPDATE_REJECTED < 0xD0
+        || EVENT_TYPE_SELF_UPDATE_REJECTED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xEF).
     // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
     // (0xEB..=0xEF) share one declared band. Every assertion uses the full
@@ -2770,6 +2784,7 @@ mod tests {
                 "SUDOMODE_PRESET_APPLIED",
                 EVENT_TYPE_SUDOMODE_PRESET_APPLIED,
             ),
+            ("SELF_UPDATE_REJECTED", EVENT_TYPE_SELF_UPDATE_REJECTED),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",
