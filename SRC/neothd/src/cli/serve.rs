@@ -1010,11 +1010,23 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     ) == crate::cluster::policy::ClusterTransport::Iroh
         && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_some()
     {
+        // GR-RESID-IROH (D3/F19/F56): thread the cluster_key (peer-auth proof),
+        // the daemon WAL writer (gossip audit), and ONE shared GossipState into
+        // both the inbound handler and the outbound broadcast.
+        let activation = crate::cluster::identity::cluster_transport_activation(&config, &creds)
+            .expect("cluster_transport_activation is Some — checked in the guard above");
+        let cluster_key = Some(std::sync::Arc::new(activation.key));
+        let cluster_wal = Some(std::sync::Arc::new(writer.clone()));
         let gs = std::sync::Arc::new(std::sync::Mutex::new(
             crate::cluster::wal_sync::GossipState::new(),
         ));
         match crate::cluster::iroh_transport::IrohTransport::bind(
-            crate::cluster::iroh_transport::gossip_handler(gs),
+            crate::cluster::iroh_transport::gossip_handler(
+                std::sync::Arc::clone(&gs),
+                cluster_wal.clone(),
+            ),
+            cluster_key,
+            cluster_wal.clone(),
         )
         .await
         {
@@ -1033,9 +1045,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 }
                 // Outbound gossip broadcast tick (WAL tail → peers, dial-by-key).
                 // Detached: daemon-lifetime; process exit reaps it.
+                // F56 — derive self_id from the REAL iroh transport identity
+                // (node id) instead of a throwaway per-process uuid, and share
+                // the SAME GossipState with the inbound handler so the vector
+                // clock + dedup frontier converge across send + receive.
+                let self_id = crate::cluster::PeerPubkey::new(t.node_id());
                 let _broadcast = crate::cluster::iroh_transport::spawn_gossip_broadcast(
                     std::sync::Arc::clone(&t),
                     segment_path.clone(),
+                    std::sync::Arc::clone(&gs),
+                    self_id,
                 );
                 info!(
                     node = %t.node_id(),

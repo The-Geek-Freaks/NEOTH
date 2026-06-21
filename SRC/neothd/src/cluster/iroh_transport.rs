@@ -34,9 +34,51 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 
+use crate::cluster::discovery::ClusterKey;
+use crate::cluster::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
+use crate::wal::events::{EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED};
+use crate::wal::writer::WalWriterHandle;
+
 /// Shared set of known peer endpoint-ids (dial keys). Learned from inbound
 /// connections + seeded from `cluster.peers` in freedom.yaml.
 pub type PeerRegistry = Arc<Mutex<HashSet<EndpointId>>>;
+
+/// D3 — length of the `cluster_key` HMAC proof carried as the Hello prefix on
+/// every authenticated gossip stream (32-byte HMAC-SHA256, see
+/// [`crate::cluster::peer_auth`]).
+const CLUSTER_PROOF_BYTES: usize = 32;
+
+/// F19 — best-effort WAL audit for an inbound gossip decision over iroh. Uses
+/// the SYNC WAL append so it works from the sync [`FrameHandler`] closure AND
+/// the async accept path, and reuses the same cluster-band codes the peeroxide
+/// path uses: `0xEE CLUSTER_GOSSIP_RECEIVED` (accepted) / `0xEF
+/// CLUSTER_GOSSIP_DROPPED` (rejected, carries the reason).
+fn emit_gossip_audit(
+    writer: &Option<Arc<WalWriterHandle>>,
+    accepted: bool,
+    verdict: &str,
+    origin: &str,
+) {
+    let Some(w) = writer else { return };
+    let event_type = if accepted {
+        EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED
+    } else {
+        EVENT_TYPE_CLUSTER_GOSSIP_DROPPED
+    };
+    let payload = serde_json::json!({
+        "accepted": accepted,
+        "verdict": verdict,
+        "origin": origin,
+        "transport": "iroh",
+        "ts_unix": crate::time::now_unix_i64(),
+    })
+    .to_string()
+    .into_bytes();
+    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+    if let Err(e) = w.try_append_sync(header, payload) {
+        tracing::debug!(error = %e, "iroh gossip audit append failed");
+    }
+}
 
 /// ALPN for NEOTH cluster gossip. Both ends must present the same bytestring or
 /// iroh aborts the handshake — a cheap protocol/version guard.
@@ -55,6 +97,14 @@ pub type FrameHandler = Arc<dyn Fn(Vec<u8>) -> Vec<u8> + Send + Sync>;
 struct GossipProtocol {
     handler: FrameHandler,
     peers: PeerRegistry,
+    /// D3 — when present, every inbound connection must present a valid
+    /// `cluster_key` HMAC proof (Hello prefix) before its frame reaches the
+    /// handler. `None` keeps the legacy unauthenticated path (no key configured).
+    cluster_key: Option<Arc<ClusterKey>>,
+    /// Our own endpoint id — the proof's verifier half.
+    our_id: EndpointId,
+    /// D3 reject-audit sink (gossip-dropped frames for the peer-auth path).
+    writer: Option<Arc<WalWriterHandle>>,
 }
 
 // `ProtocolHandler` requires `Debug`, but `FrameHandler` (a boxed closure) can't
@@ -67,19 +117,57 @@ impl std::fmt::Debug for GossipProtocol {
 
 impl ProtocolHandler for GossipProtocol {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        // EndpointAddr exchange: learn this peer's dial key from the inbound
-        // connection so we can gossip BACK to it (outbound broadcast).
-        self.peers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(connection.remote_id());
+        let peer_id = connection.remote_id();
         // One inbound bi-stream per connection = one gossip request/response.
         let (mut send, mut recv) = connection.accept_bi().await?;
         let request = recv
             .read_to_end(MAX_FRAME_BYTES)
             .await
             .map_err(AcceptError::from_err)?;
-        let reply = (self.handler)(request);
+
+        // D3 — cluster_key Hello proof. When a key is configured the first
+        // CLUSTER_PROOF_BYTES of the stream are the peer's HMAC proof and the
+        // gossip frame follows. A peer that can reach the ALPN but can't prove
+        // cluster membership is dropped BEFORE add_peer / before its frame is
+        // evaluated — parity with the peeroxide Hello gate. (iroh's QUIC channel
+        // already authenticates the peer's EndpointId at the transport level; the
+        // proof binds that id to our shared cluster_key, closing the
+        // authorization gap.)
+        let frame: Vec<u8> = match &self.cluster_key {
+            Some(key) => {
+                if request.len() < CLUSTER_PROOF_BYTES {
+                    emit_gossip_audit(
+                        &self.writer,
+                        false,
+                        "peer_auth_missing_proof",
+                        &peer_id.to_string(),
+                    );
+                    return Ok(()); // reject: too short to carry a proof
+                }
+                let (proof, frame) = request.split_at(CLUSTER_PROOF_BYTES);
+                let claimed: [u8; 32] =
+                    proof.try_into().expect("split_at(32) yields exactly 32 bytes");
+                if !verify_peer_proof(key, &claimed, peer_id.as_bytes(), self.our_id.as_bytes()) {
+                    emit_gossip_audit(
+                        &self.writer,
+                        false,
+                        "peer_auth_failed",
+                        &peer_id.to_string(),
+                    );
+                    return Ok(()); // reject: not a proven cluster member
+                }
+                frame.to_vec()
+            }
+            None => request, // legacy: no key configured → no proof expected
+        };
+
+        // Proof OK (or no key configured) → learn this peer's dial key so we can
+        // gossip BACK to it (outbound broadcast).
+        self.peers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(peer_id);
+        let reply = (self.handler)(frame);
         send.write_all(&reply)
             .await
             .map_err(AcceptError::from_err)?;
@@ -95,29 +183,48 @@ impl ProtocolHandler for GossipProtocol {
 pub struct IrohTransport {
     router: Router,
     peers: PeerRegistry,
+    /// D3 — our cluster_key. The dial side prepends a Hello proof when present
+    /// so a peeroxide-parity authorization handshake runs on every send.
+    cluster_key: Option<Arc<ClusterKey>>,
 }
 
 impl IrohTransport {
     /// Bind an endpoint (with iroh's N0 relay/discovery preset) and start
     /// accepting NEOTH cluster connections. Resolves once the endpoint is
     /// online (has a reachable address / relay home).
-    pub async fn bind(handler: FrameHandler) -> Result<Self> {
+    ///
+    /// `cluster_key` (D3): when `Some`, the accept path requires a valid
+    /// `cluster_key` HMAC proof on every inbound connection and the dial path
+    /// prepends ours. `writer` (F19): the gossip-decision audit sink.
+    pub async fn bind(
+        handler: FrameHandler,
+        cluster_key: Option<Arc<ClusterKey>>,
+        writer: Option<Arc<WalWriterHandle>>,
+    ) -> Result<Self> {
         let peers: PeerRegistry = Arc::new(Mutex::new(HashSet::new()));
         let endpoint = Endpoint::bind(presets::N0)
             .await
             .context("iroh: bind endpoint")?;
+        let our_id = endpoint.id();
         let router = Router::builder(endpoint)
             .accept(
                 NEOTH_CLUSTER_ALPN,
                 GossipProtocol {
                     handler,
                     peers: Arc::clone(&peers),
+                    cluster_key: cluster_key.clone(),
+                    our_id,
+                    writer,
                 },
             )
             .spawn();
         // Block until the endpoint has a path peers can reach it on.
         router.endpoint().online().await;
-        Ok(Self { router, peers })
+        Ok(Self {
+            router,
+            peers,
+            cluster_key,
+        })
     }
 
     /// Number of known peers (learned inbound + seeded).
@@ -181,6 +288,18 @@ impl IrohTransport {
             .open_bi()
             .await
             .map_err(|e| anyhow::anyhow!("iroh: open_bi: {e}"))?;
+        // D3 — prepend our cluster_key Hello proof so the acceptor can verify
+        // our membership before evaluating the frame. proof = HMAC(cluster_key,
+        // DOMAIN || our_id || peer_id) — signer-first asymmetry guards against a
+        // reflection attack (see cluster::peer_auth).
+        if let Some(key) = &self.cluster_key {
+            let our_id = self.router.endpoint().id();
+            let peer_id = conn.remote_id();
+            let proof = compute_cluster_key_proof(key, our_id.as_bytes(), peer_id.as_bytes());
+            send.write_all(&proof)
+                .await
+                .map_err(|e| anyhow::anyhow!("iroh: write proof: {e}"))?;
+        }
         send.write_all(frame)
             .await
             .map_err(|e| anyhow::anyhow!("iroh: write frame: {e}"))?;
@@ -233,6 +352,7 @@ impl IrohTransport {
 /// authenticated default carrier) until that lands.
 pub fn gossip_handler(
     state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
+    writer: Option<Arc<WalWriterHandle>>,
 ) -> FrameHandler {
     use crate::cluster::gossip::GossipPolicy;
     use crate::cluster::gossip_wire::{GossipAcceptance, GossipFrame};
@@ -244,20 +364,27 @@ pub fn gossip_handler(
         };
         let frame: GossipFrame = match serde_json::from_slice(&req) {
             Ok(f) => f,
-            Err(_) => return reply(false, "malformed"),
+            Err(_) => {
+                // F19 — a malformed inbound frame is a dropped gossip decision.
+                emit_gossip_audit(&writer, false, "malformed", "unknown");
+                return reply(false, "malformed");
+            }
         };
         // payload's own event_type = byte 2 of the inner WAL header (foreign
         // frame → read without HMAC, exactly like the peeroxide loop).
         let payload_et = frame.payload.get(2).copied();
         let now = crate::time::now_unix_i64();
+        let origin = frame.origin.as_str().to_string();
         let verdict = {
             let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
             g.accept_inbound(&frame, payload_et, &policy, now)
         };
-        reply(
-            matches!(verdict, GossipAcceptance::Accept),
-            &format!("{verdict:?}"),
-        )
+        let accepted = matches!(verdict, GossipAcceptance::Accept);
+        let verdict_str = format!("{verdict:?}");
+        // F19 — audit the inbound gossip decision (0xEE accepted / 0xEF dropped),
+        // matching the peeroxide path's WAL coverage.
+        emit_gossip_audit(&writer, accepted, &verdict_str, &origin);
+        reply(accepted, &verdict_str)
     })
 }
 
@@ -284,14 +411,13 @@ fn newest_wal_segment(dir: &std::path::Path) -> Option<std::path::PathBuf> {
 pub fn spawn_gossip_broadcast(
     transport: Arc<IrohTransport>,
     segment_path: std::path::PathBuf,
+    state: Arc<Mutex<crate::cluster::wal_sync::GossipState>>,
+    self_id: crate::cluster::PeerPubkey,
 ) -> tokio::task::JoinHandle<()> {
-    use crate::cluster::PeerPubkey;
     use crate::cluster::gossip::GossipPolicy;
-    use crate::cluster::wal_sync::{GossipState, collect_gossipable_frames};
+    use crate::cluster::wal_sync::collect_gossipable_frames;
     tokio::spawn(async move {
         let policy = GossipPolicy::default();
-        let mut state = GossipState::new();
-        let self_id = PeerPubkey::new(uuid::Uuid::now_v7().to_string());
         let wal_dir = segment_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -328,7 +454,14 @@ pub fn spawn_gossip_broadcast(
             last_offset = new_offset; // always advance (best-effort)
             for (event_type, raw) in frames {
                 let ts = crate::time::now_unix_i64();
-                if let Some(gframe) = state.build_outbound(&self_id, event_type, raw, ts, &policy) {
+                // F56 — build_outbound ticks + reads the SHARED vector clock.
+                // Scope the std Mutex guard so it drops BEFORE the broadcast
+                // await (a std guard is !Send and must never cross an await).
+                let gframe_opt = {
+                    let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
+                    g.build_outbound(&self_id, event_type, raw, ts, &policy)
+                };
+                if let Some(gframe) = gframe_opt {
                     if let Ok(wire) = serde_json::to_vec(&gframe) {
                         let _ = transport.broadcast(&wire).await;
                     }
@@ -356,8 +489,12 @@ mod tests {
             r.extend_from_slice(b"+ack");
             r
         });
-        let a = IrohTransport::bind(handler).await.expect("bind A");
-        let b = IrohTransport::bind(Arc::new(|r| r)).await.expect("bind B");
+        let a = IrohTransport::bind(handler, None, None)
+            .await
+            .expect("bind A");
+        let b = IrohTransport::bind(Arc::new(|r| r), None, None)
+            .await
+            .expect("bind B");
 
         let reply = b
             .send_frame(a.addr(), b"gossip-hello")
@@ -378,12 +515,45 @@ mod tests {
     fn gossip_handler_rejects_malformed_and_replies_json() {
         use crate::cluster::wal_sync::GossipState;
         let state = std::sync::Arc::new(std::sync::Mutex::new(GossipState::new()));
-        let handler = gossip_handler(state);
+        let handler = gossip_handler(state, None);
         // A non-GossipFrame byte blob must be rejected (decode failure), not
         // panic — and the reply is a parseable JSON verdict.
         let reply = handler(b"not a gossip frame".to_vec());
         let v: serde_json::Value = serde_json::from_slice(&reply).expect("json reply");
         assert_eq!(v["accepted"], false);
         assert_eq!(v["verdict"], "malformed");
+    }
+
+    // F19 — a rejected inbound gossip decision leaves a 0xEF CLUSTER_GOSSIP_DROPPED
+    // WAL audit frame (the gap vs the peeroxide path that GR-RESID-IROH closes).
+    #[tokio::test]
+    async fn gossip_handler_emits_dropped_audit_for_malformed_frame() {
+        use crate::cluster::wal_sync::GossipState;
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let writer = Arc::new(writer);
+        let state = Arc::new(Mutex::new(GossipState::new()));
+        let handler = gossip_handler(Arc::clone(&state), Some(Arc::clone(&writer)));
+        let reply = handler(b"not a gossip frame".to_vec());
+        let v: serde_json::Value = serde_json::from_slice(&reply).expect("json reply");
+        assert_eq!(v["accepted"], false);
+        // Release every WalWriterHandle sender (the test's + the closure's), then
+        // drain so the queued audit frame is flushed before we read the segment.
+        drop(handler);
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut dropped = 0usize;
+        let _ = crate::wal::scan::for_each_frame(&bytes, |_, d| {
+            if d.header.event_type == EVENT_TYPE_CLUSTER_GOSSIP_DROPPED {
+                dropped += 1;
+            }
+            Ok(())
+        });
+        assert_eq!(
+            dropped, 1,
+            "a malformed inbound gossip frame writes one 0xEF DROPPED audit"
+        );
     }
 }
