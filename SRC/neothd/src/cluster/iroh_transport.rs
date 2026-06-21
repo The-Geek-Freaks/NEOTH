@@ -217,10 +217,20 @@ impl IrohTransport {
 ///     OWN event_type (byte 2 of the inner WAL header), so a mistagged frame
 ///     can't smuggle a private band across.
 ///
-/// **(3) peer trust** + **(1) node capabilities** are enforced BEFORE frames
-/// reach here: iroh's QUIC channel is authenticated by EndpointId, and the
-/// caller verifies the peer's `cluster_key` HMAC proof (`cluster::peer_auth`)
-/// on the Hello before admitting gossip — exactly as the peeroxide loop does.
+/// **(1) node capabilities** are checked downstream as on the peeroxide path.
+///
+/// ⚠ **(3) peer trust — iroh path NOT yet at parity (D3).** iroh's QUIC channel
+/// authenticates the peer's `EndpointId` at the TRANSPORT level, but — unlike
+/// the peeroxide loop — the iroh accept path does NOT yet verify a `cluster_key`
+/// HMAC proof (`cluster::peer_auth`) on a Hello before admitting gossip: peers
+/// are admitted by `EndpointId` / `cluster.peers` seed only, so a remote that
+/// reaches the ALPN can have frames evaluated without proving cluster
+/// membership. The `accept_inbound` stack below still gates frame
+/// acceptance/replay/band, but membership proof is missing. The cluster_key
+/// Hello handshake (+ the WAL audit F19 + the shared `GossipState`/real
+/// `self_id` F56) is tracked in GOLD `GR-RESID-IROH`; the iroh transport stays
+/// EXPERIMENTAL (feature `cluster-iroh`, off by default; peeroxide is the
+/// authenticated default carrier) until that lands.
 pub fn gossip_handler(
     state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
 ) -> FrameHandler {
