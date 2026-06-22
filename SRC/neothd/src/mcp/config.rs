@@ -73,6 +73,13 @@ pub struct McpServerConfig {
     /// longer silently bypass confirmation for every other configured server.
     #[serde(default)]
     pub smart_approve: bool,
+    /// GOLD-ADAPT-CCS-02 — per-server minimum autonomy floor. When set, the
+    /// gate (`mcp::gate::invoke_with_audit`) denies EVERY tool on this server
+    /// unless the operator's current `FreedomConfig.autonomy` meets or exceeds
+    /// it — e.g. an SSH / remote-edit server pinned to `elevated` so it stays
+    /// inert under Strict/Standard. `None` (default) imposes no per-server floor.
+    #[serde(default)]
+    pub autonomy_gate: Option<crate::permissions::AutonomyLevel>,
 }
 
 fn default_enabled() -> bool {
@@ -271,6 +278,8 @@ pub fn cbm_recommended_config() -> McpServerConfig {
         // SmartApprove off — readOnlyHint on CBM tools handles auto-approval
         // via the F5 annotation path once the tool is in allow_tools.
         smart_approve: false,
+        // CCS-02 — these read-only rails impose no per-server autonomy floor.
+        autonomy_gate: None,
     }
 }
 
@@ -319,6 +328,8 @@ pub fn hex_graph_recommended_config() -> McpServerConfig {
         // Secure-by-default: deny anything outside allow_tools.
         trust_all_tools: false,
         smart_approve: false,
+        // CCS-02 — these read-only rails impose no per-server autonomy floor.
+        autonomy_gate: None,
     }
 }
 
@@ -361,6 +372,8 @@ pub fn hex_line_recommended_config() -> McpServerConfig {
         ]),
         trust_all_tools: false,
         smart_approve: false,
+        // CCS-02 — these read-only rails impose no per-server autonomy floor.
+        autonomy_gate: None,
     }
 }
 
@@ -405,6 +418,8 @@ pub fn hex_research_recommended_config() -> McpServerConfig {
         ]),
         trust_all_tools: false,
         smart_approve: false,
+        // CCS-02 — these read-only rails impose no per-server autonomy floor.
+        autonomy_gate: None,
     }
 }
 
@@ -470,6 +485,7 @@ servers:
                     allow_tools: None,
                     trust_all_tools: false,
                     smart_approve: false,
+                    autonomy_gate: None,
                 },
                 McpServerConfig {
                     id: "b".into(),
@@ -481,6 +497,7 @@ servers:
                     allow_tools: None,
                     trust_all_tools: false,
                     smart_approve: false,
+                    autonomy_gate: None,
                 },
             ],
         };
@@ -505,6 +522,7 @@ servers:
             allow_tools: None,
             trust_all_tools: false,
             smart_approve: false,
+            autonomy_gate: None,
         };
         let resolved = cfg.resolve_env().unwrap();
         assert_eq!(resolved.get("LOG_LEVEL").map(String::as_str), Some("info"));
@@ -529,6 +547,7 @@ servers:
             allow_tools: None,
             trust_all_tools: false,
             smart_approve: false,
+            autonomy_gate: None,
         };
         let err = cfg.resolve_env().unwrap_err();
         assert!(
@@ -551,6 +570,7 @@ servers:
                 allow_tools: None,
                 trust_all_tools: false,
                 smart_approve: false,
+                autonomy_gate: None,
             }],
         }
     }
@@ -606,6 +626,7 @@ servers:
                 allow_tools: None,
                 trust_all_tools: false,
                 smart_approve: false,
+                autonomy_gate: None,
             }],
         };
         assert_eq!(s.autoroute_decision(None), AutorouteDecision::AutoOff);

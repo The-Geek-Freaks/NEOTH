@@ -204,6 +204,15 @@ async fn run_call(
                 autonomy.as_str()
             );
         }
+        Err(GateError::AutonomyGate { required, current, .. }) => {
+            anyhow::bail!(
+                "MCP `{server_id}::{tool}` denied: this server requires autonomy ≥ {} \
+                 (current {}). Raise autonomy via `neoth init`, or clear the server's \
+                 `autonomy_gate` in ~/.neoth/mcp_servers.yaml.",
+                required.as_str(),
+                current.as_str()
+            );
+        }
         Err(GateError::ConfirmRequired { reason, .. }) => {
             anyhow::bail!(
                 "MCP `{server_id}::{tool}` requires operator confirm ({}): {reason}. \
@@ -265,6 +274,7 @@ mod tests {
                 allow_tools: None,
                 trust_all_tools: false,
                 smart_approve: false,
+                autonomy_gate: None,
             }],
         };
         run_list(&s, &OutputFormat::Json).unwrap();
@@ -293,6 +303,7 @@ mod tests {
                 allow_tools: None,
                 trust_all_tools: false,
                 smart_approve: false,
+                autonomy_gate: None,
             }],
         };
         let err = run_call(&s, "test", "echo", "this is not json", &OutputFormat::Json)

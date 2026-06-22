@@ -54,6 +54,7 @@ pub fn cua_driver_server() -> McpServerConfig {
         allow_tools: Some(COMPUTER_USE_TOOLS.iter().map(|s| s.to_string()).collect()),
         trust_all_tools: false,
         smart_approve: false,
+        autonomy_gate: None,
     }
 }
 

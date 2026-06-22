@@ -93,6 +93,16 @@ pub enum GateError {
         reason: String,
     },
 
+    /// GOLD-ADAPT-CCS-02 — the server declares a per-server `autonomy_gate`
+    /// (minimum autonomy) the operator's current level does not meet.
+    #[error("MCP `{server}::{tool}` requires autonomy ≥ {required:?} (current {current:?})")]
+    AutonomyGate {
+        server: String,
+        tool: String,
+        required: crate::permissions::AutonomyLevel,
+        current: crate::permissions::AutonomyLevel,
+    },
+
     /// Underlying transport failure (spawn / handshake / RPC / I/O).
     #[error(transparent)]
     Mcp(#[from] McpError),
@@ -247,6 +257,38 @@ pub async fn invoke_with_audit(
             server: cfg.id.clone(),
             tool: tool.to_string(),
         });
+    }
+
+    // Layer 1b — per-server autonomy gate (GOLD-ADAPT-CCS-02). A server may
+    // declare a MINIMUM autonomy level (e.g. an SSH/remote-edit server gated at
+    // Elevated). Below it, deny EVERY tool on the server outright — coarser +
+    // earlier than the per-action `evaluate` below, so an elevated-only server
+    // never reaches per-tool resolution under Strict/Standard. `None` (the
+    // default) keeps the pre-CCS-02 behaviour: no per-server floor.
+    if let Some(required) = cfg.autonomy_gate {
+        if !autonomy.meets_gate(required) {
+            if let Some(w) = writer {
+                emit_reject(
+                    w,
+                    &cfg.id,
+                    tool,
+                    &format!(
+                        "server autonomy_gate requires ≥ {} (current {})",
+                        required.as_str(),
+                        autonomy.as_str()
+                    ),
+                    now_unix,
+                )
+                .await
+                .map_err(GateError::Wal)?;
+            }
+            return Err(GateError::AutonomyGate {
+                server: cfg.id.clone(),
+                tool: tool.to_string(),
+                required,
+                current: autonomy,
+            });
+        }
     }
 
     // Layer 2 — autonomy gate.
@@ -560,7 +602,28 @@ mod tests {
             allow_tools: allow.map(|v| v.into_iter().map(String::from).collect()),
             trust_all_tools: false,
             smart_approve: false,
+            autonomy_gate: None,
         }
+    }
+
+    // ── CCS-02 per-server autonomy gate ────────────────────────────
+    // invoke_with_audit needs a live McpClient (unmockable here), so —
+    // like the other gate tests — mirror the Layer-1b predicate exactly.
+    #[test]
+    fn ccs02_autonomy_gate_predicate_blocks_below_required() {
+        use crate::permissions::AutonomyLevel::*;
+        let mut cfg = base_cfg(Some(vec!["x"]));
+        // No gate → never blocks, regardless of current level.
+        assert!(cfg.autonomy_gate.is_none());
+        // Gate at Elevated: Strict/Standard blocked; Elevated/Full pass.
+        cfg.autonomy_gate = Some(Elevated);
+        let required = cfg.autonomy_gate.unwrap();
+        assert!(!Strict.meets_gate(required));
+        assert!(!Standard.meets_gate(required));
+        assert!(Elevated.meets_gate(required));
+        assert!(Full.meets_gate(required));
+        // Custom current never implicitly satisfies an Elevated gate.
+        assert!(!Custom.meets_gate(required));
     }
 
     // ── SC-11 enforce_skill_allowlist ──────────────────────────────

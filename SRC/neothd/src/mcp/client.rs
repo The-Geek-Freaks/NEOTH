@@ -379,6 +379,7 @@ mod tests {
             allow_tools: None,
             trust_all_tools: false,
             smart_approve: false,
+            autonomy_gate: None,
         };
         let result = McpClient::spawn_with_timeout(&cfg, Duration::from_millis(200)).await;
         let err = match result {

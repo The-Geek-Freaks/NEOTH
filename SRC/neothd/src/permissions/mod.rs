@@ -266,6 +266,29 @@ impl AutonomyLevel {
             _ => None,
         }
     }
+
+    /// Monotonic rank of the four linear levels. `Custom` is unmodelled (no
+    /// override map yet) so it ranks as `Standard` — deliberately low, so a
+    /// `Custom` operator never *implicitly* satisfies an Elevated/Full gate.
+    fn rank(self) -> u8 {
+        match self {
+            Self::Strict => 0,
+            Self::Standard | Self::Custom => 1,
+            Self::Elevated => 2,
+            Self::Full => 3,
+        }
+    }
+
+    /// GOLD-ADAPT-CCS-02 — does the operator's current level satisfy a server's
+    /// `autonomy_gate` (minimum required) level? Fail-closed: a `Custom`
+    /// *required* gate is satisfied only by `Full`, since the override map that
+    /// would resolve `Custom` does not exist yet.
+    pub fn meets_gate(self, required: AutonomyLevel) -> bool {
+        if matches!(required, AutonomyLevel::Custom) {
+            return matches!(self, AutonomyLevel::Full);
+        }
+        self.rank() >= required.rank()
+    }
 }
 
 /// Per-action permission resolution. Tools receive this from `evaluate`
@@ -1480,5 +1503,31 @@ mod tests {
         let _exec: PermissionToken<Execute> = PermissionToken::mint();
         let _none: PermissionToken<NoPermission> = PermissionToken::mint();
         let _grant: FreedomGrant<Execute> = FreedomGrant::issue();
+    }
+
+    #[test]
+    fn meets_gate_respects_linear_order() {
+        use AutonomyLevel::*;
+        // A level meets its own gate and every lower one.
+        assert!(Full.meets_gate(Elevated));
+        assert!(Full.meets_gate(Strict));
+        assert!(Elevated.meets_gate(Standard));
+        assert!(Standard.meets_gate(Standard));
+        // …but never a higher one.
+        assert!(!Standard.meets_gate(Elevated));
+        assert!(!Strict.meets_gate(Standard));
+    }
+
+    #[test]
+    fn meets_gate_is_fail_closed_for_custom() {
+        use AutonomyLevel::*;
+        // Custom is unmodelled: as a CURRENT level it never satisfies an
+        // Elevated/Full gate (ranks as Standard).
+        assert!(!Custom.meets_gate(Elevated));
+        assert!(Custom.meets_gate(Standard));
+        // As a REQUIRED gate, only Full satisfies it (override map absent).
+        assert!(Full.meets_gate(Custom));
+        assert!(!Elevated.meets_gate(Custom));
+        assert!(!Custom.meets_gate(Custom));
     }
 }
