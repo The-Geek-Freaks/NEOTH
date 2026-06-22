@@ -50,6 +50,10 @@ pub mod stt_dispatch;
 /// results. Wire into the STT post-processing path when embeddings are
 /// available (`media.auto_speaker_labels: true`).
 pub mod speaker_profile;
+/// SPEAKR-02c — self-contained log-mel + statistics-pooling speaker-embedding
+/// encoder. Fills the `utterance_embeddings` seam: PCM → unit-norm voice vector
+/// consumed by `speaker_profile`. No model download, no external weights.
+pub mod speaker_encoder;
 /// HANDY-03 — filler-word removal + stutter collapse for raw STT transcripts.
 /// Called as a post-processing hook before transcript text leaves the pipeline.
 pub mod stt_postprocess;

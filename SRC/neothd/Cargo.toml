@@ -513,6 +513,10 @@ symphonia           = { version = "0.5", default-features = false, features = ["
 # GOLD-ADAPT-HANDY-01: band-limited FFT resampler. Replaces the linear
 # interpolation in audio.rs. No system deps — pure Rust FFT (rustfft inside).
 rubato              = "0.16"
+# GOLD-ADAPT-SPEAKR-02c: real-input FFT for the speaker-embedding front-end
+# (log-mel spectrogram). Already in the tree transitively via rubato; promoted
+# to a direct dep. Pure Rust, no system deps.
+realfft             = "3"
 # GOLD-ADAPT-HANDY-03: STT post-processing — fuzzy custom-word correction.
 # strsim: Levenshtein + other string metrics; natural: Soundex phonetics.
 # Both are pure Rust with no system deps.

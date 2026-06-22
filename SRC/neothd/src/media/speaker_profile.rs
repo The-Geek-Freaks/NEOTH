@@ -45,6 +45,13 @@ const AMBIGUITY_MARGIN: f32 = 0.05;
 /// zero-norm.
 const NORM_EPSILON: f32 = 1e-8;
 
+/// Fixed embedding dimensionality emitted by [`crate::media::speaker_encoder`]
+/// (mean + std over 40 mel bands). All persisted centroids assume this width:
+/// `cosine_similarity` returns 0.0 on a length mismatch, so **changing this
+/// silently re-labels every learned speaker as a new `SPEAKER_NN`** — bump it
+/// only alongside wiping `speaker_profiles.json`.
+pub const SPEAKER_EMBEDDING_DIM: usize = 80;
+
 /// A speaker's learned centroid + metadata.
 ///
 /// The `avg_embedding` is always unit-norm (enforced by [`ema_update`]).
