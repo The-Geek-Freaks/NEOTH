@@ -171,6 +171,11 @@ pub struct FreedomConfig {
     /// running eval baselines that must not be biased by active skills.
     #[serde(default)]
     pub skills: SkillsConfig,
+    /// GOLD-FEAT-07 — moral-core injection kill-switch (`moral_core.enabled`,
+    /// default true). When false, `compact_for_injection` returns None so the
+    /// operator's authored moral core is NOT injected (without deleting the dir).
+    #[serde(default)]
+    pub moral_core: crate::config::policy::MoralCoreConfig,
     /// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller. Off by default; an
     /// operator opts in with `feeds.enabled = true` + `feeds.entries`.
     #[serde(default)]

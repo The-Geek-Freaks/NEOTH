@@ -139,6 +139,29 @@ pub struct MeetingSummaryConfig {
     pub append_mode: bool,
 }
 
+/// GOLD-FEAT-07 — moral-core injection config. The LOWKEY moral core (operator-
+/// authored value directives) is injected at enrichment position 0 on every
+/// chat + channel turn. `enabled` is the operator kill-switch: default `true`
+/// (injection ON, backward-compatible); set `false` to disable injection
+/// without deleting the moral-core directory.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MoralCoreConfig {
+    #[serde(default = "default_moral_core_enabled")]
+    pub enabled: bool,
+}
+
+fn default_moral_core_enabled() -> bool {
+    true
+}
+
+impl Default for MoralCoreConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_moral_core_enabled(),
+        }
+    }
+}
+
 fn default_skills_always_embed_route() -> bool {
     true
 }

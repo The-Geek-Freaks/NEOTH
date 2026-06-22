@@ -142,6 +142,17 @@ pub fn compact_directives(blocks: &[MoralCoreBlock]) -> String {
 /// simply skipped). Best-effort: a load error yields `None` (never breaks a
 /// turn).
 pub fn compact_for_injection() -> Option<String> {
+    // GOLD-FEAT-07 — operator kill-switch. Best-effort config read; a default or
+    // unreadable freedom.yaml keeps injection ON (backward-compatible). When
+    // `moral_core.enabled = false`, return None so neither the CLI (chat.rs) nor
+    // the channel (serve_pipeline) injection site emits the moral core — gated
+    // once here so both call sites stay untouched.
+    let enabled = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.moral_core.enabled)
+        .unwrap_or(true);
+    if !enabled {
+        return None;
+    }
     let blocks = load_moral_core(&default_dir()).unwrap_or_default();
     let compact = compact_directives(&blocks);
     if compact.is_empty() {
