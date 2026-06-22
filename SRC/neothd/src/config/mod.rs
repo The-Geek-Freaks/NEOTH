@@ -56,14 +56,14 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use automation::{
-    DEFAULT_DRIFT_ALERT_INTERVAL_SECS, DEFAULT_INACTIVITY_GAP_SECS, DEFAULT_MONITOR_INTERVAL_SECS,
-    DEFAULT_PATTERN_CRON_INTERVAL_SECS, DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
-    DEFAULT_RECALL_LATENCY_INTERVAL_SECS, DEFAULT_REGRESSION_INTERVAL_SECS,
-    DEFAULT_RESOURCE_WATCH_INTERVAL_SECS, DEFAULT_SESSION_HEALTH_INTERVAL_SECS,
-    DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS, DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig,
-    MonitorConfig, N8nApiConfig, PatternCronConfig, ProactiveConfig, ProfileAdaptConfig,
-    RecallLatencyConfig, RegressionAnchorConfig, ResourceWatchConfig, SessionHealthConfig,
-    TokenAnomalyConfig, WatchdogConfig,
+    BgMonitorConfig, DEFAULT_DRIFT_ALERT_INTERVAL_SECS, DEFAULT_INACTIVITY_GAP_SECS,
+    DEFAULT_MONITOR_INTERVAL_SECS, DEFAULT_PATTERN_CRON_INTERVAL_SECS,
+    DEFAULT_PROFILE_ADAPT_INTERVAL_SECS, DEFAULT_RECALL_LATENCY_INTERVAL_SECS,
+    DEFAULT_REGRESSION_INTERVAL_SECS, DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
+    DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
+    DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, MonitorConfig, N8nApiConfig, PatternCronConfig,
+    ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig,
+    ResourceWatchConfig, SessionHealthConfig, TokenAnomalyConfig, WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -489,6 +489,13 @@ pub struct FreedomConfig {
     /// quiet (deduped per UTC day).
     #[serde(default)]
     pub pattern_cron: PatternCronConfig,
+    /// GOLD-ADAPT-ODY-07 — background-job detach monitor. Scans
+    /// `~/.neoth/bgjobs/` every `bg_monitor.interval_secs` for completed
+    /// detached subprocess jobs and fires auto-continue callbacks. Always-on
+    /// infrastructure: default `interval_secs = 5`. Set `interval_secs: 0`
+    /// to disable entirely (no task spawns, no global registry).
+    #[serde(default)]
+    pub bg_monitor: BgMonitorConfig,
     /// SPEC-03b — per-provider HTTP-429 fallback chain. Empty (default) =
     /// no fallback, pre-SPEC-03b behaviour preserved exactly.
     #[serde(default)]

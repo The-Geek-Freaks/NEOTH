@@ -473,6 +473,53 @@ pub(crate) fn spawn_ecology_cron(
     handle
 }
 
+/// GOLD-ADAPT-ODY-07 — background-job monitor task. Creates the process-global
+/// [`crate::daemon::bg_jobs::BgJobRegistry`], resurrects pre-restart orphan
+/// jobs via `load_existing`, then spawns the periodic scan loop.
+///
+/// Returns `None` when `bg_monitor.interval_secs == 0` (monitor disabled).
+/// The `load_existing` async call is driven on a detached `tokio::spawn` so
+/// it does not block the serve-init path — it races with the first monitor
+/// tick but both paths are idempotent (register is idempotent by design).
+pub(crate) fn spawn_bg_monitor_task(config: &FreedomConfig) -> Option<JoinHandle<()>> {
+    let interval = config.bg_monitor.interval_secs;
+    if interval == 0 {
+        return None;
+    }
+    let bgjobs_dir = FreedomConfig::default_neoth_home().join("bgjobs");
+    // Ensure the directory exists before any job can land there.
+    if let Err(e) = std::fs::create_dir_all(&bgjobs_dir) {
+        tracing::warn!(
+            path = %bgjobs_dir.display(),
+            error = %e,
+            "bg_monitor: could not create bgjobs dir (monitor still starts)"
+        );
+    }
+    let registry = std::sync::Arc::new(crate::daemon::bg_jobs::BgJobRegistry::new(
+        bgjobs_dir,
+    ));
+    // Store globally so any call site can call `global_registry()`.
+    crate::daemon::bg_jobs::init_global_registry(std::sync::Arc::clone(&registry));
+    // Re-hydrate orphan jobs from a prior daemon session (best-effort async).
+    let reg_for_load = std::sync::Arc::clone(&registry);
+    tokio::spawn(async move {
+        let loaded = reg_for_load.load_existing().await;
+        if loaded > 0 {
+            tracing::info!(
+                count = loaded,
+                "bg_monitor: resurrected orphan jobs from prior session"
+            );
+        }
+    });
+    let handle =
+        crate::daemon::bg_monitor::spawn_bg_monitor(registry, interval)?;
+    info!(
+        interval_secs = interval,
+        "bg_monitor task spawned (GOLD-ADAPT-ODY-07)"
+    );
+    Some(handle)
+}
+
 // ── Region-7 updater lanes (U-04 + MV-01b). The three probe crons share one
 // `UpdaterCronConfig` (built once in run_serve + cloned into each) and differ
 // only by their ComponentSpec builder closure + UpdaterTaskKind. The two
@@ -2315,6 +2362,8 @@ pub(crate) struct BackgroundHandles {
     pub profile_adapt_cron_handle: Option<JoinHandle<()>>,
     pub ecology_cron_handle: Option<JoinHandle<()>>,
     pub pattern_cron_handle: Option<JoinHandle<()>>,
+    /// GOLD-ADAPT-ODY-07 — background-job detach monitor handle.
+    pub bg_monitor_handle: Option<JoinHandle<()>>,
     pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub rss_feed_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -2385,6 +2434,7 @@ pub(crate) async fn shutdown_background_tasks(
         profile_adapt_cron_handle,
         ecology_cron_handle,
         pattern_cron_handle,
+        bg_monitor_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,
@@ -2587,6 +2637,9 @@ pub(crate) async fn shutdown_background_tasks(
     // Abort the F4-01 ecology auto-scheduler (drain before writer close).
     crate::cli::serve_tasks::abort_optional(ecology_cron_handle).await;
     crate::cli::serve_tasks::abort_optional(pattern_cron_handle).await;
+    // Abort the GOLD-ADAPT-ODY-07 background-job monitor. WAL-free task — safe
+    // to cancel at any point; in-flight scan_once calls are idempotent.
+    crate::cli::serve_tasks::abort_optional(bg_monitor_handle).await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

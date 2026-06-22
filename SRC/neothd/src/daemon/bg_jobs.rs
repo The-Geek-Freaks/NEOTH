@@ -261,6 +261,34 @@ pub fn read_job_status(exit_path: &Path) -> BgJobStatus {
     BgJobStatus::Completed { code }
 }
 
+// ── Process-global registry ──────────────────────────────────────────────────
+//
+// A single `Arc<BgJobRegistry>` initialised once at daemon startup
+// (`init_global_registry`) and accessible to any code path that wants to
+// register a detached job without threading the registry through the call
+// stack.  `OnceLock` semantics: the second `init_global_registry` call is a
+// no-op (the first registration wins).  Returns `None` before daemon startup
+// (e.g. during `neoth chat` which skips `run_serve`).
+
+use std::sync::OnceLock;
+
+static BG_JOB_REGISTRY: OnceLock<Arc<BgJobRegistry>> = OnceLock::new();
+
+/// Access the process-global [`BgJobRegistry`] initialised by `daemon::serve`.
+///
+/// Returns `None` before `run_serve` has called [`init_global_registry`]
+/// (i.e. in one-shot CLI invocations that do not go through `neoth serve`).
+pub fn global_registry() -> Option<Arc<BgJobRegistry>> {
+    BG_JOB_REGISTRY.get().map(Arc::clone)
+}
+
+/// Called exactly once at daemon startup (from
+/// `serve_tasks::spawn_bg_monitor_task`).  Subsequent calls are no-ops
+/// (OnceLock semantics — the first registration wins).
+pub(crate) fn init_global_registry(reg: Arc<BgJobRegistry>) {
+    let _ = BG_JOB_REGISTRY.set(reg);
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -879,6 +879,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let pattern_cron_handle = crate::cli::serve_tasks::spawn_pattern_cron(&config);
 
+    // ── GOLD-ADAPT-ODY-07 background-job monitor ──────────────────────────
+    // Scans ~/.neoth/bgjobs/ every bg_monitor.interval_secs for completed
+    // detached subprocess jobs and fires auto-continue callbacks. Creates the
+    // process-global BgJobRegistry so any code path can register a detached
+    // job via `crate::daemon::bg_jobs::global_registry()`. Default ON
+    // (interval_secs=5); operators set interval_secs=0 to disable.
+    // GOLD-ARCH-01: construction in serve_tasks (same handle, same site).
+    let bg_monitor_handle = crate::cli::serve_tasks::spawn_bg_monitor_task(&config);
+
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
     // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
@@ -928,6 +937,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             pattern_cron_handle
                 .as_ref()
                 .map(|h| WatchedWorker::new("pattern_cron", h.abort_handle())),
+            bg_monitor_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("bg_monitor", h.abort_handle())),
             snapshot_refresh_handle
                 .as_ref()
                 .map(|h| WatchedWorker::new("snapshot_refresh", h.abort_handle())),
@@ -1498,6 +1510,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         profile_adapt_cron_handle,
         ecology_cron_handle,
         pattern_cron_handle,
+        bg_monitor_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,

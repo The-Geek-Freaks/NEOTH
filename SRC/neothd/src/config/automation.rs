@@ -619,3 +619,26 @@ impl PatternCronConfig {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
 }
+
+/// GOLD-ADAPT-ODY-07 — background-job monitor config.
+///
+/// When `interval_secs > 0` (default 5), `spawn_bg_monitor` scans
+/// `~/.neoth/bgjobs/` for completed detached subprocess jobs and fires
+/// auto-continue callbacks. The monitor is always-on infrastructure
+/// (no bgjobs = no auto-continue), so `interval_secs` defaults to 5s
+/// rather than 0. Operators who want to disable it entirely set
+/// `bg_monitor.interval_secs: 0` in freedom.yaml.
+///
+/// `interval_secs: 0` disables the monitor entirely (no task spawns).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct BgMonitorConfig {
+    /// Scan interval in seconds. Default 5. `0` = disabled (no task spawns).
+    pub interval_secs: u64,
+}
+
+impl Default for BgMonitorConfig {
+    fn default() -> Self {
+        Self { interval_secs: 5 }
+    }
+}
