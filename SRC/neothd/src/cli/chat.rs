@@ -1274,6 +1274,24 @@ async fn dispatch_provider(
             // SC-11 — scope the MCP gate to the matched skill's
             // tool_allowlist (empty/None ⇒ no skill-level restriction).
             let skill_allowlist = skill_tool_allowlist.as_deref();
+            // GOLD-ADAPT-MEM-05 — snapshot session state BEFORE the dispatch loop
+            // (which compacts tool-results/context via the CompressionRuntime
+            // below) so `compaction_guard::restore_latest` / `neoth recover` can
+            // pull the pre-compaction context back (anti-dementia). Gated on
+            // compaction.enabled; best-effort (a backup-write failure never blocks
+            // the turn — pre_compact returns and we ignore the path).
+            if config.compaction.enabled {
+                let mut snap_ctx = std::collections::BTreeMap::new();
+                snap_ctx.insert("source".to_string(), serde_json::json!("mcp_dispatch_loop"));
+                snap_ctx.insert("prompt_chars".to_string(), serde_json::json!(req.prompt.len()));
+                snap_ctx.insert("max_turns".to_string(), serde_json::json!(config.goal.max_turns));
+                let _ = crate::memory::compaction_guard::pre_compact(
+                    &FreedomConfig::default_neoth_home(),
+                    crate::time::now_unix_i64(),
+                    snap_ctx,
+                    Some(req.prompt.chars().take(2000).collect::<String>()),
+                );
+            }
             let outcome = match run_mcp_dispatch_loop(
                 provider,
                 req.clone(),
