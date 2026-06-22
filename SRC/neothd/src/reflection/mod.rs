@@ -198,6 +198,106 @@ fn format_topics_phrase(topics: &[String]) -> String {
     }
 }
 
+// ── GOLD-ADAPT-OH-08: Intelligence view — staged observations ────────────
+//
+// Reflection observations are the "never auto-post" complement to the
+// ProactiveItem that goes into the queue. Each weekly tick that produces
+// topics writes one `ReflectionObservation` into
+// `~/.neoth/reflections/staged_observations.jsonl`. The operator reads them
+// via `neoth proactive intelligence` (read-only, no accept/reject). The drain
+// loop enforces the never-auto-post invariant separately (source="g_01_mini"
+// → SidecarOnly regardless of autonomy or routing config).
+
+/// One staged reflection observation for the Intelligence view.
+/// Written to `~/.neoth/reflections/staged_observations.jsonl`.
+/// NEVER auto-posted into chat — `surface_only` is an explicit type-level
+/// invariant marker so any future serialisation path can assert on it and
+/// `jq` queries can filter without knowing the producer.
+///
+/// All new fields MUST be `#[serde(default)]` for forward compatibility.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ReflectionObservation {
+    /// ISO-week tag, e.g. `"2026-W25"`.
+    pub iso_week_tag: String,
+    /// Unix seconds when the observation was composed.
+    pub generated_ts_unix: i64,
+    /// Top topics that fed the body (same set as the concurrent ProactiveItem).
+    pub topics: Vec<String>,
+    /// Operator-facing body (German template, identical to the ProactiveItem).
+    pub body: String,
+    /// Always `true` — present as an explicit invariant marker so any future
+    /// serialisation path can assert it and `jq` queries can filter on it
+    /// without knowing the producer.
+    #[serde(default = "default_surface_only")]
+    pub surface_only: bool,
+}
+
+fn default_surface_only() -> bool {
+    true
+}
+
+/// Path of the staged-observations JSONL file.
+pub fn staged_observations_path(home: &std::path::Path) -> std::path::PathBuf {
+    reflections_dir(home).join("staged_observations.jsonl")
+}
+
+/// Append one observation to the staged-observations JSONL.
+/// Creates `~/.neoth/reflections/` on demand. Append is crash-safe at
+/// the OS level (partial writes only lose the last incomplete line; all
+/// prior complete lines are intact). Returns `Err` only on IO failure.
+pub fn append_staged_observation(
+    home: &std::path::Path,
+    obs: &ReflectionObservation,
+) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    std::fs::create_dir_all(reflections_dir(home))?;
+    let mut line = serde_json::to_vec(obs).map_err(std::io::Error::other)?;
+    line.push(b'\n');
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(staged_observations_path(home))?;
+    f.write_all(&line)?;
+    f.flush()?;
+    Ok(())
+}
+
+/// Load all staged observations from JSONL, preserving insertion order.
+/// Missing file → empty vec. Malformed lines are skipped (corrupted disk
+/// never kills the read path).
+pub fn load_staged_observations(home: &std::path::Path) -> Vec<ReflectionObservation> {
+    let Ok(body) = std::fs::read_to_string(staged_observations_path(home)) else {
+        return Vec::new();
+    };
+    body.lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// Build a `ReflectionObservation` from already-extracted topics +
+/// ISO-week tag + timestamp. Symmetric to `build_reflection_item` but
+/// returns the surface-only record instead of the proactive-queue item.
+/// Returns `None` when topics are empty (no signal → no observation).
+pub fn build_reflection_observation(
+    iso_week_tag: &str,
+    topics: &[String],
+    generated_ts_unix: i64,
+) -> Option<ReflectionObservation> {
+    if topics.is_empty() {
+        return None;
+    }
+    let body = REFLECTION_BODY_TEMPLATE.replace("{topics}", &format_topics_phrase(topics));
+    Some(ReflectionObservation {
+        iso_week_tag: iso_week_tag.to_string(),
+        generated_ts_unix,
+        topics: topics.to_vec(),
+        body,
+        surface_only: true,
+    })
+}
+
 // ── OB-02: persistence + Obsidian vault sync ─────────────────────────────
 //
 // Mirrors the OB-01 dreaming surface: reflections persist as JSONL under
@@ -734,6 +834,101 @@ mod tests {
             sync_reflections_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-W21").unwrap();
         let actual = std::fs::metadata(&out.target_path).unwrap().len() as usize;
         assert_eq!(actual, out.bytes_written);
+    }
+
+    // ── GOLD-ADAPT-OH-08: ReflectionObservation + staged JSONL ─────────────
+
+    #[test]
+    fn oh08_build_reflection_observation_mirrors_build_reflection_item_for_same_topics() {
+        let topics = vec!["rust".to_string(), "memory".to_string()];
+        let obs =
+            build_reflection_observation("2026-W25", &topics, 1_700_000_000).unwrap();
+        let item = build_reflection_item("2026-W25", &topics, 1_700_000_000).unwrap();
+        // Operator-visible body must be identical (same template, same topics).
+        assert_eq!(obs.body, item.body);
+        assert!(obs.surface_only, "surface_only must be true");
+        assert_eq!(obs.iso_week_tag, "2026-W25");
+        assert_eq!(obs.generated_ts_unix, 1_700_000_000);
+        assert_eq!(obs.topics, topics);
+    }
+
+    #[test]
+    fn oh08_build_reflection_observation_none_when_topics_empty() {
+        let r = build_reflection_observation("2026-W25", &[], 0);
+        assert!(r.is_none(), "no topics → no observation");
+    }
+
+    #[test]
+    fn oh08_append_and_load_staged_observations_roundtrip() {
+        let home = tempfile::tempdir().unwrap();
+        let obs1 =
+            build_reflection_observation("2026-W24", &["terraform".to_string()], 100).unwrap();
+        let obs2 =
+            build_reflection_observation("2026-W25", &["rust".to_string()], 200).unwrap();
+        append_staged_observation(home.path(), &obs1).unwrap();
+        append_staged_observation(home.path(), &obs2).unwrap();
+        let loaded = load_staged_observations(home.path());
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].iso_week_tag, "2026-W24");
+        assert_eq!(loaded[1].iso_week_tag, "2026-W25");
+        // surface_only invariant survives the roundtrip.
+        assert!(loaded[0].surface_only);
+        assert!(loaded[1].surface_only);
+    }
+
+    #[test]
+    fn oh08_load_staged_observations_missing_file_returns_empty() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(load_staged_observations(home.path()).is_empty());
+    }
+
+    #[test]
+    fn oh08_load_staged_observations_skips_malformed_lines() {
+        let home = tempfile::tempdir().unwrap();
+        let obs = build_reflection_observation("2026-W25", &["rust".to_string()], 1).unwrap();
+        let valid = serde_json::to_string(&obs).unwrap();
+        std::fs::create_dir_all(reflections_dir(home.path())).unwrap();
+        let content = format!("{valid}\nnot valid json at all\n{valid}\n");
+        std::fs::write(staged_observations_path(home.path()), content).unwrap();
+        let loaded = load_staged_observations(home.path());
+        assert_eq!(loaded.len(), 2, "malformed line must be skipped");
+    }
+
+    #[test]
+    fn oh08_surface_only_default_deserialises_true_when_field_absent() {
+        // Backward-compat: old files written before the field existed must
+        // deserialise with surface_only = true (the safe default).
+        let json = r#"{"iso_week_tag":"2026-W25","generated_ts_unix":1,"topics":["rust"],"body":"Du hast…"}"#;
+        let obs: ReflectionObservation = serde_json::from_str(json).unwrap();
+        assert!(obs.surface_only, "absent field must default to true");
+    }
+
+    #[test]
+    fn oh08_staged_observations_path_is_inside_reflections_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let path = staged_observations_path(home.path());
+        assert_eq!(
+            path,
+            home.path().join("reflections").join("staged_observations.jsonl")
+        );
+    }
+
+    #[test]
+    fn oh08_append_creates_reflections_dir_if_absent() {
+        let home = tempfile::tempdir().unwrap();
+        // reflections/ does NOT exist yet.
+        assert!(!home.path().join("reflections").exists());
+        let obs = build_reflection_observation("2026-W25", &["rust".to_string()], 1).unwrap();
+        append_staged_observation(home.path(), &obs).unwrap();
+        assert!(staged_observations_path(home.path()).exists());
+    }
+
+    #[test]
+    fn oh08_build_reflection_observation_surface_only_always_true() {
+        // The constructor must always set surface_only regardless of topic set.
+        let obs =
+            build_reflection_observation("2026-W25", &["kubernetes".to_string()], 999).unwrap();
+        assert!(obs.surface_only, "surface_only must always be true from the constructor");
     }
 
     #[test]

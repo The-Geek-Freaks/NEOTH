@@ -277,6 +277,24 @@ pub fn run_reflection_tick_once(
         save_tick_state(home, &SubconsciousTickState { last_emitted_unix: now_unix });
     }
 
+    // GOLD-ADAPT-OH-08 — stage the observation for the Intelligence view.
+    // Written every time topics are present and the window gate passed, even
+    // when the queue dedup already has this week's item (the observation is
+    // an independent surface-only record, not a delivery-queue item). The
+    // operator reads staged observations via `neoth proactive intelligence`.
+    if let Some(obs) = crate::reflection::build_reflection_observation(
+        &iso_week_tag,
+        &topics,
+        now_unix,
+    ) {
+        if let Err(e) = crate::reflection::append_staged_observation(home, &obs) {
+            warn!(
+                error = %e,
+                "reflection cron: staged observation write failed (non-fatal)"
+            );
+        }
+    }
+
     Ok(enqueued)
 }
 
@@ -925,6 +943,57 @@ mod tests {
         // Request at most 3.
         let sitrep = recent_reflections_sitrep(tmp.path(), 7, 3);
         assert_eq!(sitrep.recent.len(), 3, "max_entries cap must be honoured");
+    }
+
+    // ── GOLD-ADAPT-OH-08: staged-observation write from run_reflection_tick_once ─
+
+    #[test]
+    fn oh08_run_reflection_tick_writes_staged_observation_when_topics_present() {
+        let tmp = TempDir::new().unwrap();
+        let views = tmp.path().join("views.db");
+        let conn = crate::memory::store::open(&views).unwrap();
+        let now_unix: i64 = 1_700_000_000;
+        let now_ns = now_unix * 1_000_000_000;
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                1i64,
+                crate::wal::events::EVENT_TYPE_RAW_TEXT as i64,
+                now_ns - 3_600_000_000_000i64, // 1h ago, inside the 7-day window
+                "kubernetes deployment rollout testing",
+                "hash1",
+            ],
+        )
+        .unwrap();
+        // min_window_secs = 0 → gate disabled so we reach the staging write.
+        let enqueued = run_reflection_tick_once(tmp.path(), now_unix, 0).unwrap();
+        // Whether or not the queue dedup accepted the item, the staged observation
+        // must exist (the observation is independent of the queue dedup result).
+        let staged = crate::reflection::load_staged_observations(tmp.path());
+        assert_eq!(staged.len(), 1, "one staged observation must be written");
+        assert!(
+            staged[0].body.contains("kubernetes"),
+            "observation body must include the extracted topic; got: {}",
+            staged[0].body
+        );
+        assert!(staged[0].surface_only, "surface_only flag must be true");
+        let _ = enqueued;
+    }
+
+    #[test]
+    fn oh08_staged_observation_not_written_when_no_topics() {
+        // Empty views.db → no topics → build_reflection_observation returns None
+        // → no staging write.
+        let tmp = TempDir::new().unwrap();
+        let views = tmp.path().join("views.db");
+        let _conn = crate::memory::store::open(&views).unwrap();
+        // No rows → topics empty.
+        run_reflection_tick_once(tmp.path(), 1_700_000_000, 0).unwrap();
+        assert!(
+            crate::reflection::load_staged_observations(tmp.path()).is_empty(),
+            "no topics → no staged observation"
+        );
     }
 
     #[test]

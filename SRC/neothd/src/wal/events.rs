@@ -2101,6 +2101,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     ("recon_run", EVENT_TYPE_RECON_RUN),
     ("incognito_turn", EVENT_TYPE_INCOGNITO_TURN),
+    (
+        "reflection_observation_staged",
+        EVENT_TYPE_REFLECTION_OBSERVATION_STAGED,
+    ),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
@@ -2256,6 +2260,13 @@ pub const EVENT_TYPE_RECON_RUN: u8 = 0xF6;
 /// immediate-sync (a privacy-mode decision must survive a crash).
 /// Payload (JSON): `{ts_unix}`.
 pub const EVENT_TYPE_INCOGNITO_TURN: u8 = 0xF7;
+
+/// `0xF8 REFLECTION_OBSERVATION_STAGED` — GOLD-ADAPT-OH-08. The weekly
+/// reflection cron staged one observation into
+/// `~/.neoth/reflections/staged_observations.jsonl` for the operator's
+/// Intelligence view. NEVER auto-posted to chat — surface-only.
+/// Payload (JSON): `{ iso_week_tag, topic_count, ts_unix }`.
+pub const EVENT_TYPE_REFLECTION_OBSERVATION_STAGED: u8 = 0xF8;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2644,6 +2655,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_MEMORY_TRANSFER_EXPORTED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_RECON_RUN < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_INCOGNITO_TURN < 0xF0) as usize];
+    let _ = [(); 1][(EVENT_TYPE_REFLECTION_OBSERVATION_STAGED < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -2956,6 +2968,10 @@ mod tests {
             ),
             ("RECON_RUN", EVENT_TYPE_RECON_RUN),
             ("INCOGNITO_TURN", EVENT_TYPE_INCOGNITO_TURN),
+            (
+                "REFLECTION_OBSERVATION_STAGED",
+                EVENT_TYPE_REFLECTION_OBSERVATION_STAGED,
+            ),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {

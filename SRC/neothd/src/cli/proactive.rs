@@ -17,6 +17,7 @@
 //! Same shape as `cli/paperless.rs` — a thin shim over the
 //! `proactive::action_staging` primitives shipped this session.
 
+use std::cmp::Reverse;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -74,6 +75,17 @@ pub enum ProactiveAction {
         vault: Option<PathBuf>,
         #[arg(long, value_name = "NAME", default_value = "NEOTH")]
         subdir: String,
+    },
+    /// GOLD-ADAPT-OH-08 — list reflection observations from the Intelligence
+    /// view (`~/.neoth/reflections/staged_observations.jsonl`). Read-only;
+    /// observations are NEVER auto-posted into chat.
+    Intelligence {
+        /// How many entries to show, newest first. 0 = all.
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Output as JSON (for GUI / scripting).
+        #[arg(long)]
+        json: bool,
     },
     /// GOLD-FEAT-13 — view or set per-purpose channel routing for proactive
     /// sends (`~/.neoth/channel_routing.json`). No flags → print the current
@@ -186,6 +198,40 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             default,
             failure,
         } => run_route(&home, source, channel, dest, default, failure),
+        ProactiveAction::Intelligence { limit, json } => {
+            use crate::reflection::{ReflectionObservation, load_staged_observations};
+            let mut obs: Vec<ReflectionObservation> = load_staged_observations(&home);
+            // Newest first.
+            obs.sort_by_key(|o| Reverse(o.generated_ts_unix));
+            if limit > 0 {
+                obs.truncate(limit);
+            }
+            if obs.is_empty() {
+                println!(
+                    "(no reflection observations yet — runs weekly after the first 7 days)"
+                );
+                return Ok(());
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&obs).unwrap_or_default());
+            } else {
+                for o in &obs {
+                    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                        o.generated_ts_unix,
+                        0,
+                    )
+                    .map(|d| d.format("%Y-%m-%d").to_string())
+                    .unwrap_or_else(|| o.generated_ts_unix.to_string());
+                    println!(
+                        "[{week}]  {dt}  topics: {topics}\n  → {body}\n",
+                        week = o.iso_week_tag,
+                        topics = o.topics.join(", "),
+                        body = o.body,
+                    );
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -582,6 +628,76 @@ mod tests {
             !home.path().join("skills").exists(),
             "non-skill accept must not create a skills dir",
         );
+    }
+
+    // ── GOLD-ADAPT-OH-08: Intelligence subcommand ─────────────────────────
+
+    #[test]
+    fn oh08_intelligence_empty_returns_ok() {
+        let home = tempfile::tempdir().unwrap();
+        let args = ProactiveArgs {
+            action: ProactiveAction::Intelligence { limit: 10, json: false },
+            home: Some(home.path().to_path_buf()),
+        };
+        // No staged_observations.jsonl → "(no reflection observations yet…)" printed.
+        run_proactive(args).expect("intelligence empty");
+    }
+
+    #[test]
+    fn oh08_intelligence_displays_staged_observations() {
+        use crate::reflection::{append_staged_observation, build_reflection_observation};
+        let home = tempfile::tempdir().unwrap();
+        let obs = build_reflection_observation(
+            "2026-W25",
+            &["rust".to_string(), "memory".to_string()],
+            1_700_000_000,
+        )
+        .unwrap();
+        append_staged_observation(home.path(), &obs).unwrap();
+
+        let args = ProactiveArgs {
+            action: ProactiveAction::Intelligence { limit: 10, json: false },
+            home: Some(home.path().to_path_buf()),
+        };
+        run_proactive(args).expect("intelligence with one entry");
+    }
+
+    #[test]
+    fn oh08_intelligence_json_mode_returns_ok() {
+        use crate::reflection::{append_staged_observation, build_reflection_observation};
+        let home = tempfile::tempdir().unwrap();
+        let obs =
+            build_reflection_observation("2026-W25", &["terraform".to_string()], 1_700_000_000)
+                .unwrap();
+        append_staged_observation(home.path(), &obs).unwrap();
+
+        let args = ProactiveArgs {
+            action: ProactiveAction::Intelligence { limit: 10, json: true },
+            home: Some(home.path().to_path_buf()),
+        };
+        run_proactive(args).expect("intelligence json mode");
+    }
+
+    #[test]
+    fn oh08_intelligence_limit_truncates_results() {
+        use crate::reflection::{append_staged_observation, build_reflection_observation};
+        let home = tempfile::tempdir().unwrap();
+        // Write 5 observations across 5 different weeks.
+        for week in 21..=25u32 {
+            let obs = build_reflection_observation(
+                &format!("2026-W{week:02}"),
+                &["rust".to_string()],
+                week as i64 * 1000,
+            )
+            .unwrap();
+            append_staged_observation(home.path(), &obs).unwrap();
+        }
+        // limit=2 → only 2 should be shown (run_proactive returns Ok; no panic).
+        let args = ProactiveArgs {
+            action: ProactiveAction::Intelligence { limit: 2, json: false },
+            home: Some(home.path().to_path_buf()),
+        };
+        run_proactive(args).expect("intelligence with limit");
     }
 
     #[test]
