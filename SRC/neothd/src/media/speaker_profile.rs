@@ -50,7 +50,7 @@ const NORM_EPSILON: f32 = 1e-8;
 /// The `avg_embedding` is always unit-norm (enforced by [`ema_update`]).
 /// `count` tracks how many observations have been folded in so confidence
 /// can be calibrated.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SpeakerProfile {
     /// Stable identifier ("Alex", "SPEAKER_01", …).
     pub name: String,
@@ -238,11 +238,87 @@ impl SpeakerMatcher {
     }
 }
 
+// ── SPEAKR-02b: persistent profile store + STT-dispatch labelling entry ──────
+
+/// Default profile-store path: `<home>/speaker_profiles.json`.
+pub fn profiles_path(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("speaker_profiles.json")
+}
+
+/// Load the persisted speaker profiles. Absent/unreadable/corrupt file → empty
+/// (a fresh operator simply starts with no known speakers).
+pub fn load_profiles(path: &std::path::Path) -> Vec<SpeakerProfile> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the profiles (atomic write). Best-effort: a write/serialise error is
+/// logged, never propagated (speaker labelling must never fail a transcription).
+pub fn save_profiles(path: &std::path::Path, profiles: &[SpeakerProfile]) {
+    match serde_json::to_vec_pretty(profiles) {
+        Ok(bytes) => {
+            if let Err(e) = crate::util::atomic_write::atomic_write(path, &bytes) {
+                tracing::warn!(error = %e, "speaker_profile: persist failed (non-fatal)");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "speaker_profile: serialise failed"),
+    }
+}
+
+/// SPEAKR-02b — label a batch of per-utterance voice embeddings against the
+/// persisted speaker-profile store, returning one label per embedding (`None`
+/// when the matcher refuses to commit on an ambiguous top-2). Side effect: the
+/// matched/new profiles' centroids are EMA-updated and the store is re-persisted,
+/// so speaker identity LEARNS across calls. Empty input → empty output + NO file
+/// I/O — the no-op path the STT dispatch hits until a voice-embedding source (a
+/// speaker encoder over the raw PCM) is wired.
+pub fn label_embeddings(home: &std::path::Path, embeddings: &[Vec<f32>]) -> Vec<Option<String>> {
+    if embeddings.is_empty() {
+        return Vec::new();
+    }
+    let path = profiles_path(home);
+    let mut matcher = SpeakerMatcher::from_profiles(load_profiles(&path));
+    let labels: Vec<Option<String>> = embeddings
+        .iter()
+        .map(|emb| matcher.match_and_label(emb).map(|m| m.name))
+        .collect();
+    save_profiles(&path, matcher.profiles());
+    labels
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn label_embeddings_empty_is_noop_no_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(label_embeddings(tmp.path(), &[]).is_empty());
+        assert!(
+            !profiles_path(tmp.path()).exists(),
+            "empty input must not write the store"
+        );
+    }
+
+    #[test]
+    fn label_embeddings_persists_and_reidentifies_speaker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let a = vec![1.0f32, 0.0, 0.0];
+        let b = vec![0.0f32, 1.0, 0.0];
+        let first = label_embeddings(home, &[a.clone(), b.clone()]);
+        assert_eq!(first.len(), 2);
+        assert!(first[0].is_some() && first[1].is_some());
+        assert_ne!(first[0], first[1], "distinct voices → distinct labels");
+        assert!(profiles_path(home).exists(), "store persisted");
+        // Re-present speaker A → SAME label from the persisted profile (learning).
+        let again = label_embeddings(home, &[a]);
+        assert_eq!(again[0], first[0], "persisted profile re-identifies speaker A");
+    }
 
     // ── cosine_similarity ─────────────────────────────────────────────────────
 

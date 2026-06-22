@@ -394,10 +394,39 @@ pub async fn transcribe_and_audit(
     // GOLD-ADAPT-HANDY-03 — strip filler words + stutters from the transcript
     // on every transcription (conservative; never deletes content words).
     result.text = crate::media::stt_postprocess::clean_transcript(&result.text);
+    // GOLD-ADAPT-SPEAKR-02b — speaker re-identification. When a per-utterance
+    // voice-embedding source is available, match each against the persisted
+    // speaker-profile store and learn the centroids (EMA). Gated on
+    // `media.auto_speaker_labels`; the `!embeddings.is_empty()` check short-circuits
+    // BEFORE the config read + any I/O, so this is fully inert until a PCM→embedding
+    // speaker encoder is wired (`utterance_embeddings` returns empty today). The
+    // matcher + persistent store are built + tested — only the encoder remains.
+    let embeddings = utterance_embeddings(audio, &result);
+    if !embeddings.is_empty()
+        && crate::config::FreedomConfig::load_from_default_path()
+            .map(|c| c.media.auto_speaker_labels)
+            .unwrap_or(false)
+    {
+        let labels = crate::media::speaker_profile::label_embeddings(
+            &crate::config::FreedomConfig::default_neoth_home(),
+            &embeddings,
+        );
+        let labelled = labels.iter().filter(|l| l.is_some()).count();
+        tracing::info!(speakers = ?labels, labelled, "SPEAKR-02b speaker re-id");
+    }
     if let Some(w) = writer {
         emit_stt_transcribed(w, provider.kind(), audio.len(), result.text.chars().count()).await;
     }
     Ok(result)
+}
+
+/// GOLD-ADAPT-SPEAKR-02b — extract per-utterance voice embeddings for speaker
+/// re-identification. Returns empty until a speaker encoder (ECAPA-TDNN / x-vector
+/// over the raw PCM) is wired; the STT path above gates on a non-empty result, so
+/// speaker labelling activates automatically the moment this yields vectors. Kept
+/// as a named seam so the encoder lands in exactly one place.
+fn utterance_embeddings(_audio: &[u8], _result: &TranscriptionResult) -> Vec<Vec<f32>> {
+    Vec::new()
 }
 
 async fn emit_stt_transcribed(

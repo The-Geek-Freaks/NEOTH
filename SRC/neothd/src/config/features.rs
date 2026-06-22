@@ -333,6 +333,13 @@ pub struct MediaConfig {
     /// the production hot path is the remaining step before this flag is a
     /// whole-product guarantee.
     pub required_audit_for_cloud_media: bool,
+    /// SPEAKR-02b — when true, the STT dispatch labels speakers by matching each
+    /// utterance's voice embedding against the persisted profile store
+    /// (`media::speaker_profile`). Default `false`. Inert until a per-utterance
+    /// voice-embedding source (a speaker encoder over the raw PCM) is wired —
+    /// the matcher is a no-op on empty embeddings, so labelling activates
+    /// automatically the moment embeddings flow.
+    pub auto_speaker_labels: bool,
 }
 
 /// EM-02b — CalDAV calendar-write knobs.
