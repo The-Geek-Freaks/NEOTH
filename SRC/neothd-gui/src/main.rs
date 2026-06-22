@@ -155,6 +155,23 @@ fn main() -> Result<()> {
         }
     });
 
+    // ODY-11 — density restore: read ~/.neoth/.gui-density and apply before
+    // the first paint, mirroring the .gui-theme block above.
+    {
+        let val = read_gui_density(&default_neoth_home());
+        window.global::<Theme>().set_density_mode(val);
+        window.set_chat_density_mode(val);
+    }
+    let weak_density = window.as_weak();
+    window.on_density_changed(move |val| {
+        if let Some(w) = weak_density.upgrade() {
+            let density_path = default_neoth_home().join(".gui-density");
+            write_gui_density(&density_path, val);
+            w.global::<Theme>().set_density_mode(val);
+            w.set_chat_density_mode(val);
+        }
+    });
+
     // H-3 fix — hardware probe runs in a worker thread so a hanging
     // `neothd hardware` subprocess can never block the window from
     // appearing. The placeholder string shows until the real probe
@@ -4479,6 +4496,32 @@ fn default_neoth_home() -> PathBuf {
     home.join(".neoth")
 }
 
+// ODY-11 — density persistence helpers (pure, testable without Slint window).
+// Same extraction pattern as `shape_usage_summary` / `parse_active_preset_name`.
+
+/// Read `<neoth_home>/.gui-density` → 0 (compact) / 1 (normal) / 2 (spacious).
+/// Returns 1 on missing file or unrecognised content.
+pub fn read_gui_density(neoth_home: &Path) -> i32 {
+    std::fs::read_to_string(neoth_home.join(".gui-density"))
+        .map(|s| match s.trim() {
+            "compact" => 0,
+            "spacious" => 2,
+            _ => 1,
+        })
+        .unwrap_or(1)
+}
+
+/// Write the density int (0/1/2) as a human-readable label to `path`.
+/// Out-of-range values fall through to "normal".
+pub fn write_gui_density(path: &Path, val: i32) {
+    let label = match val {
+        0 => "compact",
+        2 => "spacious",
+        _ => "normal",
+    };
+    let _ = std::fs::write(path, label);
+}
+
 fn init_tracing() {
     let filter = EnvFilter::try_from_env("NEOTH_LOG")
         .unwrap_or_else(|_| EnvFilter::new("info,neothd_gui=debug"));
@@ -5007,5 +5050,68 @@ mod tests {
         assert!(body.contains("disabled_for_eval_sessions: true"));
         assert!(body.contains("operator_id: alice"));
         assert!(body.contains("listen_port: 50000"));
+    }
+
+    // ── ODY-11 density helpers ────────────────────────────────────────────
+
+    #[test]
+    fn density_restore_reads_compact_from_disk() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".gui-density"), b"compact").unwrap();
+        assert_eq!(read_gui_density(dir.path()), 0);
+    }
+
+    #[test]
+    fn density_restore_reads_spacious_from_disk() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".gui-density"), b"spacious").unwrap();
+        assert_eq!(read_gui_density(dir.path()), 2);
+    }
+
+    #[test]
+    fn density_restore_reads_normal_from_disk() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".gui-density"), b"normal").unwrap();
+        assert_eq!(read_gui_density(dir.path()), 1);
+    }
+
+    #[test]
+    fn density_restore_defaults_to_normal_on_missing_file() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(read_gui_density(dir.path()), 1);
+    }
+
+    #[test]
+    fn density_restore_defaults_to_normal_on_garbage_file() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".gui-density"), b"%%%invalid%%%").unwrap();
+        assert_eq!(read_gui_density(dir.path()), 1);
+    }
+
+    #[test]
+    fn density_write_round_trips_all_three_values() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".gui-density");
+        // compact
+        write_gui_density(&path, 0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "compact");
+        assert_eq!(read_gui_density(dir.path()), 0);
+        // normal
+        write_gui_density(&path, 1);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "normal");
+        assert_eq!(read_gui_density(dir.path()), 1);
+        // spacious
+        write_gui_density(&path, 2);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "spacious");
+        assert_eq!(read_gui_density(dir.path()), 2);
+    }
+
+    #[test]
+    fn density_write_out_of_range_falls_through_to_normal() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".gui-density");
+        write_gui_density(&path, 99);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "normal");
+        assert_eq!(read_gui_density(dir.path()), 1);
     }
 }

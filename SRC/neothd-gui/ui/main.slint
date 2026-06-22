@@ -341,6 +341,13 @@ export component MainWindow inherits Window {
     /// callback (Slint can't run `starts-with` in expressions). When
     /// `true` the chat view renders the slash-discovery hint.
     in property <bool> chat-slash-active: false;
+    // ODY-11 — current density (0=compact 1=normal 2=spacious). Rust sets at
+    // startup from ~/.neoth/.gui-density; on_density_changed handler persists +
+    // updates Theme.density-mode so the chat surface reflws in real time.
+    in-out property <int> chat-density-mode: 1;
+    /// Operator picked a density level in Settings → Chat. Rust persists the
+    /// choice to ~/.neoth/.gui-density + calls Theme.set_density_mode(val).
+    callback density-changed(int);
 
     /// Operator typed + sent a message. Rust dispatches through
     /// `cli::chat::run_chat_with`.
@@ -1686,6 +1693,13 @@ export component MainWindow inherits Window {
             usage-responses: root.usage-responses;
             usage-tokens: root.usage-tokens;
             usage-note: root.usage-note;
+            // ODY-11: two-way density binding — Rust sets it at startup, picker
+            // updates it locally, callback carries the new value up to Rust.
+            density-mode-current <=> root.chat-density-mode;
+            density-changed(v) => {
+                root.chat-density-mode = v;
+                root.density-changed(v);
+            }
             // G-5 fix: route "← Chat" back to the Chat surface so the
             // operator can leave Settings without hunting for an exit.
                     back-clicked => { root.nav-active = "chat"; root.step = WizardStep.chat; }

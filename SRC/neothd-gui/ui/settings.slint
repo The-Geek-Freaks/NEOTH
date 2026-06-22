@@ -517,6 +517,13 @@ export component SettingsView inherits Rectangle {
     in property <string> kanban-selected-description: "";
     in property <[KanbanCommentRow]> kanban-selected-comments: [];
 
+    // ODY-11 — current density selection (0=compact 1=normal 2=spacious).
+    // Rust sets this at startup from ~/.neoth/.gui-density; the density
+    // buttons update it locally; density-changed bubbles the new value to Rust
+    // for persistence + Theme property update.
+    in-out property <int> density-mode-current: 1;
+    callback density-changed(int);
+
     callback wizard-rerun-clicked;
     callback reload-config-clicked;
     // GU-01 — Chat tab "Open chat" button → MainWindow switches to the chat view.
@@ -733,6 +740,55 @@ export component SettingsView inherits Rectangle {
                             label: "Open chat";
                             primary: true;
                             clicked => { root.open-chat-clicked(); }
+                        }
+                    }
+                }
+                // ODY-11 — Chat density picker card.
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "CHAT DENSITY";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: "Controls the spacing between messages and inside each bubble. Takes effect immediately without restart.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothButton {
+                                label: "Compact";
+                                primary: root.density-mode-current == 0;
+                                clicked => {
+                                    root.density-mode-current = 0;
+                                    root.density-changed(0);
+                                }
+                            }
+                            NeothButton {
+                                label: "Normal";
+                                primary: root.density-mode-current == 1;
+                                clicked => {
+                                    root.density-mode-current = 1;
+                                    root.density-changed(1);
+                                }
+                            }
+                            NeothButton {
+                                label: "Spacious";
+                                primary: root.density-mode-current == 2;
+                                clicked => {
+                                    root.density-mode-current = 2;
+                                    root.density-changed(2);
+                                }
+                            }
                         }
                     }
                 }

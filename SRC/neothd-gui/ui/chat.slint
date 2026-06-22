@@ -69,7 +69,8 @@ component ChatBubble inherits Rectangle {
             max-width: root.bubble-max-width;
 
             VerticalLayout {
-                padding: Theme.space-base;
+                // ODY-11: density-aware padding (compact 8px / normal 16px / spacious 24px).
+                padding: Theme.bubble-padding;
                 spacing: Theme.space-tight;
 
                 body := Text {
@@ -205,8 +206,9 @@ component Composer inherits Rectangle {
     body := VerticalLayout {
         padding-left: Theme.space-screen;
         padding-right: Theme.space-screen;
-        padding-top: Theme.space-tight;
-        padding-bottom: Theme.space-tight;
+        // ODY-11: density-aware composer padding (compact 6px / normal 8px / spacious 16px).
+        padding-top: Theme.composer-padding;
+        padding-bottom: Theme.composer-padding;
         spacing: 4px;
 
         // Persistent label above the input — accessible name for
@@ -490,7 +492,8 @@ export component ChatView inherits Rectangle {
 
                 VerticalLayout {
                     padding: Theme.space-base;
-                    spacing: Theme.space-base;
+                    // ODY-11: density-aware inter-bubble gap (compact 4px / normal 8px / spacious 16px).
+                    spacing: Theme.bubble-gap;
 
                     if root.messages.length == 0: Rectangle {
                         height: 200px;
