@@ -27,6 +27,11 @@
 
 pub mod audio;
 pub mod document;
+/// GOLD-ADAPT-HANDY-07 — GPU/accelerator detection + FMA3 guard for the
+/// media pipeline (STT backend selection). Probes CPU capability flags
+/// (FMA3/AVX2/AVX) and best available accelerator class; `require_fma3`
+/// guards against SIGILL on pre-Haswell CPUs.
+pub mod hw_probe;
 /// MM-02b — ffmpeg-backed video frame decoder (single still near a timestamp).
 pub mod frame_decoder;
 /// MM-02b — multimodal vision synthesizers (Anthropic / OpenAI / Gemini REST).
