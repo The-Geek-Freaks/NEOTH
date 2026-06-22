@@ -1606,6 +1606,57 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 }
             }
 
+            // ── GOLD-ADAPT-ODY-08 Tier-4: SOTA teacher correction (channel path) ──
+            // Same gate as cli/chat.rs Tier-4 but operating on `completion.text`
+            // and `config_for_handler`. Channel/daemon path has no FEAT-08 blocks —
+            // teacher is the only post-LOWKEY escalation path here.
+            // ODY-18 `wrap_untrusted` applied inside `try_teacher_escalation`.
+            // Best-effort; never fails the channel turn.
+            if !config_for_handler
+                .refusal_recovery
+                .teacher_escalation_enabled
+            {
+                // fast-path: opt-in gate off → skip
+            } else {
+                let original_provider_is_local =
+                    crate::providers::is_local_provider((*provider).name());
+                if original_provider_is_local {
+                    let now_unix_ch = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0) as i64;
+                    match crate::skills::teacher::try_teacher_escalation(
+                        &completion.text,
+                        &final_prompt,
+                        system_override.as_deref(),
+                        (*provider).name(),
+                        &config_for_handler,
+                        Some(&writer),
+                        now_unix_ch,
+                    )
+                    .await
+                    {
+                        Ok(Some(corrected)) => {
+                            info!(
+                                channel = channel_str,
+                                corrected_bytes = corrected.len(),
+                                "ODY-08 teacher escalation succeeded (channel path)"
+                            );
+                            completion.text = corrected;
+                            derived_from_mirror_pipeline = true; // ADV-07
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                channel = channel_str,
+                                "ODY-08 teacher escalation failed (non-fatal)"
+                            );
+                        }
+                    }
+                }
+            }
+
             // ── ADR auto-extraction (Phase 31 R-21 ADR-1) ─────────────────
             // Scan the reply for `DECISION:` / `Beschluss:` / `ADR:` markers
             // and write any detected blocks to ~/.neoth/adr/NNNN-<slug>.md.

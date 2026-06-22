@@ -26,6 +26,7 @@ pub mod mode_registry;
 pub mod registry;
 pub mod router;
 pub mod schema;
+pub mod teacher;
 pub mod test_harness;
 /// Round-3 v0.4 ARCH-07 — LOWKEY skill versioning + prompt-bundle
 /// hashing primitives. SHA-256(yaml||template) per-skill fingerprint

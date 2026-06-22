@@ -270,6 +270,22 @@ pub struct InferenceTopology {
     /// or `local_qwen`.
     #[serde(default)]
     pub utility_provider: Option<InferenceProvider>,
+    /// GOLD-ADAPT-ODY-08 — SOTA teacher provider for escalation when a local
+    /// model fails or replies with low confidence. `None` (default) = fall
+    /// through to the operator's main provider (whatever `default_slot.provider`
+    /// resolves to). Operators may name a provider here, e.g.
+    /// `teacher_provider: anthropic_api`, to route teacher calls specifically to
+    /// a cloud SOTA model while keeping the daily operator path on `claude_cli`.
+    ///
+    /// Resolution at call time (in `providers::from_config_for_teacher`):
+    ///   1. `teacher_provider` here, if set.
+    ///   2. Main provider (from `from_config(config)`) as fallback.
+    ///
+    /// A LOCAL `teacher_provider` is rejected by `from_config_for_teacher`
+    /// with a clear error — teaching via a local model would be circular
+    /// (the same class of model that failed is unlikely to correct itself).
+    #[serde(default)]
+    pub teacher_provider: Option<InferenceProvider>,
     /// Per-completion maximum new token budget for local inference.
     /// `None` → adapter default (256 — fits ChatML reply within ~1 KiB
     /// for most operator queries). Operators wanting longer outputs

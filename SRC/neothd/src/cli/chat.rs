@@ -1903,6 +1903,45 @@ async fn run_post_reply_pipelines(
         }
     }
 
+    // ── GOLD-ADAPT-ODY-08 Tier-4: SOTA teacher correction ────────────────
+    // After FEAT-08 local-abliterated path: if the ORIGINAL provider was a
+    // local model and the response is still a refusal or low-confidence,
+    // escalate to the SOTA cloud teacher. ODY-18 `wrap_untrusted` is applied
+    // EXACTLY on local output before sending to teacher (anti-injection MUST).
+    // Hard-blocked floor (`hard_blocked`) suppresses this tier too.
+    // `derived_from_mirror_pipeline = true` (ADV-07) skips profile extraction
+    // on corrected turns so the teacher's writing style is not learned as the
+    // operator's own. Best-effort; never fails a turn.
+    if !hard_blocked
+        && crate::providers::is_local_provider(provider.name())
+        && config.refusal_recovery.teacher_escalation_enabled
+    {
+        match crate::skills::teacher::try_teacher_escalation(
+            &response_text,
+            &final_prompt,
+            final_system.as_deref(),
+            provider.name(),
+            &config,
+            Some(&writer),
+            now_unix() as i64,
+        )
+        .await
+        {
+            Ok(Some(corrected)) => {
+                tracing::info!(
+                    corrected_bytes = corrected.len(),
+                    "ODY-08 teacher escalation succeeded — replacing response"
+                );
+                response_text = corrected;
+                derived_from_mirror_pipeline = true; // ADV-07: skip profile extraction
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "ODY-08 teacher escalation failed (non-fatal)");
+            }
+        }
+    }
+
     // ── ADR extraction (Phase 31 R-21 ADR-1) ─────────────────────────────
     // Scan the provider's reply for DECISION:/Beschluss:/ADR: markers. Each
     // hit writes `~/.neoth/adr/NNNN-<slug>.md`. Failures log but never

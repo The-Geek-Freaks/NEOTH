@@ -988,6 +988,17 @@ pub const EVENT_TYPE_HOOK_ERROR: u8 = 0x83;
 /// `{agent_name, stage, passed, feedback_hash_xxh3, ts}`. The feedback
 /// body itself is NOT in the WAL — only a hash — to keep the log small.
 pub const EVENT_TYPE_SUBAGENT_REVIEW_STAGE: u8 = 0x84;
+/// GOLD-ADAPT-ODY-08 — teacher escalation attempted. Emitted when a local-model
+/// response (refusal or low-confidence) triggers the SOTA teacher cloud call.
+/// Audit-critical (cloud egress event): not in the `needs_immediate_sync`
+/// deny-list → immediate fsync by default.
+/// Payload: `{provider, local_response_hash_xxh3, prompt_hash_xxh3, ts_unix}`.
+pub const EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED: u8 = 0x85;
+/// GOLD-ADAPT-ODY-08 — teacher SOTA model wrote a corrective reply (and
+/// optionally wrote a correction SKILL.md). Emitted on successful teacher call.
+/// Audit-critical (cloud egress outcome): immediate fsync by default.
+/// Payload: `{teacher_provider, corrected_bytes, skill_id, ts_unix}`.
+pub const EVENT_TYPE_TEACHER_ESCALATION_COMPLETE: u8 = 0x86;
 
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
@@ -2071,6 +2082,14 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("worker_died", EVENT_TYPE_WORKER_DIED),
     ("rss_feed_item_indexed", EVENT_TYPE_RSS_FEED_ITEM_INDEXED),
     ("rss_feed_pass_complete", EVENT_TYPE_RSS_FEED_PASS_COMPLETE),
+    (
+        "teacher_escalation_attempted",
+        EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED,
+    ),
+    (
+        "teacher_escalation_complete",
+        EVENT_TYPE_TEACHER_ESCALATION_COMPLETE,
+    ),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -2371,6 +2390,10 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_HOOK_ERROR < 0x80 || EVENT_TYPE_HOOK_ERROR > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SUBAGENT_REVIEW_STAGE < 0x80
         || EVENT_TYPE_SUBAGENT_REVIEW_STAGE > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED < 0x80
+        || EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_TEACHER_ESCALATION_COMPLETE < 0x80
+        || EVENT_TYPE_TEACHER_ESCALATION_COMPLETE > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]
@@ -2705,6 +2728,14 @@ mod tests {
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),
             ("HOOK_ERROR", EVENT_TYPE_HOOK_ERROR),
             ("SUBAGENT_REVIEW_STAGE", EVENT_TYPE_SUBAGENT_REVIEW_STAGE),
+            (
+                "TEACHER_ESCALATION_ATTEMPTED",
+                EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED,
+            ),
+            (
+                "TEACHER_ESCALATION_COMPLETE",
+                EVENT_TYPE_TEACHER_ESCALATION_COMPLETE,
+            ),
             ("EPISODE_CONSOLIDATED", EVENT_TYPE_EPISODE_CONSOLIDATED),
             ("EPISODE_PROMOTED", EVENT_TYPE_EPISODE_PROMOTED),
             ("EPISODE_ARCHIVED", EVENT_TYPE_EPISODE_ARCHIVED),

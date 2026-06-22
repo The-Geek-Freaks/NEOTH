@@ -458,6 +458,24 @@ pub struct RefusalRecoveryConfig {
     /// through to FEAT-08. Default 4; capped at the seed-catalog length.
     #[serde(default = "default_jailbreak_max_retries")]
     pub jailbreak_max_retries: usize,
+    /// GOLD-ADAPT-ODY-08 — enable SOTA teacher escalation when the local model
+    /// fails or produces a low-confidence reply. Default `false` (opt-in, cloud
+    /// egress). When `true`, the local response is fenced via `wrap_untrusted`
+    /// (ODY-18 anti-injection) and sent to `inference.teacher_provider` (default:
+    /// flagship cloud) for correction. Only fires when the ORIGINAL provider was a
+    /// local model (`is_local_provider` check). WAL records
+    /// `0x85 TEACHER_ESCALATION_ATTEMPTED` / `0x86 TEACHER_ESCALATION_COMPLETE`.
+    /// The permanent hard-block floor (`hard_blocked`) still suppresses this tier.
+    #[serde(default = "default_teacher_escalation_enabled")]
+    pub teacher_escalation_enabled: bool,
+    /// GOLD-ADAPT-ODY-08 — optional explicit teacher model override string passed
+    /// to the teacher provider (e.g. `claude-opus-4-5`). `None` = use the
+    /// provider's default flagship. Only consulted when `teacher_escalation_enabled`
+    /// is `true`. Stored separately from `inference.teacher_provider` so an operator
+    /// can pick e.g. `claude_cli` as the teacher channel but override the exact
+    /// model for that call.
+    #[serde(default)]
+    pub teacher_model_override: Option<String>,
 }
 
 impl Default for RefusalRecoveryConfig {
@@ -470,6 +488,8 @@ impl Default for RefusalRecoveryConfig {
             abliterated_model: None,
             jailbreak_retry_enabled: default_jailbreak_retry_enabled(),
             jailbreak_max_retries: default_jailbreak_max_retries(),
+            teacher_escalation_enabled: default_teacher_escalation_enabled(),
+            teacher_model_override: None,
         }
     }
 }
@@ -483,6 +503,10 @@ fn default_abliterated_fallback_enabled() -> bool {
 }
 
 fn default_jailbreak_retry_enabled() -> bool {
+    false
+}
+
+fn default_teacher_escalation_enabled() -> bool {
     false
 }
 

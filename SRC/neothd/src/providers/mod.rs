@@ -440,6 +440,51 @@ pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn P
     }
 }
 
+/// GOLD-ADAPT-ODY-08 — build the SOTA teacher provider for escalation when a
+/// local model fails or replies with low confidence.
+///
+/// Resolution order:
+///   1. `config.inference.teacher_provider` (explicit operator routing), if set.
+///   2. Main provider (`from_config(config)`) as fallback — the operator's cloud
+///      flagship then acts as the teacher.
+///
+/// **Safety gate:** a LOCAL `teacher_provider` is rejected with a clear error.
+/// Teaching via a local model is circular — the same model class that failed
+/// would be asked to correct itself. The gate uses the single canonical
+/// `is_local_provider()` check; do NOT reimplement the string comparison.
+///
+/// **No key cross-contamination:** if `teacher_provider` differs from the
+/// operator's main provider, the synthetic config resets the key/endpoint/model
+/// fields (same isolation as `build_utility_config`). Same-vendor routing
+/// keeps the shared key.
+pub async fn from_config_for_teacher(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    let Some(inf_prov) = config.inference.teacher_provider else {
+        // No explicit teacher provider — fall through to main provider.
+        return from_config(config).await;
+    };
+    let teacher_str = inf_prov.as_str();
+    if is_local_provider(teacher_str) {
+        anyhow::bail!(
+            "freedom.yaml::inference.teacher_provider = `{teacher_str}` is a local provider. \
+             Teacher escalation requires a cloud SOTA provider so the correction adds value. \
+             Set a cloud provider (e.g. `anthropic_api`, `claude_cli`, `openai_api`, `gemini_api`) \
+             or remove `teacher_provider` to fall through to the operator's main provider."
+        );
+    }
+    let teacher_kind = inf_prov.to_provider_kind();
+    let main_kind = config.provider_kind;
+    let mut synthetic = config.clone();
+    // Isolate key/endpoint/model when the teacher is a DIFFERENT vendor than
+    // the main provider (same pattern as build_utility_config).
+    if main_kind != Some(teacher_kind) {
+        synthetic.provider_key = None;
+        synthetic.provider_endpoint = None;
+        synthetic.provider_model = None;
+    }
+    synthetic.provider_kind = Some(teacher_kind);
+    from_config(&synthetic).await
+}
+
 /// GR-027 — build the synthetic [`FreedomConfig`] for the utility provider, or
 /// `None` when no `utility_provider` is set (the caller falls back to the main
 /// provider).
