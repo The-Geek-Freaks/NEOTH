@@ -888,6 +888,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction in serve_tasks (same handle, same site).
     let bg_monitor_handle = crate::cli::serve_tasks::spawn_bg_monitor_task(&config);
 
+    // ── NN-MEM-06 contradiction auto-resolution cron ──────────────────────
+    // Daily sweep of idx_contradictions backlog. WAL-free; off by default.
+    let contradiction_resolve_cron_handle =
+        crate::cli::serve_tasks::spawn_contradiction_resolve_cron(&config);
+
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
     // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
@@ -1511,6 +1516,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         ecology_cron_handle,
         pattern_cron_handle,
         bg_monitor_handle,
+        contradiction_resolve_cron_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,

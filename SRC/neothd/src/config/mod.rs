@@ -501,6 +501,13 @@ pub struct FreedomConfig {
     /// to disable entirely (no task spawns, no global registry).
     #[serde(default)]
     pub bg_monitor: BgMonitorConfig,
+    /// NN-MEM-06 — daily contradiction auto-resolution cron. When `enabled`,
+    /// auto-resolves the `idx_contradictions` backlog: temporal-supersede
+    /// (newer fact wins) · semantic-equiv (Jaccard>=0.90 merge) · human-review
+    /// queue for genuine conflicts. Default OFF.
+    #[serde(default)]
+    pub contradiction_resolve:
+        crate::daemon::contradiction_resolve_cron::ContradictionResolveCronConfig,
     /// SPEC-03b — per-provider HTTP-429 fallback chain. Empty (default) =
     /// no fallback, pre-SPEC-03b behaviour preserved exactly.
     #[serde(default)]

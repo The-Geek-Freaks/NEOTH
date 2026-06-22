@@ -39,7 +39,8 @@ pub const DEFAULT_INTERVAL_SECS: u64 = 86_400; // 24 h
 
 /// Configuration for the contradiction-resolve cron (maps to
 /// `freedom.yaml::contradiction_resolve`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
 pub struct ContradictionResolveCronConfig {
     /// Master switch. When `false`, the cron loop is not spawned.
     pub enabled: bool,

@@ -710,6 +710,25 @@ pub(crate) fn spawn_pattern_cron(config: &FreedomConfig) -> Option<JoinHandle<()
     handle
 }
 
+/// NN-MEM-06 — daily contradiction auto-resolution cron. Resolves the
+/// `idx_contradictions` backlog (temporal-supersede / semantic-equiv merge /
+/// human-review queue). WAL-free. `None` when disabled.
+pub(crate) fn spawn_contradiction_resolve_cron(
+    config: &FreedomConfig,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::contradiction_resolve_cron::spawn_contradiction_resolve_cron_loop(
+        config.contradiction_resolve.clone(),
+        crate::memory::store::default_path(),
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.contradiction_resolve.interval_secs,
+            "contradiction-resolve cron loop spawned (NN-MEM-06)"
+        );
+    }
+    handle
+}
+
 /// K-Models-Discovery — daily `~/.neoth/models_catalog.json` refresh. WAL-free;
 /// ticks but does nothing when no cloud provider is configured (no outbound
 /// traffic). Bare `JoinHandle<()>` (always spawns).
@@ -2364,6 +2383,8 @@ pub(crate) struct BackgroundHandles {
     pub pattern_cron_handle: Option<JoinHandle<()>>,
     /// GOLD-ADAPT-ODY-07 — background-job detach monitor handle.
     pub bg_monitor_handle: Option<JoinHandle<()>>,
+    /// NN-MEM-06 — daily contradiction auto-resolution cron handle.
+    pub contradiction_resolve_cron_handle: Option<JoinHandle<()>>,
     pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub rss_feed_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -2435,6 +2456,7 @@ pub(crate) async fn shutdown_background_tasks(
         ecology_cron_handle,
         pattern_cron_handle,
         bg_monitor_handle,
+        contradiction_resolve_cron_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,
@@ -2640,6 +2662,10 @@ pub(crate) async fn shutdown_background_tasks(
     // Abort the GOLD-ADAPT-ODY-07 background-job monitor. WAL-free task — safe
     // to cancel at any point; in-flight scan_once calls are idempotent.
     crate::cli::serve_tasks::abort_optional(bg_monitor_handle).await;
+    // NN-MEM-06 — abort the contradiction auto-resolve cron. WAL-free;
+    // mid-tick abort leaves any in-progress SQLite batch rolled back
+    // automatically on connection close — safe to cancel at any point.
+    crate::cli::serve_tasks::abort_optional(contradiction_resolve_cron_handle).await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;
@@ -3026,5 +3052,49 @@ mod tests {
             spawn_arxiv_ingest(&cfg, &None).is_none(),
             "arxiv disabled → None"
         );
+        // NN-MEM-06: contradiction-resolve is off by default → no task spawned.
+        assert!(
+            spawn_contradiction_resolve_cron(&cfg).is_none(),
+            "contradiction_resolve disabled by default → None"
+        );
+    }
+
+    #[test]
+    fn spawn_contradiction_resolve_returns_none_for_default_config() {
+        // Default FreedomConfig has contradiction_resolve.enabled = false.
+        // The underlying spawn fn returns None without needing a tokio reactor.
+        let cfg = FreedomConfig::default();
+        assert!(
+            !cfg.contradiction_resolve.enabled,
+            "contradiction_resolve must be off by default"
+        );
+        let handle =
+            crate::daemon::contradiction_resolve_cron::spawn_contradiction_resolve_cron_loop(
+                cfg.contradiction_resolve.clone(),
+                "/nonexistent".into(),
+            );
+        assert!(handle.is_none(), "disabled config => None (no task spawned)");
+    }
+
+    #[tokio::test]
+    async fn contradiction_resolve_cron_spawns_and_aborts_cleanly_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        // Touch the db so the cron's store::open succeeds on first tick.
+        drop(crate::memory::store::open(&db_path).unwrap());
+        let config =
+            crate::daemon::contradiction_resolve_cron::ContradictionResolveCronConfig {
+                enabled: true,
+                interval_secs: 86_400,
+            };
+        let handle =
+            crate::daemon::contradiction_resolve_cron::spawn_contradiction_resolve_cron_loop(
+                config,
+                db_path,
+            )
+            .expect("enabled config must return Some");
+        // Abort mirrors shutdown_background_tasks abort_optional path.
+        handle.abort();
+        let _ = handle.await; // JoinError on abort expected + swallowed
     }
 }
