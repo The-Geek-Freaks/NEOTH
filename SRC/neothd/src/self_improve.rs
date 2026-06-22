@@ -751,6 +751,7 @@ pub fn execute_proposal_with_verification<F>(
     home: &Path,
     id: &str,
     max_revises: usize,
+    autonomy: crate::permissions::AutonomyLevel,
     advisor_fn: F,
 ) -> Result<(ExecutionVerdict, usize)>
 where
@@ -818,7 +819,54 @@ where
         let report = advisor_fn(&diff, &verification_output);
         let verdict = review_execution_result(&report);
         match verdict {
-            ExecutionVerdict::Approved => return Ok((ExecutionVerdict::Approved, revises)),
+            ExecutionVerdict::Approved => {
+                // GOLD-ADAPT-KB-02 — independent stop-condition gate. An advisor
+                // APPROVE is the agent self-reporting "done"; at Elevated/Full
+                // autonomy that claim is NOT trusted blind (MiMo-Code judge-gated
+                // stop). Every declared `done_criterion` must be structurally
+                // reflected in the verification evidence, else the "done" is
+                // premature and the loop keeps going. Below Elevated the verifier
+                // bypasses (operator supervising) so supervised runs are unchanged;
+                // an empty `done_criteria` also bypasses (no structured gate).
+                let criteria: Vec<&str> = p
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.done_criteria.as_deref())
+                    .map(|d| {
+                        d.split([',', ';', '\n'])
+                            .map(str::trim)
+                            .filter(|c| !c.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !criteria.is_empty() {
+                    let verifier =
+                        crate::council::stop_verifier::StopConditionVerifier::new(criteria);
+                    let stop_proposal = crate::council::stop_verifier::StopProposal {
+                        agent_message: report.clone(),
+                        claimed_evidence: verification_output
+                            .lines()
+                            .map(|l| l.to_string())
+                            .collect(),
+                    };
+                    let judgement = verifier.judge(&stop_proposal, autonomy);
+                    if !judgement.is_approved() {
+                        let reason = judgement.reason();
+                        revises += 1;
+                        if revises >= max_revises {
+                            return Ok((
+                                ExecutionVerdict::Blocked {
+                                    reason: format!("stop gate: {reason}"),
+                                },
+                                revises,
+                            ));
+                        }
+                        // Premature stop — re-run the advisor loop.
+                        continue;
+                    }
+                }
+                return Ok((ExecutionVerdict::Approved, revises));
+            }
             ExecutionVerdict::Revise { reason } => {
                 revises += 1;
                 if revises >= max_revises {
@@ -1030,6 +1078,7 @@ mod tests {
             &tmp,
             "psandbox",
             1,
+            crate::permissions::AutonomyLevel::Standard,
             |_diff, _vout| "APPROVE — sandbox isolation test".to_string(),
         )
         .unwrap();
@@ -1569,6 +1618,7 @@ mod tests {
             &tmp,
             "pexec",
             2,
+            crate::permissions::AutonomyLevel::Standard,
             |_diff, _vout| "APPROVE — looks clean".to_string(),
         )
         .unwrap();
@@ -1612,6 +1662,7 @@ mod tests {
             &tmp,
             "previse",
             2,
+            crate::permissions::AutonomyLevel::Standard,
             |_diff, _vout| "REVISE: needs more work".to_string(),
         )
         .unwrap();
@@ -1662,11 +1713,136 @@ mod tests {
             &tmp,
             "pstop",
             2,
+            crate::permissions::AutonomyLevel::Standard,
             |_diff, _vout| "APPROVE".to_string(),
         )
         .unwrap();
 
         assert!(matches!(verdict, ExecutionVerdict::Blocked { .. }));
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
+    }
+
+    /// GOLD-ADAPT-KB-02 — at Full autonomy a premature advisor APPROVE (the
+    /// verification evidence does NOT cover the declared `done_criteria`) is
+    /// rejected by the independent stop gate; with the advisor stuck on APPROVE
+    /// the loop exhausts `max_revises` and Blocks with a "stop gate" reason.
+    #[test]
+    fn kb02_premature_stop_blocked_at_full_autonomy() {
+        let tmp = std::env::temp_dir().join("neoth_si_kb02_premature");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill_kb02_premature.md");
+        std::fs::write(&skill, "ORIGINAL").unwrap();
+
+        // verification emits "lint clean" — but done_criteria demands
+        // "deploy complete", which the evidence never covers.
+        #[cfg(windows)]
+        let vcmd = "echo lint clean";
+        #[cfg(not(windows))]
+        let vcmd = "echo 'lint clean'";
+
+        save_proposals(
+            &tmp,
+            &[Proposal {
+                id: "pkb02a".into(),
+                skill: "test".into(),
+                skill_path: skill.display().to_string(),
+                before: "ORIGINAL".into(),
+                after: "IMPROVED".into(),
+                summary: "kb02 premature".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 1,
+                backup: None,
+                spec: Some(ProposalSpec {
+                    verification_command: Some(vcmd.to_string()),
+                    done_criteria: Some("deploy complete".to_string()),
+                    stop_conditions: vec![],
+                    drift_sha: None,
+                }),
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+
+        let (verdict, revises) = execute_proposal_with_verification(
+            &tmp,
+            "pkb02a",
+            2,
+            crate::permissions::AutonomyLevel::Full,
+            |_diff, _vout| "APPROVE".to_string(),
+        )
+        .unwrap();
+
+        match verdict {
+            ExecutionVerdict::Blocked { reason } => {
+                assert!(reason.contains("stop gate"), "got: {reason}");
+                assert!(reason.contains("deploy complete"), "got: {reason}");
+            }
+            other => panic!("expected Blocked by stop gate, got {other:?}"),
+        }
+        assert_eq!(revises, 2, "premature APPROVE must consume revise rounds");
+
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(&skill);
+    }
+
+    /// GOLD-ADAPT-KB-02 — at Full autonomy a genuine APPROVE (verification
+    /// evidence covers every `done_criterion`) passes the stop gate and is
+    /// Approved immediately, with no extra revise rounds.
+    #[test]
+    fn kb02_genuine_stop_approved_at_full_autonomy() {
+        let tmp = std::env::temp_dir().join("neoth_si_kb02_genuine");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let skill = tmp.join("skill_kb02_genuine.md");
+        std::fs::write(&skill, "ORIGINAL").unwrap();
+
+        // verification output literally contains the done_criterion text.
+        #[cfg(windows)]
+        let vcmd = "echo all tests pass";
+        #[cfg(not(windows))]
+        let vcmd = "echo 'all tests pass'";
+
+        save_proposals(
+            &tmp,
+            &[Proposal {
+                id: "pkb02b".into(),
+                skill: "test".into(),
+                skill_path: skill.display().to_string(),
+                before: "ORIGINAL".into(),
+                after: "IMPROVED".into(),
+                summary: "kb02 genuine".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 1,
+                backup: None,
+                spec: Some(ProposalSpec {
+                    verification_command: Some(vcmd.to_string()),
+                    done_criteria: Some("all tests pass".to_string()),
+                    stop_conditions: vec![],
+                    drift_sha: None,
+                }),
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+
+        let (verdict, revises) = execute_proposal_with_verification(
+            &tmp,
+            "pkb02b",
+            2,
+            crate::permissions::AutonomyLevel::Full,
+            |_diff, _vout| "APPROVE".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            verdict,
+            ExecutionVerdict::Approved,
+            "genuine stop must pass the gate"
+        );
+        assert_eq!(revises, 0);
 
         let _ = std::fs::remove_file(proposals_path(&tmp));
         let _ = std::fs::remove_file(&skill);

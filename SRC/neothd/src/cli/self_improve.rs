@@ -135,7 +135,7 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
         // advisor_fn is a stub that reads operator input via stdin for now.
         // neoth: replace the stdin advisor with a cheaper-executor subagent dispatch
         // once the provider API is available at the CLI layer.
-        SelfImproveAction::Execute { id } => execute(&home, &id, output),
+        SelfImproveAction::Execute { id } => execute(&home, &id, autonomy, output),
     }
 }
 
@@ -430,7 +430,12 @@ fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) {
 /// stdin — this is the placeholder until a cheaper-executor subagent is wired in.
 ///
 /// The skill file is NEVER written here; `accept` remains the only write path.
-fn execute(home: &std::path::Path, id: &str, output: OutputFormat) -> Result<()> {
+fn execute(
+    home: &std::path::Path,
+    id: &str,
+    autonomy: crate::permissions::AutonomyLevel,
+    output: OutputFormat,
+) -> Result<()> {
     use si::ExecutionVerdict;
 
     // neoth: replace this stdin advisor with a cheaper-executor subagent dispatch
@@ -452,7 +457,7 @@ fn execute(home: &std::path::Path, id: &str, output: OutputFormat) -> Result<()>
     };
 
     let (verdict, revises) =
-        si::execute_proposal_with_verification(home, id, 2, advisor_fn)?;
+        si::execute_proposal_with_verification(home, id, 2, autonomy, advisor_fn)?;
 
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         let (verdict_str, reason) = match &verdict {
