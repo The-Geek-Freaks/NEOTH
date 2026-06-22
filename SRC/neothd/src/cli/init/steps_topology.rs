@@ -590,11 +590,24 @@ pub(crate) async fn step5e_cbm_offer(interactive: bool) -> Result<()> {
         match cbm::install_for_host().await {
             Ok(()) => {
                 println!("  ✓ codebase-memory-mcp installed");
-                println!(
-                    "  → enable it: add a stdio MCP-server entry for codebase-memory-mcp to \
-                     ~/.neoth/mcp_servers.yaml (serve command + args are in its README: {})",
-                    cbm::CBM_DOWNLOAD_URL
-                );
+                // GOLD-ADAPT-CBM-02 — verify the binary is on PATH, then auto-register
+                // its hardened MCP-server entry so the operator doesn't have to hand-edit
+                // mcp_servers.yaml. Idempotent + best-effort (a failure falls back to the
+                // manual hint).
+                match cbm::auto_register() {
+                    Ok(true) => println!(
+                        "  ✓ registered + enabled `codebase-memory` in ~/.neoth/mcp_servers.yaml"
+                    ),
+                    Ok(false) => println!(
+                        "  → not on PATH yet — restart your shell then run `neoth doctor`, or add \
+                         the stdio entry manually (see {})",
+                        cbm::CBM_DOWNLOAD_URL
+                    ),
+                    Err(e) => println!(
+                        "  ! auto-register failed: {e}\n    Add the stdio entry manually (see {}).",
+                        cbm::CBM_DOWNLOAD_URL
+                    ),
+                }
             }
             Err(e) => println!(
                 "  ! install failed: {e}\n    Install manually from {} then register it in \

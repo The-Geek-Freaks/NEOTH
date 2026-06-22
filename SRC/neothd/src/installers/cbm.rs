@@ -178,6 +178,54 @@ pub async fn install_for_host() -> anyhow::Result<()> {
     run_command(&cmd).await
 }
 
+/// GOLD-ADAPT-CBM-02 — true when `codebase-memory-mcp` (`.exe` on Windows) is on
+/// PATH. Pure PATH scan, no subprocess — mirrors `cli::computer_use::is_installed`.
+/// This is the "verify the stdio command exists" half of CBM-02: don't register a
+/// stdio MCP server whose `command` can't actually be spawned.
+pub fn is_installed() -> bool {
+    let exe = if cfg!(target_os = "windows") {
+        "codebase-memory-mcp.exe"
+    } else {
+        "codebase-memory-mcp"
+    };
+    exe_on_path(exe, std::env::var_os("PATH"))
+}
+
+/// Testable core of [`is_installed`]: true iff `exe` is a file in any dir of
+/// `path_var`. Split out so the PATH-scan can be unit-tested with a synthetic
+/// PATH (the real `PATH` env is not deterministic in CI).
+fn exe_on_path(exe: &str, path_var: Option<std::ffi::OsString>) -> bool {
+    path_var
+        .map(|paths| std::env::split_paths(&paths).any(|p| p.join(exe).is_file()))
+        .unwrap_or(false)
+}
+
+/// GOLD-ADAPT-CBM-02 — verify the CBM binary is on PATH, then register its
+/// hardened MCP-server entry in `mcp_servers.yaml` and enable it. Idempotent:
+/// re-enables an existing `codebase-memory` entry, else pushes
+/// [`crate::mcp::config::cbm_recommended_config`] (imported read-only — no edit
+/// to mcp/config.rs). Returns `Ok(false)` WITHOUT writing when the binary is not
+/// installed (a stdio server with an unspawnable command is worse than none).
+/// Mirrors the load/push/atomic-write pattern in `cli::computer_use::set_enabled`.
+pub fn auto_register() -> anyhow::Result<bool> {
+    if !is_installed() {
+        return Ok(false);
+    }
+    use crate::mcp::config::{McpServers, cbm_recommended_config};
+    let mut recommended = cbm_recommended_config();
+    recommended.enabled = true;
+    let mut servers = McpServers::load().unwrap_or_default();
+    if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == recommended.id) {
+        existing.enabled = true;
+    } else {
+        servers.servers.push(recommended);
+    }
+    let path = McpServers::default_path();
+    let yaml = serde_yaml::to_string(&servers)?;
+    crate::util::atomic_write::atomic_write(&path, yaml.as_bytes())?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +233,29 @@ mod tests {
     #[tokio::test]
     async fn run_command_bails_on_empty_argv() {
         assert!(run_command(&[]).await.is_err());
+    }
+
+    #[test]
+    fn exe_on_path_detects_presence_absence_and_no_path() {
+        // GOLD-ADAPT-CBM-02 — the binary-verify half. Synthetic PATH so the
+        // assertion is deterministic regardless of the host's real PATH.
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = if cfg!(target_os = "windows") {
+            "cbm-probe.exe"
+        } else {
+            "cbm-probe"
+        };
+        std::fs::write(tmp.path().join(exe), b"x").unwrap();
+        let path_var = std::env::join_paths([tmp.path()]).unwrap();
+        assert!(
+            exe_on_path(exe, Some(path_var.clone())),
+            "must find an exe present in a PATH dir"
+        );
+        assert!(
+            !exe_on_path("cbm-definitely-absent", Some(path_var)),
+            "must not find an absent exe"
+        );
+        assert!(!exe_on_path(exe, None), "no PATH set => not found");
     }
 
     #[test]
