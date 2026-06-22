@@ -84,17 +84,39 @@ fn strip_multi_word_fillers(text: &str) -> Cow<'_, str> {
     let mut result_lower = lower.clone();
 
     for phrase in MULTI_WORD_FILLERS {
-        while let Some(pos) = find_phrase_at_word_boundary(&result_lower, phrase) {
-            let end = pos + phrase.len();
-            // Check for trailing comma/punctuation that belongs to the filler
-            // (e.g. "you know,") — skip it as part of the removal.
+        while let Some(pos_lower) = find_phrase_at_word_boundary(&result_lower, phrase) {
+            let end_lower = pos_lower + phrase.len();
+            // GR-fix: `to_lowercase()` is NOT byte-length-preserving (e.g. İ U+0130,
+            // 2 bytes, lowercases to 3) — so a byte offset from `result_lower` can be
+            // a non-char-boundary in the original-case `result` and panic
+            // replace_range. Map result_lower byte offsets → result byte offsets via
+            // char index. MULTI_WORD_FILLERS are ASCII, so phrase.len() == char count.
+            let char_pos = result_lower[..pos_lower].chars().count();
+            let char_end = char_pos + phrase.chars().count();
+            let pos = result
+                .char_indices()
+                .nth(char_pos)
+                .map(|(i, _)| i)
+                .unwrap_or(result.len());
+            let end = result
+                .char_indices()
+                .nth(char_end)
+                .map(|(i, _)| i)
+                .unwrap_or(result.len());
+            // Trailing comma that belongs to the filler ("you know,") — eat it.
+            // Checked on each string independently (offsets now correct for each).
             let eat_end = if result.as_bytes().get(end).copied() == Some(b',') {
                 end + 1
             } else {
                 end
             };
+            let eat_end_lower = if result_lower.as_bytes().get(end_lower).copied() == Some(b',') {
+                end_lower + 1
+            } else {
+                end_lower
+            };
             result.replace_range(pos..eat_end, "");
-            result_lower.replace_range(pos..eat_end, "");
+            result_lower.replace_range(pos_lower..eat_end_lower, "");
         }
     }
     Cow::Owned(result)
@@ -422,6 +444,19 @@ mod tests {
         assert_eq!(
             clean_transcript("do you know the answer"),
             "do the answer"
+        );
+    }
+
+    #[test]
+    fn multibyte_before_filler_does_not_panic() {
+        // GR-fix: "İ" (U+0130) lowercases to a LONGER byte sequence, so a later
+        // filler's byte offset in result_lower diverges from result. The old code
+        // applied the lower-offset to result → char-boundary panic in replace_range.
+        // Must not panic and must still strip the filler.
+        let out = clean_transcript("İstanbul you know, is nice");
+        assert!(
+            !out.contains("you know"),
+            "filler must strip without panicking on multibyte text: {out}"
         );
     }
 

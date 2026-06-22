@@ -334,14 +334,19 @@ pub fn extract_master_key<R: Key4DbReader>(
     // Step 2: unwrap the master key blob. Reuse the same
     // intermediate key — both envelopes carry their own salt + iters
     // so PBKDF2 produces a different masking key per envelope.
-    let master_key = decrypt_pbes2_payload(&master_key_env, &intermediate)?;
+    // GR-fix: wrap the decrypted master key in Zeroizing so the too-short ERROR
+    // path scrubs the decrypted secret on drop (it was dropped un-wiped before;
+    // GOLD-SEC-21-style zeroize parity with the password-check plaintext above).
+    // Ok path returns an owned copy — caller owns wiping that; the Vec<u8> return
+    // type stays to avoid rippling Zeroizing through every caller.
+    let master_key = Zeroizing::new(decrypt_pbes2_payload(&master_key_env, &intermediate)?);
     if master_key.len() < 24 {
         return Err(MasterKeyError::MasterKeyTooShort {
             got: master_key.len(),
             min: 24,
         });
     }
-    Ok(master_key)
+    Ok(master_key.to_vec())
 }
 
 /// Convenience wrapper for the wizard chunk-3 path: opens the

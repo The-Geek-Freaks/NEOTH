@@ -281,7 +281,10 @@ async fn searxng_search_against(
     count: usize,
     lang: &str,
 ) -> Result<Vec<SearchHit>> {
-    let client = http_client::build_client()?;
+    // GR-fix: no-redirect client (parity with web_fetch's SSRF posture) — a
+    // compromised/misconfigured SearXNG instance must not be able to 3xx-redirect
+    // the search request to an internal service.
+    let client = http_client::build_client_no_redirect()?;
     let endpoint = format!("{base}/search");
     let resp = client
         .get(&endpoint)
