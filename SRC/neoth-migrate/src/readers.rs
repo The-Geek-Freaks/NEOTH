@@ -548,6 +548,394 @@ fn scan_json_file(name: &str, file: &Path, kind: ImportKind) -> StoreScan {
     }
 }
 
+// ── Known source-tag strings (mirror neothd's Source::as_str()) ─────────────
+//
+// These constants are the EXACT values neothd's `Source::as_str()` returns.
+// neoth-migrate bypasses the neothd crate, so we replicate them here as
+// string constants. A mismatch silently creates rows with an unrecognised
+// source string that recall queries would never match — pin them.
+
+/// Source tag written into `idx_groundtruth.source` for each ImportKind.
+/// `hint` on the ImportSource can override for Sqlite kind (which has
+/// sub-formats: hermes / openhuman / cq-commons).
+fn source_tag_for(src: &ImportSource) -> &'static str {
+    match src.kind {
+        ImportKind::Sqlite => {
+            // Sqlite kind carries multiple sub-formats. The operator declares
+            // which one via `hint: hermes | openhuman | cq-commons | veronica`.
+            // Fall back to a generic tag so unknown hints still produce a row.
+            match src.hint.as_deref().unwrap_or("").trim() {
+                "hermes" => "import:hermes",
+                "openhuman" => "import:openhuman",
+                "cq-commons" | "cq_commons" => "import:openclaw",
+                "veronica" => "import:veronica",
+                _ => "import:openclaw",
+            }
+        }
+        // Markdown / JSON sources: map by source name conventions first,
+        // then fall back to obsidian (the most common markdown import).
+        ImportKind::Markdown | ImportKind::MarkdownFile => "import:obsidian",
+        ImportKind::JsonFile | ImportKind::JsonDir => "import:session",
+        // Lance/Faiss/Git — these callers bail before reaching source_tag_for.
+        ImportKind::LanceArrow | ImportKind::FaissFlat | ImportKind::GitTree => "import:openclaw",
+    }
+}
+
+/// One imported claim — (statement, source_tag, scope) ready for
+/// `INSERT OR IGNORE INTO idx_groundtruth`.
+///
+/// Returns all claims for one `ImportSource`. The `source_tag` strings match
+/// `neothd::memory::groundtruth::Source::as_str()` exactly — a mismatch
+/// would silently create rows that recall queries never surface.
+///
+/// Kinds that have no implemented reader (`LanceArrow`, `FaissFlat`,
+/// `GitTree`) bail immediately so the caller can log and skip.
+pub fn emit_claims(
+    src: &ImportSource,
+    home: &Path,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    let resolved = resolve_path(&src.path, home);
+    let tag = source_tag_for(src);
+    let scope = src
+        .hint
+        .as_deref()
+        .and_then(|h| {
+            // If hint looks like a scope override (`scope:global`, `scope:host:foo`)
+            // peel it off; otherwise the hint is a sub-format key (hermes etc.)
+            // and we default to "global".
+            h.strip_prefix("scope:")
+        })
+        .unwrap_or("global")
+        .to_string();
+
+    match src.kind {
+        ImportKind::LanceArrow | ImportKind::FaissFlat | ImportKind::GitTree => {
+            anyhow::bail!(
+                "emit_claims: reader not implemented for kind {:?} (source '{}'). \
+                 This kind supports scan-only. Skip and continue.",
+                src.kind,
+                src.name
+            );
+        }
+
+        ImportKind::Sqlite => emit_sqlite_claims(&resolved, tag, &scope),
+
+        ImportKind::MarkdownFile => emit_markdown_file_claims(&resolved, tag, &scope),
+
+        ImportKind::Markdown => emit_markdown_dir_claims(&resolved, tag, &scope),
+
+        ImportKind::JsonFile => emit_json_file_claims(&resolved, tag, &scope),
+
+        ImportKind::JsonDir => emit_json_dir_claims(&resolved, tag, &scope),
+    }
+}
+
+// ── Sqlite claim emitter ─────────────────────────────────────────────────────
+
+/// Read all text rows from every user table in the Sqlite store.
+/// Each non-empty TEXT value becomes a claim with `statement = value`.
+/// This is intentionally broad: the dry-run scan already told the
+/// operator what tables exist, so apply trusts the manifest opt-in.
+fn emit_sqlite_claims(
+    path: &Path,
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    use anyhow::Context as _;
+
+    // Resolve directory → first .db file (same logic as scan_sqlite).
+    let actual_db = if path.is_dir() {
+        let candidate = std::fs::read_dir(path)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().and_then(|x| x.to_str()) == Some("db"));
+        candidate.ok_or_else(|| anyhow::anyhow!("directory contains no .db file: {}", path.display()))?
+    } else {
+        path.to_path_buf()
+    };
+
+    let conn = rusqlite::Connection::open_with_flags(
+        &actual_db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .with_context(|| format!("open sqlite: {}", actual_db.display()))?;
+
+    // Enumerate user tables.
+    let tables: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' \
+                 AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )
+            .context("list tables")?;
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .context("query tables")?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let mut claims = Vec::new();
+    for table in &tables {
+        // Find TEXT columns in each table.
+        let col_query = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
+        let text_cols: Vec<String> = {
+            let mut stmt = conn.prepare(&col_query).context("table_info")?;
+            stmt.query_map([], |row| {
+                let col_type: String = row.get::<_, String>(2).unwrap_or_default();
+                let col_name: String = row.get::<_, String>(1)?;
+                Ok((col_name, col_type))
+            })
+            .context("iterate columns")?
+            .filter_map(|r| r.ok())
+            .filter(|(_, col_type)| {
+                let t = col_type.to_uppercase();
+                t.contains("TEXT") || t.is_empty() // SQLite affinity: no type → TEXT affinity
+            })
+            .map(|(name, _)| name)
+            .collect()
+        };
+
+        if text_cols.is_empty() {
+            continue;
+        }
+
+        let sel: Vec<String> = text_cols
+            .iter()
+            .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
+            .collect();
+        let query = format!(
+            "SELECT {} FROM \"{}\"",
+            sel.join(", "),
+            table.replace('"', "\"\"")
+        );
+        let mut stmt = conn.prepare(&query).context("prepare data query")?;
+        let col_count = sel.len();
+        let rows = stmt
+            .query_map([], |row| {
+                let mut vals = Vec::with_capacity(col_count);
+                for i in 0..col_count {
+                    let v: Option<String> = row.get(i).ok().flatten();
+                    vals.push(v);
+                }
+                Ok(vals)
+            })
+            .context("query rows")?;
+
+        for row in rows.filter_map(|r| r.ok()) {
+            for val in row.into_iter().flatten() {
+                let stmt_text = val.trim().to_string();
+                if !stmt_text.is_empty() {
+                    claims.push((stmt_text, tag.to_string(), scope.to_string()));
+                }
+            }
+        }
+    }
+    Ok(claims)
+}
+
+// ── Markdown claim emitters ───────────────────────────────────────────────────
+
+/// Parse a single Markdown file. Each paragraph (block of non-empty text that
+/// is not a heading marker or fence) becomes one claim. Headings become claims
+/// too (stripped of leading `#` chars) since they often encode facts in vault
+/// style ("Server Cube is at 100.68.210.50").
+fn emit_markdown_file_claims(
+    path: &Path,
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    use anyhow::Context as _;
+    use pulldown_cmark::{Event, Parser as MdParser, Tag, TagEnd};
+
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read markdown file: {}", path.display()))?;
+
+    let mut claims = Vec::new();
+    let mut buf = String::new();
+    let mut in_code = false;
+
+    for event in MdParser::new(&text) {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => {
+                in_code = true;
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                in_code = false;
+                buf.clear();
+            }
+            Event::Text(t) | Event::Code(t) if !in_code => {
+                buf.push_str(&t);
+                buf.push(' ');
+            }
+            Event::End(TagEnd::Paragraph)
+            | Event::End(TagEnd::Heading(_))
+            | Event::End(TagEnd::Item)
+            | Event::End(TagEnd::BlockQuote(_)) => {
+                let stmt = buf.trim().to_string();
+                if !stmt.is_empty() && stmt.len() >= 8 {
+                    // Skip single-word headings or lone punctuation.
+                    claims.push((stmt, tag.to_string(), scope.to_string()));
+                }
+                buf.clear();
+            }
+            Event::SoftBreak | Event::HardBreak if !buf.trim().is_empty() => {
+                buf.push(' ');
+            }
+            Event::SoftBreak | Event::HardBreak => {}
+            _ => {}
+        }
+    }
+
+    // Trailing text that never saw a closing tag.
+    let stmt = buf.trim().to_string();
+    if !stmt.is_empty() && stmt.len() >= 8 {
+        claims.push((stmt, tag.to_string(), scope.to_string()));
+    }
+
+    Ok(claims)
+}
+
+/// Walk a directory tree of Markdown files, emitting claims from each.
+fn emit_markdown_dir_claims(
+    dir: &Path,
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    let mut claims = Vec::new();
+    for entry in WalkBuilder::new(dir).standard_filters(true).build().flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        match emit_markdown_file_claims(p, tag, scope) {
+            Ok(mut c) => claims.append(&mut c),
+            Err(e) => {
+                tracing::warn!(path = %p.display(), err = %e, "markdown claim read failed, skipping file");
+            }
+        }
+    }
+    Ok(claims)
+}
+
+// ── JSON claim emitters ───────────────────────────────────────────────────────
+
+/// Extract claims from a single JSON file.
+///
+/// Supported shapes:
+/// - Array of objects: each object with a `statement`/`text`/`content`/`body`
+///   string field becomes one claim.
+/// - Array of strings: each string is a claim.
+/// - Single object: same field extraction as above.
+fn emit_json_file_claims(
+    path: &Path,
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    use anyhow::Context as _;
+
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read json file: {}", path.display()))?;
+    let val: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parse json: {}", path.display()))?;
+
+    Ok(extract_json_claims(&val, tag, scope))
+}
+
+/// Known field names (in priority order) to extract the statement from
+/// a JSON object.
+const CLAIM_FIELDS: &[&str] = &[
+    "statement",
+    "text",
+    "content",
+    "body",
+    "message",
+    "fact",
+    "claim",
+    "note",
+    "value",
+];
+
+fn extract_json_claims(
+    val: &serde_json::Value,
+    tag: &'static str,
+    scope: &str,
+) -> Vec<(String, String, String)> {
+    let mut claims = Vec::new();
+    match val {
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                match item {
+                    serde_json::Value::String(s) => {
+                        let stmt = s.trim().to_string();
+                        if stmt.len() >= 8 {
+                            claims.push((stmt, tag.to_string(), scope.to_string()));
+                        }
+                    }
+                    serde_json::Value::Object(_) => {
+                        if let Some(stmt) = pick_claim_field(item) {
+                            claims.push((stmt, tag.to_string(), scope.to_string()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        serde_json::Value::Object(_) => {
+            if let Some(stmt) = pick_claim_field(val) {
+                claims.push((stmt, tag.to_string(), scope.to_string()));
+            }
+        }
+        serde_json::Value::String(s) => {
+            let stmt = s.trim().to_string();
+            if stmt.len() >= 8 {
+                claims.push((stmt, tag.to_string(), scope.to_string()));
+            }
+        }
+        _ => {}
+    }
+    claims
+}
+
+fn pick_claim_field(obj: &serde_json::Value) -> Option<String> {
+    for &field in CLAIM_FIELDS {
+        if let Some(serde_json::Value::String(s)) = obj.get(field) {
+            let stmt = s.trim().to_string();
+            if stmt.len() >= 8 {
+                return Some(stmt);
+            }
+        }
+    }
+    None
+}
+
+/// Walk a directory of JSON files, emitting claims from each.
+fn emit_json_dir_claims(
+    dir: &Path,
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    let mut claims = Vec::new();
+    for entry in WalkBuilder::new(dir).standard_filters(true).build().flatten() {
+        let p = entry.path();
+        if !matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("json" | "ajson")
+        ) {
+            continue;
+        }
+        match emit_json_file_claims(p, tag, scope) {
+            Ok(mut c) => claims.append(&mut c),
+            Err(e) => {
+                tracing::warn!(path = %p.display(), err = %e, "json claim read failed, skipping file");
+            }
+        }
+    }
+    Ok(claims)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -920,5 +1308,150 @@ sources:
         let scan = scan_git_inventory("test", tmp.path(), ImportKind::GitTree);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 0);
+    }
+
+    // ── emit_claims tests ─────────────────────────────────────────────────────
+
+    fn make_src(name: &str, path: &str, kind: ImportKind, hint: Option<&str>) -> ImportSource {
+        ImportSource {
+            name: name.to_string(),
+            path: path.to_string(),
+            kind,
+            hint: hint.map(String::from),
+        }
+    }
+
+    #[test]
+    fn emit_claims_json_file_array_of_objects() {
+        let tmp = tempdir().unwrap();
+        let p = tmp.path().join("facts.json");
+        std::fs::write(
+            &p,
+            r#"[{"statement":"The sky is blue"},{"statement":"Water is wet"}]"#,
+        )
+        .unwrap();
+        let src = make_src("t", &p.to_string_lossy(), ImportKind::JsonFile, None);
+        let claims = emit_claims(&src, tmp.path()).unwrap();
+        assert_eq!(claims.len(), 2);
+        assert_eq!(claims[0].0, "The sky is blue");
+        assert_eq!(claims[0].1, "import:session");
+        assert_eq!(claims[0].2, "global");
+    }
+
+    #[test]
+    fn emit_claims_json_file_array_of_strings() {
+        let tmp = tempdir().unwrap();
+        let p = tmp.path().join("strs.json");
+        std::fs::write(&p, r#"["fact one here","fact two here"]"#).unwrap();
+        let src = make_src("t", &p.to_string_lossy(), ImportKind::JsonFile, None);
+        let claims = emit_claims(&src, tmp.path()).unwrap();
+        assert_eq!(claims.len(), 2);
+        assert_eq!(claims[0].0, "fact one here");
+    }
+
+    #[test]
+    fn emit_claims_json_file_short_strings_skipped() {
+        let tmp = tempdir().unwrap();
+        let p = tmp.path().join("short.json");
+        // "ok" is 2 chars < 8 threshold; "long enough fact" is fine
+        std::fs::write(&p, r#"["ok","long enough fact here"]"#).unwrap();
+        let src = make_src("t", &p.to_string_lossy(), ImportKind::JsonFile, None);
+        let claims = emit_claims(&src, tmp.path()).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].0, "long enough fact here");
+    }
+
+    #[test]
+    fn emit_claims_markdown_file_extracts_paragraphs() {
+        let tmp = tempdir().unwrap();
+        let p = tmp.path().join("notes.md");
+        std::fs::write(
+            &p,
+            "# My Heading\n\nThis is a paragraph about something important.\n\nAnother paragraph.\n",
+        )
+        .unwrap();
+        let src = make_src("t", &p.to_string_lossy(), ImportKind::MarkdownFile, None);
+        let claims = emit_claims(&src, tmp.path()).unwrap();
+        // At minimum the heading and paragraphs should produce claims
+        assert!(!claims.is_empty(), "should extract at least one claim");
+        assert!(
+            claims.iter().any(|(s, _, _)| s.contains("important")),
+            "paragraph text must appear in claims; got {claims:?}"
+        );
+    }
+
+    #[test]
+    fn emit_claims_markdown_dir_walks_md_files() {
+        let tmp = tempdir().unwrap();
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(
+            vault.join("a.md"),
+            "# Server facts\n\nThe cube server is at 100.68.210.50.\n",
+        )
+        .unwrap();
+        std::fs::write(vault.join("b.md"), "Short.\n").unwrap(); // too short → 0 claims
+        std::fs::write(vault.join("c.txt"), "ignored\n").unwrap(); // wrong ext → skip
+        let src = make_src("v", &vault.to_string_lossy(), ImportKind::Markdown, None);
+        let claims = emit_claims(&src, tmp.path()).unwrap();
+        assert!(!claims.is_empty());
+        assert!(claims.iter().any(|(s, _, _)| s.contains("100.68.210.50")));
+        assert!(claims.iter().all(|(_, tag, _)| tag == "import:obsidian"));
+    }
+
+    #[test]
+    fn emit_claims_sqlite_reads_text_columns() {
+        let tmp = tempdir().unwrap();
+        let db_path = tmp.path().join("mem.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (id INTEGER PRIMARY KEY, text TEXT, score REAL);\
+             INSERT INTO memories VALUES (1,'The operator lives in Germany',0.9);\
+             INSERT INTO memories VALUES (2,'The assistant must speak German',0.8);",
+        )
+        .unwrap();
+        drop(conn);
+        let src = make_src(
+            "mem",
+            &db_path.to_string_lossy(),
+            ImportKind::Sqlite,
+            Some("hermes"),
+        );
+        let claims = emit_claims(&src, tmp.path()).unwrap();
+        assert_eq!(claims.len(), 2, "two text rows expected; got {claims:?}");
+        assert!(claims.iter().all(|(_, tag, _)| tag == "import:hermes"));
+        assert!(claims
+            .iter()
+            .any(|(s, _, _)| s.contains("operator lives in Germany")));
+    }
+
+    #[test]
+    fn emit_claims_lance_arrow_bails() {
+        let tmp = tempdir().unwrap();
+        // LanceArrow, FaissFlat, GitTree must bail — not crash
+        for kind in [
+            ImportKind::LanceArrow,
+            ImportKind::FaissFlat,
+            ImportKind::GitTree,
+        ] {
+            let src = make_src("t", &tmp.path().to_string_lossy(), kind, None);
+            let result = emit_claims(&src, tmp.path());
+            assert!(result.is_err(), "{kind:?} must return Err");
+        }
+    }
+
+    #[test]
+    fn source_tag_for_sqlite_hint_variants() {
+        let mk = |hint: Option<&str>| ImportSource {
+            name: "x".into(),
+            path: ".".into(),
+            kind: ImportKind::Sqlite,
+            hint: hint.map(String::from),
+        };
+        assert_eq!(source_tag_for(&mk(Some("hermes"))), "import:hermes");
+        assert_eq!(source_tag_for(&mk(Some("openhuman"))), "import:openhuman");
+        assert_eq!(source_tag_for(&mk(Some("cq-commons"))), "import:openclaw");
+        assert_eq!(source_tag_for(&mk(Some("veronica"))), "import:veronica");
+        assert_eq!(source_tag_for(&mk(None)), "import:openclaw"); // fallback
     }
 }
