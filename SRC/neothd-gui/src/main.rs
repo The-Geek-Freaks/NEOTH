@@ -362,9 +362,24 @@ fn main() -> Result<()> {
     //      gates fire identically to the CLI path.
     //   4. `invoke_from_event_loop` swaps the placeholder for the real
     //      reply (or an error bubble if the subprocess failed).
+    // ODY-10: shared buffer that holds the last non-empty operator input so
+    // ArrowUp-on-empty-composer can recall it. Ephemeral (process lifetime only).
+    // Pre-clone before the move closure so both on_chat_send_clicked and
+    // on_chat_composer_recall_requested share the same Arc.
+    let last_operator_input: std::sync::Arc<std::sync::Mutex<String>> =
+        std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let last_operator_input_for_send = std::sync::Arc::clone(&last_operator_input);
+
     let weak_chat_send = window.as_weak();
     window.on_chat_send_clicked(move |text| {
         let body = text.trim().to_string();
+        // ODY-10: capture before the empty-guard so the recall buffer is
+        // always up-to-date for the most recent non-empty send.
+        if !body.is_empty() {
+            if let Ok(mut last) = last_operator_input_for_send.lock() {
+                *last = body.clone();
+            }
+        }
         if body.is_empty() {
             return;
         }
@@ -537,6 +552,27 @@ fn main() -> Result<()> {
             });
         });
     });
+
+    // ODY-10: ArrowUp-on-empty-composer recall handler. The callback fires
+    // on the Slint event-loop thread; we read the shared buffer and write
+    // the last input back into the composer draft directly (no
+    // invoke_from_event_loop needed — we are already on the UI thread).
+    {
+        let weak_recall = window.as_weak();
+        let last_input_for_recall = std::sync::Arc::clone(&last_operator_input);
+        window.on_chat_composer_recall_requested(move || {
+            let last = last_input_for_recall
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            if last.is_empty() {
+                return;
+            }
+            if let Some(w) = weak_recall.upgrade() {
+                w.set_chat_composer_draft(last.into());
+            }
+        });
+    }
 
     // H-1 fix — chat-channel-switched was likewise unbound. Now logged
     // so the operator's sidebar click reaches the daemon-facing layer
@@ -4117,6 +4153,51 @@ mod chat_subprocess_tests {
         assert!(
             result.contains("No active preset"),
             "expected no-active-preset status, got: {result}"
+        );
+    }
+
+    // ODY-10: recall buffer logic — pure Rust unit tests (no Slint window).
+
+    #[test]
+    fn recall_buffer_captures_last_non_empty_send() {
+        let buf: std::sync::Arc<std::sync::Mutex<String>> =
+            std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+
+        // Simulate what on_chat_send_clicked does on a non-empty body.
+        let body = "  hello world  ".trim().to_string();
+        if !body.is_empty() {
+            if let Ok(mut last) = buf.lock() {
+                *last = body.clone();
+            }
+        }
+        assert_eq!(*buf.lock().unwrap(), "hello world");
+
+        // A second non-empty send overwrites the buffer.
+        let body2 = "second message".to_string();
+        if !body2.is_empty() {
+            if let Ok(mut last) = buf.lock() {
+                *last = body2.clone();
+            }
+        }
+        assert_eq!(*buf.lock().unwrap(), "second message");
+    }
+
+    #[test]
+    fn recall_buffer_ignores_empty_body() {
+        let buf: std::sync::Arc<std::sync::Mutex<String>> =
+            std::sync::Arc::new(std::sync::Mutex::new("previous".to_string()));
+
+        // An empty body (early-return guard) must NOT overwrite the buffer.
+        let body = "  ".trim().to_string();
+        if !body.is_empty() {
+            if let Ok(mut last) = buf.lock() {
+                *last = body.clone();
+            }
+        }
+        assert_eq!(
+            *buf.lock().unwrap(),
+            "previous",
+            "empty send must not clobber recall buffer"
         );
     }
 }

@@ -345,6 +345,9 @@ export component MainWindow inherits Window {
     /// Operator typed + sent a message. Rust dispatches through
     /// `cli::chat::run_chat_with`.
     callback chat-send-clicked(string);
+    /// Operator pressed ArrowUp with an empty composer — Rust writes the
+    /// last operator body back into `chat-composer-draft`.
+    callback chat-composer-recall-requested();
     /// Operator switched channels in the sidebar.
     callback chat-channel-switched(int);
 
@@ -1699,6 +1702,7 @@ export component MainWindow inherits Window {
                     active-channel-index <=> root.chat-active-channel;
                     unread-counts: root.chat-unread-counts;
                     send-clicked(text) => { root.chat-send-clicked(text); }
+                    recall-requested => { root.chat-composer-recall-requested(); }
                     channel-switched(idx) => { root.chat-channel-switched(idx); }
                     open-settings => { root.nav-active = "config"; }
                 } }  // close ChatView + SovereignFade

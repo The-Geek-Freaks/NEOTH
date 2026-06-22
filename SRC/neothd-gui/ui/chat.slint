@@ -182,6 +182,9 @@ component Composer inherits Rectangle {
     /// surfaces the slash-autocomplete dropdown when this is true.
     in property <bool> slash-active: false;
     callback send-clicked(string);
+    /// Operator pressed ArrowUp with an empty composer — fires so Rust
+    /// can write the last sent input back into `draft`.
+    callback recall-requested();
 
     // Reviewer-3 P1-B (2026-05-20): persistent label + helper line so
     // the operator always sees what the input is for, even after the
@@ -299,6 +302,16 @@ component Composer inherits Rectangle {
                         }
                         return accept;
                     }
+                    // ArrowUp on an empty composer → recall last sent input.
+                    // Non-empty composer: reject so native cursor-up navigation
+                    // works normally in the multi-line TextInput.
+                    if (event.text == Key.UpArrow) {
+                        if (root.draft == "") {
+                            root.recall-requested();
+                            return accept;
+                        }
+                        return reject;
+                    }
                     return reject;
                 }
             }
@@ -351,6 +364,9 @@ export component ChatView inherits Rectangle {
     callback send-clicked(string);
     callback channel-switched(int);
     callback open-settings();
+    /// Operator pressed ArrowUp with an empty composer — bubbles up to
+    /// Rust so it can write the last sent input back into `composer-draft`.
+    callback recall-requested();
 
     // Chat-feel #2 (beat-openhuman): auto-scroll-to-bottom. `auto-follow`
     // stays true while the operator is at/near the bottom; a manual
@@ -511,6 +527,7 @@ export component ChatView inherits Rectangle {
                 send-enabled: root.send-enabled;
                 slash-active: root.slash-active;
                 send-clicked(text) => { root.send-clicked(text); }
+                recall-requested => { root.recall-requested(); }
             }
         }
     }
