@@ -330,16 +330,18 @@ async fn run_tech_currency_tick_once(
     };
     let gaps = tech_currency_gaps(&stories, &filter, 7);
 
-    // Mark the week done even when there are no gaps, so we don't refetch HN
-    // every night for an empty result.
     if let Some(parent) = marker.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&marker, &week);
 
     let item = match build_tech_currency_item(&week, &gaps, now_unix) {
         Some(i) => i,
-        None => return Ok(false), // no gaps → no vacuous nudge
+        None => {
+            // No gaps → mark the week done (don't refetch HN nightly for an empty
+            // result). No queue op on this path, so marking here is safe.
+            let _ = std::fs::write(&marker, &week);
+            return Ok(false);
+        }
     };
     let queue_path = home.join("proactive_queue.json");
     let mut queue =
@@ -348,6 +350,11 @@ async fn run_tech_currency_tick_once(
     queue
         .save_to(&queue_path)
         .map_err(|e| format!("queue save failed: {e}"))?;
+    // GR-fix: mark the week done ONLY after the queue save succeeds. The old order
+    // wrote the marker BEFORE the enqueue/save, so a queue-save failure still
+    // marked the week → the next tick's marker check skipped and the nudge was
+    // silently lost until the next ISO week.
+    let _ = std::fs::write(&marker, &week);
     Ok(enqueued)
 }
 

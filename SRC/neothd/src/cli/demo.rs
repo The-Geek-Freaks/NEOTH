@@ -225,11 +225,14 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
             if i > 0 {
                 print!(", ");
             }
+            // GR-fix: serialise the strings via serde_json instead of a hand-built
+            // template that only escaped `"` — a note from format!("ERR: {e}") can
+            // carry backslashes/newlines/control chars and produced invalid JSON.
             print!(
-                r#"{{"step":"{}", "ok":{}, "note":"{}"}}"#,
-                s.name,
+                "{{\"step\":{}, \"ok\":{}, \"note\":{}}}",
+                serde_json::to_string(s.name).unwrap_or_else(|_| "\"\"".into()),
                 s.ok,
-                s.note.replace('"', "\\\"")
+                serde_json::to_string(&s.note).unwrap_or_else(|_| "\"\"".into())
             );
         }
         println!("]");

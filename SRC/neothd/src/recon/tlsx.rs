@@ -41,6 +41,10 @@ pub struct TlsxResult {
     pub self_signed: bool,
     #[serde(default)]
     pub expired: bool,
+    /// GR-fix: the argv requests `-jarm` (the JARM TLS fingerprint), but the field
+    /// was missing here so serde silently dropped it from every probe result.
+    #[serde(default)]
+    pub jarm: String,
 }
 
 /// Build a validated argv: `-u <hosts> [-p <ports>] -json -san -cn -cipher

@@ -48,12 +48,14 @@ pub(crate) fn check_computer_use(_home: &Path) -> CheckOutcome {
 
 /// OKF export — can NEOTH write a knowledge bundle? Probes the home dir.
 pub(crate) fn check_okf_export(home: &Path) -> CheckOutcome {
-    let writable = home.exists() && {
-        let probe = home.join(".okf-write-probe");
-        let ok = std::fs::write(&probe, b"x").is_ok();
-        let _ = std::fs::remove_file(&probe);
-        ok
-    };
+    // GR-fix: read-only check — `neoth doctor` is documented as non-mutating, but
+    // this wrote a `.okf-write-probe` file every run and left it behind if the
+    // remove failed. A metadata readonly-bit check keeps the diagnostic side-effect-free.
+    let writable = home.exists()
+        && home
+            .metadata()
+            .map(|m| !m.permissions().readonly())
+            .unwrap_or(false);
     if writable {
         CheckOutcome {
             name: "okf export",
