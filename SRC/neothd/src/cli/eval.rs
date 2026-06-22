@@ -13,7 +13,7 @@
 //! `report.md`.  A summary table is always printed to stdout.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -234,10 +234,8 @@ fn truncate(s: &str, max: usize) -> &str {
 /// Run every case in `cases` and return an [`EvalReport`].
 pub fn run_suite(suite_path: &str, cases: &[EvalCase]) -> EvalReport {
     let suite_start = Instant::now();
-    let timestamp_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs();
+    // GOLD-ARCH-07 — canonical time helper (overflow-safe), not raw duration_since.
+    let timestamp_unix = crate::time::now_unix_secs();
 
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
@@ -371,10 +369,7 @@ fn resolve_out_dir(args: &EvalArgs) -> Result<PathBuf> {
         return Ok(d.clone());
     }
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs();
+    let ts = crate::time::now_unix_secs();
     Ok(home.join("eval-runs").join(ts.to_string()))
 }
 

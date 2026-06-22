@@ -207,10 +207,27 @@ fn run_models_fit(
     } else if let Some(bw) = bandwidth {
         ("custom".to_string(), bw, vram.unwrap_or(0.0))
     } else {
-        anyhow::bail!(
-            "`models fit` needs a GPU: pass `--gpu <name>` (e.g. \"RTX 4090\") or \
-             `--bandwidth <GB/s>` for a GPU not in the table"
-        );
+        // GOLD-ADAPT-ODY-13 — no --gpu/--bandwidth given → auto-detect the host
+        // GPU (probe → built-in bandwidth table), so `neoth models fit` works
+        // out-of-the-box. Clear error naming what was detected when it isn't in
+        // the table. (The CLI scorer is ODY-13; the GUI model browser stays a
+        // separate deferred item.)
+        let report = crate::installers::gpu::probe_gpu();
+        match report.name.as_deref().and_then(hwfit::lookup_gpu) {
+            Some(g) => (
+                g.name.to_string(),
+                bandwidth.unwrap_or(g.bandwidth_gb_s),
+                vram.unwrap_or(g.vram_gb),
+            ),
+            None => {
+                let detected = report.name.as_deref().unwrap_or("none detected");
+                anyhow::bail!(
+                    "`models fit` needs a GPU: auto-detect found `{detected}` (not in the \
+                     built-in table). Pass `--gpu <name>` (e.g. \"RTX 4090\") or \
+                     `--bandwidth <GB/s>`."
+                );
+            }
+        }
     };
 
     let candidates = hwfit::default_candidates();
