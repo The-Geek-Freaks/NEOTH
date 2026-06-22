@@ -1181,9 +1181,32 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // the LOWKEY refusal-recovery path post-reply can reissue
             // the same (prompt, system) pair under a reframing. See
             // `cli/chat.rs` for the matching pattern.
+            // GOLD-ADAPT-HERMES-03b — channel clarification answer-routing
+            // (env-gated via NEOTH_CLARIFICATION; default off = byte-identical).
+            // If the operator's PRIOR turn on this (channel, sender) received a
+            // clarifying question, THIS message is the answer: re-issue the stored
+            // original prompt with the answer appended instead of treating it as a
+            // fresh request. Out-of-band (no worker park) — the pending state lives
+            // in the process-global pending_clarifications store between turns.
+            let final_prompt = if crate::cli::clarify_chat::enabled() {
+                crate::memory::pending_clarifications::take_combined(
+                    &channel_str,
+                    &sender_hash,
+                    &final_prompt,
+                )
+                .unwrap_or(final_prompt)
+            } else {
+                final_prompt
+            };
             let req = Request {
                 prompt: final_prompt.clone(),
-                system: system_override.clone(),
+                // HERMES-03b hook A — inject the clarification protocol into the
+                // system prompt so the model may emit `[[clarify]] <question>`.
+                // `augment_system` is a no-op when the feature is off, so the
+                // default channel system prompt is byte-for-byte unchanged.
+                system: system_override
+                    .clone()
+                    .map(crate::cli::clarify_chat::augment_system),
                 model: None,
                 ..Default::default()
             };
@@ -1409,6 +1432,22 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             } else {
                 provider.complete(req).await?
             };
+            // GOLD-ADAPT-HERMES-03b hook C — if the model asked for clarification,
+            // record the pending prompt (keyed on channel+sender) and surface the
+            // STRIPPED question; the operator's NEXT inbound message routes back as
+            // the answer via `take_combined` above (async-message — no worker park).
+            // Env-gated: when NEOTH_CLARIFICATION is off this whole block is skipped
+            // and the reply egresses unchanged.
+            if crate::cli::clarify_chat::enabled()
+                && crate::daemon::clarify::is_ambiguous(&completion.text)
+            {
+                crate::memory::pending_clarifications::store(
+                    &channel_str,
+                    &sender_hash,
+                    &final_prompt,
+                );
+                completion.text = crate::cli::clarify_chat::strip_marker(&completion.text);
+            }
             let latency = started.elapsed();
 
             // Q-3: record into the rolling-window meter so `/metrics` reflects

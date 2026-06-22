@@ -24,7 +24,9 @@ use crate::daemon::clarify::{self, ClarificationGate, ParkOutcome};
 use crate::providers::{Provider, Request};
 
 /// Env opt-in. Default off so the common path is byte-for-byte unchanged.
-fn enabled() -> bool {
+/// `pub(crate)` so the channel path (HERMES-03b, serve_pipeline) gates its
+/// out-of-band answer-routing on the same opt-in.
+pub(crate) fn enabled() -> bool {
     std::env::var("NEOTH_CLARIFICATION")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
@@ -59,8 +61,9 @@ const MARKERS: &[&str] = &[
     "CLARIFY:",
 ];
 
-/// Remove the (first) ambiguity marker from the model reply.
-fn strip_marker(reply: &str) -> String {
+/// Remove the (first) ambiguity marker from the model reply. `pub(crate)` so the
+/// channel path (HERMES-03b) surfaces the same clean question the CLI does.
+pub(crate) fn strip_marker(reply: &str) -> String {
     let mut out = reply.trim().to_string();
     let lower = out.to_lowercase();
     for m in MARKERS {
