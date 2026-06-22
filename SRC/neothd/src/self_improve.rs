@@ -292,11 +292,16 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
     if p.status != ProposalStatus::Pending {
         anyhow::bail!("proposal `{id}` is {:?}, not pending", p.status);
     }
-    // IMPR-02: drift check — warn if target drifted since this was staged.
+    // IMPR-02 + GR-fix: drift check — ABORT (not just warn) if the target skill
+    // file changed since the proposal was staged. The module gate promises "no
+    // skill changes without operator approval"; the approved diff was reviewed
+    // against the staged base, so applying `p.after` over a drifted file would
+    // clobber the out-of-band edits with a stale proposal. Refuse + tell the
+    // operator to re-stage. (git subprocess errors stay non-fatal — see below.)
     if let Some(sha) = p.spec.as_ref().and_then(|s| s.drift_sha.as_deref()) {
         if let Some(diff) = git_diff_stat_since(sha, &p.skill_path) {
-            eprintln!(
-                "⚠  drift warning: `{}` changed since proposal was staged (sha {sha}):\n{diff}\n   Review the diff — this proposal may be stale.",
+            anyhow::bail!(
+                "drift detected: `{}` changed since the proposal was staged (sha {sha}):\n{diff}\n   The proposal is stale — re-stage it (`neoth self-improve run`) and review the fresh diff before accepting.",
                 p.skill_path
             );
         }
@@ -1576,13 +1581,11 @@ mod tests {
     }
 
     #[test]
-    fn accept_emits_drift_warning_when_skill_changed() {
-        // Simulate drift: stage with a known fake SHA → accept without git having
-        // that SHA in history → diff --stat returns non-empty → warning on stderr.
-        // We capture stderr by redirecting via a subprocess would be complex, so
-        // we test the helper function directly instead.
-        //
-        // git_diff_stat_since with a SHA that doesn't exist returns None (graceful).
+    fn drift_helper_is_graceful_on_missing_sha() {
+        // GR-fix: accept_proposal now ABORTS (bail) on detected drift rather than
+        // warning + overwriting — so this exercises the underlying helper only.
+        // git_diff_stat_since with a SHA that doesn't exist returns None (graceful)
+        // so a missing-git / unknown-SHA environment never spuriously aborts accept.
         let result = git_diff_stat_since("0000000", "/nonexistent/path/skill.md");
         // Either None (git not available or SHA not found) or Some — both OK.
         // The important thing: it never panics.

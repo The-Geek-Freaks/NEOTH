@@ -224,6 +224,15 @@ fn run_pass(
         );
         return Ok(());
     }
+    // GR-fix: a dry-run on a DISABLED config must NOT spawn the external SkillOpt
+    // engine (a dry-run is supposed to be side-effect-free). The prior `&& !dry_run`
+    // gate let a disabled `--dry-run` fall through to the engine-spawn path below.
+    if !cfg.enabled && dry_run {
+        println!(
+            "dry-run: self-improvement is disabled — would run SkillOpt for `{persona}` once enabled (engine NOT spawned)."
+        );
+        return Ok(());
+    }
     // Resolve the production skill file (explicit, else <skills>/<persona>/skill.md).
     let skill_path = skill.unwrap_or_else(|| {
         crate::skills::installer::default_skills_dir()
