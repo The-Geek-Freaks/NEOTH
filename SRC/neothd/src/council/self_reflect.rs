@@ -349,3 +349,253 @@ mod tests {
         assert!(REFINE_SYSTEM_PROMPT.to_lowercase().contains("do not add"));
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOLD-ADAPT-LOWKEY-01 — deterministic self-score gate.
+//
+// After the council SP-5 block resolves `final_text`, the caller invokes
+// `score_answer` to get a `SelfScore` on 4 axes (correctness, completeness,
+// coherence, evidence). No LLM call is made — all heuristics are pure
+// deterministic text analysis. The composite is the mean of the 4 axes,
+// clamped to [0.0, 1.0].
+//
+// `should_gate` returns `true` when the score falls below the operator-
+// configured minimum AND the kill-switch is on. When it returns `true` the
+// caller emits a STDERR warning; `final_text` is NEVER modified.
+//
+// WAL event `0x6A COUNCIL_SELF_SCORE` is emitted unconditionally (always
+// durable — no deny-list entry in `needs_immediate_sync`) so the audit chain
+// always has a score frame alongside each council decision.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Default minimum composite score below which the gate warns.
+/// Operator can override via `freedom.yaml::council.self_score_min_composite`.
+pub const DEFAULT_SELF_SCORE_MIN_COMPOSITE: f32 = 0.60;
+
+/// Four-axis deterministic self-score produced by [`score_answer`].
+/// All fields are in `[0.0, 1.0]`.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SelfScore {
+    /// Heuristic: inverse hedge/absolutism density.
+    /// High absolute claims ("definitely", "always", "never") with no
+    /// qualification lower correctness; balanced hedging ("may", "suggests",
+    /// "evidence indicates") raises it.
+    pub correctness: f32,
+    /// Heuristic: length signal — very short answers relative to a reference
+    /// baseline are unlikely to be complete. Saturates at ~600 chars.
+    pub completeness: f32,
+    /// Heuristic: structural signal — numbered lists, bullet points, section
+    /// markers, and paragraph breaks indicate organised, coherent text.
+    pub coherence: f32,
+    /// Heuristic: citation/attribution signal — phrases like "Source:", "per ",
+    /// "according to", "http", and "ref:" suggest grounded claims.
+    pub evidence: f32,
+}
+
+impl SelfScore {
+    /// Composite score = arithmetic mean of the 4 axes, clamped to [0.0, 1.0].
+    #[must_use]
+    pub fn composite(&self) -> f32 {
+        let raw = (self.correctness + self.completeness + self.coherence + self.evidence) / 4.0;
+        raw.clamp(0.0, 1.0)
+    }
+}
+
+/// GOLD-ADAPT-LOWKEY-01 — score `text` on 4 axes without any I/O.
+///
+/// All heuristics are pure deterministic functions of the byte content.
+/// They are deliberately simple: the goal is a fast, robust signal for
+/// the gate, not a perfect quality model.
+pub fn score_answer(text: &str) -> SelfScore {
+    let lower = text.to_ascii_lowercase();
+
+    // ── Correctness ────────────────────────────────────────────────────────
+    // Absolutism keywords reduce score; hedging keywords raise it.
+    let absolutism_hits: usize = [
+        "definitely", "certainly", "always", "never", "impossible",
+        "guaranteed", "absolutely", "undoubtedly", "without question",
+    ]
+    .iter()
+    .filter(|&&kw| lower.contains(kw))
+    .count();
+    let hedge_hits: usize = [
+        "may", "might", "could", "suggests", "evidence indicates",
+        "appears to", "likely", "probably", "according to", "it seems",
+        "research shows", "studies suggest",
+    ]
+    .iter()
+    .filter(|&&kw| lower.contains(kw))
+    .count();
+    // Net hedge bonus: each hedge counteracts one absolutism hit.
+    let net_penalty = absolutism_hits.saturating_sub(hedge_hits);
+    // Each unmitigated absolutism hit costs 0.15, floor at 0.0.
+    let correctness = (1.0_f32 - net_penalty as f32 * 0.15).clamp(0.0, 1.0);
+
+    // ── Completeness ───────────────────────────────────────────────────────
+    // Longer answers are more likely to be complete. Saturates at 600 chars.
+    let char_count = text.chars().count();
+    let completeness = (char_count as f32 / 600.0).clamp(0.0, 1.0);
+
+    // ── Coherence ──────────────────────────────────────────────────────────
+    // Structural markers: numbered items ("1. " / "1) "), bullets ("- " /
+    // "* " / "• "), headers ("##"), and paragraph double-newlines.
+    let has_numbered = lower.contains("\n1.") || lower.contains("\n1)") || text.contains("1. ");
+    let has_bullets = text.contains("\n- ")
+        || text.contains("\n* ")
+        || text.contains("\n• ")
+        || text.contains("- ")
+        || text.contains("* ");
+    let has_headers = text.contains("##") || text.contains("**") || text.contains("__");
+    let has_paragraphs = text.contains("\n\n");
+    let structure_score = [has_numbered, has_bullets, has_headers, has_paragraphs]
+        .iter()
+        .filter(|&&b| b)
+        .count() as f32;
+    // 2+ structural signals → full score; 1 → half; 0 → proportional to length.
+    let coherence = if structure_score >= 2.0 {
+        1.0
+    } else if structure_score >= 1.0 {
+        0.65
+    } else {
+        // Fallback: very short answers get low coherence, longer ones baseline.
+        (char_count as f32 / 400.0).clamp(0.0, 0.55)
+    };
+
+    // ── Evidence ───────────────────────────────────────────────────────────
+    // Citation/attribution signals.
+    let citation_hits: usize = [
+        "source:", "sources:", "ref:", "reference:", "according to",
+        "per ", "via ", "http://", "https://", "doi:", "ibid",
+        "et al", "see also", "citation", "cited",
+    ]
+    .iter()
+    .filter(|&&kw| lower.contains(kw))
+    .count();
+    // Each citation signal adds 0.20 up to 1.0.
+    let evidence = (citation_hits as f32 * 0.20).clamp(0.0, 1.0);
+
+    SelfScore {
+        correctness,
+        completeness,
+        coherence,
+        evidence,
+    }
+}
+
+/// GOLD-ADAPT-LOWKEY-01 — return `true` when the gate should warn.
+///
+/// Conditions:
+/// - `config.council.self_score_enabled` must be `true` (kill-switch).
+/// - `score.composite()` must be below `effective_self_score_min_composite()`.
+pub fn should_gate(config: &crate::config::FreedomConfig, score: &SelfScore) -> bool {
+    if !config.council.self_score_enabled {
+        return false;
+    }
+    score.composite() < config.council.effective_self_score_min_composite()
+}
+
+#[cfg(test)]
+mod self_score_tests {
+    use super::*;
+    use crate::config::FreedomConfig;
+    use crate::config::inference::CouncilConfig;
+
+    fn cfg_score(enabled: bool, min: Option<f32>) -> FreedomConfig {
+        let mut cfg = FreedomConfig::default();
+        cfg.council = CouncilConfig {
+            self_score_enabled: enabled,
+            self_score_min_composite: min,
+            ..Default::default()
+        };
+        cfg
+    }
+
+    // Test 1 — low-evidence short absolute answer triggers gate.
+    #[test]
+    fn low_evidence_answer_scores_below_threshold_and_gates() {
+        let score = score_answer("It is definitely the case.");
+        assert!(
+            score.composite() < 0.60,
+            "short absolutist answer should composite below 0.60, got {}",
+            score.composite()
+        );
+        let cfg = cfg_score(true, None);
+        assert!(should_gate(&cfg, &score));
+    }
+
+    // Test 2 — solid structured answer with hedging passes gate.
+    #[test]
+    fn solid_answer_passes_gate() {
+        let text = "Evidence suggests several factors are at play.\n\n\
+            1. The first point is supported by recent studies.\n\
+            2. According to Source: NIST SP 800-63, the second factor applies.\n\
+            3. It appears that hedging language is important for accuracy.\n\n\
+            The research shows this may vary by context. See also the cited reference.";
+        let score = score_answer(text);
+        assert!(
+            score.composite() >= 0.60,
+            "structured cited answer should composite >= 0.60, got {}",
+            score.composite()
+        );
+        let cfg = cfg_score(true, None);
+        assert!(!should_gate(&cfg, &score));
+    }
+
+    // Test 3 — kill-switch: disabled = no gate regardless of score.
+    #[test]
+    fn kill_switch_disabled_never_gates() {
+        let score = score_answer("It is definitely the case.");
+        let cfg = cfg_score(false, None);
+        assert!(!should_gate(&cfg, &score));
+    }
+
+    // Test 4 — all 4 fields in [0.0, 1.0]; composite = mean.
+    #[test]
+    fn score_fields_in_range_and_composite_is_mean() {
+        let text = "Some text with evidence maybe suggesting https://example.com per source:";
+        let s = score_answer(text);
+        assert!((0.0..=1.0).contains(&s.correctness), "correctness {}", s.correctness);
+        assert!((0.0..=1.0).contains(&s.completeness), "completeness {}", s.completeness);
+        assert!((0.0..=1.0).contains(&s.coherence), "coherence {}", s.coherence);
+        assert!((0.0..=1.0).contains(&s.evidence), "evidence {}", s.evidence);
+        let expected = (s.correctness + s.completeness + s.coherence + s.evidence) / 4.0;
+        assert!(
+            (s.composite() - expected).abs() < 1e-5,
+            "composite {} != mean {}",
+            s.composite(),
+            expected
+        );
+        assert!((0.0..=1.0).contains(&s.composite()));
+    }
+
+    // Test 5 — WAL event code is 0x6A in council band and unique.
+    #[test]
+    fn council_self_score_event_code_is_0x6a_in_band() {
+        use crate::wal::events::EVENT_TYPE_COUNCIL_SELF_SCORE;
+        assert_eq!(EVENT_TYPE_COUNCIL_SELF_SCORE, 0x6A);
+        assert!(
+            (0x60..=0x6F).contains(&EVENT_TYPE_COUNCIL_SELF_SCORE),
+            "0x{:02X} not in council band",
+            EVENT_TYPE_COUNCIL_SELF_SCORE
+        );
+        // spot-check it doesn't collide with known council events
+        use crate::wal::events::{
+            EVENT_TYPE_COUNCIL_TRANSCRIPT,
+            EVENT_TYPE_COUNCIL_WINNER_SELECTED,
+            EVENT_TYPE_TOKEN_TPS_SAMPLE,
+        };
+        assert_ne!(EVENT_TYPE_COUNCIL_SELF_SCORE, EVENT_TYPE_COUNCIL_TRANSCRIPT);
+        assert_ne!(EVENT_TYPE_COUNCIL_SELF_SCORE, EVENT_TYPE_COUNCIL_WINNER_SELECTED);
+        assert_ne!(EVENT_TYPE_COUNCIL_SELF_SCORE, EVENT_TYPE_TOKEN_TPS_SAMPLE);
+    }
+
+    // Test 6 — custom min_composite override is honoured.
+    #[test]
+    fn custom_min_composite_override_honoured() {
+        // Set min very high so even a solid answer gates.
+        let cfg = cfg_score(true, Some(0.99));
+        let score = score_answer("It may suggest something according to source: X.");
+        // Composite will be well below 0.99 for a single short sentence.
+        assert!(should_gate(&cfg, &score));
+    }
+}

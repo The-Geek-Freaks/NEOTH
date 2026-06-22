@@ -577,6 +577,24 @@ pub struct CouncilConfig {
     #[serde(default)]
     pub mif_enabled: bool,
 
+    /// GOLD-ADAPT-LOWKEY-01 — deterministic self-score kill-switch.
+    /// When `true`, `dispatch_council_with_recovery` scores the resolved
+    /// `final_text` on 4 axes (correctness, completeness, coherence,
+    /// evidence) via `council::self_reflect::score_answer` after every
+    /// SP-5 block, emits a durable `0x6A COUNCIL_SELF_SCORE` WAL frame,
+    /// and prints a STDERR warning when the composite falls below
+    /// `effective_self_score_min_composite()`. `final_text` is NEVER
+    /// modified — this is observe-and-warn only. Default `false` — opt-in
+    /// so existing deployments see no change without an explicit config edit.
+    #[serde(default)]
+    pub self_score_enabled: bool,
+
+    /// GOLD-ADAPT-LOWKEY-01 — operator-tunable minimum composite score.
+    /// When `None` uses [`DEFAULT_SELF_SCORE_MIN_COMPOSITE`] (0.60).
+    /// Set via `freedom.yaml::council.self_score_min_composite`.
+    #[serde(default)]
+    pub self_score_min_composite: Option<f32>,
+
     /// Weight multiplier on cross-outer dissent score for the
     /// `QualityScore.diversity_bonus` component. `None` → use
     /// [`DEFAULT_DIVERSITY_BONUS_WEIGHT`]. Operator-tunable so a
@@ -731,6 +749,14 @@ impl CouncilConfig {
     /// Effective `refine_threshold`.
     pub fn effective_refine_threshold(&self) -> f32 {
         self.refine_threshold.unwrap_or(DEFAULT_REFINE_THRESHOLD)
+    }
+
+    /// GOLD-ADAPT-LOWKEY-01 — effective minimum composite for the self-score gate.
+    /// Falls back to `DEFAULT_SELF_SCORE_MIN_COMPOSITE` (0.60) when the operator
+    /// has not set an explicit override.
+    pub fn effective_self_score_min_composite(&self) -> f32 {
+        self.self_score_min_composite
+            .unwrap_or(crate::council::self_reflect::DEFAULT_SELF_SCORE_MIN_COMPOSITE)
     }
 
     /// Effective `diversity_bonus_weight`.

@@ -4652,6 +4652,42 @@ pub(crate) async fn dispatch_council_with_recovery(
         } else {
             winner.text.clone()
         };
+        // GOLD-ADAPT-LOWKEY-01 — deterministic self-score gate.
+        // Scores the resolved answer on 4 axes (no LLM call); emits a
+        // durable 0x6A COUNCIL_SELF_SCORE WAL audit frame; surfaces a
+        // STDERR warning if composite falls below the operator-configured
+        // minimum. Never touches final_text.
+        {
+            let self_score = crate::council::self_reflect::score_answer(&final_text);
+            let below = crate::council::self_reflect::should_gate(config, &self_score);
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "prompt_hash": prompt_hash_outer,
+                "correctness": self_score.correctness,
+                "completeness": self_score.completeness,
+                "coherence": self_score.coherence,
+                "evidence": self_score.evidence,
+                "composite": self_score.composite(),
+                "below_threshold": below,
+                "ts_unix": now_unix(),
+            }))
+            .unwrap_or_default();
+            let header = crate::wal::make_header(
+                crate::wal::events::EVENT_TYPE_COUNCIL_SELF_SCORE,
+                &payload,
+            );
+            if let Err(e) = writer.append(header, payload).await {
+                tracing::warn!(
+                    error = %e,
+                    "COUNCIL_SELF_SCORE WAL emit failed (non-fatal)"
+                );
+            }
+            if below {
+                eprintln!(
+                    "[neoth:self-score] composite {:.2} below threshold — answer may lack evidence or completeness",
+                    self_score.composite()
+                );
+            }
+        }
         // SP-4: record acceptance signal so future debates on the
         // same topic lift the winning hemisphere's memory_weight.
         let mut rw_write = crate::memory::routing_weights::RoutingWeights::load_from(&rw_path);

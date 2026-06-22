@@ -872,6 +872,18 @@ pub const EVENT_TYPE_CHANNEL_SEND_DENIED: u8 = 0x68;
 /// Payload (JSON): `{tps, total_tokens, elapsed_ms, observe_count, ts_unix}`.
 pub const EVENT_TYPE_TOKEN_TPS_SAMPLE: u8 = 0x69;
 
+/// `0x6A COUNCIL_SELF_SCORE` — GOLD-ADAPT-LOWKEY-01 deterministic self-score audit frame.
+/// Emitted by `cli::chat::dispatch_council_with_recovery` after the SP-5 block resolves
+/// `final_text`. Scores the resolved answer on 4 axes (correctness, completeness, coherence,
+/// evidence) via `council::self_reflect::score_answer` — zero LLM calls, pure deterministic
+/// heuristics. Always emitted so the WAL audit chain has a score frame for every council
+/// decision; `below_threshold` flags when the composite fell below the operator minimum.
+/// **Durable by default** — absent from `needs_immediate_sync` deny-list so it syncs
+/// immediately like all gate/decision events in this band.
+/// Payload (JSON): `{prompt_hash, correctness, completeness, coherence, evidence, composite,
+/// below_threshold, ts_unix}`.
+pub const EVENT_TYPE_COUNCIL_SELF_SCORE: u8 = 0x6A;
+
 /// `0x6E TOKEN_ANOMALY_DETECTED` — GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire.
 /// The daemon cron buckets WAL `0x21 PROVIDER_RESPONSE` token usage by UTC day
 /// and emits this when the most recent active day shows a σ-spike, a `>1M` jump
@@ -1952,6 +1964,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("channel_send", EVENT_TYPE_CHANNEL_SEND),
     ("channel_send_denied", EVENT_TYPE_CHANNEL_SEND_DENIED),
     ("token_tps_sample", EVENT_TYPE_TOKEN_TPS_SAMPLE),
+    ("council_self_score", EVENT_TYPE_COUNCIL_SELF_SCORE),
     ("token_anomaly_detected", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
     (
         "session_health_degraded",
@@ -2346,6 +2359,8 @@ const _: () = {
         [(EVENT_TYPE_CHANNEL_SEND_DENIED < 0x60 || EVENT_TYPE_CHANNEL_SEND_DENIED > 0x6F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_TOKEN_TPS_SAMPLE < 0x60 || EVENT_TYPE_TOKEN_TPS_SAMPLE > 0x6F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_COUNCIL_SELF_SCORE < 0x60 || EVENT_TYPE_COUNCIL_SELF_SCORE > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TOKEN_ANOMALY_DETECTED < 0x60
         || EVENT_TYPE_TOKEN_ANOMALY_DETECTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SESSION_HEALTH_DEGRADED < 0x60
@@ -2679,6 +2694,7 @@ mod tests {
             ("CHANNEL_SEND", EVENT_TYPE_CHANNEL_SEND),
             ("CHANNEL_SEND_DENIED", EVENT_TYPE_CHANNEL_SEND_DENIED),
             ("TOKEN_TPS_SAMPLE", EVENT_TYPE_TOKEN_TPS_SAMPLE),
+            ("COUNCIL_SELF_SCORE", EVENT_TYPE_COUNCIL_SELF_SCORE),
             ("TOKEN_ANOMALY_DETECTED", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
             (
                 "SESSION_HEALTH_DEGRADED",
