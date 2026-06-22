@@ -5,7 +5,7 @@
 //! deferred to Phase 2). Honours the Hysteria SOCKS5 proxy via
 //! `providers::http_client::build_client`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::cli::OutputFormat;
@@ -28,6 +28,13 @@ pub struct FetchArgs {
     #[arg(long)]
     pub selector: Option<String>,
 
+    /// GOLD-ADAPT-ODY-23 — extract only the goal-relevant
+    /// `{rational, evidence, summary}` from the fetched page via the configured
+    /// utility provider (an LLM pass reads the page and pulls what bears on this
+    /// goal). Mutually exclusive with `--selector` / `--jina`.
+    #[arg(long)]
+    pub goal: Option<String>,
+
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -36,6 +43,9 @@ pub struct FetchArgs {
 pub async fn run_fetch(args: FetchArgs) -> Result<()> {
     if args.jina && args.selector.is_some() {
         anyhow::bail!("--jina and --selector are mutually exclusive");
+    }
+    if args.goal.is_some() && (args.jina || args.selector.is_some()) {
+        anyhow::bail!("--goal cannot be combined with --jina or --selector");
     }
     // GOLD-ADAPT-SKILL-03 — opt this fetch process into the conditional-GET doc
     // cache so a re-fetch of the same documentation URL is revalidated (304),
@@ -121,6 +131,50 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
         }
         return Ok(());
     }
+    // GOLD-ADAPT-ODY-23b — goal-focused extraction path. Fetches the page plain
+    // (SSRF-guarded, cached) then runs one utility-provider LLM pass that pulls
+    // only the goal-relevant {rational, evidence, summary}. This is the real
+    // caller for tools::web_fetch::fetch_with_goal (the ODY-23 extractor was
+    // engine-only until now).
+    if let Some(goal) = args.goal.clone() {
+        if goal.trim().is_empty() {
+            anyhow::bail!("--goal must not be empty");
+        }
+        let config = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+        let provider = crate::providers::from_config_for_utility(&config)
+            .await
+            .context("build utility provider for goal extraction")?;
+        let extraction =
+            crate::tools::web_fetch::fetch_with_goal(&args.url, &goal, provider.as_ref()).await?;
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "url": args.url,
+                        "goal": goal,
+                        "rational": extraction.rational,
+                        "evidence": extraction.evidence,
+                        "summary": extraction.summary,
+                    }))?
+                );
+            }
+            OutputFormat::Table => {
+                println!("url:      {}", args.url);
+                println!("goal:     {goal}");
+                println!();
+                println!("rational: {}", extraction.rational);
+                println!();
+                println!("evidence ({}):", extraction.evidence.len());
+                for e in &extraction.evidence {
+                    println!("  - {e}");
+                }
+                println!();
+                println!("summary:  {}", extraction.summary);
+            }
+        }
+        return Ok(());
+    }
     let result = crate::tools::web_fetch::fetch(&args.url).await?;
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -151,6 +205,7 @@ mod tests {
             url: "file:///etc/passwd".to_string(),
             jina: false,
             selector: None,
+            goal: None,
             output: OutputFormat::Json,
         };
         let err = run_fetch(args).await.unwrap_err();
@@ -164,6 +219,7 @@ mod tests {
             url: "file:///etc/passwd".to_string(),
             jina: true,
             selector: None,
+            goal: None,
             output: OutputFormat::Json,
         };
         let err = run_fetch(args).await.unwrap_err();
@@ -176,10 +232,49 @@ mod tests {
             url: "https://example.com".to_string(),
             jina: true,
             selector: Some("h1".to_string()),
+            goal: None,
             output: OutputFormat::Json,
         };
         let err = run_fetch(args).await.unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn goal_cannot_combine_with_jina_or_selector() {
+        // GOLD-ADAPT-ODY-23b — --goal is its own (plain-fetch + extract) path.
+        let with_jina = FetchArgs {
+            url: "https://example.com".to_string(),
+            jina: true,
+            selector: None,
+            goal: Some("find the pricing".to_string()),
+            output: OutputFormat::Json,
+        };
+        let err = run_fetch(with_jina).await.unwrap_err();
+        assert!(err.to_string().contains("--goal cannot be combined"), "{err}");
+
+        let with_selector = FetchArgs {
+            url: "https://example.com".to_string(),
+            jina: false,
+            selector: Some("h1".to_string()),
+            goal: Some("find the pricing".to_string()),
+            output: OutputFormat::Json,
+        };
+        let err = run_fetch(with_selector).await.unwrap_err();
+        assert!(err.to_string().contains("--goal cannot be combined"), "{err}");
+    }
+
+    #[test]
+    fn goal_flag_parses() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrap {
+            #[command(flatten)]
+            args: FetchArgs,
+        }
+        let w = Wrap::parse_from(["x", "https://e.com", "--goal", "summarise the API"]);
+        assert_eq!(w.args.goal.as_deref(), Some("summarise the API"));
+        assert!(!w.args.jina);
+        assert!(w.args.selector.is_none());
     }
 
     #[test]
