@@ -1010,6 +1010,10 @@ async fn dispatch_provider(
         // + the per-chunk WAL frame still see the RAW delta; only the terminal
         // print is buffered, so the output text is identical, just fence-safe.
         let mut md_buf = crate::cli::streaming_buffer::MarkdownBuffer::new();
+        // GOLD-ADAPT-HERMES-09b — measure decode throughput over the live stream
+        // window; emitted as a 0x69 TOKEN_TPS_SAMPLE WAL frame after the stream
+        // completes (best-effort, never blocks the turn).
+        let mut tps_meter = crate::daemon::metering::TpsMeter::start();
         while let Some(item) = stream.next().await {
             match item {
                 Ok(chunk) => {
@@ -1020,6 +1024,8 @@ async fn dispatch_provider(
                         }
                         acc.push_str(&chunk.delta);
                         chunk_count += 1;
+                        // HERMES-09b — ~4 chars/token estimate per streamed delta.
+                        tps_meter.observe((chunk.delta.len() as u64).div_ceil(4));
                         // F4/D21 — journal the partial chunk so a mid-stream crash
                         // leaves a recoverable partial answer (best-effort).
                         if let Some(j) = journal.as_mut() {
@@ -1076,6 +1082,16 @@ async fn dispatch_provider(
         }
         if let Some(p) = stream_permit {
             p.record_success();
+        }
+        // GOLD-ADAPT-HERMES-09b — emit the stream's tokens/sec sample (0x69
+        // TOKEN_TPS_SAMPLE). Best-effort; a WAL hiccup never fails the turn.
+        {
+            let tps = tps_meter.finish();
+            if tps.has_data() {
+                if let Err(e) = crate::daemon::metering::emit_tps_sample(&tps, &writer).await {
+                    tracing::debug!(error = %e, "tps-sample WAL emit failed (non-fatal)");
+                }
+            }
         }
         {
             // QM-9 Phase 1.5 / GR-15: persist a usage event for the
