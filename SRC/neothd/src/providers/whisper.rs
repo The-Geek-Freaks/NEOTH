@@ -106,6 +106,10 @@ pub struct WhisperEngine {
     mel_filters: Vec<f32>,
     /// Lazy-loaded model. First `transcribe` call mmaps + builds.
     loaded: Arc<Mutex<Option<LoadedWhisper>>>,
+    /// Candle device selected at construction time via `HwProbe`. Stored
+    /// on the engine so `transcribe` can pass it into `ensure_loaded`
+    /// without re-running the probe on every call.
+    device: Device,
 }
 
 struct LoadedWhisper {
@@ -130,11 +134,24 @@ impl WhisperEngine {
     /// Construct an engine + lazily ensure the model artifacts are on
     /// disk. Pulls from `~/.neoth/models/<repo-flattened>/` like
     /// `LocalQwenAdapter`. ~1.6 GiB download for the turbo variant.
+    ///
+    /// Hardware probe runs once here and selects the candle `Device`
+    /// (CUDA / Metal / CPU). The 500 ms nvidia-smi timeout is acceptable
+    /// because `WhisperEngine::new` is already async and the probe is
+    /// identical to the `LocalQwenAdapter` path.
     pub async fn new(repo: Option<String>) -> Result<Self> {
         let repo = repo.unwrap_or_else(|| DEFAULT_WHISPER_REPO.to_string());
         let cache_dir = default_cache_dir(&repo);
         std::fs::create_dir_all(&cache_dir)
             .with_context(|| format!("create cache dir {}", cache_dir.display()))?;
+
+        // Run the hardware probe and select the best available device.
+        // Identical one-shot semantics to `LocalQwenAdapter` — never re-probed.
+        let probe = crate::media::hw_probe::HwProbe::detect();
+        tracing::info!(hw = %probe, "whisper: hardware probe");
+        let device = device_for_hw_probe(&probe);
+        tracing::info!(device = ?device, "whisper: selected candle device");
+
         let mut engine = WhisperEngine {
             repo: repo.clone(),
             cache_dir: cache_dir.clone(),
@@ -143,6 +160,7 @@ impl WhisperEngine {
             weights_path: cache_dir.join(SAFETENSORS_FILE),
             mel_filters: Vec::new(),
             loaded: Arc::new(Mutex::new(None)),
+            device,
         };
         engine.ensure_artifacts().await?;
         // Pre-compute mel filters based on the model's expected n_mels.
@@ -195,6 +213,7 @@ impl WhisperEngine {
         let config_path = self.config_path.clone();
         let weights_path = self.weights_path.clone();
         let mel_filters = self.mel_filters.clone();
+        let device = self.device.clone();
         let samples = samples.to_vec();
         tokio::task::spawn_blocking(move || -> Result<String> {
             ensure_loaded(
@@ -203,6 +222,7 @@ impl WhisperEngine {
                 &config_path,
                 &weights_path,
                 &options,
+                device,
             )?;
             let mut slot = loaded.lock().unwrap_or_else(|p| p.into_inner());
             let lw = slot.as_mut().expect("loaded just initialised");
@@ -219,12 +239,12 @@ fn ensure_loaded(
     config_path: &Path,
     weights_path: &Path,
     options: &WhisperOptions,
+    device: Device,
 ) -> Result<()> {
     let mut slot = loaded.lock().unwrap_or_else(|p| p.into_inner());
     if slot.is_some() {
         return Ok(());
     }
-    let device = Device::Cpu;
     let tokenizer = Tokenizer::from_file(tokenizer_path)
         .map_err(|e| anyhow::anyhow!("load whisper tokenizer.json: {e}"))?;
     let config: cw::Config = {
@@ -577,6 +597,90 @@ fn build_initial_tokens_for_language(
     Ok(ids)
 }
 
+/// Select the candle `Device` for Whisper based on the hardware probe.
+///
+/// Mirrors `providers::local_qwen::device_for` — reuses the same cargo
+/// feature gates (`qwen-cuda` / `qwen-metal`) so no new features are
+/// introduced. Applies the FMA3 guard before any non-CPU branch: candle's
+/// SIMD kernels require FMA3 (Haswell / Piledriver 2012+); on older CPUs
+/// they SIGILL. On guard failure we warn and return `Device::Cpu`.
+fn device_for_hw_probe(probe: &crate::media::hw_probe::HwProbe) -> Device {
+    use crate::media::hw_probe::AcceleratorClass;
+
+    match probe.accelerator {
+        AcceleratorClass::Cuda => {
+            // Guard: candle CUDA kernels also use FMA3 paths.
+            if let Err(msg) =
+                crate::media::hw_probe::require_fma3(probe.cpu_caps.fma3)
+            {
+                tracing::warn!(
+                    "whisper: {msg}; falling back to Device::Cpu"
+                );
+                return Device::Cpu;
+            }
+            #[cfg(feature = "qwen-cuda")]
+            {
+                match Device::new_cuda(0) {
+                    Ok(d) => {
+                        tracing::info!("whisper: CUDA device 0 acquired");
+                        return d;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "whisper: Device::new_cuda(0) failed; falling back to CPU"
+                        );
+                    }
+                }
+            }
+            #[cfg(not(feature = "qwen-cuda"))]
+            tracing::warn!(
+                "whisper: CUDA requested but `qwen-cuda` feature disabled; \
+                 using CPU. Rebuild with `--features qwen-cuda` to enable."
+            );
+            Device::Cpu
+        }
+        AcceleratorClass::Metal => {
+            if let Err(msg) =
+                crate::media::hw_probe::require_fma3(probe.cpu_caps.fma3)
+            {
+                tracing::warn!(
+                    "whisper: {msg}; falling back to Device::Cpu"
+                );
+                return Device::Cpu;
+            }
+            #[cfg(feature = "qwen-metal")]
+            {
+                match Device::new_metal(0) {
+                    Ok(d) => {
+                        tracing::info!("whisper: Metal device 0 acquired");
+                        return d;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "whisper: Device::new_metal(0) failed; falling back to CPU"
+                        );
+                    }
+                }
+            }
+            #[cfg(not(feature = "qwen-metal"))]
+            tracing::warn!(
+                "whisper: Metal requested but `qwen-metal` feature disabled; \
+                 using CPU."
+            );
+            Device::Cpu
+        }
+        AcceleratorClass::OpenVino => {
+            tracing::warn!(
+                "whisper: OpenVINO is not a candle backend; using CPU."
+            );
+            Device::Cpu
+        }
+        AcceleratorClass::Cpu => Device::Cpu,
+    }
+}
+
 fn default_cache_dir(repo: &str) -> PathBuf {
     let home = std::env::var("HOME")
         .map(PathBuf::from)
@@ -825,5 +929,45 @@ mod tests {
         let o = WhisperOptions::default();
         assert_eq!(o.temperatures, vec![0.0, 0.2, 0.4, 0.6, 0.8, 1.0]);
         assert!((o.compression_ratio_threshold - 2.4).abs() < 1e-6);
+    }
+
+    // ── device_for_hw_probe (HANDY-07-WIRE) ─────────────────────────────────
+
+    #[test]
+    fn device_for_hw_probe_no_panic_on_cuda_with_fma3() {
+        use crate::media::hw_probe::{AcceleratorClass, CpuCaps, HwProbe};
+        let probe = HwProbe {
+            cpu_caps: CpuCaps { fma3: true, avx2: true, avx: true },
+            accelerator: AcceleratorClass::Cuda,
+        };
+        // require_fma3 must succeed (fma3=true)
+        assert!(crate::media::hw_probe::require_fma3(probe.cpu_caps.fma3).is_ok());
+        // device_for_hw_probe must not panic on any build config.
+        let _ = device_for_hw_probe(&probe);
+    }
+
+    #[test]
+    fn device_for_hw_probe_falls_back_to_cpu_when_no_fma3() {
+        use crate::media::hw_probe::{AcceleratorClass, CpuCaps, HwProbe};
+        let probe = HwProbe {
+            cpu_caps: CpuCaps { fma3: false, avx2: false, avx: false },
+            accelerator: AcceleratorClass::Cuda,
+        };
+        let device = device_for_hw_probe(&probe);
+        assert!(
+            matches!(device, Device::Cpu),
+            "pre-FMA3 CPU must fall back to Device::Cpu"
+        );
+    }
+
+    #[test]
+    fn device_for_hw_probe_cpu_class_skips_fma3_guard() {
+        use crate::media::hw_probe::{AcceleratorClass, CpuCaps, HwProbe};
+        let probe = HwProbe {
+            cpu_caps: CpuCaps { fma3: false, avx2: false, avx: false },
+            accelerator: AcceleratorClass::Cpu,
+        };
+        let device = device_for_hw_probe(&probe);
+        assert!(matches!(device, Device::Cpu));
     }
 }
