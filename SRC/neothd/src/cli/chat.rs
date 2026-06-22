@@ -826,6 +826,24 @@ async fn dispatch_provider(
     turn_id: &str,
 ) -> Result<DispatchOutput> {
     let provider_name = provider.name();
+    // GOLD-ADAPT-ODY-27 — wrap the user prompt with the active output-format
+    // preset's inject_prefix/suffix (per-message, NOT a system-prompt layer, so
+    // it enforces an output shape without polluting the system block). Best-
+    // effort + a no-op when no preset is active or its inject fields are empty
+    // (`wrap_user_prompt` returns the input unchanged). Reads the per-turn
+    // active preset so a `neoth preset use <name>` takes effect on the next turn.
+    let final_prompt = {
+        let home = FreedomConfig::default_neoth_home();
+        match crate::config::presets::load(&home) {
+            Ok(pf) => match pf.active.as_ref().and_then(|n| pf.presets.get(n)) {
+                Some(preset) => {
+                    crate::config::presets::wrap_user_prompt(&final_prompt, preset).into_owned()
+                }
+                None => final_prompt,
+            },
+            Err(_) => final_prompt,
+        }
+    };
     // ── Provider call (sync OR stream) ────────────────────────────────────
     // R-04 2026-05-17: clone final_prompt + final_system here rather
     // than move so the LOWKEY refusal-recovery path post-reply can
