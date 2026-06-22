@@ -116,7 +116,13 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
             .map_err(|_| ())
     });
     match text {
-        Ok(text) => (text, "transcribed"),
+        // GR-fix: the local Whisper path bypassed clean_transcript (only the cloud
+        // path in stt_provider.rs ran it), contra the stt_postprocess "every
+        // transcript" contract. Run it here too so both paths are consistent.
+        Ok(text) => (
+            crate::media::stt_postprocess::clean_transcript(&text),
+            "transcribed",
+        ),
         Err(()) => (String::new(), "transcription failed"),
     }
 }

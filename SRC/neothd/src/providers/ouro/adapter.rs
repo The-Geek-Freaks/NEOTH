@@ -539,13 +539,13 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
         let hit = loaded
             .prefix_kv_cache
             .get(cache_key)
-            .map(|e| (e.snapshot.clone(), e.prefix_ids.clone()));
-        if let Some((snap, cached_prefix)) = hit {
-            debug_assert_eq!(
-                prefix_ids,
-                cached_prefix.as_slice(),
-                "KV-01 prefix mismatch"
-            );
+            .map(|e| (e.snapshot.clone(), e.prefix_ids.clone()))
+            // GR-fix: verify the cached prefix actually equals this prefix. The
+            // PrefixKvCache key is a hash; a collision must be treated as a MISS
+            // (safe full prefill below), not waved through by a debug_assert that
+            // is a no-op in release and then a corrupt restore_all_kv.
+            .filter(|(_, cached_prefix)| cached_prefix.as_slice() == prefix_ids);
+        if let Some((snap, _cached_prefix)) = hit {
             loaded.model.restore_all_kv(snap);
         } else {
             // MISS: full prefill of the prefix at offset 0, then snapshot + cache.

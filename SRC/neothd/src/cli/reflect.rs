@@ -176,6 +176,34 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
         DigestPeriod::Daily => (PeriodKind::Daily, date_tag_from_unix(now_unix), 1, 5),
         DigestPeriod::Yearly => (PeriodKind::Yearly, year_tag_from_unix(now_unix), 365, 10),
     };
+    // GR-fix: idempotency guard mirroring the daemon period-tick. The CLI digest
+    // path appended a fresh JSONL record + Obsidian section on EVERY invocation, so
+    // two `neoth reflect digest --daily` runs on the same day duplicated the
+    // reflection. Share the daemon's marker files so daemon + CLI see each other's
+    // completion for this tag.
+    let marker_name = match period {
+        DigestPeriod::Daily => "daily-last.txt",
+        DigestPeriod::Yearly => "yearly-last.txt",
+    };
+    let marker_path = home.join("reflections").join(marker_name);
+    if std::fs::read_to_string(&marker_path)
+        .ok()
+        .map(|s| s.trim() == tag.as_str())
+        .unwrap_or(false)
+    {
+        if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+            println!(
+                "{}",
+                serde_json::json!({ "kind": kind.as_str(), "tag": tag, "written": false, "reason": "already_done" })
+            );
+        } else {
+            println!(
+                "{} reflection {tag}: already written this period — skipping.",
+                kind.vault_subdir()
+            );
+        }
+        return Ok(());
+    }
     let topics =
         crate::reflection::top_topics_in_days(&conn, now_ns, window, n).context("topic query")?;
     let Some(refl) = periodic::build_reflection(kind, &tag, &topics, now_unix) else {
@@ -193,6 +221,12 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
         return Ok(());
     };
     periodic::append(home, &refl).context("archive reflection")?;
+    // GR-fix: record completion for this tag (same marker the daemon writes) so a
+    // re-run on the same day is a no-op.
+    if let Some(p) = marker_path.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let _ = std::fs::write(&marker_path, tag.as_str());
 
     // Obsidian sync if a vault is configured.
     let mut obsidian_path = None;
