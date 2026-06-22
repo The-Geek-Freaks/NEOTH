@@ -524,6 +524,14 @@ pub struct FreedomConfig {
     /// `idx_groundtruth`. Emits WAL `0x9D`/`0x9E`. Default OFF.
     #[serde(default)]
     pub consolidation_sweep: ConsolidationSweepConfig,
+    /// GOLD-ADAPT-JV-SELF-03 — auto-builder signal collector. When `enabled`,
+    /// a daily cron scans episode topics, ground-truth lessons, and the
+    /// SkillOpt ledger to classify improvement signals (`PatchSkill`,
+    /// `PromptEdit`, `ConfigChange`, `Escalate`) and writes them atomically
+    /// to `~/.neoth/self_improvement_signals.json` for HERMES-06. Emits WAL
+    /// `0xBE`/`0xBF`. Default OFF.
+    #[serde(default)]
+    pub self_improvement_collector: crate::config::automation::SelfImprovementCollectorConfig,
     /// NN-MEM-06 — daily contradiction auto-resolution cron. When `enabled`,
     /// auto-resolves the `idx_contradictions` backlog: temporal-supersede
     /// (newer fact wins) · semantic-equiv (Jaccard>=0.90 merge) · human-review

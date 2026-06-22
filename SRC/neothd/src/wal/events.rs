@@ -1389,6 +1389,15 @@ pub const EVENT_TYPE_OS_CLIPBOARD_ACCESS: u8 = 0xBC;
 /// is a policy/diagnostic string + byte count, NEVER clipboard content.
 pub const EVENT_TYPE_OS_CLIPBOARD_DENIED: u8 = 0xBD;
 
+/// `0xBE SELF_IMPROVEMENT_COLLECTOR_STARTED` — JV-SELF-03. Emitted before
+/// the self-improvement signal collector's `spawn_blocking` tick begins.
+/// Payload (JSON): `{ window_days, min_freq_threshold, ts_unix }`.
+pub const EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED: u8 = 0xBE;
+/// `0xBF SELF_IMPROVEMENT_COLLECTOR_DONE` — JV-SELF-03. Emitted after the
+/// tick completes. Payload (JSON): `{ signals, topics_scanned, lessons_read,
+/// ledger_records_checked, deployed_artifacts_checked, ts_unix }`.
+pub const EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE: u8 = 0xBF;
+
 // ---- 0xF0..=0xFF  Operator / system ---------------------------------------
 
 /// Daemon refused a WAL write because `~/.neoth/` exceeded the configured
@@ -2098,6 +2107,14 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("os_clipboard_access", EVENT_TYPE_OS_CLIPBOARD_ACCESS),
     ("os_clipboard_denied", EVENT_TYPE_OS_CLIPBOARD_DENIED),
     (
+        "self_improvement_collector_started",
+        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED,
+    ),
+    (
+        "self_improvement_collector_done",
+        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE,
+    ),
+    (
         "eval_critical_divergence",
         EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
     ),
@@ -2554,6 +2571,13 @@ const _: () = {
         [(EVENT_TYPE_OS_CLIPBOARD_ACCESS < 0xB0 || EVENT_TYPE_OS_CLIPBOARD_ACCESS > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_OS_CLIPBOARD_DENIED < 0xB0 || EVENT_TYPE_OS_CLIPBOARD_DENIED > 0xBF) as usize];
+    // JV-SELF-03 collector — 0xBE/0xBF overflow from the full 0xB0..=0xBD space.
+    let _ = [(); 1][(EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED < 0xB0
+        || EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED > 0xBF)
+        as usize];
+    let _ = [(); 1][(EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE < 0xB0
+        || EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE > 0xBF)
+        as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -2884,6 +2908,14 @@ mod tests {
             ("OPERATOR_FEEDBACK", EVENT_TYPE_OPERATOR_FEEDBACK),
             ("OS_CLIPBOARD_ACCESS", EVENT_TYPE_OS_CLIPBOARD_ACCESS),
             ("OS_CLIPBOARD_DENIED", EVENT_TYPE_OS_CLIPBOARD_DENIED),
+            (
+                "SELF_IMPROVEMENT_COLLECTOR_STARTED",
+                EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED,
+            ),
+            (
+                "SELF_IMPROVEMENT_COLLECTOR_DONE",
+                EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE,
+            ),
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
             ("RISK_GATE_BLOCKED", EVENT_TYPE_RISK_GATE_BLOCKED),

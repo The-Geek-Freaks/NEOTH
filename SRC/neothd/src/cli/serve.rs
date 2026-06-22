@@ -910,6 +910,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let consolidation_sweep_handle =
         crate::cli::serve_tasks::spawn_consolidation_sweep_cron(&config, writer.clone());
 
+    // ── GOLD-ADAPT-JV-SELF-03 self-improvement collector cron ────────────
+    // Daily scan of episode topics + groundtruth lessons + SkillOpt ledger;
+    // classifies PatchSkill/PromptEdit/ConfigChange/Escalate signals and
+    // writes ~/.neoth/self_improvement_signals.json for HERMES-06.
+    // Emits 0xBE/0xBF. Default OFF.
+    let self_improvement_collector_handle =
+        crate::cli::serve_tasks::spawn_self_improvement_collector_cron(&config, writer.clone());
+
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
     // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
@@ -1537,6 +1545,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         guidance_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
+        self_improvement_collector_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,

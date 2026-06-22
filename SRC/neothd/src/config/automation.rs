@@ -805,3 +805,60 @@ impl ConsolidationSweepConfig {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
 }
+
+/// JV-SELF-03 — auto-builder signal collector default tick interval: 24 hours.
+/// Signal patterns shift over days; a daily scan is ample and keeps the
+/// SQLite + filesystem overhead negligible.
+pub const DEFAULT_SELF_IMPROVEMENT_COLLECTOR_INTERVAL_SECS: u64 = 24 * 3600;
+
+/// JV-SELF-03 — configuration for the auto-builder signal collector cron
+/// (`freedom.yaml::self_improvement_collector`).
+///
+/// When `enabled`, a background cron runs every `interval_secs` and scans:
+///
+/// - `idx_episode` (raw-text events in the last `window_days`) for frequent
+///   topics (`>= min_freq_threshold` mentions).
+/// - `idx_groundtruth` (lessons written by `synthesis-cron` / `jv-self-01`)
+///   for overlaps that suggest `ConfigChange` signals.
+/// - `~/.neoth/self_improve_log.json` for skills with score regressions
+///   (`PatchSkill`) or unverified artifact deployments (`Escalate`).
+///
+/// The classified signals are written atomically to
+/// `~/.neoth/self_improvement_signals.json` for HERMES-06 to consume.
+/// WAL frames `0xBE`/`0xBF` bracket each pass.
+///
+/// Default OFF — all fields carry `#[serde(default)]` so existing
+/// `freedom.yaml` files without this section parse correctly.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct SelfImprovementCollectorConfig {
+    /// Master switch. Default `false` (opt-in).
+    pub enabled: bool,
+    /// Cron tick interval, seconds. Default 86 400 (24 h). Floor 60 s.
+    pub interval_secs: u64,
+    /// Episode look-back window in days. Default 30.
+    pub window_days: u64,
+    /// Minimum topic-mention count within the window before the topic is
+    /// treated as a signal candidate. Default 3 — a topic mentioned once or
+    /// twice is noise.
+    pub min_freq_threshold: u32,
+}
+
+impl Default for SelfImprovementCollectorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_SELF_IMPROVEMENT_COLLECTOR_INTERVAL_SECS,
+            window_days: 30,
+            min_freq_threshold: 3,
+        }
+    }
+}
+
+impl SelfImprovementCollectorConfig {
+    /// Tick interval as a `Duration`, clamped to a 60 s minimum so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
+    pub fn interval_duration(self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}

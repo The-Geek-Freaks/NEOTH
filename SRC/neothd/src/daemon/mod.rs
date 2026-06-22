@@ -43,6 +43,13 @@ pub mod detect_complete_sidecar;
 /// mature clusters into `idx_groundtruth`. Emits `0x9D`/`0x9E`. Off by
 /// default (`consolidation_sweep.enabled = false`).
 pub mod consolidation_sweep_cron;
+/// JV-SELF-03 — auto-builder signal collector cron. Scans `idx_episode`
+/// topic frequency, `idx_groundtruth` lessons, and the SkillOpt ledger
+/// to classify improvement signals (`PatchSkill`, `PromptEdit`,
+/// `ConfigChange`, `Escalate`). Writes `~/.neoth/self_improvement_signals.json`
+/// atomically for HERMES-06. Emits `0xBE`/`0xBF`. Off by default
+/// (`self_improvement_collector.enabled = false`).
+pub mod self_improvement_collector;
 pub mod contradiction_resolve_cron;
 pub mod doctor_cron;
 /// HO-09b — profile drift-alert cron. Runs the same drift evaluation

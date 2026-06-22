@@ -1,0 +1,665 @@
+//! JV-SELF-03 — Auto-builder signal collector (async cron wrapper).
+//!
+//! Feeds the Collect → Classify → Propose (HERMES-06) → Build → Verify
+//! (JV-SELF-01) → Consolidate (JV-SELF-02) self-improvement loop.
+//!
+//! ## What it does
+//!
+//! Every tick the collector scans three data sources inside `spawn_blocking`:
+//!
+//! 1. **`idx_episode`** — most-recent `window_days` of raw-text events
+//!    (`event_type = 0x01`). [`crate::reflection::topic_counts`] tokenises
+//!    the corpus; any topic that exceeds `min_freq_threshold` appearances
+//!    is a signal candidate.
+//!
+//! 2. **`idx_groundtruth`** (source IN `'synthesis-cron'`, `'jv-self-01'`) —
+//!    lessons the synthesis and self-verify croons have previously written;
+//!    used to classify signals as `ConfigChange` when a lesson overlaps the
+//!    topic.
+//!
+//! 3. **`self_improve_log.json`** — the SkillOpt ledger; consulted to detect
+//!    skills that were applied but scored badly (→ `PatchSkill`) or have not
+//!    yet had their artifact verified on disk (→ `Escalate`).
+//!
+//! ## Output
+//!
+//! A [`CollectorReport`] is serialised atomically to
+//! `~/.neoth/self_improvement_signals.json` so HERMES-06 can poll the
+//! sidecar without compile-time coupling to this module.
+//!
+//! ## WAL frames
+//!
+//! - `0xBE SELF_IMPROVEMENT_COLLECTOR_STARTED` — emitted BEFORE
+//!   `spawn_blocking`.
+//! - `0xBF SELF_IMPROVEMENT_COLLECTOR_DONE` — emitted AFTER
+//!   `spawn_blocking` returns.
+//!
+//! Both are written in async context, NOT inside `spawn_blocking`, because
+//! [`crate::wal::writer::WalWriterHandle::append`] is async and requires the
+//! tokio executor — calling from inside `spawn_blocking` would panic.
+//!
+//! ## Opt-in
+//!
+//! Disabled by default (`freedom.yaml::self_improvement_collector.enabled:
+//! false`). Returns `None` when disabled → no idle task is spawned.
+
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use tracing::warn;
+
+use crate::config::automation::SelfImprovementCollectorConfig;
+use crate::wal::{
+    EventFlags, HeaderBuilder,
+    events::{
+        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE,
+        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED,
+    },
+    writer::WalWriterHandle,
+};
+
+// ── Signal taxonomy ──────────────────────────────────────────────────────────
+
+/// Minimum age in seconds a skill artifact must have existed on disk before
+/// it is considered "verified deployed". A freshly written file (< 5 min old)
+/// may still be partially written by a concurrent SkillOpt run; waiting 5
+/// minutes is ample and keeps the check lockless.
+const DEFAULT_ARTIFACT_MIN_AGE_SECS: u64 = 300;
+
+/// Ledger score delta below which a skill is considered to have regressed and
+/// warrants a `PatchSkill` signal. A negative delta means the accepted edit
+/// made things worse (possible if the held-out gate was narrow).
+const SCORE_REGRESSION_THRESHOLD: f64 = -0.05;
+
+/// Maximum fraction of a topic's ledger-mention count that may be rejected
+/// before the signal is escalated rather than edited. A rejection rate above
+/// this suggests the topic is genuinely hard and needs operator attention.
+const ESCALATE_REJECTION_RATE: f64 = 0.5;
+
+// ── Public types ─────────────────────────────────────────────────────────────
+
+/// A single classified signal produced by one collector tick.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CollectorSignal {
+    /// The named skill has a ledger score regression; a targeted prompt edit
+    /// may help.
+    PatchSkill { skill_id: String, reason: String },
+    /// A specific prompt template or persona block should be edited to address
+    /// the topic cluster.
+    PromptEdit { target: String, reason: String },
+    /// A configuration key appears to be the root cause; the operator should
+    /// review it.
+    ConfigChange { key: String, reason: String },
+    /// The signal cannot be automatically resolved; operator attention needed.
+    Escalate { reason: String },
+}
+
+/// Summary returned by one self-improvement collector tick. Written to
+/// `~/.neoth/self_improvement_signals.json` after each pass.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CollectorReport {
+    /// Classified signals produced this tick.
+    pub signals: Vec<CollectorSignal>,
+    /// Number of distinct topics above `min_freq_threshold` in the episode window.
+    pub topics_scanned: usize,
+    /// Number of ground-truth lessons read from `idx_groundtruth`.
+    pub lessons_read: usize,
+    /// Number of `ImproveRecord` entries checked in the ledger.
+    pub ledger_records_checked: usize,
+    /// Number of skill artifacts checked for on-disk deployment.
+    pub deployed_artifacts_checked: usize,
+    /// Unix seconds when the report was written.
+    pub ts_unix: i64,
+}
+
+// ── Artifact-deployment check ────────────────────────────────────────────────
+
+/// Returns `true` when the skill artifact at `artifact_path` exists AND its
+/// mtime is at least `min_age_secs` seconds in the past (i.e. a write has
+/// settled). Purely filesystem-based — no locks needed.
+pub fn is_verified_deployed(artifact_path: &Path, min_age_secs: u64) -> bool {
+    let Ok(meta) = std::fs::metadata(artifact_path) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        // Platform does not report mtime (unusual but possible); treat as settled.
+        return true;
+    };
+    let Ok(elapsed) = modified.elapsed() else {
+        return false;
+    };
+    elapsed.as_secs() >= min_age_secs
+}
+
+// ── WAL emit helper ──────────────────────────────────────────────────────────
+
+/// Emit one WAL frame (best-effort). A write failure is logged at `error`
+/// level but never propagates — audit loss is visible via `neoth monitor`.
+async fn emit(
+    writer: &WalWriterHandle,
+    event_type: u8,
+    payload: serde_json::Value,
+    label: &'static str,
+) {
+    let bytes = match serde_json::to_vec(&payload) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "self_improvement_collector: serialize WAL payload failed"
+            );
+            return;
+        }
+    };
+    let header = HeaderBuilder::new(event_type, &bytes)
+        .flags(EventFlags::SYNTHETIC)
+        .build();
+    if let Err(e) = writer.append(header, bytes).await {
+        tracing::error!(
+            audit_loss = true,
+            event = label,
+            error = %e,
+            "self_improvement_collector: WAL frame lost"
+        );
+    }
+}
+
+// ── Blocking tick logic ──────────────────────────────────────────────────────
+
+/// Inner synchronous tick — runs inside `spawn_blocking` so that rusqlite
+/// `Connection` (which is `!Send`) never crosses an await point.
+fn tick_inner(
+    db_path: &Path,
+    home: &Path,
+    cfg: SelfImprovementCollectorConfig,
+    ts_unix: i64,
+) -> CollectorReport {
+    // ── 1. Open the views DB ─────────────────────────────────────────────────
+    let conn = match crate::memory::store::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(error = %e, "self_improvement_collector: open db failed");
+            return CollectorReport { ts_unix, ..Default::default() };
+        }
+    };
+
+    // ── 2. Query idx_episode for raw-text events in the look-back window ─────
+    let window_cutoff_ns = {
+        let window_secs = cfg.window_days.saturating_mul(86_400);
+        let now_ns = crate::time::now_unix_ns_i64();
+        now_ns - (window_secs as i64).saturating_mul(1_000_000_000)
+    };
+
+    let texts: Vec<String> = {
+        let mut stmt = match conn.prepare(
+            "SELECT text FROM idx_episode \
+             WHERE event_type = 1 AND ts_ns >= ?1 \
+             ORDER BY ts_ns ASC",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "self_improvement_collector: prepare episode query failed");
+                return CollectorReport { ts_unix, ..Default::default() };
+            }
+        };
+        match stmt.query_map(rusqlite::params![window_cutoff_ns], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(e) => {
+                warn!(error = %e, "self_improvement_collector: episode query failed");
+                return CollectorReport { ts_unix, ..Default::default() };
+            }
+        }
+    };
+
+    // ── 3. Count topics ──────────────────────────────────────────────────────
+    let topic_map = crate::reflection::topic_counts(&texts);
+    let candidate_topics: Vec<(String, usize)> = {
+        let mut v: Vec<(String, usize)> = topic_map
+            .into_iter()
+            .filter(|(_, count)| *count >= cfg.min_freq_threshold as usize)
+            .collect();
+        // Deterministic order: highest count first, then alphabetical.
+        v.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v
+    };
+    let topics_scanned = candidate_topics.len();
+
+    // ── 4. Query idx_groundtruth lessons ────────────────────────────────────
+    let lessons: Vec<String> = {
+        match conn.prepare(
+            "SELECT statement FROM idx_groundtruth \
+             WHERE source IN ('synthesis-cron', 'jv-self-01') \
+             ORDER BY id DESC \
+             LIMIT 500",
+        ) {
+            Err(e) => {
+                warn!(error = %e, "self_improvement_collector: prepare lessons query failed");
+                vec![]
+            }
+            Ok(mut stmt) => match stmt.query_map([], |row| row.get::<_, String>(0)) {
+                Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+                Err(_) => vec![],
+            },
+        }
+    };
+    let lessons_read = lessons.len();
+
+    // ── 5. Load SkillOpt ledger ──────────────────────────────────────────────
+    let ledger = crate::self_improve::load_ledger(home);
+    let ledger_records_checked = ledger.len();
+
+    // ── 6. Classify signals ──────────────────────────────────────────────────
+    let mut signals = Vec::new();
+    let mut deployed_artifacts_checked: usize = 0;
+
+    // Build a quick lookup: skill_id → ledger records for that skill.
+    let mut skill_ledger: std::collections::HashMap<String, Vec<&crate::self_improve::ImproveRecord>> =
+        std::collections::HashMap::new();
+    for rec in &ledger {
+        skill_ledger.entry(rec.skill.clone()).or_default().push(rec);
+    }
+
+    let skill_root = home.join("skills");
+
+    for (topic, count) in &candidate_topics {
+        // Check if the topic maps to a known skill with a score regression.
+        let mut classified = false;
+
+        // Score-regression check: any skill whose name contains the topic token
+        // AND whose most-recent accepted record has a negative delta below
+        // SCORE_REGRESSION_THRESHOLD.
+        for (skill_id, records) in &skill_ledger {
+            if !skill_id.to_ascii_lowercase().contains(topic.as_str()) {
+                continue;
+            }
+            // Most-recent record (ledger is oldest-first; pick last accepted).
+            let latest = records
+                .iter()
+                .filter(|r| r.accepted)
+                .max_by_key(|r| r.at_unix);
+            let Some(rec) = latest else { continue };
+            let delta = rec.score_after - rec.score_before;
+            if delta < SCORE_REGRESSION_THRESHOLD {
+                // Check artifact is deployed before recommending a patch.
+                let artifact = skill_root.join(skill_id).join("skill.yaml");
+                deployed_artifacts_checked += 1;
+                if !is_verified_deployed(&artifact, DEFAULT_ARTIFACT_MIN_AGE_SECS) {
+                    signals.push(CollectorSignal::Escalate {
+                        reason: format!(
+                            "skill '{skill_id}' artifact not yet verified deployed \
+                             (topic '{topic}', count {count})"
+                        ),
+                    });
+                } else {
+                    signals.push(CollectorSignal::PatchSkill {
+                        skill_id: skill_id.clone(),
+                        reason: format!(
+                            "score regression {delta:.3} below threshold \
+                             (topic '{topic}', count {count})"
+                        ),
+                    });
+                }
+                classified = true;
+                break;
+            }
+        }
+        if classified {
+            continue;
+        }
+
+        // Lesson-overlap check: if any stored lesson text contains the topic,
+        // classify as ConfigChange (an operator-visible lesson relates to this
+        // topic cluster → likely a config or framing issue, not a skill gap).
+        let lesson_hit = lessons
+            .iter()
+            .any(|l| l.to_ascii_lowercase().contains(topic.as_str()));
+        if lesson_hit {
+            signals.push(CollectorSignal::ConfigChange {
+                key: topic.clone(),
+                reason: format!(
+                    "lesson overlap for topic '{topic}' (count {count}); \
+                     review freedom.yaml or operator preset"
+                ),
+            });
+            classified = true;
+        }
+        if classified {
+            continue;
+        }
+
+        // Rejection-rate check: topics mentioned often but rejected by SkillOpt
+        // repeatedly are better escalated than auto-patched.
+        let total_for_topic: usize = skill_ledger
+            .values()
+            .flat_map(|recs| recs.iter())
+            .filter(|r| r.skill.to_ascii_lowercase().contains(topic.as_str()))
+            .count();
+        let rejected_for_topic: usize = skill_ledger
+            .values()
+            .flat_map(|recs| recs.iter())
+            .filter(|r| !r.accepted && r.skill.to_ascii_lowercase().contains(topic.as_str()))
+            .count();
+        let rejection_rate = if total_for_topic > 0 {
+            rejected_for_topic as f64 / total_for_topic as f64
+        } else {
+            0.0
+        };
+
+        if rejection_rate > ESCALATE_REJECTION_RATE {
+            signals.push(CollectorSignal::Escalate {
+                reason: format!(
+                    "topic '{topic}' (count {count}) has rejection rate {rejection_rate:.2} \
+                     — operator review recommended"
+                ),
+            });
+        } else {
+            signals.push(CollectorSignal::PromptEdit {
+                target: topic.clone(),
+                reason: format!(
+                    "frequent topic '{topic}' ({count} episodes in window) \
+                     with no existing skill coverage"
+                ),
+            });
+        }
+    }
+
+    CollectorReport {
+        signals,
+        topics_scanned,
+        lessons_read,
+        ledger_records_checked,
+        deployed_artifacts_checked,
+        ts_unix,
+    }
+}
+
+// ── Public async tick ────────────────────────────────────────────────────────
+
+/// One self-improvement collector tick:
+/// 1. Emits `0xBE SELF_IMPROVEMENT_COLLECTOR_STARTED`.
+/// 2. Runs [`tick_inner`] inside `spawn_blocking` (rusqlite `Connection` is
+///    `!Send`).
+/// 3. Writes the [`CollectorReport`] atomically to
+///    `~/.neoth/self_improvement_signals.json`.
+/// 4. Emits `0xBF SELF_IMPROVEMENT_COLLECTOR_DONE`.
+///
+/// Always succeeds — errors are logged and produce a zero-signal report.
+pub async fn run_self_improvement_collector_tick(
+    db_path: &Path,
+    home: &Path,
+    cfg: SelfImprovementCollectorConfig,
+    writer: &WalWriterHandle,
+) -> CollectorReport {
+    let ts_unix = crate::time::now_unix_i64();
+
+    emit(
+        writer,
+        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED,
+        serde_json::json!({
+            "window_days": cfg.window_days,
+            "min_freq_threshold": cfg.min_freq_threshold,
+            "ts_unix": ts_unix,
+        }),
+        "SELF_IMPROVEMENT_COLLECTOR_STARTED",
+    )
+    .await;
+
+    let db = db_path.to_path_buf();
+    let home_buf = home.to_path_buf();
+
+    let report = tokio::task::spawn_blocking(move || tick_inner(&db, &home_buf, cfg, ts_unix))
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "self_improvement_collector: spawn_blocking panicked");
+            CollectorReport { ts_unix, ..Default::default() }
+        });
+
+    // Write the sidecar atomically so HERMES-06 can poll it.
+    let sidecar_path = home.join("self_improvement_signals.json");
+    match serde_json::to_vec_pretty(&report) {
+        Ok(bytes) => {
+            if let Err(e) = crate::util::atomic_write::atomic_write(&sidecar_path, &bytes) {
+                tracing::error!(
+                    error = %e,
+                    path = %sidecar_path.display(),
+                    "self_improvement_collector: sidecar write failed"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "self_improvement_collector: sidecar serialize failed");
+        }
+    }
+
+    let ts_unix_done = crate::time::now_unix_i64();
+    emit(
+        writer,
+        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE,
+        serde_json::json!({
+            "signals": report.signals.len(),
+            "topics_scanned": report.topics_scanned,
+            "lessons_read": report.lessons_read,
+            "ledger_records_checked": report.ledger_records_checked,
+            "deployed_artifacts_checked": report.deployed_artifacts_checked,
+            "ts_unix": ts_unix_done,
+        }),
+        "SELF_IMPROVEMENT_COLLECTOR_DONE",
+    )
+    .await;
+
+    report
+}
+
+// ── Spawn loop ────────────────────────────────────────────────────────────────
+
+/// Spawn the self-improvement collector cron loop as a background tokio task.
+/// Returns `None` when `config.enabled == false` — opt-out operators carry
+/// no idle task.
+pub fn spawn_self_improvement_collector_loop(
+    config: SelfImprovementCollectorConfig,
+    db_path: PathBuf,
+    home: PathBuf,
+    writer: WalWriterHandle,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !config.enabled {
+        tracing::info!(
+            "self-improvement collector cron disabled \
+             (self_improvement_collector.enabled = false)"
+        );
+        return None;
+    }
+    let interval = config.interval_duration();
+    Some(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = interval.as_secs(),
+            window_days = config.window_days,
+            min_freq_threshold = config.min_freq_threshold,
+            "self-improvement collector cron loop online (JV-SELF-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let report =
+                run_self_improvement_collector_tick(&db_path, &home, config, &writer).await;
+            tracing::info!(
+                signals = report.signals.len(),
+                topics_scanned = report.topics_scanned,
+                lessons_read = report.lessons_read,
+                "self-improvement collector cron tick complete",
+            );
+        }
+    }))
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::automation::SelfImprovementCollectorConfig;
+    use crate::memory::store;
+
+    // ── config defaults ──────────────────────────────────────────────────────
+
+    #[test]
+    fn config_defaults() {
+        let cfg = SelfImprovementCollectorConfig::default();
+        assert!(!cfg.enabled, "disabled by default");
+        assert_eq!(
+            cfg.interval_secs,
+            crate::config::automation::DEFAULT_SELF_IMPROVEMENT_COLLECTOR_INTERVAL_SECS
+        );
+        assert_eq!(
+            cfg.interval_duration(),
+            std::time::Duration::from_secs(
+                crate::config::automation::DEFAULT_SELF_IMPROVEMENT_COLLECTOR_INTERVAL_SECS
+            )
+        );
+        assert_eq!(cfg.window_days, 30);
+        assert_eq!(cfg.min_freq_threshold, 3);
+    }
+
+    #[test]
+    fn interval_floor_clamps_zero() {
+        let cfg = SelfImprovementCollectorConfig {
+            interval_secs: 0,
+            ..Default::default()
+        };
+        assert_eq!(cfg.interval_duration(), std::time::Duration::from_secs(60));
+    }
+
+    // ── spawn disabled → None ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn spawn_returns_none_when_disabled() {
+        let cfg = SelfImprovementCollectorConfig { enabled: false, ..Default::default() };
+        let seg_dir = tempfile::tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+        let handle = spawn_self_improvement_collector_loop(
+            cfg,
+            "/nonexistent".into(),
+            "/nonexistent".into(),
+            writer.clone(),
+        );
+        assert!(handle.is_none(), "disabled config must return None");
+        drop(writer);
+        join.await.ok();
+    }
+
+    // ── tick on empty DB emits WAL frames and zero signals ───────────────────
+
+    #[tokio::test]
+    async fn tick_on_empty_db_emits_wal_frames_and_zero_signals() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let home = dir.path().to_path_buf();
+        // Create schema.
+        drop(store::open(&db_path).unwrap());
+
+        let seg_dir = tempfile::tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let cfg = SelfImprovementCollectorConfig::default();
+        let report = run_self_improvement_collector_tick(&db_path, &home, cfg, &writer).await;
+
+        assert_eq!(report.signals.len(), 0);
+        assert_eq!(report.topics_scanned, 0);
+        assert_eq!(report.lessons_read, 0);
+
+        drop(writer);
+        join.await.ok();
+
+        // Verify both WAL frames landed.
+        let bytes = std::fs::read(&seg).unwrap();
+        assert!(
+            bytes.windows(1).any(|w| w[0] == 0xBE),
+            "0xBE STARTED must be in WAL"
+        );
+        assert!(
+            bytes.windows(1).any(|w| w[0] == 0xBF),
+            "0xBF DONE must be in WAL"
+        );
+    }
+
+    // ── spawn enabled → Some, aborts cleanly ────────────────────────────────
+
+    #[tokio::test]
+    async fn spawn_returns_some_when_enabled_and_aborts_cleanly() {
+        let cfg = SelfImprovementCollectorConfig {
+            enabled: true,
+            interval_secs: 999_999,
+            ..Default::default()
+        };
+        let seg_dir = tempfile::tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+        let handle = spawn_self_improvement_collector_loop(
+            cfg,
+            "/nonexistent".into(),
+            "/nonexistent".into(),
+            writer.clone(),
+        )
+        .expect("enabled config must return Some");
+        handle.abort();
+        let _ = handle.await;
+        drop(writer);
+        join.await.ok();
+    }
+
+    // ── is_verified_deployed ────────────────────────────────────────────────
+
+    #[test]
+    fn is_verified_deployed_missing_path_returns_false() {
+        assert!(!is_verified_deployed(Path::new("/nonexistent/skill.yaml"), 0));
+    }
+
+    #[test]
+    fn is_verified_deployed_existing_file_zero_age_returns_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("skill.yaml");
+        std::fs::write(&p, b"enabled: true").unwrap();
+        // min_age_secs = 0 → elapsed always >= 0.
+        assert!(is_verified_deployed(&p, 0));
+    }
+
+    #[test]
+    fn is_verified_deployed_fresh_file_fails_age_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("skill.yaml");
+        std::fs::write(&p, b"enabled: true").unwrap();
+        // A just-written file won't have elapsed 999_999 seconds.
+        assert!(!is_verified_deployed(&p, 999_999));
+    }
+
+    // ── sidecar written on tick ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn tick_writes_sidecar_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let home = dir.path().to_path_buf();
+        drop(store::open(&db_path).unwrap());
+
+        let seg_dir = tempfile::tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+
+        let cfg = SelfImprovementCollectorConfig::default();
+        let _report = run_self_improvement_collector_tick(&db_path, &home, cfg, &writer).await;
+
+        drop(writer);
+        join.await.ok();
+
+        let sidecar = home.join("self_improvement_signals.json");
+        assert!(sidecar.exists(), "sidecar JSON must be written");
+        let parsed: CollectorReport =
+            serde_json::from_slice(&std::fs::read(&sidecar).unwrap()).unwrap();
+        assert_eq!(parsed.signals.len(), 0);
+    }
+}
