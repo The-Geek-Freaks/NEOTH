@@ -130,13 +130,28 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // Every LIKE below pairs the pattern with `ESCAPE '\'`.
     let pattern = format!("%{}%", crate::memory::escape_like(topic));
 
+    // GR-fix (review): wrap the whole SQLite cascade in ONE transaction. The
+    // module doc promises forget is "transactional", but the ~7 DELETE/UPDATE legs
+    // + helper cascades ran under autocommit — a mid-cascade failure (disk full,
+    // I/O error) left a PARTIAL erasure (some tiers wiped, others not), the worst
+    // outcome for a GDPR right-to-erasure op. `unchecked_transaction()` takes
+    // `&self` (no signature change for the 48 store callers; same pattern as
+    // assoc_graph.rs / wiki/ingest.rs). On any `?` the tx drops un-committed →
+    // full rollback. NOTE: the people.json wipe + the CLI-side HNSW snapshot
+    // rebuild are filesystem ops OUTSIDE SQLite — they run post-commit (people)
+    // or in the CLI caller (HNSW), so the cascade is SQLite-atomic, not
+    // end-to-end-atomic across the JSON file (documented design boundary).
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin forget cascade transaction")?;
+
     // GR-165: collect channel-side (channel, sender_id) pairs BEFORE the
     // episode delete below destroys the correlation. Channel ingest keys
     // idx_embedding with opaque "channel:chat_id:sender_id:ts" source_refs
     // that never contain the topic string — these pairs drive the second
     // embedding-wipe leg further down.
     let channel_sender_pairs: Vec<(String, String)> = {
-        let mut stmt = conn
+        let mut stmt = tx
             .prepare(
                 "SELECT DISTINCT channel, sender_id FROM idx_episode \
                  WHERE channel IS NOT NULL AND sender_id IS NOT NULL \
@@ -153,7 +168,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // delete below removes them, so co-access association links touching a
     // forgotten memory can be cascaded (else they dangle as graph endpoints).
     let forgotten_event_ids: Vec<i64> = {
-        let mut stmt = conn
+        let mut stmt = tx
             .prepare(
                 "SELECT event_id FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             )
@@ -164,21 +179,21 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
             .context("collect event_ids for link cascade")?
     };
 
-    let episode_rows = conn
+    let episode_rows = tx
         .execute(
             "DELETE FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
         )
         .context("delete from idx_episode")? as i64;
 
-    let consolidated_rows = conn
+    let consolidated_rows = tx
         .execute(
             "DELETE FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
         )
         .context("delete from idx_consolidated")? as i64;
 
-    let longterm_rows = conn
+    let longterm_rows = tx
         .execute(
             "DELETE FROM idx_longterm WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
@@ -189,7 +204,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // value mentions the topic. GDPR right-to-erasure cascade (GOLD-SEC-28
     // / CR-007) — `forget` previously skipped idx_profile, leaving the
     // operator's extracted claims about the topic on disk.
-    let profile_rows = conn
+    let profile_rows = tx
         .execute(
             "DELETE FROM idx_profile \
              WHERE field COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
@@ -204,7 +219,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // the cascade independent of revoke ordering — mirrors the forgotten_event_ids
     // pattern above).
     let revoked_gt_ids: Vec<i64> = {
-        let mut stmt = conn
+        let mut stmt = tx
             .prepare(
                 "SELECT id FROM idx_groundtruth \
                  WHERE revoked_at IS NULL AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
@@ -220,7 +235,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // audit (operator can prove they didn't assert X after revocation),
     // but recall queries filter on `revoked_at IS NULL` so it stops
     // surfacing.
-    let groundtruth_revoked = conn
+    let groundtruth_revoked = tx
         .execute(
             "UPDATE idx_groundtruth \
              SET revoked_at = ?1 \
@@ -231,21 +246,21 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
 
     // GOLD-ADAPT-MEM-02 — cascade the GDPR wipe into the contradiction ledger so
     // a revoked fact never lingers as a live leg of a pair.
-    let contradiction_rows = crate::memory::contradiction::forget_for_ids(conn, &revoked_gt_ids)?;
+    let contradiction_rows = crate::memory::contradiction::forget_for_ids(&tx,&revoked_gt_ids)?;
 
     // GOLD-SEC-28 — in-flight profile extractions. A pending delta or a queued
     // outbox frame mentioning the topic would re-materialise the forgotten data
     // when it's later applied / written, so the erasure must cover them too.
     // `delta_json` is TEXT; the outbox `payload` is a BLOB → CAST to TEXT so the
     // topic substring is matched byte-for-byte.
-    let profile_pending_rows = conn
+    let profile_pending_rows = tx
         .execute(
             "DELETE FROM idx_profile_pending WHERE delta_json COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
         )
         .context("delete from idx_profile_pending")? as i64;
 
-    let profile_outbox_rows = conn
+    let profile_outbox_rows = tx
         .execute(
             "DELETE FROM idx_profile_outbox \
              WHERE CAST(payload AS TEXT) COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
@@ -258,23 +273,28 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // the topic pattern directly; channel-keyed refs (opaque ids) match
     // via the (channel, sender_id) pairs pre-collected above (GR-165).
     let mut embedding_rows =
-        embeddings::wipe_by_source_ref_pattern(conn, &pattern).context("wipe idx_embedding")?;
+        embeddings::wipe_by_source_ref_pattern(&tx,&pattern).context("wipe idx_embedding")?;
     if !channel_sender_pairs.is_empty() {
-        embedding_rows += embeddings::wipe_by_channel_sender_refs(conn, &channel_sender_pairs)
+        embedding_rows += embeddings::wipe_by_channel_sender_refs(&tx,&channel_sender_pairs)
             .context("wipe idx_embedding channel-side")?;
     }
 
     // GOLD-ADAPT-MEM-06 — cascade the GDPR wipe into the knowledge graph:
     // entities whose name matches the topic + every relation touching them.
     let (entity_rows, relation_rows) =
-        crate::memory::entities::forget_entities_like(conn, &pattern)?;
+        crate::memory::entities::forget_entities_like(&tx,&pattern)?;
 
     // GOLD-ADAPT-MEM-07 — cascade into the co-access association graph: drop
     // every link touching a forgotten episode so none is left dangling.
     let mut link_rows: i64 = 0;
     for eid in &forgotten_event_ids {
-        link_rows += crate::memory::assoc_graph::forget_links_for_event(conn, *eid)?;
+        link_rows += crate::memory::assoc_graph::forget_links_for_event(&tx,*eid)?;
     }
+
+    // GR-fix: commit the SQLite cascade atomically. Any `?` above dropped `tx`
+    // un-committed → full rollback (no partial erasure). Everything below this
+    // line is a post-commit filesystem op, intentionally outside the SQLite tx.
+    tx.commit().context("commit forget cascade transaction")?;
 
     // D4 (GDPR) — cascade into the operator-visible people-scorer store
     // (`~/.neoth/people.json`). The people-home is the directory the conn's
@@ -535,6 +555,41 @@ mod tests {
         embeddings::upsert(&conn, "image", "AcmeCorp-logo.png", "clip", &v).unwrap();
         embeddings::upsert(&conn, "image", "vacation.png", "clip", &v).unwrap();
         conn
+    }
+
+    #[test]
+    fn forget_cascade_rolls_back_on_mid_cascade_failure() {
+        // GR-fix regression: the cascade is now wrapped in one transaction, so a
+        // failure mid-cascade must leave the DB FULLY INTACT (not a partial wipe).
+        let conn = seed_db();
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode WHERE text LIKE '%AcmeCorp%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 1, "precondition: the AcmeCorp episode exists");
+        // Sabotage a LATE cascade leg: drop a table that a delete AFTER the early
+        // idx_episode delete targets, so the cascade fails mid-flight.
+        conn.execute("DROP TABLE idx_profile_outbox", []).unwrap();
+        let r = forget_by_topic(&conn, "AcmeCorp", 0);
+        assert!(
+            r.is_err(),
+            "a mid-cascade DB error must surface as Err, not a silent partial wipe"
+        );
+        // The transaction rolled back → the early idx_episode delete is undone.
+        let after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode WHERE text LIKE '%AcmeCorp%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            after, 1,
+            "rollback: the AcmeCorp episode must survive a failed cascade (no partial erasure)"
+        );
     }
 
     #[test]
