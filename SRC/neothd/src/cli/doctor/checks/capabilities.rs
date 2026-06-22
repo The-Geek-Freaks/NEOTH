@@ -11,9 +11,11 @@ use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
 /// Computer-use (trycua cua-driver) — installed + registered as a gated MCP
 /// server? Optional capability, so "off" is a clean Pass, not a failure.
-pub(crate) fn check_computer_use(_home: &Path) -> CheckOutcome {
+pub(crate) fn check_computer_use(home: &Path) -> CheckOutcome {
     let installed = crate::computer_use::is_installed();
-    let registered = crate::mcp::config::McpServers::load()
+    // GR-fix: honour `doctor --home DIR` — load the MCP registry from the passed
+    // home, not the hardcoded default (the check ignored --home before).
+    let registered = crate::mcp::config::McpServers::load_from(&home.join("mcp_servers.yaml"))
         .ok()
         .map(|s| {
             s.servers
@@ -105,8 +107,9 @@ pub(crate) fn check_iroh_transport(_home: &Path) -> CheckOutcome {
 }
 
 /// MCP servers — how many are registered + enabled (the tool surface).
-pub(crate) fn check_mcp_servers(_home: &Path) -> CheckOutcome {
-    match crate::mcp::config::McpServers::load() {
+pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
+    // GR-fix: honour `doctor --home DIR` (was ignoring it via the default-path load).
+    match crate::mcp::config::McpServers::load_from(&home.join("mcp_servers.yaml")) {
         Ok(s) => {
             let enabled = s.servers.iter().filter(|x| x.enabled).count();
             let total = s.servers.len();
@@ -128,8 +131,9 @@ pub(crate) fn check_mcp_servers(_home: &Path) -> CheckOutcome {
 }
 
 /// WAL audit chain — the tamper-evident ledger every gated action lands in.
-pub(crate) fn check_wal_audit_health(_home: &Path) -> CheckOutcome {
-    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+pub(crate) fn check_wal_audit_health(home: &Path) -> CheckOutcome {
+    // GR-fix: honour `doctor --home DIR` (was using the hardcoded default WAL dir).
+    let wal_dir = crate::config::FreedomConfig::default_wal_dir_at(home);
     if !wal_dir.exists() {
         return CheckOutcome {
             name: "wal audit",
