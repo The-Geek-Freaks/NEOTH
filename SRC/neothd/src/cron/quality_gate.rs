@@ -1,7 +1,9 @@
 //! JV-PRO-07 — Briefing/proactive output quality gate.
 //!
 //! Pure functions. No I/O. No async. Scores a cron job's generated output so
-//! the caller can decide whether to deliver or trigger a regeneration attempt.
+//! the caller can decide whether to deliver or discard it. (V1: regeneration/
+//! retry is not yet implemented — the score is operator diagnostics + a
+//! deliver/skip signal, not a regen trigger.)
 //!
 //! ## What is scored
 //!

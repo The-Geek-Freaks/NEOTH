@@ -22,9 +22,9 @@
 //!   Empty hits produce the "Nothing found in memory for X" line
 //!   so the operator knows the recall ran but came back empty.
 //!
-//! Chat-dispatch integration (call detect_recall_intent before
-//! firing the provider) is the follow-up; this commit ships the
-//! primitives + tests so the wiring is a 3-line change.
+//! Chat-dispatch integration is LIVE: `detect_recall_intent` runs before the
+//! provider fires on the chat + operator channel paths. This module holds the
+//! primitives + tests behind that wiring (the header previously said "follow-up").
 
 use chrono::{DateTime, Utc};
 

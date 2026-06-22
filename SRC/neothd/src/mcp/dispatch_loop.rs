@@ -310,7 +310,8 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 tool_result_blocks.push(format!(
                     "secret-egress guard: this call was NOT executed — its payload contains what \
                      looks like a secret ({pattern}: {redacted}). Remove the credential from the \
-                     call. If this is genuinely intended, the operator must approve the egress."
+                     call and re-issue. (There is no per-call auto-approve for secret egress — the \
+                     guard is a hard block; lift it only by not sending the secret.)"
                 ));
                 continue;
             }
