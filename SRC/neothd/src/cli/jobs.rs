@@ -8,7 +8,7 @@
 //! For now operators can drop a job into jobs.yaml and `neoth serve` picks it
 //! up on next restart.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -44,12 +44,41 @@ pub struct JobsArgs {
     #[arg(long, value_name = "PATH")]
     pub file: Option<PathBuf>,
 
+    /// GOLD-ADAPT-ODY-07b — run COMMAND as a DETACHED background job. Its
+    /// stdout+stderr stream to `~/.neoth/bgjobs/<id>.log` and its exit code to
+    /// `<id>.exit`; the running daemon's bg-monitor tracks completion (and runs
+    /// any auto-continue callback). Quote the whole command, e.g.
+    /// `neoth jobs --run "cargo build --release" --label build`.
+    #[arg(long, value_name = "COMMAND", conflicts_with_all = ["list", "validate", "preview", "bg"])]
+    pub run: Option<String>,
+
+    /// Optional label for the `--run` job id (sanitised to `[a-z0-9_-]`;
+    /// default `job`). The on-disk id is `<label>-<unix_ts>`.
+    #[arg(long, value_name = "NAME", requires = "run")]
+    pub label: Option<String>,
+
+    /// GOLD-ADAPT-ODY-07b — list the detached background jobs in
+    /// `~/.neoth/bgjobs/` with their status (running / completed + exit code).
+    #[arg(long, conflicts_with_all = ["list", "validate", "preview", "run"])]
+    pub bg: bool,
+
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
 }
 
 pub async fn run_jobs(args: JobsArgs) -> Result<()> {
+    // GOLD-ADAPT-ODY-07b — background (detached) job producer + lister. These
+    // operate on the `~/.neoth/bgjobs/` on-disk registry that the daemon's
+    // bg_monitor watches (NOT jobs.yaml), so handle them before the jobs.yaml
+    // load + existence check.
+    if let Some(command) = args.run.as_deref() {
+        return run_bg_job(command, args.label.as_deref().unwrap_or("job"));
+    }
+    if args.bg {
+        return list_bg_jobs(&args.output);
+    }
+
     let path = args
         .file
         .clone()
@@ -276,6 +305,140 @@ pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
     })
 }
 
+// ── GOLD-ADAPT-ODY-07b — detached background-job producer + lister ──────────
+
+/// Build the detached-job shell wrapper argv. Pure (no spawn) so the redirect +
+/// exit-marker contract is unit-testable. The wrapper runs `command`, tees
+/// stdout+stderr to `log`, and writes the numeric exit code to `exit` when the
+/// command finishes — the two on-disk markers the daemon's bg_monitor reads
+/// (`<id>.log` present = running; `<id>.exit` present = done).
+fn bg_wrapper_argv(command: &str, log: &Path, exit: &Path) -> (String, Vec<String>) {
+    let log = log.display().to_string();
+    let exit = exit.display().to_string();
+    if cfg!(target_os = "windows") {
+        // /V:ON enables delayed expansion so `!ERRORLEVEL!` is the command's real
+        // exit code, not the parse-time value `%ERRORLEVEL%` would capture.
+        (
+            "cmd".to_string(),
+            vec![
+                "/V:ON".to_string(),
+                "/C".to_string(),
+                format!("({command}) > \"{log}\" 2>&1 & echo !ERRORLEVEL!> \"{exit}\""),
+            ],
+        )
+    } else {
+        (
+            "sh".to_string(),
+            vec![
+                "-c".to_string(),
+                format!("({command}) > '{log}' 2>&1; echo $? > '{exit}'"),
+            ],
+        )
+    }
+}
+
+/// Sanitise a job label to the `[a-z0-9_-]` shape the registry uses as a file
+/// stem (a label becomes part of `<label>-<ts>.log`). Empty → `job`.
+fn sanitise_label(label: &str) -> String {
+    let s: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if s.is_empty() { "job".to_string() } else { s }
+}
+
+/// ODY-07b — spawn `command` as a detached background job. Writes the bg_jobs
+/// on-disk markers (`<id>.log` + `<id>.exit`) the daemon's bg_monitor watches.
+/// The `std::process::Child` handle is dropped immediately — dropping it does
+/// NOT kill the process, so the job runs detached and survives this CLI exit.
+fn run_bg_job(command: &str, label: &str) -> Result<()> {
+    if command.trim().is_empty() {
+        anyhow::bail!("--run requires a non-empty command");
+    }
+    let bgjobs_dir = FreedomConfig::default_neoth_home().join("bgjobs");
+    std::fs::create_dir_all(&bgjobs_dir).context("create ~/.neoth/bgjobs")?;
+    let id = crate::daemon::bg_jobs::BgJobId::new(&sanitise_label(label), crate::time::now_unix_secs());
+    let log = bgjobs_dir.join(format!("{}.log", id.as_str()));
+    let exit = bgjobs_dir.join(format!("{}.exit", id.as_str()));
+    let (program, wrapper_args) = bg_wrapper_argv(command, &log, &exit);
+    let child = std::process::Command::new(&program)
+        .args(&wrapper_args)
+        .spawn()
+        .with_context(|| format!("spawn detached job via `{program}`"))?;
+    println!("started background job `{}` (pid {})", id.as_str(), child.id());
+    println!("  log   : {}", log.display());
+    println!("  status: `neoth jobs --bg` (a running daemon's bg-monitor auto-tracks completion)");
+    Ok(())
+}
+
+/// Pure listing core: scan `bgjobs_dir` for `<id>.log` files and pair each with
+/// its `<id>.exit` status. Split out so the directory scan is unit-testable with
+/// a tempdir. Returns `(id, status, exit_code)` rows sorted by id.
+fn collect_bg_rows(bgjobs_dir: &Path) -> Vec<(String, String, Option<i32>)> {
+    let mut rows: Vec<(String, String, Option<i32>)> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(bgjobs_dir) else {
+        return rows;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("log") {
+            continue;
+        }
+        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let exit = bgjobs_dir.join(format!("{stem}.exit"));
+        let (state, code) = match crate::daemon::bg_jobs::read_job_status(&exit) {
+            crate::daemon::bg_jobs::BgJobStatus::Running => ("running".to_string(), None),
+            crate::daemon::bg_jobs::BgJobStatus::Completed { code } => {
+                ("completed".to_string(), code)
+            }
+        };
+        rows.push((stem.to_string(), state, code));
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows
+}
+
+fn list_bg_jobs(output: &OutputFormat) -> Result<()> {
+    let bgjobs_dir = FreedomConfig::default_neoth_home().join("bgjobs");
+    let rows = collect_bg_rows(&bgjobs_dir);
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let arr: Vec<_> = rows
+                .iter()
+                .map(|(id, state, code)| {
+                    serde_json::json!({ "id": id, "status": state, "exit_code": code })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
+        }
+        OutputFormat::Table => {
+            if rows.is_empty() {
+                println!("no background jobs (start one: `neoth jobs --run \"<command>\"`)");
+                return Ok(());
+            }
+            println!("{:<36} {:<12} exit", "id", "status");
+            println!("{}", "-".repeat(58));
+            for (id, state, code) in &rows {
+                println!(
+                    "{:<36} {:<12} {}",
+                    truncate(id, 36),
+                    state,
+                    code.map(|c| c.to_string()).unwrap_or_else(|| "-".to_string()),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn print_table(jobs: &JobsFile) {
     let now = Utc::now();
     println!(
@@ -422,5 +585,63 @@ mod tests {
                 "field `{field}` must serialise in JobPreview JSON",
             );
         }
+    }
+
+    // ── GOLD-ADAPT-ODY-07b — detached background-job producer + lister ──────
+
+    #[test]
+    fn ody07b_bg_wrapper_argv_tees_log_and_writes_exit_code() {
+        let log = Path::new("/tmp/j.log");
+        let exit = Path::new("/tmp/j.exit");
+        let (program, wargs) = super::bg_wrapper_argv("echo hi", log, exit);
+        let joined = wargs.join(" ");
+        assert!(joined.contains("echo hi"), "must run the command: {joined}");
+        assert!(joined.contains("j.log"), "must tee to the log: {joined}");
+        assert!(joined.contains("j.exit"), "must write the exit marker: {joined}");
+        if cfg!(target_os = "windows") {
+            assert_eq!(program, "cmd");
+            assert!(
+                joined.contains("!ERRORLEVEL!"),
+                "windows needs delayed-expansion exit code: {joined}"
+            );
+        } else {
+            assert_eq!(program, "sh");
+            assert!(joined.contains("$?"), "unix captures $? as the exit code: {joined}");
+        }
+    }
+
+    #[test]
+    fn ody07b_sanitise_label_keeps_safe_chars_and_defaults_empty() {
+        assert_eq!(super::sanitise_label("build-1_x"), "build-1_x");
+        assert_eq!(super::sanitise_label("a b/c.d"), "a-b-c-d");
+        assert_eq!(super::sanitise_label(""), "job");
+        assert_eq!(super::sanitise_label("///"), "---");
+    }
+
+    #[test]
+    fn ody07b_collect_bg_rows_reports_running_and_completed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        // running job: .log only, no .exit
+        std::fs::write(dir.join("alpha-100.log"), b"out").unwrap();
+        // completed job: .log + .exit (code 0)
+        std::fs::write(dir.join("beta-200.log"), b"out").unwrap();
+        std::fs::write(dir.join("beta-200.exit"), b"0\n").unwrap();
+        // non-log file is ignored
+        std::fs::write(dir.join("note.txt"), b"x").unwrap();
+        let rows = super::collect_bg_rows(dir);
+        assert_eq!(rows.len(), 2, "two .log jobs, txt ignored: {rows:?}");
+        assert_eq!(rows[0].0, "alpha-100"); // sorted by id
+        assert_eq!(rows[0].1, "running");
+        assert_eq!(rows[0].2, None);
+        assert_eq!(rows[1].0, "beta-200");
+        assert_eq!(rows[1].1, "completed");
+        assert_eq!(rows[1].2, Some(0));
+    }
+
+    #[test]
+    fn ody07b_collect_bg_rows_empty_for_missing_dir() {
+        let rows = super::collect_bg_rows(Path::new("/no/such/bgjobs/dir/xyz"));
+        assert!(rows.is_empty());
     }
 }
