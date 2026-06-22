@@ -94,6 +94,20 @@ pub fn spawn_g02_surfacing_cron_loop(home: PathBuf, interval_secs: u64) -> JoinH
             home = %home.display(),
             "G-02 surfacing cron loop spawned"
         );
+        // GOLD-ADAPT-ODY-07b — register this daemon-lifetime loop as a background
+        // job so `neoth jobs list` + the ODY-07 bg_monitor see it as Running. No
+        // `.exit` marker is ever written (the loop runs for the daemon's lifetime),
+        // which is the accurate status. No-op before `init_global_registry` (chat).
+        if let Some(reg) = crate::daemon::bg_jobs::global_registry() {
+            let ts = crate::time::now_unix_secs();
+            reg.register(
+                crate::daemon::bg_jobs::BgJobId::new("g02-surfacing-cron", ts),
+                "G-02 profile-claim surfacing loop",
+                ts,
+                None,
+            )
+            .await;
+        }
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;

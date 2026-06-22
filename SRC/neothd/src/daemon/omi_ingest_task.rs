@@ -204,6 +204,21 @@ pub async fn run_omi_ingest_task(cfg: OmiConfig, db_path: PathBuf, writer: WalWr
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing::info!(endpoint = %cfg.endpoint, "omi: ingest task started");
 
+    // GOLD-ADAPT-ODY-07b — register this daemon-lifetime loop as a background job
+    // so `neoth jobs list` + the ODY-07 bg_monitor see it as Running. No `.exit`
+    // marker is written (the loop runs for the daemon's lifetime) — accurate
+    // status. No-op before `init_global_registry` (e.g. `neoth chat`).
+    if let Some(reg) = crate::daemon::bg_jobs::global_registry() {
+        let ts = now_unix();
+        reg.register(
+            crate::daemon::bg_jobs::BgJobId::new("omi-ingest", ts),
+            "OMI memory ingest loop",
+            ts,
+            None,
+        )
+        .await;
+    }
+
     loop {
         ticker.tick().await;
         let items: Vec<OmiItem> = match client.get(&url).send().await {
