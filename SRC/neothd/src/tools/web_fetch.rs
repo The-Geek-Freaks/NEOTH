@@ -11,6 +11,13 @@
 //! to avoid adding a heavy HTML-to-MD dep — the contract is "operator
 //! gets readable text, not byte-perfect Markdown". Tables, headers,
 //! and links survive; layout / colour / scripts do not.
+//!
+//! ## Goal-based extraction (GOLD-ADAPT-ODY-23)
+//!
+//! `fetch_with_goal(url, goal, provider)` fetches the page then runs a
+//! focused LLM extraction pass that returns `{ rational, evidence[], summary }`
+//! scoped to the caller's goal. Pairs with `tools/deep_research.rs` (ODY-17)
+//! where every page in a research plan is goal-extracted before synthesis.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -18,6 +25,7 @@ use anyhow::{Context, Result};
 use tokio::net::lookup_host;
 
 use crate::providers::http_client;
+use crate::providers::{Completion, Provider, Request};
 use crate::tools::web_doc_cache;
 
 /// Cloud metadata hostnames that resolve to link-local 169.254.x.x in
@@ -84,6 +92,117 @@ pub async fn fetch_raw(url: &str) -> Result<RawFetchResult> {
             String::new()
         };
     Ok(RawFetchResult { raw_html, meta })
+}
+
+/// GOLD-ADAPT-ODY-23 — result of a goal-focused extraction pass over a fetched
+/// page. The LLM is asked to read the page text and answer three structured
+/// questions relative to the caller's `goal`:
+///
+/// * `rational`  — why this page is (or is not) relevant to the goal.
+/// * `evidence`  — direct verbatim or close-paraphrase quotes that support
+///                 the goal; empty when the page contains no relevant evidence.
+/// * `summary`   — a concise paragraph synthesising what the page contributes
+///                 toward the goal.
+///
+/// The struct derives `serde::Deserialize` so the LLM JSON response is parsed
+/// directly into it. All three fields are `String`/`Vec<String>` — no
+/// structured sub-types that would require a schema change.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct GoalExtraction {
+    /// Why the page is (or is not) relevant to the goal.
+    pub rational: String,
+    /// Direct evidence quotes / paraphrases supporting the goal (may be empty).
+    pub evidence: Vec<String>,
+    /// Concise synthesis of what the page contributes toward the goal.
+    pub summary: String,
+}
+
+/// System prompt prefix for the goal-extraction LLM pass. Kept short to save
+/// tokens; the caller appends the goal and the page text.
+const GOAL_EXTRACT_SYSTEM: &str = "You are a precise research assistant. \
+Extract structured goal-relevant information from a web page. \
+Respond ONLY with a JSON object — no markdown fences, no extra keys. \
+The JSON must have exactly three fields: \
+\"rational\" (string: why the page is or is not relevant to the goal), \
+\"evidence\" (array of strings: direct quotes or close paraphrases from the page that support the goal; empty array if none), \
+\"summary\" (string: one-paragraph synthesis of what the page contributes to the goal). \
+If the page is not relevant, set rational to explain why, evidence to [], and summary to an empty string.";
+
+/// Extracts goal-focused structured content from a fetched URL.
+///
+/// Workflow:
+/// 1. Fetches `url` via the normal [`fetch`] path (SSRF-guarded, cached).
+/// 2. Sends the extracted page text + the caller's `goal` to `provider` in a
+///    structured extraction prompt.
+/// 3. Parses the provider's JSON response into [`GoalExtraction`].
+///
+/// `provider` is caller-supplied so this function is fully testable with a
+/// mock provider — no config loading, no daemon dependency.
+///
+/// # Errors
+/// Propagates fetch errors and provider errors. Returns `Err` when the
+/// provider response is not valid JSON matching the [`GoalExtraction`] schema.
+pub async fn fetch_with_goal(
+    url: &str,
+    goal: &str,
+    provider: &dyn Provider,
+) -> Result<GoalExtraction> {
+    let fetched = fetch(url).await?;
+    extract_goal_from_text(&fetched.text, url, goal, provider).await
+}
+
+/// Inner extraction helper — separated so the test suite can call it directly
+/// with fixture text without making a network request.
+pub(crate) async fn extract_goal_from_text(
+    page_text: &str,
+    page_url: &str,
+    goal: &str,
+    provider: &dyn Provider,
+) -> Result<GoalExtraction> {
+    // Bound the page text fed to the LLM. Uses a conservative 8 000-char
+    // ceiling: the goal + JSON envelope cost tokens too, and most extraction
+    // goals are satisfiable from the opening sections of a page.
+    const MAX_PAGE_CHARS_FOR_GOAL: usize = 8_000;
+    let page_snippet = if page_text.len() > MAX_PAGE_CHARS_FOR_GOAL {
+        &page_text[..MAX_PAGE_CHARS_FOR_GOAL]
+    } else {
+        page_text
+    };
+
+    let prompt = format!(
+        "GOAL: {goal}\n\nSOURCE URL: {page_url}\n\nPAGE TEXT:\n{page_snippet}\n\n\
+         Extract the goal-relevant information from the page above as a JSON object \
+         with fields rational, evidence, summary."
+    );
+
+    let req = Request {
+        prompt,
+        system: Some(GOAL_EXTRACT_SYSTEM.to_string()),
+        ..Request::default()
+    };
+
+    let completion: Completion = provider
+        .complete(req)
+        .await
+        .context("goal extractor: LLM call failed")?;
+
+    // Strip optional markdown code fences the LLM might emit despite the
+    // instruction — "```json\n...\n```" or "```\n...\n```".
+    let raw = completion.text.trim();
+    let stripped = raw
+        .strip_prefix("```json")
+        .or_else(|| raw.strip_prefix("```"))
+        .map(|s| s.trim_start())
+        .and_then(|s| s.strip_suffix("```"))
+        .map(|s| s.trim_end())
+        .unwrap_or(raw);
+
+    serde_json::from_str::<GoalExtraction>(stripped).with_context(|| {
+        format!(
+            "goal extractor: provider returned non-JSON response: {}",
+            &stripped[..stripped.len().min(200)]
+        )
+    })
 }
 
 /// Shared fetch core — returns the raw body string AND the extracted
@@ -658,6 +777,7 @@ fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration as StdDuration;
 
     #[test]
     fn find_ci_is_case_insensitive_single_pass() {
@@ -1066,5 +1186,238 @@ mod tests {
         let r = fetch(&mock.uri()).await.expect("expected_header match");
         assert_eq!(r.status, 200);
         assert_eq!(r.text, "ok");
+    }
+
+    // ── GOLD-ADAPT-ODY-23: goal-based extraction tests ────────────────────
+
+    /// A mock provider that always returns a fixed JSON string, simulating the
+    /// LLM extraction pass without any network or API key dependency.
+    struct FixedJsonProvider(String);
+
+    #[async_trait::async_trait]
+    impl Provider for FixedJsonProvider {
+        fn name(&self) -> &'static str {
+            "goal-extract-mock"
+        }
+        async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+            Ok(Completion {
+                text: self.0.clone(),
+                model: "mock".to_string(),
+                latency: StdDuration::from_millis(0),
+                input_tokens: None,
+                output_tokens: None,
+            })
+        }
+    }
+
+    /// A mock provider that always fails — proves `fetch_with_goal` surfaces
+    /// provider errors as `Err` instead of silently swallowing them.
+    struct FailingGoalProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for FailingGoalProvider {
+        fn name(&self) -> &'static str {
+            "goal-extract-fail-mock"
+        }
+        async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+            anyhow::bail!("simulated provider unavailable")
+        }
+    }
+
+    /// Happy path: fixture HTML page + goal → structured `GoalExtraction`.
+    /// The mock provider returns a hard-coded JSON object; we verify all three
+    /// fields are parsed correctly and that `evidence` is a vec not a scalar.
+    #[tokio::test]
+    async fn goal_extraction_parses_structured_json_from_mock_provider() {
+        let page_html = "<h1>Rust Memory Safety</h1>\
+            <p>Rust prevents data races at compile time via its ownership model. \
+            Buffer overflows are eliminated by bounds checking. \
+            The borrow checker enforces exclusive mutable access.</p>";
+        let page_text = strip_html(page_html);
+
+        let json = r#"{
+            "rational": "The page directly addresses memory safety mechanisms in Rust.",
+            "evidence": [
+                "Rust prevents data races at compile time via its ownership model.",
+                "Buffer overflows are eliminated by bounds checking."
+            ],
+            "summary": "Rust achieves memory safety through ownership, borrow checking, and bounds checks."
+        }"#;
+
+        let provider = FixedJsonProvider(json.to_string());
+        let goal = "How does Rust achieve memory safety?";
+
+        let result = extract_goal_from_text(&page_text, "https://example.com/rust", goal, &provider)
+            .await
+            .expect("extraction should succeed");
+
+        assert!(
+            result.rational.contains("memory safety"),
+            "rational should mention the goal topic; got: {}",
+            result.rational
+        );
+        assert_eq!(
+            result.evidence.len(),
+            2,
+            "expected 2 evidence items; got: {:?}",
+            result.evidence
+        );
+        assert!(
+            result.evidence[0].contains("data races"),
+            "first evidence item should reference data races"
+        );
+        assert!(
+            result.summary.contains("Rust"),
+            "summary should mention Rust; got: {}",
+            result.summary
+        );
+    }
+
+    /// When the page has no relevant content, the LLM returns empty evidence
+    /// and an explanatory rational. We verify the zero-evidence path parses.
+    #[tokio::test]
+    async fn goal_extraction_handles_no_relevant_evidence() {
+        let json = r#"{
+            "rational": "The page is about cooking recipes and is unrelated to the goal.",
+            "evidence": [],
+            "summary": ""
+        }"#;
+        let provider = FixedJsonProvider(json.to_string());
+
+        let result = extract_goal_from_text(
+            "This page is about pasta carbonara and tiramisu.",
+            "https://example.com/recipes",
+            "What are the latest breakthroughs in quantum computing?",
+            &provider,
+        )
+        .await
+        .expect("extraction should succeed even with empty evidence");
+
+        assert!(result.evidence.is_empty(), "evidence should be empty for an off-topic page");
+        assert!(result.rational.contains("cooking") || result.rational.contains("unrelated"));
+        assert!(result.summary.is_empty());
+    }
+
+    /// The LLM sometimes wraps its JSON in a ```json ... ``` code fence even
+    /// when instructed not to. Verify the fence-stripping logic handles it.
+    #[tokio::test]
+    async fn goal_extraction_strips_markdown_code_fences() {
+        let json_with_fence = "```json\n{\
+            \"rational\": \"relevant\",\
+            \"evidence\": [\"item one\"],\
+            \"summary\": \"A summary.\"\
+        }\n```";
+        let provider = FixedJsonProvider(json_with_fence.to_string());
+
+        let result = extract_goal_from_text(
+            "some page text",
+            "https://example.com/fenced",
+            "test goal",
+            &provider,
+        )
+        .await
+        .expect("fence-wrapped JSON should still parse");
+
+        assert_eq!(result.rational, "relevant");
+        assert_eq!(result.evidence, vec!["item one"]);
+        assert_eq!(result.summary, "A summary.");
+    }
+
+    /// Fence variant without `json` language tag (bare ``` ... ```).
+    #[tokio::test]
+    async fn goal_extraction_strips_bare_code_fences() {
+        let json_with_bare_fence = "```\n{\
+            \"rational\": \"bare fence test\",\
+            \"evidence\": [],\
+            \"summary\": \"bare\"\
+        }\n```";
+        let provider = FixedJsonProvider(json_with_bare_fence.to_string());
+
+        let result = extract_goal_from_text(
+            "page content",
+            "https://example.com/bare",
+            "any goal",
+            &provider,
+        )
+        .await
+        .expect("bare-fence JSON should still parse");
+
+        assert_eq!(result.rational, "bare fence test");
+        assert!(result.evidence.is_empty());
+    }
+
+    /// Provider failure propagates as `Err` rather than silently producing a
+    /// default or panicking. The caller decides how to handle provider outages.
+    #[tokio::test]
+    async fn goal_extraction_propagates_provider_error() {
+        let provider = FailingGoalProvider;
+        let err = extract_goal_from_text(
+            "any page",
+            "https://example.com/fail",
+            "any goal",
+            &provider,
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("LLM call failed") || msg.contains("provider unavailable"),
+            "error message should identify the provider failure; got: {msg}"
+        );
+    }
+
+    /// Malformed JSON from the provider returns `Err` with a context message
+    /// that includes the truncated raw response — helps operators debug prompt
+    /// regressions without reading logs.
+    #[tokio::test]
+    async fn goal_extraction_returns_err_on_malformed_json() {
+        let provider = FixedJsonProvider("not valid json {{{".to_string());
+        let err = extract_goal_from_text(
+            "page",
+            "https://example.com/bad-json",
+            "goal",
+            &provider,
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("non-JSON response"),
+            "error should mention non-JSON response; got: {msg}"
+        );
+    }
+
+    /// No-goal path: plain `fetch` (without a goal) returns unchanged text —
+    /// the extraction layer is strictly additive and does not mutate the base
+    /// `FetchResult`. Verified here with a wiremock round-trip.
+    #[tokio::test]
+    async fn plain_fetch_without_goal_returns_unchanged_passthrough() {
+        let _g = test_overrides::LoopbackGuard::enable();
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/page"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(
+                    "<p>Rust ownership rules.</p>",
+                    "text/html; charset=utf-8",
+                ),
+            )
+            .mount(&mock)
+            .await;
+
+        let url = format!("{}/page", mock.uri());
+        // Plain fetch — no goal, no provider, no extraction pass.
+        let r = fetch(&url).await.expect("plain fetch should succeed");
+        assert_eq!(r.status, 200);
+        assert!(
+            r.text.contains("Rust ownership rules"),
+            "plain fetch text should contain the page content unchanged; got: {}",
+            r.text
+        );
     }
 }

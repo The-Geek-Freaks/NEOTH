@@ -39,6 +39,10 @@ pub mod tts;
 pub mod web_doc_cache;
 /// GOLD-ADOPT-04 — native CSS HTML extraction + adaptive fingerprint re-find.
 pub mod web_extract;
+/// GOLD-ADAPT-ODY-23 — goal-based content extractor: `fetch_with_goal(url, goal, provider)`
+/// fetches a page then runs an LLM extraction pass returning `GoalExtraction { rational,
+/// evidence, summary }` focused on the caller's goal. Pairs with the deep-research engine
+/// (ODY-17) where every page in a research plan is goal-extracted before synthesis.
 pub mod web_fetch;
 pub mod web_search;
 /// GOLD-ADOPT-04 — persistent selector cache wrapping web_extract with
