@@ -134,7 +134,7 @@ pub fn challenge_answer(answer: &str) -> SelfChallenge {
 pub fn scan_information_voids(answer: &str) -> Vec<String> {
     let lower = answer.to_lowercase();
     // Any evidence anchor in the whole answer ⇒ the claim is supported.
-    if EVIDENCE_ANCHORS.iter().any(|a| lower.contains(a)) {
+    if EVIDENCE_ANCHORS.iter().any(|a| contains_word(&lower, a.trim())) {
         return Vec::new();
     }
     SUCCESS_CLAIMS
@@ -142,6 +142,35 @@ pub fn scan_information_voids(answer: &str) -> Vec<String> {
         .filter(|m| lower.contains(*m))
         .map(|m| (*m).to_string())
         .collect()
+}
+
+/// Whole-word / bounded-phrase containment (caller lowercases). A bare
+/// `str::contains` wrongly treated an evidence anchor as present when it was only
+/// a SUBSTRING of a larger word — e.g. `"test"` inside `"latest"`/`"contest"`,
+/// `"build"` inside `"rebuild"` — which falsely suppressed the information-void
+/// flag. The match must be bounded by a non-alphanumeric char (or a string edge)
+/// on each alphanumeric side. Multi-word anchors (`"0 failed"`, `"exit 0"`) match
+/// when the whole phrase appears at word boundaries. ASCII-only boundary check;
+/// a multibyte neighbour reads as a boundary (errs toward suppression, matching
+/// the module's deliberate under-flag posture).
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = haystack.as_bytes();
+    let nlen = needle.len();
+    let mut from = 0;
+    while let Some(rel) = haystack[from..].find(needle) {
+        let start = from + rel;
+        let end = start + nlen;
+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1; // needle is ASCII → start+1 is a valid char boundary
+    }
+    false
 }
 
 #[cfg(test)]
@@ -192,6 +221,23 @@ mod tests {
         assert!(
             voids.is_empty(),
             "evidence anchor must suppress the void: {voids:?}"
+        );
+    }
+
+    #[test]
+    fn anchor_substring_inside_a_larger_word_does_not_suppress() {
+        // "test" is a substring of "latest" / "rebuild" contains "build" — a bare
+        // str::contains wrongly treated these as evidence and suppressed the void.
+        // Word-boundary matching must still flag the unsupported success claim.
+        let voids = scan_information_voids("It works now in the latest rebuild.");
+        assert!(
+            voids.iter().any(|v| v.contains("works")),
+            "substring-only anchor must NOT suppress the void: {voids:?}"
+        );
+        // A genuine whole-word anchor still suppresses.
+        assert!(
+            scan_information_voids("It works now; ran the suite.").is_empty(),
+            "'ran' as a whole word must still count as evidence"
         );
     }
 

@@ -199,7 +199,7 @@ pub fn recall_from_region(
         MemoryRegion::Amygdala => {
             let mut stmt = conn.prepare(
                 "SELECT event_id, event_type, ts_ns, text, text_hash, \
-                        channel, sender_id, operator_id, importance \
+                        channel, sender_id, operator_id, importance, access_count, trust \
                  FROM idx_episode \
                  WHERE importance >= ?1 AND text COLLATE NOCASE LIKE ?2 ESCAPE '\\' \
                  ORDER BY importance DESC, ts_ns DESC \
@@ -217,8 +217,11 @@ pub fn recall_from_region(
                     operator_id: r.get(7)?,
                     tier: "hot".to_string(),
                     importance: Some(r.get::<_, f64>(8)?),
-                    access_count: 0,
-                    trust: 1,
+                    // GR-fix: read the stored columns instead of hardcoding —
+                    // idx_episode carries access_count + trust; the canonical
+                    // recall_fts path reads them too (cli/recall.rs).
+                    access_count: r.get::<_, i64>(9)? as u32,
+                    trust: r.get::<_, i64>(10)? as u8,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
@@ -234,7 +237,7 @@ pub fn recall_from_region(
             let limit_idx = types.len() + 2;
             let sql = format!(
                 "SELECT event_id, event_type, ts_ns, text, text_hash, \
-                        channel, sender_id, operator_id, importance \
+                        channel, sender_id, operator_id, importance, access_count, trust \
                  FROM idx_episode \
                  WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
                    AND event_type IN ({}) \
@@ -265,8 +268,9 @@ pub fn recall_from_region(
                     operator_id: r.get(7)?,
                     tier: "hot".to_string(),
                     importance: r.get::<_, Option<f64>>(8)?,
-                    access_count: 0,
-                    trust: 1,
+                    // GR-fix: read stored access_count + trust (see Amygdala branch).
+                    access_count: r.get::<_, i64>(9)? as u32,
+                    trust: r.get::<_, i64>(10)? as u8,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?

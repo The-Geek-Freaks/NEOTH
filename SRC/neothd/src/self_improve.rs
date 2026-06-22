@@ -252,8 +252,25 @@ pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
     if spec.drift_sha.is_none() {
         spec.drift_sha = sha;
     }
-    let id = p.id.clone();
     let mut all = load_proposals(home);
+    // GR-fix: guarantee a unique proposal id. Callers build the id as `p{ts}`;
+    // on a coarse clock (Windows timers are ~15 ms) two proposals staged in the
+    // same tick would otherwise collide, and accept/rollback/pr resolve by
+    // `find(|p| p.id == id)` → always the first match. On collision, suffix
+    // `-2`, `-3`, … until unique so every staged proposal is addressable.
+    if all.iter().any(|e| e.id == p.id) {
+        let base = p.id.clone();
+        let mut n = 2u32;
+        loop {
+            let candidate = format!("{base}-{n}");
+            if !all.iter().any(|e| e.id == candidate) {
+                p.id = candidate;
+                break;
+            }
+            n += 1;
+        }
+    }
+    let id = p.id.clone();
     all.push(p);
     save_proposals(home, &all)?;
     Ok(id)
@@ -478,26 +495,51 @@ fn upstream_pr_script(
     )
 }
 
-/// Minimal line diff (`+`/`-`/` `) for review display — no external dep. Shows
-/// removed-then-added per changed run; unchanged lines are context-elided to a
-/// count when long.
+/// Line diff (`+`/`-`) for review display — no external dep. Order-sensitive
+/// LCS so a pure REORDER of identical lines shows as real `-`/`+` moves and
+/// DUPLICATES are preserved positionally (the prior set-based diff reported
+/// "(no line changes)" for a reorder and mis-handled dups, since it only asked
+/// "is this line present anywhere in the other side"). Only changed lines are
+/// emitted; unchanged lines are elided.
+///
+/// O(n·m) time+memory in the line counts — fine for skill files (hundreds of
+/// lines). ponytail: no cap; a multi-thousand-line proposal is not a real input.
 pub fn line_diff(before: &str, after: &str) -> String {
     let a: Vec<&str> = before.lines().collect();
     let b: Vec<&str> = after.lines().collect();
-    let mut out = String::new();
-    // Simple LCS-free diff: walk both, emit removals for a-lines not in b and
-    // additions for b-lines not in a (set-based — good enough for review).
-    let bset: std::collections::HashSet<&str> = b.iter().copied().collect();
-    let aset: std::collections::HashSet<&str> = a.iter().copied().collect();
-    for line in &a {
-        if !bset.contains(line) {
-            out.push_str(&format!("- {line}\n"));
+    let (n, m) = (a.len(), b.len());
+    // lcs[i][j] = LCS length of a[i..] and b[j..].
+    let mut lcs = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if a[i] == b[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
         }
     }
-    for line in &b {
-        if !aset.contains(line) {
-            out.push_str(&format!("+ {line}\n"));
+    let mut out = String::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < n && j < m {
+        if a[i] == b[j] {
+            i += 1; // unchanged — elided
+            j += 1;
+        } else if lcs[i + 1][j] >= lcs[i][j + 1] {
+            out.push_str(&format!("- {}\n", a[i]));
+            i += 1;
+        } else {
+            out.push_str(&format!("+ {}\n", b[j]));
+            j += 1;
         }
+    }
+    while i < n {
+        out.push_str(&format!("- {}\n", a[i]));
+        i += 1;
+    }
+    while j < m {
+        out.push_str(&format!("+ {}\n", b[j]));
+        j += 1;
     }
     if out.is_empty() {
         out.push_str("(no line changes)\n");
@@ -1357,6 +1399,47 @@ mod tests {
         assert!(d.contains("+ B"));
         assert!(!d.contains("(no line changes)"));
         assert!(line_diff("same", "same").contains("(no line changes)"));
+    }
+
+    #[test]
+    fn line_diff_reorder_and_dups_are_not_no_change() {
+        // GR-fix: the prior set-based diff reported "(no line changes)" for a pure
+        // reorder of identical lines (both sets equal) and mis-handled duplicates.
+        let reorder = line_diff("a\nb", "b\na");
+        assert!(
+            !reorder.contains("(no line changes)"),
+            "a reorder must surface a real change: {reorder}"
+        );
+        let dup = line_diff("x", "x\nx");
+        assert!(dup.contains("+ x"), "an added duplicate line must show: {dup}");
+    }
+
+    #[test]
+    fn proposal_id_collision_gets_unique_suffix() {
+        // GR-fix: staging two proposals whose caller-built ids collide (coarse
+        // clock) must yield distinct addressable ids.
+        let tmp = std::env::temp_dir().join("neoth_si_idcollide");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let mk = || Proposal {
+            id: "pSAME".into(),
+            skill: "s".into(),
+            skill_path: tmp.join("s.md").display().to_string(),
+            before: "a".into(),
+            after: "b".into(),
+            summary: "x".into(),
+            status: ProposalStatus::Pending,
+            at_unix: 1,
+            backup: None,
+            spec: None,
+            ..Default::default()
+        };
+        let id1 = stage_proposal(&tmp, mk()).unwrap();
+        let id2 = stage_proposal(&tmp, mk()).unwrap();
+        assert_eq!(id1, "pSAME");
+        assert_ne!(id1, id2, "second proposal must get a distinct id: {id2}");
+        assert!(id2.starts_with("pSAME-"), "got: {id2}");
+        let _ = std::fs::remove_file(proposals_path(&tmp));
     }
 
     // ── IMPR-01: ProposalSpec serde roundtrip ─────────────────────────────────
