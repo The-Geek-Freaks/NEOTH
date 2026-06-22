@@ -315,6 +315,42 @@ fn run_persist(
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
     let stats = crate::code_map::persist::persist_map(&mut conn, &map)?;
 
+    // GR-fix (review): build + persist the call-graph EDGES. The code_map_edges
+    // table was never populated in production — persist only ran persist_map
+    // (roots/files/symbols), so codegraph_callers/codegraph_callees returned []
+    // and the co_change hidden_coupling-suppression (which filters pairs that
+    // already share a structural edge) never fired. RepoFile carries no source,
+    // so re-read each file + extract symbols here (persist is an explicit command,
+    // not hot-path). Best-effort: an unreadable file is skipped.
+    let edges_inserted = {
+        use crate::code_map::graph::{CallGraph, FileInput};
+        use crate::code_map::walker::Language;
+        let root_dir = std::path::Path::new(&map.root);
+        let mut inputs: Vec<FileInput> = Vec::with_capacity(map.files.len());
+        for rf in &map.files {
+            let Ok(source) = std::fs::read_to_string(root_dir.join(&rf.path)) else {
+                continue;
+            };
+            let syms = crate::code_map::symbols::extract_symbols(&source, rf.language);
+            if syms.is_empty() {
+                continue; // no defs → contributes no edges
+            }
+            let fi = match rf.language {
+                Language::Python
+                | Language::Ruby
+                | Language::Shell
+                | Language::Toml
+                | Language::Yaml
+                | Language::Dockerfile => FileInput::hash_family(rf.path.clone(), source, syms),
+                _ => FileInput::c_family(rf.path.clone(), source, syms),
+            };
+            inputs.push(fi);
+        }
+        let graph = CallGraph::build(&inputs);
+        crate::code_map::persist::persist_edges(&mut conn, &map.root, graph.edges())
+            .context("persist call-graph edges")?
+    };
+
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let summary = json!({
@@ -322,6 +358,7 @@ fn run_persist(
                 "db_path": db_path.to_string_lossy(),
                 "files_inserted": stats.files_inserted,
                 "symbols_inserted": stats.symbols_inserted,
+                "edges_inserted": edges_inserted,
                 "prior_files_replaced": stats.prior_files_replaced,
                 "scan_report": {
                     "total_files": map.report.total_files,
@@ -339,6 +376,7 @@ fn run_persist(
             println!("  db:                   {}", db_path.display());
             println!("  files inserted:       {}", stats.files_inserted);
             println!("  symbols inserted:     {}", stats.symbols_inserted);
+            println!("  edges inserted:       {edges_inserted}");
             println!("  prior files replaced: {}", stats.prior_files_replaced);
             println!();
             println!(
