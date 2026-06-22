@@ -92,6 +92,28 @@ pub struct CodeArgs {
     pub output: OutputFormat,
 }
 
+/// GOLD-ADAPT-AWE-AIDER-01 — best-effort repo-map context for the coding-intent
+/// decomposer. Loads the indexed `code_map` for the current working directory
+/// and returns a token-budgeted [`crate::code_map::RepoMapSummary`] text
+/// (aider-style call-graph summary) to inject as the decomposer's
+/// `project_context`. Returns `None` when the repo isn't indexed (no
+/// `neoth code-map` run for this root), the db is missing/unreadable, or the
+/// summary is empty — the decomposer then proceeds context-free exactly as before.
+fn repo_map_context() -> Option<String> {
+    let conn = crate::code_map::persist::open(&crate::code_map::persist::default_path()).ok()?;
+    let root = std::env::current_dir().ok()?.to_string_lossy().to_string();
+    repo_map_context_from(&conn, &root)
+}
+
+/// Testable core: build the repo-map context for `root` from an open code_map
+/// connection. `None` when the root isn't indexed or the summary is empty.
+fn repo_map_context_from(conn: &rusqlite::Connection, root: &str) -> Option<String> {
+    let map = crate::code_map::persist::load_map(conn, root).ok()??;
+    let summary = crate::code_map::build_summary(&map, crate::code_map::DEFAULT_TOKEN_BUDGET);
+    let text = summary.text.trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
 pub async fn run_code(args: CodeArgs) -> Result<()> {
     // `--apply` needs a dispatch path to apply INTO. Both `--dispatch`
     // (fresh session) and `--run-pending` (existing Backlog) are dispatch
@@ -167,9 +189,22 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     println!("cerebellum bound to: {}", llm.provider_name());
     println!("decomposing prompt …");
 
-    let result = decompose(&llm, &conn, session_id, &args.prompt, None, now_ns)
-        .await
-        .context("decompose prompt via cerebellum")?;
+    // GOLD-ADAPT-AWE-AIDER-01 — feed the aider-style repo-map summary as the
+    // decomposer's project_context (best-effort: None when the repo isn't indexed).
+    let repo_ctx = repo_map_context();
+    if repo_ctx.is_some() {
+        println!("injecting repo-map context (code_map summary) …");
+    }
+    let result = decompose(
+        &llm,
+        &conn,
+        session_id,
+        &args.prompt,
+        repo_ctx.as_deref(),
+        now_ns,
+    )
+    .await
+    .context("decompose prompt via cerebellum")?;
 
     if result.input_truncated {
         eprintln!("⚠  input was truncated to fit the 12k-token budget");
@@ -683,6 +718,21 @@ fn now_unix_ns() -> u64 {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    // GOLD-ADAPT-AWE-AIDER-01 — an unindexed repo yields no repo-map context, so
+    // run_code's decomposer falls back to context-free exactly as before (the
+    // safety property: the wiring must never break the coding path when the repo
+    // hasn't been `neoth code-map`-indexed).
+    #[test]
+    fn repo_map_context_none_for_unindexed_root() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let conn = crate::code_map::persist::open(&db).expect("open fresh code_map db");
+        assert!(
+            repo_map_context_from(&conn, "/nonexistent/unindexed/root").is_none(),
+            "an unindexed root must yield None (decomposer runs context-free)"
+        );
+    }
 
     #[test]
     fn intern_label_leaks_each_unique_label_at_most_once() {
