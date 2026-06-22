@@ -17,8 +17,8 @@ use tracing::{info, warn};
 use crate::config::FreedomConfig;
 use crate::providers::{self, CompletionChunk, Request};
 use crate::wal::events::{
-    EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE,
-    EVENT_TYPE_RAW_TEXT, EVENT_TYPE_SKILL_INJECT_SKIPPED,
+    EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN, EVENT_TYPE_PROVIDER_REQUEST,
+    EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT, EVENT_TYPE_SKILL_INJECT_SKIPPED,
 };
 use crate::wal::spawn as wal_spawn;
 
@@ -113,6 +113,14 @@ pub struct ChatArgs {
     /// `chat resume from <hash>` workflow today.
     #[arg(long = "resume-from", value_name = "HASH")]
     pub resume_from: Option<String>,
+
+    /// ODY-09 — ephemeral/incognito turn: skip memory injection (Block::D recall)
+    /// and suppress the RAW_TEXT, PROVIDER_REQUEST, and PROVIDER_RESPONSE WAL
+    /// frames for this turn. The reply is still rendered to stdout. A single
+    /// `INCOGNITO_TURN` (0xF7) WAL frame records that the mode was active, without
+    /// storing any prompt content.
+    #[arg(long)]
+    pub incognito: bool,
 }
 
 pub async fn run_chat(args: ChatArgs) -> Result<()> {
@@ -496,7 +504,13 @@ async fn build_prompt_bundle(
     // operator INTENT (Block::A `--system` + Block::E prompt) and excludes the
     // whole assembled context (skills/MCP/moral/repo all sit outside it too),
     // so recall stays off the ARCH-02 replay-determinism surface. Best-effort.
-    let recall_block = maybe_recall_block(&prompt).await;
+    // ODY-09: incognito turns skip Block::D recall injection — no memory surfaces
+    // on this turn, so the operator's intent stays ephemeral end-to-end.
+    let recall_block = if args.incognito {
+        None
+    } else {
+        maybe_recall_block(&prompt).await
+    };
 
     // ── GOLD-ADAPT-MEM-12 — session-guidance block (recent hindsight sessions
     // + open fact-contradictions), folded above the recall block as session-
@@ -1636,32 +1650,35 @@ async fn run_post_reply_pipelines(
     };
 
     // ── PROVIDER_RESPONSE ─────────────────────────────────────────────────
-    let resp_payload = serde_json::to_vec(&serde_json::json!({
-        "operator_id": config.operator_id,
-        // GOLD-ADAPT-VIEW-01 — stamp the session so `neoth cost top-sessions`
-        // can attribute this turn's token spend. Additive JSON field: older WAL
-        // readers ignore it; pre-VIEW-01 frames bucket as "(unattributed)".
-        "session_id": current_session_id,
-        "provider": provider.name(),
-        "model": model_used,
-        "response_hash_xxh3": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
-        "response_bytes": response_text.len(),
-        "latency_ns": u64::try_from(total_latency.as_nanos()).unwrap_or(u64::MAX),
-        "input_tokens": final_input_tokens,
-        // ARCH-04: name the real prompt-token count so it pairs with
-        // `prompt_token_estimate` on PROVIDER_REQUEST — operators can
-        // diff estimate-vs-actual per turn from the audit chain. Same
-        // value as `input_tokens` (kept for back-compat with existing
-        // WAL readers); the named field closes the estimate/actual pair.
-        "prompt_token_actual": final_input_tokens,
-        "output_tokens": final_output_tokens,
-        "streamed": args.stream,
-    }))?;
-    let resp_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_RESPONSE, &resp_payload);
-    writer
-        .append(resp_header, resp_payload)
-        .await
-        .context("write PROVIDER_RESPONSE WAL frame")?;
+    // ODY-09: incognito turns skip PROVIDER_RESPONSE — no response hash/metadata in WAL.
+    if !args.incognito {
+        let resp_payload = serde_json::to_vec(&serde_json::json!({
+            "operator_id": config.operator_id,
+            // GOLD-ADAPT-VIEW-01 — stamp the session so `neoth cost top-sessions`
+            // can attribute this turn's token spend. Additive JSON field: older WAL
+            // readers ignore it; pre-VIEW-01 frames bucket as "(unattributed)".
+            "session_id": current_session_id,
+            "provider": provider.name(),
+            "model": model_used,
+            "response_hash_xxh3": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
+            "response_bytes": response_text.len(),
+            "latency_ns": u64::try_from(total_latency.as_nanos()).unwrap_or(u64::MAX),
+            "input_tokens": final_input_tokens,
+            // ARCH-04: name the real prompt-token count so it pairs with
+            // `prompt_token_estimate` on PROVIDER_REQUEST — operators can
+            // diff estimate-vs-actual per turn from the audit chain. Same
+            // value as `input_tokens` (kept for back-compat with existing
+            // WAL readers); the named field closes the estimate/actual pair.
+            "prompt_token_actual": final_input_tokens,
+            "output_tokens": final_output_tokens,
+            "streamed": args.stream,
+        }))?;
+        let resp_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_RESPONSE, &resp_payload);
+        writer
+            .append(resp_header, resp_payload)
+            .await
+            .context("write PROVIDER_RESPONSE WAL frame")?;
+    }
 
     // F4/D21 — the PROVIDER_RESPONSE frame is now durably recorded, which closes
     // the turn-journal's durability window (module contract: open until the
@@ -2491,15 +2508,28 @@ pub async fn run_chat_with(
     // Stored before the hashed PROVIDER_REQUEST so `neoth recall "..."` can
     // find what the operator typed. WAL is mode-0600 / DACL-restricted, so
     // raw prompts at rest match the existing trust boundary.
-    let raw_header = crate::wal::make_header(EVENT_TYPE_RAW_TEXT, prompt.as_bytes());
-    // Capture the event_id before the header moves into `append` — the
-    // post-reply profile-learning pipeline (B-Konsens 2026-05-17 below)
-    // uses this as the trigger anchor for `extract_window`.
-    let raw_event_id = raw_header.event_id.0 as i64;
-    writer
-        .append(raw_header, prompt.as_bytes().to_vec())
-        .await
-        .context("write RAW_TEXT WAL frame")?;
+    // ODY-09: incognito turns skip RAW_TEXT entirely — no prompt content in WAL.
+    // An INCOGNITO_TURN (0xF7) audit anchor is written instead.
+    let raw_event_id = if args.incognito {
+        // ODY-09: no prompt stored; raw_event_id=0 signals "no anchor" to the
+        // profile-learning pipeline (extract_window gates on valid non-zero ids).
+        let payload = serde_json::to_vec(&serde_json::json!({"ts_unix": now_unix()}))
+            .unwrap_or_default();
+        let hdr = crate::wal::make_header(EVENT_TYPE_INCOGNITO_TURN, &payload);
+        let _ = writer.append(hdr, payload).await;
+        0i64
+    } else {
+        let raw_header = crate::wal::make_header(EVENT_TYPE_RAW_TEXT, prompt.as_bytes());
+        // Capture the event_id before the header moves into `append` — the
+        // post-reply profile-learning pipeline (B-Konsens 2026-05-17 below)
+        // uses this as the trigger anchor for `extract_window`.
+        let raw_event_id = raw_header.event_id.0 as i64;
+        writer
+            .append(raw_header, prompt.as_bytes().to_vec())
+            .await
+            .context("write RAW_TEXT WAL frame")?;
+        raw_event_id
+    };
 
     // ── P-08 briefing-gate marker (Workstream C, Session 22) ──────────────
     // Update the operator-activity timestamp so the cron task's
@@ -2643,26 +2673,29 @@ pub async fn run_chat_with(
         estimate
     };
 
-    let req_payload = serde_json::to_vec(&serde_json::json!({
-        "operator_id": config.operator_id,
-        "provider": provider.name(),
-        // SPEC-04: on/off-device classification of THIS request's
-        // provider ("local" | "cloud") — the durable per-turn audit
-        // anchor for the privacy posture, alongside the extraction-path
-        // 0x2E PROFILE_EXTRACT_TARGET frame.
-        "target": crate::profile::runner::extract_target_label(provider.name()),
-        "model": args.model.clone().or_else(|| config.provider_model.clone()),
-        "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
-        "prompt_bytes": prompt.len(),
-        "prompt_bundle_hash": prompt_bundle_hash,
-        "prompt_token_estimate": prompt_token_estimate,
-        "ts_unix": now_unix(),
-    }))?;
-    let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
-    writer
-        .append(req_header, req_payload)
-        .await
-        .context("write PROVIDER_REQUEST WAL frame")?;
+    // ODY-09: incognito turns skip PROVIDER_REQUEST — no prompt hash/metadata in WAL.
+    if !args.incognito {
+        let req_payload = serde_json::to_vec(&serde_json::json!({
+            "operator_id": config.operator_id,
+            "provider": provider.name(),
+            // SPEC-04: on/off-device classification of THIS request's
+            // provider ("local" | "cloud") — the durable per-turn audit
+            // anchor for the privacy posture, alongside the extraction-path
+            // 0x2E PROFILE_EXTRACT_TARGET frame.
+            "target": crate::profile::runner::extract_target_label(provider.name()),
+            "model": args.model.clone().or_else(|| config.provider_model.clone()),
+            "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
+            "prompt_bytes": prompt.len(),
+            "prompt_bundle_hash": prompt_bundle_hash,
+            "prompt_token_estimate": prompt_token_estimate,
+            "ts_unix": now_unix(),
+        }))?;
+        let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
+        writer
+            .append(req_header, req_payload)
+            .await
+            .context("write PROVIDER_REQUEST WAL frame")?;
+    }
 
     // ── Operator context + skills load — K-Perf-4 parallel resource load ──
     // Both reads hit the filesystem and are mutually independent: operator_md
@@ -5639,6 +5672,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             resume_from: None,
+            incognito: false,
         };
 
         run_chat_with(args, config, &provider)
@@ -5740,6 +5774,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             resume_from: None,
+            incognito: false,
         };
 
         run_chat_with(args, config, &provider)
@@ -5904,6 +5939,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             resume_from: None,
+            incognito: false,
         };
 
         run_chat_with(args, config, &provider)
@@ -6015,6 +6051,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             resume_from: None,
+            incognito: false,
         };
         run_chat_with(args, config, &LocalQwenMock)
             .await
@@ -6150,6 +6187,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             resume_from: None,
+            incognito: false,
         };
 
         run_chat_with(args, config, &MockStreamProvider)
@@ -6301,6 +6339,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             resume_from: None,
+            incognito: false,
         };
 
         let result = run_chat_with(args, config, &FailingProvider).await;

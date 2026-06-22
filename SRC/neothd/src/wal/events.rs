@@ -2100,6 +2100,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
     ),
     ("recon_run", EVENT_TYPE_RECON_RUN),
+    ("incognito_turn", EVENT_TYPE_INCOGNITO_TURN),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
@@ -2245,6 +2246,16 @@ pub const EVENT_TYPE_MEMORY_TRANSFER_EXPORTED: u8 = 0xF5;
 /// Payload (JSON): `{tool, args_hash, result_count, autonomy_level,
 /// operator_id, ts_unix}`.
 pub const EVENT_TYPE_RECON_RUN: u8 = 0xF6;
+
+/// `0xF7 INCOGNITO_TURN` — GOLD-ADAPT-ODY-09. The operator ran a chat turn
+/// with `--incognito`: memory injection (Block::D recall) was suppressed and
+/// no RAW_TEXT / PROVIDER_REQUEST / PROVIDER_RESPONSE frames were written.
+/// The reply was still rendered to stdout. This frame is the SOLE audit anchor
+/// proving an incognito turn ran — payload carries only `{ts_unix}` so no
+/// prompt content reaches the WAL. Operator-system band (0xF0..=0xFF);
+/// immediate-sync (a privacy-mode decision must survive a crash).
+/// Payload (JSON): `{ts_unix}`.
+pub const EVENT_TYPE_INCOGNITO_TURN: u8 = 0xF7;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2632,6 +2643,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_DREAM_COMPOSED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_MEMORY_TRANSFER_EXPORTED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_RECON_RUN < 0xF0) as usize];
+    let _ = [(); 1][(EVENT_TYPE_INCOGNITO_TURN < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -2943,6 +2955,7 @@ mod tests {
                 EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
             ),
             ("RECON_RUN", EVENT_TYPE_RECON_RUN),
+            ("INCOGNITO_TURN", EVENT_TYPE_INCOGNITO_TURN),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {

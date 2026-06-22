@@ -257,6 +257,8 @@ async fn run_one(
         top_p: None,
         sampling_seed: None,
         resume_from: None,
+        // Recipes are operator-authored automation — never incognito.
+        incognito: false,
     };
 
     // GOLD-ADOPT-16 — per-recipe retry with a shell success-check. SECURITY: the
