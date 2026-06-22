@@ -44,6 +44,12 @@ pub mod model_manager;
 /// HANDY-01 — band-limited sinc resampler (rubato) for the STT capture path.
 pub mod resampler;
 pub mod stt_dispatch;
+/// GOLD-ADAPT-SPEAKR-02 — Speaker voice-profile re-identification.
+/// Cosine-matches a voice embedding against known profiles, updates the
+/// winning centroid via a 70/30 EMA, and guards against ambiguous top-2
+/// results. Wire into the STT post-processing path when embeddings are
+/// available (`media.auto_speaker_labels: true`).
+pub mod speaker_profile;
 /// HANDY-03 — filler-word removal + stutter collapse for raw STT transcripts.
 /// Called as a post-processing hook before transcript text leaves the pipeline.
 pub mod stt_postprocess;
