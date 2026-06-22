@@ -364,6 +364,28 @@ pub(crate) fn spawn_guidance_cron(
     handle
 }
 
+/// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron.
+///
+/// Produces a structured synthesis meta-note written as a `idx_groundtruth`
+/// row (`source = "synthesis-cron"`, `scope = "meta"`) and optionally to
+/// `~/.neoth/synthesis/YYYY-WW.md`. WAL-free. Returns `None` when disabled
+/// (the default).
+pub(crate) fn spawn_synthesis_cron(config: &FreedomConfig) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::synthesis_cron::spawn_synthesis_cron_loop(
+        config.synthesis_cron,
+        crate::memory::store::default_path(),
+        FreedomConfig::default_neoth_home(),
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.synthesis_cron.interval_secs,
+            window_days = config.synthesis_cron.window_days,
+            "synthesis pattern-recognition cron spawned (NN-MEM-02)"
+        );
+    }
+    handle
+}
+
 /// GOLD-ADAPT-JV-PRO-02 — token-anomaly tripwire cron (`0x6E`). Buckets the WAL
 /// `0x21 PROVIDER_RESPONSE` token usage over a rolling baseline + alerts on a
 /// σ-spike / >1M jump / new model. `None` when `token_anomaly.enabled = false`.
@@ -2412,6 +2434,9 @@ pub(crate) struct BackgroundHandles {
     /// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron handle.
     /// WAL-free; `None` when `guidance_cron.enabled = false` (default).
     pub guidance_cron_handle: Option<JoinHandle<()>>,
+    /// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron handle.
+    /// WAL-free; `None` when `synthesis_cron.enabled = false` (default).
+    pub synthesis_cron_handle: Option<JoinHandle<()>>,
     pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub rss_feed_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -2485,6 +2510,7 @@ pub(crate) async fn shutdown_background_tasks(
         bg_monitor_handle,
         contradiction_resolve_cron_handle,
         guidance_cron_handle,
+        synthesis_cron_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,
@@ -2697,6 +2723,10 @@ pub(crate) async fn shutdown_background_tasks(
     // GOLD-ADAPT-JV-MEM-16 — abort the guidance-block snapshot refresh cron.
     // WAL-free (writes only a JSON snapshot file); safe to abort at any point.
     crate::cli::serve_tasks::abort_optional(guidance_cron_handle).await;
+    // NN-MEM-02 — abort the synthesis pattern-recognition cron. WAL-free;
+    // mid-tick abort is safe — the groundtruth insert is transactional, and
+    // the vault write uses atomic tmp→rename so a partial write is never seen.
+    crate::cli::serve_tasks::abort_optional(synthesis_cron_handle).await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

@@ -49,6 +49,11 @@ pub enum Source {
     /// (SC-14: only ever a self-hosted endpoint; api.omi.me is refused at
     /// daemon startup).
     Omi,
+    /// NN-MEM-02 — 5-dimensional synthesis pattern-recognition cron. Automated
+    /// weekly meta-note written by `daemon::synthesis_cron`; NOT operator-
+    /// attested (starts `Candidate`, corroboration required). Written as
+    /// `source = "synthesis-cron"` in SQLite.
+    Synthesis,
 }
 
 impl Source {
@@ -66,6 +71,7 @@ impl Source {
             Source::ImportObsidian => "import:obsidian",
             Source::BulkText => "bulk-text",
             Source::Omi => "omi",
+            Source::Synthesis => "synthesis-cron",
         }
     }
 
@@ -89,6 +95,8 @@ impl Source {
                 | Source::ArpScan
             // BulkText removed: extraction is automated; corroboration required.
             // GOLD-ADAPT-JV-MEM-01.
+            // Synthesis is NOT operator-attested: it's an automated cron pass.
+            // NN-MEM-02.
         )
     }
 

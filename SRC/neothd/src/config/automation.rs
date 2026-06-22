@@ -682,3 +682,47 @@ impl GuidanceCronConfig {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
 }
+
+// ── NN-MEM-02 — 5-dimensional synthesis pattern-recognition cron ─────────────
+
+/// Default run interval: once per week (7 days).
+pub const DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS: u64 = 604_800;
+
+/// Default look-back window for episode analysis: 30 days.
+pub const DEFAULT_SYNTHESIS_WINDOW_DAYS: u64 = 30;
+
+/// Configuration for the synthesis pattern-recognition cron (maps to
+/// `freedom.yaml::synthesis_cron`). All fields are `#[serde(default)]`
+/// so old `freedom.yaml` files without this section parse correctly.
+///
+/// NN-MEM-02: weekly 5-dimensional pass over `idx_episode` /
+/// `idx_groundtruth` / `idx_contradictions` → structured synthesis note
+/// written as a `idx_groundtruth` row (`source = "synthesis-cron"`) and
+/// optionally to `~/.neoth/synthesis/YYYY-WW.md`. Default OFF.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct SynthesisCronConfig {
+    /// Master switch. Default `false` (opt-in).
+    pub enabled: bool,
+    /// Run interval in seconds. Default 604800 (7 days). Floor 60s.
+    pub interval_secs: u64,
+    /// Episode look-back window in days. Default 30.
+    pub window_days: u64,
+}
+
+impl Default for SynthesisCronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS,
+            window_days: DEFAULT_SYNTHESIS_WINDOW_DAYS,
+        }
+    }
+}
+
+impl SynthesisCronConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum.
+    pub fn interval_duration(self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}

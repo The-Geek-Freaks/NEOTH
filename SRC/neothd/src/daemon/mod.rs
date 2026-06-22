@@ -102,6 +102,14 @@ pub mod resource_watch;
 /// GOLD-ADAPT-VIEW-05 — session-health / outcome cron (A–F daily grade from the
 /// WAL audit trail; alerts on degradation).
 pub mod session_health_cron;
+/// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron. Reads
+/// `idx_episode` (frequency + temporal-clustering), `idx_groundtruth`
+/// (domain-correlation), and `idx_contradictions` (contradiction flags) to
+/// produce a structured synthesis meta-note written as a `idx_groundtruth` row
+/// (`source = "synthesis-cron"`, `scope = "meta"`) and optionally to
+/// `~/.neoth/synthesis/YYYY-WW.md`. WAL-free; off by default
+/// (`synthesis_cron.enabled = false`).
+pub mod synthesis_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

@@ -61,10 +61,11 @@ pub use automation::{
     DEFAULT_PATTERN_CRON_INTERVAL_SECS, DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
     DEFAULT_RECALL_LATENCY_INTERVAL_SECS, DEFAULT_REGRESSION_INTERVAL_SECS,
     DEFAULT_RESOURCE_WATCH_INTERVAL_SECS, DEFAULT_SESSION_HEALTH_INTERVAL_SECS,
-    DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS, DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig,
-    GuidanceCronConfig, MonitorConfig, N8nApiConfig, PatternCronConfig, ProactiveConfig,
-    ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig, ResourceWatchConfig,
-    SessionHealthConfig, TokenAnomalyConfig, WatchdogConfig,
+    DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
+    DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, GuidanceCronConfig, MonitorConfig,
+    N8nApiConfig, PatternCronConfig, ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig,
+    RegressionAnchorConfig, ResourceWatchConfig, SessionHealthConfig, SynthesisCronConfig,
+    TokenAnomalyConfig, WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -508,6 +509,13 @@ pub struct FreedomConfig {
     /// so `build_prompt_bundle` can inject richer session context. Default OFF.
     #[serde(default)]
     pub guidance_cron: GuidanceCronConfig,
+    /// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron.
+    /// When `enabled`, performs a weekly pass over `idx_episode`,
+    /// `idx_groundtruth`, and `idx_contradictions`, producing a structured
+    /// synthesis note written as a `idx_groundtruth` row and optionally to
+    /// `~/.neoth/synthesis/YYYY-WW.md`. Default OFF (WAL-free, opt-in).
+    #[serde(default)]
+    pub synthesis_cron: SynthesisCronConfig,
     /// NN-MEM-06 — daily contradiction auto-resolution cron. When `enabled`,
     /// auto-resolves the `idx_contradictions` backlog: temporal-supersede
     /// (newer fact wins) · semantic-equiv (Jaccard>=0.90 merge) · human-review

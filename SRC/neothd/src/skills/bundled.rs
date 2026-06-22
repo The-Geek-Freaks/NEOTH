@@ -291,6 +291,14 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "max_plus_plus",
         include_str!("../../assets/skills/max_plus_plus/skill.yaml"),
     ),
+    // NN-MEM-02 (2026-06-22) — 5-dimensional synthesis pattern-recognition companion
+    // skill. On-demand synthesis of the weekly cron's 5 dimensions (frequency +
+    // temporal-clustering + domain-correlation + contradiction-flags + cross-cutting).
+    // Ships DISABLED by default (opt-in alongside synthesis_cron.enabled).
+    (
+        "memory_synthesis",
+        include_str!("../../assets/skills/memory_synthesis/skill.yaml"),
+    ),
     // GOLD-ADAPT-PONY-01 (2026-06-19) — bundled skill.
     (
         "neoth_debt",

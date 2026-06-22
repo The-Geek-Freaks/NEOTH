@@ -898,6 +898,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let guidance_cron_handle =
         crate::cli::serve_tasks::spawn_guidance_cron(&config, &wal_dir);
 
+    // ── NN-MEM-02 5-dimensional synthesis pattern-recognition cron ─────────
+    // Weekly synthesis pass over idx_episode/idx_groundtruth/idx_contradictions.
+    // WAL-free; off by default (synthesis_cron.enabled = false).
+    let synthesis_cron_handle =
+        crate::cli::serve_tasks::spawn_synthesis_cron(&config);
+
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
     // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
@@ -1523,6 +1529,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         bg_monitor_handle,
         contradiction_resolve_cron_handle,
         guidance_cron_handle,
+        synthesis_cron_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,

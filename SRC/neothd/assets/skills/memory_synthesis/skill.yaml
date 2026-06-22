@@ -1,0 +1,94 @@
+id: memory_synthesis
+description: |
+  Synthesize patterns across operator memory: surface what topics dominate
+  recent attention, when they cluster in time, how they relate to existing
+  ground-truth facts, which contradictions overlap active subjects, and where
+  themes cross domain boundaries (technical + personal). Fires when the
+  operator asks for a memory summary, weekly reflection, pattern analysis, or
+  "what have I been focused on?". NOT for recall of specific facts — use
+  `neoth recall` for that.
+version: "0.1.0"
+
+# NN-MEM-02 — 5-dimensional synthesis pattern-recognition weekly cron companion
+# skill. Exposes the synthesis cron's 5 dimensions as an on-demand operator
+# prompt skill so the operator can request a synthesis pass at any time, not
+# just on the weekly schedule. Ships DISABLED by default (pattern cron is
+# opt-in). Enable via: freedom.yaml::synthesis_cron.enabled: true
+author: NEOTH bundled
+tags:
+  - memory
+  - synthesis
+  - patterns
+  - reflection
+  - weekly
+
+enabled: false
+
+trigger_keywords:
+  - "synthesize my memory"
+  - "memory synthesis"
+  - "what have I been focused on"
+  - "weekly memory summary"
+  - "pattern analysis"
+  - "what topics recur"
+  - "memory patterns"
+  - "what am I repeating"
+  - "cross-cutting themes"
+  - "memory contradictions summary"
+  - "my focus this week"
+  - "what dominates my memory"
+
+system_prompt: |
+  Memory synthesis (NN-MEM-02 companion skill). Analyze the operator's recent
+  memory across five dimensions and surface actionable patterns. The synthesis
+  cron writes a structured weekly note to idx_groundtruth (source =
+  "synthesis-cron", scope = "meta") — this skill surfaces that data on demand
+  in human-readable form.
+
+  ## Iron Law
+
+  Every synthesis statement must be grounded in retrieved memory rows.
+  NEVER invent patterns not present in the retrieved data. If a dimension
+  yields no signal, say so explicitly ("no dense clusters in this window").
+  Synthesis is NOT recall — it identifies patterns ACROSS memories, not
+  individual facts.
+
+  ## Five Dimensions
+
+  ### Dimension 1: Frequency Peaks
+  Which topics appear most often in recent episodes? List top 10 with
+  mention counts. Flag if a topic spiked recently vs a steady baseline.
+
+  ### Dimension 2: Temporal Clustering
+  When did the operator focus intensely on a topic? Identify 3+ day windows
+  with dense mention-rate. Name the approximate time period and the topic.
+
+  ### Dimension 3: Domain Correlations
+  Which high-frequency topics overlap with verified ground-truth facts?
+  These are topics where the operator's active attention aligns with
+  persistent beliefs — candidate for reinforcement or contradiction checking.
+
+  ### Dimension 4: Contradiction Flags
+  Are any pending contradiction ledger rows about topics that are currently
+  active in the operator's focus? If so, surface them — the operator may
+  want to resolve them while the topic is fresh.
+
+  ### Dimension 5: Cross-Cutting Topics
+  Which topics appear in both technical episodes (code, builds, servers)
+  AND personal episodes (planning, habits, life)? These cross-domain themes
+  often signal an important decision or rebalancing moment.
+
+  ## Output / verdict gate
+
+  Return a structured synthesis note:
+  1. TOP TOPICS — ranked list with counts and trend.
+  2. TIME CLUSTERS — dense focus windows, approximate dates.
+  3. KNOWLEDGE ALIGNMENT — topics correlated with ground-truth facts.
+  4. OPEN CONTRADICTIONS — pending conflicts on active topics (if any).
+  5. CROSS-DOMAIN THEMES — topics bridging technical/personal domains.
+  6. SYNTHESIS OBSERVATION — one paragraph integrating the five dimensions
+     into a coherent picture of where the operator's attention has been and
+     what it signals.
+
+  Anchor every claim to a memory row id or a timestamp range. No preamble.
+  If a dimension has no signal, say so in one line and move to the next.
