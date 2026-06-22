@@ -22,6 +22,7 @@ pub mod ingress_sanitizer;
 /// `npm install -g` of any CLI toolchain package. Blocks confirmed `MAL-*`
 /// packages, fails open on a lookup error.
 pub mod osv_check;
+pub mod jailbreak_retry;
 pub mod paperless_ingest;
 pub mod redact;
 pub mod refusal_abliterated;

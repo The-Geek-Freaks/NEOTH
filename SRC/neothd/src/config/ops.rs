@@ -444,6 +444,20 @@ pub struct RefusalRecoveryConfig {
     /// `abliterated_fallback_enabled` is `true` (no model = nothing to route to).
     #[serde(default)]
     pub abliterated_model: Option<String>,
+    /// GOLD-FEAT-08b — enable the jailbreak-harness retry layer that runs BEFORE
+    /// the local-abliterated fallback. Default `false` (opt-in). When `true`, a
+    /// `SafetyPolicy` over-refusal that survives the LOWKEY reframing pipeline is
+    /// retried against the SAME cloud provider up to `jailbreak_max_retries`
+    /// times, each wrapping the request in a distinct seed harness
+    /// (`security::jailbreak_retry`). First non-refusal wins; all-refused falls
+    /// through to FEAT-08. The CSAM/bioweapon hard-block floor still applies
+    /// first. WAL records `0x25 PROVIDER_FALLBACK_ATTEMPTED` (kind=jailbreak).
+    #[serde(default = "default_jailbreak_retry_enabled")]
+    pub jailbreak_retry_enabled: bool,
+    /// GOLD-FEAT-08b — number of jailbreak harnesses to try before falling
+    /// through to FEAT-08. Default 4; capped at the seed-catalog length.
+    #[serde(default = "default_jailbreak_max_retries")]
+    pub jailbreak_max_retries: usize,
 }
 
 impl Default for RefusalRecoveryConfig {
@@ -454,6 +468,8 @@ impl Default for RefusalRecoveryConfig {
             max_attempts: default_refusal_recovery_max_attempts(),
             abliterated_fallback_enabled: default_abliterated_fallback_enabled(),
             abliterated_model: None,
+            jailbreak_retry_enabled: default_jailbreak_retry_enabled(),
+            jailbreak_max_retries: default_jailbreak_max_retries(),
         }
     }
 }
@@ -464,6 +480,14 @@ fn default_refusal_recovery_enabled() -> bool {
 
 fn default_abliterated_fallback_enabled() -> bool {
     false
+}
+
+fn default_jailbreak_retry_enabled() -> bool {
+    false
+}
+
+fn default_jailbreak_max_retries() -> usize {
+    crate::security::jailbreak_retry::DEFAULT_MAX_RETRIES
 }
 
 fn default_refusal_recovery_max_attempts() -> u32 {

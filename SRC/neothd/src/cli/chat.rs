@@ -1816,13 +1816,60 @@ async fn run_post_reply_pipelines(
         }
     }
 
+    // ── GOLD-FEAT-08b Tier-2.5: jailbreak-harness retry ───────────────────
+    // Operator decision (2026-06-22, authorized-researcher / sovereign agent):
+    // BEFORE the sovereign local fallback, if the response is STILL a SafetyPolicy
+    // over-refusal and the operator opted in, retry the SAME cloud provider up to
+    // `jailbreak_max_retries` times, each wrapping the request in a distinct seed
+    // harness (ported from davidondrej/jailbreak-autoresearch). First non-refusal
+    // wins. If every harness still refuses, fall through to FEAT-08 below (the
+    // operator's local model — the sovereign floor). The CSAM/bioweapon hard-block
+    // floor runs first inside the retry. Opt-in + WAL-audited (0x25).
+    let mut jailbreak_recovered = false;
+    if !hard_blocked && config.refusal_recovery.jailbreak_retry_enabled {
+        let jb_report = crate::security::refusal_detect::classify(&response_text);
+        if jb_report.is_refusal()
+            && crate::security::refusal_abliterated::should_route_to_abliterated(
+                &crate::security::refusal_cause::classify_cause(&response_text),
+            )
+        {
+            match crate::security::jailbreak_retry::try_jailbreak_retry(
+                provider,
+                &final_prompt,
+                final_system.as_deref(),
+                None,
+                config.refusal_recovery.jailbreak_max_retries,
+                Some(&writer),
+                now_unix() as i64,
+            )
+            .await
+            {
+                Ok(Some(new_text)) => {
+                    tracing::info!(
+                        recovered_bytes = new_text.len(),
+                        "FEAT-08b jailbreak retry succeeded — replacing response"
+                    );
+                    response_text = new_text;
+                    derived_from_mirror_pipeline = true; // skip profile extraction on recovered turns
+                    jailbreak_recovered = true;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "FEAT-08b jailbreak retry failed (non-fatal)");
+                }
+            }
+        }
+    }
+
     // ── GOLD-FEAT-08 Tier-3: local-abliterated fallback ───────────────────
-    // After the LOWKEY reframing pipeline above, if the response is STILL a
-    // SafetyPolicy over-refusal and the operator opted in, route to their OWN
-    // local abliterated model (operator-owned hardware — NOT provider-
-    // deception). The orchestrator runs the permanent hard-block floor first
-    // and emits WAL 0x26/0x27/0x28 internally. Best-effort; never bails a turn.
-    if !hard_blocked && config.refusal_recovery.abliterated_fallback_enabled {
+    // After the LOWKEY reframing pipeline above (and the FEAT-08b jailbreak retry,
+    // if it ran and did NOT recover), if the response is STILL a SafetyPolicy
+    // over-refusal and the operator opted in, route to their OWN local abliterated
+    // model (operator-owned hardware — NOT provider-deception). The orchestrator
+    // runs the permanent hard-block floor first and emits WAL 0x26/0x27/0x28
+    // internally. Best-effort; never bails a turn.
+    if !jailbreak_recovered && !hard_blocked && config.refusal_recovery.abliterated_fallback_enabled
+    {
         let t3_report = crate::security::refusal_detect::classify(&response_text);
         if t3_report.is_refusal()
             && crate::security::refusal_abliterated::should_route_to_abliterated(
