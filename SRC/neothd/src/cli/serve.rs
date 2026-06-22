@@ -1628,6 +1628,24 @@ pub(crate) async fn handle_reload_sentinel(
                 )
                 .await;
             }
+            // GOLD-FEAT-07b — dedicated moral-core kill-switch audit. The generic
+            // CONFIG_RELOADED above already lists "moral_core" in changed_fields, but
+            // the moral core is the sovereign position-0 directive layer, so its
+            // enable/disable gets its own greppable WAL anchor carrying the resulting
+            // on/off state (read from the just-swapped live config).
+            if changed_fields.iter().any(|f| f == "moral_core") {
+                let enabled = controller.latest().moral_core.enabled;
+                let mc_payload = serde_json::json!({ "enabled": enabled, "ts_unix": ts_unix });
+                if let Ok(bytes) = serde_json::to_vec(&mc_payload) {
+                    emit_required_audit(
+                        writer,
+                        crate::wal::events::EVENT_TYPE_MORAL_CORE_TOGGLED,
+                        "MORAL_CORE_TOGGLED",
+                        bytes,
+                    )
+                    .await;
+                }
+            }
         }
         crate::config::reload::ReloadResult::Rejected { reason } => {
             warn!(

@@ -1649,6 +1649,18 @@ pub const EVENT_TYPE_SUDOMODE_PRESET_APPLIED: u8 = 0xDD;
 /// ts_unix}`. `reason` is the integrity-violation message (no binary bytes).
 pub const EVENT_TYPE_SELF_UPDATE_REJECTED: u8 = 0xDE;
 
+/// `0xDF MORAL_CORE_TOGGLED` — GOLD-FEAT-07b. Emitted when the operator flips the
+/// moral-core kill-switch (`moral_core.enabled` in freedom.yaml) and the daemon
+/// hot-reloads. A dedicated audit anchor on top of the generic
+/// `0xD0 CONFIG_RELOADED`: the moral core is the sovereign position-0 directive
+/// layer, so enabling/disabling it is a security-relevant change an operator
+/// should be able to grep for directly (not buried in a generic reload's
+/// `changed_fields`).
+///
+/// Payload (JSON): `{enabled: bool, ts_unix: i64}`. No directive content — only
+/// the on/off transition is recorded.
+pub const EVENT_TYPE_MORAL_CORE_TOGGLED: u8 = 0xDF;
+
 // ---- 0xE0..=0xEF  Cluster lifecycle (R-7, Session 19; 0xE0..=0xEA assigned) ----
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
@@ -2494,6 +2506,8 @@ const _: () = {
         || EVENT_TYPE_SUDOMODE_PRESET_APPLIED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_SELF_UPDATE_REJECTED < 0xD0
         || EVENT_TYPE_SELF_UPDATE_REJECTED > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_MORAL_CORE_TOGGLED < 0xD0
+        || EVENT_TYPE_MORAL_CORE_TOGGLED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xEF).
     // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
     // (0xEB..=0xEF) share one declared band. Every assertion uses the full
@@ -2800,6 +2814,7 @@ mod tests {
                 EVENT_TYPE_SUDOMODE_PRESET_APPLIED,
             ),
             ("SELF_UPDATE_REJECTED", EVENT_TYPE_SELF_UPDATE_REJECTED),
+            ("MORAL_CORE_TOGGLED", EVENT_TYPE_MORAL_CORE_TOGGLED),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",
