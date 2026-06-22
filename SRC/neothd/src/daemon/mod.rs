@@ -140,5 +140,16 @@ pub mod pidfile;
 pub mod quota;
 pub mod rate_limit;
 pub mod usage_log;
+/// GOLD-ADAPT-ODY-07 — Background-job detach + auto-continue registry.
+/// Tracks detached subprocess jobs via on-disk `.log`/`.exit` marker files.
+/// Jobs register with [`bg_jobs::BgJobRegistry`]; the monitor polls for
+/// completion and fires optional `on_complete` callbacks (auto-continue).
+/// Self-contained, no hot-lane deps, new-file clean lane.
+pub mod bg_jobs;
+/// GOLD-ADAPT-ODY-07 companion — background-job monitor loop.
+/// [`bg_monitor::spawn_bg_monitor`] spawns a periodic scan over the
+/// [`bg_jobs::BgJobRegistry`]: completed jobs get their callbacks invoked,
+/// are removed from the registry, and produce a [`bg_monitor::JobCompleteReport`].
+pub mod bg_monitor;
 // Telemetry static-enforcement lives at `tests/no_outbound_network.rs` —
 // runs on every `cargo test` and blocks PRs. No daemon-side module needed.
