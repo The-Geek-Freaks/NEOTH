@@ -177,6 +177,24 @@ fn decode(bytes: &[u8], format: AudioFormat) -> Vec<f32> {
     }
 }
 
+/// Decode and resample PCM bytes to 16 kHz mono `f32` samples.
+///
+/// Shared by both encoder paths (log-mel + x-vector) so callers that need
+/// the raw 16 kHz buffer before segmenting don't have to inline the decode/
+/// resample logic.  Returns an empty `Vec` if the format is unsupported or
+/// the input is empty.
+pub fn decode_to_f32(bytes: &[u8], format: AudioFormat, sample_rate_hz: u32) -> Vec<f32> {
+    let decoded = decode(bytes, format);
+    if decoded.is_empty() {
+        return Vec::new();
+    }
+    if sample_rate_hz != SAMPLE_RATE {
+        crate::media::resampler::resample_mono(&decoded, sample_rate_hz, SAMPLE_RATE)
+    } else {
+        decoded
+    }
+}
+
 /// Encode each transcript segment into a speaker embedding. When `segments`
 /// is empty (a provider that returns no timestamps) the whole clip is encoded
 /// as one utterance. Segments that decode too short are skipped, so the result

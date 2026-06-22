@@ -54,6 +54,10 @@ pub mod speaker_profile;
 /// encoder. Fills the `utterance_embeddings` seam: PCM → unit-norm voice vector
 /// consumed by `speaker_profile`. No model download, no external weights.
 pub mod speaker_encoder;
+/// SPEAKR-02c (neural upgrade) — x-vector (TDNN) speaker-embedding encoder.
+/// Dormant scaffold: activates when the operator provisions weights via
+/// `scripts/convert_xvector.py`. Falls back to `speaker_encoder` when absent.
+pub mod speaker_encoder_xvector;
 /// HANDY-03 — filler-word removal + stutter collapse for raw STT transcripts.
 /// Called as a post-processing hook before transcript text leaves the pipeline.
 pub mod stt_postprocess;

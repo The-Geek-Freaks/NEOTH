@@ -21,6 +21,15 @@
 //! * **Auto-label** — when no profile matches, a new `SPEAKER_NN` entry is
 //!   created (NN = number of existing profiles + 1).
 //!
+//! ## Embedding-dimension migration
+//!
+//! The persisted store records the embedding dimension in
+//! [`ProfileStore::embedding_dim`]. On load, if the stored dim does not match
+//! the incoming embeddings, the store is discarded and a fresh one is started.
+//! This prevents silent cosine-0.0 re-labelling of every known speaker when
+//! the operator switches from the 80-dim log-mel encoder to the 512-dim
+//! x-vector encoder (or back). The warning is logged at `WARN` level.
+//!
 //! ## Wiring note
 //!
 //! The wiring point (`media.auto_speaker_labels: true` + post-transcription
@@ -245,26 +254,98 @@ impl SpeakerMatcher {
     }
 }
 
-// ── SPEAKR-02b: persistent profile store + STT-dispatch labelling entry ──────
+// ── SPEAKR-02b / SPEAKR-02c: persistent profile store + dim-migration ────────
+
+/// On-disk JSON envelope for the speaker profile store.
+///
+/// Wraps the profile list with the embedding dimension so we can detect
+/// dimension changes (e.g. switching from the 80-dim log-mel encoder to the
+/// 512-dim x-vector encoder) and reset the store rather than silently
+/// mismatching cosines.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ProfileStore {
+    /// Embedding dimension all centroids were trained on.
+    embedding_dim: usize,
+    /// The stored profiles.
+    profiles: Vec<SpeakerProfile>,
+}
 
 /// Default profile-store path: `<home>/speaker_profiles.json`.
 pub fn profiles_path(home: &std::path::Path) -> std::path::PathBuf {
     home.join("speaker_profiles.json")
 }
 
-/// Load the persisted speaker profiles. Absent/unreadable/corrupt file → empty
-/// (a fresh operator simply starts with no known speakers).
-pub fn load_profiles(path: &std::path::Path) -> Vec<SpeakerProfile> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+/// Load the persisted speaker profiles.
+///
+/// `incoming_dim` is the dimensionality of the embeddings the caller is about
+/// to produce. If the store exists but was written with a different dimension,
+/// it is discarded (logged at `WARN`) and an empty list is returned — preventing
+/// silent cosine-0.0 mismatches on every speaker.
+///
+/// Absent / unreadable / corrupt file → empty (fresh start, no warning).
+pub fn load_profiles(path: &std::path::Path, incoming_dim: usize) -> Vec<SpeakerProfile> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(), // file absent or unreadable → fresh start
+    };
+
+    // Try the new envelope format first.
+    if let Ok(store) = serde_json::from_str::<ProfileStore>(&raw) {
+        if store.embedding_dim != incoming_dim {
+            tracing::warn!(
+                stored_dim = store.embedding_dim,
+                incoming_dim,
+                "speaker_profile: embedding dimension changed — discarding {} profile(s) \
+                 and starting fresh (re-learn will happen automatically)",
+                store.profiles.len()
+            );
+            return Vec::new();
+        }
+        return store.profiles;
+    }
+
+    // Legacy format: bare Vec<SpeakerProfile> (written before dim-migration).
+    // Accept only if the actual centroid lengths match incoming_dim.
+    if let Ok(profiles) = serde_json::from_str::<Vec<SpeakerProfile>>(&raw) {
+        let consistent = profiles.is_empty()
+            || profiles.iter().all(|p| p.avg_embedding.len() == incoming_dim);
+        if consistent {
+            return profiles;
+        }
+        tracing::warn!(
+            incoming_dim,
+            "speaker_profile: legacy store has mismatched embedding dim — discarding and starting fresh"
+        );
+    }
+
+    Vec::new()
 }
 
 /// Persist the profiles (atomic write). Best-effort: a write/serialise error is
 /// logged, never propagated (speaker labelling must never fail a transcription).
-pub fn save_profiles(path: &std::path::Path, profiles: &[SpeakerProfile]) {
-    match serde_json::to_vec_pretty(profiles) {
+///
+/// Writes the new envelope format with `embedding_dim` recorded.
+pub fn save_profiles(path: &std::path::Path, profiles: &[SpeakerProfile], embedding_dim: usize) {
+    let embedding_dim = if profiles.is_empty() {
+        // No profiles yet — record the dim so the next load can gate correctly.
+        embedding_dim
+    } else {
+        // Sanity-check: all centroids should be the declared dim.
+        let actual = profiles[0].avg_embedding.len();
+        if actual != embedding_dim {
+            tracing::warn!(
+                declared = embedding_dim,
+                actual,
+                "speaker_profile: dim mismatch on save — using actual centroid length"
+            );
+            actual
+        } else {
+            embedding_dim
+        }
+    };
+
+    let store = ProfileStore { embedding_dim, profiles: profiles.to_vec() };
+    match serde_json::to_vec_pretty(&store) {
         Ok(bytes) => {
             if let Err(e) = crate::util::atomic_write::atomic_write(path, &bytes) {
                 tracing::warn!(error = %e, "speaker_profile: persist failed (non-fatal)");
@@ -285,13 +366,14 @@ pub fn label_embeddings(home: &std::path::Path, embeddings: &[Vec<f32>]) -> Vec<
     if embeddings.is_empty() {
         return Vec::new();
     }
+    let incoming_dim = embeddings[0].len();
     let path = profiles_path(home);
-    let mut matcher = SpeakerMatcher::from_profiles(load_profiles(&path));
+    let mut matcher = SpeakerMatcher::from_profiles(load_profiles(&path, incoming_dim));
     let labels: Vec<Option<String>> = embeddings
         .iter()
         .map(|emb| matcher.match_and_label(emb).map(|m| m.name))
         .collect();
-    save_profiles(&path, matcher.profiles());
+    save_profiles(&path, matcher.profiles(), incoming_dim);
     labels
 }
 
@@ -325,6 +407,74 @@ mod tests {
         // Re-present speaker A → SAME label from the persisted profile (learning).
         let again = label_embeddings(home, &[a]);
         assert_eq!(again[0], first[0], "persisted profile re-identifies speaker A");
+    }
+
+    // ── dim-migration ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn dim_change_discards_store_and_starts_fresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let path = profiles_path(home);
+
+        // Write a store with dim=80 (log-mel encoder).
+        let p80 = SpeakerProfile::new("Alice", vec![1.0f32; 80]);
+        save_profiles(&path, &[p80], 80);
+        assert!(path.exists(), "store should exist after save");
+
+        // Load with dim=512 (x-vector encoder) → store must be discarded.
+        let loaded = load_profiles(&path, 512);
+        assert!(
+            loaded.is_empty(),
+            "expected fresh store on dim change 80→512, got {} profile(s)",
+            loaded.len()
+        );
+    }
+
+    #[test]
+    fn same_dim_load_recovers_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = profiles_path(tmp.path());
+
+        let p = SpeakerProfile::new("Bob", vec![1.0f32; 3]);
+        save_profiles(&path, &[p], 3);
+        let loaded = load_profiles(&path, 3);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Bob");
+    }
+
+    #[test]
+    fn legacy_format_accepted_when_dim_matches() {
+        // Bare Vec<SpeakerProfile> JSON (old format before ProfileStore wrapper).
+        let tmp = tempfile::tempdir().unwrap();
+        let path = profiles_path(tmp.path());
+
+        let profiles = vec![SpeakerProfile::new("Carol", vec![0.5f32; 4])];
+        let json = serde_json::to_vec_pretty(&profiles).unwrap();
+        std::fs::write(&path, &json).unwrap();
+
+        let loaded = load_profiles(&path, 4);
+        assert_eq!(loaded.len(), 1, "legacy format with matching dim should load");
+        assert_eq!(loaded[0].name, "Carol");
+    }
+
+    #[test]
+    fn legacy_format_discarded_on_dim_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = profiles_path(tmp.path());
+
+        // Legacy format with dim=2 centroids.
+        let profiles = vec![SpeakerProfile::new("Dave", vec![1.0f32, 0.0])];
+        let json = serde_json::to_vec_pretty(&profiles).unwrap();
+        std::fs::write(&path, &json).unwrap();
+
+        // Load expecting dim=512.
+        let loaded = load_profiles(&path, 512);
+        assert!(
+            loaded.is_empty(),
+            "legacy store with wrong dim must be discarded, got {} profile(s)",
+            loaded.len()
+        );
     }
 
     // ── cosine_similarity ─────────────────────────────────────────────────────

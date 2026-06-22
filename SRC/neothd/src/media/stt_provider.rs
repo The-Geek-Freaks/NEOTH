@@ -394,14 +394,20 @@ pub async fn transcribe_and_audit(
     // GOLD-ADAPT-HANDY-03 — strip filler words + stutters from the transcript
     // on every transcription (conservative; never deletes content words).
     result.text = crate::media::stt_postprocess::clean_transcript(&result.text);
-    // GOLD-ADAPT-SPEAKR-02b/02c — speaker re-identification. The self-contained
-    // log-mel encoder (speaker_encoder) turns each per-utterance PCM segment
-    // into a voice embedding; each is matched against the persisted
-    // speaker-profile store + learns the centroid (EMA). The config read, the
-    // CPU-bound encode, AND the profile-store I/O all run inside ONE
-    // spawn_blocking so nothing blocks the async executor (no sync fs read on
-    // the runtime, no FFT on a worker thread). Only the raw-PCM input formats
-    // are handled; anything else is a graceful no-op.
+    // GOLD-ADAPT-SPEAKR-02b/02c — speaker re-identification.
+    //
+    // Encoder selection (inside spawn_blocking):
+    //   1. Try XVectorEncoder::try_load() — activates when operator provisions
+    //      weights via `scripts/convert_xvector.py`. 512-dim output.
+    //   2. Fall back to the log-mel encoder (embed_segments). 80-dim output.
+    //
+    // The dim difference is safe because speaker_profile::load_profiles gates
+    // on embedding_dim and resets the store on a mismatch rather than silently
+    // returning cosine 0.0 for every speaker.
+    //
+    // The config read, the CPU-bound encode, AND the profile-store I/O all run
+    // inside ONE spawn_blocking so nothing blocks the async executor. Only PCM
+    // formats are handled; everything else is a graceful no-op.
     if matches!(
         request.format,
         crate::media::stt_dispatch::AudioFormat::PcmS16leMono
@@ -418,12 +424,48 @@ pub async fn transcribe_and_audit(
             {
                 return Vec::new();
             }
-            let embeddings = crate::media::speaker_encoder::embed_segments(
-                &audio_owned,
-                format,
-                sample_rate,
-                &segments,
-            );
+
+            // Decode to 16 kHz f32 first so both encoder paths share the same
+            // decoded buffer. embed_segments does this internally; we replicate
+            // that here for the x-vector path.
+            use crate::media::speaker_encoder_xvector::XVectorEncoder;
+
+            // Attempt neural x-vector encoder first (dormant until weights cached).
+            let embeddings: Vec<Vec<f32>> =
+                if let Some(xvec) = XVectorEncoder::try_load() {
+                    // Decode + segment → individual f32 sample slices, encode each.
+                    let decoded = crate::media::speaker_encoder::decode_to_f32(
+                        &audio_owned,
+                        format,
+                        sample_rate,
+                    );
+                    if decoded.is_empty() {
+                        return Vec::new();
+                    }
+                    let segs = if segments.is_empty() {
+                        // Encode the whole clip as one segment.
+                        vec![xvec.embed(&decoded)]
+                    } else {
+                        // Encode each segment window individually.
+                        const SR: u32 = 16_000;
+                        segments.iter().map(|s| {
+                            let start = (s.start_ms as u64 * SR as u64 / 1000) as usize;
+                            let end = (s.end_ms as u64 * SR as u64 / 1000)
+                                .min(decoded.len() as u64) as usize;
+                            if start >= end { None } else { xvec.embed(&decoded[start..end]) }
+                        }).collect()
+                    };
+                    segs.into_iter().flatten().collect()
+                } else {
+                    // Log-mel fallback (always available, no weights needed).
+                    crate::media::speaker_encoder::embed_segments(
+                        &audio_owned,
+                        format,
+                        sample_rate,
+                        &segments,
+                    )
+                };
+
             if embeddings.is_empty() {
                 return Vec::new();
             }
