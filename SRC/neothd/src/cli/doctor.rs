@@ -75,6 +75,13 @@ pub struct DoctorArgs {
     /// Useful for tab-completion + operator-side runbook generation.
     #[arg(long)]
     pub list_checks: bool,
+    /// GOLD-ADAPT-ODY-22: run live network probes against configured subsystems
+    /// (ollama, SearXNG, IMAP) using `tokio::time::timeout`-bounded HTTP/TCP
+    /// checks. Reports Up/Down/latency per subsystem. Runs in addition to the
+    /// static check battery. Never touches real network during automated tests —
+    /// safe to omit in CI.
+    #[arg(long)]
+    pub live: bool,
     /// GOLD-ADOPT-24: after running the checks, feed any WARN/FAIL outcomes to
     /// the cheap `inference.utility_provider` for an LLM root-cause + first-fix.
     /// NEOTH's 31 structured checks are a richer signal than a raw log dump, so
@@ -166,7 +173,13 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
         .home
         .clone()
         .unwrap_or_else(FreedomConfig::default_neoth_home);
-    let outcomes = run_all_checks(&home);
+    let mut outcomes = run_all_checks(&home);
+
+    // GOLD-ADAPT-ODY-22: append live network probes when --live is requested.
+    if args.live {
+        let live = checks::live_probes::run_live_probes().await;
+        outcomes.extend(live);
+    }
 
     let any_fail = outcomes.iter().any(|o| o.status == CheckStatus::Fail);
     let any_warn = outcomes.iter().any(|o| o.status == CheckStatus::Warn);
@@ -1027,6 +1040,7 @@ mod tests {
             quiet: false,
             explain: None,
             list_checks: true,
+            live: false,
             diagnose: false,
             output: OutputFormat::Table,
         };
@@ -1043,6 +1057,7 @@ mod tests {
             quiet: false,
             explain: Some("nope-not-real".to_string()),
             list_checks: false,
+            live: false,
             diagnose: false,
             output: OutputFormat::Table,
         };
@@ -1059,6 +1074,7 @@ mod tests {
             quiet: false,
             explain: Some("freedom.yaml".to_string()),
             list_checks: false,
+            live: false,
             diagnose: false,
             output: OutputFormat::Table,
         };
