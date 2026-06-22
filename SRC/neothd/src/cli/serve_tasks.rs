@@ -756,6 +756,29 @@ pub(crate) fn spawn_pattern_cron(config: &FreedomConfig) -> Option<JoinHandle<()
     handle
 }
 
+/// JV-SELF-02 — AMEM4Rec consolidation sweep cron. Clusters hot-tier
+/// episode embeddings by cosine ≥ threshold, boosts importance, and merges
+/// mature clusters into `idx_groundtruth`. Emits `0x9D`/`0x9E`. `None`
+/// when `consolidation_sweep.enabled = false` (the default).
+pub(crate) fn spawn_consolidation_sweep_cron(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::consolidation_sweep_cron::spawn_consolidation_sweep_cron_loop(
+        config.consolidation_sweep,
+        crate::memory::store::default_path(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.consolidation_sweep.interval_secs,
+            cosine_threshold = config.consolidation_sweep.cosine_threshold,
+            "consolidation-sweep cron spawned (JV-SELF-02)"
+        );
+    }
+    handle
+}
+
 /// NN-MEM-06 — daily contradiction auto-resolution cron. Resolves the
 /// `idx_contradictions` backlog (temporal-supersede / semantic-equiv merge /
 /// human-review queue). WAL-free. `None` when disabled.
@@ -2437,6 +2460,9 @@ pub(crate) struct BackgroundHandles {
     /// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron handle.
     /// WAL-free; `None` when `synthesis_cron.enabled = false` (default).
     pub synthesis_cron_handle: Option<JoinHandle<()>>,
+    /// JV-SELF-02 — AMEM4Rec consolidation-sweep cron handle.
+    /// Emits `0x9D`/`0x9E`; `None` when `consolidation_sweep.enabled = false` (default).
+    pub consolidation_sweep_handle: Option<JoinHandle<()>>,
     pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub rss_feed_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -2511,6 +2537,7 @@ pub(crate) async fn shutdown_background_tasks(
         contradiction_resolve_cron_handle,
         guidance_cron_handle,
         synthesis_cron_handle,
+        consolidation_sweep_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,
@@ -2727,6 +2754,12 @@ pub(crate) async fn shutdown_background_tasks(
     // mid-tick abort is safe — the groundtruth insert is transactional, and
     // the vault write uses atomic tmp→rename so a partial write is never seen.
     crate::cli::serve_tasks::abort_optional(synthesis_cron_handle).await;
+    // JV-SELF-02 — abort the AMEM4Rec consolidation-sweep cron. Mid-tick
+    // abort is safe: the SQLite work runs in spawn_blocking (transaction
+    // is rolled back on connection close) and the two WAL frames are
+    // independent appends. At worst one audit frame is lost — the next
+    // boot's tick re-establishes correct state.
+    crate::cli::serve_tasks::abort_optional(consolidation_sweep_handle).await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

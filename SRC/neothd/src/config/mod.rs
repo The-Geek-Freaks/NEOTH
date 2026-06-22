@@ -56,7 +56,8 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use automation::{
-    BgMonitorConfig, DEFAULT_DRIFT_ALERT_INTERVAL_SECS, DEFAULT_GUIDANCE_CRON_INTERVAL_SECS,
+    BgMonitorConfig, ConsolidationSweepConfig, DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS,
+    DEFAULT_DRIFT_ALERT_INTERVAL_SECS, DEFAULT_GUIDANCE_CRON_INTERVAL_SECS,
     DEFAULT_INACTIVITY_GAP_SECS, DEFAULT_MONITOR_INTERVAL_SECS,
     DEFAULT_PATTERN_CRON_INTERVAL_SECS, DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
     DEFAULT_RECALL_LATENCY_INTERVAL_SECS, DEFAULT_REGRESSION_INTERVAL_SECS,
@@ -516,6 +517,13 @@ pub struct FreedomConfig {
     /// `~/.neoth/synthesis/YYYY-WW.md`. Default OFF (WAL-free, opt-in).
     #[serde(default)]
     pub synthesis_cron: SynthesisCronConfig,
+    /// JV-SELF-02 — AMEM4Rec consolidation sweep. When `enabled`, a
+    /// background cron (default 6h) clusters hot-tier embeddings by cosine
+    /// similarity ≥ `cosine_threshold`, boosts member importance (cap
+    /// `importance_boost_cap`), and merges mature clusters into
+    /// `idx_groundtruth`. Emits WAL `0x9D`/`0x9E`. Default OFF.
+    #[serde(default)]
+    pub consolidation_sweep: ConsolidationSweepConfig,
     /// NN-MEM-06 — daily contradiction auto-resolution cron. When `enabled`,
     /// auto-resolves the `idx_contradictions` backlog: temporal-supersede
     /// (newer fact wins) · semantic-equiv (Jaccard>=0.90 merge) · human-review

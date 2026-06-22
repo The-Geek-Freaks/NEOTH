@@ -38,6 +38,11 @@ pub mod detect_complete_sidecar;
 /// `idx_contradictions` backlog: temporal-supersede (newer fact wins) +
 /// semantic-equiv (Jaccard≥0.90 merge) + human-review queue for genuine
 /// conflicts. Off by default (`contradiction_resolve.enabled = false`).
+/// JV-SELF-02 — AMEM4Rec consolidation sweep cron. Clusters hot-tier
+/// episode embeddings by cosine similarity, boosts importance, and merges
+/// mature clusters into `idx_groundtruth`. Emits `0x9D`/`0x9E`. Off by
+/// default (`consolidation_sweep.enabled = false`).
+pub mod consolidation_sweep_cron;
 pub mod contradiction_resolve_cron;
 pub mod doctor_cron;
 /// HO-09b — profile drift-alert cron. Runs the same drift evaluation

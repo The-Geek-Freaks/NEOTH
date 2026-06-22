@@ -904,6 +904,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let synthesis_cron_handle =
         crate::cli::serve_tasks::spawn_synthesis_cron(&config);
 
+    // ── JV-SELF-02 AMEM4Rec consolidation-sweep cron ─────────────────────
+    // 6h sweep: cosine-cluster hot-tier embeddings, boost importance, merge
+    // mature clusters into idx_groundtruth. Emits 0x9D/0x9E. Default OFF.
+    let consolidation_sweep_handle =
+        crate::cli::serve_tasks::spawn_consolidation_sweep_cron(&config, writer.clone());
+
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
     // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
@@ -1530,6 +1536,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         contradiction_resolve_cron_handle,
         guidance_cron_handle,
         synthesis_cron_handle,
+        consolidation_sweep_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,

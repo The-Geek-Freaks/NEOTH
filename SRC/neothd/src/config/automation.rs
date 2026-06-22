@@ -733,3 +733,75 @@ impl SynthesisCronConfig {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
 }
+
+/// JV-SELF-02 — AMEM4Rec consolidation sweep default tick interval: 6 hours.
+/// Shorter than the weekly synthesis cron — the sweep is lightweight
+/// (cosine scan + importance UPDATE) and benefits from more frequent cluster
+/// discovery.
+pub const DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS: u64 = 6 * 3600;
+
+/// Default cosine-similarity threshold for clustering hot-tier embeddings.
+/// L2-normalised vectors → cosine = dot product; 0.75 requires high semantic
+/// overlap (empirically ~top-5% similarity on typical episode corpora).
+pub const DEFAULT_SWEEP_COSINE_THRESHOLD: f64 = 0.75;
+
+/// Maximum importance value the sweep may assign to a cluster member.
+/// Caps the boost so the Hebbian decay path retains control of long-term
+/// forgetting — a pinned-by-sweep row can still decay from 0.85 to
+/// FORGET_FLOOR in ~4 days at the standard 0.98/pass rate.
+pub const DEFAULT_SWEEP_IMPORTANCE_BOOST_CAP: f64 = 0.85;
+
+/// Minimum cluster size (number of members) before the sweep boosts
+/// importance or merges to groundtruth. A solo episode has no peers —
+/// no boost applied.
+pub const DEFAULT_SWEEP_MIN_CLUSTER_SIZE: usize = 2;
+
+/// JV-SELF-02 — configuration for the AMEM4Rec consolidation-sweep cron
+/// (`freedom.yaml::consolidation_sweep`).
+///
+/// When `enabled`, a background cron runs every `interval_secs` seconds.
+/// It loads all hot-tier (`idx_episode`) rows that have an embedding in
+/// `idx_embedding`, clusters them by cosine similarity ≥ `cosine_threshold`
+/// (Union-Find O(N²) — safe at hot-tier sizes ≤ 50k), boosts the importance
+/// of every cluster member (cap `importance_boost_cap`), and merges
+/// "mature" clusters (avg_importance ≥ 0.5 AND member time-span ≥ 7 days)
+/// into a canonical `idx_groundtruth` row
+/// (`source = "consolidation-sweep"`, `scope = "meta"`).
+///
+/// Default OFF (all fields are `#[serde(default)]` so old `freedom.yaml`
+/// files without this section parse correctly).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct ConsolidationSweepConfig {
+    /// Master switch. Default `false` (opt-in).
+    pub enabled: bool,
+    /// Run interval in seconds. Default 21 600 (6 h). Floor 60 s.
+    pub interval_secs: u64,
+    /// Cosine-similarity threshold for Union-Find clustering (0.0..=1.0).
+    /// Default 0.75.
+    pub cosine_threshold: f64,
+    /// Importance-boost cap after clustering. Default 0.85.
+    pub importance_boost_cap: f64,
+    /// Minimum cluster size before boost / merge fires. Default 2.
+    pub min_cluster_size: usize,
+}
+
+impl Default for ConsolidationSweepConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS,
+            cosine_threshold: DEFAULT_SWEEP_COSINE_THRESHOLD,
+            importance_boost_cap: DEFAULT_SWEEP_IMPORTANCE_BOOST_CAP,
+            min_cluster_size: DEFAULT_SWEEP_MIN_CLUSTER_SIZE,
+        }
+    }
+}
+
+impl ConsolidationSweepConfig {
+    /// Tick interval as a `Duration`, clamped to a 60 s minimum so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop.
+    pub fn interval_duration(self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}

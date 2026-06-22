@@ -1105,6 +1105,21 @@ pub const EVENT_TYPE_IDENTITY_MERGED: u8 = 0x9B;
 /// Payload (JSON): `{text_hash, source: "omi", scope, confidence, ts_unix}`.
 pub const EVENT_TYPE_OMI_ACTION_PROMOTED: u8 = 0x9C;
 
+/// `0x9D CONSOLIDATION_SWEEP_STARTED` — JV-SELF-02. The AMEM4Rec
+/// consolidation-sweep cron started one pass over `idx_embedding` (hot-tier
+/// episodes). Emitted BEFORE the `spawn_blocking` SQLite work begins.
+///
+/// Payload (JSON): `{cosine_threshold, min_cluster_size, importance_boost_cap,
+/// ts_unix}`.
+pub const EVENT_TYPE_CONSOLIDATION_SWEEP_STARTED: u8 = 0x9D;
+
+/// `0x9E CONSOLIDATION_SWEEP_DONE` — JV-SELF-02. One AMEM4Rec consolidation
+/// sweep pass completed. Emitted AFTER `spawn_blocking` returns.
+///
+/// Payload (JSON): `{clusters_found, members_boosted, merged_to_groundtruth,
+/// ts_unix}`.
+pub const EVENT_TYPE_CONSOLIDATION_SWEEP_DONE: u8 = 0x9E;
+
 // ---- 0xA0..=0xAF  Permissions / autonomy (R-23) ---------------------------
 
 /// Permission decision returned `Allow` (after a possible Confirm round-trip).
@@ -2107,6 +2122,14 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
+    (
+        "consolidation_sweep_started",
+        EVENT_TYPE_CONSOLIDATION_SWEEP_STARTED,
+    ),
+    (
+        "consolidation_sweep_done",
+        EVENT_TYPE_CONSOLIDATION_SWEEP_DONE,
+    ),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
     ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
@@ -2479,6 +2502,10 @@ const _: () = {
         [(); 1][(EVENT_TYPE_IDENTITY_MERGED < 0x90 || EVENT_TYPE_IDENTITY_MERGED > 0x9F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_OMI_ACTION_PROMOTED < 0x90 || EVENT_TYPE_OMI_ACTION_PROMOTED > 0x9F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CONSOLIDATION_SWEEP_STARTED < 0x90
+        || EVENT_TYPE_CONSOLIDATION_SWEEP_STARTED > 0x9F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CONSOLIDATION_SWEEP_DONE < 0x90
+        || EVENT_TYPE_CONSOLIDATION_SWEEP_DONE > 0x9F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PERMISSION_GRANTED < 0xA0 || EVENT_TYPE_PERMISSION_GRANTED > 0xAF) as usize];
     let _ = [(); 1]
@@ -2816,6 +2843,14 @@ mod tests {
             ("MODE_CHECKPOINT", EVENT_TYPE_MODE_CHECKPOINT),
             ("IDENTITY_MERGED", EVENT_TYPE_IDENTITY_MERGED),
             ("OMI_ACTION_PROMOTED", EVENT_TYPE_OMI_ACTION_PROMOTED),
+            (
+                "CONSOLIDATION_SWEEP_STARTED",
+                EVENT_TYPE_CONSOLIDATION_SWEEP_STARTED,
+            ),
+            (
+                "CONSOLIDATION_SWEEP_DONE",
+                EVENT_TYPE_CONSOLIDATION_SWEEP_DONE,
+            ),
             ("PERMISSION_GRANTED", EVENT_TYPE_PERMISSION_GRANTED),
             ("PERMISSION_DENIED", EVENT_TYPE_PERMISSION_DENIED),
             ("LEVEL_ELEVATED", EVENT_TYPE_LEVEL_ELEVATED),

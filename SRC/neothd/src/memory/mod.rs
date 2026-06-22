@@ -28,6 +28,12 @@ pub mod channel_weights;
 /// headless-tested.
 pub mod compaction_guard;
 pub mod consolidate;
+/// JV-SELF-02 — AMEM4Rec consolidation sweep. Clusters hot-tier episode
+/// embeddings by cosine similarity ≥ threshold (Union-Find), boosts
+/// member importance (cap 0.85), and merges mature clusters into
+/// `idx_groundtruth`. Pure sync, no WAL; cron wrapper in
+/// `daemon::consolidation_sweep_cron` emits `0x9D`/`0x9E`.
+pub mod consolidation_sweep;
 /// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory eval harness.
 /// `neoth memory-eval` runs a synthetic recall benchmark against a fresh
 /// temp DB and reports precision so CI can detect memory-tuning regressions.
