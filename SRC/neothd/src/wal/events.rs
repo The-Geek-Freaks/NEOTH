@@ -1028,6 +1028,21 @@ pub const EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED: u8 = 0x85;
 /// Payload: `{teacher_provider, corrected_bytes, skill_id, ts_unix}`.
 pub const EVENT_TYPE_TEACHER_ESCALATION_COMPLETE: u8 = 0x86;
 
+/// `0x87 BG_SESSION_STARTED` — HERMES-02. A `/background` or `/btw` slash
+/// command spawned a headless background provider call. Emitted by
+/// `cli::bg_session::spawn_background_session` before the Tokio task fires.
+/// Audit-critical (cloud egress event if the provider is remote).
+/// Payload: `{job_id, label, prompt_hash, ts_unix}` — `label` is `"background"`
+/// or `"btw"`; `prompt_hash` is a FNV-64 hex of the prompt body (privacy).
+pub const EVENT_TYPE_BG_SESSION_STARTED: u8 = 0x87;
+
+/// `0x88 BG_SESSION_DONE` — HERMES-02. The background provider call finished
+/// and its result was written to `~/.neoth/bgjobs/<id>.result`. Emitted by
+/// `cli::bg_session::emit_bg_done_wal` via a one-shot WAL writer from the
+/// background task. Audit-critical (marks when the egress completed).
+/// Payload: `{job_id, label, ts_unix}`.
+pub const EVENT_TYPE_BG_SESSION_DONE: u8 = 0x88;
+
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
 /// One event moved from `idx_episode` (hot) into `idx_consolidated` (warm).
@@ -2166,6 +2181,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "teacher_escalation_complete",
         EVENT_TYPE_TEACHER_ESCALATION_COMPLETE,
     ),
+    ("bg_session_started", EVENT_TYPE_BG_SESSION_STARTED),
+    ("bg_session_done", EVENT_TYPE_BG_SESSION_DONE),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -2493,6 +2510,10 @@ const _: () = {
         || EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TEACHER_ESCALATION_COMPLETE < 0x80
         || EVENT_TYPE_TEACHER_ESCALATION_COMPLETE > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_BG_SESSION_STARTED < 0x80
+        || EVENT_TYPE_BG_SESSION_STARTED > 0x8F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_BG_SESSION_DONE < 0x80 || EVENT_TYPE_BG_SESSION_DONE > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]

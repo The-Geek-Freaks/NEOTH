@@ -220,6 +220,27 @@ pub fn built_in_commands() -> Vec<SlashCommand> {
             SlashAction::Quit,
             "Usage: /quit",
         ),
+        // ── HERMES-02 background sessions ────────────────────────────
+        // `/background` and `/btw` spawn a headless provider call in a
+        // Tokio task and deliver the result at the next idle turn.
+        // Not destructive — no config mutation, no privilege ceiling.
+        action_cmd(
+            "background",
+            "Run a prompt in the background; result delivered at next idle.",
+            SlashAction::BackgroundRun { btw: false },
+            "Usage: /background <prompt>\n\
+             Queues a headless provider call. The result is printed at the\n\
+             start of your next interactive turn, prefixed with [btw].\n\
+             Alias: /btw",
+        ),
+        action_cmd(
+            "btw",
+            "Alias for /background — run a prompt in the background.",
+            SlashAction::BackgroundRun { btw: true },
+            "Usage: /btw <prompt>\n\
+             Same as /background. The result is printed at the start of your\n\
+             next interactive turn, prefixed with [btw].",
+        ),
         // ── NOOB-UX slash pair (Session 20 batch) ────────────────────
         // Three new prompt-based slash commands that mirror the CLI
         // subcommands shipped this session. Each routes the operator
@@ -326,6 +347,9 @@ mod tests {
         assert!(names.contains(&"reload".to_string()));
         assert!(names.contains(&"autonomy".to_string()));
         assert!(names.contains(&"quit".to_string()));
+        // HERMES-02 background sessions
+        assert!(names.contains(&"background".to_string()));
+        assert!(names.contains(&"btw".to_string()));
     }
 
     #[test]
@@ -343,6 +367,8 @@ mod tests {
             "reload",
             "autonomy",
             "quit",
+            "background",
+            "btw",
         ];
         let cmds = built_in_commands();
         for name in action_names {

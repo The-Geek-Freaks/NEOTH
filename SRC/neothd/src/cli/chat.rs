@@ -752,6 +752,41 @@ async fn enforce_preflight(
                     return Ok(PreflightOutcome::Done);
                 }
 
+                // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ───
+                // Short-circuit before the TOML registry: spawn a headless
+                // provider call in a Tokio background task, deliver result at
+                // next idle turn. Builds a fresh provider Arc from the live
+                // config (avoids changing enforce_preflight's &dyn signature).
+                if name == "background" || name == "btw" {
+                    let prompt_body = cmd_args.trim().to_string();
+                    if prompt_body.is_empty() {
+                        println!("Usage: /{name} <prompt>");
+                    } else {
+                        match crate::providers::fallback_chain_from_config(config, None).await {
+                            Ok(bg_provider) => {
+                                crate::cli::bg_session::spawn_background_session(
+                                    &name,
+                                    prompt_body,
+                                    config.clone(),
+                                    bg_provider.into(),
+                                    Some(&writer),
+                                )
+                                .await;
+                                println!(
+                                    "[neoth] /{name}: background session queued — \
+                                     result at next idle"
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("/{name}: failed to build provider: {e:#}");
+                            }
+                        }
+                    }
+                    drop(writer);
+                    let _ = writer_join.await;
+                    return Ok(PreflightOutcome::Done);
+                }
+
                 let slash_dir = home.join("commands");
                 let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
                 if let Some(cmd) = commands.iter().find(|c| c.name == name) {
@@ -2378,6 +2413,18 @@ pub async fn run_chat_with(
     let first_tour_home = crate::config::FreedomConfig::default_neoth_home();
     if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
         println!("[neoth] {greeting}");
+    }
+
+    // HERMES-02 — deliver any completed background sessions at next idle.
+    // Scans `~/.neoth/bgjobs/*.result` whose `.exit` marker is present
+    // and whose `.delivered` marker is absent; prints each prefixed with
+    // `[btw]`. Idempotent via the `.delivered` sibling marker.
+    {
+        let bgjobs_home = first_tour_home.join("bgjobs");
+        let pending = crate::cli::bg_session::maybe_deliver_bg_result(&bgjobs_home).await;
+        for result in pending {
+            println!("[btw] {result}");
+        }
     }
 
     // Round-3 v0.4 QU-11 / ARS-6 — if `--resume-from <hash>` is set,

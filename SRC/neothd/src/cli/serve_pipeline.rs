@@ -1062,6 +1062,36 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             }));
                         }
 
+                        // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ──
+                        // Not destructive — no channel privilege ceiling applies.
+                        // Spawns a headless provider call; returns an immediate ack
+                        // to the sender. Result is delivered to the next CLI idle turn
+                        // (channel path does not have a persistent "next turn" session
+                        // — the result file stays in bgjobs/ for the CLI to pick up).
+                        if name == "background" || name == "btw" {
+                            let prompt_body = args.trim().to_string();
+                            let reply_text = if prompt_body.is_empty() {
+                                format!("Usage: /{name} <prompt>")
+                            } else {
+                                crate::cli::bg_session::spawn_background_session(
+                                    &name,
+                                    prompt_body,
+                                    config_for_handler.as_ref().clone(),
+                                    Arc::clone(&provider),
+                                    Some(&writer),
+                                )
+                                .await;
+                                format!(
+                                    "[NEOTH] /{name}: running in background — \
+                                     result ready at next idle"
+                                )
+                            };
+                            return Ok(::std::option::Option::Some(OutboundMessage {
+                                recipient_id: inbound.sender_id.clone(),
+                                text: reply_text,
+                            }));
+                        }
+
                         let slash_dir =
                             crate::config::FreedomConfig::default_neoth_home().join("commands");
                         let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();

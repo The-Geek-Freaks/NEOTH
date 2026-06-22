@@ -87,8 +87,9 @@ mod tests {
         assert!(names.contains(&"recipe"));
         assert_eq!(
             cmds.len(),
-            22,
-            "ships 10 prompt-based + 12 action-based built-ins: {names:?}"
+            24,
+            "ships 10 prompt-based + 14 action-based built-ins \
+             (incl. /background + /btw from HERMES-02): {names:?}"
         );
     }
 

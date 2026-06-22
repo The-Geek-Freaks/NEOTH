@@ -117,6 +117,18 @@ pub enum SlashAction {
     /// `/quit` — exit the chat session cleanly. Drains the WAL,
     /// closes the channel adapters, returns to shell.
     Quit,
+    /// `/background <prompt>` / `/btw <prompt>` — HERMES-02. Spawn a
+    /// headless provider call in the background; deliver the result at
+    /// the next idle turn. `btw` is an alias that conveys the same
+    /// intent with a shorter name. Not destructive: read-only from the
+    /// privilege-ceiling perspective (spawns a provider call, does NOT
+    /// mutate config/state).
+    BackgroundRun {
+        /// True when the command was invoked as `/btw`; false for
+        /// `/background`. Stored so WAL audit frames and display
+        /// banners can show the exact command name the operator typed.
+        btw: bool,
+    },
 }
 
 impl SlashAction {
@@ -136,6 +148,8 @@ impl SlashAction {
             Self::ReloadConfig => "reload_config",
             Self::AutonomyLevel => "autonomy_level",
             Self::Quit => "quit",
+            Self::BackgroundRun { btw: false } => "background_run",
+            Self::BackgroundRun { btw: true } => "btw_run",
         }
     }
 

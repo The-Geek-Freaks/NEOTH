@@ -13,6 +13,8 @@ pub mod agents;
 pub mod arxiv;
 pub mod arxiv_ingest_task;
 pub mod backup;
+/// HERMES-02 — `/background` + `/btw` parallel ephemeral sessions.
+pub mod bg_session;
 pub mod catalog;
 pub mod channel;
 pub mod chat;

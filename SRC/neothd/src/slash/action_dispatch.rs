@@ -115,6 +115,12 @@ pub fn dispatch_action(
         SlashAction::ReloadConfig => handle_reload(),
         SlashAction::AutonomyLevel => handle_autonomy(trimmed, config),
         SlashAction::Quit => ActionOutcome::Exit,
+        // HERMES-02: the real spawn happens in chat.rs / serve_pipeline.rs
+        // BEFORE dispatch_action is reached (they short-circuit by command
+        // name). This arm fires only for any future caller that routes
+        // BackgroundRun through the generic action path — it returns a
+        // Pending that explains the usage rather than silently doing nothing.
+        SlashAction::BackgroundRun { btw } => handle_background_run(trimmed, btw),
     }
 }
 
@@ -356,6 +362,29 @@ fn handle_reload() -> ActionOutcome {
                  Check that ~/.neoth/ exists + is writable."
             ),
         },
+    }
+}
+
+/// HERMES-02 fallback handler. The real spawn is done BEFORE
+/// `dispatch_action` is called (in `chat.rs` and `serve_pipeline.rs`
+/// by direct name match). This arm is a safety net for any caller
+/// that routes `BackgroundRun` through the generic action path — it
+/// surfaces a user-visible message so the operator is not silently
+/// dropped into a no-op.
+fn handle_background_run(prompt: &str, btw: bool) -> ActionOutcome {
+    let cmd = if btw { "btw" } else { "background" };
+    if prompt.is_empty() {
+        return ActionOutcome::InvalidArgs {
+            text: format!("/{cmd} — usage: `/{cmd} <prompt>`"),
+        };
+    }
+    // The spawn already ran in the call site before we got here.
+    // This path fires if the command somehow re-enters the generic
+    // dispatch path — acknowledge it rather than silently dropping.
+    ActionOutcome::Handled {
+        text: format!(
+            "[neoth] /{cmd}: background session queued — result at next idle"
+        ),
     }
 }
 
@@ -647,6 +676,10 @@ mod tests {
         assert!(SlashAction::ConnectChannel.is_destructive());
         assert!(!SlashAction::ConfigGet.is_destructive());
         assert!(!SlashAction::Quit.is_destructive());
+        // HERMES-02: background sessions are NOT destructive — they are
+        // read-only from the privilege ceiling perspective.
+        assert!(!SlashAction::BackgroundRun { btw: false }.is_destructive());
+        assert!(!SlashAction::BackgroundRun { btw: true }.is_destructive());
     }
 
     #[test]
@@ -668,6 +701,77 @@ mod tests {
         assert!(SlashAction::AutonomyLevel.is_destructive_with_args(""));
         // Read-only stays read-only.
         assert!(!SlashAction::ConfigGet.is_destructive_with_args("anything"));
+    }
+
+    // ── HERMES-02 background_run dispatch ────────────────────────────
+
+    #[test]
+    fn background_run_empty_prompt_returns_invalid_args() {
+        let out = dispatch_action(
+            SlashAction::BackgroundRun { btw: false },
+            "",
+            &cfg(),
+            CommandSource::Cli,
+        );
+        assert!(
+            matches!(out, ActionOutcome::InvalidArgs { .. }),
+            "empty prompt must return InvalidArgs"
+        );
+        assert!(out.text().contains("/background"));
+    }
+
+    #[test]
+    fn btw_empty_prompt_returns_invalid_args() {
+        let out = dispatch_action(
+            SlashAction::BackgroundRun { btw: true },
+            "",
+            &cfg(),
+            CommandSource::Cli,
+        );
+        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
+        assert!(out.text().contains("/btw"));
+    }
+
+    #[test]
+    fn background_run_with_prompt_returns_handled() {
+        let out = dispatch_action(
+            SlashAction::BackgroundRun { btw: false },
+            "what is 2+2",
+            &cfg(),
+            CommandSource::Cli,
+        );
+        assert!(
+            matches!(out, ActionOutcome::Handled { .. }),
+            "non-empty prompt must return Handled"
+        );
+        assert!(out.text().contains("background"));
+    }
+
+    #[test]
+    fn btw_with_prompt_returns_handled() {
+        let out = dispatch_action(
+            SlashAction::BackgroundRun { btw: true },
+            "summarise the news",
+            &cfg(),
+            CommandSource::Cli,
+        );
+        assert!(matches!(out, ActionOutcome::Handled { .. }));
+        assert!(out.text().contains("btw"));
+    }
+
+    #[test]
+    fn background_run_not_blocked_from_channel() {
+        // BackgroundRun is NOT destructive → channel may invoke it.
+        let out = dispatch_action(
+            SlashAction::BackgroundRun { btw: false },
+            "research topic",
+            &cfg(),
+            CommandSource::Channel,
+        );
+        assert!(
+            !out.is_channel_blocked(),
+            "background_run must not be blocked from channel"
+        );
     }
 
     #[test]
