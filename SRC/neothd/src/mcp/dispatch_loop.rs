@@ -98,6 +98,8 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         crate::context::compaction::CompactionPolicy::disabled(),
         // GOLD-HR-08 — compression off in the bare wrapper (same rationale).
         None,
+        // HERMES-04 — judge disabled in bare wrapper (test/convenience callers).
+        None,
     )
     .await
 }
@@ -129,6 +131,10 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // (freedom.yaml::compression.enabled = false) = off; the loop is then
     // byte-for-byte identical to the pre-HR-08 behaviour.
     compression: Option<crate::context::compress::CompressionRuntime>,
+    // HERMES-04 — independent goal-judge provider. When `Some`, a separate LLM
+    // call verifies the goal is met before the loop exits on a clean exit with
+    // an active goal. `None` = judge disabled (existing nudge path fires unchanged).
+    judge_provider: Option<&dyn crate::providers::Provider>,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -241,6 +247,33 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
             // No tool calls → the model thinks it's done. GOLD-ADOPT-22: if a
             // goal/grind is active and we're under the cap, inject one nudge and
             // keep going; otherwise stop.
+            //
+            // HERMES-04: before the nudge fires, optionally run an independent
+            // judge call. If the judge says the goal IS met, skip the nudge and
+            // let the loop exit normally. Fail-open: a provider error from the
+            // judge lets the nudge fire as if the judge were absent.
+            if iterations < max_iterations {
+                if let (Some(provider), Some(goal_text)) =
+                    (judge_provider, goal_tracker.active_goal())
+                {
+                    if crate::mcp::goal_judge::judge_goal_met(
+                        goal_text,
+                        &current_text,
+                        provider,
+                        writer,
+                    )
+                    .await
+                    {
+                        tracing::info!(
+                            iteration = iterations,
+                            "HERMES-04: judge confirmed goal met — exiting loop early"
+                        );
+                        // Consume the goal so the nudge path doesn't fire.
+                        goal_tracker.mark_goal_met();
+                        break;
+                    }
+                }
+            }
             if iterations < max_iterations {
                 if let Some(nudge) = goal_tracker.on_clean_exit() {
                     // Visibility (GOLD-ADOPT-22): a grind keeps re-firing — make
@@ -1199,6 +1232,7 @@ mod tests {
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
+            None, // HERMES-04: judge disabled in tests
         )
         .await
         .unwrap();
@@ -1323,6 +1357,7 @@ mod tests {
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
+            None, // HERMES-04: judge disabled in tests
         )
         .await
         .unwrap();
@@ -1376,6 +1411,7 @@ mod tests {
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
+            None, // HERMES-04: judge disabled in tests
         )
         .await
         .unwrap();
@@ -1489,6 +1525,7 @@ mod tests {
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
+            None, // HERMES-04: judge disabled in tests
         )
         .await
         .unwrap();
@@ -1550,6 +1587,7 @@ mod tests {
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
+            None, // HERMES-04: judge disabled in tests
         )
         .await
         .unwrap();
@@ -1584,6 +1622,7 @@ mod tests {
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
+            None, // HERMES-04: judge disabled in tests
         )
         .await
         .unwrap();
@@ -1674,6 +1713,7 @@ mod tests {
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
+            None, // HERMES-04: judge disabled in tests
         )
         .await
         .unwrap();

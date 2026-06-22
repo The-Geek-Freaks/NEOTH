@@ -241,6 +241,13 @@ pub struct GoalConfig {
     /// objective is done — a persistent grind burns budget every turn.
     #[serde(default)]
     pub grind: Option<String>,
+    /// HERMES-04 — enable independent LLM judge verification on goal clean-exit.
+    /// When `true` AND a `goal` is set, the dispatch loop fires an extra provider
+    /// call to verify the goal is met before allowing an early exit. Default
+    /// `false` (opt-in) to prevent unexpected extra provider calls for operators
+    /// who have not explicitly configured a judge.
+    #[serde(default)]
+    pub judge_enabled: bool,
 }
 
 impl Default for GoalConfig {
@@ -250,6 +257,7 @@ impl Default for GoalConfig {
             max_turns: 5,
             goal: None,
             grind: None,
+            judge_enabled: false,
         }
     }
 }

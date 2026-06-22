@@ -106,6 +106,24 @@ impl GoalTracker {
         self.goal.is_some() || self.grind.is_some()
     }
 
+    /// HERMES-04 — returns the raw goal text if a goal is set AND the nudge has
+    /// not yet fired. Used by the judge path to obtain the goal for the judge
+    /// prompt without consuming it from the tracker.
+    pub fn active_goal(&self) -> Option<&str> {
+        if !self.goal_nudge_fired {
+            self.goal.as_deref()
+        } else {
+            None
+        }
+    }
+
+    /// HERMES-04 — mark the goal as already met so `on_clean_exit` skips the
+    /// nudge on the next call. Call this when the judge confirms goal-met so the
+    /// loop exits immediately without injecting a spurious nudge.
+    pub fn mark_goal_met(&mut self) {
+        self.goal_nudge_fired = true;
+    }
+
     /// Clear both goal and grind (operator `/goal off` / `/grind off` equivalent).
     pub fn clear(&mut self) {
         self.goal = None;

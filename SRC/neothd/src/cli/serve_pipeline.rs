@@ -1491,6 +1491,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         config_for_handler.compression.thresholds(),
                         crate::context::compress::default_ccr_dir(),
                     ),
+                    // HERMES-04 — judge provider for channel path. Same gate as
+                    // chat.rs: opt-in only when judge_enabled AND a goal is set.
+                    if config_for_handler.goal.judge_enabled
+                        && config_for_handler.goal.goal.is_some()
+                    {
+                        Some(provider.as_ref())
+                    } else {
+                        None
+                    },
                 )
                 .await
                 {

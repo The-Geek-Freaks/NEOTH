@@ -36,6 +36,7 @@ pub mod config;
 pub mod dispatch_loop;
 pub mod gate;
 pub mod harness;
+pub mod goal_judge;
 pub mod goal_tracker;
 pub mod hints;
 pub mod repetition_guard;

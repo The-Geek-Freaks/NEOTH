@@ -1043,6 +1043,14 @@ pub const EVENT_TYPE_BG_SESSION_STARTED: u8 = 0x87;
 /// Payload: `{job_id, label, ts_unix}`.
 pub const EVENT_TYPE_BG_SESSION_DONE: u8 = 0x88;
 
+/// `0x89 GOAL_JUDGED` — HERMES-04. An independent judge LLM call verified
+/// whether the operator's goal was met at a dispatch-loop clean exit.
+/// Audit-critical: records the verdict so the operator can confirm an early
+/// exit was warranted. Privacy: `goal_hash` is xxh3-64 hex of the raw goal
+/// text (never stored in the WAL). Payload: `{goal_hash, verdict, ts_unix}`
+/// where `verdict` is `"met"` or `"not_met"`.
+pub const EVENT_TYPE_GOAL_JUDGED: u8 = 0x89;
+
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
 /// One event moved from `idx_episode` (hot) into `idx_consolidated` (warm).
@@ -2183,6 +2191,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     ("bg_session_started", EVENT_TYPE_BG_SESSION_STARTED),
     ("bg_session_done", EVENT_TYPE_BG_SESSION_DONE),
+    ("goal_judged", EVENT_TYPE_GOAL_JUDGED),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -2514,6 +2523,8 @@ const _: () = {
         || EVENT_TYPE_BG_SESSION_STARTED > 0x8F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_BG_SESSION_DONE < 0x80 || EVENT_TYPE_BG_SESSION_DONE > 0x8F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_GOAL_JUDGED < 0x80 || EVENT_TYPE_GOAL_JUDGED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]
@@ -3060,6 +3071,7 @@ mod tests {
                 "REFLECTION_OBSERVATION_STAGED",
                 EVENT_TYPE_REFLECTION_OBSERVATION_STAGED,
             ),
+            ("GOAL_JUDGED", EVENT_TYPE_GOAL_JUDGED),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {

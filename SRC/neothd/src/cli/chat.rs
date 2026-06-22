@@ -1434,6 +1434,13 @@ async fn dispatch_provider(
                     config.compression.thresholds(),
                     crate::context::compress::default_ccr_dir(),
                 ),
+                // HERMES-04 — pass the provider as judge when judge_enabled AND a
+                // goal is set. Uses the same provider instance (no extra config).
+                if config.goal.judge_enabled && config.goal.goal.is_some() {
+                    Some(provider)
+                } else {
+                    None
+                },
             )
             .await
             {
@@ -5303,6 +5310,10 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // GOLD-HR-08 — per-block tool-result compression (freedom.yaml::compression).
     // `None` = disabled (the default); behaviour is then unchanged.
     compression: Option<crate::context::compress::CompressionRuntime>,
+    // HERMES-04 — optional independent goal-judge provider. When `Some` AND a
+    // goal is set, an extra LLM call verifies the goal before a clean exit.
+    // `None` = judge disabled (existing nudge path fires unchanged).
+    judge_provider: Option<&dyn crate::providers::Provider>,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -5397,6 +5408,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         hints_enabled,
         compaction,
         compression,
+        judge_provider,
     )
     .await
 }
