@@ -56,14 +56,15 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use automation::{
-    BgMonitorConfig, DEFAULT_DRIFT_ALERT_INTERVAL_SECS, DEFAULT_INACTIVITY_GAP_SECS,
-    DEFAULT_MONITOR_INTERVAL_SECS, DEFAULT_PATTERN_CRON_INTERVAL_SECS,
-    DEFAULT_PROFILE_ADAPT_INTERVAL_SECS, DEFAULT_RECALL_LATENCY_INTERVAL_SECS,
-    DEFAULT_REGRESSION_INTERVAL_SECS, DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
-    DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
-    DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, MonitorConfig, N8nApiConfig, PatternCronConfig,
-    ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig,
-    ResourceWatchConfig, SessionHealthConfig, TokenAnomalyConfig, WatchdogConfig,
+    BgMonitorConfig, DEFAULT_DRIFT_ALERT_INTERVAL_SECS, DEFAULT_GUIDANCE_CRON_INTERVAL_SECS,
+    DEFAULT_INACTIVITY_GAP_SECS, DEFAULT_MONITOR_INTERVAL_SECS,
+    DEFAULT_PATTERN_CRON_INTERVAL_SECS, DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
+    DEFAULT_RECALL_LATENCY_INTERVAL_SECS, DEFAULT_REGRESSION_INTERVAL_SECS,
+    DEFAULT_RESOURCE_WATCH_INTERVAL_SECS, DEFAULT_SESSION_HEALTH_INTERVAL_SECS,
+    DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS, DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig,
+    GuidanceCronConfig, MonitorConfig, N8nApiConfig, PatternCronConfig, ProactiveConfig,
+    ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig, ResourceWatchConfig,
+    SessionHealthConfig, TokenAnomalyConfig, WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -501,6 +502,12 @@ pub struct FreedomConfig {
     /// to disable entirely (no task spawns, no global registry).
     #[serde(default)]
     pub bg_monitor: BgMonitorConfig,
+    /// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron.
+    /// When `enabled`, the daemon periodically writes
+    /// `~/.neoth/guidance_snapshot.json` with freshness + 24h-signal counts
+    /// so `build_prompt_bundle` can inject richer session context. Default OFF.
+    #[serde(default)]
+    pub guidance_cron: GuidanceCronConfig,
     /// NN-MEM-06 — daily contradiction auto-resolution cron. When `enabled`,
     /// auto-resolves the `idx_contradictions` backlog: temporal-supersede
     /// (newer fact wins) · semantic-equiv (Jaccard>=0.90 merge) · human-review

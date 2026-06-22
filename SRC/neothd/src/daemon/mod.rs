@@ -133,6 +133,12 @@ pub mod watchdog_cron;
 pub mod worker_watch;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
 pub mod dreaming;
+/// GOLD-ADAPT-JV-MEM-16 — Guidance-block snapshot refresh cron. Periodically
+/// writes `~/.neoth/guidance_snapshot.json` (scorecard freshness + 24h WAL
+/// signal counts) so `build_prompt_bundle` can inject richer session context
+/// without re-scanning the WAL on every chat turn. WAL-free (reads only).
+/// Off by default (`freedom.yaml::guidance_cron.enabled: true` to opt in).
+pub mod guidance_cron;
 pub mod healthz;
 pub mod isolation;
 pub mod observability;

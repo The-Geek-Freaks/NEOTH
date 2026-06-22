@@ -3729,17 +3729,43 @@ fn maybe_guidance_block_at(home: &std::path::Path, now_unix: i64) -> Option<Stri
             0
         }
     };
-    render_guidance_block(&cards, pending)
+
+    // JV-MEM-16: load the daemon-refreshed snapshot (best-effort; None on a
+    // fresh install or when the cron is disabled — the block still renders
+    // the MEM-12 lanes from cards + pending above).
+    let snapshot = crate::daemon::guidance_cron::load_guidance_snapshot(home);
+
+    render_guidance_block(&cards, pending, snapshot.as_ref())
 }
 
 /// Render the guidance lanes. `None` when there is nothing to say (no recent
-/// cards AND no pending contradictions) so a fresh install / quiet week adds no
-/// empty block.
+/// cards, no pending contradictions, no scorecard anomaly, no 24h signals) so
+/// a fresh install / quiet week adds no empty block.
+///
+/// JV-MEM-16: the third argument is the daemon-refreshed snapshot that carries
+/// scorecard freshness + 24h WAL signal counts. Pass `None` in tests (the
+/// snapshot is absent on a fresh home — tests stay hermetic).
 fn render_guidance_block(
     recent_cards: &[crate::memory::hindsight::HindsightCard],
     pending_contradictions: usize,
+    snapshot: Option<&crate::daemon::guidance_cron::GuidanceSnapshot>,
 ) -> Option<String> {
-    if recent_cards.is_empty() && pending_contradictions == 0 {
+    // JV-MEM-16: pre-compute whether the new lanes contribute anything.
+    let has_unhealthy = snapshot.is_some_and(|s| !s.scorecard_healthy);
+    let has_signals = snapshot.is_some_and(|s| {
+        s.crash_alerts_24h
+            + s.silence_alerts_24h
+            + s.token_anomaly_24h
+            + s.session_degraded_24h
+            + s.cron_errors_24h
+            > 0
+    });
+
+    if recent_cards.is_empty()
+        && pending_contradictions == 0
+        && !has_unhealthy
+        && !has_signals
+    {
         return None;
     }
     let mut s = String::from(
@@ -3752,6 +3778,51 @@ fn render_guidance_block(
         for c in recent_cards {
             let label = c.display_name.as_deref().unwrap_or(&c.one_line_summary);
             s.push_str(&format!("- {}\n", recall_snippet(label)));
+        }
+    }
+    // JV-MEM-16: memory-quality lane (only show when unhealthy — healthy is
+    // noise that would appear on every turn).
+    if let Some(snap) = snapshot {
+        if !snap.scorecard_healthy {
+            s.push_str(&format!(
+                "### Memory quality\n\
+                 - Freshness score: {:.0}% (grade {})\n",
+                snap.scorecard_freshness * 100.0,
+                snap.scorecard_grade
+            ));
+        }
+        // JV-MEM-16: 24h signals lane (only show nonzero counts).
+        let total_signals = snap.crash_alerts_24h
+            + snap.silence_alerts_24h
+            + snap.token_anomaly_24h
+            + snap.session_degraded_24h
+            + snap.cron_errors_24h;
+        if total_signals > 0 {
+            s.push_str("### 24h system signals\n");
+            if snap.cron_errors_24h > 0 {
+                s.push_str(&format!(
+                    "- {} cron job failure(s)\n",
+                    snap.cron_errors_24h
+                ));
+            }
+            if snap.crash_alerts_24h > 0 {
+                s.push_str(&format!(
+                    "- {} crash alert(s)\n",
+                    snap.crash_alerts_24h
+                ));
+            }
+            if snap.token_anomaly_24h > 0 {
+                s.push_str(&format!(
+                    "- {} token anomaly alert(s)\n",
+                    snap.token_anomaly_24h
+                ));
+            }
+            if snap.silence_alerts_24h + snap.session_degraded_24h > 0 {
+                s.push_str(&format!(
+                    "- {} channel/session alert(s)\n",
+                    snap.silence_alerts_24h + snap.session_degraded_24h
+                ));
+            }
         }
     }
     if pending_contradictions > 0 {
@@ -7090,12 +7161,12 @@ mod tests {
 
     #[test]
     fn guidance_block_none_when_nothing_to_say() {
-        assert!(render_guidance_block(&[], 0).is_none());
+        assert!(render_guidance_block(&[], 0, None).is_none());
     }
 
     #[test]
     fn guidance_block_pending_only_omits_sessions_section() {
-        let out = render_guidance_block(&[], 3).expect("pending alone yields a block");
+        let out = render_guidance_block(&[], 3, None).expect("pending alone yields a block");
         assert!(out.contains("Session context"), "header: {out}");
         assert!(
             out.contains("3 flagged fact-contradiction"),
@@ -7122,7 +7193,7 @@ mod tests {
             one_line_summary: "4 turns on the cluster design".into(),
             display_name: None,
         };
-        let out = render_guidance_block(std::slice::from_ref(&card), 0)
+        let out = render_guidance_block(std::slice::from_ref(&card), 0, None)
             .expect("a recent card yields a block");
         assert!(out.contains("### Recent sessions"), "{out}");
         assert!(
@@ -7158,6 +7229,93 @@ mod tests {
         let out = maybe_guidance_block_at(dir.path(), 1_700_000_000)
             .expect("a pending contradiction yields a block");
         assert!(out.contains("1 flagged fact-contradiction"), "{out}");
+    }
+
+    // ── GOLD-ADAPT-JV-MEM-16 — guidance snapshot integration ────────────────
+
+    /// JV-MEM-16: verify that maybe_guidance_block_at surfaces cron errors
+    /// from a pre-written guidance_snapshot.json — proving the round-trip:
+    /// snapshot written by the daemon cron → read + rendered by the chat
+    /// assembly path that build_prompt_bundle calls.
+    #[test]
+    fn maybe_guidance_block_at_renders_cron_errors_from_snapshot() {
+        let dir = tempdir().unwrap();
+        // Write a snapshot with 2 cron errors and unhealthy freshness.
+        let snap = crate::daemon::guidance_cron::GuidanceSnapshot {
+            ts_unix: 1_700_000_000,
+            scorecard_freshness: 0.20,
+            scorecard_grade: "F".to_string(),
+            scorecard_healthy: false,
+            crash_alerts_24h: 0,
+            silence_alerts_24h: 0,
+            token_anomaly_24h: 0,
+            session_degraded_24h: 0,
+            cron_errors_24h: 2,
+        };
+        let snap_path =
+            crate::daemon::guidance_cron::guidance_snapshot_path(dir.path());
+        std::fs::create_dir_all(snap_path.parent().unwrap()).unwrap();
+        std::fs::write(&snap_path, serde_json::to_vec(&snap).unwrap()).unwrap();
+
+        // Call the same function that build_prompt_bundle calls.
+        let out = maybe_guidance_block_at(dir.path(), 1_700_000_000)
+            .expect("snapshot with cron errors must yield a guidance block");
+
+        assert!(
+            out.contains("2 cron job failure"),
+            "cron errors rendered: {out}"
+        );
+        assert!(
+            out.contains("Memory quality"),
+            "freshness lane rendered: {out}"
+        );
+        assert!(
+            out.contains("20%") || out.contains("grade F") || out.contains("(grade F)"),
+            "grade shown: {out}"
+        );
+    }
+
+    /// JV-MEM-16: verify that an unhealthy-but-zero-signals snapshot still
+    /// yields a block (memory quality lane alone is sufficient).
+    #[test]
+    fn guidance_block_unhealthy_snapshot_no_signals_yields_block() {
+        let snap = crate::daemon::guidance_cron::GuidanceSnapshot {
+            ts_unix: 1_700_000_000,
+            scorecard_freshness: 0.55,
+            scorecard_grade: "E".to_string(),
+            scorecard_healthy: false,
+            crash_alerts_24h: 0,
+            silence_alerts_24h: 0,
+            token_anomaly_24h: 0,
+            session_degraded_24h: 0,
+            cron_errors_24h: 0,
+        };
+        let out = render_guidance_block(&[], 0, Some(&snap))
+            .expect("unhealthy freshness alone should yield a block");
+        assert!(out.contains("Memory quality"), "{out}");
+        assert!(out.contains("55%") || out.contains("grade E"), "{out}");
+        assert!(!out.contains("24h system"), "no signals → no signals lane: {out}");
+    }
+
+    /// JV-MEM-16: verify that a healthy snapshot with no signals and no cards
+    /// yields None (no noisy empty block on every turn).
+    #[test]
+    fn guidance_block_healthy_snapshot_no_signals_yields_none() {
+        let snap = crate::daemon::guidance_cron::GuidanceSnapshot {
+            ts_unix: 1_700_000_000,
+            scorecard_freshness: 0.95,
+            scorecard_grade: "A".to_string(),
+            scorecard_healthy: true,
+            crash_alerts_24h: 0,
+            silence_alerts_24h: 0,
+            token_anomaly_24h: 0,
+            session_degraded_24h: 0,
+            cron_errors_24h: 0,
+        };
+        assert!(
+            render_guidance_block(&[], 0, Some(&snap)).is_none(),
+            "healthy snapshot + no signals = no block"
+        );
     }
 
     // ── GOLD-ADAPT-MEM-10 — hemisphere-aware recall ──────────────────────

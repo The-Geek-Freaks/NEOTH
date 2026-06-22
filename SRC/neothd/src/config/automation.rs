@@ -642,3 +642,43 @@ impl Default for BgMonitorConfig {
         Self { interval_secs: 5 }
     }
 }
+
+/// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron.
+///
+/// When `enabled`, the daemon scans the WAL + scorecard every
+/// `interval_secs` (default 3h) and writes
+/// `~/.neoth/guidance_snapshot.json` so the next `build_prompt_bundle`
+/// reads richer context (freshness + 24h signals + cron errors).
+///
+/// Default OFF so a fresh install carries zero idle overhead; the
+/// operator enables via `freedom.yaml::guidance_cron.enabled: true`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct GuidanceCronConfig {
+    /// Master switch. Default `false` (opt-in).
+    pub enabled: bool,
+    /// Snapshot refresh interval in seconds. Default 10800 (3h). Floor 60s.
+    pub interval_secs: u64,
+    /// Look-back window for 24h-signal counting in seconds. Default 86400 (24h).
+    pub signal_window_secs: u64,
+}
+
+/// Default snapshot refresh interval: 3 hours.
+pub const DEFAULT_GUIDANCE_CRON_INTERVAL_SECS: u64 = 10_800;
+
+impl Default for GuidanceCronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_GUIDANCE_CRON_INTERVAL_SECS,
+            signal_window_secs: 86_400,
+        }
+    }
+}
+
+impl GuidanceCronConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum.
+    pub fn interval_duration(self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}

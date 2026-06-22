@@ -340,6 +340,30 @@ pub(crate) fn spawn_monitor_cron(
     handle
 }
 
+/// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron (WAL-free).
+///
+/// Spawns when `freedom.yaml::guidance_cron.enabled: true`; writes
+/// `~/.neoth/guidance_snapshot.json` every `interval_secs` (default 3h)
+/// so `build_prompt_bundle` / `maybe_guidance_block_at` read richer context.
+/// Returns `None` (no task) when disabled (the default).
+pub(crate) fn spawn_guidance_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::guidance_cron::spawn_guidance_cron_loop(
+        config.guidance_cron,
+        FreedomConfig::default_neoth_home(),
+        wal_dir.to_path_buf(),
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.guidance_cron.interval_secs,
+            "guidance-block snapshot cron spawned (JV-MEM-16)"
+        );
+    }
+    handle
+}
+
 /// GOLD-ADAPT-JV-PRO-02 — token-anomaly tripwire cron (`0x6E`). Buckets the WAL
 /// `0x21 PROVIDER_RESPONSE` token usage over a rolling baseline + alerts on a
 /// σ-spike / >1M jump / new model. `None` when `token_anomaly.enabled = false`.
@@ -2385,6 +2409,9 @@ pub(crate) struct BackgroundHandles {
     pub bg_monitor_handle: Option<JoinHandle<()>>,
     /// NN-MEM-06 — daily contradiction auto-resolution cron handle.
     pub contradiction_resolve_cron_handle: Option<JoinHandle<()>>,
+    /// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron handle.
+    /// WAL-free; `None` when `guidance_cron.enabled = false` (default).
+    pub guidance_cron_handle: Option<JoinHandle<()>>,
     pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub rss_feed_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -2457,6 +2484,7 @@ pub(crate) async fn shutdown_background_tasks(
         pattern_cron_handle,
         bg_monitor_handle,
         contradiction_resolve_cron_handle,
+        guidance_cron_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,
@@ -2666,6 +2694,9 @@ pub(crate) async fn shutdown_background_tasks(
     // mid-tick abort leaves any in-progress SQLite batch rolled back
     // automatically on connection close — safe to cancel at any point.
     crate::cli::serve_tasks::abort_optional(contradiction_resolve_cron_handle).await;
+    // GOLD-ADAPT-JV-MEM-16 — abort the guidance-block snapshot refresh cron.
+    // WAL-free (writes only a JSON snapshot file); safe to abort at any point.
+    crate::cli::serve_tasks::abort_optional(guidance_cron_handle).await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

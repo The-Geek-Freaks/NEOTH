@@ -893,6 +893,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let contradiction_resolve_cron_handle =
         crate::cli::serve_tasks::spawn_contradiction_resolve_cron(&config);
 
+    // ── GOLD-ADAPT-JV-MEM-16 guidance-block snapshot refresh cron ─────────
+    // Writes ~/.neoth/guidance_snapshot.json every 3h (default OFF).
+    let guidance_cron_handle =
+        crate::cli::serve_tasks::spawn_guidance_cron(&config, &wal_dir);
+
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
     // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
@@ -1517,6 +1522,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         pattern_cron_handle,
         bg_monitor_handle,
         contradiction_resolve_cron_handle,
+        guidance_cron_handle,
         dreaming_task,
         arxiv_ingest_task,
         rss_feed_task,
