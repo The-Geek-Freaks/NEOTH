@@ -902,6 +902,16 @@ pub const EVENT_TYPE_DEEP_RESEARCH_STARTED: u8 = 0x6B;
 /// Payload (JSON): `{topic_hash, rounds, word_count, citation_count, ts_unix}`.
 pub const EVENT_TYPE_DEEP_RESEARCH_COMPLETED: u8 = 0x6C;
 
+/// `0x6D SKILL_PERF_SUGGESTION` — NN-MEM-05 SWIRL-style skill-improvement pass.
+/// The weekly synthesis cron identified a skill whose SkillOpt ledger shows
+/// low score-delta or high rejection rate, and generated a natural-language
+/// prompt-improvement suggestion based on the operator's top work topics.
+/// Advisory — batchable (not durability-critical). Same band-note rationale
+/// as `0x6E TOKEN_ANOMALY_DETECTED`.
+/// Payload (JSON): `{skill_id, signal_kind, score_delta_mean, rejection_rate,
+/// suggestion_hash, ts_unix}`.
+pub const EVENT_TYPE_SKILL_PERF_SUGGESTION: u8 = 0x6D;
+
 /// `0x6E TOKEN_ANOMALY_DETECTED` — GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire.
 /// The daemon cron buckets WAL `0x21 PROVIDER_RESPONSE` token usage by UTC day
 /// and emits this when the most recent active day shows a σ-spike, a `>1M` jump
@@ -1996,6 +2006,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("council_self_score", EVENT_TYPE_COUNCIL_SELF_SCORE),
     ("deep_research_started", EVENT_TYPE_DEEP_RESEARCH_STARTED),
     ("deep_research_completed", EVENT_TYPE_DEEP_RESEARCH_COMPLETED),
+    ("skill_perf_suggestion", EVENT_TYPE_SKILL_PERF_SUGGESTION),
     ("token_anomaly_detected", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
     (
         "session_health_degraded",
@@ -2404,6 +2415,8 @@ const _: () = {
         || EVENT_TYPE_DEEP_RESEARCH_STARTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_DEEP_RESEARCH_COMPLETED < 0x60
         || EVENT_TYPE_DEEP_RESEARCH_COMPLETED > 0x6F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_SKILL_PERF_SUGGESTION < 0x60
+        || EVENT_TYPE_SKILL_PERF_SUGGESTION > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TOKEN_ANOMALY_DETECTED < 0x60
         || EVENT_TYPE_TOKEN_ANOMALY_DETECTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SESSION_HEALTH_DEGRADED < 0x60

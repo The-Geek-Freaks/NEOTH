@@ -59,6 +59,8 @@ pub struct SynthesisReport {
     pub contradictions_flagged: usize,
     /// Whether a groundtruth row was written this tick.
     pub note_written: bool,
+    /// NN-MEM-05: number of skill-prompt suggestions written this tick.
+    pub skill_suggestions_written: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +85,10 @@ pub struct SynthesisNote {
     pub contradiction_flags: Vec<ContradictionFlag>,
     /// Topics that appear across multiple domain partitions.
     pub cross_cutting: Vec<CrossCuttingTopic>,
+    /// NN-MEM-05: SWIRL-style skill-prompt improvement suggestions.
+    /// Empty when `enable_skill_perf_pass = false` or the ledger has no data.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_perf_suggestions: Vec<SkillPerfSuggestion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +132,26 @@ pub struct CrossCuttingTopic {
     pub domains: Vec<String>,
 }
 
+/// NN-MEM-05 — one skill-prompt improvement suggestion from the SWIRL-style pass.
+///
+/// The synthesis cron reads the SkillOpt ledger (`~/.neoth/self_improve_log.json`)
+/// to compute per-skill accepted/rejected ratios and mean score deltas, then flags
+/// skills with low improvement signals and generates a natural-language suggestion
+/// grounded in the operator's top work topics from dimensions 1–4.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillPerfSuggestion {
+    /// The skill id (matches `ImproveRecord.skill`).
+    pub skill_id: String,
+    /// Why this skill was flagged: `"low_score_delta"` | `"high_rejection_rate"`.
+    pub signal_kind: String,
+    /// Mean `score_after - score_before` across accepted proposals in the window.
+    pub score_delta_mean: f64,
+    /// Fraction of all proposals (accepted + rejected) that were rejected (0.0–1.0).
+    pub rejection_rate: f64,
+    /// Natural-language suggestion text referencing top frequency topics.
+    pub suggestion: String,
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 
@@ -146,6 +172,20 @@ const MAX_CROSS_CUTTING: usize = 10;
 
 /// RAW_TEXT event_type in `idx_episode` (0x01).
 const RAW_TEXT_EVENT_TYPE: i64 = crate::wal::events::EVENT_TYPE_RAW_TEXT as i64;
+
+// ── NN-MEM-05 constants ──────────────────────────────────────────────────────
+
+/// SkillOpt score delta below which a skill is considered under-performing.
+const SKILL_PERF_MIN_SCORE_DELTA: f64 = 0.05;
+
+/// Rejection rate above which a skill is flagged (majority of proposals rejected).
+const SKILL_PERF_MAX_REJECTION_RATE: f64 = 0.5;
+
+/// Maximum skill suggestions per tick (prevents very long JSON blobs).
+const MAX_SKILL_SUGGESTIONS: usize = 5;
+
+/// Number of top frequency topics to mention in each suggestion text.
+const SUGGESTION_CONTEXT_TOPICS: usize = 3;
 
 // ---------------------------------------------------------------------------
 // Dimension helpers
@@ -524,6 +564,145 @@ fn iso_week_label(unix_secs: i64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Dimension 6 — NN-MEM-05 SWIRL-style skill-performance pass
+
+/// Per-skill aggregated stats computed from the SkillOpt ledger.
+struct SkillStats {
+    total: usize,
+    rejected: usize,
+    /// Deltas from accepted proposals only (`score_after - score_before`).
+    accepted_deltas: Vec<f64>,
+}
+
+/// Dimension 6 — SWIRL-style skill-performance pass (NN-MEM-05).
+///
+/// Reads `~/.neoth/self_improve_log.json` (the SkillOpt ledger), groups
+/// records by skill id, and flags skills whose SkillOpt proposals consistently
+/// show low improvement (mean `score_after - score_before < 0.05`) or high
+/// rejection rate (`rejected / total > 0.5`).
+///
+/// For each flagged skill (capped at `MAX_SKILL_SUGGESTIONS`), a natural-language
+/// suggestion string is generated that references the operator's top frequency
+/// topics from dimension 1, grounding the hint in current work context —
+/// the SWIRL "what the operator is doing right now should inform how skills are
+/// tuned" principle.
+///
+/// Pure and synchronous — runs inside `spawn_blocking` alongside dimensions 1–5.
+/// Failure-tolerant: an absent or malformed ledger yields an empty vec.
+pub(crate) fn compute_skill_perf_pass(
+    home: &Path,
+    window_start_unix: i64,
+    top_topics: &[FrequencyPeak],
+) -> Vec<SkillPerfSuggestion> {
+    let records = crate::self_improve::load_ledger(home);
+    if records.is_empty() {
+        return vec![];
+    }
+
+    // Group into per-skill stats, filtering to the synthesis window.
+    let mut by_skill: HashMap<String, SkillStats> = HashMap::new();
+    for rec in &records {
+        if rec.at_unix < window_start_unix {
+            continue;
+        }
+        let entry = by_skill.entry(rec.skill.clone()).or_insert(SkillStats {
+            total: 0,
+            rejected: 0,
+            accepted_deltas: Vec::new(),
+        });
+        entry.total += 1;
+        if rec.accepted {
+            entry.accepted_deltas.push(rec.score_after - rec.score_before);
+        } else {
+            entry.rejected += 1;
+        }
+    }
+
+    if by_skill.is_empty() {
+        return vec![];
+    }
+
+    // Build context string from top frequency topics.
+    let topic_ctx: String = top_topics
+        .iter()
+        .take(SUGGESTION_CONTEXT_TOPICS)
+        .map(|p| p.topic.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let topic_phrase = if topic_ctx.is_empty() {
+        "recent operator work".to_string()
+    } else {
+        format!("recent focus on {topic_ctx}")
+    };
+
+    // Flag skills below thresholds; deterministic order by skill id.
+    let mut skill_ids: Vec<&String> = by_skill.keys().collect();
+    skill_ids.sort_unstable();
+
+    let mut suggestions: Vec<SkillPerfSuggestion> = Vec::new();
+
+    for skill_id in skill_ids {
+        if suggestions.len() >= MAX_SKILL_SUGGESTIONS {
+            break;
+        }
+        let stats = &by_skill[skill_id];
+        if stats.total == 0 {
+            continue;
+        }
+
+        let rejection_rate = stats.rejected as f64 / stats.total as f64;
+        let score_delta_mean = if stats.accepted_deltas.is_empty() {
+            0.0
+        } else {
+            stats.accepted_deltas.iter().sum::<f64>() / stats.accepted_deltas.len() as f64
+        };
+
+        let low_delta = !stats.accepted_deltas.is_empty()
+            && score_delta_mean < SKILL_PERF_MIN_SCORE_DELTA;
+        let high_rejection = rejection_rate > SKILL_PERF_MAX_REJECTION_RATE;
+
+        if !low_delta && !high_rejection {
+            continue;
+        }
+
+        let signal_kind = if low_delta && high_rejection {
+            "low_score_delta+high_rejection_rate".to_string()
+        } else if low_delta {
+            "low_score_delta".to_string()
+        } else {
+            "high_rejection_rate".to_string()
+        };
+
+        let suggestion = if high_rejection && !low_delta {
+            format!(
+                "Skill `{skill_id}` had {:.0}% of SkillOpt proposals rejected in this synthesis \
+                 window. Given {topic_phrase}, review whether the skill's system prompt \
+                 accurately reflects the operator's current priorities and task patterns. \
+                 Consider broadening its framing or clarifying its scope.",
+                rejection_rate * 100.0,
+            )
+        } else {
+            format!(
+                "Skill `{skill_id}` accepted proposals show a mean score improvement of only \
+                 {score_delta_mean:.3} (threshold {SKILL_PERF_MIN_SCORE_DELTA}). Given \
+                 {topic_phrase}, the skill prompt may not be aligned with current work patterns. \
+                 Consider refining its system prompt to better match these topics.",
+            )
+        };
+
+        suggestions.push(SkillPerfSuggestion {
+            skill_id: skill_id.clone(),
+            signal_kind,
+            score_delta_mean,
+            rejection_rate,
+            suggestion,
+        });
+    }
+
+    suggestions
+}
+
+// ---------------------------------------------------------------------------
 // Main tick function
 
 /// One synthesis tick. Opens `db_path`, runs all 5 dimensions, writes the
@@ -575,6 +754,15 @@ pub fn run_synthesis_tick_once(
     // ── Dimension 5: cross-cutting topics ───────────────────────────────────
     let cross_cutting = compute_cross_cutting(&conn, window_start_ns, now_ns, &frequency_peaks);
 
+    // ── Dimension 6 (NN-MEM-05): SWIRL-style skill-perf pass ────────────────
+    let window_start_unix = window_start_ns / 1_000_000_000;
+    let skill_perf_suggestions = if config.enable_skill_perf_pass {
+        compute_skill_perf_pass(home, window_start_unix, &frequency_peaks)
+    } else {
+        vec![]
+    };
+    let skill_suggestions_written = skill_perf_suggestions.len();
+
     let topics_analyzed = frequency_peaks.len();
     let correlations_found = domain_correlations.len();
     let contradictions_flagged = contradiction_flags.len();
@@ -588,6 +776,7 @@ pub fn run_synthesis_tick_once(
         domain_correlations,
         contradiction_flags,
         cross_cutting,
+        skill_perf_suggestions,
     };
 
     let statement = serde_json::to_string(&note)
@@ -610,7 +799,8 @@ pub fn run_synthesis_tick_once(
                 topics = topics_analyzed,
                 correlations = correlations_found,
                 contradictions = contradictions_flagged,
-                "NN-MEM-02: synthesis note written to idx_groundtruth"
+                skill_suggestions = skill_suggestions_written,
+                "NN-MEM-02/NN-MEM-05: synthesis note written to idx_groundtruth"
             );
             true
         }
@@ -656,6 +846,7 @@ pub fn run_synthesis_tick_once(
         correlations_found,
         contradictions_flagged,
         note_written,
+        skill_suggestions_written,
     })
 }
 
@@ -766,7 +957,8 @@ pub fn spawn_synthesis_cron_loop(
                         correlations_found = report.correlations_found,
                         contradictions_flagged = report.contradictions_flagged,
                         note_written = report.note_written,
-                        "NN-MEM-02: synthesis cron tick complete",
+                        skill_suggestions_written = report.skill_suggestions_written,
+                        "NN-MEM-02/NN-MEM-05: synthesis cron tick complete",
                     ),
                     Err(e) => tracing::error!(
                         error = %e,
@@ -807,6 +999,7 @@ mod tests {
             enabled: true,
             interval_secs: 604_800,
             window_days: 30,
+            enable_skill_perf_pass: false,
         };
         let handle = spawn_synthesis_cron_loop(cfg, "/nonexistent".into(), "/nonexistent".into())
             .expect("handle when enabled");
@@ -862,6 +1055,7 @@ mod tests {
             enabled: true,
             interval_secs: 604_800,
             window_days: 30,
+            enable_skill_perf_pass: false,
         };
         let report = run_synthesis_tick_once(
             &db_path,
@@ -917,6 +1111,7 @@ mod tests {
             enabled: true,
             interval_secs: 0,
             window_days: 30,
+            enable_skill_perf_pass: false,
         };
         assert_eq!(cfg.interval_duration(), Duration::from_secs(60));
     }
@@ -953,6 +1148,7 @@ mod tests {
             domain_correlations: vec![],
             contradiction_flags: vec![],
             cross_cutting: vec![],
+            skill_perf_suggestions: vec![],
         };
         let md = build_synthesis_markdown(&note, 1_750_000_000);
         assert!(md.contains("2026-W25"), "must contain week label");

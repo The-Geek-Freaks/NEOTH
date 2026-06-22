@@ -708,6 +708,12 @@ pub struct SynthesisCronConfig {
     pub interval_secs: u64,
     /// Episode look-back window in days. Default 30.
     pub window_days: u64,
+    /// NN-MEM-05: enable the SWIRL-style skill-performance dimension within the
+    /// synthesis pass. Reads `~/.neoth/self_improve_log.json` and emits
+    /// skill-prompt improvement suggestions. Default `false` (opt-in within the
+    /// synthesis_cron opt-in, since it needs the SkillOpt ledger to have data).
+    /// No-op when the ledger is empty.
+    pub enable_skill_perf_pass: bool,
 }
 
 impl Default for SynthesisCronConfig {
@@ -716,6 +722,7 @@ impl Default for SynthesisCronConfig {
             enabled: false,
             interval_secs: DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS,
             window_days: DEFAULT_SYNTHESIS_WINDOW_DAYS,
+            enable_skill_perf_pass: false,
         }
     }
 }
