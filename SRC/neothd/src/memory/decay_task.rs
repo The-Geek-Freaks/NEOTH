@@ -247,6 +247,13 @@ async fn summarize_consolidated_days(
     provider: &dyn Provider,
     days: &[(String, Vec<(i64, String)>)],
 ) {
+    // GOLD-ADAPT-SPEAKR-01 — load the operator's summarize prompt-layer override
+    // ONCE per pass (best-effort; an absent/unreadable config → hardcoded
+    // defaults, byte-identical to the legacy prompt). Composed per-day below.
+    let meeting_cfg = crate::config::FreedomConfig::load_from_default_path()
+        .ok()
+        .map(|c| c.skills.meeting_summary);
+    let layers = crate::memory::warm_summarize::summary_layers(meeting_cfg.as_ref());
     for (day, _events_this_pass) in days {
         // Load the FULL retained set for this day (check + fetch in one open).
         // Returns None when the day already has a summary or has < 2 rows.
@@ -268,7 +275,9 @@ async fn summarize_consolidated_days(
         };
 
         let summary =
-            match crate::memory::warm_summarize::summarize_day_batch(provider, &all_events).await {
+            match crate::memory::warm_summarize::summarize_day_batch(provider, &all_events, &layers)
+                .await
+            {
                 Ok(s) if !s.is_empty() => s,
                 Ok(_) => continue,
                 Err(e) => {

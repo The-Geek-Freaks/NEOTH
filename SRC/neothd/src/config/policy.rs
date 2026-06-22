@@ -104,6 +104,39 @@ pub struct SkillsConfig {
     /// false-activate a turn. Default `false` = gated mode = curated skill set.
     #[serde(default)]
     pub enable_all_bundled: bool,
+
+    /// GOLD-ADAPT-SPEAKR-01 — operator-overridable 5-layer prompt for the
+    /// warm-tier / meeting summarization path. Empty by default → the
+    /// hardcoded summarizer prompt is used; any set layer overrides it
+    /// (see [`crate::memory::summarize_prompt::SummarizePromptLayers`]).
+    #[serde(default)]
+    pub meeting_summary: MeetingSummaryConfig,
+}
+
+/// GOLD-ADAPT-SPEAKR-01 — config mirror of the 5 summarize prompt layers.
+/// Kept as a plain `Eq` config struct (so `SkillsConfig: Eq` holds) and
+/// mapped to [`crate::memory::summarize_prompt::SummarizePromptLayers`] at the
+/// summarize call site. All layers default to `None` → the hardcoded prompt.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MeetingSummaryConfig {
+    /// Highest-priority context layer → provider `system` prompt.
+    #[serde(default)]
+    pub admin: Option<String>,
+    /// User-supplied instruction override → provider `user` prompt.
+    #[serde(default)]
+    pub user: Option<String>,
+    /// Folder/context-scoped layer → `system` side.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// Tag-scoped layer → `user` side.
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Lowest-priority append layer → `user` side.
+    #[serde(default)]
+    pub append: Option<String>,
+    /// Concatenate all set layers instead of short-circuiting at the first.
+    #[serde(default)]
+    pub append_mode: bool,
 }
 
 fn default_skills_always_embed_route() -> bool {
@@ -120,6 +153,7 @@ impl Default for SkillsConfig {
             disabled: Vec::new(),
             enabled: Vec::new(),
             enable_all_bundled: false,
+            meeting_summary: MeetingSummaryConfig::default(),
         }
     }
 }

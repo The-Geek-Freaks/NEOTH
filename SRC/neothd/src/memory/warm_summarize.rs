@@ -18,18 +18,30 @@
 //! that closure returns (never nested), writing the summary rows for next
 //! recall to find.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 
+use crate::config::policy::MeetingSummaryConfig;
+use crate::memory::summarize_prompt::SummarizePromptLayers;
 use crate::providers::{Provider, Request};
 
 /// Max chars of concatenated event text fed to the summarizer — keeps the
 /// prompt cheap on local weights even for a busy day.
 const MAX_SUMMARY_INPUT_CHARS: usize = 2000;
 
-/// Build the summarize prompt for one day's retained events. Pure (no I/O), so
-/// the prompt shape is unit-testable without a provider.
-pub fn build_summary_prompt(events: &[(i64, String)]) -> String {
+/// GOLD-ADAPT-SPEAKR-01 — the hardcoded baseline summarizer layers. The
+/// system framing lands in the `admin` (context) slot, the instruction in the
+/// `append` (lowest-priority instruction) slot, so an operator's
+/// `skills.meeting_summary.*` layers override either independently.
+pub const DEFAULT_SUMMARY_SYSTEM: &str = "You are a terse memory summarizer.";
+pub const DEFAULT_SUMMARY_INSTRUCTION: &str =
+    "Summarize the following memory events from a single day in 2-3 sentences. \
+     Preserve names, dates, and decisions; drop filler.";
+
+/// Build the bounded event body (truncated, UTF-8-safe). Pure (no I/O).
+pub fn build_summary_body(events: &[(i64, String)]) -> String {
     let mut body = String::new();
     for (_id, text) in events {
         let t = text.trim();
@@ -54,23 +66,74 @@ pub fn build_summary_prompt(events: &[(i64, String)]) -> String {
             break;
         }
     }
+    body.trim().to_string()
+}
+
+/// Build the default summarize prompt (instruction + body). Pure; retained for
+/// the back-compat / unit-test surface.
+pub fn build_summary_prompt(events: &[(i64, String)]) -> String {
     format!(
-        "Summarize the following memory events from a single day in 2-3 sentences. \
-         Preserve names, dates, and decisions; drop filler.\n\n{}",
-        body.trim()
+        "{DEFAULT_SUMMARY_INSTRUCTION}\n\n{}",
+        build_summary_body(events)
     )
+}
+
+/// GOLD-ADAPT-SPEAKR-01 — map the operator's `skills.meeting_summary` config
+/// onto [`SummarizePromptLayers`], seeded with the hardcoded defaults so a
+/// fully-empty config reproduces the legacy prompt exactly. Any set layer
+/// overrides its default.
+pub fn summary_layers(cfg: Option<&MeetingSummaryConfig>) -> SummarizePromptLayers {
+    let mut layers = SummarizePromptLayers {
+        admin: Some(DEFAULT_SUMMARY_SYSTEM.to_string()),
+        append: Some(DEFAULT_SUMMARY_INSTRUCTION.to_string()),
+        ..Default::default()
+    };
+    if let Some(c) = cfg {
+        if c.admin.is_some() {
+            layers.admin = c.admin.clone();
+        }
+        if c.user.is_some() {
+            layers.user = c.user.clone();
+        }
+        if c.folder.is_some() {
+            layers.folder = c.folder.clone();
+        }
+        if c.tag.is_some() {
+            layers.tag = c.tag.clone();
+        }
+        if c.append.is_some() {
+            layers.append = c.append.clone();
+        }
+        layers.append_mode = c.append_mode;
+    }
+    layers
 }
 
 /// Summarize one day's retained events via the (local) provider. Async — call
 /// it from the async consolidation pass, NEVER from inside a `spawn_blocking`
 /// closure (see the module note on the nested-`block_on` deadlock).
+///
+/// GOLD-ADAPT-SPEAKR-01: the (system, instruction) prompt is composed from
+/// `layers` ([`summary_layers`]) so an operator can override the summarizer
+/// prompt via `freedom.yaml::skills.meeting_summary`. The event body is appended
+/// to the composed instruction. Empty composed sides fall back to the hardcoded
+/// defaults (defence-in-depth — `summary_layers` always seeds them).
 pub async fn summarize_day_batch(
     provider: &dyn Provider,
     events: &[(i64, String)],
+    layers: &SummarizePromptLayers,
 ) -> Result<String> {
+    let body = build_summary_body(events);
+    let (mut system, mut instruction) = layers.compose_with_roles(&HashMap::new());
+    if system.trim().is_empty() {
+        system = DEFAULT_SUMMARY_SYSTEM.to_string();
+    }
+    if instruction.trim().is_empty() {
+        instruction = DEFAULT_SUMMARY_INSTRUCTION.to_string();
+    }
     let req = Request {
-        prompt: build_summary_prompt(events),
-        system: Some("You are a terse memory summarizer.".to_string()),
+        prompt: format!("{instruction}\n\n{body}"),
+        system: Some(system),
         ..Default::default()
     };
     let completion = provider
@@ -274,8 +337,32 @@ mod tests {
             (1, "did a thing".to_string()),
             (2, "did another".to_string()),
         ];
-        let summary = summarize_day_batch(&StubSummarizer, &events).await.unwrap();
+        let summary = summarize_day_batch(&StubSummarizer, &events, &summary_layers(None))
+            .await
+            .unwrap();
         assert_eq!(summary, "Alex shipped Nostr and OP-01.", "trimmed");
+    }
+
+    // GOLD-ADAPT-SPEAKR-01 — default layers reproduce the legacy prompt exactly.
+    #[test]
+    fn summary_layers_default_reproduces_hardcoded_prompt() {
+        let layers = summary_layers(None);
+        let (system, instruction) = layers.compose_with_roles(&HashMap::new());
+        assert_eq!(system, DEFAULT_SUMMARY_SYSTEM);
+        assert_eq!(instruction, DEFAULT_SUMMARY_INSTRUCTION);
+    }
+
+    // GOLD-ADAPT-SPEAKR-01 — an operator `user` layer overrides the default
+    // instruction on the live summarize path (the wiring this item adds).
+    #[test]
+    fn summary_layers_operator_override_replaces_instruction() {
+        let cfg = MeetingSummaryConfig {
+            user: Some("Summarize as 5 bullet points.".to_string()),
+            ..Default::default()
+        };
+        let layers = summary_layers(Some(&cfg));
+        let (_system, instruction) = layers.compose_with_roles(&HashMap::new());
+        assert_eq!(instruction, "Summarize as 5 bullet points.");
     }
 
     #[test]
