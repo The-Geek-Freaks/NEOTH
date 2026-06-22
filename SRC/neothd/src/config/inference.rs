@@ -525,6 +525,28 @@ pub enum SelectionMode {
 /// trip cleanly. The defaults preserve Session-14-and-prior
 /// behaviour exactly — operators must explicitly opt in to each
 /// new feature to see any change.
+/// GOLD-ADAPT-LOWKEY-01b — what the deterministic self-score gate DOES when an
+/// answer's composite falls below the configured minimum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelfScoreAction {
+    /// Emit a STDERR warning + the durable `0x6A` WAL frame, deliver the answer
+    /// UNCHANGED (observe-only — the pre-LOWKEY-01b default).
+    #[default]
+    Warn,
+    /// Withhold the low-quality answer: deliver a short notice instead. The
+    /// `0x6A` audit frame still records the score + the block.
+    Block,
+    /// Re-refine the winning hemisphere up to `self_score_max_redos` times,
+    /// keeping the best-composite candidate; if it still fails the gate, fall
+    /// through to the Warn behaviour.
+    Redo,
+}
+
+fn default_self_score_max_redos() -> u8 {
+    1
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CouncilConfig {
     /// Winner-selection strategy. See [`SelectionMode`].
@@ -610,6 +632,19 @@ pub struct CouncilConfig {
     /// Set via `freedom.yaml::council.self_score_min_composite`.
     #[serde(default)]
     pub self_score_min_composite: Option<f32>,
+
+    /// GOLD-ADAPT-LOWKEY-01b — what the self-score gate DOES when it fires:
+    /// `warn` (default, observe-only) | `block` (withhold the answer, deliver a
+    /// notice) | `redo` (re-refine up to `self_score_max_redos`, keep the best).
+    /// Only meaningful when `self_score_enabled = true`.
+    #[serde(default)]
+    pub self_score_action: SelfScoreAction,
+
+    /// GOLD-ADAPT-LOWKEY-01b — max re-refine passes when
+    /// `self_score_action = redo`. Floored at 1 by
+    /// [`CouncilConfig::effective_self_score_max_redos`]. Default 1.
+    #[serde(default = "default_self_score_max_redos")]
+    pub self_score_max_redos: u8,
 
     /// Weight multiplier on cross-outer dissent score for the
     /// `QualityScore.diversity_bonus` component. `None` → use
@@ -775,6 +810,12 @@ impl CouncilConfig {
             .unwrap_or(crate::council::self_reflect::DEFAULT_SELF_SCORE_MIN_COMPOSITE)
     }
 
+    /// GOLD-ADAPT-LOWKEY-01b — redo count floored at 1 (a `Redo` action always
+    /// retries at least once; a config `0` would otherwise be a silent no-op).
+    pub fn effective_self_score_max_redos(&self) -> u8 {
+        self.self_score_max_redos.max(1)
+    }
+
     /// Effective `diversity_bonus_weight`.
     pub fn effective_diversity_bonus_weight(&self) -> f32 {
         self.diversity_bonus_weight
@@ -901,6 +942,35 @@ impl HemisphereRole {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn self_score_action_defaults_to_warn() {
+        assert_eq!(CouncilConfig::default().self_score_action, SelfScoreAction::Warn);
+        assert_eq!(SelfScoreAction::default(), SelfScoreAction::Warn);
+    }
+
+    #[test]
+    fn self_score_action_serde_round_trips_snake_case() {
+        // The freedom.yaml surface is snake_case.
+        for (s, want) in [
+            ("\"warn\"", SelfScoreAction::Warn),
+            ("\"block\"", SelfScoreAction::Block),
+            ("\"redo\"", SelfScoreAction::Redo),
+        ] {
+            let got: SelfScoreAction = serde_json::from_str(s).unwrap();
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn effective_self_score_max_redos_floors_at_one() {
+        let mut cfg = CouncilConfig::default();
+        // A Redo action with a config 0 must still retry at least once.
+        cfg.self_score_max_redos = 0;
+        assert_eq!(cfg.effective_self_score_max_redos(), 1);
+        cfg.self_score_max_redos = 3;
+        assert_eq!(cfg.effective_self_score_max_redos(), 3);
+    }
 
     #[test]
     fn provider_round_trips_through_from_str() {

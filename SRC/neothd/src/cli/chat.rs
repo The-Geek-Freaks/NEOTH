@@ -4868,7 +4868,7 @@ pub(crate) async fn dispatch_council_with_recovery(
         .await;
         // SP-5 (Session 14) — self-reflect refinement pass.
         // Threshold + kill-switch gated; fail-safe on any error.
-        let final_text = if crate::council::self_reflect::should_refine(config, winner.score, 0) {
+        let mut final_text = if crate::council::self_reflect::should_refine(config, winner.score, 0) {
             match build_hemisphere(config, winner.role, req).await {
                 Ok(reflect_hemisphere) => {
                     let refined = crate::council::self_reflect::refine(
@@ -4890,14 +4890,48 @@ pub(crate) async fn dispatch_council_with_recovery(
         } else {
             winner.text.clone()
         };
-        // GOLD-ADAPT-LOWKEY-01 — deterministic self-score gate.
-        // Scores the resolved answer on 4 axes (no LLM call); emits a
-        // durable 0x6A COUNCIL_SELF_SCORE WAL audit frame; surfaces a
-        // STDERR warning if composite falls below the operator-configured
-        // minimum. Never touches final_text.
+        // GOLD-ADAPT-LOWKEY-01/01b — deterministic self-score gate.
+        // Scores the resolved answer on 4 axes (no LLM call), then acts per
+        // `council.self_score_action`: Warn (observe-only, default), Block
+        // (withhold + deliver a notice), or Redo (re-refine the winning
+        // hemisphere up to `effective_self_score_max_redos`, keep the best
+        // composite). A durable 0x6A COUNCIL_SELF_SCORE WAL frame is always
+        // emitted; it now records the action taken + redo count.
         {
-            let self_score = crate::council::self_reflect::score_answer(&final_text);
+            let mut self_score = crate::council::self_reflect::score_answer(&final_text);
+            let action = config.council.self_score_action;
+            let mut redos: u8 = 0;
+            // Redo: re-refine while the gate still fires, keeping the best
+            // composite candidate. Opt-in (action == Redo) only.
+            if action == crate::config::inference::SelfScoreAction::Redo
+                && crate::council::self_reflect::should_gate(config, &self_score)
+            {
+                let max_redos = config.council.effective_self_score_max_redos();
+                while redos < max_redos
+                    && crate::council::self_reflect::should_gate(config, &self_score)
+                {
+                    redos += 1;
+                    match build_hemisphere(config, winner.role, req).await {
+                        Ok(h) => {
+                            let cand =
+                                crate::council::self_reflect::refine(&req.prompt, &final_text, &h)
+                                    .await
+                                    .refined;
+                            let cand_score = crate::council::self_reflect::score_answer(&cand);
+                            if cand_score.composite() > self_score.composite() {
+                                final_text = cand;
+                                self_score = cand_score;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "self-score redo: hemisphere rebuild failed");
+                            break;
+                        }
+                    }
+                }
+            }
             let below = crate::council::self_reflect::should_gate(config, &self_score);
+            let blocked = below && action == crate::config::inference::SelfScoreAction::Block;
             let payload = serde_json::to_vec(&serde_json::json!({
                 "prompt_hash": prompt_hash_outer,
                 "correctness": self_score.correctness,
@@ -4906,6 +4940,9 @@ pub(crate) async fn dispatch_council_with_recovery(
                 "evidence": self_score.evidence,
                 "composite": self_score.composite(),
                 "below_threshold": below,
+                "action": format!("{action:?}"),
+                "redos": redos,
+                "blocked": blocked,
                 "ts_unix": now_unix(),
             }))
             .unwrap_or_default();
@@ -4919,10 +4956,24 @@ pub(crate) async fn dispatch_council_with_recovery(
                     "COUNCIL_SELF_SCORE WAL emit failed (non-fatal)"
                 );
             }
-            if below {
-                eprintln!(
-                    "[neoth:self-score] composite {:.2} below threshold — answer may lack evidence or completeness",
+            if blocked {
+                tracing::warn!(
+                    composite = self_score.composite(),
+                    "LOWKEY-01b self-score BLOCK — answer withheld"
+                );
+                final_text = format!(
+                    "[withheld] The generated answer scored {:.2} on the deterministic self-quality gate (below the configured minimum) and was withheld per council.self_score_action=block. Lower council.self_score_min_composite or change the action to receive it.",
                     self_score.composite()
+                );
+            } else if below {
+                eprintln!(
+                    "[neoth:self-score] composite {:.2} below threshold — answer may lack evidence or completeness{}",
+                    self_score.composite(),
+                    if redos > 0 {
+                        format!(" (after {redos} redo pass(es))")
+                    } else {
+                        String::new()
+                    }
                 );
             }
         }
