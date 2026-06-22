@@ -19,7 +19,8 @@ use serde_json::json;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
-use crate::cron::schema::Job;
+use crate::cron::briefing_prompt::render_briefing_system_prompt;
+use crate::cron::schema::{classify_role, CronRole, Job};
 use crate::profile::briefing_gate::should_emit_for_briefing;
 use crate::profile::briefing_policy::{BriefingPolicy, EmitVerdict};
 use crate::profile::estimators::ObservedTurn;
@@ -117,10 +118,28 @@ pub async fn run_job(
             }
         };
 
+    // ── OH-06: inject system prompt for Briefing-classified jobs ──────────
+    // `classify_role` uses keyword/name heuristic — no I/O.
+    // Seed = UTC day number so the greeting is stable across the two 30 s
+    // ticks that may both visit the same cron minute, but rotates daily.
+    let system_prompt: Option<String> = if classify_role(job) == CronRole::Briefing {
+        let tz = job.schedule.timezone();
+        let now_local = chrono::Utc::now().with_timezone(&tz);
+        let local_dt = now_local.format("%A, %Y-%m-%d %H:%M").to_string();
+        // Use the IANA name string (via the tz field or "UTC" fallback).
+        let tz_name = job.schedule.tz.as_deref().unwrap_or("UTC");
+        let _greeting = crate::cron::briefing_prompt::pick_greeting(
+            (crate::time::now_unix_i64().max(0) as u64) / 86_400,
+        );
+        Some(render_briefing_system_prompt(tz_name, &local_dt))
+    } else {
+        None
+    };
+
     // ── Provider call (bounded by timeout_seconds) ─────────────────────────
     let req = Request {
         prompt: effective_prompt,
-        system: None,
+        system: system_prompt,
         model: None,
         ..Default::default()
     };
@@ -157,7 +176,11 @@ pub async fn run_job(
     if ok {
         // Score the briefing's quality; a thin / filler-heavy proactive output is
         // worse than none — make it visible so the operator can tune/regenerate.
-        let q = crate::cron::quality_gate::score_briefing(&output_text, 40);
+        // OH-06: raise floor to 80 words — the OH spec targets 200-400 words;
+        // 40 was a pre-OH generic floor. 80 is the minimum sane "morning coffee
+        // read" check (a proper 200-word brief with headings still passes at 80
+        // via title/citation bonuses; pure-filler outputs are caught by filler_ratio).
+        let q = crate::cron::quality_gate::score_briefing(&output_text, 80);
         if q.should_regenerate() {
             warn!(
                 job_id = %job.id,
@@ -398,6 +421,7 @@ mod workstream_c_tests {
     use async_trait::async_trait;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use tempfile::tempdir;
 
     fn briefing_job() -> Job {
@@ -617,5 +641,140 @@ mod workstream_c_tests {
         assert_ne!(EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_FIRED);
         assert_ne!(EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_SUCCESS);
         assert_ne!(EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_FAILED);
+    }
+
+    // ─── OH-06: Briefing system-prompt injection ──────────────────────────
+
+    /// A provider that captures the `Request::system` field it receives.
+    struct SystemCapturingProvider {
+        captured_system: Arc<Mutex<Option<String>>>,
+    }
+
+    #[async_trait]
+    impl Provider for SystemCapturingProvider {
+        fn name(&self) -> &'static str {
+            "cap-system-mock"
+        }
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            *self.captured_system.lock().unwrap() = req.system.clone();
+            // Return a long enough output so the quality gate (min_words=80)
+            // does not warn — it still warns in real production for short
+            // outputs but we don't want it to mask the test assertions.
+            let long_text = "## Morning Brief — 2026-06-22\n\n\
+                Guten Morgen! Here is your daily briefing.\n\n\
+                ### Tech\n- Rust 2024 edition shipped with major improvements.\n\
+                - Tokio 2.0 beta released with lower p99 latency.\n\
+                - Bevy 0.14 reached stable with improved GPU rendering.\n\n\
+                ### Calendar\nCalendar: not connected — skipping.\n\n\
+                ### News Feed\nNews feed: unavailable. Configure a feed URL to populate this section.\n\n\
+                ### Summary\nA quiet morning. Check your feeds once connected.\n\
+                More placeholder words to satisfy the 80-word minimum gate check here.\n"
+                .to_string();
+            Ok(Completion {
+                text: long_text,
+                model: "mock".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(10),
+                output_tokens: Some(120),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn briefing_job_receives_system_prompt_with_tz_and_no_fabricate() {
+        // Arrange: a morning-briefing job whose name triggers classify_role → Briefing.
+        let job = Job {
+            id: "morning_brief_oh06".into(),
+            name: "Morning Briefing".into(),
+            enabled: true,
+            schedule: Schedule {
+                cron: "0 7 * * *".into(),
+                tz: Some("Europe/Berlin".into()),
+            },
+            prompt: "Summarise the overnight events.".into(),
+            timeout_seconds: 30,
+            delivery: None,
+            depends_on: vec![],
+        };
+
+        let captured_system: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let provider = SystemCapturingProvider {
+            captured_system: captured_system.clone(),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("oh06.wal");
+        let (writer, join) = crate::wal::spawn(seg).unwrap();
+
+        run_job(&job, &provider, &writer).await.expect("run_job must succeed");
+
+        drop(writer);
+        let _ = join.await;
+
+        // Assert: system prompt was injected and contains required OH clauses.
+        let sys = captured_system
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("system must be Some(…) for Briefing-classified jobs");
+
+        assert!(
+            sys.contains("Europe/Berlin"),
+            "tz name must appear in system prompt; got: {sys}"
+        );
+        assert!(
+            sys.contains("200") && sys.contains("400"),
+            "word-count target (200–400) must appear in system prompt; got: {sys}"
+        );
+        assert!(
+            sys.to_ascii_lowercase().contains("fabricat")
+                || sys.to_ascii_lowercase().contains("invent"),
+            "no-fabricate rule must appear in system prompt; got: {sys}"
+        );
+        assert!(
+            sys.to_ascii_lowercase().contains("gap")
+                || sys.to_ascii_lowercase().contains("not connected")
+                || sys.to_ascii_lowercase().contains("unavailable"),
+            "honest-about-gaps rule must appear in system prompt; got: {sys}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_briefing_job_receives_no_system_prompt() {
+        // A maintenance job must NOT get a system prompt injected.
+        let job = Job {
+            id: "cleanup_oh06".into(),
+            name: "Database Cleanup".into(),
+            enabled: true,
+            schedule: Schedule {
+                cron: "0 3 * * *".into(),
+                tz: None,
+            },
+            prompt: "Run database vacuum and prune old records.".into(),
+            timeout_seconds: 60,
+            delivery: None,
+            depends_on: vec![],
+        };
+
+        let captured_system: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let provider = SystemCapturingProvider {
+            captured_system: captured_system.clone(),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("oh06_nonbriefing.wal");
+        let (writer, join) = crate::wal::spawn(seg).unwrap();
+
+        run_job(&job, &provider, &writer).await.expect("run_job must succeed");
+
+        drop(writer);
+        let _ = join.await;
+
+        let sys = captured_system.lock().unwrap().clone();
+        assert!(
+            sys.is_none(),
+            "non-Briefing job must receive system: None, got Some({:?})",
+            sys
+        );
     }
 }
