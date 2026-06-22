@@ -21,6 +21,12 @@ pub mod archive;
 pub mod assoc_graph;
 pub mod bulk_text;
 pub mod channel_weights;
+/// GOLD-ADAPT-MEM-05 — Pre-compaction backup + persisted counter.
+/// Snapshots session state + bumps a counter before any compaction so a
+/// bad compaction is recoverable. Wire as a pre-compact hook in the
+/// dispatch loop (follow-up — caller is parallel-hot). Standalone +
+/// headless-tested.
+pub mod compaction_guard;
 pub mod consolidate;
 /// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory eval harness.
 /// `neoth memory-eval` runs a synthetic recall benchmark against a fresh
