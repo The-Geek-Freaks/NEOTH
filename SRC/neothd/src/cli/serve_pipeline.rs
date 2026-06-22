@@ -1003,6 +1003,65 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let (final_prompt, system_override) =
                 match crate::slash::parse_invocation(&sanitized_text) {
                     crate::slash::Invocation::Command { name, args } => {
+                        // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
+                        // Read-only: no system mutation → not blocked by the channel
+                        // privilege ceiling. Runs the multi-step search→read→synthesize
+                        // loop and returns the result as an OutboundMessage reply.
+                        if name == "research" {
+                            let topic = args.trim();
+                            let reply_text = if topic.is_empty() {
+                                "Usage: /research <topic>".to_string()
+                            } else {
+                                let search_provider =
+                                    crate::tools::deep_research::resolve_search_provider();
+                                match crate::tools::deep_research::resolve_search_key(
+                                    search_provider,
+                                ) {
+                                    Err(e) => format!("deep-research: {e}"),
+                                    Ok(search_key) => {
+                                        info!(
+                                            channel = channel_str,
+                                            topic = topic,
+                                            "slash /research: starting deep-research engine"
+                                        );
+                                        match crate::tools::deep_research::run_deep_research(
+                                            topic,
+                                            provider.as_ref(),
+                                            &search_key,
+                                            search_provider,
+                                            &config_for_handler.deep_research,
+                                            &writer,
+                                        )
+                                        .await
+                                        {
+                                            Ok(report) => {
+                                                let mut out = report.article.clone();
+                                                if !report.citations.is_empty() {
+                                                    out.push_str("\n\n---\nSources:\n");
+                                                    for (i, c) in
+                                                        report.citations.iter().enumerate()
+                                                    {
+                                                        out.push_str(&format!(
+                                                            "[{}] {} — {}\n",
+                                                            i + 1,
+                                                            c.title,
+                                                            c.url
+                                                        ));
+                                                    }
+                                                }
+                                                out
+                                            }
+                                            Err(e) => format!("deep-research error: {e:#}"),
+                                        }
+                                    }
+                                }
+                            };
+                            return Ok(::std::option::Option::Some(OutboundMessage {
+                                recipient_id: inbound.sender_id.clone(),
+                                text: reply_text,
+                            }));
+                        }
+
                         let slash_dir =
                             crate::config::FreedomConfig::default_neoth_home().join("commands");
                         let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
@@ -1190,7 +1249,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // in the process-global pending_clarifications store between turns.
             let final_prompt = if crate::cli::clarify_chat::enabled() {
                 crate::memory::pending_clarifications::take_combined(
-                    &channel_str,
+                    channel_str,
                     &sender_hash,
                     &final_prompt,
                 )
@@ -1442,7 +1501,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 && crate::daemon::clarify::is_ambiguous(&completion.text)
             {
                 crate::memory::pending_clarifications::store(
-                    &channel_str,
+                    channel_str,
                     &sender_hash,
                     &final_prompt,
                 );

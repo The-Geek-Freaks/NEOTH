@@ -577,6 +577,13 @@ pub struct FreedomConfig {
     /// pre-WIRE-07 O(N) scan so existing installs see zero behaviour change.
     #[serde(default)]
     pub memory: MemoryConfig,
+
+    /// GOLD-ADAPT-ODY-17 — deep-research engine iteration budget. Caps how many
+    /// search→read→synthesize rounds are allowed per `/research` invocation.
+    /// Default `None` → engine uses its compiled-in ceiling (5 rounds).
+    /// Operators on paid search APIs lower this to control per-query cost.
+    #[serde(default)]
+    pub deep_research: DeepResearchConfig,
 }
 
 /// AUDIT-RPC-01 — audit-RPC listener config. Default: disabled (the daemon
@@ -612,6 +619,23 @@ pub struct ClusterConfig {
     /// announces on the public DHT while this is `false` — the safety gate
     /// against an accidental cluster join on a fresh install.
     pub enabled: bool,
+}
+
+/// GOLD-ADAPT-ODY-17 — operator-tunable iteration budget for the deep-research engine.
+/// All fields are `Option<T>` so an absent `deep_research:` block in freedom.yaml
+/// round-trips without error; `None` fields use the engine's compiled-in defaults.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct DeepResearchConfig {
+    /// Maximum search→read→synthesize rounds per `/research` call.
+    /// Default: 5. Operators on paid search APIs lower this to bound cost.
+    pub max_rounds: Option<u8>,
+    /// How many search results to request per query (1–20).
+    /// Default: 5.
+    pub results_per_query: Option<usize>,
+    /// How many search-hit pages to fetch and goal-extract per round.
+    /// Default: 3. Higher values raise quality at the cost of LLM calls.
+    pub pages_per_round: Option<usize>,
 }
 
 #[cfg(test)]

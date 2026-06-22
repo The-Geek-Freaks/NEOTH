@@ -690,6 +690,54 @@ async fn enforce_preflight(
                 name,
                 args: cmd_args,
             } => {
+                // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
+                // Short-circuits before the TOML command registry and the LLM
+                // round-trip: runs the multi-step search→read→synthesize loop,
+                // prints the report, and returns Done. No provider call, no
+                // consent gate, no token cost for the outer chat pipeline.
+                if name == "research" {
+                    let topic = cmd_args.trim();
+                    if topic.is_empty() {
+                        println!("Usage: /research <topic>");
+                        return Ok(PreflightOutcome::Done);
+                    }
+                    let search_provider =
+                        crate::tools::deep_research::resolve_search_provider();
+                    match crate::tools::deep_research::resolve_search_key(search_provider) {
+                        Err(e) => {
+                            eprintln!("deep-research: {e}");
+                            return Ok(PreflightOutcome::Done);
+                        }
+                        Ok(search_key) => {
+                            info!(topic = topic, "slash /research: starting deep-research engine");
+                            match crate::tools::deep_research::run_deep_research(
+                                topic,
+                                provider,
+                                &search_key,
+                                search_provider,
+                                &config.deep_research,
+                                &writer,
+                            )
+                            .await
+                            {
+                                Ok(report) => {
+                                    println!("{}\n", report.article);
+                                    if !report.citations.is_empty() {
+                                        println!("---\nSources:");
+                                        for (i, c) in report.citations.iter().enumerate() {
+                                            println!("[{}] {} — {}", i + 1, c.title, c.url);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("deep-research error: {e:#}");
+                                }
+                            }
+                        }
+                    }
+                    return Ok(PreflightOutcome::Done);
+                }
+
                 let slash_dir = home.join("commands");
                 let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
                 if let Some(cmd) = commands.iter().find(|c| c.name == name) {

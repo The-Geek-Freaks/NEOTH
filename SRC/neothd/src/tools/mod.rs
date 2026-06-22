@@ -18,6 +18,12 @@ pub mod caldav;
 /// EM-02b — CalDAV calendar (VEVENT) read/write. Reuses the `caldav` VTODO
 /// primitives + the shared `email::calendar` model/renderer.
 pub mod caldav_calendar;
+/// GOLD-ADAPT-ODY-17 — iterative deep-research engine (multi-step
+/// search→read→synthesize loop). Invoked via the `/research <topic>` slash
+/// command from `cli/chat.rs` (CLI) and `cli/serve_pipeline.rs` (channel).
+/// Builds on `web_search::search_cached` (ODY-29), `web_fetch::fetch_with_goal`
+/// (ODY-23), and `pipeline::untrusted_wrap::wrap_untrusted` (ODY-18).
+pub mod deep_research;
 pub mod github;
 pub mod google_tasks;
 /// GOLD-ADOPT-26 — zero-config web-to-Markdown via https://r.jina.ai/<url>.

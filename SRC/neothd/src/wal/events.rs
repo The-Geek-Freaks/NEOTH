@@ -884,6 +884,24 @@ pub const EVENT_TYPE_TOKEN_TPS_SAMPLE: u8 = 0x69;
 /// below_threshold, ts_unix}`.
 pub const EVENT_TYPE_COUNCIL_SELF_SCORE: u8 = 0x6A;
 
+/// `0x6B DEEP_RESEARCH_STARTED` — GOLD-ADAPT-ODY-17 iterative deep-research engine.
+/// Emitted by `tools::deep_research::run_deep_research` at the top of the loop,
+/// before the plan-query LLM call, so crash-recovery can identify interrupted
+/// research sessions and surface them to the operator. The topic is hashed (not
+/// stored raw) because an operator's research query may be sensitive.
+/// **Durable by default** — absent from `needs_immediate_sync` deny-list so it
+/// syncs immediately, consistent with all other gate/decision events in this band.
+/// Payload (JSON): `{topic_hash, ts_unix}`.
+pub const EVENT_TYPE_DEEP_RESEARCH_STARTED: u8 = 0x6B;
+
+/// `0x6C DEEP_RESEARCH_COMPLETED` — GOLD-ADAPT-ODY-17 iterative deep-research engine.
+/// Emitted by `tools::deep_research::run_deep_research` after the synthesis LLM
+/// call completes, providing an immutable audit record of every research run
+/// with its iteration budget + output size. Absent from the
+/// `needs_immediate_sync` deny-list (same policy as `0x6B`).
+/// Payload (JSON): `{topic_hash, rounds, word_count, citation_count, ts_unix}`.
+pub const EVENT_TYPE_DEEP_RESEARCH_COMPLETED: u8 = 0x6C;
+
 /// `0x6E TOKEN_ANOMALY_DETECTED` — GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire.
 /// The daemon cron buckets WAL `0x21 PROVIDER_RESPONSE` token usage by UTC day
 /// and emits this when the most recent active day shows a σ-spike, a `>1M` jump
@@ -1976,6 +1994,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("channel_send_denied", EVENT_TYPE_CHANNEL_SEND_DENIED),
     ("token_tps_sample", EVENT_TYPE_TOKEN_TPS_SAMPLE),
     ("council_self_score", EVENT_TYPE_COUNCIL_SELF_SCORE),
+    ("deep_research_started", EVENT_TYPE_DEEP_RESEARCH_STARTED),
+    ("deep_research_completed", EVENT_TYPE_DEEP_RESEARCH_COMPLETED),
     ("token_anomaly_detected", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
     (
         "session_health_degraded",
@@ -2380,6 +2400,10 @@ const _: () = {
         [(EVENT_TYPE_TOKEN_TPS_SAMPLE < 0x60 || EVENT_TYPE_TOKEN_TPS_SAMPLE > 0x6F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_COUNCIL_SELF_SCORE < 0x60 || EVENT_TYPE_COUNCIL_SELF_SCORE > 0x6F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_DEEP_RESEARCH_STARTED < 0x60
+        || EVENT_TYPE_DEEP_RESEARCH_STARTED > 0x6F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_DEEP_RESEARCH_COMPLETED < 0x60
+        || EVENT_TYPE_DEEP_RESEARCH_COMPLETED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TOKEN_ANOMALY_DETECTED < 0x60
         || EVENT_TYPE_TOKEN_ANOMALY_DETECTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SESSION_HEALTH_DEGRADED < 0x60
