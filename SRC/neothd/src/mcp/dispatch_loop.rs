@@ -775,7 +775,11 @@ fn format_success(call: &ParsedToolCall, result: &crate::mcp::client::ToolCallRe
     for c in &result.content {
         match c {
             crate::mcp::client::McpContent::Text { text } => {
-                body.push_str(text);
+                // GOLD-ADAPT-OH-09 — domain-compress recognised tool/log output
+                // (git/cargo/npm/lint) before it enters the model context;
+                // non-matching text passes through unchanged. Composes with the
+                // generic HR-08 large-block pass (compress_tool_results) below.
+                body.push_str(&crate::coding::tokenjuice_rules::compress(text));
                 body.push('\n');
             }
             crate::mcp::client::McpContent::Image { data, mime_type } => {
@@ -1738,6 +1742,39 @@ mod tests {
         assert!(out.contains("mcp:remote-http/search/error"), "source label present");
         // The injection text must NOT appear before the guard opens.
         assert!(!out[..g_open].contains("ignore your instructions"));
+    }
+
+    // GOLD-ADAPT-OH-09 — format_success domain-compresses recognised tool output
+    // (git/cargo/npm/lint via tokenjuice) before it reaches the model context.
+    #[test]
+    fn format_success_tokenjuice_compresses_git_log_output() {
+        // 20 SHA-prefixed commit lines — triggers tokenjuice's git-log rule.
+        let mut log = String::new();
+        for i in 0u32..20 {
+            log.push_str(&format!("{:07x} fix: commit #{}\n", i + 0xabc_def0, i));
+        }
+        let call = ParsedToolCall {
+            server: "git".into(),
+            tool: "log".into(),
+            arguments: serde_json::json!({}),
+        };
+        let result = crate::mcp::client::ToolCallResult {
+            content: vec![crate::mcp::client::McpContent::Text { text: log.clone() }],
+            is_error: false,
+        };
+        let block = format_success(&call, &result);
+        // git-log rule summarises the tail → "more commits" marker only appears
+        // when tokenjuice actually ran on the tool output.
+        assert!(
+            block.contains("more commits"),
+            "git-log tool output must be tokenjuice-compressed in the model context: {block}"
+        );
+        assert!(
+            block.len() < log.len(),
+            "compressed block ({}) must be shorter than the raw log ({})",
+            block.len(),
+            log.len()
+        );
     }
 
     #[test]
