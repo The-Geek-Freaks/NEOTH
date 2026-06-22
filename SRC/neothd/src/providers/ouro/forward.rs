@@ -230,7 +230,18 @@ impl OuroModel {
     /// GOLD-ADAPT-KV-01 — restore from a [`Self::snapshot_all_kv`] result (same
     /// num_layers × total_ut_steps shape).
     pub fn restore_all_kv(&mut self, snap: KvSnapshot) {
-        debug_assert_eq!(snap.len(), self.layers.len());
+        // GR-fix: a debug_assert is a no-op in release, so a mismatched snapshot
+        // would silently zip-truncate to the shorter side → a PARTIAL KV restore
+        // (corrupt cache state) in release builds. Guard at runtime: on a count
+        // mismatch leave the cache intact and warn, rather than half-restore.
+        if snap.len() != self.layers.len() {
+            tracing::warn!(
+                snapshot_layers = snap.len(),
+                model_layers = self.layers.len(),
+                "restore_all_kv: snapshot/layer-count mismatch — skipping restore (KV cache left intact)"
+            );
+            return;
+        }
         for (layer, s) in self.layers.iter_mut().zip(snap) {
             layer.restore_kv(s);
         }

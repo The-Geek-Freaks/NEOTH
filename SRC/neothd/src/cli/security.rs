@@ -877,8 +877,12 @@ fn check_permission_decisions(home: &Path, lookback_hours: u64, report: &mut Aud
         Ok(r) => r,
         Err(e) => {
             report.push(
+                // GR-fix: fail loud. audit.rs contracts "a security audit MUST fail
+                // loud on a corrupt segment rather than silently report a clean
+                // trail" — a Warn let `neoth doctor` stay green on an unreadable
+                // permission audit. Fail aligns the caller with that contract.
                 "Permission decisions",
-                CheckStatus::Warn,
+                CheckStatus::Fail,
                 format!(
                     "could not read permission audit from {}: {e}",
                     segment.display()

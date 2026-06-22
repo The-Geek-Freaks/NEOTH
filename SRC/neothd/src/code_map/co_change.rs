@@ -5,7 +5,7 @@
 //! coupling — the most dangerous kind because no static tool surfaces
 //! it. This module:
 //!
-//! 1. Runs `git -C <repo> log --name-only --pretty=format:%H` to get
+//! 1. Runs `git -C <repo> log --name-only --pretty=format:COMMIT:%H` to get
 //!    per-commit file-sets.
 //! 2. Counts how many commits each unordered file-pair co-appears in.
 //! 3. Filters out pairs below `min_co_changes` AND pairs that already
@@ -53,7 +53,7 @@ pub fn hidden_coupling(
     let out = Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["log", "--name-only", "--pretty=format:%H"])
+        .args(["log", "--name-only", "--pretty=format:COMMIT:%H"])
         .output()
         .context("spawn git log for co-change")?;
 
@@ -103,7 +103,7 @@ pub fn hidden_coupling(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Parse the combined `git log --name-only --pretty=format:%H` output
+/// Parse the combined `git log --name-only --pretty=format:COMMIT:%H` output
 /// into a list of per-commit file-sets.
 ///
 /// Output format interleaves commit hash lines and file-path lines,
@@ -133,8 +133,11 @@ fn parse_commit_file_sets(raw: &str) -> Vec<Vec<String>> {
             }
             continue;
         }
-        // A 40-char hex string is a commit hash.
-        if is_commit_hash(line) {
+        // GR-fix: a commit boundary is the `COMMIT:` sentinel (git
+        // --pretty=format:COMMIT:%H). A bare 40-hex check both MISSED SHA-256
+        // (64-char) commit ids and FALSE-matched a tracked file literally named
+        // with 40 hex chars. The colon can never appear in a tracked path.
+        if line.starts_with("COMMIT:") {
             if in_files && !current.is_empty() {
                 sets.push(std::mem::take(&mut current));
             }
@@ -149,10 +152,6 @@ fn parse_commit_file_sets(raw: &str) -> Vec<Vec<String>> {
         sets.push(current);
     }
     sets
-}
-
-fn is_commit_hash(s: &str) -> bool {
-    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Returns `true` if any edge in `edges` links `a` and `b`.
