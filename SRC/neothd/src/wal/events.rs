@@ -1064,6 +1064,31 @@ pub const EVENT_TYPE_BG_SESSION_DONE: u8 = 0x88;
 /// where `verdict` is `"met"` or `"not_met"`.
 pub const EVENT_TYPE_GOAL_JUDGED: u8 = 0x89;
 
+/// `0x8A CRON_JOB_SELF_HEAL_ALERT` — GOLD-ADAPT-HERMES-07. Emitted by
+/// `cron::runner::run_job` when a job run returns `success:false` AND the
+/// `Retrospective::risk_score` is at or above the self-heal threshold (default
+/// 0.3). This is the durable audit anchor for the self-healing admin flow:
+/// the error was classified, risk-scored, and a recommendation generated;
+/// the operator is alerted via the `ProactiveQueue` drain loop.
+///
+/// The frame fires BEFORE the `JOB_FAILED (0x42)` frame so that WAL replay
+/// can correlate: "failure was flagged for self-heal, then the failure frame
+/// landed". Best-effort (`let _ =`) — a WAL append failure must never block
+/// the job outcome or the proactive enqueue.
+///
+/// Payload (JSON):
+///   - `job_id`: String — the cron job's stable id
+///   - `cause`: String — `ErrorCause::as_str()` (e.g. `"provider_error"`)
+///   - `risk_score`: f64 — `[0.0, 1.0]` urgency from `Retrospective::risk_score`
+///   - `recommendation`: String — actionable next step from `recommendation_for`
+///   - `ts_unix_ms`: i64 — millisecond timestamp
+///
+/// Hooks-lifecycle band (0x80..=0x8F). Job-failure is a lifecycle event:
+/// the job fired (hook stage), the provider was called, the failure path
+/// triggered the self-heal guard — all lifecycle-adjacent. 0x8A is the next
+/// free slot after 0x89 (GOAL_JUDGED).
+pub const EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT: u8 = 0x8A;
+
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
 /// One event moved from `idx_episode` (hot) into `idx_consolidated` (warm).
@@ -2218,6 +2243,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("bg_session_started", EVENT_TYPE_BG_SESSION_STARTED),
     ("bg_session_done", EVENT_TYPE_BG_SESSION_DONE),
     ("goal_judged", EVENT_TYPE_GOAL_JUDGED),
+    (
+        "cron_job_self_heal_alert",
+        EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT,
+    ),
     ("agent_dispatched", EVENT_TYPE_AGENT_DISPATCHED),
 ];
 
@@ -2605,6 +2634,8 @@ const _: () = {
         [(EVENT_TYPE_BG_SESSION_DONE < 0x80 || EVENT_TYPE_BG_SESSION_DONE > 0x8F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_GOAL_JUDGED < 0x80 || EVENT_TYPE_GOAL_JUDGED > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT < 0x80
+        || EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]
@@ -3162,6 +3193,10 @@ mod tests {
                 EVENT_TYPE_HISTORY_COMPACTION_FIRED,
             ),
             ("GOAL_JUDGED", EVENT_TYPE_GOAL_JUDGED),
+            (
+                "CRON_JOB_SELF_HEAL_ALERT",
+                EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT,
+            ),
             ("AGENT_DISPATCHED", EVENT_TYPE_AGENT_DISPATCHED),
         ];
         for i in 0..codes.len() {

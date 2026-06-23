@@ -26,9 +26,10 @@ use crate::profile::briefing_policy::{BriefingPolicy, EmitVerdict};
 use crate::profile::estimators::ObservedTurn;
 use crate::profile::snapshot::aggregate_and_persist;
 use crate::providers::{Provider, Request};
+use crate::proactive::{ProactiveItem, ProactiveQueue};
 use crate::wal::events::{
-    EVENT_TYPE_JOB_FAILED, EVENT_TYPE_JOB_FIRED, EVENT_TYPE_JOB_SKIPPED_BY_GATE,
-    EVENT_TYPE_JOB_SUCCESS, EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT, EVENT_TYPE_JOB_FAILED, EVENT_TYPE_JOB_FIRED,
+    EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_SUCCESS, EVENT_TYPE_RAW_TEXT,
 };
 use crate::wal::{EventFlags, writer::WalWriterHandle};
 
@@ -210,6 +211,54 @@ pub async fn run_job(
             recommendation = %retro.recommendation,
             "JV-PRO-06: job failed — retrospective"
         );
+
+        // GOLD-ADAPT-HERMES-07 — self-heal alert: when the risk score
+        // is non-trivial (≥ 0.3) emit a WAL audit frame and enqueue a
+        // ProactiveItem so the operator is alerted via the drain loop.
+        // Both operations are best-effort (`let _ =`) — failure here
+        // must never affect the job outcome or block the WAL frame below.
+        const SELF_HEAL_RISK_THRESHOLD: f64 = 0.3;
+        if retro.risk_score >= SELF_HEAL_RISK_THRESHOLD {
+            // (a) WAL audit frame 0x8A CRON_JOB_SELF_HEAL_ALERT
+            if let Ok(alert_payload) = serde_json::to_vec(&json!({
+                "job_id": job.id,
+                "cause": retro.cause.as_str(),
+                "risk_score": retro.risk_score,
+                "recommendation": retro.recommendation,
+                "ts_unix_ms": now_unix_ms(),
+            })) {
+                let _ = write_event(writer, EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT, &alert_payload)
+                    .await;
+            }
+
+            // (b) Enqueue a ProactiveItem for the drain loop to surface.
+            // Dedup key uses the UTC date so at most one alert per job per day.
+            let utc_day = chrono::Utc::now().date_naive();
+            let dedup_key = format!("self-heal:{}:{}", job.id, utc_day);
+            let body = format!(
+                "[CRON SELF-HEAL] Job `{}` failed (cause: {}, risk: {:.2})\n\nRecommendation: {}",
+                job.id,
+                retro.cause.as_str(),
+                retro.risk_score,
+                retro.recommendation,
+            );
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            let queue_path = home.join("proactive_queue.json");
+            let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
+            let inserted = queue.enqueue(ProactiveItem {
+                priority: 80,
+                dedup_key,
+                channel: "cli".to_string(),
+                source: "hermes_07".to_string(),
+                body,
+                scheduled_for_unix: 0,
+                is_failure: true,
+                expires_unix: crate::time::now_unix_i64().saturating_add(86_400),
+            });
+            if inserted {
+                let _ = queue.save_to(&queue_path);
+            }
+        }
     }
 
     // ── WAL: SUCCESS / FAILED ──────────────────────────────────────────────
@@ -641,6 +690,151 @@ mod workstream_c_tests {
         assert_ne!(EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_FIRED);
         assert_ne!(EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_SUCCESS);
         assert_ne!(EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_FAILED);
+    }
+
+    // ─── GOLD-ADAPT-HERMES-07: self-heal alert path ───────────────────────
+
+    /// A provider that always returns an error, simulating a job failure.
+    struct FailingProvider {
+        error_msg: String,
+    }
+
+    #[async_trait]
+    impl Provider for FailingProvider {
+        fn name(&self) -> &'static str {
+            "failing-mock"
+        }
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            anyhow::bail!("{}", self.error_msg)
+        }
+    }
+
+    #[tokio::test]
+    async fn cron_job_failure_enqueues_self_heal_alert_and_writes_wal_frame() {
+        use crate::proactive::ProactiveQueue;
+        use crate::wal::events::EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+        let home = tempdir().unwrap();
+        let wal_dir = tempdir().unwrap();
+        let seg = wal_dir.path().join("hermes07.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+
+        // A rate-limit error produces ProviderError cause with risk_score ≥ 0.3
+        // (base weight 0.5 * amplifier > 0.3 for consecutive_failures=1).
+        let provider = FailingProvider {
+            error_msg: "http status 429 rate limit".to_string(),
+        };
+        let job = Job {
+            id: "test-job".into(),
+            name: "test job".into(),
+            enabled: true,
+            schedule: Schedule {
+                cron: "0 * * * *".into(),
+                tz: None,
+            },
+            prompt: "do something".into(),
+            timeout_seconds: 30,
+            delivery: None,
+            depends_on: vec![],
+        };
+
+        // Set NEOTH_HOME for the duration of the test and immediately drop the
+        // lock so it is NOT held across await points (clippy::await_holding_lock).
+        // SAFETY: env-var mutation serialized by the lock; lock dropped before
+        // any await so no MutexGuard is live across an async suspension point.
+        {
+            let _env = crate::test_env::lock();
+            unsafe {
+                std::env::set_var("NEOTH_HOME", home.path());
+            }
+        } // lock released here — before the first .await
+
+        let outcome = run_job(&job, &provider, &writer)
+            .await
+            .expect("run_job must not error (failures are Ok(RunOutcome { success:false }))");
+
+        drop(writer);
+        let _ = join.await;
+
+        // (1) Outcome must be a failure.
+        assert!(!outcome.success, "provider error must produce success:false");
+
+        // (2) WAL segment must contain a 0x8A CRON_JOB_SELF_HEAL_ALERT frame.
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut saw_alert = false;
+        let mut alert_payload: Option<serde_json::Value> = None;
+        while !cursor.is_empty() {
+            let Ok(frame) = decode_frame(cursor) else {
+                break;
+            };
+            if frame.header.event_type == EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT {
+                saw_alert = true;
+                alert_payload = serde_json::from_slice(frame.payload).ok();
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        assert!(saw_alert, "expected 0x8A CRON_JOB_SELF_HEAL_ALERT frame in WAL");
+
+        let payload = alert_payload.unwrap();
+        assert_eq!(
+            payload["job_id"].as_str(),
+            Some("test-job"),
+            "payload job_id must match"
+        );
+        assert_eq!(
+            payload["cause"].as_str(),
+            Some("provider_error"),
+            "cause must be provider_error for a 429 error"
+        );
+        assert!(
+            payload["risk_score"].as_f64().unwrap_or(0.0) > 0.0,
+            "risk_score must be positive"
+        );
+
+        // (3) proactive_queue.json must exist and contain exactly one item.
+        let queue_path = home.path().join("proactive_queue.json");
+        assert!(
+            queue_path.exists(),
+            "proactive_queue.json must be written by the self-heal path"
+        );
+        let queue = ProactiveQueue::load_from(&queue_path).expect("queue must be parseable");
+        let items = queue.peek();
+        assert_eq!(items.len(), 1, "exactly one self-heal alert must be queued");
+        let item = &items[0];
+        assert_eq!(item.source, "hermes_07", "source must be hermes_07");
+        assert!(item.is_failure, "is_failure must be true for a failure alert");
+        assert!(
+            item.dedup_key.starts_with("self-heal:test-job:"),
+            "dedup_key must start with self-heal:test-job: got {}",
+            item.dedup_key
+        );
+
+        // (4) A second failure for the same job on the same day must be deduped
+        // (the queue must still have exactly one item after re-running).
+        let wal_dir2 = tempdir().unwrap();
+        let seg2 = wal_dir2.path().join("hermes07b.wal");
+        let (writer2, join2) = wal_spawn(seg2).unwrap();
+        let _ = run_job(&job, &provider, &writer2).await;
+        drop(writer2);
+        let _ = join2.await;
+        let queue2 = ProactiveQueue::load_from(&queue_path).unwrap();
+        assert_eq!(
+            queue2.peek().len(),
+            1,
+            "same-day dedup must prevent a second alert for the same job"
+        );
+
+        // Cleanup: remove env var under the lock (symmetric with set above).
+        {
+            let _env = crate::test_env::lock();
+            unsafe {
+                std::env::remove_var("NEOTH_HOME");
+            }
+        }
     }
 
     // ─── OH-06: Briefing system-prompt injection ──────────────────────────
