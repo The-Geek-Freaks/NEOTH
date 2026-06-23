@@ -397,13 +397,16 @@ pub async fn transcribe_and_audit(
     // GOLD-ADAPT-SPEAKR-02b/02c — speaker re-identification.
     //
     // Encoder selection (inside spawn_blocking):
-    //   1. Try XVectorEncoder::try_load() — activates when operator provisions
-    //      weights via `scripts/convert_xvector.py`. 512-dim output.
-    //   2. Fall back to the log-mel encoder (embed_segments). 80-dim output.
+    //   1. Try EcapaTdnn::try_load() — highest accuracy; activates when operator
+    //      provisions weights via `scripts/convert_ecapa.py`. 192-dim output.
+    //   2. Try XVectorEncoder::try_load() — fallback neural encoder; activates
+    //      when operator provisions weights via `scripts/convert_xvector.py`.
+    //      512-dim output.
+    //   3. Fall back to the log-mel encoder (embed_segments). 80-dim output.
     //
-    // The dim difference is safe because speaker_profile::load_profiles gates
-    // on embedding_dim and resets the store on a mismatch rather than silently
-    // returning cosine 0.0 for every speaker.
+    // The dim difference across encoders is safe: speaker_profile::load_profiles
+    // gates on embedding_dim and resets the store on a mismatch rather than
+    // silently returning cosine 0.0 for every speaker.
     //
     // The config read, the CPU-bound encode, AND the profile-store I/O all run
     // inside ONE spawn_blocking so nothing blocks the async executor. Only PCM
@@ -425,37 +428,57 @@ pub async fn transcribe_and_audit(
                 return Vec::new();
             }
 
-            // Decode to 16 kHz f32 first so both encoder paths share the same
-            // decoded buffer. embed_segments does this internally; we replicate
-            // that here for the x-vector path.
+            // Decode to 16 kHz f32 first so all neural encoder paths share
+            // the same decoded buffer.  embed_segments handles decoding
+            // internally; we replicate it here for the neural paths.
+            use crate::media::speaker_encoder_ecapa::EcapaTdnn;
             use crate::media::speaker_encoder_xvector::XVectorEncoder;
 
-            // Attempt neural x-vector encoder first (dormant until weights cached).
-            let embeddings: Vec<Vec<f32>> =
-                if let Some(xvec) = XVectorEncoder::try_load() {
-                    // Decode + segment → individual f32 sample slices, encode each.
-                    let decoded = crate::media::speaker_encoder::decode_to_f32(
-                        &audio_owned,
-                        format,
-                        sample_rate,
-                    );
-                    if decoded.is_empty() {
-                        return Vec::new();
-                    }
-                    let segs = if segments.is_empty() {
-                        // Encode the whole clip as one segment.
-                        vec![xvec.embed(&decoded)]
-                    } else {
-                        // Encode each segment window individually.
-                        const SR: u32 = 16_000;
-                        segments.iter().map(|s| {
+            /// Encode segments from a pre-decoded 16 kHz f32 buffer using the
+            /// given per-sample closure.  Returns one embedding per segment
+            /// (or one for the whole clip when `segments` is empty).
+            fn encode_with<F>(
+                decoded: &[f32],
+                segments: &[crate::media::stt_dispatch::TextSegment],
+                embed: F,
+            ) -> Vec<Vec<f32>>
+            where
+                F: Fn(&[f32]) -> Option<Vec<f32>>,
+            {
+                const SR: u32 = 16_000;
+                if segments.is_empty() {
+                    embed(decoded).into_iter().collect()
+                } else {
+                    segments
+                        .iter()
+                        .filter_map(|s| {
                             let start = (s.start_ms as u64 * SR as u64 / 1000) as usize;
                             let end = (s.end_ms as u64 * SR as u64 / 1000)
                                 .min(decoded.len() as u64) as usize;
-                            if start >= end { None } else { xvec.embed(&decoded[start..end]) }
-                        }).collect()
-                    };
-                    segs.into_iter().flatten().collect()
+                            if start >= end { None } else { embed(&decoded[start..end]) }
+                        })
+                        .collect()
+                }
+            }
+
+            // ── Encoder priority: ECAPA → x-vector → log-mel ─────────────
+            let embeddings: Vec<Vec<f32>> =
+                if let Some(ecapa) = EcapaTdnn::try_load() {
+                    // Highest accuracy: ECAPA-TDNN, 192-dim.
+                    let decoded = crate::media::speaker_encoder::decode_to_f32(
+                        &audio_owned, format, sample_rate,
+                    );
+                    if decoded.is_empty() { return Vec::new(); }
+                    encode_with(&decoded, &segments, |s| ecapa.embed(s))
+
+                } else if let Some(xvec) = XVectorEncoder::try_load() {
+                    // Fallback neural: x-vector TDNN, 512-dim.
+                    let decoded = crate::media::speaker_encoder::decode_to_f32(
+                        &audio_owned, format, sample_rate,
+                    );
+                    if decoded.is_empty() { return Vec::new(); }
+                    encode_with(&decoded, &segments, |s| xvec.embed(s))
+
                 } else {
                     // Log-mel fallback (always available, no weights needed).
                     crate::media::speaker_encoder::embed_segments(

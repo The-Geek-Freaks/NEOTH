@@ -58,6 +58,11 @@ pub mod speaker_encoder;
 /// Dormant scaffold: activates when the operator provisions weights via
 /// `scripts/convert_xvector.py`. Falls back to `speaker_encoder` when absent.
 pub mod speaker_encoder_xvector;
+/// SPEAKR-02c (highest-accuracy neural upgrade) — ECAPA-TDNN speaker-embedding
+/// encoder (192-dim). Dormant scaffold: activates when the operator provisions
+/// weights via `scripts/convert_ecapa.py`. Preferred over x-vector when weights
+/// are present; falls back to x-vector then log-mel when absent.
+pub mod speaker_encoder_ecapa;
 /// HANDY-03 — filler-word removal + stutter collapse for raw STT transcripts.
 /// Called as a post-processing hook before transcript text leaves the pipeline.
 pub mod stt_postprocess;
