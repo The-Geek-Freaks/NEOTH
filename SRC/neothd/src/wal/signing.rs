@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use base64::Engine as _;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use zeroize::Zeroizing;
 
 /// Stable algorithm tag stored in the signed envelope so a future scheme
 /// change is unambiguous to a verifier.
@@ -48,14 +49,16 @@ pub fn load_or_init_signing_key(path: &Path) -> Result<SigningKey> {
     if path.exists() {
         let body =
             std::fs::read(path).with_context(|| format!("read signing key {}", path.display()))?;
-        let seed = crate::wal::compaction::maybe_unwrap_dpapi(&body, path)?;
-        let seed: [u8; 32] = seed.as_slice().try_into().map_err(|_| {
-            anyhow::anyhow!(
-                "signing key at {} is not 32 bytes ({} given) — refusing to use a malformed key",
-                path.display(),
-                seed.len(),
-            )
-        })?;
+        let raw = crate::wal::compaction::maybe_unwrap_dpapi(&body, path)?;
+        let seed: Zeroizing<[u8; 32]> =
+            Zeroizing::new(raw.as_slice().try_into().map_err(|_| {
+                anyhow::anyhow!(
+                    "signing key at {} is not 32 bytes ({} given) — refusing to use a malformed key",
+                    path.display(),
+                    raw.len(),
+                )
+            })?);
+        // `seed` drops and zeroes the stack copy of the 32-byte secret after this return.
         return Ok(SigningKey::from_bytes(&seed));
     }
     if let Some(parent) = path.parent() {
@@ -65,11 +68,13 @@ pub fn load_or_init_signing_key(path: &Path) -> Result<SigningKey> {
     // 32-byte ed25519 seed via the OS CSPRNG. **Fail closed** when the OS RNG
     // is unavailable — a predictable signing key undermines the whole
     // attribution story (same contract as the HMAC key).
-    let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed)
+    let mut seed: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    getrandom::getrandom(seed.as_mut())
         .context("OS RNG unavailable — refusing to generate weak signing key")?;
-    crate::wal::compaction::write_key_securely(path, &seed)?;
-    Ok(SigningKey::from_bytes(&seed))
+    crate::wal::compaction::write_key_securely(path, seed.as_ref())?;
+    let key = SigningKey::from_bytes(&seed);
+    // `seed` drops and zeroes the stack copy of the 32-byte secret here.
+    Ok(key)
 }
 
 /// Base64 (standard) of the 32-byte ed25519 public key — what lands in the
@@ -90,9 +95,11 @@ pub fn load_signing_pubkey_if_present(path: &Path) -> Option<String> {
         return None;
     }
     let body = std::fs::read(path).ok()?;
-    let seed = crate::wal::compaction::maybe_unwrap_dpapi(&body, path).ok()?;
-    let seed: [u8; 32] = seed.as_slice().try_into().ok()?;
-    Some(pubkey_b64(&SigningKey::from_bytes(&seed)))
+    let raw = crate::wal::compaction::maybe_unwrap_dpapi(&body, path).ok()?;
+    let seed: Zeroizing<[u8; 32]> = Zeroizing::new(raw.as_slice().try_into().ok()?);
+    let result = Some(pubkey_b64(&SigningKey::from_bytes(&seed)));
+    // `seed` drops and zeroes the stack copy of the 32-byte secret here.
+    result
 }
 
 /// Sign `msg`, returning base64 (standard) of the 64-byte detached signature.

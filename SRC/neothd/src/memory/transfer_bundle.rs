@@ -247,7 +247,11 @@ pub fn default_transfer_key_path() -> PathBuf {
 /// as `wal::signing::load_or_init_signing_key`. Fail-closed if the OS RNG is
 /// unavailable. The public half (what senders use as `--dest`) is derived via
 /// [`transfer_pubkey_b64`].
-pub fn load_or_init_transfer_key(path: &Path) -> Result<[u8; 32]> {
+///
+/// Returns a [`Zeroizing`] wrapper so the 32-byte secret is wiped from memory
+/// when it drops, preventing the raw X25519 seed from outliving its use-site.
+/// Callers pass `&*secret` where `&[u8; 32]` is expected (Deref coercion).
+pub fn load_or_init_transfer_key(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
     if path.exists() {
         let body =
             std::fs::read(path).with_context(|| format!("read transfer key {}", path.display()))?;
@@ -259,7 +263,7 @@ pub fn load_or_init_transfer_key(path: &Path) -> Result<[u8; 32]> {
                 seed.len(),
             )
         })?;
-        return Ok(seed);
+        return Ok(Zeroizing::new(seed));
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -269,7 +273,7 @@ pub fn load_or_init_transfer_key(path: &Path) -> Result<[u8; 32]> {
     getrandom::getrandom(&mut seed)
         .context("OS RNG unavailable — refusing to generate a weak transfer key")?;
     crate::wal::compaction::write_key_securely(path, &seed)?;
-    Ok(seed)
+    Ok(Zeroizing::new(seed))
 }
 
 /// Base64 (standard) of the X25519 PUBLIC key derived from a transfer secret —
@@ -518,15 +522,35 @@ mod tests {
     fn transfer_keypair_generates_persists_and_derives_pubkey() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wal").join("transfer.key");
-        let s1 = load_or_init_transfer_key(&path).expect("first gen");
+        let s1: Zeroizing<[u8; 32]> = load_or_init_transfer_key(&path).expect("first gen");
         assert!(path.exists());
-        let s2 = load_or_init_transfer_key(&path).expect("second read");
-        assert_eq!(s1, s2, "the persisted key is stable across loads");
+        let s2: Zeroizing<[u8; 32]> = load_or_init_transfer_key(&path).expect("second read");
+        assert_eq!(*s1, *s2, "the persisted key is stable across loads");
         // The derived pubkey is what a sender would use as --dest; round-trips.
         let pub_b64 = transfer_pubkey_b64(&s1);
         let parsed = parse_b64_32(&pub_b64, "transfer pubkey").unwrap();
         // A bundle sealed to this pubkey decrypts with the secret.
         let bundle = encrypt_for(b"to me", &parsed, &signer(1), 1).unwrap();
         assert_eq!(decrypt_with(&bundle, &s1).unwrap(), b"to me");
+    }
+
+    #[test]
+    fn transfer_key_load_returns_zeroizing_wrapper() {
+        // Prove: (1) load_or_init_transfer_key returns Zeroizing<[u8;32]> (compile-time),
+        // (2) fresh key is non-zero, (3) reload returns the identical bytes.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transfer.key");
+        let k1: Zeroizing<[u8; 32]> = load_or_init_transfer_key(&path).unwrap();
+        assert!(k1.iter().any(|&b| b != 0), "fresh key must be non-zero");
+        let k2: Zeroizing<[u8; 32]> = load_or_init_transfer_key(&path).unwrap();
+        assert_eq!(*k1, *k2, "reload returns the same key");
+        // Full encrypt → pubkey derive → decrypt round-trip with the Zeroizing key.
+        let pub_b64 = transfer_pubkey_b64(&k1);
+        let recipient_pub = parse_b64_32(&pub_b64, "pub").unwrap();
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let bundle = encrypt_for(b"crypto-03 zeroizing integration", &recipient_pub, &signing_key, 1_700_000_000)
+            .expect("encrypt succeeds");
+        let plaintext = decrypt_with(&bundle, &k1).expect("decrypt with Zeroizing-wrapped key");
+        assert_eq!(plaintext, b"crypto-03 zeroizing integration");
     }
 }

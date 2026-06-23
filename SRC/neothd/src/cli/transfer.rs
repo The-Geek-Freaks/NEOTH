@@ -287,6 +287,7 @@ fn run_verify(file: PathBuf, pubkey: Option<String>, output: OutputFormat) -> Re
     let my_secret =
         transfer_bundle::load_or_init_transfer_key(&transfer_bundle::default_transfer_key_path())
             .context("load transfer key")?;
+    // my_secret is Zeroizing<[u8;32]>; auto-deref coerces to &[u8;32].
     let my_pub = transfer_bundle::transfer_pubkey_b64(&my_secret);
     let my_pub_bytes = parse_b64_32(&my_pub, "transfer pubkey")?;
     let verdict = transfer_bundle::verify_bundle(&bundle, Some(&my_pub_bytes), expected.as_ref());
@@ -368,7 +369,9 @@ fn run_import(
     let my_secret =
         transfer_bundle::load_or_init_transfer_key(&transfer_bundle::default_transfer_key_path())
             .context("load transfer key")?;
-    let my_pub_bytes = parse_b64_32(&transfer_bundle::transfer_pubkey_b64(&my_secret), "pub")?;
+    // my_secret is Zeroizing<[u8;32]>; auto-deref coerces to &[u8;32].
+    let my_pub_bytes =
+        parse_b64_32(&transfer_bundle::transfer_pubkey_b64(&my_secret), "pub")?;
     let expected = parse_expected_sender(pubkey.as_deref())?;
 
     // Verify FIRST — refuse to decrypt a wrong-recipient / unsupported / (when

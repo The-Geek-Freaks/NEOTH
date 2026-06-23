@@ -57,6 +57,14 @@ impl SecretString {
         &self.0
     }
 
+    /// Alias for [`expose`] matching the `secrecy` crate's `ExposeSecret`
+    /// naming convention. Prefer this name in new call-sites so the pattern is
+    /// grep-stable ("every `expose_secret()` call borrows secret material").
+    /// The `secrecy` crate is NOT a dep — this is a naming convention only.
+    pub fn expose_secret(&self) -> &str {
+        self.expose()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -229,6 +237,14 @@ mod tests {
     fn expose_returns_value() {
         let s = SecretString::from("plaintext");
         assert_eq!(s.expose(), "plaintext");
+    }
+
+    #[test]
+    fn expose_secret_alias_returns_value() {
+        let s = SecretString::from("alias-test");
+        assert_eq!(s.expose_secret(), "alias-test");
+        // Must not appear in Debug output.
+        assert!(!format!("{s:?}").contains("alias-test"));
     }
 
     #[test]

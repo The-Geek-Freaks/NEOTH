@@ -50,6 +50,7 @@ pub async fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()
             &crate::memory::transfer_bundle::default_transfer_key_path(),
         )
         .context("load transfer key")?;
+        // secret is Zeroizing<[u8;32]>; auto-deref coerces to &[u8;32].
         let pubkey = crate::memory::transfer_bundle::transfer_pubkey_b64(&secret);
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => {
