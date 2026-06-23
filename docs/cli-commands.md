@@ -189,6 +189,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `--top-p <P>` — Top-p (nucleus) sampling cutoff for local_qwen. `1.0` keeps every token; `0.9` is a common balance. Ignored when `--temperature` is `0`/unset (greedy mode short-circuits before top-p applies)
 - `--sampling-seed <SEED>` — Optional RNG seed for reproducible sampling. Pair with `--temperature > 0` to make a non-greedy call replayable. Unused on cloud providers
 - `--resume-from <HASH>` — Round-3 v0.4 QU-11 / ARS-6 — resume a prior session from a `MODE_CHECKPOINT` (WAL `0x9A`) snapshot. Takes the 12-char checkpoint hash (or any unique prefix) printed by the prior session at checkpoint-emission time. NEOTH looks up the snapshot via `recall::reconstruct::reconstruct_from_checkpoint`, prints a one-line resume banner ("resuming session X / phase Y / provider Z"), and prepends a typed RESUME-CONTEXT block to the chat's system prompt so the assistant knows the prior pipeline shape. Full pipeline-state rehydration (re-scoping MCP servers, restoring council hemisphere routing) lands as a follow-up — this surface unblocks the operator-facing `chat resume from <hash>` workflow today
+- `--incognito <INCOGNITO>` — ODY-09 — ephemeral/incognito turn: skip memory injection (Block::D recall) and suppress the RAW_TEXT, PROVIDER_REQUEST, and PROVIDER_RESPONSE WAL frames for this turn. The reply is still rendered to stdout. A single `INCOGNITO_TURN` (0xF7) WAL frame records that the mode was active, without storing any prompt content
 
 ## `neoth checkpoint`
 
@@ -611,6 +612,7 @@ Run operator health checks (freedom/credentials/db/wal/hmac/quota/...). Exit cod
 - `--quiet <QUIET>` — Suppress per-check output; print only the final summary line + use exit code for CI
 - `--explain <NAME>` — V03-07: print operator-facing documentation for the named check (what it tests, common failures, fix steps) instead of running the full diagnostic suite. Combine with `--output json` for scripted runbook lookups. Pair with `--list-checks` to see what's available
 - `--list-checks <LIST_CHECKS>` — V03-07: print the list of check names recognised by `--explain`. Useful for tab-completion + operator-side runbook generation
+- `--live <LIVE>` — GOLD-ADAPT-ODY-22: run live network probes against configured subsystems (ollama, SearXNG, IMAP) using `tokio::time::timeout`-bounded HTTP/TCP checks. Reports Up/Down/latency per subsystem. Runs in addition to the static check battery. Never touches real network during automated tests — safe to omit in CI
 - `--diagnose <DIAGNOSE>` — GOLD-ADOPT-24: after running the checks, feed any WARN/FAIL outcomes to the cheap `inference.utility_provider` for an LLM root-cause + first-fix. NEOTH's 31 structured checks are a richer signal than a raw log dump, so the LLM reasons over them. Best-effort; needs a configured provider
 
 ## `neoth dream`
@@ -704,6 +706,16 @@ Remove a domain from the trusted-sender allowlist
 
 - `<DOMAIN>` — Domain to remove
 
+## `neoth eval`
+
+GOLD-ADAPT-HARNESS-05 — JSON EvalCase suite runner
+
+- `<SUITE>` — Path to the JSON suite file (array of EvalCase)
+- `--max-steps <MAX_STEPS>` — Maximum steps per case (informational; enforced by live runner only)
+- `--preset <PRESET>` — Provider preset to use for live runs (future; no-op in headless mode)
+- `--json <JSON>` — Emit only the JSON report to stdout; suppress the summary table + Markdown
+- `--out-dir <OUT_DIR>` — Write report files to this directory instead of the default eval-runs/<ts>/
+
 ## `neoth events`
 
 Browse the WAL event-type registry. Self-documenting audit trail — `neoth events` lists every code NEOTH writes, `--code 0xNN` looks up a single byte, `--band 0x90` filters to memory-tier events
@@ -744,6 +756,7 @@ Fetch a URL + return its text content (A-21)
 - `<URL>` — URL to fetch. Only http(s) schemes accepted
 - `--jina <JINA>` — GOLD-ADOPT-26 — fetch via the Jina Reader proxy (https://r.jina.ai), which renders JS-heavy / bot-blocked pages to clean Markdown. The last-resort path when the plain fetch returns thin or empty content
 - `--selector <SELECTOR>` — GOLD-ADOPT-04 — extract the text of elements matching this CSS selector from the fetched page (e.g. `--selector "h1.title"`). The selector is cached per host; if the site later changes and the selector breaks, an adaptive fingerprint re-find heals it. Mutually exclusive with `--jina`
+- `--goal <GOAL>` — GOLD-ADAPT-ODY-23 — extract only the goal-relevant `{rational, evidence, summary}` from the fetched page via the configured utility provider (an LLM pass reads the page and pulls what bears on this goal). Mutually exclusive with `--selector` / `--jina`
 
 ## `neoth fs`
 
@@ -1131,6 +1144,9 @@ List + validate scheduled jobs defined in `~/.neoth/jobs.yaml`
 - `--validate <VALIDATE>` — Parse + validate jobs.yaml without printing the table. Exits non-zero on the first invalid job
 - `--preview <ID>` — AR-04 (Session 24) — dry-run one job by id: prints the next 3 fire times, the predicted EUR token cost via the existing cost predictor, and whether the operator's current autonomy level would allow / confirm / block the call when it eventually fires. No WAL writes, no provider calls, no scheduler side effects — purely diagnostic. Pairs with `--file` for inspecting a draft jobs.yaml before commit
 - `--file <PATH>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+- `--run <COMMAND>` — GOLD-ADAPT-ODY-07b — run COMMAND as a DETACHED background job. Its stdout+stderr stream to `~/.neoth/bgjobs/<id>.log` and its exit code to `<id>.exit`; the running daemon's bg-monitor tracks completion (and runs any auto-continue callback). Quote the whole command, e.g. `neoth jobs --run "cargo build --release" --label build`
+- `--label <NAME>` — Optional label for the `--run` job id (sanitised to `[a-z0-9_-]`; default `job`). The on-disk id is `<label>-<unix_ts>`
+- `--bg <BG>` — GOLD-ADAPT-ODY-07b — list the detached background jobs in `~/.neoth/bgjobs/` with their status (running / completed + exit code)
 
 ## `neoth kanban`
 
@@ -1736,6 +1752,13 @@ Mark a proposal Approved. For a **Skill** proposal (KF-04 idle forge) this ADOPT
 
 - `<ID>`
 - `--note <NOTE>`
+
+### `neoth proactive intelligence`
+
+GOLD-ADAPT-OH-08 — list reflection observations from the Intelligence view (`~/.neoth/reflections/staged_observations.jsonl`). Read-only; observations are NEVER auto-posted into chat
+
+- `--limit <LIMIT>` — How many entries to show, newest first. 0 = all
+- `--json <JSON>` — Output as JSON (for GUI / scripting)
 
 ### `neoth proactive list`
 
