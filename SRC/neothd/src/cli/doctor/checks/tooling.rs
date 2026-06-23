@@ -317,6 +317,33 @@ pub(crate) fn check_wasm_plugins(home: &Path) -> CheckOutcome {
     }
 }
 
+/// GOLD-ADAPT-DOC-01 — advisory gate for the `ppt_master` skill.
+///
+/// Probes whether python-pptx is importable on the operator's host.
+/// The skill ALWAYS routes and loads regardless of this result —
+/// the gate is advisory (the system_prompt itself handles the absent case).
+/// PASS when python-pptx is importable; WARN with install hint otherwise.
+pub(crate) fn check_pptmaster_python(_home: &Path) -> CheckOutcome {
+    let installed = crate::config::installer::is_pptmaster_installed();
+    CheckOutcome {
+        name: "ppt_master python",
+        status: if installed {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Warn
+        },
+        detail: if installed {
+            "python-pptx importable — ppt_master skill ready (generate presentations with `pip install python-pptx` already done)".to_string()
+        } else {
+            format!(
+                "python-pptx not found — ppt_master skill routes but generated code \
+                 needs it to run; install with `{}`",
+                crate::config::installer::PPTMASTER_INSTALL_CMD
+            )
+        },
+    }
+}
+
 /// Local copy of the whisper engine's `default_cache_dir` so the doctor
 /// can run with the same path math as the engine without exposing the
 /// engine's `pub` surface. Kept in sync via the
@@ -340,6 +367,8 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_tmux_for_claude_cli,
     check_stuck_claude_processes,
     check_wasm_plugins,
+    // GOLD-ADAPT-DOC-01 (2026-06-23) — ppt_master Python gate.
+    check_pptmaster_python,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -460,5 +489,27 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               `~/.neoth/freedom.yaml` and flip \
               `plugins:\\n  wasm:\\n    enabled: true`, then \
               restart the daemon.",
+    },
+    // GOLD-ADAPT-DOC-01 (2026-06-23) — ppt_master python gate.
+    CheckDoc {
+        name: "ppt_master python",
+        purpose: "GOLD-ADAPT-DOC-01 advisory gate for the `ppt_master` \
+                  bundled skill. Probes whether python-pptx is importable \
+                  on the operator's Python by running `python -c \
+                  \"import pptx\"` (Windows) or `python3 -c \"import pptx\"` \
+                  (Linux/macOS). PASS = python-pptx present, the skill \
+                  produces runnable code immediately. WARN = python-pptx \
+                  absent, the skill still routes and the LLM will surface \
+                  the install hint in its reply. The gate is ADVISORY: \
+                  skill routing is never suppressed.",
+        common_failures: "Fresh Python install without python-pptx; \
+                         operator using a virtual environment that is \
+                         not active when the daemon probes; Python not \
+                         on PATH at all (Windows without system Python).",
+        fix: "Run `pip install python-pptx` (or `pip3 install python-pptx` \
+              on Linux/macOS) in the Python environment that will run the \
+              generated script. Restart `neoth doctor` to confirm. If \
+              Python is not on PATH at all, install Python 3.10+ first \
+              from python.org.",
     },
 ];

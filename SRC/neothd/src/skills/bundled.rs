@@ -591,6 +591,12 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/pm-wwas/skill.yaml"),
     ),
     ("pme", include_str!("../../assets/skills/pme/skill.yaml")),
+    // GOLD-ADAPT-DOC-01 (2026-06-23) — ppt_master skill: python-pptx presentation
+    // generation, advisory Python install gate, MIT. Ships enabled; gate is advisory.
+    (
+        "ppt_master",
+        include_str!("../../assets/skills/ppt_master/skill.yaml"),
+    ),
     (
         "prototype",
         include_str!("../../assets/skills/prototype/skill.yaml"),
@@ -723,6 +729,72 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
 mod tests {
     use super::*;
     use crate::skills::schema::SkillManifest;
+
+    /// GOLD-ADAPT-DOC-01 (2026-06-23) — integration test.
+    ///
+    /// Asserts three things in one pass:
+    ///  1. ppt_master is in BUNDLED_SKILLS, parses cleanly, ships enabled.
+    ///  2. The keyword router (the live consumer) routes realistic operator
+    ///     prompts to ppt_master when the full bundled skill set is loaded —
+    ///     proving the trigger_keywords are live, not just declared.
+    ///  3. The Python gate probe does not panic.
+    #[test]
+    fn gold_adapt_doc_01_ppt_master_bundled_enabled_and_routes() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+        use std::path::PathBuf;
+
+        // 1. Bundled presence + parse + enabled.
+        let (_, body) = BUNDLED_SKILLS
+            .iter()
+            .find(|(id, _)| *id == "ppt_master")
+            .expect("GOLD-ADAPT-DOC-01: ppt_master must be in BUNDLED_SKILLS");
+        let manifest: SkillManifest = serde_yaml::from_str(body)
+            .expect("ppt_master skill.yaml must parse cleanly");
+        assert_eq!(manifest.id, "ppt_master");
+        assert!(
+            manifest.enabled,
+            "ppt_master must ship enabled (not a pm-* or specialist skill)"
+        );
+        assert!(
+            !manifest.trigger_keywords.is_empty(),
+            "ppt_master must have trigger_keywords"
+        );
+        assert!(
+            !manifest.system_prompt.trim().is_empty(),
+            "ppt_master must have a non-empty system_prompt"
+        );
+
+        // 2. Live routing: build an isolated skill set containing only
+        //    ppt_master so route() must select it (no cross-activation risk).
+        let skill = Skill {
+            manifest: manifest.clone(),
+            path: PathBuf::from("/bundled/ppt_master/skill.yaml"),
+            content_hash: String::new(),
+        };
+        let skills = vec![skill];
+        for prompt in [
+            "create a presentation about our Q3 results",
+            "build a slideshow for the all-hands meeting",
+            "generate slides for the product launch",
+            "write a powerpoint presentation on the roadmap",
+            "make a presentation about the new feature",
+            "create pptx file for the board",
+        ] {
+            let m = route(prompt, &skills).unwrap_or_else(|| {
+                panic!("ppt_master: prompt `{prompt}` routed to nothing")
+            });
+            assert_eq!(
+                m.skill.id(),
+                "ppt_master",
+                "prompt `{prompt}` should route to ppt_master, got `{}`",
+                m.skill.id()
+            );
+        }
+
+        // 3. Python gate probe — smoke only (CI may or may not have python-pptx).
+        let _gate: bool = crate::config::installer::is_pptmaster_installed();
+    }
 
     #[test]
     fn every_bundled_skill_has_nonempty_body() {

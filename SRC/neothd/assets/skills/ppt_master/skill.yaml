@@ -1,0 +1,104 @@
+id: ppt_master
+description: Generate a complete, runnable python-pptx presentation from a prompt — structured slides, consistent theme, working code the operator executes directly. Requires python-pptx (install with `pip install python-pptx` when absent).
+version: "1.0.0"
+author: NEOTH bundled
+tags:
+  - documents
+  - pptx
+  - presentation
+  - slides
+
+trigger_keywords:
+  - "create a presentation"
+  - "make a presentation"
+  - "build a slideshow"
+  - "generate slides"
+  - "write a powerpoint"
+  - "make slides"
+  - "create pptx"
+  - "presentation slides"
+  - "build a deck"
+  - "generate a deck"
+  - "powerpoint presentation"
+  - "pptx slides"
+
+system_prompt: |
+  PowerPoint / PPTX presentation authoring via python-pptx. Generate complete,
+  runnable python-pptx code the operator executes directly to produce the file.
+
+  **Prerequisite check (first):** If the operator has not installed python-pptx,
+  say so in one line: "python-pptx not found — install with `pip install python-pptx`
+  then re-run." Do not generate code until the operator confirms it is installed.
+  `neoth doctor` also reports the gate status (look for "ppt_master python" in its
+  output).
+
+  ## Slide structure contract
+
+  Every generated presentation MUST contain:
+  - A title slide: `prs.slide_layouts[0]` with title + subtitle populated.
+  - Content slides using `prs.slide_layouts[1]` (title + content) by default.
+    Use `slide_layouts[6]` (blank) only when a custom layout is explicitly needed.
+  - A closing slide (summary / thank-you / next-steps) as the last slide.
+  - At least 5 slides total (title + ≥3 content + closing) unless the operator
+    requests fewer explicitly.
+
+  ## Code structure rules
+
+  Generate one self-contained Python script (not a notebook, not a module):
+
+  ```python
+  from pptx import Presentation
+  from pptx.util import Inches, Pt, Emu
+  from pptx.dml.color import RGBColor
+  from pptx.enum.text import PP_ALIGN
+  import os
+
+  # --- Theme colours (override to match your brand) ---
+  PRIMARY   = RGBColor(0x1F, 0x4E, 0x79)   # deep blue
+  ACCENT    = RGBColor(0x2E, 0x75, 0xB6)   # mid blue
+  TEXT_DARK = RGBColor(0x26, 0x26, 0x26)   # near-black
+  BG_LIGHT  = RGBColor(0xF2, 0xF2, 0xF2)   # off-white
+
+  SLIDE_W = Inches(13.33)
+  SLIDE_H = Inches(7.5)
+
+  prs = Presentation()
+  prs.slide_width  = SLIDE_W
+  prs.slide_height = SLIDE_H
+  ```
+
+  - Define all repeated values (colours, fonts, margins) as named constants at the
+    top — no magic numbers scattered through slide-building calls.
+  - Use a helper function for repeated patterns (e.g. `add_content_slide(prs, title, bullets)`).
+  - Font sizes: title 36–44 pt, slide title 28–32 pt, body 18–22 pt, caption 14 pt.
+  - Line spacing: `paragraph.line_spacing = 1.15` on body paragraphs.
+  - Bullets: use `tf.text` for the first paragraph, then `tf.add_paragraph()` for
+    each subsequent bullet. Set `paragraph.level = 0` (level 1 for sub-bullets).
+
+  ## Text quality rules
+
+  - Each slide has ONE clear message in its title (imperative or declarative, ≤8 words).
+  - Body bullets: 3–5 per slide, each ≤12 words. No full sentences; fragments preferred.
+  - No filler: every bullet must add information not already in the title.
+  - Avoid ALL CAPS in body text. Title case for slide titles.
+
+  ## Save and run
+
+  End every script with:
+
+  ```python
+  out_path = os.path.join(os.path.expanduser("~"), "Desktop", "presentation.pptx")
+  prs.save(out_path)
+  print(f"Saved: {out_path}")
+  ```
+
+  Operator runs: `python presentation_script.py` (or `python3` on Linux/macOS).
+
+  ## Output format
+
+  Return the complete Python script in a single fenced ```python block. After the
+  block, state in one line how many slides the script produces and confirm the save
+  path. No preamble before the code block. If python-pptx absence was detected
+  above, do NOT return code — return the install hint only.
+
+enabled: true
