@@ -423,6 +423,67 @@ pub fn hex_research_recommended_config() -> McpServerConfig {
     }
 }
 
+/// GOLD-PROG-15 / PC-02 — hardened, opt-in `McpServerConfig` for the official
+/// **chrome-devtools-mcp** server (browser automation via the Chrome DevTools
+/// Protocol).
+///
+/// A browser driver can navigate URLs, read the DOM, and (with the right tools)
+/// execute arbitrary JavaScript + exfiltrate page content — the same blast
+/// radius as a remote-shell server. Security posture:
+/// - `enabled: false`      — operator opts in only after verifying the package.
+/// - **`autonomy_gate: Elevated`** (CCS-02) — the ENTIRE server is inert below
+///   Elevated autonomy; a Strict/Standard operator can't invoke any tool, even
+///   one in `allow_tools`. This is the per-server floor the SSH/remote class uses.
+/// - `trust_all_tools: false` + an `allow_tools` pin scoped to **read/navigate
+///   only** — `take_snapshot`/`take_screenshot`/`list_pages`/`navigate_page`.
+///   Interaction + JS-eval tools (`click`, `fill`, `evaluate_script`) are
+///   DELIBERATELY EXCLUDED (the hex-line pattern: the operator adds them by hand
+///   to unlock active control).
+/// - `smart_approve: false` — a browser tool must never auto-approve past a
+///   Confirm gate (even a screenshot returns page content).
+/// - telemetry OFF: `CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1` (the package's
+///   own opt-out, named in the GOLD plan) + `DO_NOT_TRACK=1`.
+///
+/// License: chrome-devtools-mcp is Apache-2.0 (Google). The operator confirms
+/// the license + telemetry posture by explicitly setting `enabled: true`.
+// neoth: verify the exact tool names against the installed chrome-devtools-mcp
+// version before relying on the allow_tools pin — the autonomy_gate is the
+// real floor regardless of the tool list.
+pub fn chrome_devtools_recommended_config() -> McpServerConfig {
+    McpServerConfig {
+        id: "chrome-devtools".into(),
+        description: Some(
+            "chrome-devtools-mcp: Chrome DevTools Protocol browser automation (read/navigate \
+             rail). JS-eval + interaction tools excluded — add by hand to unlock. Elevated \
+             autonomy floor; set enabled: true after confirming the license + telemetry posture."
+                .into(),
+        ),
+        command: "npx".into(),
+        args: vec!["-y".into(), "chrome-devtools-mcp@latest".into()],
+        env: std::collections::HashMap::from([
+            // Telemetry opt-out (the package's own switch, per the GOLD plan).
+            (
+                "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS".into(),
+                "1".into(),
+            ),
+            ("DO_NOT_TRACK".into(), "1".into()),
+        ]),
+        // Operator must explicitly enable after confirming license + telemetry.
+        enabled: false,
+        // Read/navigate surface only; interaction + JS-eval intentionally absent.
+        allow_tools: Some(vec![
+            "list_pages".into(),
+            "navigate_page".into(),
+            "take_snapshot".into(),
+            "take_screenshot".into(),
+        ]),
+        trust_all_tools: false,
+        smart_approve: false,
+        // CCS-02 — a browser driver is high-blast-radius: inert below Elevated.
+        autonomy_gate: Some(crate::permissions::AutonomyLevel::Elevated),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,5 +910,48 @@ servers:
         assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
         assert!(!cfg.smart_approve, "smart_approve must be false");
         assert!(!cfg.enabled, "must be disabled until operator opts in");
+    }
+
+    // --- GOLD-PROG-15 / PC-02: chrome_devtools_recommended_config tests ---
+
+    #[test]
+    fn chrome_devtools_config_id_command_and_telemetry_off() {
+        let cfg = chrome_devtools_recommended_config();
+        assert_eq!(cfg.id, "chrome-devtools");
+        assert_eq!(cfg.command, "npx");
+        assert!(
+            cfg.args.iter().any(|a| a == "chrome-devtools-mcp@latest"),
+            "args must launch chrome-devtools-mcp"
+        );
+        // Telemetry opt-out is forced via env (the GOLD plan's named switch).
+        assert_eq!(
+            cfg.env.get("CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS").map(String::as_str),
+            Some("1"),
+            "usage-statistics must be disabled"
+        );
+        assert_eq!(cfg.env.get("DO_NOT_TRACK").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn chrome_devtools_config_is_elevated_gated_and_read_only() {
+        let cfg = chrome_devtools_recommended_config();
+        // CCS-02 floor: the whole server is inert below Elevated.
+        assert_eq!(
+            cfg.autonomy_gate,
+            Some(crate::permissions::AutonomyLevel::Elevated),
+            "browser driver must require Elevated autonomy"
+        );
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        // Read/navigate only — interaction + JS-eval are deliberately excluded.
+        assert!(tools.iter().any(|t| t == "take_snapshot"));
+        for forbidden in ["evaluate_script", "click", "fill"] {
+            assert!(
+                !tools.iter().any(|t| t == forbidden),
+                "{forbidden} must NOT be in the default allowlist (operator adds by hand)"
+            );
+        }
     }
 }
