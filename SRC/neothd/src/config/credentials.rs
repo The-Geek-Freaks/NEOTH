@@ -223,6 +223,13 @@ pub struct Credentials {
     /// lives here in `SecretString` (mlock+zeroize), NOT in freedom.yaml.
     /// The PUBLIC cluster rendezvous name lives in `freedom.yaml::cluster.name`.
     pub cluster_passphrase: Option<SecretString>,
+    /// GOLD-ADAPT-TUDU-01 — tududi self-hosted task manager API token.
+    /// Set by the wizard when the operator registers their local tududi
+    /// instance. The daemon populates `TUDUDI_API_TOKEN` in the NEOTH
+    /// process env at startup so `mcp_servers.yaml`'s `from_env` sentinel
+    /// resolves at MCP spawn time. Secret (mlock+zeroize).
+    #[serde(default)]
+    pub tududi_api_token: Option<SecretString>,
 }
 
 impl Credentials {
@@ -338,6 +345,7 @@ impl Credentials {
             ms_todo_client_secret,
             ms_todo_refresh_token,
             cluster_passphrase,
+            tududi_api_token,
         } = self;
         provider_key.is_none()
             && telegram_token.is_none()
@@ -393,6 +401,7 @@ impl Credentials {
             && ms_todo_client_secret.is_none()
             && ms_todo_refresh_token.is_none()
             && cluster_passphrase.is_none()
+            && tududi_api_token.is_none()
     }
 
     /// True if either field is set. Mirror of `!is_empty()` for call-site

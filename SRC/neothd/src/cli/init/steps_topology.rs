@@ -619,6 +619,124 @@ pub(crate) async fn step5e_cbm_offer(interactive: bool) -> Result<()> {
     Ok(())
 }
 
+/// Step 6i — GOLD-ADAPT-TUDU-01: optional tududi self-hosted task manager MCP rail.
+///
+/// tududi is a self-hosted Node.js task manager
+/// (<https://github.com/chrisvel/tududi>). Its MCP server exposes 8 task tools
+/// (`list_tasks`, `get_task`, `create_task`, `update_task`, `complete_task`,
+/// `delete_task`, `add_subtask`, `get_task_metrics`) over a stdio
+/// `StdioServerTransport` — the same JSON-RPC 2.0 framing NEOTH already uses
+/// for all MCP servers. The wizard collects the absolute path to
+/// `backend/modules/mcp/server.js` inside the operator's tududi installation
+/// and the API token, then calls [`crate::installers::tududi::auto_register`].
+///
+/// Non-interactive: print a registration hint and skip. The wizard step is
+/// an offer — no unattended install of a third-party service.
+pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
+    use crate::installers::tududi;
+    if !interactive {
+        println!(
+            "[neoth init] optional tududi task-manager MCP rail — skip for now. \
+             To register later, run `neoth mcp register --id tududi` or re-run \
+             `neoth init --force`. See https://github.com/chrisvel/tududi"
+        );
+        return Ok(());
+    }
+    #[cfg(feature = "wizard")]
+    {
+        println!(
+            "\n[6i/9] tududi task-manager MCP rail (optional) — exposes 8 task tools \
+             (list/get/create/update/complete/delete/subtask/metrics) from your \
+             self-hosted tududi instance."
+        );
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(
+                "Do you self-host tududi and want to register its MCP server now?",
+            )
+            .default(false)
+            .interact()
+            .context("tududi offer confirm")?;
+        if !want {
+            println!(
+                "  → skipped (register later: https://github.com/chrisvel/tududi)"
+            );
+            return Ok(());
+        }
+
+        // Collect the absolute path to server.js.
+        println!(
+            "  Enter the absolute path to tududi's MCP server script.\n  \
+             Example: /home/op/tududi/backend/modules/mcp/server.js"
+        );
+        let server_js: String = dialoguer::Input::with_theme(
+            &dialoguer::theme::ColorfulTheme::default(),
+        )
+        .with_prompt("Path to server.js")
+        .validate_with(|s: &String| {
+            if s.trim().is_empty() {
+                Err("path cannot be empty")
+            } else {
+                Ok(())
+            }
+        })
+        .interact_text()
+        .context("tududi server.js path input")?;
+        let server_js = server_js.trim().to_string();
+
+        // Validate the file exists before asking for the token.
+        if !tududi::is_server_file_present(&server_js) {
+            println!(
+                "  ! `{server_js}` is not a regular file.\n  \
+                 Skipping registration — check the path and re-run `neoth init --force` \
+                 or `neoth mcp register --id tududi` to register manually."
+            );
+            return Ok(());
+        }
+
+        // Collect the API token (masked input).
+        let api_token: String = dialoguer::Password::with_theme(
+            &dialoguer::theme::ColorfulTheme::default(),
+        )
+        .with_prompt("tududi API token")
+        .validate_with(|s: &String| {
+            if s.trim().is_empty() {
+                Err("API token cannot be empty")
+            } else {
+                Ok(())
+            }
+        })
+        .interact()
+        .context("tududi API token input")?;
+        let api_token = api_token.trim().to_string();
+
+        let neoth_home = crate::cli::init::dirs_home().join(".neoth");
+        match tududi::auto_register(&server_js, &api_token, &neoth_home) {
+            Ok(true) => {
+                println!(
+                    "  ✓ tududi registered + enabled in ~/.neoth/mcp_servers.yaml\n  \
+                     ✓ API token written to ~/.neoth/credentials.yaml (mode 0600)\n  \
+                     → Start NEOTH and try: \"list my tasks\""
+                );
+            }
+            Ok(false) => {
+                // Should not be reachable (we already checked is_server_file_present),
+                // but guard defensively.
+                println!(
+                    "  ! server.js not found at `{server_js}` — registration skipped.\n  \
+                     Verify the path and re-run the wizard."
+                );
+            }
+            Err(e) => {
+                println!(
+                    "  ! registration failed: {e}\n  \
+                     Add the entry manually (see https://github.com/chrisvel/tududi)."
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Step 5c — NOOB-UX-6 (Workstream B): Qwen weights pre-download.
 ///
 /// Only meaningful when the operator's inference topology pulls in

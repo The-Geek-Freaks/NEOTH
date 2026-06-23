@@ -484,6 +484,74 @@ pub fn chrome_devtools_recommended_config() -> McpServerConfig {
     }
 }
 
+/// GOLD-ADAPT-TUDU-01 — hardened default registration for the **tududi**
+/// self-hosted task manager's stdio MCP server.
+///
+/// tududi ships a Node.js MCP server in `backend/modules/mcp/server.js`
+/// (StdioServerTransport, 8 task tools). The wizard collects the absolute
+/// path to `server.js` and the operator's API token and calls
+/// [`crate::installers::tududi::auto_register`] to materialise this entry
+/// in `~/.neoth/mcp_servers.yaml`. The token is stored in `credentials.yaml`
+/// under `tududi_api_token`; the `from_env` sentinel here is resolved at
+/// spawn time from `TUDUDI_API_TOKEN` in the NEOTH daemon's process env
+/// (populated by the credentials loader at startup).
+///
+/// Security defaults:
+/// - `enabled: false`          — operator opts in only via the wizard.
+/// - `trust_all_tools: false`  — only the 8 listed task tools are reachable.
+/// - `allow_tools`             — all 8 task tools from `taskTools.js`; no
+///   system or file-access tools are exposed by this server.
+/// - `smart_approve: false`    — task mutation tools must always gate.
+/// - `autonomy_gate: None`     — task tools are low-blast-radius read/write,
+///   no floor needed (Standard autonomy is sufficient).
+/// - `TUDUDI_API_TOKEN: from_env` — resolved from the daemon process env at
+///   spawn; never written as a literal value into `mcp_servers.yaml`.
+///
+/// The `command` and first `args` element are supplied by the caller (the
+/// absolute path to `server.js`). This factory takes `server_js_path` so the
+/// integration test can pin a synthetic path without touching the real FS.
+// neoth: tool names verified against tududi/backend/modules/mcp/taskTools.js
+// (GOLD-ADAPT-TUDU-01 recon 2026-06-23). Re-verify on upstream version bumps.
+pub fn tududi_recommended_config(server_js_path: &str) -> McpServerConfig {
+    McpServerConfig {
+        id: "tududi".into(),
+        description: Some(
+            "tududi: self-hosted task manager MCP server (8 task tools). \
+             Requires a local tududi instance with its Node.js MCP server. \
+             Set enabled: true after the wizard registers your instance."
+                .into(),
+        ),
+        // tududi's MCP server is a Node.js stdio process, not an npx package.
+        // The operator's absolute path to `backend/modules/mcp/server.js`
+        // is baked into args at registration time.
+        command: "node".into(),
+        args: vec![server_js_path.to_string()],
+        env: std::collections::HashMap::from([
+            // The API token sentinel — resolved at spawn time from the daemon
+            // process env (credentials.yaml::tududi_api_token → TUDUDI_API_TOKEN).
+            // Never a literal value here.
+            ("TUDUDI_API_TOKEN".into(), "from_env".into()),
+        ]),
+        // Operator must explicitly enable after the wizard configures the path.
+        enabled: false,
+        // All 8 task tools from taskTools.js — task-scoped, no system access.
+        allow_tools: Some(vec![
+            "list_tasks".into(),
+            "get_task".into(),
+            "create_task".into(),
+            "update_task".into(),
+            "complete_task".into(),
+            "delete_task".into(),
+            "add_subtask".into(),
+            "get_task_metrics".into(),
+        ]),
+        trust_all_tools: false,
+        smart_approve: false,
+        // Task tools are low blast-radius — no autonomy floor needed.
+        autonomy_gate: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -953,5 +1021,71 @@ servers:
                 "{forbidden} must NOT be in the default allowlist (operator adds by hand)"
             );
         }
+    }
+
+    // --- GOLD-ADAPT-TUDU-01: tududi_recommended_config tests ---
+
+    #[test]
+    fn tududi_config_id_command_and_8_tools() {
+        let cfg = tududi_recommended_config("/path/to/server.js");
+        assert_eq!(cfg.id, "tududi");
+        assert_eq!(cfg.command, "node");
+        assert_eq!(cfg.args, vec!["/path/to/server.js"]);
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert_eq!(tools.len(), 8, "must expose exactly 8 task tools");
+        for name in [
+            "list_tasks",
+            "get_task",
+            "create_task",
+            "update_task",
+            "complete_task",
+            "delete_task",
+            "add_subtask",
+            "get_task_metrics",
+        ] {
+            assert!(
+                tools.iter().any(|t| t == name),
+                "allow_tools must contain `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn tududi_config_is_secure_by_default() {
+        let cfg = tududi_recommended_config("/x");
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+        assert!(cfg.autonomy_gate.is_none(), "no autonomy floor for task tools");
+    }
+
+    #[test]
+    fn tududi_config_token_is_from_env_sentinel() {
+        // The API token MUST use the from_env sentinel — a literal value
+        // here would be a secret-in-config leak caught by `neoth doctor`.
+        let cfg = tududi_recommended_config("/path/to/server.js");
+        assert_eq!(
+            cfg.env.get("TUDUDI_API_TOKEN").map(String::as_str),
+            Some("from_env"),
+            "TUDUDI_API_TOKEN must use from_env sentinel, not a literal value"
+        );
+    }
+
+    #[test]
+    fn tududi_config_server_js_path_is_baked_into_args() {
+        // The factory must place the caller-supplied server.js path as the
+        // sole arg (node <path>) — not a package name or npx invocation.
+        let path = "/home/op/tududi/backend/modules/mcp/server.js";
+        let cfg = tududi_recommended_config(path);
+        assert_eq!(cfg.command, "node");
+        assert!(
+            cfg.args.iter().any(|a| a == path),
+            "args must contain the supplied server.js path"
+        );
+        // Sanity: no npx or -y flags — this is a direct node invocation.
+        assert!(
+            !cfg.args.iter().any(|a| a == "npx" || a == "-y"),
+            "tududi must use `node <path>`, not npx"
+        );
     }
 }

@@ -113,6 +113,9 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step6f_import_memory(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step6g_credential_import(&args, interactive, &neoth_dir).await;
+    // GOLD-ADAPT-TUDU-01 — optional tududi self-hosted task manager MCP rail.
+    // No checkpoint save needed (re-offerable each run like step5e_cbm_offer).
+    step6i_tududi_offer(interactive).await?;
     step6h_install_recommended(&args, interactive, &neoth_dir);
     step7_autonomy(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
@@ -1542,7 +1545,7 @@ mod tests {
         );
         assert_eq!(
             WizardStep::ALL.len(),
-            20,
+            21,
             "WizardStep variant count drifted"
         );
     }

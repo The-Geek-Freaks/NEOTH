@@ -391,6 +391,11 @@ pub enum WizardStep {
     AutoUpdate = 70,
     WasmPlugins = 71,
     Supervisor = 72,
+    /// GOLD-ADAPT-TUDU-01 — wizard offer for the optional tududi self-hosted
+    /// task manager MCP rail. Registers `server.js` path + API token, writes
+    /// `tududi_api_token` to `credentials.yaml` and the hardened entry to
+    /// `mcp_servers.yaml`. Non-interactive: skips (no unattended install).
+    TududiOffer = 73,
 }
 
 impl WizardStep {
@@ -417,6 +422,7 @@ impl WizardStep {
         Self::AutoUpdate,
         Self::WasmPlugins,
         Self::Supervisor,
+        Self::TududiOffer,
     ];
 }
 
