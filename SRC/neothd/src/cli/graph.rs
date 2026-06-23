@@ -75,6 +75,14 @@ pub struct GraphArgs {
     /// will not appear in `neoth recall` results.
     #[arg(long)]
     pub no_ingest: bool,
+
+    /// GRAPH-07: after `graphify update`, also run `graphify label` to rename
+    /// "Community N" placeholders to semantic names using the configured provider.
+    /// Requires `obsidian_vault` AND a non-local provider (anthropic_api /
+    /// openai_api / openai_compat / claude_cli) in freedom.yaml. Skip with a
+    /// warning when a local candle provider is configured.
+    #[arg(long, default_value_t = false)]
+    pub label: bool,
 }
 
 /// Entry point for `neoth graph <path>`.
@@ -156,6 +164,30 @@ pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
         "GRAPH-06: graphify update OK ({})",
         update_out.status
     );
+
+    // GRAPH-07: run `graphify label` when --label is set (operator opt-in).
+    // Runs BEFORE vault-copy so the labeled GRAPH_REPORT.md is what gets
+    // filed into Obsidian and ingested into idx_groundtruth.
+    let communities_labeled: u64 = if args.label {
+        use crate::daemon::self_map_task::run_label_step_one_shot;
+        let provider_key = cfg
+            .provider_key
+            .as_ref()
+            .map(|s| s.expose().to_owned());
+        run_label_step_one_shot(
+            &corpus_path,
+            &cfg.provider_kind,
+            &provider_key,
+            &cfg.provider_endpoint,
+            &cfg.self_map_label_model,
+        )
+        .await
+    } else {
+        0
+    };
+    if args.label {
+        println!("GRAPH-07: label step done — communities_labeled={communities_labeled}");
+    }
 
     if args.dry_run {
         println!("GRAPH-06: --dry-run set; skipping vault copy + ingest.");
@@ -277,15 +309,16 @@ pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
     // may fail — that is logged as a warning and never blocks the CLI (pitfall
     // #4). We reuse the same event byte (0xFB) because the semantic is
     // identical: graphify completed on a corpus.
-    emit_wal_frame(pages_written, gt_inserted, &corpus_name).await;
+    emit_wal_frame(pages_written, gt_inserted, communities_labeled, &corpus_name).await;
 
     // ── Step 8: summary ──────────────────────────────────────────────────────
     println!();
-    println!("GRAPH-06 complete:");
-    println!("  corpus      {}", corpus_path.display());
-    println!("  vault dir   {}", out_dir.display());
-    println!("  files       {pages_written}");
-    println!("  gt rows     {gt_inserted}");
+    println!("GRAPH-06/07 complete:");
+    println!("  corpus              {}", corpus_path.display());
+    println!("  vault dir           {}", out_dir.display());
+    println!("  files               {pages_written}");
+    println!("  gt rows             {gt_inserted}");
+    println!("  communities labeled {communities_labeled}");
 
     Ok(())
 }
@@ -322,7 +355,7 @@ fn build_corpus_scope(corpus_name: &str) -> String {
 /// Best-effort: any error (e.g. the daemon holds an exclusive WAL lock) is
 /// logged as a warning — the CLI result is still `Ok`. Mirrors the email
 /// one-shot pattern in `cli/email.rs`.
-async fn emit_wal_frame(pages_written: u64, gt_inserted: u64, corpus: &str) {
+async fn emit_wal_frame(pages_written: u64, gt_inserted: u64, communities_labeled: u64, corpus: &str) {
     let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
     if let Some(p) = segment.parent() {
         let _ = std::fs::create_dir_all(p);
@@ -336,10 +369,11 @@ async fn emit_wal_frame(pages_written: u64, gt_inserted: u64, corpus: &str) {
     };
     let now_ns = crate::time::now_unix_ns_i64();
     let payload = serde_json::to_vec(&serde_json::json!({
-        "pages_written": pages_written,
-        "gt_inserted":   gt_inserted,
-        "corpus":        corpus,
-        "ts_unix":       now_ns / 1_000_000_000,
+        "pages_written":       pages_written,
+        "gt_inserted":         gt_inserted,
+        "communities_labeled": communities_labeled,
+        "corpus":              corpus,
+        "ts_unix":             now_ns / 1_000_000_000,
     }))
     .unwrap_or_default();
     let header = HeaderBuilder::new(EVENT_TYPE_SELF_MAP_COMPLETE, &payload).build();

@@ -246,6 +246,19 @@ pub struct FreedomConfig {
     /// `None` = `"NEOTH-Self"`.
     #[serde(default)]
     pub self_map_subdir: Option<String>,
+    /// GOLD-ADAPT-GRAPH-07 — opt-in community naming via the configured provider.
+    /// When `true`, each self-map tick runs `python -m graphifyy label .` after
+    /// `update`, routing the LLM call through the operator's configured provider
+    /// (AnthropicApi / OpenaiApi / OpenaiCompat / ClaudeCli). Local candle
+    /// providers (LocalQwen / LocalOuro) expose no HTTP endpoint and are skipped
+    /// with a warn. Default `false` — the step costs real API tokens or a
+    /// `claude` subprocess call.
+    #[serde(default)]
+    pub self_map_label_enabled: bool,
+    /// GOLD-ADAPT-GRAPH-07 — model to pass to `graphify label`. `None` = let
+    /// graphify pick its default (claude-opus-4-5 or gpt-4o depending on backend).
+    #[serde(default)]
+    pub self_map_label_model: Option<String>,
     /// R-3 Hysteria transport — encrypted egress for provider HTTP
     /// traffic. When `Some`, `neothd serve` spawns the Hysteria
     /// subprocess at startup, probes the local SOCKS5 port, and sets

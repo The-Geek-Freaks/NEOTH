@@ -98,8 +98,28 @@ pub(crate) fn spawn_self_map(
         .self_map_interval_secs
         .map(std::time::Duration::from_secs);
     let subdir = config.self_map_subdir.clone();
+    // GRAPH-07: extract label config + provider creds for community naming.
+    let label_enabled = config.self_map_label_enabled;
+    let label_model = config.self_map_label_model.clone();
+    let provider_kind = config.provider_kind;
+    // Expose the SecretString into a transient String for the subprocess env var.
+    // This is the ONLY consumer; it is not persisted or logged.
+    let provider_key = config
+        .provider_key
+        .as_ref()
+        .map(|s| s.expose().to_owned());
+    let provider_endpoint = config.provider_endpoint.clone();
     Some(crate::daemon::self_map_task::spawn(
-        vault, source_dir, subdir, interval, writer,
+        vault,
+        source_dir,
+        subdir,
+        interval,
+        writer,
+        label_enabled,
+        label_model,
+        provider_kind,
+        provider_key,
+        provider_endpoint,
     ))
 }
 
