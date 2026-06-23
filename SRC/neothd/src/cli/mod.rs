@@ -67,6 +67,10 @@ pub mod fs;
 pub mod github;
 pub mod glossary;
 pub mod goal;
+/// GOLD-ADAPT-GRAPH-06 — `neoth graph <path>`: run graphify on any corpus
+/// and file GRAPH_REPORT.md + GRAPH_TREE.html into the Obsidian vault +
+/// groundtruth so `neoth recall` can answer questions about the corpus.
+pub mod graph;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
 pub mod gui;
@@ -858,6 +862,18 @@ pub enum Commands {
     /// `~/.neoth/code_map.db` SQLite for recall integration.
     CodeMap(code_map::CodeMapArgs),
 
+    /// GOLD-ADAPT-GRAPH-06 — run graphify on any user-supplied corpus and
+    /// file the output into the Obsidian vault + wiki ground-truth so
+    /// `neoth recall` can answer questions about the mapped repository.
+    ///
+    /// Runs `python -m graphifyy update` inside `<path>`, copies
+    /// `GRAPH_REPORT.md` + `GRAPH_TREE.html` into `<vault>/<corpus-name>/`,
+    /// and ingests the report into `idx_groundtruth` (per-corpus scope so
+    /// each mapped repo has its own independent revoke boundary).
+    ///
+    /// `neoth graph <path> [--subdir NAME] [--dry-run] [--no-ingest]`
+    Graph(graph::GraphArgs),
+
     /// REPOW-01/02/03 — git-derived repo intelligence.
     ///
     /// Ranks every tracked source file by change-risk (ownership + churn),
@@ -1469,6 +1485,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::CodeMap(mut args) => {
             args.output = global_output;
             code_map::run_code_map(args).await?;
+        }
+        Commands::Graph(args) => {
+            graph::run_graph(args).await?;
         }
         Commands::CodeIntel(args) => {
             code_intel::run_code_intel(args).await?;

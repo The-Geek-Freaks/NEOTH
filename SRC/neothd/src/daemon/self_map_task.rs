@@ -103,7 +103,10 @@ async fn run(
 
 /// Probe graphify availability. Returns `Ok(())` if `python -m graphifyy
 /// --version` exits 0; `Err` (with a helpful message) otherwise.
-async fn check_graphify_available() -> anyhow::Result<()> {
+///
+/// Exported `pub` so `cli::graph` (GOLD-ADAPT-GRAPH-06 one-shot CLI) can reuse
+/// the probe without duplicating it.
+pub async fn check_graphify_available() -> anyhow::Result<()> {
     let out = tokio::process::Command::new("python")
         .args(["-m", "graphifyy", "--version"])
         .output()
