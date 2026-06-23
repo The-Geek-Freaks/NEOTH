@@ -24,6 +24,7 @@ use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 /// Schema tag — bumped if the wire format changes.
 pub const TRANSFER_SCHEMA_VERSION: u32 = 1;
@@ -111,12 +112,29 @@ pub fn parse_b64_32(s: &str, what: &str) -> Result<[u8; 32]> {
 
 /// Derive the one-shot AES-256 key from the ECDH shared secret. Salt = the
 /// ephemeral pubkey (binds the key to this exact exchange).
-fn derive_key(shared: &[u8; 32], ephemeral_pub: &[u8; 32]) -> [u8; 32] {
+///
+/// Returns a `Zeroizing` wrapper so the 32-byte OKM is wiped on drop on
+/// every exit path (including caller early returns). The wrapper derefs to
+/// `[u8; 32]` so `Key::<Aes256Gcm>::from_slice(&aes_key)` requires no
+/// call-site changes.
+fn derive_key(shared: &[u8; 32], ephemeral_pub: &[u8; 32]) -> Zeroizing<[u8; 32]> {
     let hk = Hkdf::<Sha256>::new(Some(ephemeral_pub), shared);
     let mut okm = [0u8; 32];
     hk.expand(HKDF_INFO, &mut okm)
         .expect("HKDF-SHA256 expand of 32 bytes is always valid");
-    okm
+    // neoth: hkdf 0.12 has no Zeroize impl — the PRK copy inside `hk`'s
+    // internal HmacCore is released (not cleared) when the frame unwinds.
+    // Explicit drop here marks the intent and bounds the lifetime; the
+    // intermediate T(1) expansion block on expand's stack frame is also
+    // released without clearing (upstream papercut). The Zeroizing wrapper
+    // on `okm` is the layer we CAN control. Upgrade path: enable a zeroize
+    // feature on hkdf when upstream provides one; the `drop(hk)` comment
+    // is the re-test marker.
+    // Hkdf has no Drop impl so clippy warns about drop-non-drop; the call is
+    // intentional: it documents lifetime intent, not destructor invocation.
+    #[allow(clippy::drop_non_drop)]
+    drop(hk);
+    Zeroizing::new(okm)
 }
 
 /// Encrypt `payload` FOR the recipient's X25519 public key + sign with the
@@ -141,7 +159,8 @@ pub fn encrypt_for(
         n.copy_from_slice(&r[..12]);
         n
     };
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&aes_key));
+    // `from_slice` expects `&[u8]`; deref Zeroizing<[u8;32]> → [u8;32] → &[u8].
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(aes_key.as_ref()));
     let ciphertext = cipher
         .encrypt(Nonce::from_slice(&nonce_bytes), payload)
         .map_err(|e| anyhow::anyhow!("AES-256-GCM encrypt: {e}"))?;
@@ -205,7 +224,8 @@ pub fn decrypt_with(bundle: &TransferBundle, recipient_secret: &[u8; 32]) -> Res
     let secret = StaticSecret::from(*recipient_secret);
     let shared = secret.diffie_hellman(&PublicKey::from(eph_pub));
     let aes_key = derive_key(shared.as_bytes(), &eph_pub);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&aes_key));
+    // `from_slice` expects `&[u8]`; deref Zeroizing<[u8;32]> → [u8;32] → &[u8].
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(aes_key.as_ref()));
     cipher
         .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
         .map_err(|e| anyhow::anyhow!("AES-256-GCM decrypt (wrong key or tampered): {e}"))
@@ -423,6 +443,22 @@ mod tests {
         let json = serde_json::to_string(&bundle).unwrap();
         let back: TransferBundle = serde_json::from_str(&json).unwrap();
         assert_eq!(bundle, back);
+    }
+
+    // ── CRYPTO-02 zeroize ────────────────────────────────────────────────
+
+    #[test]
+    fn derive_key_returns_zeroizing_wrapper() {
+        // Compile-time proof: derive_key must return Zeroizing<[u8; 32]>.
+        // If the return type reverts to [u8; 32] this test fails to compile.
+        let shared = [0xABu8; 32];
+        let eph = [0xCDu8; 32];
+        let key: Zeroizing<[u8; 32]> = derive_key(&shared, &eph);
+        // Must be non-zero (HKDF of non-zero inputs produces non-zero OKM).
+        assert_ne!(*key, [0u8; 32]);
+        // Must be deterministic.
+        let key2: Zeroizing<[u8; 32]> = derive_key(&shared, &eph);
+        assert_eq!(*key, *key2);
     }
 
     // ── A3-01 hardening ──────────────────────────────────────────────────

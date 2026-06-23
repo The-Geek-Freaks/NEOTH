@@ -181,12 +181,22 @@ pub fn derive_keys_pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> ([u8
     let mut mac_key = [0u8; 32];
     hk.expand(b"mac", &mut mac_key)
         .expect("32 bytes fits in the 8160-byte HKDF output bound");
+    // neoth: drop `hk` explicitly to release the HmacCore that holds a copy
+    // of `master_key` (set from `from_prk`). hkdf 0.12 has no Zeroize impl
+    // — the PRK copy inside the HmacCore is released (not cleared) when the
+    // frame unwinds. The intermediate T(1) expansion block inside
+    // `expand_multi_info` is also released without clearing (upstream
+    // papercut). This `drop` bounds the lifetime of the PRK copy to before
+    // `master_key.zeroize()` executes; upgrade path: enable a zeroize
+    // feature on hkdf when upstream provides one.
+    // Hkdf has no Drop impl so clippy warns about drop-non-drop; the call is
+    // intentional: it documents lifetime intent, not destructor invocation.
+    #[allow(clippy::drop_non_drop)]
+    drop(hk);
     // Scrub the PRK once the subkeys are derived — `master_key` is the
     // single point that compromises both subkeys, and NEOTH zeroizes all
-    // key material (consistent with SecretBytes). `hk` copied the PRK
-    // internally + isn't used past its last `expand`, so this `&mut`
-    // doesn't conflict. The returned subkeys are wrapped in `Zeroizing`
-    // by the caller (`parse_and_decrypt`).
+    // key material (consistent with SecretBytes). The returned subkeys are
+    // wrapped in `Zeroizing` by the caller (`parse_and_decrypt`).
     master_key.zeroize();
     (enc_key, mac_key)
 }
@@ -442,6 +452,21 @@ mod tests {
         }"#;
         let err = parse_envelope_json(body).unwrap_err();
         assert_eq!(err, BitwardenEncryptedError::IterationsTooLow(5000));
+    }
+
+    // ── CRYPTO-02 zeroize ─────────────────────────────────────────
+
+    #[test]
+    fn derive_keys_pbkdf2_drops_hk_cleanly() {
+        // Regression: explicit drop(hk) before master_key.zeroize() must
+        // not affect the expand output — derivation must remain correct.
+        let (enc, mac) = derive_keys_pbkdf2(b"password", b"salt", 100_000);
+        // enc and mac must differ (different HKDF info strings).
+        assert_ne!(enc, mac);
+        // Must be stable across calls — drop order doesn't affect the OKM.
+        let (enc2, mac2) = derive_keys_pbkdf2(b"password", b"salt", 100_000);
+        assert_eq!(enc, enc2);
+        assert_eq!(mac, mac2);
     }
 
     // ── derive_keys_pbkdf2 ────────────────────────────────────────

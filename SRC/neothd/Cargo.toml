@@ -368,7 +368,7 @@ blake2 = "0.10"
 # family, same vintage as ed25519-dalek; pure-Rust, MSVC-clean, no C deps.
 # `static_secrets` exposes `StaticSecret` (off by default in 2.x) which we use
 # for both the ephemeral and the recipient key.
-x25519-dalek = { version = "2", features = ["static_secrets"] }
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 
 # TD-02 CalDAV — WebDAV `multistatus` XML parsing (REPORT calendar-query for
 # VTODO). Already resolved transitively in Cargo.lock; pure-Rust, no C deps.
