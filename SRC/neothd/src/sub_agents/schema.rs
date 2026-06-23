@@ -35,6 +35,37 @@ use serde::{Deserialize, Serialize};
 
 use crate::council::qa_verdict::QaVerdict;
 
+/// GOLD-ADAPT-OH-13 — per-agent context-layer omission flags.
+///
+/// Each flag controls whether the corresponding enrichment layer is OMITTED
+/// when the agent fires (true = omit, false = keep). Defaults mirror OH's
+/// intent: everything except the moral core is omitted by default (the agent
+/// supplies its own system prompt and doesn't need the operator's profile /
+/// recall / MCP catalogue), but the moral-core safety layer stays injected
+/// so agents can't silently drop the operator's position-0 directives.
+///
+/// Operators override these in their agent TOML:
+/// ```toml
+/// omit_moral_core = true        # opts the agent out of the moral-core layer
+/// omit_operator_context = false # keeps the operator context for this agent
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentOmitFlags {
+    /// Omit the `operator_context` enrichment layer (identity + memory context).
+    pub operator_context: bool,
+    /// Omit the `mcp_catalogue` enrichment layer.
+    pub mcp_catalogue: bool,
+    /// Omit the `moral_core` enrichment layer (position-0 directives).
+    /// Defaults to `false` — moral core stays injected for safety.
+    pub moral_core: bool,
+    /// Omit the `preset_addendum` enrichment layer (profile preset delta).
+    pub preset: bool,
+    /// Omit the recall block (Block::D memory episodes).
+    pub recall: bool,
+    /// Omit the `repo_context_block` enrichment layer.
+    pub repo_context: bool,
+}
+
 /// One sub-agent definition. Either operator-defined (TOML) or built-in
 /// (returned by [`super::builtins::built_in_agents`]).
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -62,9 +93,39 @@ pub struct SubAgent {
     /// Disable an override without deleting the file.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+
+    // ── GOLD-ADAPT-OH-13: per-agent context-layer omission flags ────────────
+    /// Omit the `operator_context` enrichment layer for this agent.
+    /// Default: true (agents get their own system; operator context excluded).
+    #[serde(default = "default_true")]
+    pub omit_operator_context: bool,
+    /// Omit the `mcp_catalogue` enrichment layer for this agent.
+    /// Default: true.
+    #[serde(default = "default_true")]
+    pub omit_mcp_catalogue: bool,
+    /// Omit the `moral_core` enrichment layer for this agent.
+    /// Default: false — moral core stays injected for safety by default.
+    #[serde(default)]
+    pub omit_moral_core: bool,
+    /// Omit the `preset_addendum` enrichment layer for this agent.
+    /// Default: true.
+    #[serde(default = "default_true")]
+    pub omit_preset: bool,
+    /// Omit the recall block (Block::D memory episodes) for this agent.
+    /// Default: true.
+    #[serde(default = "default_true")]
+    pub omit_recall: bool,
+    /// Omit the `repo_context_block` enrichment layer for this agent.
+    /// Default: true.
+    #[serde(default = "default_true")]
+    pub omit_repo_context: bool,
 }
 
 fn default_enabled() -> bool {
+    true
+}
+
+fn default_true() -> bool {
     true
 }
 
@@ -72,6 +133,19 @@ impl SubAgent {
     /// True if this agent is allowed to call `tool_name`.
     pub fn allows_tool(&self, tool_name: &str) -> bool {
         self.tools.iter().any(|t| t == tool_name)
+    }
+
+    /// GOLD-ADAPT-OH-13 — convert this agent's `omit_*` TOML fields into
+    /// the typed [`AgentOmitFlags`] struct used by the enrichment rebuild.
+    pub fn to_omit_flags(&self) -> AgentOmitFlags {
+        AgentOmitFlags {
+            operator_context: self.omit_operator_context,
+            mcp_catalogue: self.omit_mcp_catalogue,
+            moral_core: self.omit_moral_core,
+            preset: self.omit_preset,
+            recall: self.omit_recall,
+            repo_context: self.omit_repo_context,
+        }
     }
 }
 
@@ -231,8 +305,84 @@ mod tests {
             system: "s".into(),
             tools: vec![],
             enabled: true,
+            omit_operator_context: true,
+            omit_mcp_catalogue: true,
+            omit_moral_core: false,
+            omit_preset: true,
+            omit_recall: true,
+            omit_repo_context: true,
         };
         assert!(!a.allows_tool("anything"));
+    }
+
+    // ── GOLD-ADAPT-OH-13: omit_ flag tests ─────────────────────────────
+
+    #[test]
+    fn omit_flags_default_to_true_for_all_but_moral_core() {
+        // A minimal TOML with no omit_ fields must produce omit=true for all
+        // context layers EXCEPT moral_core, which defaults to false.
+        let toml_src = r#"
+            name = "planner2"
+            description = "Plan"
+            system = "Be a planner."
+        "#;
+        let a: SubAgent = toml::from_str(toml_src).unwrap();
+        assert!(a.omit_operator_context, "omit_operator_context must default true");
+        assert!(a.omit_mcp_catalogue, "omit_mcp_catalogue must default true");
+        assert!(a.omit_preset, "omit_preset must default true");
+        assert!(a.omit_recall, "omit_recall must default true");
+        assert!(a.omit_repo_context, "omit_repo_context must default true");
+        assert!(!a.omit_moral_core, "omit_moral_core must default false (safety layer stays in)");
+    }
+
+    #[test]
+    fn omit_moral_core_can_be_set_true_in_toml() {
+        let toml_src = r#"
+            name = "bare-agent"
+            description = "No moral core"
+            system = "raw system"
+            omit_moral_core = true
+        "#;
+        let a: SubAgent = toml::from_str(toml_src).unwrap();
+        let flags = a.to_omit_flags();
+        assert!(flags.moral_core, "to_omit_flags must propagate omit_moral_core=true");
+    }
+
+    #[test]
+    fn omit_operator_context_false_in_toml() {
+        let toml_src = r#"
+            name = "context-agent"
+            description = "Wants operator context"
+            system = "use context"
+            omit_operator_context = false
+        "#;
+        let a: SubAgent = toml::from_str(toml_src).unwrap();
+        let flags = a.to_omit_flags();
+        assert!(!flags.operator_context);
+        assert!(!flags.moral_core, "moral_core still false by default");
+    }
+
+    #[test]
+    fn to_omit_flags_round_trips_all_fields() {
+        let toml_src = r#"
+            name = "full-omit"
+            description = "Everything omitted"
+            system = "agent"
+            omit_operator_context = true
+            omit_mcp_catalogue = true
+            omit_moral_core = true
+            omit_preset = true
+            omit_recall = true
+            omit_repo_context = true
+        "#;
+        let a: SubAgent = toml::from_str(toml_src).unwrap();
+        let flags = a.to_omit_flags();
+        assert!(flags.operator_context);
+        assert!(flags.mcp_catalogue);
+        assert!(flags.moral_core);
+        assert!(flags.preset);
+        assert!(flags.recall);
+        assert!(flags.repo_context);
     }
 
     // ── QM-5 NEXUS handoff tests ────────────────────────────────────────

@@ -186,6 +186,30 @@ struct PromptBundle {
     /// in `plan_attestation::APPLICABLE_SKILLS`. Threaded to
     /// `enforce_preflight` which re-reads the file and bails if tampered.
     plan_attest_hash: Option<String>,
+    /// GOLD-ADAPT-OH-13 — raw enrichment layers carried from
+    /// `build_prompt_bundle` to `enforce_preflight` so the agent-dispatch
+    /// block can selectively rebuild the system prompt per-agent without
+    /// re-running all the async I/O.
+    agent_raw_layers: AgentRawLayers,
+}
+
+/// GOLD-ADAPT-OH-13 — raw enrichment layer strings, threaded from
+/// `build_prompt_bundle` (where they were computed) to `enforce_preflight`
+/// (where the sub-agent dispatch block can selectively apply them via
+/// `AgentOmitFlags`). Also carries `skill_delegate_to` for Part B
+/// skill-to-agent auto-synthesis.
+struct AgentRawLayers {
+    operator_context: Option<String>,
+    preset_addendum: Option<String>,
+    explicit_system: Option<String>,
+    repo_context_block: Option<String>,
+    skill_layer: Option<String>,
+    mcp_catalogue: Option<String>,
+    persona_override: Option<String>,
+    moral_core: Option<String>,
+    recall_block: Option<String>,
+    guidance_block: Option<String>,
+    skill_delegate_to: Option<String>,
 }
 
 async fn build_prompt_bundle(
@@ -373,8 +397,14 @@ async fn build_prompt_bundle(
     // no tool-allowlist gate). Owned so it outlives the match block to
     // the MCP dispatch call.
     let mut skill_tool_allowlist: Option<Vec<String>> = None;
-    let (skill_layer, used_skill_id): (Option<String>, Option<String>) = if eval_suppress {
-        (None, None)
+    // GOLD-ADAPT-OH-13: extended to 3-tuple to capture `delegate_to` from the
+    // matched skill manifest without requiring a second scan of `skill_match`.
+    let (skill_layer, used_skill_id, skill_delegate_to): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = if eval_suppress {
+        (None, None, None)
     } else if let Some(resolved) = mode_hit {
         let parent = installed_skills
             .iter()
@@ -393,8 +423,8 @@ async fn build_prompt_bundle(
         // Mode activation is its own audit path — review-gate
         // dispatching via /agent is the explicit operator path,
         // so no used_skill_id surfaces here (mirrors the prior
-        // `_skill_match` discard).
-        (layer, None)
+        // `_skill_match` discard). Mode paths never carry delegate_to.
+        (layer, None, None)
     } else {
         // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
         // PF-01 (Session 30): Stage-2 runs when EITHER keyword Stage-1
@@ -453,11 +483,15 @@ async fn build_prompt_bundle(
             .as_ref()
             .map(|m| m.skill.system_prompt().to_string());
         let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+        // GOLD-ADAPT-OH-13: capture delegate_to from the matched skill manifest.
+        let delegate = skill_match
+            .as_ref()
+            .and_then(|m| m.skill.manifest.delegate_to.clone());
         // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
         skill_tool_allowlist = skill_match
             .as_ref()
             .map(|m| m.skill.manifest.tool_allowlist.clone());
-        (layer, id)
+        (layer, id, delegate)
     };
     // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
     let mut skill_layer = skill_layer;
@@ -580,6 +614,12 @@ async fn build_prompt_bundle(
     // MCP / moral) > guidance (MEM-12 session-wide context) > recall (Block::D
     // turn-specific episodes, closest to the user turn). `None` lanes drop out;
     // all-None → None (byte-identical to before guidance/recall when both empty).
+    //
+    // GOLD-ADAPT-OH-13: clone guidance_block + recall_block before the move
+    // into the fold so they can be threaded to enforce_preflight for the
+    // selective agent-enrichment rebuild.
+    let guidance_block_raw = guidance_block.clone();
+    let recall_block_raw = recall_block.clone();
     let combined_system = [enriched.system, guidance_block, recall_block]
         .into_iter()
         .flatten()
@@ -589,11 +629,28 @@ async fn build_prompt_bundle(
     // the same way it did before the helper extraction.
     let _used_skill_id = enriched.used_skill_id;
 
+    // GOLD-ADAPT-OH-13: bundle raw layers so enforce_preflight can rebuild
+    // the system prompt per-agent with selective omissions.
+    let agent_raw_layers = AgentRawLayers {
+        operator_context,
+        preset_addendum,
+        explicit_system: args.system.clone(),
+        repo_context_block,
+        skill_layer,
+        mcp_catalogue,
+        persona_override,
+        moral_core,
+        recall_block: recall_block_raw,
+        guidance_block: guidance_block_raw,
+        skill_delegate_to,
+    };
+
     (
         PromptBundle {
             combined_system,
             skill_tool_allowlist,
             plan_attest_hash,
+            agent_raw_layers,
         },
         config,
         prompt,
@@ -625,8 +682,9 @@ enum PreflightOutcome {
     },
 }
 
-// GOLD-ADAPT-PWF-01 adds `plan_attest_hash` as a 9th parameter; suppress
-// the lint rather than refactoring into a context struct (separate concern).
+// GOLD-ADAPT-PWF-01 adds `plan_attest_hash` as a 9th parameter;
+// GOLD-ADAPT-OH-13 adds `agent_raw_layers` as a 10th. Suppress the lint
+// rather than refactoring into a context struct (separate concern).
 #[allow(clippy::too_many_arguments)]
 async fn enforce_preflight(
     combined_system: Option<String>,
@@ -640,6 +698,8 @@ async fn enforce_preflight(
     // GOLD-ADAPT-PWF-01: SHA-256 of `task_plan.md` captured at injection
     // time by `build_prompt_bundle`. `None` means no plan was injected.
     plan_attest_hash: Option<String>,
+    // GOLD-ADAPT-OH-13: raw enrichment layers for selective agent rebuild.
+    agent_raw_layers: AgentRawLayers,
 ) -> Result<PreflightOutcome> {
     // ── Permission gate (Phase 28b AU-4) + C-14 cost preview ───────────────
     // Real `eur_estimate` from the cost predictor — feeds both the
@@ -726,19 +786,110 @@ async fn enforce_preflight(
         }
     }
 
-    // ── Sub-agent dispatch (Phase 30 R-18 SA-2) ────────────────────────────
+    // ── Sub-agent dispatch (Phase 30 R-18 SA-2 + GOLD-ADAPT-OH-13) ──────────
     // `/agent <name> <body>` swaps system+model+tools for the named agent.
-    // Built-ins: code-reviewer / security-reviewer / planner.
+    // GOLD-ADAPT-OH-13 Part B: a matched skill with `delegate_to: <name>`
+    // auto-synthesises a Dispatch so the same enrichment-rebuild path fires.
     let agent_dir = home.join("agents");
     let agents = crate::sub_agents::load_all(&agent_dir)
         .await
         .unwrap_or_default();
-    let agent_dispatch = crate::sub_agents::parse_agent_invocation(&prompt, &agents);
+    // Explicit /agent invocation takes priority; fall back to skill delegate_to.
+    let agent_dispatch =
+        crate::sub_agents::parse_agent_invocation(&prompt, &agents).or_else(|| {
+            // Part B: if a skill matched and declares delegate_to, synthesise
+            // a Dispatch using that agent + the original prompt as the body.
+            agent_raw_layers
+                .skill_delegate_to
+                .as_deref()
+                .and_then(|name| agents.iter().find(|a| a.name == name))
+                .map(|agent| crate::sub_agents::Dispatch {
+                    agent_name: agent.name.clone(),
+                    system: agent.system.clone(),
+                    model: agent.model.clone(),
+                    allowed_tools: agent.tools.clone(),
+                    prompt: prompt.clone(),
+                    omit_flags: agent.to_omit_flags(),
+                })
+        });
     // Capture the original prompt + name BEFORE the dispatch consumes the
     // values — needed for the two-stage review gate after the reply lands.
     let review_context: Option<(String, String)> = agent_dispatch
         .as_ref()
         .map(|d| (d.agent_name.clone(), d.prompt.clone()));
+
+    // ── GOLD-ADAPT-OH-13: selective enrichment rebuild helper ─────────────
+    // Build a system prompt for `d` using only the layers NOT omitted by its
+    // `omit_flags`. Mirrors the layer order in `build_enriched_request`:
+    //   moral_core > operator_context > preset_addendum > explicit_system >
+    //   repo_context_block > skill_layer > mcp_catalogue
+    // then folds guidance_block + recall_block in above that (same order as
+    // the main combined_system fold).  Returns `(agent_prompt, agent_system)`.
+    let build_agent_system = |d: &crate::sub_agents::Dispatch| -> Option<String> {
+        use crate::pipeline::{build_enriched_request, EnrichmentInputs};
+        let f = &d.omit_flags;
+        let enriched = build_enriched_request(EnrichmentInputs {
+            prompt: &d.prompt,
+            operator_context: if f.operator_context {
+                None
+            } else {
+                agent_raw_layers.operator_context.as_deref()
+            },
+            preset_addendum: if f.preset {
+                None
+            } else {
+                agent_raw_layers.preset_addendum.as_deref()
+            },
+            explicit_system: agent_raw_layers.explicit_system.as_deref(),
+            repo_context_block: if f.repo_context {
+                None
+            } else {
+                agent_raw_layers.repo_context_block.as_deref()
+            },
+            skill_system_prompt: agent_raw_layers.skill_layer.as_deref(),
+            used_skill_id: None,
+            mcp_catalogue: if f.mcp_catalogue {
+                None
+            } else {
+                agent_raw_layers.mcp_catalogue.as_deref()
+            },
+            persona_override: agent_raw_layers.persona_override.as_deref(),
+            moral_core: if f.moral_core {
+                None
+            } else {
+                agent_raw_layers.moral_core.as_deref()
+            },
+        });
+        // Fold guidance + recall on top (same authority order as main path),
+        // respecting the omit flags.
+        let guidance = if f.recall {
+            None
+        } else {
+            agent_raw_layers.guidance_block.as_deref()
+        };
+        let recall = if f.recall {
+            None
+        } else {
+            agent_raw_layers.recall_block.as_deref()
+        };
+        // The agent's own system prompt is always the base.
+        let agent_base = Some(d.system.as_str());
+        [
+            agent_base,
+            enriched.system.as_deref(),
+            guidance,
+            recall,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .fold(None::<String>, |acc, layer| {
+            Some(match acc {
+                None => layer.to_string(),
+                Some(a) => format!("{a}\n\n{layer}"),
+            })
+        })
+    };
 
     // ── Slash command dispatch (Phase 28 R-17 SC-2) ────────────────────────
     // If the operator typed `/help`, `/recall foo`, etc., look up the command
@@ -747,7 +898,38 @@ async fn enforce_preflight(
     // user-facing prompt body. Non-commands pass through untouched.
     let (final_prompt, final_system) = if let Some(d) = agent_dispatch {
         info!(agent = %d.agent_name, "sub-agent dispatch");
-        (d.prompt, Some(d.system))
+        // GOLD-ADAPT-OH-13: emit WAL 0xFC AGENT_DISPATCHED with omit-flags mask.
+        {
+            let f = &d.omit_flags;
+            let auto_delegated = agent_raw_layers.skill_delegate_to.as_deref()
+                .map(|s| s.to_string());
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "agent_name": d.agent_name,
+                "omit_flags_mask": {
+                    "operator_context": f.operator_context,
+                    "mcp_catalogue": f.mcp_catalogue,
+                    "moral_core": f.moral_core,
+                    "preset": f.preset,
+                    "recall": f.recall,
+                    "repo_context": f.repo_context,
+                },
+                "auto_delegated_from_skill": auto_delegated,
+                "ts_unix": crate::time::now_unix_secs(),
+            }))
+            .unwrap_or_default();
+            if !payload.is_empty() {
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_AGENT_DISPATCHED,
+                    &payload,
+                )
+                .build();
+                if let Err(e) = writer.append(header, payload).await {
+                    tracing::warn!(error = %e, "WAL append AGENT_DISPATCHED failed (best-effort)");
+                }
+            }
+        }
+        let agent_system = build_agent_system(&d);
+        (d.prompt, agent_system)
     } else {
         match crate::slash::parse_invocation(&prompt) {
             crate::slash::Invocation::Command {
@@ -2854,6 +3036,7 @@ pub async fn run_chat_with(
             combined_system,
             skill_tool_allowlist,
             plan_attest_hash,
+            agent_raw_layers,
         },
         config,
         prompt,
@@ -2880,6 +3063,7 @@ pub async fn run_chat_with(
         writer_join,
         &home,
         plan_attest_hash,
+        agent_raw_layers,
     )
     .await?
     {

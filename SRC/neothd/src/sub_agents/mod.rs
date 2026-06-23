@@ -40,7 +40,7 @@ pub mod review;
 pub mod schema;
 
 pub use loader::load_all;
-pub use schema::SubAgent;
+pub use schema::{AgentOmitFlags, SubAgent};
 
 /// Resolved dispatch — the caller swaps these in for the per-turn system
 /// prompt + model preference, and consults `allowed_tools` before letting
@@ -54,6 +54,10 @@ pub struct Dispatch {
     /// The user-facing prompt body — `/agent <name> <body>` strips the
     /// `/agent <name>` prefix and forwards `<body>` here.
     pub prompt: String,
+    /// GOLD-ADAPT-OH-13 — which enrichment layers to omit when rebuilding
+    /// the system prompt for this agent. Populated from the matched
+    /// [`SubAgent`]'s `omit_*` TOML fields via [`SubAgent::to_omit_flags`].
+    pub omit_flags: AgentOmitFlags,
 }
 
 /// Parse `/agent <name> <body>` invocations against the loaded set and
@@ -83,6 +87,7 @@ pub fn parse_agent_invocation(text: &str, agents: &[SubAgent]) -> Option<Dispatc
         model: agent.model.clone(),
         allowed_tools: agent.tools.clone(),
         prompt: body.to_string(),
+        omit_flags: agent.to_omit_flags(),
     })
 }
 
@@ -98,6 +103,12 @@ mod parse_tests {
             system: "be a planner".into(),
             tools: vec!["recall".into()],
             enabled: true,
+            omit_operator_context: true,
+            omit_mcp_catalogue: true,
+            omit_moral_core: false,
+            omit_preset: true,
+            omit_recall: true,
+            omit_repo_context: true,
         }]
     }
 

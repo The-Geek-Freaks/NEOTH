@@ -55,6 +55,15 @@ pub struct SkillManifest {
     pub modes: Vec<ModeEntry>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// GOLD-ADAPT-OH-13 — optional sub-agent delegation. When set, the skill
+    /// router automatically synthesises a `Dispatch` for the named agent
+    /// (looked up by `name` in the loaded agent list) and routes the turn
+    /// through the standard omit-flag enrichment path instead of injecting
+    /// the skill's own `system_prompt` as a layer. The skill's payload
+    /// reaches the agent as `d.prompt`; the `skill_layer` is cleared before
+    /// the enrichment rebuild to prevent double-injection.
+    #[serde(default)]
+    pub delegate_to: Option<String>,
 }
 
 /// QM-3 mode-spectrum enum. Controls how template-heavy the output
@@ -336,6 +345,29 @@ homepage: "https://example.com/morning-news"
         );
     }
 
+    /// GOLD-ADAPT-OH-13 — `delegate_to` parses from YAML and defaults to None.
+    #[test]
+    fn delegate_to_field_parses_and_defaults() {
+        let with_delegate = r#"
+id: plan-and-run
+description: delegate skill
+trigger_keywords: ["plan this"]
+system_prompt: "unused when delegating"
+delegate_to: planner
+"#;
+        let m: SkillManifest = serde_yaml::from_str(with_delegate).expect("parse");
+        assert_eq!(m.delegate_to.as_deref(), Some("planner"));
+
+        let without_delegate = r#"
+id: plain-skill
+description: no delegation
+trigger_keywords: ["hello"]
+system_prompt: "do stuff"
+"#;
+        let m2: SkillManifest = serde_yaml::from_str(without_delegate).expect("parse");
+        assert!(m2.delegate_to.is_none(), "delegate_to defaults to None");
+    }
+
     #[test]
     fn skill_helpers_proxy_to_manifest() {
         let manifest = SkillManifest {
@@ -351,6 +383,7 @@ homepage: "https://example.com/morning-news"
             source: None,
             modes: vec![],
             enabled: true,
+            delegate_to: None,
         };
         let s = Skill {
             manifest,

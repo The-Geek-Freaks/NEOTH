@@ -178,6 +178,12 @@ mod tests {
             system: format!("system for {name}"),
             tools: vec!["recall".into()],
             enabled: true,
+            omit_operator_context: true,
+            omit_mcp_catalogue: true,
+            omit_moral_core: false,
+            omit_preset: false,
+            omit_recall: false,
+            omit_repo_context: false,
         }
     }
 

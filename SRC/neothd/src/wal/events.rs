@@ -2218,6 +2218,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("bg_session_started", EVENT_TYPE_BG_SESSION_STARTED),
     ("bg_session_done", EVENT_TYPE_BG_SESSION_DONE),
     ("goal_judged", EVENT_TYPE_GOAL_JUDGED),
+    ("agent_dispatched", EVENT_TYPE_AGENT_DISPATCHED),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -2385,6 +2386,22 @@ pub const EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE: u8 = 0xFA;
 /// Operator-system band (0xF0..=0xFF).
 /// Payload (JSON): `{ pages_written, gt_inserted, ts_unix }`.
 pub const EVENT_TYPE_SELF_MAP_COMPLETE: u8 = 0xFB;
+
+/// `0xFC AGENT_DISPATCHED` — GOLD-ADAPT-OH-13. A `/agent <name> <body>`
+/// slash-command (or a `delegate_to:` skill auto-synthesis) routed the
+/// current turn to a named sub-agent with selective enrichment layer
+/// suppression. Emitted by `cli::chat` at the agent-dispatch site after
+/// the enrichment rebuild succeeds, before the provider call fires.
+///
+/// Records which enrichment layers were included vs omitted, so an
+/// operator auditing `neoth wal show --type agent_dispatched` can see
+/// exactly how the sub-agent's system prompt was composed.
+///
+/// Payload (JSON): `{ agent_name, omit_flags_mask:{ operator_context,
+/// mcp_catalogue, moral_core, preset, recall, repo_context },
+/// auto_delegated_from_skill? (present only on skill auto-synthesis),
+/// ts_unix }`.
+pub const EVENT_TYPE_AGENT_DISPATCHED: u8 = 0xFC;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2806,6 +2823,8 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE < 0xF0) as usize];
     // GOLD-ADAPT-GRAPH-05 — 0xFB must sit in the 0xF0..=0xFF operator/system band.
     let _ = [(); 1][(EVENT_TYPE_SELF_MAP_COMPLETE < 0xF0) as usize];
+    // GOLD-ADAPT-OH-13 — 0xFC must sit in the 0xF0..=0xFF operator/system band.
+    let _ = [(); 1][(EVENT_TYPE_AGENT_DISPATCHED < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -3143,6 +3162,7 @@ mod tests {
                 EVENT_TYPE_HISTORY_COMPACTION_FIRED,
             ),
             ("GOAL_JUDGED", EVENT_TYPE_GOAL_JUDGED),
+            ("AGENT_DISPATCHED", EVENT_TYPE_AGENT_DISPATCHED),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {
