@@ -183,6 +183,12 @@ static DAEMON_CRONS: &[DaemonCron] = &[
         description: "Regression checker: compares current WAL metrics against a baseline snapshot.",
         gate: None,
     },
+    // GOLD-ADAPT-GRAPH-05 — alphabetically between "session-health" and "token-anomaly".
+    DaemonCron {
+        id: "self-map",
+        description: "NEOTH self-map cron: runs graphify on own source, writes GRAPH_REPORT to NEOTH-Self/ vault, ingests into idx_groundtruth (scope neoth-self-map). Emits 0xFB SELF_MAP_COMPLETE.",
+        gate: Some("freedom.yaml::obsidian_vault + self_map_source_dir"),
+    },
     DaemonCron {
         id: "session-health",
         description: "Session health cron: detects stale open sessions and emits health warnings.",

@@ -538,6 +538,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let obsidian_wiki_rebuild_task =
         crate::cli::serve_tasks::spawn_obsidian_wiki_rebuild(&config, writer.clone());
 
+    // ── 5b-tris-c. GOLD-ADAPT-GRAPH-05 NEOTH self-map cron ────────────────
+    //
+    // Spawned only when `obsidian_vault` AND a source directory are both
+    // configured (either `self_map_source_dir` or env `NEOTH_SRC_DIR`).
+    // Runs `graphify update` on the daemon source tree on a 24h cadence,
+    // copies GRAPH_REPORT.md + GRAPH_TREE.html into vault/NEOTH-Self/, and
+    // ingests the report into idx_groundtruth (scope neoth-self-map) so
+    // recall returns graph-derived answers about NEOTH's own structure.
+    // WAL-emitting (0xFB) — construction in serve_tasks; aborted before
+    // drop(writer) in shutdown.
+    let self_map_task = crate::cli::serve_tasks::spawn_self_map(&config, writer.clone());
+
     // ── 5b-quad. Cloud archive auto-mirror (R-8) ───────────────────────────
     //
     // Off by default. When freedom.yaml::cloud_archive_dest is set,
@@ -1587,6 +1599,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         n8n_api_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
+        self_map_task,
         cloud_task,
         hysteria_supervisor,
     };

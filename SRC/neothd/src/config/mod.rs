@@ -232,6 +232,20 @@ pub struct FreedomConfig {
     /// process working directory (repo root under normal daemon invocation).
     #[serde(default)]
     pub obsidian_wiki_source_dir: Option<String>,
+    /// GOLD-ADAPT-GRAPH-05 — source directory for the self-map cron.
+    /// `graphify update` is run against this directory to produce the
+    /// structural graph of the daemon source tree.
+    /// `None` = check env `NEOTH_SRC_DIR`; skip when absent.
+    #[serde(default)]
+    pub self_map_source_dir: Option<String>,
+    /// GOLD-ADAPT-GRAPH-05 — self-map rebuild interval in seconds.
+    /// `None` = use the module default (24h).
+    #[serde(default)]
+    pub self_map_interval_secs: Option<u64>,
+    /// GOLD-ADAPT-GRAPH-05 — vault subdir for self-map output.
+    /// `None` = `"NEOTH-Self"`.
+    #[serde(default)]
+    pub self_map_subdir: Option<String>,
     /// R-3 Hysteria transport — encrypted egress for provider HTTP
     /// traffic. When `Some`, `neothd serve` spawns the Hysteria
     /// subprocess at startup, probes the local SOCKS5 port, and sets

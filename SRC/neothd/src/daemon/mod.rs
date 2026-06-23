@@ -172,6 +172,13 @@ pub mod usage_log;
 /// completion and fires optional `on_complete` callbacks (auto-continue).
 /// Self-contained, no hot-lane deps, new-file clean lane.
 pub mod bg_jobs;
+/// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron. Runs `graphify update` on the
+/// daemon source tree on a schedule, copies `GRAPH_REPORT.md` +
+/// `GRAPH_TREE.html` into `<vault>/NEOTH-Self/`, ingests the report into
+/// `idx_groundtruth` (scope `neoth-self-map`), and emits `0xFB
+/// SELF_MAP_COMPLETE`. Gated by `freedom.yaml::obsidian_vault` +
+/// `self_map_source_dir` (or env `NEOTH_SRC_DIR`). Off by default.
+pub mod self_map_task;
 /// GOLD-ADAPT-ODY-07 companion — background-job monitor loop.
 /// [`bg_monitor::spawn_bg_monitor`] spawns a periodic scan over the
 /// [`bg_jobs::BgJobRegistry`]: completed jobs get their callbacks invoked,

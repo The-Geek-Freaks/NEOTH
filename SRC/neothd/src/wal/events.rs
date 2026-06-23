@@ -2184,6 +2184,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "obsidian_wiki_rebuild_complete",
         EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE,
     ),
+    // GOLD-ADAPT-GRAPH-05 — self-map cron completion.
+    ("self_map_complete", EVENT_TYPE_SELF_MAP_COMPLETE),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
     (
@@ -2374,6 +2376,15 @@ pub const EVENT_TYPE_HISTORY_COMPACTION_FIRED: u8 = 0xF9;
 /// Payload (JSON): `{ pages_written, sources, ground_truth_inserted,
 /// ground_truth_revoked, ts_unix }`.
 pub const EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE: u8 = 0xFA;
+
+/// `0xFB SELF_MAP_COMPLETE` — GOLD-ADAPT-GRAPH-05. The periodic NEOTH
+/// self-map cron ran `graphify update` on the daemon source tree,
+/// copied `GRAPH_REPORT.md` + `GRAPH_TREE.html` into
+/// `<vault>/NEOTH-Self/`, and ingested the report into `idx_groundtruth`
+/// (scope `neoth-self-map`).
+/// Operator-system band (0xF0..=0xFF).
+/// Payload (JSON): `{ pages_written, gt_inserted, ts_unix }`.
+pub const EVENT_TYPE_SELF_MAP_COMPLETE: u8 = 0xFB;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2793,6 +2804,8 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_REFLECTION_OBSERVATION_STAGED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_HISTORY_COMPACTION_FIRED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE < 0xF0) as usize];
+    // GOLD-ADAPT-GRAPH-05 — 0xFB must sit in the 0xF0..=0xFF operator/system band.
+    let _ = [(); 1][(EVENT_TYPE_SELF_MAP_COMPLETE < 0xF0) as usize];
 };
 
 #[cfg(test)]

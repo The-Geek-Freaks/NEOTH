@@ -74,6 +74,35 @@ pub(crate) fn spawn_obsidian_wiki_rebuild(
     ))
 }
 
+/// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron. Spawned only when both
+/// `freedom.yaml::obsidian_vault` AND a source dir are configured (either
+/// `freedom.yaml::self_map_source_dir` or env `NEOTH_SRC_DIR`).
+/// `None` (no vault or no source dir) ⇒ no task. WAL-emitting (0xFB) —
+/// must be aborted BEFORE `drop(writer)` in shutdown.
+pub(crate) fn spawn_self_map(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    // Gate: vault must be configured.
+    let vault_str = config.obsidian_vault.as_deref()?;
+    let vault = std::path::PathBuf::from(vault_str);
+
+    // Source dir: explicit config → env NEOTH_SRC_DIR → None (skip).
+    let source_dir = config
+        .self_map_source_dir
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("NEOTH_SRC_DIR").map(std::path::PathBuf::from))?;
+
+    let interval = config
+        .self_map_interval_secs
+        .map(std::time::Duration::from_secs);
+    let subdir = config.self_map_subdir.clone();
+    Some(crate::daemon::self_map_task::spawn(
+        vault, source_dir, subdir, interval, writer,
+    ))
+}
+
 /// R-8 — cloud archive auto-mirror. Spawned only when `freedom.yaml::cloud_archive_dest`
 /// is set; periodically mirrors the session archive into a subdir of that folder
 /// so the operator's cloud-vendor desktop client picks up the delta. `None`
@@ -2639,6 +2668,11 @@ pub(crate) struct BackgroundHandles {
     /// WAL-emitting (0xFA); `None` when `obsidian_vault` or source dir
     /// is not configured. Must be aborted BEFORE `drop(writer)`.
     pub obsidian_wiki_rebuild_task: Option<JoinHandle<anyhow::Result<()>>>,
+    /// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron handle.
+    /// WAL-emitting (0xFB); `None` when `obsidian_vault` or
+    /// `self_map_source_dir` / env `NEOTH_SRC_DIR` is not configured.
+    /// Must be aborted BEFORE `drop(writer)`.
+    pub self_map_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub cloud_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor>,
 }
@@ -2716,6 +2750,7 @@ pub(crate) async fn shutdown_background_tasks(
         n8n_api_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
+        self_map_task,
         cloud_task,
         hysteria_supervisor,
     } = handles;
@@ -2973,6 +3008,11 @@ pub(crate) async fn shutdown_background_tasks(
     // 0xFA WAL frames; mid-tick abort at worst drops one rebuild-complete
     // frame (the next boot re-runs the rebuild on its first tick).
     crate::cli::serve_tasks::abort_optional(obsidian_wiki_rebuild_task).await;
+
+    // GOLD-ADAPT-GRAPH-05: abort the self-map cron BEFORE drop(writer) — it
+    // emits 0xFB SELF_MAP_COMPLETE frames; mid-tick abort at worst drops one
+    // frame (the next boot re-runs the graphify update on its first tick).
+    crate::cli::serve_tasks::abort_optional(self_map_task).await;
 
     // Same drill for the cloud auto-mirror task. The cloud client
     // upstream gets the final delta on its own schedule once the
