@@ -859,6 +859,15 @@ Set the one-shot goal (replaces any existing goal)
 
 Show the active goal + grind (the default — also runs with no subcommand via the wrapper)
 
+## `neoth graph`
+
+GOLD-ADAPT-GRAPH-06 — run graphify on any user-supplied corpus and file the output into the Obsidian vault + wiki ground-truth so `neoth recall` can answer questions about the mapped repository
+
+- `<PATH>` — Root directory of the corpus to map. graphify's `update` is run with this as its working directory, so `graphify-out/` will appear directly inside it
+- `--subdir <NAME>` — Override the vault subdirectory name. Defaults to the last component of PATH (e.g. `mycorp` for `/home/user/projects/mycorp`). Must not be `NEOTH-Self` (reserved for the GRAPH-05 self-map cron)
+- `--dry-run <DRY_RUN>` — Probe graphify and run `graphifyy update`, but skip the vault copy and groundtruth ingest. Useful to verify graphify runs before committing to the full pipeline
+- `--no-ingest <NO_INGEST>` — Copy GRAPH_REPORT.md + GRAPH_TREE.html into the vault but skip the groundtruth ingest pass. The files will be browsable in Obsidian but will not appear in `neoth recall` results
+
 ## `neoth groundtruth`
 
 Manage hard-stored ground-truth facts (Phase 28c R-24)
