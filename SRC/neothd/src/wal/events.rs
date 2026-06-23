@@ -2180,6 +2180,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "history_compaction_fired",
         EVENT_TYPE_HISTORY_COMPACTION_FIRED,
     ),
+    (
+        "obsidian_wiki_rebuild_complete",
+        EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE,
+    ),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
     (
@@ -2361,6 +2365,15 @@ pub const EVENT_TYPE_REFLECTION_OBSERVATION_STAGED: u8 = 0xF8;
 /// verbatim. Operator-system band (0xF0..=0xFF).
 /// Payload (JSON): `{ original_chars, summarised_chars, kept_chars, threshold_tokens, model }`.
 pub const EVENT_TYPE_HISTORY_COMPACTION_FIRED: u8 = 0xF9;
+
+/// `0xFA OBSIDIAN_WIKI_REBUILD_COMPLETE` — OH-14. The periodic
+/// self-wiki rebuild cron completed one successful tick: it re-rendered
+/// the PLAN/ design corpus into the Obsidian vault and refreshed the
+/// ground-truth pointers in `idx_groundtruth` (scope `neoth-self-wiki`).
+/// Operator-system band (0xF0..=0xFF).
+/// Payload (JSON): `{ pages_written, sources, ground_truth_inserted,
+/// ground_truth_revoked, ts_unix }`.
+pub const EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE: u8 = 0xFA;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2779,6 +2792,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_INCOGNITO_TURN < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_REFLECTION_OBSERVATION_STAGED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_HISTORY_COMPACTION_FIRED < 0xF0) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE < 0xF0) as usize];
 };
 
 #[cfg(test)]

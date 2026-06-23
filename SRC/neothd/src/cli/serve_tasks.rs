@@ -44,6 +44,36 @@ pub(crate) fn spawn_obsidian_sync(
     ))
 }
 
+/// OH-14 — Obsidian self-wiki periodic rebuild. Spawned only when both
+/// `freedom.yaml::obsidian_vault` AND a source dir are configured (either
+/// `freedom.yaml::obsidian_wiki_source_dir` or env `NEOTH_PLAN_DIR`).
+/// `None` (no vault or no source dir) ⇒ no task. WAL-emitting (0xFA) —
+/// must be aborted BEFORE `drop(writer)` in shutdown.
+pub(crate) fn spawn_obsidian_wiki_rebuild(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    // Gate: vault must be configured.
+    let vault_str = config.obsidian_vault.as_deref()?;
+    let vault = std::path::PathBuf::from(vault_str);
+
+    // Source dir: explicit config → env NEOTH_PLAN_DIR → None (skip).
+    let source_dir = config
+        .obsidian_wiki_source_dir
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("NEOTH_PLAN_DIR").map(std::path::PathBuf::from)
+        })?;
+
+    let interval = config
+        .obsidian_wiki_rebuild_secs
+        .map(std::time::Duration::from_secs);
+    Some(crate::cli::obsidian_wiki_rebuild_task::spawn(
+        vault, source_dir, None, interval, writer,
+    ))
+}
+
 /// R-8 — cloud archive auto-mirror. Spawned only when `freedom.yaml::cloud_archive_dest`
 /// is set; periodically mirrors the session archive into a subdir of that folder
 /// so the operator's cloud-vendor desktop client picks up the delta. `None`
@@ -2605,6 +2635,10 @@ pub(crate) struct BackgroundHandles {
     pub n8n_api_shutdown: Arc<tokio::sync::Notify>,
     pub n8n_api_task: Option<JoinHandle<()>>,
     pub obsidian_task: Option<JoinHandle<anyhow::Result<()>>>,
+    /// OH-14 — periodic self-wiki rebuild cron handle.
+    /// WAL-emitting (0xFA); `None` when `obsidian_vault` or source dir
+    /// is not configured. Must be aborted BEFORE `drop(writer)`.
+    pub obsidian_wiki_rebuild_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub cloud_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor>,
 }
@@ -2681,6 +2715,7 @@ pub(crate) async fn shutdown_background_tasks(
         n8n_api_shutdown,
         n8n_api_task,
         obsidian_task,
+        obsidian_wiki_rebuild_task,
         cloud_task,
         hysteria_supervisor,
     } = handles;
@@ -2933,6 +2968,11 @@ pub(crate) async fn shutdown_background_tasks(
     // Abort the Obsidian auto-sync task. Pure file IO — aborting mid-copy
     // is safe; the next start runs a fresh full sync from `wal_cursor=0`.
     crate::cli::serve_tasks::abort_optional(obsidian_task).await;
+
+    // OH-14: abort the wiki-rebuild cron BEFORE drop(writer) — it emits
+    // 0xFA WAL frames; mid-tick abort at worst drops one rebuild-complete
+    // frame (the next boot re-runs the rebuild on its first tick).
+    crate::cli::serve_tasks::abort_optional(obsidian_wiki_rebuild_task).await;
 
     // Same drill for the cloud auto-mirror task. The cloud client
     // upstream gets the final delta on its own schedule once the
@@ -3308,6 +3348,24 @@ mod tests {
                 "/nonexistent".into(),
             );
         assert!(handle.is_none(), "disabled config => None (no task spawned)");
+    }
+
+    /// OH-14 — spawn_obsidian_wiki_rebuild returns None when no vault is
+    /// configured. The vault gate fires before the WalWriterHandle is even
+    /// used, so we can verify the None path without a tokio runtime by using
+    /// a dummy writer (created via the channel pair approach in wal::writer).
+    #[tokio::test]
+    async fn spawn_obsidian_wiki_rebuild_returns_none_when_no_vault() {
+        // Default config: obsidian_vault = None → spawn must return None.
+        let cfg = FreedomConfig::default();
+        let wal_dir = tempfile::tempdir().unwrap();
+        let (writer, _join) =
+            crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
+        let handle = spawn_obsidian_wiki_rebuild(&cfg, writer);
+        assert!(
+            handle.is_none(),
+            "no obsidian_vault → spawn_obsidian_wiki_rebuild must return None"
+        );
     }
 
     #[tokio::test]

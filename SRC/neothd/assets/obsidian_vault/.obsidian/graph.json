@@ -1,0 +1,20 @@
+{
+  "collapse-filter": false,
+  "search": "",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": false,
+  "showOrphans": true,
+  "colorGroups": [
+    {
+      "query": "tag:#spec",
+      "color": { "a": 1, "rgb": 4993022 }
+    },
+    {
+      "query": "tag:#design",
+      "color": { "a": 1, "rgb": 14540253 }
+    }
+  ],
+  "scale": 1,
+  "close": false
+}

@@ -211,6 +211,19 @@ pub fn bootstrap_files() -> Vec<VaultBootstrapFile<'static>> {
             relative_path: "Templates/Daily Note.md",
             content: include_str!("../../assets/obsidian_vault/Templates/Daily Note.md"),
         },
+        // OH-14 — default Obsidian graph config: colour-codes #spec and #design
+        // tags and shows orphan nodes so the self-wiki docs show up even when
+        // they carry no backlinks yet.
+        VaultBootstrapFile {
+            relative_path: ".obsidian/graph.json",
+            content: include_str!("../../assets/obsidian_vault/.obsidian/graph.json"),
+        },
+        // OH-14 — empty types registry. Obsidian creates this on first launch;
+        // shipping it pre-populated avoids a "vault was modified externally" prompt.
+        VaultBootstrapFile {
+            relative_path: ".obsidian/types.json",
+            content: include_str!("../../assets/obsidian_vault/.obsidian/types.json"),
+        },
     ]
 }
 

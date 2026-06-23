@@ -287,6 +287,26 @@ fn scaffold_vault(vault: &Path) -> Result<InitOutcome> {
         &mut created,
         &mut skipped,
     )?;
+    // OH-14 — default Obsidian graph config: colour-codes #spec/#design tags
+    // + shows orphan nodes so NEOTH-Wiki pages surface in the graph view
+    // immediately even before the operator adds backlinks.
+    write_if_absent(
+        vault,
+        Path::new(".obsidian/graph.json"),
+        GRAPH_JSON,
+        &mut created,
+        &mut skipped,
+    )?;
+    // OH-14 — empty Obsidian property types registry. Obsidian would create
+    // this itself on first vault open; shipping it pre-populated avoids a
+    // "vault modified externally" dialog for the operator.
+    write_if_absent(
+        vault,
+        Path::new(".obsidian/types.json"),
+        TYPES_JSON,
+        &mut created,
+        &mut skipped,
+    )?;
 
     Ok(InitOutcome {
         vault_path: vault.to_path_buf(),
@@ -337,6 +357,13 @@ const APPEARANCE_JSON: &str = r#"{
   "theme": "system"
 }
 "#;
+
+/// OH-14 — default graph config embedded from the bundled asset.
+/// Shipped via both `scaffold_vault` (CLI) and `bootstrap_files()` (wizard).
+const GRAPH_JSON: &str = include_str!("../../assets/obsidian_vault/.obsidian/graph.json");
+
+/// OH-14 — empty Obsidian property types registry.
+const TYPES_JSON: &str = include_str!("../../assets/obsidian_vault/.obsidian/types.json");
 
 /// Empty workspace pin so Obsidian doesn't show the "Open as vault?"
 /// confirmation on first launch.
@@ -915,6 +942,15 @@ mod tests {
         assert!(created.contains(&".obsidian/appearance.json".to_string()));
         assert!(created.contains(&".obsidian/community-plugins.json".to_string()));
         assert!(created.contains(&".obsidian/workspace.json".to_string()));
+        // OH-14 — graph + types config must be scaffolded on init.
+        assert!(
+            created.contains(&".obsidian/graph.json".to_string()),
+            "graph.json must be created on init; created={created:?}"
+        );
+        assert!(
+            created.contains(&".obsidian/types.json".to_string()),
+            "types.json must be created on init; created={created:?}"
+        );
         assert!(outcome.skipped_existing.is_empty());
     }
 

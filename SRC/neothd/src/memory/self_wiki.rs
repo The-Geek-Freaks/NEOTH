@@ -142,6 +142,12 @@ static DAEMON_CRONS: &[DaemonCron] = &[
         description: "WAL integrity + crash.log + channel silence monitor; emits 0x48/0x49/0x4A on anomalies.",
         gate: Some("freedom.yaml::monitor.enabled"),
     },
+    // OH-14 — alphabetically between "monitor" and "omi-ingest".
+    DaemonCron {
+        id: "obsidian-wiki-rebuild",
+        description: "Periodic NEOTH self-wiki rebuild: re-renders PLAN/ design corpus into the Obsidian vault and refreshes ground-truth pointers (scope neoth-self-wiki). Emits 0xFA on each successful tick.",
+        gate: Some("freedom.yaml::obsidian_vault"),
+    },
     DaemonCron {
         id: "omi-ingest",
         description: "OMI transcript ingest: polls a local OMI backend, sanitises, promotes to ground-truth.",

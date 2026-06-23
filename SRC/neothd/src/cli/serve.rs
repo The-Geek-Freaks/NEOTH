@@ -527,6 +527,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let obsidian_task = crate::cli::serve_tasks::spawn_obsidian_sync(&config);
 
+    // ── 5b-tris-b. OH-14 Obsidian self-wiki rebuild cron ──────────────────
+    //
+    // Spawned only when `obsidian_vault` AND a source directory are both
+    // configured (either `obsidian_wiki_source_dir` or env `NEOTH_PLAN_DIR`).
+    // Re-renders the PLAN/ design corpus into vault/<subdir>/ on a 24h cadence
+    // and refreshes ground-truth pointers so the wiki is recall-accessible.
+    // WAL-emitting (0xFA) — construction in serve_tasks; aborted before
+    // drop(writer) in shutdown.
+    let obsidian_wiki_rebuild_task =
+        crate::cli::serve_tasks::spawn_obsidian_wiki_rebuild(&config, writer.clone());
+
     // ── 5b-quad. Cloud archive auto-mirror (R-8) ───────────────────────────
     //
     // Off by default. When freedom.yaml::cloud_archive_dest is set,
@@ -1575,6 +1586,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         n8n_api_shutdown,
         n8n_api_task,
         obsidian_task,
+        obsidian_wiki_rebuild_task,
         cloud_task,
         hysteria_supervisor,
     };

@@ -221,6 +221,17 @@ pub struct FreedomConfig {
     /// (1 hour). Field unused when `obsidian_vault` is None.
     #[serde(default)]
     pub obsidian_auto_sync_secs: Option<u64>,
+    /// OH-14 — periodic self-wiki rebuild interval in seconds.
+    /// `None` = use the module default (24 hours).
+    /// Field unused when `obsidian_vault` is None.
+    #[serde(default)]
+    pub obsidian_wiki_rebuild_secs: Option<u64>,
+    /// OH-14 — path to the source design-doc directory (PLAN/) fed into
+    /// the wiki rebuild cron. `None` = check env `NEOTH_PLAN_DIR`; skip
+    /// the cron when neither is set. Relative paths are resolved from the
+    /// process working directory (repo root under normal daemon invocation).
+    #[serde(default)]
+    pub obsidian_wiki_source_dir: Option<String>,
     /// R-3 Hysteria transport — encrypted egress for provider HTTP
     /// traffic. When `Some`, `neothd serve` spawns the Hysteria
     /// subprocess at startup, probes the local SOCKS5 port, and sets
