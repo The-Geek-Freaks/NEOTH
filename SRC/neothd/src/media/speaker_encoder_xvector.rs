@@ -20,7 +20,7 @@
 //!   sample_rate = 16_000
 //!   win_length  = 25 ms  → 400 samples  (SpeechBrain Fbank default)
 //!   hop_length  = 10 ms  → 160 samples
-//!   n_fft       = 512    (next power-of-2 ≥ win_length in SpeechBrain)
+//!   n_fft       = 400    (SpeechBrain Fbank default = win_length; realfft handles non-pow2)
 //!   mean_var_norm: sentence-level mean subtraction only (std_norm=False)
 //!
 //! Xvector.blocks flat list:
@@ -100,7 +100,7 @@ const SAFETENSORS_FILE: &str = "model.safetensors";
 /// Number of Fbank mel bins the checkpoint was trained on.
 const N_MELS: usize = 24;
 /// FFT size matching SpeechBrain's default for 25 ms @ 16 kHz.
-const N_FFT: usize = 512;
+const N_FFT: usize = 400;
 /// Analysis frame length (25 ms @ 16 kHz).
 const FRAME_LEN: usize = 400;
 /// Hop length (10 ms @ 16 kHz).
@@ -407,10 +407,24 @@ fn fbank_frames(samples: &[f32], fb: &[Vec<f32>]) -> Vec<Vec<f32>> {
 
     let mut indata = r2c.make_input_vec();
     let mut spectrum = r2c.make_output_vec();
-    // Hann window.
+    // PERIODIC HAMMING window — SpeechBrain STFT defaults to
+    // `torch.hamming_window(win_length)` (periodic=True): `0.54 - 0.46·cos(2πn/N)`,
+    // denominator N (= FRAME_LEN). (The prior code was doubly broken: a linear
+    // ramp with the `.cos()` dropped entirely, plus the symmetric denominator.)
     let window: Vec<f32> = (0..FRAME_LEN)
-        .map(|n| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * n as f32 / (FRAME_LEN as f32 - 1.0)))
+        .map(|n| 0.54 - 0.46 * (2.0 * std::f32::consts::PI * n as f32 / FRAME_LEN as f32).cos())
         .collect();
+
+    // center=True (SpeechBrain/torchaudio STFT default): pad N_FFT/2 on both
+    // sides so frame t is centred at t·HOP. torch pads 'reflect'; we zero-pad —
+    // the difference only touches the first/last frame and is negligible after
+    // utterance-level pooling.
+    let pad = N_FFT / 2;
+    let mut padded = Vec::with_capacity(samples.len() + 2 * pad);
+    padded.resize(pad, 0.0f32);
+    padded.extend_from_slice(samples);
+    padded.resize(padded.len() + pad, 0.0f32);
+    let samples = padded.as_slice();
 
     let mut frames = Vec::new();
     let mut start = 0usize;
