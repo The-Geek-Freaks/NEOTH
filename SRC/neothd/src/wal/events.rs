@@ -17,7 +17,7 @@
 //!
 //! | Range          | Purpose                                                |
 //! |----------------|--------------------------------------------------------|
-//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …)               |
+//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors |
 //! | `0x10..=0x1F`  | Daemon lifecycle (BOOT, SHUTDOWN, UPDATE_RAN, …)        |
 //! | `0x20..=0x2F`  | LLM provider lifecycle (REQUEST/RESPONSE/ERROR/STREAM) |
 //! | `0x2A..=0x2B`  | (reserved Phase 10 D14b) local Qwen3 inference trace   |
@@ -33,7 +33,7 @@
 //! | `0xE0..=0xEF`  | Cluster lifecycle (R-7) — 0xE0..=0xEA assigned         |
 //! | `0xF0..=0xFF`  | Operator / system (QUOTA_BREACHED, …)                  |
 
-// ---- 0x01..=0x0F  Memory + recall -----------------------------------------
+// ---- 0x01..=0x0F  Memory + recall; 0x05..=0x07 = turn-journal recovery ----
 
 /// Raw user-supplied text. The baseline content event.
 pub const EVENT_TYPE_RAW_TEXT: u8 = 0x01;
@@ -59,6 +59,19 @@ pub const EVENT_TYPE_TURN_JOURNAL_OPENED: u8 = 0x05;
 /// matching CLOSED frame is the canonical "crash recovery candidate"
 /// signal that `neoth recover` consumes.
 pub const EVENT_TYPE_TURN_JOURNAL_CLOSED: u8 = 0x06;
+
+/// GOLD-ADAPT-HERMES-05 — emitted at daemon startup for each orphaned
+/// `.jsonl` turn-journal found in `~/.neoth/journals/`. An orphan
+/// means the previous `neoth chat` invocation crashed between
+/// `TURN_JOURNAL_OPENED` (0x05) and `TURN_JOURNAL_CLOSED` (0x06).
+///
+/// Payload: `{ "turn_id": str, "journal_path": str, "size_bytes": u64,
+/// "line_count": usize, "ts_unix": i64 }`.
+///
+/// The operator recovers via `neoth recover --list` / `--restore`.
+/// The daemon NEVER deletes orphaned journals automatically — removal
+/// is an explicit operator action only.
+pub const EVENT_TYPE_STALE_INTERRUPTED: u8 = 0x07;
 
 // ---- 0x10..=0x1F  Daemon lifecycle ----------------------------------------
 
@@ -1998,6 +2011,9 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
 pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("raw_text", EVENT_TYPE_RAW_TEXT),
     ("reinforce", EVENT_TYPE_REINFORCE),
+    ("turn_journal_opened", EVENT_TYPE_TURN_JOURNAL_OPENED),
+    ("turn_journal_closed", EVENT_TYPE_TURN_JOURNAL_CLOSED),
+    ("stale_interrupted", EVENT_TYPE_STALE_INTERRUPTED),
     ("boot", EVENT_TYPE_BOOT),
     ("shutdown", EVENT_TYPE_SHUTDOWN),
     ("provider_request", EVENT_TYPE_PROVIDER_REQUEST),
@@ -2352,6 +2368,17 @@ pub const EVENT_TYPE_HISTORY_COMPACTION_FIRED: u8 = 0xF9;
 const _: () = {
     let _ = [(); 1][(EVENT_TYPE_RAW_TEXT < 0x01 || EVENT_TYPE_RAW_TEXT > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_REINFORCE < 0x01 || EVENT_TYPE_REINFORCE > 0x0F) as usize];
+    // 0x05..=0x07 are recovery anchors (turn-journal lifecycle), not recall
+    // ops, even though they sit in the 0x01..=0x0F memory+recall band.
+    let _ =
+        [(); 1][(EVENT_TYPE_TURN_JOURNAL_OPENED < 0x01 || EVENT_TYPE_TURN_JOURNAL_OPENED > 0x0F)
+            as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_TURN_JOURNAL_CLOSED < 0x01 || EVENT_TYPE_TURN_JOURNAL_CLOSED > 0x0F)
+            as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_STALE_INTERRUPTED < 0x01 || EVENT_TYPE_STALE_INTERRUPTED > 0x0F)
+            as usize];
     let _ = [(); 1][(EVENT_TYPE_BOOT < 0x10 || EVENT_TYPE_BOOT > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SHUTDOWN < 0x10 || EVENT_TYPE_SHUTDOWN > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_INSTALLER_RAN < 0x10 || EVENT_TYPE_INSTALLER_RAN > 0x1F) as usize];

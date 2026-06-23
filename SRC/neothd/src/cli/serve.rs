@@ -291,6 +291,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // task rows stranded in InProgress (crash mid-execute).
     crate::cli::serve_tasks::run_stale_kanban_reapers_on_startup();
 
+    // ── 5a-journal. GOLD-ADAPT-HERMES-05 startup journal recovery scan.
+    // Walks ~/.neoth/journals/ for orphaned .jsonl files left by a crash
+    // mid-turn; emits one 0x07 STALE_INTERRUPTED WAL frame per orphan.
+    // Also warns on LiveShrunk / LiveMissing .bak verdicts. Read-only;
+    // never deletes journals. Best-effort — errors are logged, not fatal.
+    crate::cli::serve_tasks::run_journal_recovery_on_startup(&writer).await;
+
     // ── 5a-creds. Startup credential-pattern audit (HO-06) ─────────────────
     //
     // Walks `~/.neoth/policy.yaml::startup_audit_scan_paths` for
