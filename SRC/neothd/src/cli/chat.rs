@@ -181,6 +181,11 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
 struct PromptBundle {
     combined_system: Option<String>,
     skill_tool_allowlist: Option<Vec<String>>,
+    /// GOLD-ADAPT-PWF-01: SHA-256 hex of `task_plan.md` at injection time,
+    /// or `None` when no plan file was present or the active skill is not
+    /// in `plan_attestation::APPLICABLE_SKILLS`. Threaded to
+    /// `enforce_preflight` which re-reads the file and bails if tampered.
+    plan_attest_hash: Option<String>,
 }
 
 async fn build_prompt_bundle(
@@ -454,6 +459,34 @@ async fn build_prompt_bundle(
             .map(|m| m.skill.manifest.tool_allowlist.clone());
         (layer, id)
     };
+    // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
+    let mut skill_layer = skill_layer;
+
+    // ── GOLD-ADAPT-PWF-01: plan-attestation fence injection ───────────────
+    // When `writing_plans` or `executing_plans` is active AND a
+    // `task_plan.md` file exists, fence its content into the skill layer
+    // and capture the SHA-256 hash for downstream tamper detection.
+    // Best-effort: I/O errors are logged but do NOT abort the turn (the
+    // guard degrades gracefully — no hash means no verify, same as no plan).
+    let plan_attest_hash: Option<String> = if let Some(id) = used_skill_id.as_deref() {
+        if crate::skills::plan_attestation::APPLICABLE_SKILLS.contains(&id) {
+            match crate::skills::plan_attestation::attest_and_fence(&home, id, &mut skill_layer) {
+                Ok(hash) => hash,
+                Err(e) => {
+                    tracing::warn!(
+                        skill = id,
+                        error = %e,
+                        "plan-attestation: fence injection failed (best-effort; turn continues)"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     // ── MCP tool catalogue (Step 1 of autonomous routing) ─────────────────
     // No-op when `~/.neoth/mcp_servers.yaml` is missing/empty. Pick #34
@@ -560,6 +593,7 @@ async fn build_prompt_bundle(
         PromptBundle {
             combined_system,
             skill_tool_allowlist,
+            plan_attest_hash,
         },
         config,
         prompt,
@@ -591,6 +625,9 @@ enum PreflightOutcome {
     },
 }
 
+// GOLD-ADAPT-PWF-01 adds `plan_attest_hash` as a 9th parameter; suppress
+// the lint rather than refactoring into a context struct (separate concern).
+#[allow(clippy::too_many_arguments)]
 async fn enforce_preflight(
     combined_system: Option<String>,
     prompt: String,
@@ -600,6 +637,9 @@ async fn enforce_preflight(
     writer: crate::wal::writer::WalWriterHandle,
     writer_join: tokio::task::JoinHandle<()>,
     home: &std::path::Path,
+    // GOLD-ADAPT-PWF-01: SHA-256 of `task_plan.md` captured at injection
+    // time by `build_prompt_bundle`. `None` means no plan was injected.
+    plan_attest_hash: Option<String>,
 ) -> Result<PreflightOutcome> {
     // ── Permission gate (Phase 28b AU-4) + C-14 cost preview ───────────────
     // Real `eur_estimate` from the cost predictor — feeds both the
@@ -838,6 +878,42 @@ async fn enforce_preflight(
     // with the hook's `reason` surfaced to the operator. Each fired hook
     // writes a `HOOK_FIRED`/`HOOK_REPLACED`/`HOOK_BLOCKED` WAL frame so
     // the audit trail is exact about which rules touched the call.
+    // ── GOLD-ADAPT-PWF-01: plan-attestation tamper detection ─────────────
+    // If a plan file was fenced at injection time, re-read it now and
+    // verify the SHA-256 still matches. This is the only point where both
+    // (a) the assembled system string exists and (b) we can still abort
+    // before a provider call fires. The window between attest_and_fence
+    // and here is typically <1ms (same turn, same process), but the guard
+    // catches any out-of-band modification (editor saves, injection scripts,
+    // race with another process) and also proves tamper-detection is active
+    // in the WAL audit trail via HOOK_BLOCKED (0x81).
+    if let Some(ref expected_hash) = plan_attest_hash {
+        if !crate::skills::plan_attestation::verify_plan_hash(home, expected_hash) {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "name": "plan-attest-guard",
+                "stage": "pre_provider_call",
+                "reason": "[PLAN TAMPERED] task_plan.md hash mismatch — plan was modified after injection",
+                "ts_unix": crate::time::now_unix_secs(),
+            }))
+            .unwrap_or_default();
+            if !payload.is_empty() {
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                    &payload,
+                )
+                .build();
+                if let Err(e) = writer.append(header, payload).await {
+                    tracing::warn!(error = %e, "WAL append HOOK_BLOCKED (plan tamper) failed");
+                }
+            }
+            drop(writer);
+            let _ = writer_join.await;
+            anyhow::bail!(
+                "[PLAN TAMPERED] task_plan.md was modified after plan injection — aborting turn"
+            );
+        }
+    }
+
     let hook_dir = home.join("hooks");
     // Pick #34 (Session 14, silent-failure audit-fix): surface hook
     // load failures at warn level — prior `unwrap_or_default()` silently
@@ -2777,6 +2853,7 @@ pub async fn run_chat_with(
         PromptBundle {
             combined_system,
             skill_tool_allowlist,
+            plan_attest_hash,
         },
         config,
         prompt,
@@ -2802,6 +2879,7 @@ pub async fn run_chat_with(
         writer,
         writer_join,
         &home,
+        plan_attest_hash,
     )
     .await?
     {

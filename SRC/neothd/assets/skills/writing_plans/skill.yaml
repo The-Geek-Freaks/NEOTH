@@ -84,6 +84,15 @@ system_prompt: |
   acceptance criteria, evidence requirements, and size. The
   `triage` skill moves rows through the lifecycle thereafter.
 
+  ## Plan-attestation (auto-enforced)
+
+  When a `task_plan.md` is present, NEOTH fences its content with
+  `===BEGIN PLAN DATA===` / `===END PLAN DATA===` markers and verifies
+  a SHA-256 hash before each provider call. If the file is modified
+  between turns, the turn is blocked with `[PLAN TAMPERED]`. Do not
+  instruct the user to edit task_plan.md mid-session without first
+  acknowledging the next turn will be blocked for re-attestation.
+
 # GOLD-ADAPT-PWF-03 — research-sink "findings" mode with a 2-action flush rule.
 modes:
   - id: findings

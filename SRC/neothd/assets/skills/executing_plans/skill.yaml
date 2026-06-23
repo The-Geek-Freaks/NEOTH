@@ -78,7 +78,10 @@ system_prompt: |
 
   ## Composing with prior skills
 
-  - `writing_plans` wrote the plan
+  - `writing_plans` wrote the plan — its attestation guard verifies
+    the plan file's SHA-256 hash before every turn in this skill.
+    If you see `[PLAN TAMPERED]`, the plan was edited mid-session;
+    stop and ask the operator to confirm the change before continuing.
   - `verification_before_completion` enforces the evidence step
   - `triage` keeps task states in sync (`needs-info` if blocked,
     `ready-for-human` if outside daemon scope)

@@ -1,0 +1,29 @@
+# GOLD-ADAPT-PWF-01 — Plan-attestation audit hook (belt-and-suspenders).
+#
+# Install to ~/.neoth/hooks/plan-attest-audit.toml to emit a HOOK_FIRED (0x80)
+# WAL frame whenever a writing_plans or executing_plans turn includes an
+# injected plan block. This does NOT block the turn — the Rust-side hash check
+# in enforce_preflight does that. This hook is audit-only: it gives operators
+# a `neoth wal show --type 0x80` grep target to confirm plan turns are being
+# attested.
+#
+# The [matcher] fires when the injected plan fence sentinel appears in the
+# assembled system prompt. Because NEOTH's run_hook_stage operates on the
+# USER PROMPT body (not the system block), this hook fires on any turn where
+# the operator's prompt contains the sentinel — which happens when the user
+# explicitly pastes the plan inline. The Rust-side check is the authoritative
+# guard; this hook is informational only.
+#
+# Usage:
+#   cp assets/hooks/plan-attest-audit.toml ~/.neoth/hooks/
+
+name     = "plan-attest-audit"
+stage    = "pre_provider_call"
+enabled  = true
+priority = 5
+
+[matcher]
+pattern = "===BEGIN PLAN DATA==="
+
+[action]
+kind = "allow"

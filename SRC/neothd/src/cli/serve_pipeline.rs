@@ -886,7 +886,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // deployment model bypassed the gate `neoth chat` enforced.
             // A mode is a behaviour variant of its parent skill, so the
             // PARENT skill's allowlist still applies when a mode is active.
-            let (skill_layer, used_skill_id, channel_skill_allowlist): (
+            let (mut skill_layer, used_skill_id, channel_skill_allowlist): (
                 Option<String>,
                 Option<String>,
                 Option<Vec<String>>,
@@ -977,6 +977,38 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 
             // GOLD-FEAT-07 — moral core for channel turns too (position 0).
             let channel_moral_core = crate::memory::moral_core::compact_for_injection();
+            // ── GOLD-ADAPT-PWF-01: plan-attestation fence injection (channel) ──
+            // Mirror of the CLI-path attest_and_fence call in cli/chat.rs.
+            // Runs BEFORE build_enriched_request so the fenced plan block
+            // is included in skill_system_prompt that the enricher assembles.
+            // Best-effort: I/O errors log + skip, consistent with CLI path.
+            let channel_plan_attest_hash: Option<String> =
+                if let Some(id) = used_skill_id.as_deref() {
+                    if crate::skills::plan_attestation::APPLICABLE_SKILLS.contains(&id) {
+                        let neoth_home = crate::config::FreedomConfig::default_neoth_home();
+                        match crate::skills::plan_attestation::attest_and_fence(
+                            &neoth_home,
+                            id,
+                            &mut skill_layer,
+                        ) {
+                            Ok(hash) => hash,
+                            Err(e) => {
+                                tracing::warn!(
+                                    skill = id,
+                                    channel = channel_str,
+                                    error = %e,
+                                    "plan-attestation: channel fence injection failed (best-effort)"
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
             let channel_enriched =
                 crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
                     prompt: &sanitized_text,
@@ -992,6 +1024,38 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 });
             let channel_enriched_system = channel_enriched.system;
             let _channel_used_skill_id = channel_enriched.used_skill_id;
+
+            // ── GOLD-ADAPT-PWF-01: plan-attestation verify (channel) ──────
+            // Re-read task_plan.md and verify hash before dispatch. On
+            // tamper: emit HOOK_BLOCKED (0x81) WAL frame and return Ok(None)
+            // to drop the inbound message silently (same as PreChannelIngress
+            // Block pattern — no error response sent to channel sender).
+            if let Some(ref expected_hash) = channel_plan_attest_hash {
+                let neoth_home = crate::config::FreedomConfig::default_neoth_home();
+                if !crate::skills::plan_attestation::verify_plan_hash(&neoth_home, expected_hash) {
+                    let payload = match serde_json::to_vec(&serde_json::json!({
+                        "name": "plan-attest-guard",
+                        "stage": "pre_provider_call",
+                        "channel": channel_str,
+                        "reason": "[PLAN TAMPERED] task_plan.md hash mismatch (channel path)",
+                        "ts_unix": crate::time::now_unix_secs(),
+                    })) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "plan-attest: payload serialise failed");
+                            return Ok(::std::option::Option::None);
+                        }
+                    };
+                    emit_required_audit(
+                        &writer,
+                        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                        "HOOK_BLOCKED",
+                        payload,
+                    )
+                    .await;
+                    return Ok(::std::option::Option::None);
+                }
+            }
 
             // ── Slash command dispatch (Phase 28 R-17 SC-2) ───────────────
             // If the operator opens with `/<name> args`, route through the
