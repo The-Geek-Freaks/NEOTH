@@ -344,6 +344,35 @@ pub(crate) fn check_pptmaster_python(_home: &Path) -> CheckOutcome {
     }
 }
 
+/// GOLD-ADAPT-DOC-04 — advisory gate for the `officecli_*` skill family (11 skills).
+///
+/// Probes whether the officecli binary is on PATH via `officecli --version`.
+/// The skills ship `enabled: false` and are never activated by the router
+/// until the operator explicitly enables them — this check is ADVISORY only.
+/// PASS when the binary is present; WARN with install hint (`d.officecli.ai`) otherwise.
+pub(crate) fn check_officecli_binary(_home: &Path) -> CheckOutcome {
+    let installed = crate::config::installer::is_officecli_installed();
+    CheckOutcome {
+        name: "officecli binary",
+        status: if installed {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Warn
+        },
+        detail: if installed {
+            "officecli on PATH — the 11 officecli_* skills are ready to enable \
+             (set `freedom.yaml::skills.enabled: [officecli_docx_edit, ...]` to activate)"
+                .to_string()
+        } else {
+            format!(
+                "officecli not found — 11 officecli_* skills ship disabled until the binary \
+                 is on PATH; install from {}",
+                crate::config::installer::OFFICECLI_INSTALL_URL
+            )
+        },
+    }
+}
+
 /// Local copy of the whisper engine's `default_cache_dir` so the doctor
 /// can run with the same path math as the engine without exposing the
 /// engine's `pub` surface. Kept in sync via the
@@ -369,6 +398,8 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_wasm_plugins,
     // GOLD-ADAPT-DOC-01 (2026-06-23) — ppt_master Python gate.
     check_pptmaster_python,
+    // GOLD-ADAPT-DOC-04 (2026-06-23) — officecli binary gate (11 skills).
+    check_officecli_binary,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -511,5 +542,28 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               generated script. Restart `neoth doctor` to confirm. If \
               Python is not on PATH at all, install Python 3.10+ first \
               from python.org.",
+    },
+    // GOLD-ADAPT-DOC-04 (2026-06-23) — officecli binary gate.
+    CheckDoc {
+        name: "officecli binary",
+        purpose: "GOLD-ADAPT-DOC-04 advisory gate for the 11 `officecli_*` \
+                  bundled skills (docx/xlsx/pptx create, edit, format, \
+                  convert, pdf export, pipeline). Probes `officecli \
+                  --version` on PATH. PASS = binary present, operator can \
+                  enable the skill family via `freedom.yaml::skills.enabled`. \
+                  WARN = binary absent, skills ship disabled and will not \
+                  be activated by the router. The gate is ADVISORY: the \
+                  enabled:false field is the actual router gate.",
+        common_failures: "officecli not installed (most common — fresh \
+                         operator install); officecli installed but not \
+                         on PATH (e.g. installed to ~/bin without PATH \
+                         update); version mismatch (old officecli returns \
+                         non-zero on --version).",
+        fix: "Download and install officecli from d.officecli.ai. Ensure \
+              the binary directory is on your PATH (add it to ~/.bashrc / \
+              ~/.zshrc / System env on Windows). After install, run \
+              `neoth doctor` to confirm PASS. Then enable skills: add \
+              `officecli_docx_edit` (and others) to \
+              `freedom.yaml::skills.enabled` and restart the daemon.",
     },
 ];

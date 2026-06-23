@@ -1,0 +1,70 @@
+id: officecli_xlsx_formula
+description: >
+  Insert, validate, and audit Excel formulas in .xlsx files — SUM, VLOOKUP,
+  IF, pivot-style aggregations — using the officecli binary. Binary-optional —
+  ships disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "add formula to excel spreadsheet"
+  - "insert xlsx formula with officecli"
+  - "set sum formula in spreadsheet"
+  - "vlookup formula in excel file"
+  - "audit formulas in xlsx"
+  - "add calculation to spreadsheet"
+  - "formula in excel via command line"
+
+system_prompt: |
+  Excel formula insertion and management via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate formula commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## Formula commands
+
+  ```sh
+  # Insert a formula into a specific cell
+  officecli xlsx formula --cell C10 --formula "=SUM(C2:C9)" input.xlsx -o output.xlsx
+
+  # Insert a VLOOKUP formula
+  officecli xlsx formula --cell D2 \
+    --formula '=VLOOKUP(A2,Sheet2!$A:$B,2,FALSE)' \
+    input.xlsx -o output.xlsx
+
+  # Copy a formula down a column (fill-down from C2 to C50)
+  officecli xlsx formula --fill-down C2:C50 input.xlsx -o output.xlsx
+
+  # List all formulas in a sheet
+  officecli xlsx formula --list --sheet "Calculations" input.xlsx
+
+  # Validate formulas (check for #REF!, #DIV/0!, etc.)
+  officecli xlsx formula --validate input.xlsx
+  ```
+
+  ## Formula authoring rules
+
+  1. **Formula strings MUST use double quotes for the outer shell argument**
+     and single quotes internally for string literals within the formula:
+     `--formula '=IF(A2="Y","Yes","No")'` — never mix them.
+  2. **Absolute vs relative references**: use `$` for ranges that must not
+     shift on fill-down (lookup tables, header ranges). Use relative for
+     data ranges that should shift row-by-row.
+  3. **Validation first**: always run `officecli xlsx formula --validate`
+     before handing the file to the operator — catch #REF! errors before
+     they propagate into downstream calculations.
+  4. **officecli does NOT recalculate formulas** — formula results are only
+     recomputed when the file is opened in Excel / Calc. Warn the operator
+     that displayed values in the CLI output reflect stored (pre-edit) results,
+     not the newly inserted formula's output.
+  5. List formulas after insertion to confirm placement:
+     `officecli xlsx formula --list --sheet "SheetName" output.xlsx`.
+
+enabled: false

@@ -304,6 +304,56 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "neoth_debt",
         include_str!("../../assets/skills/neoth_debt/skill.yaml"),
     ),
+    // GOLD-ADAPT-DOC-04 (2026-06-23) — officecli family (11 skills), binary-gated, Apache-2.0.
+    // All ship `enabled: false`; operator enables after installing officecli from d.officecli.ai.
+    // Sorted: officecli_docx_convert < officecli_docx_create < officecli_docx_edit <
+    //         officecli_docx_format < officecli_office_pipeline < officecli_pdf_convert <
+    //         officecli_pptx_create < officecli_pptx_edit < officecli_xlsx_create <
+    //         officecli_xlsx_edit < officecli_xlsx_formula  (all 'o' before omega_prime 'o+m').
+    (
+        "officecli_docx_convert",
+        include_str!("../../assets/skills/officecli_docx_convert/skill.yaml"),
+    ),
+    (
+        "officecli_docx_create",
+        include_str!("../../assets/skills/officecli_docx_create/skill.yaml"),
+    ),
+    (
+        "officecli_docx_edit",
+        include_str!("../../assets/skills/officecli_docx_edit/skill.yaml"),
+    ),
+    (
+        "officecli_docx_format",
+        include_str!("../../assets/skills/officecli_docx_format/skill.yaml"),
+    ),
+    (
+        "officecli_office_pipeline",
+        include_str!("../../assets/skills/officecli_office_pipeline/skill.yaml"),
+    ),
+    (
+        "officecli_pdf_convert",
+        include_str!("../../assets/skills/officecli_pdf_convert/skill.yaml"),
+    ),
+    (
+        "officecli_pptx_create",
+        include_str!("../../assets/skills/officecli_pptx_create/skill.yaml"),
+    ),
+    (
+        "officecli_pptx_edit",
+        include_str!("../../assets/skills/officecli_pptx_edit/skill.yaml"),
+    ),
+    (
+        "officecli_xlsx_create",
+        include_str!("../../assets/skills/officecli_xlsx_create/skill.yaml"),
+    ),
+    (
+        "officecli_xlsx_edit",
+        include_str!("../../assets/skills/officecli_xlsx_edit/skill.yaml"),
+    ),
+    (
+        "officecli_xlsx_formula",
+        include_str!("../../assets/skills/officecli_xlsx_formula/skill.yaml"),
+    ),
     (
         "omega_prime",
         include_str!("../../assets/skills/omega_prime/skill.yaml"),
@@ -821,12 +871,22 @@ mod tests {
             if id.starts_with("pm-") {
                 pm += 1;
                 assert!(!m.enabled, "pm-* skill `{id}` must ship disabled");
-            } else if *id == "github_pr_review" || *id == "iac_security_audit" {
-                // Documented non-pm DISABLED specialists: github_pr_review
-                // (GITPR-03) touches the network; iac_security_audit (HCP-01) is
-                // a niche IaC pentest checklist. Both ship off; operator enables
-                // explicitly with `neoth skill --enable <id>`.
-                assert!(!m.enabled, "specialist skill `{id}` must ship disabled");
+            } else if *id == "github_pr_review"
+                || *id == "iac_security_audit"
+                || *id == "memory_synthesis"
+                || id.starts_with("officecli_")
+            {
+                // Documented non-pm DISABLED specialists:
+                //   github_pr_review (GITPR-03) — touches the network.
+                //   iac_security_audit (HCP-01) — niche IaC pentest checklist.
+                //   memory_synthesis (NN-MEM-02) — opt-in alongside synthesis_cron.enabled.
+                //   officecli_* (GOLD-ADAPT-DOC-04) — binary-gated; operator enables
+                //     after installing officecli from d.officecli.ai.
+                // All ship off; operator enables with `neoth skill --enable <id>`.
+                assert!(
+                    !m.enabled,
+                    "specialist/binary-gated skill `{id}` must ship disabled"
+                );
             } else {
                 assert!(m.enabled, "non-pm bundled skill `{id}` must ship enabled");
             }
@@ -1077,5 +1137,124 @@ mod tests {
                 m.skill.id()
             );
         }
+    }
+
+    /// GOLD-ADAPT-DOC-04 (2026-06-23) — integration test.
+    ///
+    /// Asserts five things in one pass:
+    ///  1. All 11 `officecli_*` ids are present in `BUNDLED_SKILLS`.
+    ///  2. Each parses cleanly and ships `enabled: false` (binary-optional gate).
+    ///  3. When force-enabled (simulating `freedom.yaml::skills.enabled`),
+    ///     the keyword router maps realistic operator prompts to the correct skill.
+    ///  4. With `enabled: false` (as shipped), the same prompts route to `None` —
+    ///     proving the gate is live.
+    ///  5. `is_officecli_installed()` probe does not panic.
+    #[test]
+    fn gold_adapt_doc_04_officecli_bundled_gated_and_routes() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+        use std::path::PathBuf;
+
+        // (skill-id, trigger phrase that must route exclusively to it)
+        let pack: &[(&str, &str)] = &[
+            ("officecli_docx_convert",    "convert docx to pdf"),
+            ("officecli_docx_create",     "create a word document"),
+            ("officecli_docx_edit",       "edit this word document"),
+            ("officecli_docx_format",     "format word document styles"),
+            ("officecli_office_pipeline", "office document pipeline"),
+            ("officecli_pdf_convert",     "convert office file to pdf"),
+            ("officecli_pptx_create",     "create pptx file with officecli"),
+            ("officecli_pptx_edit",       "edit existing pptx file"),
+            ("officecli_xlsx_create",     "create xlsx spreadsheet"),
+            ("officecli_xlsx_edit",       "edit excel spreadsheet with officecli"),
+            ("officecli_xlsx_formula",    "add formula to excel spreadsheet"),
+        ];
+
+        // 1+2: all present, parse cleanly, ship disabled.
+        for (id, _) in pack {
+            let (_, body) = BUNDLED_SKILLS
+                .iter()
+                .find(|(bid, _)| bid == id)
+                .unwrap_or_else(|| panic!("GOLD-ADAPT-DOC-04: `{id}` must be in BUNDLED_SKILLS"));
+            let manifest: SkillManifest = serde_yaml::from_str(body)
+                .unwrap_or_else(|e| panic!("`{id}` skill.yaml must parse cleanly: {e}"));
+            assert_eq!(manifest.id, *id, "`{id}` manifest id mismatch");
+            assert!(
+                !manifest.enabled,
+                "`{id}` must ship disabled (binary-optional gate — operator enables after \
+                 installing officecli from d.officecli.ai)"
+            );
+            assert!(
+                !manifest.trigger_keywords.is_empty(),
+                "`{id}` must have trigger_keywords — router would never reach it"
+            );
+            assert!(
+                !manifest.system_prompt.trim().is_empty(),
+                "`{id}` must have a non-empty system_prompt"
+            );
+        }
+
+        // 3: force-enable all 11, build Vec<Skill>, assert routing.
+        let enabled_skills: Vec<Skill> = pack
+            .iter()
+            .map(|(id, _)| {
+                let (_, body) = BUNDLED_SKILLS
+                    .iter()
+                    .find(|(bid, _)| bid == id)
+                    .unwrap();
+                let mut manifest: SkillManifest = serde_yaml::from_str(body).unwrap();
+                manifest.enabled = true; // simulate freedom.yaml::skills.enabled
+                Skill {
+                    manifest,
+                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    content_hash: String::new(),
+                }
+            })
+            .collect();
+
+        for (id, phrase) in pack {
+            let m = route(phrase, &enabled_skills).unwrap_or_else(|| {
+                panic!(
+                    "GOLD-ADAPT-DOC-04: `{id}` prompt `{phrase}` routed to nothing \
+                     (force-enabled — trigger_keywords must be live)"
+                )
+            });
+            assert_eq!(
+                m.skill.id(),
+                *id,
+                "prompt `{phrase}` should route to `{id}`, got `{}`",
+                m.skill.id()
+            );
+        }
+
+        // 4: as shipped (enabled: false), all 11 prompts must route to None.
+        let gated_skills: Vec<Skill> = pack
+            .iter()
+            .map(|(id, _)| {
+                let (_, body) = BUNDLED_SKILLS
+                    .iter()
+                    .find(|(bid, _)| bid == id)
+                    .unwrap();
+                let manifest: SkillManifest = serde_yaml::from_str(body).unwrap();
+                // enabled is already false as shipped — no mutation needed.
+                assert!(!manifest.enabled);
+                Skill {
+                    manifest,
+                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    content_hash: String::new(),
+                }
+            })
+            .collect();
+
+        for (id, phrase) in pack {
+            assert!(
+                route(phrase, &gated_skills).is_none(),
+                "GOLD-ADAPT-DOC-04: `{id}` ships disabled — prompt `{phrase}` must route to \
+                 None (the enabled:false gate must block the router)"
+            );
+        }
+
+        // 5: binary probe smoke — must not panic, result value is env-dependent.
+        let _installed: bool = crate::config::installer::is_officecli_installed();
     }
 }

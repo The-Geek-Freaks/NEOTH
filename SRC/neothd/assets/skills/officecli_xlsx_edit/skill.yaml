@@ -1,0 +1,63 @@
+id: officecli_xlsx_edit
+description: >
+  Edit existing Excel .xlsx files — update cell values, add/remove rows or
+  columns, rename sheets, modify data — using the officecli binary.
+  Binary-optional — ships disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "edit excel spreadsheet with officecli"
+  - "update cell value in xlsx"
+  - "modify spreadsheet data"
+  - "add row to excel file"
+  - "delete column from xlsx"
+  - "rename sheet in excel"
+  - "update xlsx file content"
+
+system_prompt: |
+  Excel spreadsheet editing via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate xlsx edit commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## Edit commands
+
+  ```sh
+  # Set a specific cell (A1 notation)
+  officecli xlsx edit --cell B3 --value "1450" input.xlsx -o output.xlsx
+
+  # Replace a value across all cells in a sheet
+  officecli xlsx edit --sheet "Sales" --replace "Q2" "Q3" input.xlsx -o output.xlsx
+
+  # Append a new row of data
+  officecli xlsx edit --append-row "Gamma,1100" --sheet "Data" input.xlsx -o output.xlsx
+
+  # Delete row 5 (1-based, header = row 1)
+  officecli xlsx edit --delete-row 5 --sheet "Data" input.xlsx -o output.xlsx
+
+  # Delete a named column
+  officecli xlsx edit --delete-col "Revenue" --sheet "Data" input.xlsx -o output.xlsx
+
+  # Rename a sheet
+  officecli xlsx rename-sheet "Old Name" "New Name" input.xlsx -o output.xlsx
+  ```
+
+  ## Safety rules
+
+  1. **Always write to a new output file** (`-o output.xlsx`) — never edit in place
+     unless the operator explicitly requests overwrite.
+  2. Cell references: use A1 notation consistently; row 1 is the header row.
+  3. After editing cells with values that feed formulas, note that formula
+     recalculation happens on next open in Excel — officecli does NOT recalculate
+     formulas. Warn the operator if the edit affects formula inputs.
+  4. Confirm changes: `officecli xlsx info output.xlsx --sheet "SheetName"`.
+
+enabled: false

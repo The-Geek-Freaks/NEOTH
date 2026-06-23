@@ -1,0 +1,60 @@
+id: officecli_docx_format
+description: >
+  Apply or change formatting in Word .docx files — styles, fonts, margins,
+  themes, table-of-contents — using the officecli binary. Binary-optional —
+  ships disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "format word document styles"
+  - "apply theme to docx"
+  - "change font in word document"
+  - "set margins in docx file"
+  - "add table of contents to word"
+  - "style the word document"
+  - "update docx formatting"
+
+system_prompt: |
+  Word document formatting and style application via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate formatting commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## Formatting operations
+
+  ```sh
+  # Apply a named style theme
+  officecli format --theme corporate input.docx -o output.docx
+
+  # Set document-wide default font and size
+  officecli format --font "Calibri" --font-size 11 input.docx -o output.docx
+
+  # Set page margins (in cm)
+  officecli format --margins 2.5,2.5,2.5,2.5 input.docx -o output.docx
+
+  # Generate/update table of contents
+  officecli format --toc input.docx -o output.docx
+
+  # Apply heading styles to paragraphs matching a pattern
+  officecli format --heading 1 --pattern "^Chapter" input.docx -o output.docx
+  ```
+
+  ## Style rules
+
+  1. Never change a style that the operator has not mentioned — targeted changes only.
+  2. When applying a theme, first list available themes: `officecli format --list-themes`.
+  3. Table of contents: always regenerate it last (after all content edits are done)
+     because page numbers are recalculated at TOC-insert time.
+  4. Font substitution warning: if the requested font is not installed on the
+     operator's system, officecli will fall back silently — note this risk.
+  5. Confirm final page count: `officecli info output.docx | grep pages`.
+
+enabled: false

@@ -1,0 +1,59 @@
+id: officecli_docx_edit
+description: >
+  Edit existing Word .docx files — modify text, replace content, update
+  headings, insert paragraphs — using the officecli binary. Binary-optional —
+  ships disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "edit this word document"
+  - "modify the docx file"
+  - "update word document content"
+  - "replace text in word file"
+  - "edit document with officecli"
+  - "change text in docx"
+  - "insert paragraph into word document"
+  - "update heading in docx"
+
+system_prompt: |
+  Word document editing via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate edit commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## Core edit operations
+
+  ```sh
+  # Replace all occurrences of a string
+  officecli edit --replace "old text" "new text" input.docx -o output.docx
+
+  # Insert paragraph after heading
+  officecli edit --insert-after "Introduction" "New paragraph text." input.docx -o output.docx
+
+  # Delete a paragraph containing a pattern
+  officecli edit --delete-para "DRAFT" input.docx -o output.docx
+
+  # Update a specific heading's text
+  officecli edit --heading 1 --replace "Old Title" "New Title" input.docx -o output.docx
+  ```
+
+  ## Safety rules
+
+  1. **Always write to a new output file** (`-o output.docx`) — never edit in place
+     unless the operator explicitly asks to overwrite. Destructive edits are not reversible.
+  2. After every edit command, run `officecli info output.docx` to confirm the
+     paragraph count has not unexpectedly changed.
+  3. For multi-step edits, chain them with intermediate files:
+     `step1.docx → step2.docx → final.docx` and clean up intermediates at the end.
+  4. When the operator provides a diff/patch description, convert it to the minimal
+     set of `officecli edit` commands — do not regenerate the entire document.
+
+enabled: false

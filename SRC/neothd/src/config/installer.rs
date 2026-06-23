@@ -50,6 +50,36 @@ pub fn is_pptmaster_installed() -> bool {
         .unwrap_or(false)
 }
 
+/// Install URL for the officecli binary, surfaced by `neoth doctor` when the
+/// binary is absent. Operators download officecli from this URL and place it
+/// on their PATH before enabling the `officecli_*` skill family.
+///
+/// ## GOLD-ADAPT-DOC-04 (2026-06-23)
+///
+/// Added for the 11 `officecli_*` bundled skills (binary-gated, Apache-2.0).
+/// Identical advisory pattern to PPTMASTER_INSTALL_CMD (DOC-01).
+pub const OFFICECLI_INSTALL_URL: &str = "https://d.officecli.ai";
+
+/// Returns `true` iff `officecli --version` exits 0 — meaning the officecli
+/// binary is present on the operator's PATH.
+///
+/// Returns `false` on any error (binary not on PATH, non-zero exit, spawn
+/// failure). Never panics.
+///
+/// ## Advisory gate
+///
+/// This probe is used by `neoth doctor` (advisory only). The `officecli_*`
+/// skills ship `enabled: false` and are never activated by the router until
+/// the operator explicitly enables them via `freedom.yaml::skills.enabled`.
+/// The probe does NOT suppress routing — it only surfaces the install hint.
+pub fn is_officecli_installed() -> bool {
+    std::process::Command::new("officecli")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +113,22 @@ mod tests {
         // On non-Windows: must be "python3"
         #[cfg(not(target_os = "windows"))]
         assert_eq!(bin, "python3");
+    }
+
+    /// GOLD-ADAPT-DOC-04: officecli probe must not panic regardless of
+    /// whether the binary is on PATH. CI runners won't have officecli.
+    #[test]
+    fn officecli_probe_does_not_panic() {
+        let _ = is_officecli_installed();
+    }
+
+    /// GOLD-ADAPT-DOC-04: the install URL must point to the documented
+    /// officecli distribution site.
+    #[test]
+    fn officecli_install_url_points_to_d_officecli_ai() {
+        assert!(
+            OFFICECLI_INSTALL_URL.contains("d.officecli.ai"),
+            "OFFICECLI_INSTALL_URL must reference d.officecli.ai, got: {OFFICECLI_INSTALL_URL}"
+        );
     }
 }

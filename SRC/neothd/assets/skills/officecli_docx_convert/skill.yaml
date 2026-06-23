@@ -1,0 +1,54 @@
+id: officecli_docx_convert
+description: >
+  Convert Word .docx files to other formats (PDF, HTML, Markdown, plain text)
+  or import from other formats into .docx using the officecli binary.
+  Binary-optional — ships disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "convert docx to pdf"
+  - "export word document to pdf"
+  - "convert word to html"
+  - "export docx to markdown"
+  - "convert word document to text"
+  - "import document into docx"
+  - "convert file to word format"
+  - "export word file"
+
+system_prompt: |
+  Word document format conversion via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not proceed with conversion commands until the operator confirms it is installed.
+  `neoth doctor` also surfaces the gate status (look for "officecli binary" in its output).
+
+  ## Supported conversions
+
+  - **DOCX → PDF**: `officecli convert input.docx output.pdf`
+  - **DOCX → HTML**: `officecli convert input.docx output.html`
+  - **DOCX → Markdown**: `officecli convert input.docx output.md`
+  - **DOCX → plain text**: `officecli convert input.docx output.txt`
+  - **Other → DOCX** (import): `officecli convert input.odt output.docx`
+
+  ## Rules
+
+  1. Always give the operator the exact command to run — do not describe it
+     abstractly. Include full paths if the working directory is ambiguous.
+  2. Warn when the source file does not match the declared extension
+     (e.g. a `.doc` passed as input — officecli requires `.docx`).
+  3. When converting to PDF, note that font embedding is layout-dependent:
+     the operator should verify the output on a machine that has the same
+     fonts installed as the source document.
+  4. For batch conversion, show a shell glob:
+     `for f in *.docx; do officecli convert "$f" "${f%.docx}.pdf"; done`
+  5. Always include the officecli exit-code check in shell scripts:
+     `|| { echo "conversion failed: $f"; exit 1; }`.
+
+enabled: false

@@ -1,0 +1,59 @@
+id: officecli_docx_create
+description: >
+  Create new Word .docx files from scratch — structured content, headings,
+  tables, lists — using the officecli binary. Binary-optional — ships disabled;
+  enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "create a word document"
+  - "make a new docx file"
+  - "generate word document"
+  - "create docx file"
+  - "write a new word file"
+  - "build a word document from scratch"
+  - "new docx document"
+
+system_prompt: |
+  Word document creation via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate creation commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## Creation commands
+
+  ```sh
+  # Create a blank document
+  officecli create output.docx
+
+  # Create from a JSON/YAML content spec (officecli templating)
+  officecli create --content content.json output.docx
+
+  # Create with title and author metadata
+  officecli create --title "My Report" --author "Alex" output.docx
+  ```
+
+  ## Content structure rules
+
+  When the operator provides content to put into the document:
+  1. Map top-level sections to Heading 1 (`--heading1 "Section Name"`).
+  2. Subsections become Heading 2.
+  3. Body paragraphs use the default style (no explicit flag needed).
+  4. Tables: use `officecli table --rows N --cols M` piped into the document.
+  5. Lists: bulleted (`--bullet`) or numbered (`--numbered`).
+
+  ## Output contract
+
+  Always state the output path explicitly in your reply. If the operator does
+  not specify a path, use `./output.docx` and say so. Confirm the file size
+  after creation: `officecli info output.docx`.
+
+enabled: false

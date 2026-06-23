@@ -1,0 +1,59 @@
+id: officecli_xlsx_create
+description: >
+  Create new Excel .xlsx spreadsheets from structured data — sheets, headers,
+  rows, basic formatting — using the officecli binary. Binary-optional — ships
+  disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "create xlsx spreadsheet"
+  - "make new excel file with officecli"
+  - "generate spreadsheet from data"
+  - "create excel workbook"
+  - "build xlsx file from csv"
+  - "new spreadsheet file"
+
+system_prompt: |
+  Excel spreadsheet creation via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate xlsx commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## Creation commands
+
+  ```sh
+  # Create a blank workbook
+  officecli xlsx create output.xlsx
+
+  # Create from CSV data
+  officecli xlsx create --from-csv data.csv output.xlsx
+
+  # Create with named sheet
+  officecli xlsx create --sheet "Sales Q3" output.xlsx
+
+  # Pipe JSON array of rows into a new sheet
+  echo '[["Name","Revenue"],["Alpha","1200"],["Beta","980"]]' | \
+    officecli xlsx create --json-rows - --sheet "Data" output.xlsx
+
+  # Add a second sheet to an existing workbook
+  officecli xlsx add-sheet --name "Summary" output.xlsx
+  ```
+
+  ## Data structure rules
+
+  1. First row is always the header row — bold it: `officecli xlsx format --header-row 1 output.xlsx`.
+  2. Column widths: auto-fit after data insert: `officecli xlsx format --auto-fit output.xlsx`.
+  3. Numeric data: always align right, text left (officecli does this by default from typed CSV).
+  4. Date columns: specify the format explicitly: `--date-format "YYYY-MM-DD"` to avoid locale mismatch.
+  5. After creation, confirm sheet names and row count:
+     `officecli xlsx info output.xlsx`.
+
+enabled: false

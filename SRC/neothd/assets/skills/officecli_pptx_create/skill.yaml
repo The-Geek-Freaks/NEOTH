@@ -1,0 +1,79 @@
+id: officecli_pptx_create
+description: >
+  Create new PowerPoint .pptx files from structured content — title slides,
+  content slides, speaker notes — using the officecli binary. Binary-optional —
+  ships disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "create pptx file with officecli"
+  - "generate powerpoint with officecli"
+  - "make new pptx presentation"
+  - "build slide deck with officecli"
+  - "create presentation file"
+  - "new powerpoint file from command line"
+
+system_prompt: |
+  PowerPoint presentation creation via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate pptx commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  Note: for rich python-pptx presentation generation (themes, colours, exact
+  positioning), the `ppt_master` skill is often more capable. Use this skill
+  when the operator specifically needs the officecli binary workflow (CI/CD
+  pipelines, shell scripts, server-side automation).
+
+  ## Creation commands
+
+  ```sh
+  # Create a blank presentation
+  officecli pptx create output.pptx
+
+  # Create from a YAML slide spec
+  officecli pptx create --spec slides.yaml output.pptx
+
+  # Add a title slide
+  officecli pptx add-slide --layout title --title "Q3 Results" \
+    --subtitle "Financial Summary" output.pptx
+
+  # Add a content slide with bullets
+  officecli pptx add-slide --layout content \
+    --title "Key Metrics" \
+    --bullets "Revenue: +12%,Churn: -3%,NPS: 72" output.pptx
+
+  # Add speaker notes to the last slide
+  officecli pptx set-notes "Mention the ARR milestone here." output.pptx
+  ```
+
+  ## Slide spec YAML format (for --spec)
+
+  ```yaml
+  theme: corporate
+  slides:
+    - layout: title
+      title: "Report Title"
+      subtitle: "Subtitle Text"
+    - layout: content
+      title: "First Section"
+      bullets:
+        - "Point one"
+        - "Point two"
+      notes: "Speaker notes go here"
+  ```
+
+  ## Rules
+
+  1. Every deck must have a title slide as slide 1 and a closing slide as the last slide.
+  2. Bullet text: ≤12 words per bullet, ≤5 bullets per slide.
+  3. Always confirm slide count: `officecli pptx info output.pptx | grep slides`.
+
+enabled: false

@@ -1,0 +1,66 @@
+id: officecli_pdf_convert
+description: >
+  Convert Office files (docx, xlsx, pptx) to PDF, or extract content from PDFs
+  into Office formats, using the officecli binary. Binary-optional — ships
+  disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "convert office file to pdf"
+  - "export spreadsheet to pdf"
+  - "render powerpoint as pdf"
+  - "officecli pdf export"
+  - "save document as pdf"
+  - "batch convert to pdf"
+  - "pdf from office document"
+
+system_prompt: |
+  Office-to-PDF (and PDF extraction) via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate conversion commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## PDF conversion commands
+
+  ```sh
+  # Single-file conversions
+  officecli convert input.docx output.pdf
+  officecli convert input.xlsx output.pdf
+  officecli convert input.pptx output.pdf
+
+  # Batch conversion of all docx in a directory
+  for f in *.docx; do
+    officecli convert "$f" "${f%.docx}.pdf" || echo "FAILED: $f"
+  done
+
+  # Extract text from PDF back to docx
+  officecli convert input.pdf output.docx
+
+  # Select specific sheets for xlsx → pdf
+  officecli convert --sheet "Summary,Q1" input.xlsx output.pdf
+
+  # Select specific slide range for pptx → pdf
+  officecli convert --slides 1-5 input.pptx output.pdf
+  ```
+
+  ## Quality notes
+
+  1. Font embedding: officecli embeds available fonts; fonts not present on the
+     host will be substituted. Warn the operator if the source document uses
+     proprietary fonts.
+  2. Page size: defaults to the document's native page size. To force A4:
+     `officecli convert --page-size A4 input.docx output.pdf`.
+  3. xlsx print area: if the spreadsheet has no print area defined, officecli
+     renders all non-empty sheets. Recommend setting a print area in Excel first.
+  4. Always verify output: `officecli info output.pdf | grep pages` to confirm
+     no pages were silently dropped.
+
+enabled: false

@@ -1,0 +1,62 @@
+id: officecli_pptx_edit
+description: >
+  Edit existing PowerPoint .pptx files — update slide text, reorder slides,
+  insert or delete slides, update speaker notes — using the officecli binary.
+  Binary-optional — ships disabled; enable after installing officecli from d.officecli.ai.
+version: "1.0.0"
+author: NEOTH bundled (OfficeCLI Apache-2.0)
+tags:
+  - documents
+  - office
+  - binary-gated
+
+trigger_keywords:
+  - "edit existing pptx file"
+  - "update powerpoint slide text"
+  - "reorder slides in pptx"
+  - "delete slide from presentation"
+  - "insert slide into powerpoint"
+  - "modify pptx speaker notes"
+  - "change slide content in presentation"
+
+system_prompt: |
+  PowerPoint presentation editing via the officecli binary.
+
+  **Prerequisite check (first):** Verify officecli is on PATH by running
+  `officecli --version`. If it is not found, say so in one line:
+  "officecli not found — install from d.officecli.ai then re-run."
+  Do not generate pptx edit commands until the operator confirms it is installed.
+  `neoth doctor` surfaces the gate status (look for "officecli binary" in output).
+
+  ## Edit commands
+
+  ```sh
+  # Replace text across all slides
+  officecli pptx edit --replace "Q2" "Q3" input.pptx -o output.pptx
+
+  # Delete slide by 1-based index
+  officecli pptx delete-slide 3 input.pptx -o output.pptx
+
+  # Reorder: move slide 5 to position 2
+  officecli pptx move-slide 5 2 input.pptx -o output.pptx
+
+  # Update title of slide N
+  officecli pptx edit --slide 2 --title "New Section Title" input.pptx -o output.pptx
+
+  # Update speaker notes on slide N
+  officecli pptx set-notes --slide 4 "Updated note text." input.pptx -o output.pptx
+
+  # Insert a blank slide after slide N
+  officecli pptx insert-slide --after 3 --layout content input.pptx -o output.pptx
+  ```
+
+  ## Safety rules
+
+  1. **Always write to a new output file** (`-o output.pptx`) — never overwrite
+     the source. Slide operations are not reversible in-place.
+  2. Before deleting or reordering, confirm the current slide order:
+     `officecli pptx info input.pptx --slides` (lists slide titles by index).
+  3. After editing, verify: `officecli pptx info output.pptx | grep slides`.
+  4. Text replacement is case-sensitive by default — add `--ignore-case` when needed.
+
+enabled: false
