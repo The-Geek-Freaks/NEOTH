@@ -61,6 +61,9 @@ pub struct SynthesisReport {
     pub note_written: bool,
     /// NN-MEM-05: number of skill-prompt suggestions written this tick.
     pub skill_suggestions_written: usize,
+    /// HERMES-06 GAP-B: number of `SkillPerfSuggestion` proposals newly staged
+    /// in the OB-03 queue this tick (0 when `propose_skills_from_perf = false`).
+    pub skill_proposals_staged: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -763,6 +766,21 @@ pub fn run_synthesis_tick_once(
     };
     let skill_suggestions_written = skill_perf_suggestions.len();
 
+    // ── HERMES-06 GAP-B: SkillPerfSuggestion → staged ConfigTweak proposals ──
+    // Runs after the perf pass so `skill_perf_suggestions` is fully populated.
+    // Best-effort: staging errors are logged at warn level, never propagated.
+    let skill_proposals_staged = if config.propose_skills_from_perf {
+        stage_skill_perf_proposals(home, &skill_perf_suggestions, now_unix)
+    } else {
+        0
+    };
+    if skill_proposals_staged > 0 {
+        tracing::info!(
+            skill_proposals_staged,
+            "HERMES-06 GAP-B: staged SkillPerfSuggestion proposal(s) for operator review"
+        );
+    }
+
     let topics_analyzed = frequency_peaks.len();
     let correlations_found = domain_correlations.len();
     let contradictions_flagged = contradiction_flags.len();
@@ -847,7 +865,101 @@ pub fn run_synthesis_tick_once(
         contradictions_flagged,
         note_written,
         skill_suggestions_written,
+        skill_proposals_staged,
     })
+}
+
+// ── HERMES-06 GAP-B: SkillPerfSuggestion → staged proposal ─────────────────
+
+/// For each [`SkillPerfSuggestion`] from the SWIRL pass, forge a
+/// `ProposalKind::ConfigTweak` candidate and stage it in the OB-03 proactive
+/// review queue.
+///
+/// Called synchronously from within `spawn_blocking` (already off the async
+/// executor) so blocking FS ops are correct here. Best-effort — every error is
+/// logged at `warn` level; staging continues for the remaining suggestions.
+///
+/// Returns the count of newly enqueued proposals.
+fn stage_skill_perf_proposals(
+    home: &Path,
+    suggestions: &[SkillPerfSuggestion],
+    tick_ts_unix: i64,
+) -> usize {
+    use crate::proactive::ProactiveQueue;
+    use crate::proactive::action_staging::{
+        ProposalKind, ProposalStatus, ProposedAction, make_proposal_id, stage_and_enqueue,
+    };
+
+    if suggestions.is_empty() {
+        return 0;
+    }
+
+    let queue_path = home.join("proactive_queue.json");
+    let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
+    let mut staged = 0usize;
+
+    for s in suggestions {
+        // Produce a minimal YAML block describing what the operator should
+        // review. The `ConfigTweak` kind signals "this is about a config or
+        // skill prompt change", not a new skill file.
+        let draft_yaml = format!(
+            "# HERMES-06 SkillPerfSuggestion\nskill_id: {skill_id}\nsignal_kind: {signal_kind}\n\
+             score_delta_mean: {score_delta_mean:.4}\nrejection_rate: {rejection_rate:.4}\n\
+             suggestion: |\n  {suggestion}\n",
+            skill_id = s.skill_id,
+            signal_kind = s.signal_kind,
+            score_delta_mean = s.score_delta_mean,
+            rejection_rate = s.rejection_rate,
+            suggestion = s.suggestion.replace('\n', "\n  "),
+        );
+        let title = format!("Skill prompt review: {}", s.skill_id);
+        let rationale = format!(
+            "The weekly synthesis SWIRL pass detected a performance concern for skill `{}`.\n\n\
+             Signal: **{}** (score delta mean: {:.3}, rejection rate: {:.1}%).\n\n\
+             Suggestion: {}\n\n\
+             Review the YAML draft; `accept` acknowledges the suggestion and logs it, \
+             `reject` discards it. No files are modified automatically.",
+            s.skill_id,
+            s.signal_kind,
+            s.score_delta_mean,
+            s.rejection_rate * 100.0,
+            s.suggestion,
+        );
+        let proposal_id =
+            make_proposal_id(ProposalKind::ConfigTweak, &title, &draft_yaml, tick_ts_unix);
+        let proposal = ProposedAction {
+            id: proposal_id,
+            kind: ProposalKind::ConfigTweak,
+            title,
+            rationale,
+            draft_yaml,
+            generated_ts_unix: tick_ts_unix,
+            status: ProposalStatus::Pending,
+            operator_note: String::new(),
+        };
+        match stage_and_enqueue(home, proposal, &mut queue) {
+            Ok((_, true)) => staged += 1,
+            Ok((_, false)) => {} // dedup: already in queue from a prior tick
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    skill_id = %s.skill_id,
+                    "synthesis cron: SkillPerfSuggestion proposal staging failed"
+                );
+            }
+        }
+    }
+
+    if staged > 0 {
+        if let Err(e) = queue.save_to(&queue_path) {
+            tracing::warn!(
+                error = %e,
+                "synthesis cron: queue save after HERMES-06 GAP-B staging failed"
+            );
+        }
+    }
+
+    staged
 }
 
 /// Render the synthesis note as a human-readable Obsidian markdown file.
@@ -958,7 +1070,8 @@ pub fn spawn_synthesis_cron_loop(
                         contradictions_flagged = report.contradictions_flagged,
                         note_written = report.note_written,
                         skill_suggestions_written = report.skill_suggestions_written,
-                        "NN-MEM-02/NN-MEM-05: synthesis cron tick complete",
+                        skill_proposals_staged = report.skill_proposals_staged,
+                        "NN-MEM-02/NN-MEM-05/HERMES-06: synthesis cron tick complete",
                     ),
                     Err(e) => tracing::error!(
                         error = %e,
@@ -1000,6 +1113,7 @@ mod tests {
             interval_secs: 604_800,
             window_days: 30,
             enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
         };
         let handle = spawn_synthesis_cron_loop(cfg, "/nonexistent".into(), "/nonexistent".into())
             .expect("handle when enabled");
@@ -1056,6 +1170,7 @@ mod tests {
             interval_secs: 604_800,
             window_days: 30,
             enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
         };
         let report = run_synthesis_tick_once(
             &db_path,
@@ -1112,6 +1227,7 @@ mod tests {
             interval_secs: 0,
             window_days: 30,
             enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
         };
         assert_eq!(cfg.interval_duration(), Duration::from_secs(60));
     }

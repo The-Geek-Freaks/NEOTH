@@ -714,6 +714,14 @@ pub struct SynthesisCronConfig {
     /// synthesis_cron opt-in, since it needs the SkillOpt ledger to have data).
     /// No-op when the ledger is empty.
     pub enable_skill_perf_pass: bool,
+    /// HERMES-06 GAP-B: when `true` (and `enable_skill_perf_pass = true`),
+    /// each [`SkillPerfSuggestion`] produced by the SWIRL pass is also staged
+    /// as a `ProposalKind::ConfigTweak` in the OB-03 proactive review queue
+    /// (`~/.neoth/proposals/`). Requires both `enabled = true` and
+    /// `enable_skill_perf_pass = true`; silently no-ops otherwise. Default
+    /// `false` — opt-in so the queue isn't flooded on fresh installs.
+    #[serde(default)]
+    pub propose_skills_from_perf: bool,
 }
 
 impl Default for SynthesisCronConfig {
@@ -723,6 +731,7 @@ impl Default for SynthesisCronConfig {
             interval_secs: DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS,
             window_days: DEFAULT_SYNTHESIS_WINDOW_DAYS,
             enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
         }
     }
 }
@@ -842,6 +851,14 @@ pub struct SelfImprovementCollectorConfig {
     /// treated as a signal candidate. Default 3 — a topic mentioned once or
     /// twice is noise.
     pub min_freq_threshold: u32,
+    /// HERMES-06 GAP-A: when `true`, `PromptEdit` signals are converted to
+    /// `ProposalKind::Skill` candidates and staged in the OB-03 proactive
+    /// review queue (`~/.neoth/proposals/`). Requires `enabled = true`.
+    /// Default `false` — opt-in; the ledger needs data before proposals are
+    /// meaningful. `PatchSkill` and `Escalate` signals are never auto-proposed
+    /// (operator-review gate, same reasoning as skill_forge).
+    #[serde(default)]
+    pub propose_skills: bool,
 }
 
 impl Default for SelfImprovementCollectorConfig {
@@ -851,6 +868,7 @@ impl Default for SelfImprovementCollectorConfig {
             interval_secs: DEFAULT_SELF_IMPROVEMENT_COLLECTOR_INTERVAL_SECS,
             window_days: 30,
             min_freq_threshold: 3,
+            propose_skills: false,
         }
     }
 }

@@ -132,6 +132,71 @@ pub fn is_verified_deployed(artifact_path: &Path, min_age_secs: u64) -> bool {
     elapsed.as_secs() >= min_age_secs
 }
 
+// ── HERMES-06 GAP-A: PromptEdit → staged skill proposals ────────────────────
+
+/// Iterate `report.signals`, pick every `PromptEdit`, forge a candidate skill
+/// proposal from it via [`crate::daemon::skill_forge::build_proposal_from_collector_signal`],
+/// and stage it in the OB-03 proactive review queue.
+///
+/// Called synchronously from the async tick after the sidecar write. IO is
+/// ordinary blocking filesystem ops (same pattern as `forge_and_stage_dreams`
+/// in `cli::dreaming_task`); the volume is tiny (≤ `TOP_N_TOPICS` items) so
+/// `spawn_blocking` is not required.
+///
+/// Best-effort: every error is logged at `warn` level, staging continues for
+/// the remaining signals.
+fn stage_prompt_edit_proposals(home: &Path, report: &CollectorReport, tick_ts_unix: i64) {
+    use crate::daemon::skill_forge::build_proposal_from_collector_signal;
+    use crate::proactive::ProactiveQueue;
+    use crate::proactive::action_staging::stage_and_enqueue;
+
+    let queue_path = home.join("proactive_queue.json");
+    let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
+    let mut staged = 0usize;
+
+    for signal in &report.signals {
+        let (target, reason) = match signal {
+            CollectorSignal::PromptEdit { target, reason } => (target.as_str(), reason.as_str()),
+            // PatchSkill and Escalate require operator attention beyond a skill
+            // YAML draft — skip them here.
+            _ => continue,
+        };
+        let Some(proposal) =
+            build_proposal_from_collector_signal(target, reason, tick_ts_unix)
+        else {
+            tracing::debug!(
+                topic = target,
+                "self_improvement_collector: PromptEdit topic un-slugifiable, skipping proposal"
+            );
+            continue;
+        };
+        match stage_and_enqueue(home, proposal, &mut queue) {
+            Ok((_, true)) => staged += 1,
+            Ok((_, false)) => {} // already in queue (dedup by proposal id)
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    topic = target,
+                    "self_improvement_collector: proposal staging failed"
+                );
+            }
+        }
+    }
+
+    if staged > 0 {
+        match queue.save_to(&queue_path) {
+            Ok(()) => tracing::info!(
+                staged,
+                "HERMES-06 GAP-A: staged PromptEdit skill proposal(s) for operator review"
+            ),
+            Err(e) => warn!(
+                error = %e,
+                "self_improvement_collector: queue save after proposal staging failed"
+            ),
+        }
+    }
+}
+
 // ── WAL emit helper ──────────────────────────────────────────────────────────
 
 /// Emit one WAL frame (best-effort). A write failure is logged at `error`
@@ -432,6 +497,14 @@ pub async fn run_self_improvement_collector_tick(
         Err(e) => {
             tracing::error!(error = %e, "self_improvement_collector: sidecar serialize failed");
         }
+    }
+
+    // HERMES-06 GAP-A: convert PromptEdit signals into staged skill proposals.
+    // Only PromptEdit signals map cleanly to a skill draft — PatchSkill and
+    // Escalate need operator attention beyond what a skill YAML can address.
+    // Best-effort: proposal staging errors are logged, never propagated.
+    if cfg.propose_skills {
+        stage_prompt_edit_proposals(home, &report, ts_unix);
     }
 
     let ts_unix_done = crate::time::now_unix_i64();
