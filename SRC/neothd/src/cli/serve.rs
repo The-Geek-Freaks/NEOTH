@@ -442,7 +442,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // channel turns, so per-hop frames stay correct under concurrency.
     let shared_provider: Option<Arc<dyn Provider>> =
         match providers::fallback_chain_from_config(&config, Some(writer.clone())).await {
-            Ok(p) => Some(Arc::from(p)),
+            Ok(p) => {
+                // GOLD-ADAPT-HARNESS-03: wrap with history-compaction middleware when enabled.
+                // Daemon path threads the WAL writer so every compaction event is auditable.
+                let arc: Arc<dyn Provider> = if config.tokens.history_compaction_enabled {
+                    let utility = providers::from_config_for_utility(&config).await.ok();
+                    providers::compactor::arc_from_config(
+                        Arc::from(p),
+                        utility,
+                        &config.tokens,
+                        Some(writer.clone()),
+                    )
+                } else {
+                    Arc::from(p)
+                };
+                Some(arc)
+            }
             Err(e) => {
                 warn!(error = %e, "provider not available — channels + cron skipped");
                 None

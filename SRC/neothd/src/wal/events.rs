@@ -2160,6 +2160,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "reflection_observation_staged",
         EVENT_TYPE_REFLECTION_OBSERVATION_STAGED,
     ),
+    (
+        "history_compaction_fired",
+        EVENT_TYPE_HISTORY_COMPACTION_FIRED,
+    ),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
     (
@@ -2333,6 +2337,14 @@ pub const EVENT_TYPE_INCOGNITO_TURN: u8 = 0xF7;
 /// Intelligence view. NEVER auto-posted to chat — surface-only.
 /// Payload (JSON): `{ iso_week_tag, topic_count, ts_unix }`.
 pub const EVENT_TYPE_REFLECTION_OBSERVATION_STAGED: u8 = 0xF8;
+
+/// `0xF9 HISTORY_COMPACTION_FIRED` — GOLD-ADAPT-HARNESS-03. The
+/// `CompactingProvider` middleware detected that the flat prompt + system
+/// text exceeded the configured threshold and squashed the older portion
+/// via a utility LLM summarisation call. The live-zone tail is preserved
+/// verbatim. Operator-system band (0xF0..=0xFF).
+/// Payload (JSON): `{ original_chars, summarised_chars, kept_chars, threshold_tokens, model }`.
+pub const EVENT_TYPE_HISTORY_COMPACTION_FIRED: u8 = 0xF9;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2739,6 +2751,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_RECON_RUN < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_INCOGNITO_TURN < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_REFLECTION_OBSERVATION_STAGED < 0xF0) as usize];
+    let _ = [(); 1][(EVENT_TYPE_HISTORY_COMPACTION_FIRED < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -3070,6 +3083,10 @@ mod tests {
             (
                 "REFLECTION_OBSERVATION_STAGED",
                 EVENT_TYPE_REFLECTION_OBSERVATION_STAGED,
+            ),
+            (
+                "HISTORY_COMPACTION_FIRED",
+                EVENT_TYPE_HISTORY_COMPACTION_FIRED,
             ),
             ("GOAL_JUDGED", EVENT_TYPE_GOAL_JUDGED),
         ];

@@ -302,7 +302,8 @@ impl SkillsConfig {
 /// response headroom. Operators on smaller-context models lower this
 /// to match. The hardcoded `cli::chat::DEFAULT_PROMPT_TOKEN_CAP` falls
 /// back to this value when callers don't pass an override.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+// f32 field (history_compaction_threshold) means Eq is not derivable.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct TokensConfig {
     /// Total token cap per provider request before
     /// `tokens::budget::enforce_budget` degradation policy fires.
@@ -313,6 +314,21 @@ pub struct TokensConfig {
     /// `--hashline` flag). Off by default.
     #[serde(default)]
     pub hashline_edits: bool,
+    /// GOLD-ADAPT-HARNESS-03 — enable message-history compaction middleware.
+    /// When true, `CompactingProvider` wraps the fallback chain and
+    /// squashes old prompt history when `history_compaction_threshold`
+    /// fraction of `max_per_request` is exceeded.
+    #[serde(default)]
+    pub history_compaction_enabled: bool,
+    /// Fraction of `max_per_request` at which compaction fires.
+    /// Default 0.8 — fire when prompt + system exceed 80 % of the cap.
+    #[serde(default = "TokensConfig::default_history_compaction_threshold")]
+    pub history_compaction_threshold: f32,
+    /// Characters of the most-recent prompt to preserve verbatim
+    /// (the "live zone"). Everything before this suffix is summarised.
+    /// Default 4000 chars ≈ 1000 tokens.
+    #[serde(default = "TokensConfig::default_history_keep_recent_chars")]
+    pub history_keep_recent_chars: usize,
 }
 
 impl Default for TokensConfig {
@@ -320,6 +336,9 @@ impl Default for TokensConfig {
         Self {
             max_per_request: Self::default_max_per_request(),
             hashline_edits: false,
+            history_compaction_enabled: false,
+            history_compaction_threshold: Self::default_history_compaction_threshold(),
+            history_keep_recent_chars: Self::default_history_keep_recent_chars(),
         }
     }
 }
@@ -327,6 +346,12 @@ impl Default for TokensConfig {
 impl TokensConfig {
     pub fn default_max_per_request() -> u32 {
         100_000
+    }
+    pub fn default_history_compaction_threshold() -> f32 {
+        0.8
+    }
+    pub fn default_history_keep_recent_chars() -> usize {
+        4_000
     }
 }
 

@@ -153,6 +153,16 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // failover in the logs. The daemon path threads its writer for the
     // durable `0x25 PROVIDER_FALLBACK_ATTEMPTED` audit frame.
     let provider = providers::fallback_chain_from_config(&config, None).await?;
+    // GOLD-ADAPT-HARNESS-03: wrap with history-compaction middleware when enabled.
+    // CLI path has no WAL writer yet (writer is opened inside run_chat_with),
+    // so WAL audit frames are skipped here (wal=None). The inner provider retains
+    // the same identity for callers — only the prompt is modified in-place.
+    let provider: Box<dyn providers::Provider> = if config.tokens.history_compaction_enabled {
+        let utility = providers::from_config_for_utility(&config).await.ok();
+        providers::compactor::CompactingProvider::from_config(provider, utility, &config.tokens, None)
+    } else {
+        provider
+    };
     run_chat_with(args, config, provider.as_ref()).await
 }
 
