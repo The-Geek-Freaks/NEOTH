@@ -17,6 +17,11 @@ pub mod cpt_recovery;
 #[cfg(windows)]
 pub mod dpapi;
 pub mod error;
+/// GOLD-ADAPT-CRYPTO-01 — deterministic 96-bit nonce generator for future
+/// AEAD-at-rest (WAL frames / config blobs). Non-Clone/non-Copy by design;
+/// prevents nonce reuse. No live consumer today — wired when `wal/aead.rs`
+/// or `wal/encrypt.rs` lands (AEAD-at-rest gate, GOLD-ADAPT-CRYPTO-04).
+pub mod nonce_counter;
 pub mod events;
 pub mod frame;
 pub mod header;
