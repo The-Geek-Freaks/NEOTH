@@ -1672,6 +1672,35 @@ async fn dispatch_provider(
                     snap_ctx,
                     Some(req.prompt.chars().take(2000).collect::<String>()),
                 );
+                // PWF-02: PreCompact MODE_CHECKPOINT (0x9A). Emit a second
+                // checkpoint AFTER the compaction snapshot so a resume after
+                // crash inside the dispatch loop lands at the pre-compact
+                // boundary rather than at the session-start boundary. Best-
+                // effort: never blocks the dispatch loop.
+                {
+                    use crate::recall::reconstruct::ModeCheckpoint;
+                    use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
+                    let council_mode_str = if config.council.disabled.unwrap_or(false) {
+                        "off".to_string()
+                    } else {
+                        "enabled".to_string()
+                    };
+                    let mut cp = ModeCheckpoint {
+                        checkpoint_hash: String::new(),
+                        session_id: turn_id.to_string(),
+                        mode: "chat".to_string(),
+                        provider_target: provider.name().to_string(),
+                        council_mode: council_mode_str,
+                        scoped_mcp_servers: Vec::new(),
+                        phase: "chat:pre-compact".to_string(),
+                        ts_unix: crate::time::now_unix_i64(),
+                    };
+                    cp.stamp_hash();
+                    if let Ok(payload) = serde_json::to_vec(&cp) {
+                        let hdr = crate::wal::make_header(EVENT_TYPE_MODE_CHECKPOINT, &payload);
+                        let _ = writer.append(hdr, payload).await;
+                    }
+                }
             }
             let outcome = match run_mcp_dispatch_loop(
                 provider,
@@ -2711,8 +2740,15 @@ pub async fn run_chat_with(
     // still gets a chat turn, just without the resume hydration.
     if let Some(hash_prefix) = args.resume_from.clone() {
         match hydrate_resume_context(&hash_prefix, args.system.as_deref()) {
-            Ok((banner, combined_system)) => {
+            Ok((banner, combined_system, catchup)) => {
                 println!("{banner}");
+                // PWF-02: print catchup line when something happened since the checkpoint.
+                if !catchup.is_empty() {
+                    println!(
+                        "[neoth] catchup: {} provider turns, {} tool calls, {} compactions since checkpoint",
+                        catchup.provider_turns, catchup.tool_calls, catchup.compactions,
+                    );
+                }
                 args.system = Some(combined_system);
             }
             Err(why) => {
@@ -2825,6 +2861,45 @@ pub async fn run_chat_with(
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
     }
     let (writer, writer_join) = wal_spawn(segment_path.clone()).context("spawn WAL writer")?;
+
+    // ── PWF-02: SessionStart MODE_CHECKPOINT (0x9A) ───────────────────────
+    // Emit a session-start checkpoint immediately after the WAL writer
+    // opens so that `neoth chat --resume-from <hash>` can recover this
+    // session's provider / council configuration even if the process
+    // crashes before completing a turn. Best-effort: a WAL append failure
+    // MUST NOT fail the chat turn.
+    //
+    // Provider name at this point: the live Provider hasn't been
+    // constructed yet (it's passed in via the `provider` argument) but
+    // its name() is available from the &dyn Provider reference.
+    // MCP scope is empty at session-start — a follow-on checkpoint
+    // emitted inside run_mcp_dispatch_loop (after scope resolution) could
+    // add it, but that is a future slice.
+    {
+        use crate::recall::reconstruct::ModeCheckpoint;
+        use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
+        let council_mode_str = if config.council.disabled.unwrap_or(false) {
+            "off".to_string()
+        } else {
+            "enabled".to_string()
+        };
+        let mut cp = ModeCheckpoint {
+            checkpoint_hash: String::new(),
+            session_id: current_session_id.clone(),
+            mode: "chat".to_string(),
+            provider_target: provider.name().to_string(),
+            council_mode: council_mode_str,
+            scoped_mcp_servers: Vec::new(), // populated post-MCP-resolve; empty here
+            phase: "chat:session-start".to_string(),
+            ts_unix: chat_ts_unix,
+        };
+        cp.stamp_hash();
+        println!("[neoth] checkpoint: {}", cp.checkpoint_hash);
+        if let Ok(payload) = serde_json::to_vec(&cp) {
+            let hdr = crate::wal::make_header(EVENT_TYPE_MODE_CHECKPOINT, &payload);
+            let _ = writer.append(hdr, payload).await;
+        }
+    }
 
     // ── RAW_TEXT (the actual prompt, for recall) ──────────────────────────
     // Stored before the hashed PROVIDER_REQUEST so `neoth recall "..."` can
@@ -5729,15 +5804,21 @@ fn session_memory_signal() -> Option<String> {
 /// `Err(String)` so the caller can print a single warning + proceed
 /// without the resume hydration. The operator still gets a chat
 /// turn — just without the prior context.
+/// PWF-02: hydrate a prior `MODE_CHECKPOINT` from views.db by hash prefix.
+/// Returns `(banner, combined_system, catchup_summary)` on success so the
+/// caller can print the banner, optionally the catchup line, and inject the
+/// RESUME-CONTEXT block into the system prompt.
 fn hydrate_resume_context(
     hash_prefix: &str,
     existing_system: Option<&str>,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, crate::recall::reconstruct::CatchupSummary), String> {
     let views_path = crate::memory::store::default_path();
     let conn = crate::memory::store::open(&views_path)
         .map_err(|e| format!("views.db open failed: {e}"))?;
     let cp = crate::recall::reconstruct::reconstruct_from_checkpoint(&conn, hash_prefix)
         .map_err(|e| format!("checkpoint lookup failed: {e}"))?;
+    // PWF-02: count activity since the checkpoint timestamp.
+    let catchup = crate::recall::reconstruct::catchup_summary(&conn, cp.ts_unix);
     let mcp_scope = if cp.scoped_mcp_servers.is_empty() {
         "(default scope)".to_string()
     } else {
@@ -5768,7 +5849,7 @@ fn hydrate_resume_context(
         Some(s) if !s.trim().is_empty() => format!("{resume_block}\n{s}"),
         _ => resume_block,
     };
-    Ok((banner, combined))
+    Ok((banner, combined, catchup))
 }
 
 #[cfg(test)]

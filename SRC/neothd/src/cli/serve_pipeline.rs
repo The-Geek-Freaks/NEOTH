@@ -23,7 +23,8 @@ use crate::config::FreedomConfig;
 use crate::memory::store;
 use crate::providers::{Provider, Request};
 use crate::wal::events::{
-    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_MODE_CHECKPOINT,
+    EVENT_TYPE_RAW_TEXT,
 };
 use crate::wal::writer::WalWriterHandle;
 
@@ -601,6 +602,49 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // inbound path — the plaintext id stays in-process only (rate
             // limiter, permission gate, identity resolve), never on disk.
             let sender_hash = sender_hash_of(&inbound.sender_id);
+
+            // PWF-02: channel-turn SessionStart MODE_CHECKPOINT (0x9A).
+            // Emit before the ingress/audit pipeline so crash-recovery can
+            // identify which session a crash happened in. Uses a stable
+            // per-turn session_id derived from the sender id + timestamp so
+            // the operator can correlate across `neoth wal show` without a
+            // session concept in the channel path. Best-effort: never blocks
+            // the pipeline.
+            {
+                use crate::recall::reconstruct::ModeCheckpoint;
+                let ts_unix = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                // Stable per-turn id: xxh3-64 of sender_hash + ts_unix.
+                let turn_id = format!(
+                    "{:016x}-{ts_unix}",
+                    xxhash_rust::xxh3::xxh3_64(
+                        format!("{sender_hash}-{ts_unix}").as_bytes()
+                    )
+                );
+                let council_mode_str = if config_for_handler.council.disabled.unwrap_or(false) {
+                    "off".to_string()
+                } else {
+                    "enabled".to_string()
+                };
+                let mut cp = ModeCheckpoint {
+                    checkpoint_hash: String::new(),
+                    session_id: turn_id,
+                    mode: "channel".to_string(),
+                    provider_target: provider.name().to_string(),
+                    council_mode: council_mode_str,
+                    scoped_mcp_servers: Vec::new(),
+                    phase: "channel:session-start".to_string(),
+                    ts_unix,
+                };
+                cp.stamp_hash();
+                if let Ok(payload) = serde_json::to_vec(&cp) {
+                    let hdr = crate::wal::make_header(EVENT_TYPE_MODE_CHECKPOINT, &payload);
+                    let _ = writer.append(hdr, payload).await;
+                }
+            }
+
             // GOLD-ARCH-01 phase 2: SPEC-11 identity resolve (stamps human_uuid).
             resolve_inbound_identity(&mut inbound, &views_conn).await;
             // GOLD-ARCH-01 phase 2: SD-03 edited-message audit. An edit is

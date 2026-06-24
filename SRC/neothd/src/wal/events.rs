@@ -2248,6 +2248,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT,
     ),
     ("agent_dispatched", EVENT_TYPE_AGENT_DISPATCHED),
+    // PWF-02: session-catchup PreCompact + SessionStart recovery.
+    // `neoth wal show --type mode_checkpoint` surfaces every session-start +
+    // pre-compact boundary written by the chat/channel pipelines.
+    ("mode_checkpoint", EVENT_TYPE_MODE_CHECKPOINT),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -3505,6 +3509,26 @@ mod tests {
         // Distinct from the generic codes they replace.
         assert_ne!(EVENT_TYPE_CHANNEL_SEND, EVENT_TYPE_CHANNEL_EGRESS);
         assert_ne!(EVENT_TYPE_CHANNEL_SEND_DENIED, EVENT_TYPE_PERMISSION_DENIED);
+    }
+
+    /// PWF-02 pin: operators bake `neoth wal show --type 0x9A` (and
+    /// `--type mode_checkpoint`) into runbooks. Pin the literal so a
+    /// future band-rebase forces a deliberate update + confirm the
+    /// frame is immediate-sync (a session-start checkpoint that is
+    /// lost on crash is useless for recovery).
+    #[test]
+    fn mode_checkpoint_is_0x9a_in_memory_band_and_durable() {
+        assert_eq!(EVENT_TYPE_MODE_CHECKPOINT, 0x9A);
+        assert!(
+            (0x90..=0x9F).contains(&EVENT_TYPE_MODE_CHECKPOINT),
+            "MODE_CHECKPOINT = 0x{:02X} escaped memory-ops band 0x90..=0x9F",
+            EVENT_TYPE_MODE_CHECKPOINT,
+        );
+        // A checkpoint that doesn't survive a crash is worthless for recovery.
+        assert!(
+            needs_immediate_sync(EVENT_TYPE_MODE_CHECKPOINT),
+            "MODE_CHECKPOINT MUST be immediate-sync (crash-recovery anchor)"
+        );
     }
 
     #[test]

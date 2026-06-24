@@ -32,7 +32,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
+use crate::wal::events::{
+    EVENT_TYPE_CONTEXT_COMPACTION_DONE, EVENT_TYPE_MCP_TOOL_CALLED,
+    EVENT_TYPE_MODE_CHECKPOINT, EVENT_TYPE_PROVIDER_REQUEST,
+};
 
 /// Payload format for the `MODE_CHECKPOINT` WAL frame. The writer
 /// emits this JSON; the reader parses it via
@@ -114,6 +117,74 @@ fn hex_nibble(n: u8) -> char {
         0..=9 => (b'0' + n) as char,
         10..=15 => (b'a' + n - 10) as char,
         _ => unreachable!("nibble fits in u4"),
+    }
+}
+
+/// Summary of activity that occurred SINCE a prior `MODE_CHECKPOINT` was
+/// written. Returned by [`catchup_summary`] so a resumed session can
+/// print "N provider turns, M tool calls since checkpoint" without having
+/// to scan the entire WAL.
+///
+/// The three counters cover the three most operator-visible activities:
+/// - `provider_turns` — how many outbound LLM calls were made (0x20
+///   `PROVIDER_REQUEST`).
+/// - `tool_calls` — how many MCP tool invocations were dispatched (0xC0
+///   `MCP_TOOL_CALLED`).
+/// - `compactions` — how many context-compaction passes completed (0x5C
+///   `CONTEXT_COMPACTION_DONE`).
+///
+/// All three are counted from `since_ts_unix` (inclusive, seconds) to
+/// "now". A zero-value summary means "nothing interesting happened since
+/// the checkpoint" — the caller should suppress the catchup line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatchupSummary {
+    /// Number of `PROVIDER_REQUEST` (0x20) frames after the checkpoint.
+    pub provider_turns: u32,
+    /// Number of `MCP_TOOL_CALLED` (0xC0) frames after the checkpoint.
+    pub tool_calls: u32,
+    /// Number of `CONTEXT_COMPACTION_DONE` (0x5C) frames after the checkpoint.
+    pub compactions: u32,
+}
+
+impl CatchupSummary {
+    /// True when all three counters are zero — the caller skips the
+    /// catchup print line in this case.
+    pub fn is_empty(&self) -> bool {
+        self.provider_turns == 0 && self.tool_calls == 0 && self.compactions == 0
+    }
+}
+
+/// Count the three activity types in `idx_episode` that occurred AFTER the
+/// given checkpoint timestamp (exclusive lower bound, nanoseconds
+/// converted from seconds internally).
+///
+/// Called immediately after a successful [`reconstruct_from_checkpoint`]
+/// to give the resumed session a "what you missed" signal:
+///
+/// ```text
+/// [neoth] catchup: 3 provider turns, 2 tool calls since checkpoint
+/// ```
+///
+/// The function is read-only and best-effort — a query failure returns
+/// a zero [`CatchupSummary`] rather than propagating an error. The
+/// caller uses `CatchupSummary::is_empty()` to decide whether to print.
+pub fn catchup_summary(conn: &rusqlite::Connection, since_ts_unix: i64) -> CatchupSummary {
+    // Convert seconds → nanoseconds for the idx_episode.ts_ns column.
+    let since_ts_ns = since_ts_unix.saturating_mul(1_000_000_000i64);
+    let count_for = |event_type: u8| -> u32 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM idx_episode \
+             WHERE event_type = ?1 AND ts_ns > ?2",
+            rusqlite::params![event_type as i64, since_ts_ns],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|n| n.min(u32::MAX as i64) as u32)
+        .unwrap_or(0)
+    };
+    CatchupSummary {
+        provider_turns: count_for(EVENT_TYPE_PROVIDER_REQUEST),
+        tool_calls: count_for(EVENT_TYPE_MCP_TOOL_CALLED),
+        compactions: count_for(EVENT_TYPE_CONTEXT_COMPACTION_DONE),
     }
 }
 
@@ -379,6 +450,73 @@ mod tests {
         let conn = build_in_memory_db();
         let err = reconstruct_from_checkpoint(&conn, "anyhash12345").unwrap_err();
         assert!(matches!(err, ReconstructError::CheckpointNotFound(_)));
+    }
+
+    // ── catchup_summary ───────────────────────────────────────────────
+
+    fn insert_episode_row(conn: &rusqlite::Connection, event_id: i64, event_type: u8, ts_ns: i64) {
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
+             VALUES (?1, ?2, ?3, '', 'h')",
+            rusqlite::params![event_id, event_type as i64, ts_ns],
+        )
+        .unwrap();
+    }
+
+    /// 3 PROVIDER_REQUEST + 2 MCP_TOOL_CALLED rows AFTER the cutoff must be
+    /// counted correctly; CONTEXT_COMPACTION_DONE rows absent → 0.
+    #[test]
+    fn catchup_summary_counts_relevant_frame_types() {
+        let conn = build_in_memory_db();
+        let since_ts_unix: i64 = 1_700_000_000;
+        let after_ns = (since_ts_unix + 1) * 1_000_000_000;
+        // 3 provider requests.
+        for i in 0..3i64 {
+            insert_episode_row(&conn, 10 + i, EVENT_TYPE_PROVIDER_REQUEST, after_ns + i);
+        }
+        // 2 MCP tool calls.
+        for i in 0..2i64 {
+            insert_episode_row(&conn, 20 + i, EVENT_TYPE_MCP_TOOL_CALLED, after_ns + i);
+        }
+        let summary = catchup_summary(&conn, since_ts_unix);
+        assert_eq!(summary.provider_turns, 3);
+        assert_eq!(summary.tool_calls, 2);
+        assert_eq!(summary.compactions, 0);
+        assert!(!summary.is_empty());
+    }
+
+    /// Rows AT OR BEFORE the cutoff timestamp must be excluded.
+    #[test]
+    fn catchup_summary_ignores_frames_before_checkpoint() {
+        let conn = build_in_memory_db();
+        let since_ts_unix: i64 = 1_700_000_000;
+        let cutoff_ns = since_ts_unix * 1_000_000_000;
+        // Insert rows at exactly the cutoff (not after) — must be excluded.
+        insert_episode_row(&conn, 1, EVENT_TYPE_PROVIDER_REQUEST, cutoff_ns);
+        insert_episode_row(&conn, 2, EVENT_TYPE_MCP_TOOL_CALLED, cutoff_ns - 1);
+        insert_episode_row(&conn, 3, EVENT_TYPE_CONTEXT_COMPACTION_DONE, cutoff_ns);
+        let summary = catchup_summary(&conn, since_ts_unix);
+        assert_eq!(summary.provider_turns, 0);
+        assert_eq!(summary.tool_calls, 0);
+        assert_eq!(summary.compactions, 0);
+        assert!(summary.is_empty());
+    }
+
+    /// All three counters populated simultaneously.
+    #[test]
+    fn catchup_summary_counts_all_three_types() {
+        let conn = build_in_memory_db();
+        let since_ts_unix: i64 = 1_000_000;
+        let after_ns = (since_ts_unix + 1) * 1_000_000_000;
+        insert_episode_row(&conn, 1, EVENT_TYPE_PROVIDER_REQUEST, after_ns);
+        insert_episode_row(&conn, 2, EVENT_TYPE_PROVIDER_REQUEST, after_ns + 1);
+        insert_episode_row(&conn, 3, EVENT_TYPE_MCP_TOOL_CALLED, after_ns + 2);
+        insert_episode_row(&conn, 4, EVENT_TYPE_CONTEXT_COMPACTION_DONE, after_ns + 3);
+        insert_episode_row(&conn, 5, EVENT_TYPE_CONTEXT_COMPACTION_DONE, after_ns + 4);
+        let summary = catchup_summary(&conn, since_ts_unix);
+        assert_eq!(summary.provider_turns, 2);
+        assert_eq!(summary.tool_calls, 1);
+        assert_eq!(summary.compactions, 2);
     }
 
     #[test]
