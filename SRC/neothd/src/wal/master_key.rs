@@ -15,7 +15,7 @@
 //! enabling encryption.
 
 use super::compaction::{maybe_unwrap_dpapi, write_key_securely};
-use super::crypto::{derive_subkey, WalMasterKey, WalSegmentKey, INFO_WAL_SEGMENT};
+use super::crypto::{derive_subkey, WalMasterKey, WalSegmentKey, INFO_CONFIG, INFO_WAL_SEGMENT};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -61,6 +61,29 @@ pub fn wal_encryption_enabled() -> bool {
         crate::config::wal::load_wal_config(&home.join("freedom.yaml")).encryption
             == crate::config::wal::WalEncryption::Aes256GcmSiv
     })
+}
+
+/// Config-at-rest subkey (CRYPTO-04 #5) — domain-separated (`INFO_CONFIG`) from
+/// the WAL segment key. **Load-only** for the decrypt/read path; `None` when no
+/// master.key exists.
+pub fn config_subkey() -> Option<WalSegmentKey> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let path = master_key_path(&home);
+    if !path.exists() {
+        return None;
+    }
+    let body = std::fs::read(&path).ok()?;
+    let raw = maybe_unwrap_dpapi(&body, &path).ok()?;
+    let master = WalMasterKey::from_bytes(&raw).ok()?;
+    derive_subkey(&master, INFO_CONFIG).ok()
+}
+
+/// Config-at-rest subkey for the WRITE path: load-OR-INIT the master key, derive
+/// the `INFO_CONFIG` subkey. Creates the key on first encrypted credentials write.
+pub fn config_subkey_ensure() -> Option<WalSegmentKey> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let master = load_or_init_master_key(&master_key_path(&home)).ok()?;
+    derive_subkey(&master, INFO_CONFIG).ok()
 }
 
 /// Writer-side segment subkey: load-OR-INIT the default-home master key

@@ -28,6 +28,46 @@ pub fn default_path() -> PathBuf {
     super::FreedomConfig::default_neoth_home().join("credentials.yaml")
 }
 
+/// GOLD-ADAPT-CRYPTO-04 #5 — magic prefix marking an AEAD-encrypted
+/// credentials.yaml. Distinct from the WAL `ENC_MAGIC` so the two at-rest
+/// formats can never be confused. Layout: `CONF_MAGIC ‖ nonce(12) ‖ ciphertext`.
+const CONF_MAGIC: &[u8] = b"NEOTH_CONF_ENCv1\n";
+
+/// Encrypt a serialized credentials YAML string with the config subkey
+/// (AES-256-GCM-SIV, the magic as AAD). Fresh random nonce per write.
+fn encrypt_credentials_body(
+    key: &crate::wal::crypto::WalSegmentKey,
+    yaml: &str,
+) -> Result<Vec<u8>> {
+    let mut nonce = [0u8; 12];
+    getrandom::getrandom(&mut nonce).map_err(|e| anyhow::anyhow!("credentials nonce RNG: {e}"))?;
+    let ct = crate::wal::crypto::encrypt_blob(key, &nonce, CONF_MAGIC, yaml.as_bytes())
+        .context("encrypt credentials body")?;
+    let mut out = Vec::with_capacity(CONF_MAGIC.len() + nonce.len() + ct.len());
+    out.extend_from_slice(CONF_MAGIC);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+/// Decrypt a `CONF_MAGIC`-framed credentials blob. `Err` on wrong key / tamper /
+/// truncation / non-UTF-8 plaintext.
+fn decrypt_credentials_body(
+    key: &crate::wal::crypto::WalSegmentKey,
+    raw: &[u8],
+) -> Result<String> {
+    let after = raw
+        .strip_prefix(CONF_MAGIC)
+        .ok_or_else(|| anyhow::anyhow!("credentials blob is not CONF_MAGIC-framed"))?;
+    if after.len() < 12 {
+        anyhow::bail!("encrypted credentials truncated (no nonce)");
+    }
+    let nonce: [u8; 12] = after[..12].try_into().expect("checked len >= 12");
+    let pt = crate::wal::crypto::decrypt_blob(key, &nonce, CONF_MAGIC, &after[12..])
+        .context("decrypt credentials (wrong key or tampered)")?;
+    String::from_utf8(pt).context("decrypted credentials are not UTF-8")
+}
+
 /// Shape of `credentials.yaml`. All fields optional so an operator who
 /// hasn't configured a provider key (e.g. claude-cli OAuth only) doesn't
 /// need to keep an empty key around.
@@ -241,8 +281,23 @@ impl Credentials {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let body = std::fs::read_to_string(path)
+        let raw = std::fs::read(path)
             .with_context(|| format!("read credentials at {}", path.display()))?;
+        // CRYPTO-04 #5 — decrypt when at-rest-encrypted; else legacy plaintext.
+        let body: String = if raw.starts_with(CONF_MAGIC) {
+            let key = crate::wal::master_key::config_subkey().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "credentials at {} are encrypted but the master key is unavailable \
+                     (restore it: neoth security restore-master-key)",
+                    path.display()
+                )
+            })?;
+            decrypt_credentials_body(&key, &raw)
+                .with_context(|| format!("decrypt credentials at {}", path.display()))?
+        } else {
+            String::from_utf8(raw)
+                .with_context(|| format!("credentials at {} are not valid UTF-8", path.display()))?
+        };
         let c: Self = serde_yaml::from_str(&body)
             .with_context(|| format!("parse credentials YAML at {}", path.display()))?;
         Ok(c)
@@ -278,7 +333,23 @@ impl Credentials {
         // off the heap.
         use zeroize::Zeroize;
         let mut body = serde_yaml::to_string(self).context("serialise credentials")?;
-        let result = write_mode_0600(path, body.as_bytes());
+        // CRYPTO-04 #5 — encrypt at rest when the operator enabled at-rest
+        // encryption. FAIL-CLOSED: enabled-but-no-key refuses to write plaintext
+        // secrets (more sensitive than WAL frames).
+        let result = if crate::wal::master_key::wal_encryption_enabled() {
+            match crate::wal::master_key::config_subkey_ensure() {
+                Some(key) => match encrypt_credentials_body(&key, &body) {
+                    Ok(blob) => write_mode_0600(path, &blob),
+                    Err(e) => Err(e),
+                },
+                None => Err(anyhow::anyhow!(
+                    "at-rest encryption enabled but master key unavailable — \
+                     refusing to write plaintext credentials"
+                )),
+            }
+        } else {
+            write_mode_0600(path, body.as_bytes())
+        };
         body.zeroize();
         result?;
         Ok(())
@@ -528,6 +599,42 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn conf_key(seed: u8) -> crate::wal::crypto::WalSegmentKey {
+        let m = crate::wal::crypto::WalMasterKey::from_bytes(&[seed; 32]).unwrap();
+        crate::wal::crypto::derive_subkey(&m, crate::wal::crypto::INFO_CONFIG).unwrap()
+    }
+
+    #[test]
+    fn credentials_at_rest_round_trips_and_hides_the_secret() {
+        let key = conf_key(11);
+        let yaml = "provider_key: sk-supersecret-123\ntelegram_token: bot-abc\n";
+        let blob = encrypt_credentials_body(&key, yaml).unwrap();
+        assert!(blob.starts_with(CONF_MAGIC), "framed with the config magic");
+        // The plaintext secret must not appear in the ciphertext.
+        assert!(
+            !blob.windows(11).any(|w| w == b"supersecret"),
+            "ciphertext must not contain the plaintext secret"
+        );
+        assert_eq!(decrypt_credentials_body(&key, &blob).unwrap(), yaml);
+    }
+
+    #[test]
+    fn credentials_decrypt_wrong_key_or_tamper_fails() {
+        let blob = encrypt_credentials_body(&conf_key(1), "provider_key: x\n").unwrap();
+        assert!(decrypt_credentials_body(&conf_key(2), &blob).is_err(), "wrong key");
+        let mut tampered = blob.clone();
+        *tampered.last_mut().unwrap() ^= 0xFF;
+        assert!(decrypt_credentials_body(&conf_key(1), &tampered).is_err(), "tamper");
+    }
+
+    #[test]
+    fn legacy_plaintext_credentials_are_not_magic_framed() {
+        // A plaintext YAML file does not carry CONF_MAGIC → load() reads it as
+        // legacy plaintext (no key needed). The WAL ENC_MAGIC is also distinct.
+        assert!(!b"provider_key: x\n".starts_with(CONF_MAGIC));
+        assert_ne!(CONF_MAGIC, crate::wal::crypto::ENC_MAGIC);
+    }
     use tempfile::tempdir;
 
     #[test]
