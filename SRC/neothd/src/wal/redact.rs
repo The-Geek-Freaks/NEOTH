@@ -291,8 +291,26 @@ where
     // The header is kept byte-for-byte; only the zstd body is rewritten.
     let header_bytes = file_bytes[..header_len].to_vec();
     let blob = &file_bytes[header_len..];
+    // GOLD-ADAPT-CRYPTO-04f — a sealed segment may be AEAD-encrypted-on-seal.
+    // Decrypt the body (the plaintext header is the AAD) BEFORE decompressing,
+    // and remember so the rewrite RE-ENCRYPTS — never downgrade an encrypted
+    // segment to plaintext via a redaction.
+    let was_encrypted = super::crypto::is_encrypted(blob);
+    let compressed_blob: std::borrow::Cow<'_, [u8]> = if was_encrypted {
+        let key = super::master_key::default_segment_key().ok_or_else(|| {
+            anyhow::anyhow!("redact: segment is encrypted but no master key is available")
+        })?;
+        let (nonce, ct) = super::crypto::split_encrypted(blob)?;
+        std::borrow::Cow::Owned(
+            super::crypto::decrypt_blob(key, &nonce, &header_bytes, ct).with_context(|| {
+                format!("decrypt sealed WAL segment {}", segment_path.display())
+            })?,
+        )
+    } else {
+        std::borrow::Cow::Borrowed(blob)
+    };
     // Decompress with the zip-bomb cap (a crafted blob can't OOM the daemon).
-    let mut frames = decompress_frames(blob)
+    let mut frames = decompress_frames(&compressed_blob)
         .with_context(|| format!("decompress sealed WAL segment {}", segment_path.display()))?;
 
     let report =
@@ -306,6 +324,22 @@ where
 
     let recompressed = compress_frames(&frames)
         .with_context(|| format!("recompress redacted WAL segment {}", segment_path.display()))?;
+
+    // CRYPTO-04f — re-encrypt if the segment was encrypted, with a FRESH nonce
+    // (SIV tolerates reuse, but a new nonce is cleaner for auditors). The
+    // preserved plaintext header stays the AAD.
+    let body: Vec<u8> = if was_encrypted {
+        let key = super::master_key::default_segment_key()
+            .ok_or_else(|| anyhow::anyhow!("redact: cannot re-encrypt without the master key"))?;
+        let mut nonce = [0u8; 12];
+        getrandom::getrandom(&mut nonce)
+            .map_err(|e| anyhow::anyhow!("redact re-encrypt nonce RNG: {e}"))?;
+        let ct = super::crypto::encrypt_blob(key, &nonce, &header_bytes, &recompressed)
+            .context("re-encrypt redacted segment")?;
+        super::crypto::frame_encrypted(&nonce, &ct)
+    } else {
+        recompressed
+    };
 
     // Atomic rewrite: preserved header + new blob → unique `.redact.tmp` → fsync
     // → rename over the original. A PER-INVOCATION unique tmp name (pid + a
@@ -338,8 +372,8 @@ where
             .with_context(|| format!("open redact tmp {}", tmp_path.display()))?;
         tmp.write_all(&header_bytes)
             .context("write preserved segment header to redact tmp")?;
-        tmp.write_all(&recompressed)
-            .context("write recompressed redacted body to redact tmp")?;
+        tmp.write_all(&body)
+            .context("write recompressed (+re-encrypted) redacted body to redact tmp")?;
         tmp.sync_all().context("fsync redact tmp")?;
     }
     if let Err(e) = std::fs::rename(&tmp_path, segment_path) {
