@@ -220,6 +220,30 @@ pub(crate) fn fmt_bytes(n: u64) -> String {
     }
 }
 
+/// GOLD-ADAPT-HERMES-07b — surface staged self-heal patch proposals (from
+/// crash-log analysis) so the operator reviews them. Warn when any are staged;
+/// they are advisory only and never auto-applied.
+pub(crate) fn check_self_heal_proposals(home: &Path) -> CheckOutcome {
+    let proposals = crate::daemon::self_heal::load_proposals(home);
+    if proposals.is_empty() {
+        CheckOutcome {
+            name: "self-heal proposals",
+            status: CheckStatus::Pass,
+            detail: "none staged".into(),
+        }
+    } else {
+        CheckOutcome {
+            name: "self-heal proposals",
+            status: CheckStatus::Warn,
+            detail: format!(
+                "{} staged patch proposal(s) from crash analysis — review {} (advisory; not auto-applied)",
+                proposals.len(),
+                crate::daemon::self_heal::proposals_path(home).display()
+            ),
+        }
+    }
+}
+
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
 pub(crate) const CHECKS: &[CheckFn] = &[
@@ -228,6 +252,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_hmac_key,
     check_quota,
     check_disk_space,
+    check_self_heal_proposals,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -297,5 +322,18 @@ pub(crate) const DOCS: &[CheckDoc] = &[
         fix: "Prune backups (`neoth backup --prune`); compact WAL (`neoth \
               wal compact`); move `~/.neoth/` to a larger volume via \
               symlink + `chown`.",
+    },
+    CheckDoc {
+        name: "self-heal proposals",
+        purpose: "HERMES-07b — the monitor cron categorises new panics in \
+                  `~/.neoth/crash.log` into staged, operator-reviewable patch \
+                  proposals (`~/.neoth/self_heal/proposals.jsonl`). Doctor \
+                  surfaces the count so they don't sit unseen.",
+        common_failures: "Staged proposals accumulating = the daemon is \
+                         panicking repeatedly; each proposal names the likely \
+                         file:line + fix class.",
+        fix: "Review `~/.neoth/self_heal/proposals.jsonl` — each entry has a \
+              category + suggested_action + evidence. Apply fixes manually \
+              (NEOTH never self-patches). Clear the file once addressed.",
     },
 ];

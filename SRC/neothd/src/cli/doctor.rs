@@ -404,8 +404,9 @@ mod tests {
         // 31 in Session 44 for `vector index snapshot` (GOLD-WIRE-07);
         // 36 for the capability-readiness domain (computer-use, okf export,
         // iroh transport, mcp servers, wal audit) — the integration proof;
-        // 37 for self-improvement (SkillOpt).
-        assert_eq!(all_check_docs().count(), 37);
+        // 37 for self-improvement (SkillOpt); +2 since (parallel-lane checks);
+        // +1 for self-heal proposals (HERMES-07b) = 40.
+        assert_eq!(all_check_docs().count(), 40);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1147,8 +1148,9 @@ mod tests {
         // + n8n_api_token (Session 28c, SC-08) + stuck claude processes
         // (Session 44, GOLD-WIRE-05) + vector index snapshot (Session 44,
         // GOLD-WIRE-07) + the 6 capability-readiness checks (computer-use,
-        // okf export, iroh transport, mcp servers, wal audit, self-improvement).
-        assert_eq!(outs.len(), 37);
+        // okf export, iroh transport, mcp servers, wal audit, self-improvement)
+        // + 2 parallel-lane checks since + self-heal proposals (HERMES-07b) = 40.
+        assert_eq!(outs.len(), 40);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
