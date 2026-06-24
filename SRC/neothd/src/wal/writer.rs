@@ -1010,6 +1010,29 @@ async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalE
         SEGMENT_FLAG_COMPRESSED,
     );
 
+    let compressed_len = compressed.len();
+
+    // GOLD-ADAPT-CRYPTO-04d encrypt-on-seal: when `wal.encryption` is enabled,
+    // the sealed (compressed) frame blob is AES-256-GCM-SIV-encrypted with the
+    // plaintext v2 header as AAD, framed `ENC_MAGIC‖nonce‖ciphertext`. The
+    // header keeps SEGMENT_FLAG_COMPRESSED (the decrypted blob IS compressed),
+    // so the reader chokepoint decrypts-then-decompresses. FAIL-CLOSED: a
+    // configured-on operator never silently gets a plaintext segment.
+    let body: Vec<u8> = if crate::wal::master_key::wal_encryption_enabled() {
+        let key = crate::wal::master_key::writer_segment_key().ok_or_else(|| {
+            std::io::Error::other("WAL encryption enabled but the master key could not be loaded")
+        })?;
+        let mut nonce = [0u8; 12];
+        getrandom::getrandom(&mut nonce)
+            .map_err(|e| std::io::Error::other(format!("encrypt-on-seal nonce RNG: {e}")))?;
+        let ct =
+            crate::wal::crypto::encrypt_blob(&key, &nonce, &v2_header.to_le_bytes(), &compressed)
+                .map_err(|e| std::io::Error::other(format!("encrypt-on-seal: {e}")))?;
+        crate::wal::crypto::frame_encrypted(&nonce, &ct)
+    } else {
+        compressed
+    };
+
     // Write to tmp.
     let mut tmp_opts = tokio::fs::OpenOptions::new();
     tmp_opts.create(true).write(true).truncate(true);
@@ -1017,7 +1040,7 @@ async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalE
     tmp_opts.mode(0o600);
     let mut tmp_file = tmp_opts.open(&tmp_path).await?;
     tmp_file.write_all(&v2_header.to_le_bytes()).await?;
-    tmp_file.write_all(&compressed).await?;
+    tmp_file.write_all(&body).await?;
     tmp_file.sync_all().await?;
     drop(tmp_file);
 
@@ -1027,9 +1050,11 @@ async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalE
     info!(
         path = %state.path.display(),
         raw_bytes = state.pending_frames.len(),
-        compressed_bytes = compressed.len(),
-        ratio = format!("{:.1}%", compressed.len() as f64 / state.pending_frames.len().max(1) as f64 * 100.0),
-        "WAL segment finalized with zstd-3 compression"
+        compressed_bytes = compressed_len,
+        ratio = format!("{:.1}%", compressed_len as f64 / state.pending_frames.len().max(1) as f64 * 100.0),
+        encrypted = crate::wal::master_key::wal_encryption_enabled(),
+        "WAL segment finalized (zstd-3{})",
+        if crate::wal::master_key::wal_encryption_enabled() { " + AES-256-GCM-SIV" } else { "" },
     );
     state.pending_frames.clear();
     Ok(())

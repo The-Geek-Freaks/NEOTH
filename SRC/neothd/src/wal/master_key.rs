@@ -49,6 +49,29 @@ pub fn default_segment_key() -> Option<&'static WalSegmentKey> {
     .as_ref()
 }
 
+/// Process-memoized read of `freedom.yaml::wal.encryption` — `true` when the
+/// operator opted into AES-256-GCM-SIV at-rest. The writer consults this on
+/// seal; the reader does NOT (it decrypts based on the segment's ENC magic,
+/// independent of the flag, so a config that's later turned off still reads
+/// already-encrypted history).
+pub fn wal_encryption_enabled() -> bool {
+    static EN: OnceLock<bool> = OnceLock::new();
+    *EN.get_or_init(|| {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        crate::config::wal::load_wal_config(&home.join("freedom.yaml")).encryption
+            == crate::config::wal::WalEncryption::Aes256GcmSiv
+    })
+}
+
+/// Writer-side segment subkey: load-OR-INIT the default-home master key
+/// (CREATES + persists it on the first encrypted seal — the writer owns key
+/// creation) and derive the segment subkey. `None` only on RNG/IO failure.
+pub fn writer_segment_key() -> Option<WalSegmentKey> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let master = load_or_init_master_key(&master_key_path(&home)).ok()?;
+    derive_subkey(&master, INFO_WAL_SEGMENT).ok()
+}
+
 /// Load the master key, generating + persisting a fresh one on first use.
 /// Fail-closed on RNG failure (mirrors `compaction::load_or_init_key`).
 pub fn load_or_init_master_key(path: &Path) -> Result<WalMasterKey> {
