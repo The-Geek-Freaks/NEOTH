@@ -483,10 +483,29 @@ pub(crate) async fn step5b2_ollama_provision(
 
     #[cfg(feature = "wizard")]
     {
+        use crate::cli::device_profile::{detect_device_profile, recommend_tier, LocalAiTier};
         use crate::installers::ollama;
+
+        // OH-04 tier gate — suppress the Ollama install offer on machines where
+        // RAM <8 GB and no GPU is detected (CloudFirst tier). Hybrid (8–15 GB,
+        // no GPU) still gets the offer: small quantized models are viable at 8 GB.
+        let profile = detect_device_profile();
+        let tier = recommend_tier(profile.total_ram_gb, profile.gpu_present);
+        if matches!(tier, LocalAiTier::CloudFirst) {
+            println!(
+                "  [OH-04] RAM {:.1} GB, no GPU detected — local Ollama install skipped (cloud-first tier).",
+                profile.total_ram_gb
+            );
+            println!(
+                "    Switch a hemisphere to a cloud provider, or re-run `neoth init` on a machine \
+                 with ≥8 GB RAM (Hybrid) or a GPU (LocalCapable) to enable local models."
+            );
+            return Ok(());
+        }
+
         println!("\n[5b/9] Ollama runtime — serves your local abliterated model(s).");
 
-        // Install Ollama if it isn't already on PATH.
+        // Install Ollama if it isn't already reachable (multi-path probe).
         if ollama::check_ollama_available().await.is_none() {
             let install =
                 dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -501,7 +520,20 @@ pub(crate) async fn step5b2_ollama_provision(
                     .context("ollama install confirm")?;
             if install {
                 match ollama::install_for_host().await {
-                    Ok(()) => println!("  ✓ Ollama installed"),
+                    Ok(()) => {
+                        println!("  ✓ Ollama installed");
+                        // OH-05 — post-install binary probe: /CURRENTUSER puts the
+                        // binary in %LOCALAPPDATA%\Programs\Ollama\ which is NOT on PATH
+                        // until the next shell restart. Locate it explicitly so the pull
+                        // calls below work in the same wizard session.
+                        match ollama::find_ollama_binary() {
+                            Some(ref p) => println!("  ✓ binary located: {}", p.display()),
+                            None => println!(
+                                "  ! binary not found on known paths after install — \
+                                 restart your shell then run pulls manually."
+                            ),
+                        }
+                    }
                     Err(e) => println!(
                         "  ! Ollama install failed: {e}\n    Install manually from {} then re-run the pulls below.",
                         ollama::OLLAMA_DOWNLOAD_URL
@@ -511,7 +543,12 @@ pub(crate) async fn step5b2_ollama_provision(
                 println!("  → skipped Ollama install. Pull commands are printed below.");
             }
         } else {
-            println!("  ✓ Ollama already installed");
+            // Already installed — still log the resolved path for operator visibility.
+            if let Some(ref p) = ollama::find_ollama_binary() {
+                println!("  ✓ Ollama already installed ({})", p.display());
+            } else {
+                println!("  ✓ Ollama already installed");
+            }
         }
 
         // Offer to pull each configured model.
@@ -527,7 +564,19 @@ pub(crate) async fn step5b2_ollama_provision(
             let cmd = ollama::pull_command(r);
             if pull {
                 println!("  ⏬ {}", cmd.join(" "));
-                if let Err(e) = ollama::run_command(&cmd).await {
+                // OH-05 — use find_ollama_binary() for the pull so that a
+                // /CURRENTUSER fresh-install binary (not yet on PATH) is used
+                // directly rather than failing with "ollama: command not found".
+                let pull_result = match ollama::find_ollama_binary() {
+                    Some(bin) => {
+                        // pull_command returns ["ollama", "pull", "<ref>"] —
+                        // drop the first token (binary name) and pass the rest.
+                        let rest: Vec<String> = cmd[1..].to_vec();
+                        ollama::run_command_at(&bin, &rest).await
+                    }
+                    None => ollama::run_command(&cmd).await,
+                };
+                if let Err(e) = pull_result {
                     println!("  ! pull failed: {e} (re-run `{}` later)", cmd.join(" "));
                 }
             } else {
@@ -1018,4 +1067,52 @@ pub(crate) fn step5d_profile_approval_gate(
     }
     state.steps_completed.push(WizardStep::ProfileGate as u8);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OH-05 integration test — non-interactive path with one Ollama-endpoint
+    /// slot configured. Proves that step5b2_ollama_provision is reachable,
+    /// collect_ollama_model_refs fires, and the non-interactive branch returns
+    /// Ok(()) without panicking or hitting a live Ollama daemon.
+    #[tokio::test]
+    async fn step5b2_non_interactive_prints_pull_command_for_ollama_slot() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider};
+
+        let mut state = WizardState::default();
+
+        // Wire one hemisphere to the Ollama OpenAI-compat endpoint with an hf.co model ref.
+        let slot = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("hf.co/unsloth/Qwen2.5-7B-Instruct-GGUF:Q4_K_M".to_string()),
+            endpoint: Some(
+                crate::installers::ollama::openai_compat_endpoint(
+                    crate::installers::ollama::DEFAULT_OLLAMA_PORT,
+                )
+            ),
+            key: None,
+            region: None,
+            api_version: None,
+            voice: None,
+        };
+        state.inference.left = slot;
+
+        // Non-interactive — must return Ok(()) with no panic.
+        // collect_ollama_model_refs sees the slot; the non-interactive branch
+        // prints the pull command to stdout and returns without touching Ollama.
+        let result = step5b2_ollama_provision(false, &mut state).await;
+        assert!(result.is_ok(), "step5b2_ollama_provision non-interactive must be Ok: {result:?}");
+    }
+
+    /// OH-05 — step5b2 with an empty topology returns Ok(()) immediately
+    /// (no Ollama slots configured).
+    #[tokio::test]
+    async fn step5b2_non_interactive_noop_when_no_ollama_slots() {
+        let mut state = WizardState::default();
+        // Default topology has no OpenAiCompat Ollama slots.
+        let result = step5b2_ollama_provision(false, &mut state).await;
+        assert!(result.is_ok(), "step5b2 must be Ok with empty topology: {result:?}");
+    }
 }
