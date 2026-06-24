@@ -308,20 +308,65 @@ pub fn verify_marker(segment_path: &Path, key: &[u8], marker: &MarkerPayload) ->
 /// already v2 when compression is on), so no offset shift is needed. Returns the
 /// header length too, so frame walkers know where the first frame starts.
 pub(crate) fn logical_segment_bytes(raw: &[u8]) -> Result<(usize, Cow<'_, [u8]>)> {
+    logical_segment_bytes_with_key(raw, None)
+}
+
+/// GOLD-ADAPT-CRYPTO-04c — like [`logical_segment_bytes`] but decrypts an
+/// encrypt-on-seal (CRYPTO-04d) segment body with `key` BEFORE the existing
+/// decompress path. The on-disk layout of an encrypted sealed segment is
+/// `[plaintext header (AAD)] [ENC_MAGIC ‖ nonce ‖ ciphertext]`, where the
+/// ciphertext is `encrypt(compress(frames))` (or `encrypt(frames)` when
+/// compression is off). The plaintext header is the AEAD AAD, so a tampered
+/// header fails the tag.
+///
+/// `key = None` is the legacy path: a non-encrypted segment reconstructs
+/// EXACTLY as before (borrow, no copy); an encrypted one returns `Err` (you
+/// need the key to read it). Every existing caller passes `None`, so until
+/// encrypt-on-seal lands this is a no-op — `is_encrypted(body)` is never true.
+pub(crate) fn logical_segment_bytes_with_key<'a>(
+    raw: &'a [u8],
+    key: Option<&crate::wal::crypto::WalSegmentKey>,
+) -> Result<(usize, Cow<'a, [u8]>)> {
+    use crate::wal::crypto;
     // A file without a parseable segment header — a bare frame stream (minimal
     // test fixture) or a pre-header artifact — is treated as raw, frames starting
-    // at offset 0. Only a header that parses AND sets the compression flag
-    // triggers decompression; a flagged-compressed header whose blob won't inflate
-    // IS an error (tamper-suspect), surfaced to the caller.
+    // at offset 0.
     let Ok(hdr) = parse_segment_header(raw) else {
         return Ok((0, Cow::Borrowed(raw)));
     };
     let header_len = hdr.header_len();
+    let body = raw.get(header_len..).unwrap_or(&[]);
+
+    // ── CRYPTO-04c decrypt layer ── peel the AEAD frame off the body first.
+    // No-op on legacy plaintext segments (is_encrypted == false).
+    let frame_blob: Cow<'a, [u8]> = if crypto::is_encrypted(body) {
+        let k = key.ok_or_else(|| {
+            anyhow::anyhow!("WAL segment body is encrypted but no segment key was provided")
+        })?;
+        let (nonce, ct) = crypto::split_encrypted(body)?;
+        let plain = crypto::decrypt_blob(k, &nonce, &raw[..header_len], ct)
+            .context("decrypt sealed WAL segment")?;
+        Cow::Owned(plain)
+    } else {
+        Cow::Borrowed(body)
+    };
+
+    // Only a header that sets the compression flag triggers decompression; a
+    // flagged-compressed blob that won't inflate IS an error (tamper-suspect).
     if !hdr.is_compressed() {
-        return Ok((header_len, Cow::Borrowed(raw)));
+        return match frame_blob {
+            // Not encrypted + not compressed → the raw file is already logical.
+            Cow::Borrowed(_) => Ok((header_len, Cow::Borrowed(raw))),
+            // Encryption-only → stitch the plaintext header onto the decrypted frames.
+            Cow::Owned(plain) => {
+                let mut logical = Vec::with_capacity(header_len + plain.len());
+                logical.extend_from_slice(&raw[..header_len]);
+                logical.extend_from_slice(&plain);
+                Ok((header_len, Cow::Owned(logical)))
+            }
+        };
     }
-    let blob = raw.get(header_len..).unwrap_or(&[]);
-    let frames = decompress_frames(blob).context("decompress segment frame blob")?;
+    let frames = decompress_frames(&frame_blob).context("decompress segment frame blob")?;
     let mut logical = Vec::with_capacity(header_len + frames.len());
     logical.extend_from_slice(&raw[..header_len]);
     logical.extend_from_slice(&frames);
@@ -365,6 +410,66 @@ pub fn verify_marker_bytes(segment_bytes: &[u8], key: &[u8], marker: &MarkerPayl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crypto04c_decrypts_encrypted_segment_at_chokepoint() {
+        use crate::wal::compress::compress_frames;
+        use crate::wal::crypto::{self, derive_subkey, WalMasterKey, INFO_WAL_SEGMENT};
+        use crate::wal::segment_header::{
+            SegmentHeaderV2, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN,
+        };
+
+        let key =
+            derive_subkey(&WalMasterKey::from_bytes(&[3u8; 32]).unwrap(), INFO_WAL_SEGMENT).unwrap();
+        let frames = b"the raw frame stream the writer held before sealing".repeat(4);
+
+        // Build: header(plaintext AAD) || ENC_MAGIC ‖ nonce ‖ encrypt(maybe-compress(frames)).
+        let build = |compressed: bool| -> Vec<u8> {
+            let flag = if compressed { SEGMENT_FLAG_COMPRESSED } else { 0 };
+            let header = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], flag)
+                .to_le_bytes()
+                .to_vec();
+            let blob = if compressed {
+                compress_frames(&frames).unwrap()
+            } else {
+                frames.clone()
+            };
+            let nonce = [7u8; 12];
+            let ct = crypto::encrypt_blob(&key, &nonce, &header, &blob).unwrap();
+            let mut seg = header.clone();
+            seg.extend_from_slice(&crypto::frame_encrypted(&nonce, &ct));
+            seg
+        };
+
+        for compressed in [false, true] {
+            let seg = build(compressed);
+            // With the key: decrypts (+ decompresses) back to header || frames.
+            let (hl, logical) = logical_segment_bytes_with_key(&seg, Some(&key)).unwrap();
+            assert_eq!(hl, SEGMENT_HEADER_V2_LEN);
+            assert_eq!(
+                &logical[hl..],
+                &frames[..],
+                "compressed={compressed}: round-trips to the frame stream"
+            );
+            // Without the key an encrypted segment cannot be read (default path too).
+            assert!(logical_segment_bytes_with_key(&seg, None).is_err());
+            assert!(logical_segment_bytes(&seg).is_err());
+            // Wrong key → AEAD tag fails closed.
+            let wrong =
+                derive_subkey(&WalMasterKey::from_bytes(&[9u8; 32]).unwrap(), INFO_WAL_SEGMENT)
+                    .unwrap();
+            assert!(logical_segment_bytes_with_key(&seg, Some(&wrong)).is_err());
+        }
+
+        // A legacy plaintext segment is unaffected by passing a key (passthrough).
+        let header = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], 0)
+            .to_le_bytes()
+            .to_vec();
+        let mut plain = header.clone();
+        plain.extend_from_slice(&frames);
+        let (hl, logical) = logical_segment_bytes_with_key(&plain, Some(&key)).unwrap();
+        assert_eq!(&logical[hl..], &frames[..]);
+    }
     use tempfile::tempdir;
 
     #[test]
