@@ -12,6 +12,10 @@ pub mod compress;
 /// HKDF subkeys, resume-safe nonce counter, AES-256-GCM-SIV blob encrypt/decrypt).
 /// Foundation slice; WAL-core wiring (encrypt-on-seal) lands separately.
 pub mod crypto;
+/// GOLD-ADAPT-CRYPTO-04 slice 2 — WAL master-key lifecycle (load/init/backup/
+/// restore), reusing the existing DPAPI-wrap key path. Recovery for the
+/// lose-key-lose-content footgun.
+pub mod master_key;
 /// ADV-01 (F4 finding, SPEC §4.3) — HMAC-SHA256 authenticator + .cpt
 /// file format + crash-recovery apply path. Closes the pre-placed-
 /// .cpt-injection attack window on the WAL recovery boundary.
