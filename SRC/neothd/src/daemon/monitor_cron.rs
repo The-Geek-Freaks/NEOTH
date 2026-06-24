@@ -403,6 +403,30 @@ pub async fn run_monitor_tick(
                 "monitor: new daemon panics in crash.log — inspect and report",
             );
             crash_alerted = true;
+
+            // GOLD-ADAPT-HERMES-07b — categorise the NEW panic lines into
+            // staged, operator-reviewable PatchProposals. Advisory only: nothing
+            // is auto-applied (`neoth self-heal list` surfaces them). Best-effort.
+            if let Ok(content) = std::fs::read_to_string(&c.crash_log_path) {
+                let panic_lines: Vec<&str> = content
+                    .lines()
+                    .filter(|l| l.contains("[neoth panic]") || l.contains("panicked at"))
+                    .collect();
+                // The newly-appeared panics are the tail of the file.
+                let take = (c.new_crashes as usize).min(panic_lines.len());
+                let new_lines = &panic_lines[panic_lines.len() - take..];
+                let proposals = crate::daemon::self_heal::analyse_panic_lines(new_lines, ts_unix);
+                if let Some(home) = c.crash_log_path.parent() {
+                    match crate::daemon::self_heal::stage_proposals(home, &proposals) {
+                        Ok(()) if !proposals.is_empty() => tracing::info!(
+                            staged = proposals.len(),
+                            "HERMES-07b: staged self-heal patch proposals for operator review",
+                        ),
+                        Ok(()) => {}
+                        Err(e) => tracing::warn!(error = %e, "self-heal: stage proposals failed"),
+                    }
+                }
+            }
         }
     }
 

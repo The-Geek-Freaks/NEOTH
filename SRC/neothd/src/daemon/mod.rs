@@ -75,6 +75,10 @@ pub mod model_download_audit;
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
+/// GOLD-ADAPT-HERMES-07b — log-analysis → patch-proposal → operator-reviewed
+/// fix. Categorises panics from crash.log into staged, advisory PatchProposals
+/// (never auto-applied). Consumed by the monitor crash path + `neoth self-heal`.
+pub mod self_heal;
 /// OM-01 — local OMI transcript ingest task. Polls a self-hosted OMI backend
 /// (SC-14: cloud endpoints refused at startup), sanitises + promotes
 /// high-confidence items to ground-truth (`0x9C`), extracts action items to
