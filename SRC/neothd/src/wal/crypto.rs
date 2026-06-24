@@ -16,8 +16,9 @@
 //! that residual is acceptable; a GCM auth bypass is not.
 //!
 //! ## CRYPTO-01/02/03
-//! - **CRYPTO-01** [`NonceCounter`]: non-`Clone`, `prefix || counter` (LE),
-//!   capped at 2⁴⁸ so the counter space can never wrap into reuse.
+//! - **CRYPTO-01** is the EXISTING [`super::nonce_counter::NonceCounter`]
+//!   (`prefix || counter_be`, 2⁴⁸ cap, resume-safe) — the AEAD seam here
+//!   consumes its `next_nonce()` output; it is NOT re-implemented in this module.
 //! - **CRYPTO-02** [`derive_subkey`]: HKDF-SHA256 with the intermediate output
 //!   buffer zeroized before return (the upstream `hkdf` papercut).
 //! - **CRYPTO-03** [`WalMasterKey`] / [`WalSegmentKey`]: typed `[u8; 32]`
@@ -40,10 +41,6 @@ pub const ENC_MAGIC: &[u8] = b"NEOTH_ENCv1\n";
 pub const INFO_WAL_SEGMENT: &[u8] = b"neoth-wal-segment-enc-v1";
 /// HKDF `info` for the credentials-at-rest subkey.
 pub const INFO_CONFIG: &[u8] = b"neoth-config-enc-v1";
-
-/// Hard cap on the nonce counter (2⁴⁸). Reaching it forces segment rotation
-/// long before the counter could wrap and reuse a value.
-const NONCE_COUNTER_MAX: u64 = 1 << 48;
 
 /// CRYPTO-03 — the 32-byte root key. Zeroizes on drop; `Debug` is redacted.
 #[derive(Zeroize, ZeroizeOnDrop)]
@@ -104,47 +101,6 @@ pub fn derive_subkey(master: &WalMasterKey, info: &[u8]) -> Result<WalSegmentKey
     let key = WalSegmentKey(okm); // copies okm into the owned, zeroizing struct
     okm.zeroize(); // CRYPTO-02: scrub the intermediate buffer
     Ok(key)
-}
-
-/// CRYPTO-01 — resume-safe nonce source. Non-`Clone` (a clone would let two
-/// writers issue the same nonce). The 12-byte nonce is `prefix(4) || counter(8)`
-/// little-endian; `prefix` is the segment id so two segments never share a
-/// nonce space even at the same counter.
-#[derive(Debug)]
-pub struct NonceCounter {
-    prefix: [u8; 4],
-    counter: u64,
-}
-
-impl NonceCounter {
-    /// Start a counter for a segment. `start` lets a resuming writer continue
-    /// from the segment's existing frame count (the authoritative source).
-    pub fn new(segment_prefix: [u8; 4], start: u64) -> Self {
-        Self {
-            prefix: segment_prefix,
-            counter: start,
-        }
-    }
-
-    /// Yield the next nonce and advance. `Err` once the 2⁴⁸ cap is reached so a
-    /// caller rotates the segment instead of ever wrapping into reuse.
-    pub fn next_nonce(&mut self) -> Result<[u8; 12]> {
-        if self.counter >= NONCE_COUNTER_MAX {
-            return Err(anyhow!(
-                "nonce counter exhausted (2^48) — segment must rotate"
-            ));
-        }
-        let mut nonce = [0u8; 12];
-        nonce[0..4].copy_from_slice(&self.prefix);
-        nonce[4..12].copy_from_slice(&self.counter.to_le_bytes());
-        self.counter += 1;
-        Ok(nonce)
-    }
-
-    /// The current counter value (frames issued so far).
-    pub fn position(&self) -> u64 {
-        self.counter
-    }
 }
 
 /// CRYPTO-04 — AES-256-GCM-SIV encrypt. `aad` is authenticated-but-not-encrypted
@@ -255,28 +211,6 @@ mod tests {
         let seg = derive_subkey(&master, INFO_WAL_SEGMENT).unwrap();
         let cfg = derive_subkey(&master, INFO_CONFIG).unwrap();
         assert_ne!(seg.expose(), cfg.expose(), "different info → different keys");
-    }
-
-    #[test]
-    fn nonce_counter_increments_and_caps() {
-        let mut nc = NonceCounter::new([0xAB; 4], 0);
-        let n0 = nc.next_nonce().unwrap();
-        let n1 = nc.next_nonce().unwrap();
-        assert_ne!(n0, n1);
-        assert_eq!(&n0[0..4], &[0xAB; 4], "prefix preserved");
-        assert_eq!(&n0[4..12], &0u64.to_le_bytes());
-        assert_eq!(&n1[4..12], &1u64.to_le_bytes());
-        // At the cap, refuse rather than wrap into reuse.
-        let mut maxed = NonceCounter::new([0; 4], NONCE_COUNTER_MAX);
-        assert!(maxed.next_nonce().is_err());
-    }
-
-    #[test]
-    fn nonce_prefix_separates_segments() {
-        // Same counter, different segment prefix → different nonce space.
-        let mut a = NonceCounter::new([1, 0, 0, 0], 5);
-        let mut b = NonceCounter::new([2, 0, 0, 0], 5);
-        assert_ne!(a.next_nonce().unwrap(), b.next_nonce().unwrap());
     }
 
     #[test]
