@@ -5,6 +5,48 @@ All notable changes to NEOTH are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-gold-rc1] — 2026-06-24 — GOLD release candidate (headless core)
+
+First release candidate on the `ROAD_TO_1_0_GOLD` track. The **headless daemon
+core is feature-complete**: WS-A (security hardening) / WS-C (correctness) /
+WS-D (feature wiring) COMPLETE; WS-B/E/F/G/H largely closed; WS-I
+repo-adaptations at 219/298 (the remaining 79 are dominated by the GUI/Slint
+lane + display-gated items + a few v1.1 features). 7000+ lib tests green.
+
+**Known RC-scoped gaps (intentional, documented):**
+- WAL/config AEAD-at-rest is **foundation-only** (`GOLD-ADAPT-CRYPTO-04` `[~]`):
+  the AES-256-GCM-SIV primitives + master-key lifecycle ship; the encrypt-on-seal
+  WAL-core wiring is pending. WAL **integrity** (HMAC) is always-on regardless.
+- The **neural speaker encoders** (x-vector / ECAPA-TDNN) are dormant scaffolds —
+  they activate only when an operator provisions converted weights
+  (`scripts/convert_{xvector,ecapa}.py`). The self-contained log-mel encoder is
+  the zero-config default and runs today.
+- The **GUI lane** (Slint) and a few **v1.1 features** (`GOLD-FEAT-04/05/06`)
+  are post-RC.
+
+### Added (2026-06-23/24 session)
+
+- **forget_by_topic cascade is now atomic** — the 13-step erasure runs in a
+  single SQLite transaction; a mid-cascade failure rolls back fully (no partial
+  wipe), + a rollback regression test.
+- **SPEAKR-02c speaker re-identification** — a self-contained log-mel +
+  statistics-pooling voice encoder (runs offline, no weights) wired into STT
+  dispatch, plus dormant neural x-vector + ECAPA-TDNN scaffolds whose Fbank
+  front-ends were adversarially verified against the real SpeechBrain config.
+- **LOWKEY-01b self-score gate actions** — `Warn` (default) | `Block` (withhold)
+  | `Redo` (re-refine the winning hemisphere, keep the best composite).
+- **CCS-02 per-server MCP `autonomy_gate`** — a server can require a minimum
+  autonomy level (SSH / browser-driver inert below Elevated) + a hardened
+  `chrome-devtools-mcp` recommended config.
+- **CRYPTO-04 AEAD-at-rest foundation** — `wal/crypto.rs` (AES-256-GCM-SIV,
+  typed zeroizing keys, HKDF subkeys, AAD-bound encrypt/decrypt) + `wal/master_key.rs`
+  (DPAPI-wrapped lifecycle + backup/restore recovery).
+- **HERMES-07b self-heal proposals** — the monitor categorises crash-log panics
+  into staged, operator-reviewable patch proposals (advisory; **never**
+  auto-applied), surfaced in `neoth doctor`.
+- **Release-proof matrices** — WAL crash-recovery durability, MCP security
+  posture, and the cross-domain untrusted-input prompt-injection fence.
+
 ## [Unreleased] — 2026-05-21 — Post-v0.1 follow-up sprint
 
 After the v0.1 release force-push (commit `a879665`), this sprint
