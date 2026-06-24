@@ -66,7 +66,8 @@ pub use automation::{
     DEFAULT_RESOURCE_WATCH_INTERVAL_SECS, DEFAULT_SESSION_HEALTH_INTERVAL_SECS,
     DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
     DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, GuidanceCronConfig, MonitorConfig,
-    N8nApiConfig, PatternCronConfig, ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig,
+    KanbanSseConfig, N8nApiConfig, PatternCronConfig, ProactiveConfig, ProfileAdaptConfig,
+    RecallLatencyConfig,
     RegressionAnchorConfig, ResourceWatchConfig, SessionHealthConfig, SynthesisCronConfig,
     TokenAnomalyConfig, WatchdogConfig,
 };
@@ -601,6 +602,12 @@ pub struct FreedomConfig {
     /// `~/.neoth/n8n_api_token` mode-0600.
     #[serde(default)]
     pub n8n_api: N8nApiConfig,
+    /// GOLD-ADAPT-HERMES-08 — SSE endpoint for live kanban events.
+    /// Streams `idx_kanban_task_event` rows + real-time broadcast to
+    /// browser/GUI/n8n EventSource clients. Off by default; operator
+    /// opts in via `kanban_sse.enabled: true` + optional `port` override.
+    #[serde(default)]
+    pub kanban_sse: KanbanSseConfig,
     /// PC-01 — OS-tool surface (file/folder access). Default DENY-ALL: an
     /// empty `tools.os.allowed_paths` means NEOTH can read no operator file.
     /// Operators at `elevated`/`full` autonomy opt in by listing absolute

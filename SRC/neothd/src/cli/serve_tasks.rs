@@ -1147,6 +1147,64 @@ pub(crate) fn spawn_n8n_api(
     }
 }
 
+/// GOLD-ADAPT-HERMES-08 — Kanban SSE endpoint.
+///
+/// Binds `127.0.0.1:<config.kanban_sse.port>` (default 9432) when
+/// `kanban_sse.enabled = true`. Streams live kanban events (task events,
+/// comments, dep edges) to browser/GUI/n8n EventSource consumers.
+/// Bearer-token auth reuses the n8n_api token file.
+/// `None` when disabled or the token load fails (endpoint simply absent).
+pub(crate) fn spawn_kanban_sse(
+    config: &FreedomConfig,
+    writer: &WalWriterHandle,
+    kanban_sse_shutdown: &Arc<tokio::sync::Notify>,
+) -> (
+    Option<JoinHandle<()>>,
+    Option<Arc<tokio::sync::broadcast::Sender<crate::coding::feed::FeedEntry>>>,
+) {
+    let _ = writer; // SSE server is WAL-read-only; writer retained for API symmetry
+    if !config.kanban_sse.enabled {
+        tracing::debug!("freedom.yaml::kanban_sse.enabled = false; skipping SSE spawn");
+        return (None, None);
+    }
+    let home = FreedomConfig::default_neoth_home();
+    let token_path = config
+        .n8n_api
+        .token_path
+        .clone()
+        .unwrap_or_else(|| home.clone());
+    match crate::n8n_api::server::load_or_init_token(&token_path) {
+        Ok(token) => {
+            let (tx, _) =
+                tokio::sync::broadcast::channel::<crate::coding::feed::FeedEntry>(512);
+            let tx_arc = std::sync::Arc::new(tx);
+            let state = std::sync::Arc::new(crate::daemon::kanban_sse::SseState {
+                config: std::sync::Arc::new(config.clone()),
+                tx: std::sync::Arc::clone(&tx_arc),
+                home: home.clone(),
+                token,
+            });
+            tracing::info!(
+                port = config.kanban_sse.port,
+                "kanban_sse enabled — spawning SSE task on 127.0.0.1"
+            );
+            let handle = crate::daemon::kanban_sse::spawn_server(
+                state,
+                std::sync::Arc::clone(kanban_sse_shutdown),
+            );
+            (Some(handle), Some(tx_arc))
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %token_path.display(),
+                "kanban_sse token load/init failed — SSE endpoint will NOT be available"
+            );
+            (None, None)
+        }
+    }
+}
+
 /// `/healthz` + `/metrics` listener (Phase 33c BS-1). Off by default; opt in via
 /// `freedom.yaml::observability_listen: "127.0.0.1:PORT"`. Loopback by design.
 /// `None` when unset or the host:port is invalid. WAL-free.
@@ -2702,6 +2760,10 @@ pub(crate) struct BackgroundHandles {
     pub tmux_sweeper_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub n8n_api_shutdown: Arc<tokio::sync::Notify>,
     pub n8n_api_task: Option<JoinHandle<()>>,
+    /// GOLD-ADAPT-HERMES-08 — shutdown notifier for the kanban SSE server.
+    pub kanban_sse_shutdown: Arc<tokio::sync::Notify>,
+    /// GOLD-ADAPT-HERMES-08 — task handle for the kanban SSE hyper server.
+    pub kanban_sse_task: Option<JoinHandle<()>>,
     pub obsidian_task: Option<JoinHandle<anyhow::Result<()>>>,
     /// OH-14 — periodic self-wiki rebuild cron handle.
     /// WAL-emitting (0xFA); `None` when `obsidian_vault` or source dir
@@ -2792,6 +2854,8 @@ pub(crate) async fn shutdown_background_tasks(
         tmux_sweeper_task,
         n8n_api_shutdown,
         n8n_api_task,
+        kanban_sse_shutdown,
+        kanban_sse_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
         self_map_task,
@@ -3042,6 +3106,14 @@ pub(crate) async fn shutdown_background_tasks(
     // their existing response), then drop the JoinHandle.
     n8n_api_shutdown.notify_waiters();
     if let Some(task) = n8n_api_task {
+        let _ = task.await;
+    }
+
+    // GOLD-ADAPT-HERMES-08: drain the kanban SSE server. Notify breaks
+    // the accept loop; in-flight SSE streams finish their current frame
+    // then see the TCP close. WAL-free — safe to stop after n8n_api.
+    kanban_sse_shutdown.notify_waiters();
+    if let Some(task) = kanban_sse_task {
         let _ = task.await;
     }
 

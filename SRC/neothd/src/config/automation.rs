@@ -34,6 +34,36 @@ impl Default for N8nApiConfig {
     }
 }
 
+/// GOLD-ADAPT-HERMES-08 — `freedom.yaml::kanban_sse` shape.
+///
+/// SSE endpoint that streams live kanban events (task events, comments,
+/// dep edges) to browser/GUI/n8n consumers. Default OFF — opt in by
+/// setting `kanban_sse.enabled: true`. No token file needed; the
+/// connection uses the same bearer-token mechanism as n8n_api (the
+/// token is the `n8n_api.token_path` file if present, else
+/// `~/.neoth/n8n_api_token`). Port defaults to 9432.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct KanbanSseConfig {
+    /// Master switch. Default `false`.
+    pub enabled: bool,
+    /// Loopback port the SSE hyper server binds. Default 9432.
+    pub port: u16,
+}
+
+fn default_kanban_sse_port() -> u16 {
+    9432
+}
+
+impl Default for KanbanSseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_kanban_sse_port(),
+        }
+    }
+}
+
 /// C-16 (Session 21) — proactive messaging opt-in. Pure config
 /// shape; the runtime gate consults `proactive.enabled` before
 /// firing any unsolicited outbound. Default OFF.

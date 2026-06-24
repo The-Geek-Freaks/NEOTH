@@ -734,6 +734,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let n8n_api_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
     let n8n_api_task = crate::cli::serve_tasks::spawn_n8n_api(&config, &writer, &n8n_api_shutdown);
 
+    // ── 5c-quad. Spawn Kanban SSE endpoint — GOLD-ADAPT-HERMES-08 ────────────
+    //
+    // Binds 127.0.0.1:<config.kanban_sse.port> (default 9432) when
+    // `freedom.yaml::kanban_sse.enabled = true`. Streams live kanban
+    // events (task events, comments, dep edges) to browser/GUI/n8n
+    // clients via `text/event-stream`. Bearer-token auth (same token
+    // file as n8n_api). Default OFF — operator opts in.
+    let kanban_sse_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let (kanban_sse_task, _kanban_sse_tx) =
+        crate::cli::serve_tasks::spawn_kanban_sse(&config, &writer, &kanban_sse_shutdown);
+
     // ── 5c-bis. Spawn /healthz + /metrics listener — Phase 33c BS-1 ────────
     //
     // Optional, off by default. Operator opts in by setting
@@ -1652,6 +1663,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         tmux_sweeper_task,
         n8n_api_shutdown,
         n8n_api_task,
+        kanban_sse_shutdown,
+        kanban_sse_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
         self_map_task,

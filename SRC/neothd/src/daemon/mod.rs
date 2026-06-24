@@ -31,6 +31,11 @@ pub mod audit_rpc;
 pub mod auto_update;
 pub mod backup;
 pub mod backup_retention;
+/// GOLD-ADAPT-HERMES-08 — SSE endpoint for live kanban events (task events,
+/// comments, dep edges). Binds loopback port 9432 (default) when
+/// `kanban_sse.enabled = true` in freedom.yaml. Bearer-auth + hyper 1.x
+/// + broadcast fan-out from `coding::store` mutations.
+pub mod kanban_sse;
 pub mod clock_floor;
 pub mod credentials_import_sidecar;
 pub mod detect_complete_sidecar;

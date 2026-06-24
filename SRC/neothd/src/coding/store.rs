@@ -22,11 +22,13 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
+use tokio::sync::broadcast;
 
 use super::types::{
     Hemisphere, KanbanComment, KanbanSession, KanbanSessionId, KanbanTask, KanbanTaskId,
-    SessionStatus, TaskStatus, TestSummary,
+    SessionStatus, TaskDep, TaskEvent, TaskStatus, TestSummary,
 };
+use crate::coding::feed::FeedEntry;
 
 /// Create (if missing) the three coding-workflow tables in `views.db`:
 /// `idx_kanban_session`, `idx_kanban_task`, `idx_kanban_comment`.
@@ -95,6 +97,28 @@ CREATE TABLE IF NOT EXISTS idx_kanban_comment (
 );
 CREATE INDEX IF NOT EXISTS idx_kanban_comment_task
     ON idx_kanban_comment (task_id, created_ns ASC);
+
+CREATE TABLE IF NOT EXISTS idx_kanban_task_event (
+    event_id     INTEGER PRIMARY KEY,
+    task_id      INTEGER NOT NULL REFERENCES idx_kanban_task(task_id),
+    event_type   INTEGER NOT NULL,
+    payload      TEXT NOT NULL,
+    created_ns   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kanban_task_event_task
+    ON idx_kanban_task_event (task_id, created_ns ASC);
+CREATE INDEX IF NOT EXISTS idx_kanban_task_event_created
+    ON idx_kanban_task_event (created_ns ASC);
+
+CREATE TABLE IF NOT EXISTS idx_kanban_task_dep (
+    dep_id              INTEGER PRIMARY KEY,
+    task_id             INTEGER NOT NULL,
+    depends_on_task_id  INTEGER NOT NULL,
+    created_ns          INTEGER NOT NULL,
+    UNIQUE(task_id, depends_on_task_id) ON CONFLICT IGNORE
+);
+CREATE INDEX IF NOT EXISTS idx_kanban_task_dep_task
+    ON idx_kanban_task_dep (task_id);
 ";
 
 // ── Session CRUD ───────────────────────────────────────────────────────────
@@ -536,6 +560,190 @@ pub fn list_comments_for_task(
         .context("query list_comments_for_task")?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .context("collect kanban comments")
+}
+
+// ── Task events (GOLD-ADAPT-HERMES-08) ────────────────────────────────────
+
+/// Append one row to `idx_kanban_task_event`. Called by every mutation
+/// function that changes observable task state (status, comment, dep
+/// edge). The `tx` broadcast sender notifies connected SSE subscribers
+/// immediately — best-effort (`let _ =` so a lagging/absent subscriber
+/// never blocks the mutation).
+pub fn insert_task_event(
+    conn: &Connection,
+    task_id: i64,
+    event_type: u8,
+    payload_json: &str,
+    created_ns: u64,
+    tx: Option<&broadcast::Sender<FeedEntry>>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO idx_kanban_task_event (task_id, event_type, payload, created_ns) \
+         VALUES (?1, ?2, ?3, ?4)",
+        params![task_id, event_type as i64, payload_json, created_ns as i64],
+    )
+    .context("insert idx_kanban_task_event row")?;
+    if let Some(tx) = tx {
+        let entry = FeedEntry {
+            ts_ns: created_ns,
+            event_type,
+            actor: "system".to_string(),
+            message: payload_json.to_string(),
+        };
+        let _ = tx.send(entry);
+    }
+    Ok(())
+}
+
+/// All task events for one task, oldest-first. The SSE server streams
+/// these as the initial snapshot when a client connects.
+pub fn list_task_events(conn: &Connection, task_id: i64) -> Result<Vec<TaskEvent>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT event_id, task_id, event_type, payload, created_ns \
+             FROM idx_kanban_task_event WHERE task_id = ?1 \
+             ORDER BY created_ns ASC, event_id ASC",
+        )
+        .context("prepare list_task_events")?;
+    let rows = stmt
+        .query_map(params![task_id], |row| {
+            Ok(TaskEvent {
+                event_id: row.get(0)?,
+                task_id: row.get(1)?,
+                event_type: row.get::<_, i64>(2)? as u8,
+                payload_json: row.get(3)?,
+                created_ns: row.get::<_, i64>(4)? as u64,
+            })
+        })
+        .context("query list_task_events")?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect task events")
+}
+
+/// All task events across all tasks, oldest-first. Used by the SSE
+/// server's initial snapshot for the global `/kanban/events` stream.
+pub fn list_all_task_events(conn: &Connection) -> Result<Vec<TaskEvent>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT event_id, task_id, event_type, payload, created_ns \
+             FROM idx_kanban_task_event ORDER BY created_ns ASC, event_id ASC",
+        )
+        .context("prepare list_all_task_events")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(TaskEvent {
+                event_id: row.get(0)?,
+                task_id: row.get(1)?,
+                event_type: row.get::<_, i64>(2)? as u8,
+                payload_json: row.get(3)?,
+                created_ns: row.get::<_, i64>(4)? as u64,
+            })
+        })
+        .context("query list_all_task_events")?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect all task events")
+}
+
+// ── Task dependencies (GOLD-ADAPT-HERMES-08) ──────────────────────────────
+
+/// Add a dependency edge: `task_id` must wait for `depends_on_task_id`
+/// to reach a terminal state. `UNIQUE … ON CONFLICT IGNORE` means a
+/// duplicate insert is silently ignored — idempotent by design.
+pub fn insert_task_dep(
+    conn: &Connection,
+    task_id: i64,
+    depends_on_task_id: i64,
+    created_ns: u64,
+    tx: Option<&broadcast::Sender<FeedEntry>>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO idx_kanban_task_dep (task_id, depends_on_task_id, created_ns) \
+         VALUES (?1, ?2, ?3)",
+        params![task_id, depends_on_task_id, created_ns as i64],
+    )
+    .context("insert idx_kanban_task_dep row")?;
+    let payload_json = serde_json::json!({
+        "task_id": task_id,
+        "depends_on_task_id": depends_on_task_id,
+        "ts": created_ns,
+    })
+    .to_string();
+    insert_task_event(
+        conn,
+        task_id,
+        crate::wal::events::EVENT_TYPE_KANBAN_TASK_DEP_ADDED,
+        &payload_json,
+        created_ns,
+        tx,
+    )
+}
+
+/// Remove a dependency edge. No-op when the edge does not exist.
+pub fn remove_task_dep(
+    conn: &Connection,
+    task_id: i64,
+    depends_on_task_id: i64,
+    created_ns: u64,
+    tx: Option<&broadcast::Sender<FeedEntry>>,
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM idx_kanban_task_dep \
+         WHERE task_id = ?1 AND depends_on_task_id = ?2",
+        params![task_id, depends_on_task_id],
+    )
+    .context("delete idx_kanban_task_dep row")?;
+    let payload_json = serde_json::json!({
+        "task_id": task_id,
+        "depends_on_task_id": depends_on_task_id,
+        "ts": created_ns,
+    })
+    .to_string();
+    insert_task_event(
+        conn,
+        task_id,
+        crate::wal::events::EVENT_TYPE_KANBAN_TASK_DEP_REMOVED,
+        &payload_json,
+        created_ns,
+        tx,
+    )
+}
+
+/// All prerequisite task_ids for the given task. The dispatcher uses
+/// this to gate dispatch: a task with unresolved deps stays Backlog.
+pub fn list_deps_for_task(conn: &Connection, task_id: i64) -> Result<Vec<i64>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT depends_on_task_id FROM idx_kanban_task_dep \
+             WHERE task_id = ?1 ORDER BY dep_id ASC",
+        )
+        .context("prepare list_deps_for_task")?;
+    let rows = stmt
+        .query_map(params![task_id], |row| row.get::<_, i64>(0))
+        .context("query list_deps_for_task")?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect task dep ids")
+}
+
+/// All `TaskDep` rows for a task with full struct data.
+pub fn list_full_deps_for_task(conn: &Connection, task_id: i64) -> Result<Vec<TaskDep>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT dep_id, task_id, depends_on_task_id, created_ns \
+             FROM idx_kanban_task_dep WHERE task_id = ?1 ORDER BY dep_id ASC",
+        )
+        .context("prepare list_full_deps_for_task")?;
+    let rows = stmt
+        .query_map(params![task_id], |row| {
+            Ok(TaskDep {
+                dep_id: row.get(0)?,
+                task_id: row.get(1)?,
+                depends_on_task_id: row.get(2)?,
+                created_ns: row.get::<_, i64>(3)? as u64,
+            })
+        })
+        .context("query list_full_deps_for_task")?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect task deps")
 }
 
 // ── Row → struct helpers ───────────────────────────────────────────────────

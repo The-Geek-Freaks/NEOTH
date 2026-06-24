@@ -271,6 +271,40 @@ pub struct KanbanTask {
     pub test_summary: Option<TestSummary>,
 }
 
+/// GOLD-ADAPT-HERMES-08 — one row in `idx_kanban_task_event`.
+/// Captures every mutation to a task (status change, comment, dep
+/// edge) as an append-only audit row so the SSE server can replay
+/// the full event history to a connecting client.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskEvent {
+    /// SQLite ROWID — monotone within the views.db file.
+    pub event_id: i64,
+    /// The task this event belongs to.
+    pub task_id: i64,
+    /// WAL event-type byte (0x73..=0x79). Consumers use this to
+    /// discriminate status-changed / comment / dep-added / dep-removed.
+    pub event_type: u8,
+    /// Full JSON payload mirroring the WAL frame's payload shape.
+    pub payload_json: String,
+    /// Nanoseconds since unix epoch when the event was recorded.
+    pub created_ns: u64,
+}
+
+/// GOLD-ADAPT-HERMES-08 — one row in `idx_kanban_task_dep`.
+/// A directed dependency edge: `task_id` blocks until
+/// `depends_on_task_id` reaches a terminal status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskDep {
+    /// SQLite ROWID.
+    pub dep_id: i64,
+    /// The dependent task (must wait).
+    pub task_id: i64,
+    /// The prerequisite task (must finish first).
+    pub depends_on_task_id: i64,
+    /// When the edge was recorded.
+    pub created_ns: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

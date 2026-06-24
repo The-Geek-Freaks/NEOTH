@@ -1011,6 +1011,17 @@ pub const EVENT_TYPE_KANBAN_SESSION_CLOSED: u8 = 0x76;
 /// ts}`. Not yet wired — Pick #6 implementation lands this.
 pub const EVENT_TYPE_KANBAN_TASK_PROGRESS: u8 = 0x77;
 
+/// `0x78 KANBAN_TASK_DEP_ADDED` — GOLD-ADAPT-HERMES-08. A dependency
+/// edge was added between two tasks (task_id depends on
+/// depends_on_task_id). Payload: `{task_id, depends_on_task_id, ts}`.
+/// Immediate-sync: dependency graph changes are audit-critical.
+pub const EVENT_TYPE_KANBAN_TASK_DEP_ADDED: u8 = 0x78;
+
+/// `0x79 KANBAN_TASK_DEP_REMOVED` — GOLD-ADAPT-HERMES-08. A dependency
+/// edge between two tasks was removed. Payload:
+/// `{task_id, depends_on_task_id, ts}`.
+pub const EVENT_TYPE_KANBAN_TASK_DEP_REMOVED: u8 = 0x79;
+
 // ---- 0x80..=0x8F  Hook lifecycle (Phase 29 R-15) --------------------------
 
 /// A hook fired at a pipeline stage (matcher passed, action ran). Payload:
@@ -2775,6 +2786,11 @@ const _: () = {
     // silently did not cover it. Now it does.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_TASK_PROGRESS < 0x70
         || EVENT_TYPE_KANBAN_TASK_PROGRESS > 0x7F) as usize];
+    // GOLD-ADAPT-HERMES-08: 0x78/0x79 dep-edge events in coding-workflow band.
+    let _ = [(); 1][(EVENT_TYPE_KANBAN_TASK_DEP_ADDED < 0x70
+        || EVENT_TYPE_KANBAN_TASK_DEP_ADDED > 0x7F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_KANBAN_TASK_DEP_REMOVED < 0x70
+        || EVENT_TYPE_KANBAN_TASK_DEP_REMOVED > 0x7F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0
@@ -3123,6 +3139,8 @@ mod tests {
             ("KANBAN_TASK_COMPLETED", EVENT_TYPE_KANBAN_TASK_COMPLETED),
             ("KANBAN_SESSION_CLOSED", EVENT_TYPE_KANBAN_SESSION_CLOSED),
             ("KANBAN_TASK_PROGRESS", EVENT_TYPE_KANBAN_TASK_PROGRESS),
+            ("KANBAN_TASK_DEP_ADDED", EVENT_TYPE_KANBAN_TASK_DEP_ADDED),
+            ("KANBAN_TASK_DEP_REMOVED", EVENT_TYPE_KANBAN_TASK_DEP_REMOVED),
             ("CONFIG_RELOADED", EVENT_TYPE_CONFIG_RELOADED),
             ("CONFIG_RELOAD_REJECTED", EVENT_TYPE_CONFIG_RELOAD_REJECTED),
             ("SELF_UPDATE_APPLIED", EVENT_TYPE_SELF_UPDATE_APPLIED),
@@ -3363,6 +3381,8 @@ mod tests {
         assert_eq!(EVENT_TYPE_KANBAN_TASK_COMMENT, 0x74);
         assert_eq!(EVENT_TYPE_KANBAN_TASK_COMPLETED, 0x75);
         assert_eq!(EVENT_TYPE_KANBAN_SESSION_CLOSED, 0x76);
+        assert_eq!(EVENT_TYPE_KANBAN_TASK_DEP_ADDED, 0x78);
+        assert_eq!(EVENT_TYPE_KANBAN_TASK_DEP_REMOVED, 0x79);
         for code in [
             EVENT_TYPE_KANBAN_SESSION_OPENED,
             EVENT_TYPE_KANBAN_TASK_CREATED,
@@ -3371,6 +3391,8 @@ mod tests {
             EVENT_TYPE_KANBAN_TASK_COMMENT,
             EVENT_TYPE_KANBAN_TASK_COMPLETED,
             EVENT_TYPE_KANBAN_SESSION_CLOSED,
+            EVENT_TYPE_KANBAN_TASK_DEP_ADDED,
+            EVENT_TYPE_KANBAN_TASK_DEP_REMOVED,
         ] {
             assert!(
                 (0x70..=0x7F).contains(&code),
@@ -3394,6 +3416,8 @@ mod tests {
             EVENT_TYPE_KANBAN_TASK_COMMENT,
             EVENT_TYPE_KANBAN_TASK_COMPLETED,
             EVENT_TYPE_KANBAN_SESSION_CLOSED,
+            EVENT_TYPE_KANBAN_TASK_DEP_ADDED,
+            EVENT_TYPE_KANBAN_TASK_DEP_REMOVED,
         ] {
             assert!(
                 needs_immediate_sync(code),

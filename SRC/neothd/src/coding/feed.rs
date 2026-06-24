@@ -25,7 +25,8 @@ use crate::wal::events::{
     EVENT_TYPE_KANBAN_SESSION_CLOSED, EVENT_TYPE_KANBAN_SESSION_OPENED,
     EVENT_TYPE_KANBAN_STATUS_CHANGED, EVENT_TYPE_KANBAN_TASK_ASSIGNED,
     EVENT_TYPE_KANBAN_TASK_COMMENT, EVENT_TYPE_KANBAN_TASK_COMPLETED,
-    EVENT_TYPE_KANBAN_TASK_CREATED, EVENT_TYPE_KANBAN_TASK_PROGRESS,
+    EVENT_TYPE_KANBAN_TASK_CREATED, EVENT_TYPE_KANBAN_TASK_DEP_ADDED,
+    EVENT_TYPE_KANBAN_TASK_DEP_REMOVED, EVENT_TYPE_KANBAN_TASK_PROGRESS,
 };
 
 /// One formatted line in the activity feed. Pick #5's `neoth kanban
@@ -88,6 +89,8 @@ pub fn parse_kanban_payload(event_type: u8, ts_ns: u64, payload_bytes: &[u8]) ->
         EVENT_TYPE_KANBAN_TASK_COMPLETED => parse_task_completed(ts_ns, payload_bytes),
         EVENT_TYPE_KANBAN_SESSION_CLOSED => parse_session_closed(ts_ns, payload_bytes),
         EVENT_TYPE_KANBAN_TASK_PROGRESS => parse_task_progress(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_TASK_DEP_ADDED => parse_dep_added(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_TASK_DEP_REMOVED => parse_dep_removed(ts_ns, payload_bytes),
         _ => None,
     }
 }
@@ -452,6 +455,40 @@ fn parse_session_closed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
         event_type: EVENT_TYPE_KANBAN_SESSION_CLOSED,
         actor: "cerebellum".to_string(),
         message: format!("Session closed: {status}{counts}"),
+    })
+}
+
+// ── Dep-edge parsers (GOLD-ADAPT-HERMES-08) ───────────────────────────────
+
+#[derive(Deserialize)]
+struct DepEdgePayload {
+    task_id: i64,
+    depends_on_task_id: i64,
+}
+
+fn parse_dep_added(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: DepEdgePayload = serde_json::from_slice(payload).ok()?;
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_TASK_DEP_ADDED,
+        actor: "system".to_string(),
+        message: format!(
+            "dep added: task {} → depends on {}",
+            p.task_id, p.depends_on_task_id
+        ),
+    })
+}
+
+fn parse_dep_removed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: DepEdgePayload = serde_json::from_slice(payload).ok()?;
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_TASK_DEP_REMOVED,
+        actor: "system".to_string(),
+        message: format!(
+            "dep removed: task {} no longer depends on {}",
+            p.task_id, p.depends_on_task_id
+        ),
     })
 }
 
