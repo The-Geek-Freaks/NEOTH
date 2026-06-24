@@ -21,6 +21,7 @@
 
 pub mod audit;
 pub mod confirm;
+pub mod confirm_bus;
 pub mod gate;
 pub mod lease;
 pub mod tier_classifier;

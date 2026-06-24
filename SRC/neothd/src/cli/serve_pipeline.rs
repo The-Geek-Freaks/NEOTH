@@ -71,6 +71,15 @@ pub(crate) struct PipelineHandlerDeps {
     /// startup couldn't open or drain views.db — handler falls back
     /// to per-call open so the channel path still works.
     pub(crate) views_conn: Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    /// GOLD-ADAPT-GOOSE-03: shared approve/deny bus for channel-driven
+    /// permission confirms. When `Some`, the two autonomy gates in the
+    /// turn loop (ChannelSend + PaidProviderCall) switch from
+    /// `ConfirmStrategy::FailClosed` to `ConfirmStrategy::Channel` +
+    /// `.with_channel_asker(bus_asker)` so the operator can approve /
+    /// deny from their Telegram chat (or any other front-end that holds
+    /// a clone of the `Arc<ConfirmBus>`). `None` preserves the pre-GOOSE-03
+    /// fail-closed behaviour for headless / test call sites.
+    pub(crate) confirm_bus: Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
 }
 
 /// SC-11 — derive the MCP `tool_allowlist` that scopes a single channel
@@ -395,6 +404,11 @@ pub(crate) async fn release_channel_reply(
     sender_hash: &str,
     body: &str,
     provenance: &ReplyProvenance,
+    // GOLD-ADAPT-GOOSE-03: when `Some`, the ChannelSend gate switches from
+    // `FailClosed` to `Channel` strategy so the operator can approve / deny
+    // the reply from their chat. `None` preserves the pre-GOOSE-03
+    // fail-closed behaviour for all non-channel and test call sites.
+    channel_asker: Option<Arc<dyn crate::permissions::gate::ChannelAsker>>,
 ) -> Result<Option<OutboundMessage>> {
     // ── PreEgress hooks ───────────────────────────────────────────────
     // Last filter before the channel adapter sends the reply. A Replace
@@ -467,6 +481,10 @@ pub(crate) async fn release_channel_reply(
     // operator-granted `channel_send` lease for the sender pre-authorises it
     // (Confirm→Allow). Loaded fresh per reply so `neoth lease revoke` takes
     // effect at once; a missing/corrupt leases.json → empty store → fail-closed.
+    //
+    // GOLD-ADAPT-GOOSE-03: when a ChannelAsker (BusAsker) is wired, the gate
+    // switches from FailClosed to Channel strategy — a Confirm outcome delivers
+    // a UUID elicitation to the operator and suspends until they reply.
     {
         use crate::permissions::lease::LeaseStore;
         use crate::permissions::{Action, ConfirmStrategy, Gate};
@@ -482,9 +500,16 @@ pub(crate) async fn release_channel_reply(
             .duration_since(::std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let gate = Gate::for_level(autonomy)
-            .with_confirm(ConfirmStrategy::FailClosed)
-            .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
+        let gate = {
+            let base = Gate::for_level(autonomy)
+                .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
+            if let Some(asker) = channel_asker {
+                base.with_confirm(ConfirmStrategy::Channel)
+                    .with_channel_asker(asker)
+            } else {
+                base.with_confirm(ConfirmStrategy::FailClosed)
+            }
+        };
         if let Err(e) = gate.check(&action, Some(writer)).await {
             warn!(
                 channel = channel_str,
@@ -539,7 +564,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         profile_config,
         reload_controller,
         views_conn,
+        confirm_bus,
     } = deps;
+    // GOLD-ADAPT-GOOSE-03: build the ChannelAsker from the bus once (outside the
+    // per-message closure) so the Arc is cloned once per inbound, not per gate call.
+    let channel_asker_arc: Option<Arc<dyn crate::permissions::gate::ChannelAsker>> =
+        confirm_bus.as_ref().map(|bus| {
+            Arc::new(crate::permissions::confirm_bus::BusAsker(Arc::clone(bus)))
+                as Arc<dyn crate::permissions::gate::ChannelAsker>
+        });
+    // Keep a second Arc into the bus for the UUID-reply fast-path (submit_response).
+    let confirm_bus_for_reply = confirm_bus;
     Box::new(move |inbound: InboundMessage| {
         let provider = Arc::clone(&provider);
         let writer = writer.clone();
@@ -548,6 +583,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         let rate_limiter = Arc::clone(&rate_limiter);
         let segment_path = segment_path.clone();
         let profile_config = profile_config.clone();
+        // GOLD-ADAPT-GOOSE-03: clone the optional asker Arc into this message's closure.
+        let channel_asker = channel_asker_arc.as_ref().map(Arc::clone);
+        let confirm_bus_reply = confirm_bus_for_reply.as_ref().map(Arc::clone);
         // Pick #39 (Session 14, hot-reload live-propagation): snapshot
         // the live config ONCE at the top of the handler. Tunables
         // reflect any `neoth reload` since the previous message;
@@ -708,6 +746,48 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .await?;
             let sanitized_text = report.text;
 
+            // ── GOLD-ADAPT-GOOSE-03: UUID-reply fast-path ─────────────────
+            // When the operator sends "yes <uuid>" or "no <uuid>" in reply to
+            // a pending approval elicitation, we must intercept the message
+            // BEFORE the recall short-circuit and BEFORE the LLM dispatch so
+            // neither produces a spurious reply.
+            //
+            // Pattern: /^(yes|no)\s+([0-9a-f-]{32,36})\b/i
+            // (UUID v7 is 36 chars with hyphens; also match 32-char no-hyphen forms.)
+            //
+            // This is checked only when a confirm_bus is wired (channel-driven
+            // permission confirms active). A plain "yes" or "no" without a UUID
+            // passes through normally.
+            if let Some(ref bus) = confirm_bus_reply {
+                static UUID_REPLY_RE: std::sync::OnceLock<regex::Regex> =
+                    std::sync::OnceLock::new();
+                let re = UUID_REPLY_RE.get_or_init(|| {
+                    regex::Regex::new(
+                        r"(?i)^(yes|no)\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})\b",
+                    )
+                    .expect("UUID reply regex must compile")
+                });
+                if let Some(caps) = re.captures(sanitized_text.trim()) {
+                    let verdict_str = caps.get(1).map_or("", |m| m.as_str());
+                    let uuid_str = caps.get(2).map_or("", |m| m.as_str());
+                    if let Ok(parsed_uuid) = uuid_str.parse::<uuid::Uuid>() {
+                        let approved = verdict_str.eq_ignore_ascii_case("yes");
+                        let found = bus.submit_response(parsed_uuid, approved);
+                        tracing::debug!(
+                            channel = channel_str,
+                            sender_hash = %sender_hash,
+                            uuid = %parsed_uuid,
+                            approved,
+                            found,
+                            "GOOSE-03: UUID-reply fast-path — {}",
+                            if found { "waiter notified" } else { "UUID not found (stale or duplicate)" }
+                        );
+                        // Suppress the normal pipeline: no LLM call, no reply.
+                        return Ok(::std::option::Option::None);
+                    }
+                }
+            }
+
             // ── GOLD-WIRE-02b: conversational-recall short-circuit ────────
             // "Weißt du noch als wir über X geredet haben?" / "do you remember
             // when we talked about X?" answered straight from local memory —
@@ -769,6 +849,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             &sender_hash,
                             &recall_reply,
                             &provenance,
+                            channel_asker.as_ref().map(Arc::clone),
                         )
                         .await;
                     }
@@ -817,7 +898,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let action = Action::PaidProviderCall {
                     eur_estimate: cost.total_eur,
                 };
-                let gate = Gate::for_level(autonomy).with_confirm(ConfirmStrategy::FailClosed);
+                // GOLD-ADAPT-GOOSE-03: switch from FailClosed to Channel when the
+                // bus asker is wired so the operator can approve costly calls.
+                let gate = {
+                    let base = Gate::for_level(autonomy);
+                    if let Some(asker) = channel_asker.as_ref().map(Arc::clone) {
+                        base.with_confirm(ConfirmStrategy::Channel)
+                            .with_channel_asker(asker)
+                    } else {
+                        base.with_confirm(ConfirmStrategy::FailClosed)
+                    }
+                };
                 if let Err(e) = gate.check(&action, Some(&writer)).await {
                     warn!(
                         channel = channel_str,
@@ -2155,6 +2246,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &sender_hash,
                 &completion.text,
                 &provenance,
+                channel_asker,
             )
             .await
         })
@@ -2612,6 +2704,7 @@ mod tests {
             "deadbeefdeadbeef",
             "here is what I recall about rust",
             &prov,
+            None, // no confirm bus in this test
         )
         .await
         .expect("release ok");
@@ -2655,6 +2748,7 @@ mod tests {
             "deadbeefdeadbeef",
             "secret operator memory",
             &prov,
+            None, // no confirm bus in this test
         )
         .await
         .expect("release ok (gate Deny is Ok(None), not Err)");

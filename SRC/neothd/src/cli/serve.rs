@@ -504,6 +504,60 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &crate::config::credentials::default_path(),
     )
     .unwrap_or_default();
+    // GOLD-ADAPT-GOOSE-03: construct the approval bus + drain task BEFORE
+    // spawning channel adapters. The drain task reads ConfirmRequests and
+    // forwards them as elicitation messages on the operator's primary channel
+    // (Telegram, if configured). The bus Arc is threaded into every channel
+    // handler so gates can switch to Channel confirm strategy.
+    let (confirm_bus, mut confirm_rx) =
+        crate::permissions::confirm_bus::ConfirmBus::new();
+    // Capture the Telegram token + operator user-id for the drain task.
+    let drain_telegram_token = config.telegram_token.clone();
+    let drain_telegram_user_id = config.telegram_user_id;
+    let confirm_drain_task: Option<tokio::task::JoinHandle<()>> =
+        Some(tokio::spawn(async move {
+            while let Some(req) = confirm_rx.recv().await {
+                // Format a human-readable elicitation message with the UUID
+                // the operator must echo back as "yes <uuid>" or "no <uuid>".
+                let msg = format!(
+                    "\u{26a0}\u{fe0f} NEOTH needs your approval\n\
+                     Action: {}\n\
+                     Reply: `yes {}` to allow or `no {}` to deny",
+                    req.description, req.uuid, req.uuid
+                );
+                // Best-effort: send via Telegram if credentials are present.
+                if let (Some(token), Some(user_id)) =
+                    (&drain_telegram_token, drain_telegram_user_id)
+                {
+                    let url = format!(
+                        "https://api.telegram.org/bot{}/sendMessage",
+                        token.expose()
+                    );
+                    // Fire-and-forget — a failed delivery lets the gate time
+                    // out (fail-closed); no retry needed here.
+                    let _ = reqwest::Client::new()
+                        .post(&url)
+                        .json(&serde_json::json!({
+                            "chat_id": user_id,
+                            "text": msg,
+                            "parse_mode": "Markdown"
+                        }))
+                        .send()
+                        .await;
+                } else {
+                    // No Telegram configured — log so the operator can see
+                    // the pending approval in daemon logs.
+                    tracing::warn!(
+                        uuid = %req.uuid,
+                        description = %req.description,
+                        "GOOSE-03: approval requested but no Telegram configured; \
+                         reply via `neoth channel confirm {}`",
+                        req.uuid
+                    );
+                }
+            }
+        }));
+
     // GOLD-ARCH-01: the channel-adapter bootstrap (Telegram polling + Slack
     // socket-mode + WhatsApp Meta webhook listener) is relocated to serve_tasks.
     crate::cli::serve_tasks::spawn_channel_adapters(
@@ -518,6 +572,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &dispatch_join,
         &creds,
         &mut channel_tasks,
+        &Some(confirm_bus),
     );
 
     // ── 5b-tris. Obsidian vault auto-sync (R-5 follow-up) ──────────────────
@@ -1602,6 +1657,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         self_map_task,
         cloud_task,
         hysteria_supervisor,
+        confirm_drain_task,
     };
     crate::cli::serve_tasks::shutdown_background_tasks(bg, writer, writer_join).await;
     Ok(())

@@ -1667,6 +1667,10 @@ pub(crate) fn spawn_channel_adapters(
     dispatch_join: &Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     creds: &crate::config::credentials::Credentials,
     channel_tasks: &mut Vec<JoinHandle<()>>,
+    // GOLD-ADAPT-GOOSE-03: shared approval bus passed into every channel handler.
+    // When `Some`, channel permission gates switch to Channel confirm strategy
+    // (suspend/resume via UUID elicitation). `None` = fail-closed (pre-GOOSE-03).
+    confirm_bus: &Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
 ) {
     if let (Some(telegram_token), Some(provider)) =
         (config.telegram_token.clone(), shared_provider.as_ref())
@@ -1680,6 +1684,7 @@ pub(crate) fn spawn_channel_adapters(
             segment_path,
             shared_views_conn,
             reload_controller,
+            confirm_bus.clone(),
         );
         // SF-03: hand the adapter the daemon's WAL writer so allowlist-rejected
         // senders are audited via `0x3B CHANNEL_GATE_REJECTED`.
@@ -1722,6 +1727,7 @@ pub(crate) fn spawn_channel_adapters(
                 segment_path,
                 shared_views_conn,
                 reload_controller,
+                confirm_bus.clone(),
             );
             let channel = crate::channels::slack::SlackChannel::new(bot, app);
             spawn_channel_run(channel, handler, "Slack", channel_tasks);
@@ -1765,6 +1771,7 @@ pub(crate) fn spawn_channel_adapters(
                         segment_path,
                         shared_views_conn,
                         reload_controller,
+                        confirm_bus.clone(),
                     );
                     spawn_channel_run(channel, handler, "Discord", channel_tasks);
                     info!(
@@ -1808,6 +1815,7 @@ pub(crate) fn spawn_channel_adapters(
                         segment_path,
                         shared_views_conn,
                         reload_controller,
+                        confirm_bus.clone(),
                     );
                     spawn_channel_run(channel, handler, "Signal", channel_tasks);
                     info!(
@@ -1857,6 +1865,7 @@ pub(crate) fn spawn_channel_adapters(
                 segment_path,
                 shared_views_conn,
                 reload_controller,
+                confirm_bus.clone(),
             );
             spawn_channel_run(channel, handler, "Mattermost", channel_tasks);
             info!(
@@ -1911,6 +1920,7 @@ pub(crate) fn spawn_channel_adapters(
                     segment_path,
                     shared_views_conn,
                     reload_controller,
+                    confirm_bus.clone(),
                 );
                 spawn_channel_run(channel, handler, "Matrix", channel_tasks);
                 info!(
@@ -1962,6 +1972,7 @@ pub(crate) fn spawn_channel_adapters(
                     segment_path,
                     shared_views_conn,
                     reload_controller,
+                    confirm_bus.clone(),
                 );
                 spawn_channel_run(channel, handler, "IRC", channel_tasks);
                 info!(
@@ -2009,6 +2020,7 @@ pub(crate) fn spawn_channel_adapters(
                     segment_path,
                     shared_views_conn,
                     reload_controller,
+                    confirm_bus.clone(),
                 );
                 spawn_channel_run(channel, handler, "Twitch", channel_tasks);
                 info!(
@@ -2053,6 +2065,7 @@ pub(crate) fn spawn_channel_adapters(
                     segment_path,
                     shared_views_conn,
                     reload_controller,
+                    confirm_bus.clone(),
                 );
                 spawn_channel_run(channel, handler, "Nostr", channel_tasks);
                 info!(
@@ -2095,6 +2108,7 @@ pub(crate) fn spawn_channel_adapters(
                 segment_path,
                 shared_views_conn,
                 reload_controller,
+                confirm_bus.clone(),
             );
             let port = config.whatsapp_webhook_port.unwrap_or(8443);
             let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
@@ -2198,6 +2212,7 @@ pub(crate) fn spawn_channel_adapters(
                 segment_path,
                 shared_views_conn,
                 reload_controller,
+                confirm_bus.clone(),
             );
             let port = creds.line_webhook_port.unwrap_or(8444);
             let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
@@ -2291,6 +2306,9 @@ pub(crate) fn build_channel_handler(
     segment_path: &std::path::Path,
     shared_views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
     reload_controller: &Arc<crate::config::reload::ReloadController>,
+    // GOLD-ADAPT-GOOSE-03: shared approval bus. When `Some`, channel gates
+    // switch from FailClosed to Channel strategy (suspend/resume via UUID).
+    confirm_bus: Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
 ) -> PipelineHandler {
     build_pipeline_handler(PipelineHandlerDeps {
         provider,
@@ -2304,6 +2322,7 @@ pub(crate) fn build_channel_handler(
         profile_config: config.profile.clone(),
         reload_controller: Arc::clone(reload_controller),
         views_conn: shared_views_conn.clone(),
+        confirm_bus,
     })
 }
 
@@ -2695,6 +2714,11 @@ pub(crate) struct BackgroundHandles {
     pub self_map_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub cloud_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor>,
+    /// GOLD-ADAPT-GOOSE-03 — drain task that reads `ConfirmRequest`s off the
+    /// bus's mpsc channel and forwards them as elicitation messages to the
+    /// operator's primary channel (Telegram). WAL-free; aborted before
+    /// `drop(writer)` to avoid logging new frames after the writer closes.
+    pub confirm_drain_task: Option<JoinHandle<()>>,
 }
 
 /// GOLD-ARCH-01: the full ordered daemon shutdown sequence, moved VERBATIM out
@@ -2773,6 +2797,7 @@ pub(crate) async fn shutdown_background_tasks(
         self_map_task,
         cloud_task,
         hysteria_supervisor,
+        confirm_drain_task,
     } = handles;
 
     // MONITOR-02: abort the worker-watch FIRST — so the deliberate abort of the
@@ -3045,6 +3070,10 @@ pub(crate) async fn shutdown_background_tasks(
         info!("stopping Hysteria subprocess");
         drop(sup);
     }
+
+    // GOLD-ADAPT-GOOSE-03: abort the confirm-bus drain task. WAL-free so it
+    // can safely stop here, just before the writer closes.
+    crate::cli::serve_tasks::abort_optional(confirm_drain_task).await;
 
     drop(writer);
     match writer_join.await {
