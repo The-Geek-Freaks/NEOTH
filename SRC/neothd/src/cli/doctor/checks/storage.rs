@@ -244,6 +244,31 @@ pub(crate) fn check_self_heal_proposals(home: &Path) -> CheckOutcome {
     }
 }
 
+/// GOLD-ADAPT-CRYPTO-04e — when WAL/config AEAD-at-rest is enabled, remind the
+/// operator to back up the master key. Losing it makes every sealed segment AND
+/// encrypted credentials permanently unreadable — the highest-severity footgun,
+/// so this stays a standing WARN while encryption is on.
+pub(crate) fn check_wal_encryption_backup(home: &Path) -> CheckOutcome {
+    let enc = crate::config::wal::load_wal_config(&home.join("freedom.yaml")).encryption;
+    if enc != crate::config::wal::WalEncryption::Aes256GcmSiv {
+        return CheckOutcome {
+            name: "wal encryption",
+            status: CheckStatus::Pass,
+            detail: "plaintext at rest (WAL integrity/HMAC always on)".into(),
+        };
+    }
+    let key = crate::wal::master_key::master_key_path(home);
+    CheckOutcome {
+        name: "wal encryption",
+        status: CheckStatus::Warn,
+        detail: format!(
+            "AES-256-GCM-SIV on — BACK UP {} offline (`neoth security backup-master-key`); \
+             losing it makes sealed segments + encrypted credentials UNREADABLE forever",
+            key.display()
+        ),
+    }
+}
+
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
 pub(crate) const CHECKS: &[CheckFn] = &[
@@ -253,6 +278,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_quota,
     check_disk_space,
     check_self_heal_proposals,
+    check_wal_encryption_backup,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -322,6 +348,19 @@ pub(crate) const DOCS: &[CheckDoc] = &[
         fix: "Prune backups (`neoth backup --prune`); compact WAL (`neoth \
               wal compact`); move `~/.neoth/` to a larger volume via \
               symlink + `chown`.",
+    },
+    CheckDoc {
+        name: "wal encryption",
+        purpose: "CRYPTO-04 — reports whether WAL/config AEAD-at-rest \
+                  (`freedom.yaml::wal.encryption`) is on, and (when on) reminds \
+                  the operator to back up `~/.neoth/wal/master.key`. WAL \
+                  integrity (HMAC) is always on independent of this.",
+        common_failures: "Encryption enabled WITHOUT an offline key backup → a \
+                         Windows reinstall / machine migration permanently loses \
+                         all sealed segments + encrypted credentials.",
+        fix: "`neoth security backup-master-key --out <offline path>` and store \
+              it safely. Restore on a new machine with `neoth security \
+              restore-master-key --from <path>` before first start.",
     },
     CheckDoc {
         name: "self-heal proposals",
