@@ -8,6 +8,10 @@ pub mod compaction;
 /// for sealed WAL segments. Pure sync wrappers; the writer calls them
 /// during segment finalization (not on the hot per-frame path).
 pub mod compress;
+/// GOLD-ADAPT-CRYPTO-01..04 — AEAD-at-rest primitives (typed zeroizing keys,
+/// HKDF subkeys, resume-safe nonce counter, AES-256-GCM-SIV blob encrypt/decrypt).
+/// Foundation slice; WAL-core wiring (encrypt-on-seal) lands separately.
+pub mod crypto;
 /// ADV-01 (F4 finding, SPEC §4.3) — HMAC-SHA256 authenticator + .cpt
 /// file format + crash-recovery apply path. Closes the pre-placed-
 /// .cpt-injection attack window on the WAL recovery boundary.

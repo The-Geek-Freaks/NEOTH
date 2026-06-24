@@ -398,6 +398,11 @@ aes    = "0.8"
 # A3-01 transfer bundles use AES-256-GCM cross-platform; Windows Chrome
 # credential decrypt reuses the same crate below the cfg(windows) code path.
 aes-gcm = "0.10"
+# GOLD-ADAPT-CRYPTO-04 — WAL/config AEAD-at-rest. AES-256-GCM-SIV is
+# nonce-MISUSE-resistant (RustCrypto, same umbrella as aes-gcm): a nonce
+# collision on a resume/crash degrades to IND-CPA, not GCM key recovery — the
+# right choice for an at-rest log that resumes across restarts.
+aes-gcm-siv = "0.11"
 cbc    = { version = "0.1", features = ["block-padding"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 subtle = "2"

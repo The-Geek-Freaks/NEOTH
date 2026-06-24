@@ -127,6 +127,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aes-gcm-siv"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae0784134ba9375416d469ec31e7c5f9fa94405049cf08c5ce5b4698be673e0d"
+dependencies = [
+ "aead 0.5.2",
+ "aes 0.8.4",
+ "cipher 0.4.4",
+ "ctr 0.9.2",
+ "polyval 0.6.2",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7131,6 +7146,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm 0.10.3",
+ "aes-gcm-siv",
  "anyhow",
  "arboard",
  "arc-swap",
