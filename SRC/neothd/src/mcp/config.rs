@@ -423,6 +423,80 @@ pub fn hex_research_recommended_config() -> McpServerConfig {
     }
 }
 
+/// GOLD-ADAPT-CCS-02 — hardened, opt-in `McpServerConfig` for **hex-ssh-mcp**
+/// (`@levnikolaevich/hex-ssh-mcp`) — a stdio MCP server that exposes
+/// FNV-checksum-verified SSH + SFTP + persistent-tmux operations on remote hosts.
+///
+/// An SSH/remote-edit server is high-blast-radius: it can read and write files
+/// on any reachable host, execute arbitrary shell commands, and exfiltrate data
+/// over existing SSH tunnels.  Security posture:
+/// - `enabled: false`          — operator must opt in explicitly.
+/// - **`autonomy_gate: Elevated`** (CCS-02) — the ENTIRE server is inert below
+///   Elevated autonomy; Strict/Standard operators cannot invoke any tool, even
+///   one in `allow_tools`.  This matches the chrome-devtools + mobile-mcp tier.
+/// - `trust_all_tools: false` + an `allow_tools` pin covering ALL 14 tools —
+///   every tool is deliberate; no "trust the server's full catalogue" fallback.
+///   The checksum-before-edit tools (`ssh_write_file`, `ssh_edit_block`) enforce
+///   FNV-1a verification inside the MCP subprocess before any mutation occurs,
+///   realising the CLAUDE.md "show exact command + confirm" rule for Cube/debian.
+/// - `smart_approve: false`    — remote mutation must never auto-approve past a
+///   Confirm gate.
+///
+/// Tool names verified against `@levnikolaevich/hex-ssh-mcp` package manifest
+/// (GOLD-ADAPT-CCS-02 recon 2026-06-24; re-verify on upstream version bumps).
+// neoth: verify against live `npx -y @levnikolaevich/hex-ssh-mcp` tools/list
+// before setting enabled: true.  The FNV checksum protocol is enforced by the
+// subprocess — NEOTH's gate (Layer 1b) blocks the whole server below Elevated.
+// The 0xC0/0xC1 WAL events are emitted generically by invoke_with_audit.
+pub fn hex_ssh_recommended_config() -> McpServerConfig {
+    McpServerConfig {
+        id: "hex-ssh".into(),
+        description: Some(
+            "hex-ssh-mcp: FNV-checksum-verified SSH / SFTP / tmux remote operations. \
+             All 14 tools gated behind Elevated autonomy — inert on Strict/Standard. \
+             Set enabled: true after verifying the npm package and your SSH targets."
+                .into(),
+        ),
+        command: "npx".into(),
+        // neoth: verify the exact npm package name/launch arg before shipping —
+        // @levnikolaevich/hex-ssh-mcp (GOLD-ADAPT-CCS-02 recon 2026-06-24).
+        args: vec!["-y".into(), "@levnikolaevich/hex-ssh-mcp".into()],
+        env: std::collections::HashMap::new(),
+        // Operator must explicitly enable after verifying the package.
+        enabled: false,
+        // All 14 tools: remote-read, checksum-verified-write, exec, sftp, tmux.
+        // No tools are excluded — the Elevated autonomy_gate is the coarse floor
+        // for the whole server; per-tool Layer 2 handles finer decisions.
+        allow_tools: Some(vec![
+            // Remote file read
+            "ssh_read_file".into(),
+            "ssh_list_directory".into(),
+            "ssh_get_file_info".into(),
+            // Checksum-verified remote edits (FNV-1a verified by subprocess)
+            "ssh_write_file".into(),
+            "ssh_edit_block".into(),
+            "ssh_delete_file".into(),
+            // Remote command execution
+            "ssh_exec".into(),
+            "ssh_find_files".into(),
+            "ssh_grep".into(),
+            // SFTP bulk transfer
+            "sftp_upload".into(),
+            "sftp_download".into(),
+            // Persistent tmux session management
+            "tmux_send".into(),
+            "tmux_read".into(),
+            "tmux_list".into(),
+        ]),
+        // Secure-by-default: deny anything outside allow_tools.
+        trust_all_tools: false,
+        // Remote mutation must never auto-approve past a Confirm gate.
+        smart_approve: false,
+        // CCS-02 — SSH/remote-edit is high-blast-radius: inert below Elevated.
+        autonomy_gate: Some(crate::permissions::AutonomyLevel::Elevated),
+    }
+}
+
 /// GOLD-PROG-15 / PC-02 — hardened, opt-in `McpServerConfig` for the official
 /// **chrome-devtools-mcp** server (browser automation via the Chrome DevTools
 /// Protocol).
@@ -1256,5 +1330,88 @@ servers:
             tools.iter().any(|t| t == "mobile_type_text"),
             "allow_tools must contain mobile_type_text"
         );
+    }
+
+    // --- GOLD-ADAPT-CCS-02: hex_ssh_recommended_config tests ---
+
+    #[test]
+    fn hex_ssh_config_id_and_command_are_stable() {
+        let cfg = hex_ssh_recommended_config();
+        assert_eq!(cfg.id, "hex-ssh");
+        assert_eq!(cfg.command, "npx");
+        assert!(
+            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-ssh-mcp"),
+            "args must contain the hex-ssh npm package name"
+        );
+        assert!(
+            cfg.args.iter().any(|a| a == "-y"),
+            "args must contain -y for auto-fetch"
+        );
+    }
+
+    #[test]
+    fn hex_ssh_config_is_elevated_gated_and_secure_by_default() {
+        let cfg = hex_ssh_recommended_config();
+        // CCS-02 floor: the whole server is inert below Elevated.
+        assert_eq!(
+            cfg.autonomy_gate,
+            Some(crate::permissions::AutonomyLevel::Elevated),
+            "SSH/remote-edit server must require Elevated autonomy"
+        );
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+    }
+
+    #[test]
+    fn hex_ssh_config_has_14_tools() {
+        let cfg = hex_ssh_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert_eq!(
+            tools.len(),
+            14,
+            "hex-ssh-mcp must expose exactly 14 tools; got {}",
+            tools.len()
+        );
+    }
+
+    #[test]
+    fn hex_ssh_config_contains_checksum_verified_edit_tools() {
+        // These are the key high-blast-radius tools whose FNV-checksum
+        // verification is enforced by the hex-ssh-mcp subprocess.
+        let cfg = hex_ssh_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        for name in [
+            "ssh_write_file",
+            "ssh_edit_block",
+            "ssh_exec",
+            "ssh_read_file",
+            "sftp_upload",
+            "tmux_send",
+        ] {
+            assert!(
+                tools.iter().any(|t| t == name),
+                "allow_tools must contain `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn hex_ssh_gate_predicate_blocks_strict_and_standard() {
+        // Exercises the exact cfg.autonomy_gate -> meets_gate() path that
+        // invoke_with_audit uses at Layer 1b — proves the factory config
+        // connects correctly to the live gate enforcement.
+        use crate::permissions::AutonomyLevel::*;
+        let cfg = hex_ssh_recommended_config();
+        let required = cfg.autonomy_gate.expect("autonomy_gate must be Some(Elevated)");
+        assert_eq!(required, Elevated, "gate must be Elevated");
+        // Strict and Standard must NOT satisfy the gate.
+        assert!(!Strict.meets_gate(required), "Strict must not satisfy Elevated gate");
+        assert!(!Standard.meets_gate(required), "Standard must not satisfy Elevated gate");
+        // Custom ranks as Standard (unmodelled) — also blocked.
+        assert!(!Custom.meets_gate(required), "Custom must not satisfy Elevated gate");
+        // Elevated and Full must satisfy the gate.
+        assert!(Elevated.meets_gate(required), "Elevated must satisfy its own gate");
+        assert!(Full.meets_gate(required), "Full must satisfy Elevated gate");
     }
 }
