@@ -867,6 +867,7 @@ GOLD-ADAPT-GRAPH-06 — run graphify on any user-supplied corpus and file the ou
 - `--subdir <NAME>` — Override the vault subdirectory name. Defaults to the last component of PATH (e.g. `mycorp` for `/home/user/projects/mycorp`). Must not be `NEOTH-Self` (reserved for the GRAPH-05 self-map cron)
 - `--dry-run <DRY_RUN>` — Probe graphify and run `graphifyy update`, but skip the vault copy and groundtruth ingest. Useful to verify graphify runs before committing to the full pipeline
 - `--no-ingest <NO_INGEST>` — Copy GRAPH_REPORT.md + GRAPH_TREE.html into the vault but skip the groundtruth ingest pass. The files will be browsable in Obsidian but will not appear in `neoth recall` results
+- `--label <LABEL>` — GRAPH-07: after `graphify update`, also run `graphify label` to rename "Community N" placeholders to semantic names using the configured provider. Requires `obsidian_vault` AND a non-local provider (anthropic_api / openai_api / openai_compat / claude_cli) in freedom.yaml. Skip with a warning when a local candle provider is configured
 
 ## `neoth groundtruth`
 
@@ -2300,6 +2301,21 @@ SC-09 (Session 28) — export the WAL HMAC compaction key to `<output>` in plain
 - `--output <PATH>` — Plaintext destination path. The file is written mode-0600 (Unix) so it's only readable by the operator account. Refused if the path already exists unless `--force` is also passed (defence against silent overwrite of an older backup)
 - `--force <FORCE>` — Overwrite `--output` if it already exists. Without this flag the command fails fast — accidentally re-running this command with the same `--output` shouldn't blow away an older backup taken at a different rotation
 - `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests). Defaults to the operator's actual `~/.neoth`
+
+### `neoth security backup-master-key`
+
+CRYPTO-04e — export the WAL/config AEAD master key as a portable RAW backup (NOT DPAPI-wrapped, so it survives a reinstall). Store it OFFLINE: losing it makes every encrypted sealed segment + credentials permanently unreadable
+
+- `--output <PATH>` — Raw portable destination path (written mode-0600 on Unix). Refused if it exists unless `--force`
+- `--force <FORCE>` — Overwrite `--output` if it already exists
+- `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests)
+
+### `neoth security restore-master-key`
+
+CRYPTO-04e — re-bind a RAW master-key backup to THIS machine (DPAPI-wrap on Windows / mode-0600 elsewhere), overwriting the current key. Stop the daemon first
+
+- `--source <PATH>` — Path to the raw master-key backup (from `backup-master-key`). Re-bound to this machine and installed over the current key
+- `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests)
 
 ### `neoth security rewrap-hmac-key`
 

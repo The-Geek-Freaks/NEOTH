@@ -85,6 +85,15 @@ pub enum SecurityCommand {
     /// existing compaction-marker audit chain verifies again. Stop the
     /// daemon before running. See `PLAN/RUNBOOK_dpapi_hmac_recovery.md`.
     RewrapHmacKey(RewrapHmacKeyArgs),
+    /// CRYPTO-04e — export the WAL/config AEAD master key as a portable RAW
+    /// backup (NOT DPAPI-wrapped, so it survives a reinstall). Store it OFFLINE:
+    /// losing it makes every encrypted sealed segment + credentials permanently
+    /// unreadable.
+    BackupMasterKey(BackupMasterKeyArgs),
+    /// CRYPTO-04e — re-bind a RAW master-key backup to THIS machine (DPAPI-wrap
+    /// on Windows / mode-0600 elsewhere), overwriting the current key. Stop the
+    /// daemon first.
+    RestoreMasterKey(RestoreMasterKeyArgs),
     /// GR-10 — single-glance view of the active safety RAILS: which
     /// protective defaults are ENGAGED vs which the operator has RELAXED
     /// (autonomy, private inference, proactive/cluster transport, OS-tool
@@ -114,6 +123,31 @@ pub struct RewrapHmacKeyArgs {
     pub source: PathBuf,
     /// Override the `~/.neoth` home dir (mostly for tests). Defaults
     /// to the operator's actual `~/.neoth`.
+    #[arg(long, value_name = "DIR")]
+    pub home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct BackupMasterKeyArgs {
+    /// Raw portable destination path (written mode-0600 on Unix). Refused if it
+    /// exists unless `--force`.
+    #[arg(long, value_name = "PATH")]
+    pub output: PathBuf,
+    /// Overwrite `--output` if it already exists.
+    #[arg(long)]
+    pub force: bool,
+    /// Override the `~/.neoth` home dir (mostly for tests).
+    #[arg(long, value_name = "DIR")]
+    pub home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct RestoreMasterKeyArgs {
+    /// Path to the raw master-key backup (from `backup-master-key`). Re-bound to
+    /// this machine and installed over the current key.
+    #[arg(long, value_name = "PATH")]
+    pub source: PathBuf,
+    /// Override the `~/.neoth` home dir (mostly for tests).
     #[arg(long, value_name = "DIR")]
     pub home: Option<PathBuf>,
 }
@@ -238,6 +272,8 @@ pub async fn run_security(args: SecurityArgs) -> Result<()> {
         }
         SecurityCommand::BackupHmacKey(a) => run_backup_hmac_key(&a),
         SecurityCommand::RewrapHmacKey(a) => run_rewrap_hmac_key(&a).await,
+        SecurityCommand::BackupMasterKey(a) => run_backup_master_key(&a),
+        SecurityCommand::RestoreMasterKey(a) => run_restore_master_key(&a),
         SecurityCommand::SafeMode(a) => run_safe_mode(&a),
     }
 }
@@ -800,6 +836,54 @@ pub fn run_backup_hmac_key(args: &BackupHmacKeyArgs) -> Result<()> {
     eprintln!("[neoth security]   playbook (Tier 1 — re-wrap on new machine).");
 
     println!("backup written: {}", args.output.display());
+    Ok(())
+}
+
+/// CRYPTO-04e — export the WAL/config AEAD master key as a portable RAW backup.
+pub fn run_backup_master_key(args: &BackupMasterKeyArgs) -> Result<()> {
+    let home = args
+        .home
+        .clone()
+        .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
+    if args.output.exists() && !args.force {
+        anyhow::bail!(
+            "refusing to overwrite existing backup at {}; pass --force to replace",
+            args.output.display()
+        );
+    }
+    let src = crate::wal::master_key::master_key_path(&home);
+    if !src.exists() {
+        anyhow::bail!(
+            "no master key at {} — WAL/config encryption is not enabled \
+             (set freedom.yaml::wal.encryption: aes256_gcm_siv)",
+            src.display()
+        );
+    }
+    crate::wal::master_key::backup_master_key(&src, &args.output)?;
+    eprintln!();
+    eprintln!("[neoth security] MASTER-KEY BACKUP WRITTEN (raw, portable)");
+    eprintln!("[neoth security]   path: {}", args.output.display());
+    eprintln!("[neoth security] This is the AEAD master key for WAL + credentials at rest.");
+    eprintln!("[neoth security] Store it OFFLINE (password manager / hardware token) — NOT on");
+    eprintln!("[neoth security] the same disk as ~/.neoth. Losing it makes encrypted segments");
+    eprintln!("[neoth security] + credentials PERMANENTLY unreadable.");
+    println!("master-key backup written: {}", args.output.display());
+    Ok(())
+}
+
+/// CRYPTO-04e — restore a RAW master-key backup, re-binding it to this machine.
+pub fn run_restore_master_key(args: &RestoreMasterKeyArgs) -> Result<()> {
+    let home = args
+        .home
+        .clone()
+        .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
+    let raw = std::fs::read(&args.source)
+        .map_err(|e| anyhow::anyhow!("read master-key backup {}: {e}", args.source.display()))?;
+    let dst = crate::wal::master_key::master_key_path(&home);
+    crate::wal::master_key::restore_master_key(&raw, &dst)?;
+    eprintln!("[neoth security] master key restored + re-bound to this machine: {}", dst.display());
+    eprintln!("[neoth security] Restart the daemon — encrypted segments/credentials are readable again.");
+    println!("master-key restored: {}", dst.display());
     Ok(())
 }
 
