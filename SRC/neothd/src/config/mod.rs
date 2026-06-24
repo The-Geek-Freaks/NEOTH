@@ -647,6 +647,16 @@ pub struct FreedomConfig {
     /// Operators on paid search APIs lower this to control per-query cost.
     #[serde(default)]
     pub deep_research: DeepResearchConfig,
+
+    /// GOLD-ADAPT-OH-03 — set to `true` by `write_config` when at least one
+    /// channel/integration was configured during onboarding. `neoth serve` bails
+    /// at boot if `false` and the secondary credential probe also finds nothing.
+    /// Idempotent: re-running `neoth init --force` with a channel re-sets it `true`.
+    /// Old freedom.yaml files (missing field) default to `false`; the secondary
+    /// probe in `check_onboarding_complete` passes them through when credentials.yaml
+    /// already has a channel configured.
+    #[serde(default)]
+    pub onboarding_complete: bool,
 }
 
 /// AUDIT-RPC-01 — audit-RPC listener config. Default: disabled (the daemon

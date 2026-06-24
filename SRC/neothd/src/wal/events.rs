@@ -2259,6 +2259,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT,
     ),
     ("agent_dispatched", EVENT_TYPE_AGENT_DISPATCHED),
+    (
+        "onboarding_complete_confirmed",
+        EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED,
+    ),
     // PWF-02: session-catchup PreCompact + SessionStart recovery.
     // `neoth wal show --type mode_checkpoint` surfaces every session-start +
     // pre-compact boundary written by the chat/channel pipelines.
@@ -2446,6 +2450,15 @@ pub const EVENT_TYPE_SELF_MAP_COMPLETE: u8 = 0xFB;
 /// auto_delegated_from_skill? (present only on skill auto-synthesis),
 /// ts_unix }`.
 pub const EVENT_TYPE_AGENT_DISPATCHED: u8 = 0xFC;
+
+/// `0xFD ONBOARDING_COMPLETE_CONFIRMED` — GOLD-ADAPT-OH-03. Emitted once per
+/// daemon boot (non-one-shot) immediately after the BOOT frame, recording that
+/// the onboarding completion gate passed and capturing the channel-presence
+/// snapshot for audit. Best-effort: a write failure is logged at WARN but does
+/// not abort the boot sequence.
+///
+/// Payload (JSON): `{ operator_id, onboarding_complete: bool, ts_unix }`.
+pub const EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED: u8 = 0xFD;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -2876,6 +2889,8 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_SELF_MAP_COMPLETE < 0xF0) as usize];
     // GOLD-ADAPT-OH-13 — 0xFC must sit in the 0xF0..=0xFF operator/system band.
     let _ = [(); 1][(EVENT_TYPE_AGENT_DISPATCHED < 0xF0) as usize];
+    // GOLD-ADAPT-OH-03 — 0xFD must sit in the 0xF0..=0xFF operator/system band.
+    let _ = [(); 1][(EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -3220,6 +3235,10 @@ mod tests {
                 EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT,
             ),
             ("AGENT_DISPATCHED", EVENT_TYPE_AGENT_DISPATCHED),
+            (
+                "ONBOARDING_COMPLETE_CONFIRMED",
+                EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED,
+            ),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {

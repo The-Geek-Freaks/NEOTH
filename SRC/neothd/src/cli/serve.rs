@@ -23,7 +23,7 @@ use crate::memory::store;
 use crate::providers::{self, Provider};
 use crate::shutdown;
 use crate::wal::EventFlags;
-use crate::wal::events::EVENT_TYPE_BOOT;
+use crate::wal::events::{EVENT_TYPE_BOOT, EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED};
 use crate::wal::writer::WalWriterHandle;
 
 // GOLD-ARCH-01: the channel-side inbound pipeline now lives in `serve_pipeline`.
@@ -69,6 +69,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         provider = ?config.provider_kind,
         "loaded freedom.yaml"
     );
+
+    // GOLD-ADAPT-OH-03: onboarding completion gate — bail before touching the WAL
+    // if no channel/integration has been configured. Bypassed for --one-shot
+    // (integration-test path that runs against ephemeral configs with no channels).
+    // The secondary credential probe inside check_onboarding_complete handles old
+    // freedom.yaml files that pre-date the `onboarding_complete` flag.
+    if !args.one_shot {
+        crate::cli::serve_tasks::check_onboarding_complete(&config)?;
+    }
 
     // GOLD-ARCH-01: post-config runtime-service priming relocated to serve_tasks
     // (OMI SC-14 hard rule + V03-08/A-2 consent gate + SkillRegistry watcher +
@@ -161,6 +170,27 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             "persist clock_floor failed at startup — next start cannot detect a \
              pre-this-run rollback; check disk permissions on ~/.neoth/clock.floor",
         );
+    }
+
+    // GOLD-ADAPT-OH-03 audit frame — best-effort, non-blocking. Emitted after
+    // the BOOT frame so the WAL writer is live; the gate itself fires before WAL
+    // is open (in run_serve) and cannot write. Skipped for --one-shot (gate was
+    // already bypassed; no point auditing a non-daemon start).
+    if !args.one_shot {
+        let oh03_payload = serde_json::json!({
+            "operator_id": config.operator_id.as_deref().unwrap_or(""),
+            "onboarding_complete": config.onboarding_complete,
+            "ts_unix": now_ns / 1_000_000_000u64,
+        })
+        .to_string()
+        .into_bytes();
+        let oh03_header =
+            crate::wal::HeaderBuilder::new(EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED, &oh03_payload)
+                .flags(EventFlags::SYNTHETIC)
+                .build();
+        if let Err(e) = writer.append(oh03_header, oh03_payload).await {
+            warn!(error = %e, "OH-03 audit frame write failed (non-fatal)");
+        }
     }
 
     if args.one_shot {

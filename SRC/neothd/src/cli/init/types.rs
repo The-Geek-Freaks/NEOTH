@@ -560,6 +560,13 @@ pub struct WizardState {
     /// plaintext HMAC-key backup (so an aborted/resumed wizard doesn't re-ask).
     #[serde(default)]
     pub hmac_backup_offered: bool,
+    /// GOLD-ADAPT-OH-03 — persisted by `write_config` when at least one channel
+    /// was configured during the wizard. `FreedomConfig` reads this field back;
+    /// `neoth serve` bails at boot when `false` AND the credential probe also
+    /// finds no channel. `#[serde(default)]` keeps old freedom.yaml round-trips
+    /// clean (missing field → false → secondary probe applied at daemon boot).
+    #[serde(default)]
+    pub onboarding_complete: bool,
     pub steps_completed: Vec<u8>,
 }
 

@@ -946,6 +946,8 @@ mod tests {
             install_n8n: false,
             import_memory: None,
             hmac_backup_offered: false,
+            // GOLD-ADAPT-OH-03: fixture has telegram configured → flag is true.
+            onboarding_complete: true,
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
@@ -2190,6 +2192,43 @@ mod tests {
             state
                 .steps_completed
                 .contains(&(WizardStep::Autonomy as u8))
+        );
+    }
+
+    // ── GOLD-ADAPT-OH-03: write_config sets onboarding_complete flag ──────────
+
+    /// When at least one channel (telegram) is configured, write_config must
+    /// emit `onboarding_complete: true` into freedom.yaml.
+    #[tokio::test]
+    async fn oh03_write_config_sets_flag_true_when_telegram_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        // fixture_state() has telegram_token set → onboarding_complete = true.
+        let state = fixture_state();
+        write_config(&neoth_dir, &state).await.expect("write_config");
+        let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
+        assert!(
+            body.contains("onboarding_complete: true"),
+            "must be true when telegram configured; got:\n{body}"
+        );
+    }
+
+    /// When no channel is configured, write_config must emit
+    /// `onboarding_complete: false` into freedom.yaml.
+    #[tokio::test]
+    async fn oh03_write_config_sets_flag_false_when_no_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let mut state = fixture_state();
+        // Strip both wizard-path channels.
+        state.telegram_token = None;
+        state.keet_seed_phrase = None;
+        // write_config recomputes the flag from configured_channels(state).
+        write_config(&neoth_dir, &state).await.expect("write_config");
+        let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
+        assert!(
+            body.contains("onboarding_complete: false"),
+            "must be false when no wizard-path channel configured; got:\n{body}"
         );
     }
 }

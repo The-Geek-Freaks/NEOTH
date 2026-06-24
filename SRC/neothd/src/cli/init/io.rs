@@ -413,6 +413,12 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     let keet_seed_phrase = public_state.keet_seed_phrase.take();
     let pears_bearer_token = public_state.pears_bearer_token.take();
 
+    // GOLD-ADAPT-OH-03: mark onboarding complete iff ≥1 channel configured.
+    // `configured_channels` checks keet + telegram (the two wizard-path channels).
+    // Discord/Slack/WhatsApp/Signal configured via step6g go straight to
+    // credentials.yaml — the secondary boot-time probe catches those correctly.
+    public_state.onboarding_complete = !configured_channels(state).is_empty();
+
     let freedom_yaml = neoth_dir.join("freedom.yaml");
     let serialized = serde_yaml::to_string(&public_state)
         .context("serialize WizardState as YAML for freedom.yaml")?;
