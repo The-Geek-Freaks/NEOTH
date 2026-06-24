@@ -308,7 +308,23 @@ pub fn verify_marker(segment_path: &Path, key: &[u8], marker: &MarkerPayload) ->
 /// already v2 when compression is on), so no offset shift is needed. Returns the
 /// header length too, so frame walkers know where the first frame starts.
 pub(crate) fn logical_segment_bytes(raw: &[u8]) -> Result<(usize, Cow<'_, [u8]>)> {
+    // CRYPTO-04d — only consult the default-home segment key when the body is
+    // actually AEAD-framed; the common plaintext path never touches the key
+    // store. This makes EVERY reader (verify / scan / indexer / proof_bundle)
+    // decrypt sealed segments transparently, with zero signature ripple.
+    if segment_body_is_encrypted(raw) {
+        return logical_segment_bytes_with_key(raw, crate::wal::master_key::default_segment_key());
+    }
     logical_segment_bytes_with_key(raw, None)
+}
+
+/// True when a parsed segment's body begins with the AEAD frame magic.
+fn segment_body_is_encrypted(raw: &[u8]) -> bool {
+    let Ok(hdr) = parse_segment_header(raw) else {
+        return false;
+    };
+    let body = raw.get(hdr.header_len()..).unwrap_or(&[]);
+    crate::wal::crypto::is_encrypted(body)
 }
 
 /// GOLD-ADAPT-CRYPTO-04c — like [`logical_segment_bytes`] but decrypts an

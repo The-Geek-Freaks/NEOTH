@@ -15,13 +15,38 @@
 //! enabling encryption.
 
 use super::compaction::{maybe_unwrap_dpapi, write_key_securely};
-use super::crypto::WalMasterKey;
+use super::crypto::{derive_subkey, WalMasterKey, WalSegmentKey, INFO_WAL_SEGMENT};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Default master-key path: `<home>/wal/master.key`.
 pub fn master_key_path(home: &Path) -> PathBuf {
     home.join("wal").join("master.key")
+}
+
+/// Process-memoized WAL segment subkey, derived from the default-home master
+/// key, for the reader chokepoint (`compaction::logical_segment_bytes`) to
+/// decrypt sealed segments WITHOUT threading a key through every caller.
+///
+/// **Load-only** — returns `None` when no `master.key` exists (encryption was
+/// never enabled), so a reader never creates a key as a side effect. It is only
+/// consulted when a segment body is actually AEAD-framed (the common plaintext
+/// path never calls this), and by then the writer has already created the key.
+pub fn default_segment_key() -> Option<&'static WalSegmentKey> {
+    static KEY: OnceLock<Option<WalSegmentKey>> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let path = master_key_path(&home);
+        if !path.exists() {
+            return None;
+        }
+        let body = std::fs::read(&path).ok()?;
+        let raw = maybe_unwrap_dpapi(&body, &path).ok()?;
+        let master = WalMasterKey::from_bytes(&raw).ok()?;
+        derive_subkey(&master, INFO_WAL_SEGMENT).ok()
+    })
+    .as_ref()
 }
 
 /// Load the master key, generating + persisting a fresh one on first use.

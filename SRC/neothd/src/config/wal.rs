@@ -24,14 +24,35 @@ pub struct WalConfig {
     /// Existing segments replay correctly regardless — the reader auto-detects
     /// header version and decompresses when the COMPRESSED flag is set.
     pub compression: WalCompression,
+    /// GOLD-ADAPT-CRYPTO-04 — AEAD-at-rest for newly-SEALED segments. `"none"`
+    /// (default) keeps plaintext-at-rest (WAL integrity/HMAC is always on
+    /// regardless). `"aes256_gcm_siv"` encrypts the sealed (compressed) frame
+    /// blob; the live segment stays plaintext. **Enabling it requires backing up
+    /// `~/.neoth/wal/master.key`** — losing the key makes sealed segments
+    /// unreadable (`neoth doctor` warns; see `neoth security backup-master-key`).
+    #[serde(default)]
+    pub encryption: WalEncryption,
 }
 
 impl Default for WalConfig {
     fn default() -> Self {
         Self {
             compression: WalCompression::None,
+            encryption: WalEncryption::None,
         }
     }
+}
+
+/// AEAD-at-rest policy for sealed WAL segments (GOLD-ADAPT-CRYPTO-04).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WalEncryption {
+    /// Plaintext at rest (default). WAL integrity (HMAC) is unaffected.
+    #[default]
+    None,
+    /// AES-256-GCM-SIV on the sealed frame blob. YAML key: `aes256_gcm_siv`.
+    #[serde(rename = "aes256_gcm_siv")]
+    Aes256GcmSiv,
 }
 
 /// Compression algorithm for WAL segments.
@@ -77,6 +98,22 @@ mod tests {
     #[test]
     fn default_wal_config_is_none_compression() {
         assert_eq!(WalConfig::default().compression, WalCompression::None);
+    }
+
+    #[test]
+    fn default_wal_config_is_none_encryption() {
+        assert_eq!(WalConfig::default().encryption, WalEncryption::None);
+    }
+
+    #[test]
+    fn load_wal_config_encryption_from_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "wal:\n  encryption: aes256_gcm_siv\n").unwrap();
+        assert_eq!(load_wal_config(&path).encryption, WalEncryption::Aes256GcmSiv);
+        // Missing key → None (backward compatible).
+        std::fs::write(&path, "wal:\n  compression: zstd_3\n").unwrap();
+        assert_eq!(load_wal_config(&path).encryption, WalEncryption::None);
     }
 
     #[test]
