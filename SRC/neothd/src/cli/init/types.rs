@@ -396,6 +396,12 @@ pub enum WizardStep {
     /// `tududi_api_token` to `credentials.yaml` and the hardened entry to
     /// `mcp_servers.yaml`. Non-interactive: skips (no unattended install).
     TududiOffer = 73,
+    /// GOLD-ADAPT-SYS-01 — wizard offer for the optional mobile-mcp iOS/Android
+    /// device control rail (`@mobilenext/mobile-mcp`). Launched via npx; no
+    /// secret token. Writes the hardened entry (Elevated autonomy gate,
+    /// telemetry OFF, 24 local-device tools) to `mcp_servers.yaml`.
+    /// Non-interactive: skips (device prerequisites require operator setup).
+    MobileMcpOffer = 74,
 }
 
 impl WizardStep {
@@ -423,6 +429,7 @@ impl WizardStep {
         Self::WasmPlugins,
         Self::Supervisor,
         Self::TududiOffer,
+        Self::MobileMcpOffer,
     ];
 }
 

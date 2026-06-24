@@ -484,6 +484,99 @@ pub fn chrome_devtools_recommended_config() -> McpServerConfig {
     }
 }
 
+/// GOLD-ADAPT-SYS-01 — hardened, opt-in `McpServerConfig` for **mobile-mcp**
+/// (`@mobilenext/mobile-mcp`) — a stdio MCP server that drives iOS/Android
+/// devices via the WebDriverAgent + ADB stack.
+///
+/// A mobile device driver is medium-blast-radius: it can tap UI, read the
+/// screen, capture screenshots, and manipulate apps on a real or simulated
+/// phone. Security posture:
+/// - `enabled: false`      — operator opts in only.
+/// - **`autonomy_gate: Elevated`** (CCS-02) — the server is inert below
+///   Elevated autonomy (same tier as chrome-devtools-mcp). No tool fires
+///   on Strict/Standard operators.
+/// - `trust_all_tools: false` + `allow_tools` scoped to the 24 **local-
+///   device** tools. The 3 cloud-device allocation tools
+///   (`mobile_list_remote_devices`, `mobile_allocate_remote_device`,
+///   `mobile_release_remote_device`) are **deliberately excluded** — they
+///   provision devices from an external cloud pool and are cloud-blast-radius.
+///   Operators who need them must add them by hand.
+/// - `smart_approve: false` — device control must never auto-approve past a
+///   Confirm gate.
+/// - Telemetry OFF: `MOBILEMCP_DISABLE_TELEMETRY=1` — mobile-mcp fires
+///   PostHog events (`posthog("launch", {})` + per-tool events) to
+///   `https://us.i.posthog.com/i/v0/e/` unless this env var is set. NEOTH
+///   forces it off unconditionally in the subprocess env. The wizard step
+///   discloses this to the operator before they opt in.
+///
+/// Prerequisites (NOT installed by NEOTH; operator-supplied):
+/// - Node ≥18 + npm/npx on PATH — `npx -y @mobilenext/mobile-mcp@latest`
+///   auto-fetches the package on first use (supply-chain risk: same as other
+///   `@latest` MCP packages; pin the version in mcp_servers.yaml after verifying).
+/// - iOS real device: Xcode CLI tools + WebDriverAgent installed + signed with
+///   a valid Apple Developer account. iOS Simulator requires no WDA signing.
+/// - Android: `adb` in PATH and USB debugging enabled on the target device.
+///
+/// Tool names verified against `@mobilenext/mobile-mcp` server.ts
+/// (GOLD-ADAPT-SYS-01 recon 2026-06-23).
+pub fn mobile_mcp_recommended_config() -> McpServerConfig {
+    McpServerConfig {
+        id: "mobile-mcp".into(),
+        description: Some(
+            "mobile-mcp: iOS/Android device control via WebDriverAgent + ADB. \
+             Launched via npx; Elevated autonomy floor. Remote-device cloud tools \
+             excluded — add by hand if needed. Set enabled: true after installing \
+             Node + device prerequisites (Xcode/ADB)."
+                .into(),
+        ),
+        command: "npx".into(),
+        args: vec!["-y".into(), "@mobilenext/mobile-mcp@latest".into()],
+        env: std::collections::HashMap::from([
+            // PostHog telemetry opt-out — mobile-mcp fires posthog("launch", {})
+            // and per-tool events unless this sentinel is present. Forced OFF here;
+            // disclosed verbally in the wizard step before the operator opts in.
+            ("MOBILEMCP_DISABLE_TELEMETRY".into(), "1".into()),
+        ]),
+        // Operator must explicitly enable after verifying prerequisites.
+        enabled: false,
+        // 24 local-device tools (all mobile_* tools EXCEPT the 3 remote-device
+        // cloud allocation tools which are cloud-blast-radius and excluded here;
+        // operators add them manually when needed).
+        allow_tools: Some(vec![
+            "mobile_take_screenshot".into(),
+            "mobile_describe_screen".into(),
+            "mobile_click".into(),
+            "mobile_long_click".into(),
+            "mobile_double_click".into(),
+            "mobile_swipe".into(),
+            "mobile_tap_at".into(),
+            "mobile_type_text".into(),
+            "mobile_press_button".into(),
+            "mobile_launch_app".into(),
+            "mobile_terminate_app".into(),
+            "mobile_open_url".into(),
+            "mobile_get_device_info".into(),
+            "mobile_list_apps".into(),
+            "mobile_list_elements".into(),
+            "mobile_get_element_text".into(),
+            "mobile_find_element".into(),
+            "mobile_wait_for_element".into(),
+            "mobile_scroll_screen".into(),
+            "mobile_pinch".into(),
+            "mobile_rotate".into(),
+            "mobile_set_orientation".into(),
+            "mobile_get_clipboard".into(),
+            "mobile_set_clipboard".into(),
+        ]),
+        // Secure-by-default: deny anything outside allow_tools.
+        trust_all_tools: false,
+        // Device control must never auto-approve past a Confirm gate.
+        smart_approve: false,
+        // CCS-02 — mobile device control is medium-blast-radius: inert below Elevated.
+        autonomy_gate: Some(crate::permissions::AutonomyLevel::Elevated),
+    }
+}
+
 /// GOLD-ADAPT-TUDU-01 — hardened default registration for the **tududi**
 /// self-hosted task manager's stdio MCP server.
 ///
@@ -1086,6 +1179,82 @@ servers:
         assert!(
             !cfg.args.iter().any(|a| a == "npx" || a == "-y"),
             "tududi must use `node <path>`, not npx"
+        );
+    }
+
+    // --- GOLD-ADAPT-SYS-01: mobile_mcp_recommended_config tests ---
+
+    #[test]
+    fn mobile_mcp_config_id_and_command_are_stable() {
+        let cfg = mobile_mcp_recommended_config();
+        assert_eq!(cfg.id, "mobile-mcp");
+        assert_eq!(cfg.command, "npx");
+        assert!(
+            cfg.args.iter().any(|a| a.contains("@mobilenext/mobile-mcp")),
+            "args must launch @mobilenext/mobile-mcp"
+        );
+    }
+
+    #[test]
+    fn mobile_mcp_config_is_elevated_gated_and_telemetry_off() {
+        let cfg = mobile_mcp_recommended_config();
+        // CCS-02 floor: the whole server is inert below Elevated.
+        assert_eq!(
+            cfg.autonomy_gate,
+            Some(crate::permissions::AutonomyLevel::Elevated),
+            "mobile device control must require Elevated autonomy"
+        );
+        // PostHog telemetry must be disabled unconditionally.
+        assert_eq!(
+            cfg.env.get("MOBILEMCP_DISABLE_TELEMETRY").map(String::as_str),
+            Some("1"),
+            "MOBILEMCP_DISABLE_TELEMETRY must be forced to 1"
+        );
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+    }
+
+    #[test]
+    fn mobile_mcp_config_excludes_remote_device_cloud_tools() {
+        let cfg = mobile_mcp_recommended_config();
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        // These 3 tools provision cloud-hosted remote devices — cloud-blast-radius.
+        for forbidden in [
+            "mobile_list_remote_devices",
+            "mobile_allocate_remote_device",
+            "mobile_release_remote_device",
+        ] {
+            assert!(
+                !tools.iter().any(|t| t == forbidden),
+                "{forbidden} must NOT be in the default allowlist (cloud-blast-radius)"
+            );
+        }
+        // Must expose a meaningful local-device surface (at least 20 tools).
+        assert!(
+            tools.len() >= 20,
+            "must expose at least 20 local-device tools; got {}",
+            tools.len()
+        );
+    }
+
+    #[test]
+    fn mobile_mcp_config_is_secure_by_default() {
+        let cfg = mobile_mcp_recommended_config();
+        assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
+        assert!(!cfg.smart_approve, "smart_approve must be false");
+        assert!(!cfg.enabled, "must be disabled until operator opts in");
+        // Core local-device tools must be present.
+        let tools = cfg.allow_tools.as_ref().expect("allow_tools must be Some");
+        assert!(
+            tools.iter().any(|t| t == "mobile_take_screenshot"),
+            "allow_tools must contain mobile_take_screenshot"
+        );
+        assert!(
+            tools.iter().any(|t| t == "mobile_click"),
+            "allow_tools must contain mobile_click"
+        );
+        assert!(
+            tools.iter().any(|t| t == "mobile_type_text"),
+            "allow_tools must contain mobile_type_text"
         );
     }
 }

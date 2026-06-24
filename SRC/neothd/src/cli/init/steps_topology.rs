@@ -737,6 +737,105 @@ pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
     Ok(())
 }
 
+/// Step 6j — GOLD-ADAPT-SYS-01: optional mobile-mcp iOS/Android device control rail.
+///
+/// mobile-mcp (`@mobilenext/mobile-mcp`) is an MCP server that drives real iOS
+/// and Android devices (and iOS Simulator) via WebDriverAgent + ADB. It exposes
+/// 24 local-device tools (`mobile_take_screenshot`, `mobile_click`,
+/// `mobile_type_text`, etc.) and is launched via `npx -y @mobilenext/mobile-mcp@latest`
+/// — no global install step required.
+///
+/// Prerequisites (NEOTH cannot install these; operator-supplied):
+/// - Node ≥ 18 + npx on PATH.
+/// - iOS real device: Xcode CLI tools + WebDriverAgent signed with a valid Apple
+///   Developer account. iOS Simulator requires no WDA signing.
+/// - Android: `adb` in PATH and USB debugging enabled on the target device.
+///
+/// Telemetry disclosure: mobile-mcp fires PostHog events unless
+/// `MOBILEMCP_DISABLE_TELEMETRY=1` is set. NEOTH forces this off automatically
+/// in the subprocess environment — the operator is informed before opting in.
+///
+/// Non-interactive: print a registration hint and skip. Device prerequisites
+/// require human setup; no unattended install is performed.
+pub(crate) async fn step6j_mobile_mcp_offer(interactive: bool) -> Result<()> {
+    use crate::installers::mobile_mcp;
+    if !interactive {
+        println!(
+            "[neoth init] optional mobile-mcp iOS/Android device control rail — skip for now. \
+             Prerequisites: Node ≥18 on PATH + Xcode/ADB for real devices. \
+             Re-run `neoth init --force` after installing Node, or add the entry manually \
+             to ~/.neoth/mcp_servers.yaml. See https://github.com/mobile-next/mobile-mcp"
+        );
+        return Ok(());
+    }
+    #[cfg(feature = "wizard")]
+    {
+        println!(
+            "\n[6j/9] mobile-mcp iOS/Android device control rail (optional) — drives real \
+             devices and simulators via WebDriverAgent (iOS) + ADB (Android). Exposes 24 \
+             local-device tools (screenshot, tap, swipe, type, app control, …).\n\
+             \n\
+             Prerequisites:\n\
+               • Node ≥18 + npx on PATH (mobile-mcp is launched via npx; no global install)\n\
+               • iOS real device: Xcode CLI tools + WebDriverAgent installed + Apple Developer \
+             account for WDA signing. iOS Simulator works without WDA signing.\n\
+               • Android: `adb` in PATH + USB debugging enabled on the target device.\n\
+             \n\
+             Telemetry note: mobile-mcp sends anonymous usage events to PostHog. \
+             NEOTH disables this automatically by setting \
+             MOBILEMCP_DISABLE_TELEMETRY=1 in the subprocess environment.\n\
+             \n\
+             Security note: Elevated autonomy floor (same as chrome-devtools-mcp) — \
+             mobile device control is inert on Strict/Standard operators. The 3 cloud \
+             remote-device allocation tools are excluded from the default allowlist."
+        );
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(
+                "Register mobile-mcp now? (requires Node ≥18 + device prerequisites above)",
+            )
+            .default(false)
+            .interact()
+            .context("mobile-mcp offer confirm")?;
+        if !want {
+            println!(
+                "  → skipped (register later: https://github.com/mobile-next/mobile-mcp)"
+            );
+            return Ok(());
+        }
+
+        let neoth_home = crate::cli::init::dirs_home().join(".neoth");
+        match mobile_mcp::auto_register(&neoth_home).await {
+            Ok(true) => {
+                println!(
+                    "  ✓ mobile-mcp registered + enabled in ~/.neoth/mcp_servers.yaml\n  \
+                     ✓ MOBILEMCP_DISABLE_TELEMETRY=1 forced in subprocess env (PostHog off)\n  \
+                     → Autonomy floor: Elevated (inert on Strict/Standard)\n  \
+                     → Start NEOTH and try: \"tap the login button on my phone\""
+                );
+            }
+            Ok(false) => {
+                println!(
+                    "  ! Node/npx not found on PATH — install Node first:\n  \
+                     \n  \
+                     Windows: https://nodejs.org/en/download  (use the LTS installer)\n  \
+                     macOS:   brew install node\n  \
+                     Linux:   sudo apt install nodejs npm\n  \
+                     \n  \
+                     Then re-run: neoth init --force"
+                );
+            }
+            Err(e) => {
+                println!(
+                    "  ! registration failed: {e}\n  \
+                     Add the entry manually to ~/.neoth/mcp_servers.yaml \
+                     (see https://github.com/mobile-next/mobile-mcp)."
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Step 5c — NOOB-UX-6 (Workstream B): Qwen weights pre-download.
 ///
 /// Only meaningful when the operator's inference topology pulls in

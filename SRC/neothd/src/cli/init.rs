@@ -116,6 +116,10 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // GOLD-ADAPT-TUDU-01 — optional tududi self-hosted task manager MCP rail.
     // No checkpoint save needed (re-offerable each run like step5e_cbm_offer).
     step6i_tududi_offer(interactive).await?;
+    // GOLD-ADAPT-SYS-01 — optional mobile-mcp iOS/Android device control rail.
+    // No checkpoint save needed (re-offerable each run; device prerequisites
+    // vary per operator session).
+    step6j_mobile_mcp_offer(interactive).await?;
     step6h_install_recommended(&args, interactive, &neoth_dir);
     step7_autonomy(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
