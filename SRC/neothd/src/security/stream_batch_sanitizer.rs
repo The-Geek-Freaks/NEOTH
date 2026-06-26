@@ -151,7 +151,8 @@ impl StreamBatchSanitizer {
             return FlushOutcome::Empty;
         }
         let batch = std::mem::take(&mut self.buffer);
-        let report = sanitize(&batch, &self.channel);
+        // identity_locked=false: stream-batch path does not carry persona-lock state.
+        let report = sanitize(&batch, &self.channel, false);
         if report.quarantined {
             self.state = StreamState::Halted;
             self.halts += 1;
@@ -187,6 +188,10 @@ pub fn finding_summary(report: &SanitizeReport) -> Vec<String> {
             }
             Finding::PromptInjectionMarker { pattern } => {
                 format!("prompt_injection_marker `{pattern}`")
+            }
+            // GOLD-ADAPT-JV-MODE-01: identity-anchor blocked a persona hijack attempt.
+            Finding::PersonaOverrideAttempt { pattern } => {
+                format!("persona_override_attempt `{pattern}`")
             }
         })
         .collect()

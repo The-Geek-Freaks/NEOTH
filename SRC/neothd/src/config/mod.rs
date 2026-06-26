@@ -92,6 +92,30 @@ pub use rollback::RollbackConfig;
 pub use tools::{ClipboardConfig, OsToolsConfig, ToolsConfig};
 pub use wal::{WalCompression, WalConfig, load_wal_config, load_wal_config_strict};
 
+/// GOLD-ADAPT-JV-MODE-01 — identity-locked persona modes.
+///
+/// Unlike `ProfilePreset` (which controls tone/verbosity per turn),
+/// `PersonaMode` carries a hard identity-anchor invariant: once set, the
+/// chosen persona CANNOT be changed by incoming channel messages, skills, or
+/// user prompts. The lock is enforced at two layers:
+///
+/// 1. Ingress sanitizer: persona-override attempt patterns quarantine the
+///    message before it reaches the pipeline.
+/// 2. Enrichment: the identity-anchor text is pinned at position 1 in the
+///    layered system prompt (after moral_core, before operator_context) so no
+///    downstream layer can displace it.
+///
+/// Stored in `freedom.yaml::persona_mode` as the snake_case variant name.
+/// `None` = no identity lock (default; all channels open).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonaMode {
+    /// Identity-locked loyal-buddy: mirrors operator register, proactive
+    /// ("ausführen+berichten nicht fragen"), direct/no-filler, loyal-first.
+    /// Rejects persona-change requests at the ingress layer.
+    LoyalBuddy,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FreedomConfig {
     #[serde(default)]
@@ -182,6 +206,16 @@ pub struct FreedomConfig {
     /// operator's authored moral core is NOT injected (without deleting the dir).
     #[serde(default)]
     pub moral_core: crate::config::policy::MoralCoreConfig,
+    /// GOLD-ADAPT-JV-MODE-01 — identity-locked persona mode.
+    /// `None` = no lock (default). `Some(PersonaMode::LoyalBuddy)` activates
+    /// the loyal-buddy persona: identity-anchor injected at position 1 in the
+    /// system-prompt stack; ingress sanitizer quarantines persona-override
+    /// attempts before they reach the pipeline.
+    ///
+    /// Set via `freedom.yaml::persona_mode = "loyal_buddy"` or
+    /// `neoth profile persona apply loyal-buddy`.
+    #[serde(default)]
+    pub persona_mode: Option<PersonaMode>,
     /// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller. Off by default; an
     /// operator opts in with `feeds.enabled = true` + `feeds.entries`.
     #[serde(default)]

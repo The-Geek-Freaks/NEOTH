@@ -2460,6 +2460,26 @@ pub const EVENT_TYPE_AGENT_DISPATCHED: u8 = 0xFC;
 /// Payload (JSON): `{ operator_id, onboarding_complete: bool, ts_unix }`.
 pub const EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED: u8 = 0xFD;
 
+/// `0xFE LOYAL_BUDDY_ACTIVATED` — GOLD-ADAPT-JV-MODE-01. The operator applied
+/// the `loyal_buddy` persona mode via `neoth profile persona apply loyal-buddy`
+/// or the onboarding wizard's Charakter/Modus picker. Records the activation
+/// durably so audit-trail replay can reconstruct when the identity-lock was
+/// first engaged. Immediate-sync: the identity lock is an operator-sovereignty
+/// decision and must survive a crash.
+///
+/// Payload (JSON): `{ source, ts_unix }` where `source` ∈
+/// `"cli"` | `"wizard"` | `"gui"`.
+pub const EVENT_TYPE_LOYAL_BUDDY_ACTIVATED: u8 = 0xFE;
+
+/// `0xFF PERSONA_LOCK_ENFORCED` — GOLD-ADAPT-JV-MODE-01. The ingress sanitizer
+/// quarantined an inbound channel message because it contained a persona-override
+/// attempt while `identity_locked = true` (loyal-buddy mode active). The channel
+/// message is dropped silently; this WAL frame is the durable proof-of-enforcement.
+/// Immediate-sync: security audit anchor.
+///
+/// Payload (JSON): `{ channel, pattern, input_hash, ts_unix }`.
+pub const EVENT_TYPE_PERSONA_LOCK_ENFORCED: u8 = 0xFF;
+
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
 
@@ -2891,6 +2911,13 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_AGENT_DISPATCHED < 0xF0) as usize];
     // GOLD-ADAPT-OH-03 — 0xFD must sit in the 0xF0..=0xFF operator/system band.
     let _ = [(); 1][(EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED < 0xF0) as usize];
+    // GOLD-ADAPT-JV-MODE-01 — 0xFE/0xFF must sit in the 0xF0..=0xFF operator/system band.
+    // 0xFE: standard lower-bound check (always evaluates at compile time).
+    let _ = [(); 1][(EVENT_TYPE_LOYAL_BUDDY_ACTIVATED < 0xF0) as usize];
+    // 0xFF == u8::MAX so `< 0xF0` is always false — that IS the correct in-band assertion
+    // (index 0 = ok; index 1 = OOB = compile error). Clippy flags the tautology; allow it.
+    #[allow(clippy::absurd_extreme_comparisons)]
+    let _ = [(); 1][(EVENT_TYPE_PERSONA_LOCK_ENFORCED < 0xF0) as usize];
 };
 
 #[cfg(test)]

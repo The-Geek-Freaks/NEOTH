@@ -142,7 +142,8 @@ pub fn ingest_ocr_text(
     document_id: impl Into<String>,
 ) -> Result<PaperlessOcrPayload, IngestError> {
     let document_id = document_id.into();
-    let report: SanitizeReport = sanitize(raw_text, "paperless");
+    // identity_locked=false: paperless ingest does not carry persona-lock state.
+    let report: SanitizeReport = sanitize(raw_text, "paperless", false);
 
     if report.quarantined {
         return Err(IngestError::Quarantined {

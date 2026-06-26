@@ -233,7 +233,8 @@ pub fn triage_inbound(email: &InboundEmail) -> InboundTriage {
     // Stages 1+2: MIME / CRLF / quoted-printable normalisation.
     let stage12 = sanitize_email_body(&email.body);
     // Stage 3: generic NFKC + prompt-injection scan on the cleaned body.
-    let ingress = ingress_sanitize(&stage12.body, "email");
+    // identity_locked=false: email inbound does not carry persona-lock state.
+    let ingress = ingress_sanitize(&stage12.body, "email", false);
 
     // Attachment names are always cleaned (a malware ext on a dropped email
     // is still worth recording for the operator trail).

@@ -210,6 +210,11 @@ struct AgentRawLayers {
     recall_block: Option<String>,
     guidance_block: Option<String>,
     skill_delegate_to: Option<String>,
+    /// GOLD-ADAPT-JV-MODE-01 — full loyal-buddy skill YAML body when active.
+    /// `'static` because it's sourced from `include_str!` in bundled.rs.
+    identity_anchor: Option<&'static str>,
+    /// GOLD-ADAPT-JV-MODE-01 — true when PersonaMode::LoyalBuddy is active.
+    identity_locked: bool,
 }
 
 async fn build_prompt_bundle(
@@ -598,6 +603,23 @@ async fn build_prompt_bundle(
     // GOLD-FEAT-07 — load the operator's LOWKEY moral core (if any) for
     // position-0 injection. Best-effort; `None` when not configured.
     let moral_core = crate::memory::moral_core::compact_for_injection();
+
+    // GOLD-ADAPT-JV-MODE-01 — load persona mode; derive identity anchor text
+    // and the identity_locked flag. loyal_buddy pins the bundled skill body at
+    // position 1 (after moral_core) so no downstream layer can override it.
+    let persona_mode = crate::cli::profile::load_persona_mode(&preset_home);
+    let (identity_anchor_text, identity_locked) = match persona_mode {
+        Some(crate::config::PersonaMode::LoyalBuddy) => {
+            // Pull system_prompt from the bundled skill YAML at compile time.
+            let body = crate::skills::bundled::BUNDLED_SKILLS
+                .iter()
+                .find(|(id, _)| *id == "loyal_buddy")
+                .map(|(_, body)| *body);
+            (body, true)
+        }
+        None => (None, false),
+    };
+
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt: &prompt,
         operator_context: operator_context.as_deref(),
@@ -609,6 +631,8 @@ async fn build_prompt_bundle(
         mcp_catalogue: mcp_catalogue.as_deref(),
         persona_override: persona_override.as_deref(),
         moral_core: moral_core.as_deref(),
+        identity_anchor: identity_anchor_text,
+        identity_locked,
     });
     // Fold the layers in authority order: enriched.system (operator / skills /
     // MCP / moral) > guidance (MEM-12 session-wide context) > recall (Block::D
@@ -643,6 +667,9 @@ async fn build_prompt_bundle(
         recall_block: recall_block_raw,
         guidance_block: guidance_block_raw,
         skill_delegate_to,
+        // GOLD-ADAPT-JV-MODE-01
+        identity_anchor: identity_anchor_text,
+        identity_locked,
     };
 
     (
@@ -859,6 +886,10 @@ async fn enforce_preflight(
             } else {
                 agent_raw_layers.moral_core.as_deref()
             },
+            // GOLD-ADAPT-JV-MODE-01: identity lock propagates to sub-agents;
+            // the anchor is not omit-flag-gated (identity cannot be stripped by a skill).
+            identity_anchor: agent_raw_layers.identity_anchor,
+            identity_locked: agent_raw_layers.identity_locked,
         });
         // Fold guidance + recall on top (same authority order as main path),
         // respecting the omit flags.

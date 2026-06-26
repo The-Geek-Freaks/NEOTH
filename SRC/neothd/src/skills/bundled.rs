@@ -279,6 +279,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "log_analyzer",
         include_str!("../../assets/skills/log_analyzer/skill.yaml"),
     ),
+    // GOLD-ADAPT-JV-MODE-01 (2026-06-24) — identity-locked loyal-buddy persona.
+    (
+        "loyal_buddy",
+        include_str!("../../assets/skills/loyal_buddy/skill.yaml"),
+    ),
     (
         "lowkey_base",
         include_str!("../../assets/skills/lowkey_base/skill.yaml"),

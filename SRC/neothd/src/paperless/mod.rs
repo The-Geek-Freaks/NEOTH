@@ -147,6 +147,13 @@ fn render_findings_block(findings: &[Finding]) -> String {
                     pattern.replace('`', "'")
                 )
             }
+            // GOLD-ADAPT-JV-MODE-01: persona override attempt blocked by identity anchor.
+            Finding::PersonaOverrideAttempt { pattern } => {
+                format!(
+                    "- persona_override_attempt: `{}`\n",
+                    pattern.replace('`', "'")
+                )
+            }
         };
         out.push_str(&line);
     }

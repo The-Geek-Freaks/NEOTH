@@ -55,7 +55,8 @@ pub fn tiebreak_system_prompt() -> &'static str {
 /// injection phrases). The findings summary never carries attacker-controlled
 /// free text (see `summarize_findings`).
 pub fn build_tiebreak_prompt(subject: &str, body: &str, assessment: &ThreatAssessment) -> String {
-    let subject_clean = crate::security::ingress_sanitizer::sanitize(subject, "email-subject");
+    // identity_locked=false: email ingest does not carry persona-lock state.
+    let subject_clean = crate::security::ingress_sanitizer::sanitize(subject, "email-subject", false);
     let subject_display = if subject_clean.quarantined {
         "[subject withheld — injection pattern detected]".to_string()
     } else {

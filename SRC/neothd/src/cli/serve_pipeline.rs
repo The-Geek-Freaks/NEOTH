@@ -298,8 +298,9 @@ pub(crate) async fn sanitize_inbound(
     channel_str: &str,
     sender_hash: &str,
     audit_dir: &std::path::Path,
+    identity_locked: bool,
 ) -> Option<crate::security::ingress_sanitizer::SanitizeReport> {
-    let report = crate::security::ingress_sanitizer::sanitize(raw_text, channel_str);
+    let report = crate::security::ingress_sanitizer::sanitize(raw_text, channel_str, identity_locked);
     if let Err(e) = crate::security::ingress_sanitizer::audit_append(&report, audit_dir).await {
         warn!(error = %e, "ingress audit append failed; continuing");
     }
@@ -775,8 +776,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // GOLD-ARCH-01 phase 2: Phase-11a ingress sanitize (quarantine →
             // silent drop). The raw input never touches the WAL or the provider.
             let audit_dir = crate::config::FreedomConfig::default_neoth_home().join("audit");
+            // GOLD-ADAPT-JV-MODE-01: load persona mode here (before sanitize) so
+            // the ingress gate can block persona-override attempts in locked mode.
+            let _serve_persona_mode =
+                crate::cli::profile::load_persona_mode(&crate::config::FreedomConfig::default_neoth_home());
+            let serve_identity_locked = _serve_persona_mode.is_some();
             let Some(report) =
-                sanitize_inbound(raw_text, channel_str, &sender_hash, &audit_dir).await
+                sanitize_inbound(raw_text, channel_str, &sender_hash, &audit_dir, serve_identity_locked).await
             else {
                 return Ok(::std::option::Option::None);
             };
@@ -1105,6 +1111,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .map(|p| crate::profile::presets::apply_preset(p).system_addendum)
                     .filter(|s| !s.is_empty());
 
+            // GOLD-ADAPT-JV-MODE-01 — derive identity anchor for channel turns.
+            // Uses the already-loaded `_serve_persona_mode` and `serve_identity_locked`.
+            let channel_identity_anchor: Option<&str> = if serve_identity_locked {
+                crate::skills::bundled::BUNDLED_SKILLS
+                    .iter()
+                    .find(|(id, _)| *id == "loyal_buddy")
+                    .map(|(_, body)| *body)
+            } else {
+                None
+            };
+
             let channel_repo_context = crate::cli::chat::maybe_repo_context_block(
                 config_for_handler.as_ref(),
                 &sanitized_text,
@@ -1156,6 +1173,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     mcp_catalogue: channel_mcp_catalogue.as_deref(),
                     persona_override: channel_persona.as_deref(),
                     moral_core: channel_moral_core.as_deref(),
+                    // GOLD-ADAPT-JV-MODE-01
+                    identity_anchor: channel_identity_anchor,
+                    identity_locked: serve_identity_locked,
                 });
             let channel_enriched_system = channel_enriched.system;
             let _channel_used_skill_id = channel_enriched.used_skill_id;
@@ -2648,7 +2668,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let audit_dir = dir.path().join("audit");
         // Benign input → Some(report) with the sanitized text + an audit record.
-        let report = sanitize_inbound("hello there", "telegram", "h1", &audit_dir).await;
+        let report = sanitize_inbound("hello there", "telegram", "h1", &audit_dir, false).await;
         assert_eq!(report.map(|r| r.text), Some("hello there".to_string()));
         assert!(
             std::fs::read_dir(&audit_dir)
@@ -2662,6 +2682,7 @@ mod tests {
             "telegram",
             "h1",
             &audit_dir,
+            false,
         )
         .await;
         assert!(
@@ -2675,7 +2696,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
-        let report = crate::security::ingress_sanitizer::sanitize("hello world", "telegram");
+        let report = crate::security::ingress_sanitizer::sanitize("hello world", "telegram", false);
         let msg = inbound(Some("hello world"), None);
         let eid = emit_inbound_ingress(&writer, &report, &msg, "h1", &Some("op1".to_string()))
             .await

@@ -96,6 +96,15 @@ pub struct EnrichmentInputs<'a> {
     /// the layered body — the operator's behavioural constitution the model
     /// reads first. `None` when no moral core is configured.
     pub moral_core: Option<&'a str>,
+    /// GOLD-ADAPT-JV-MODE-01 — identity-anchor text for the loyal-buddy persona.
+    /// When `identity_locked` is `true`, this text is pinned at **position 1**
+    /// (after `moral_core`, before `operator_context`) so no downstream layer can
+    /// displace it. `None` when persona mode is not `LoyalBuddy`.
+    pub identity_anchor: Option<&'a str>,
+    /// GOLD-ADAPT-JV-MODE-01 — when `true`, `identity_anchor` is hard-pinned at
+    /// position 1 in the layer stack. Also triggers the KB-01 non-disclosure
+    /// clause regardless of whether a skill or persona is active.
+    pub identity_locked: bool,
 }
 
 /// Output of [`build_enriched_request`]. Owned strings — the caller
@@ -146,9 +155,25 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     // Trim leading/trailing whitespace from every borrowed input so a
     // stray newline at the edge of one block doesn't widen the gap to
     // the next. The merge below adds the canonical "\n\n" separator.
-    let layers: [Option<&str>; 7] = [
+    //
+    // GOLD-ADAPT-JV-MODE-01: when identity_locked=true, the identity_anchor
+    // is injected at position 1 (after moral_core, before operator_context)
+    // so it cannot be displaced by any downstream layer. When locked but no
+    // anchor text is present the slot is None and collapses out naturally.
+    let identity_anchor_layer: Option<&str> = if inputs.identity_locked {
+        inputs
+            .identity_anchor
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    } else {
+        None
+    };
+
+    let layers: [Option<&str>; 8] = [
         // GOLD-FEAT-07 — moral core is position 0: highest-priority directives.
         inputs.moral_core.map(str::trim).filter(|s| !s.is_empty()),
+        // GOLD-ADAPT-JV-MODE-01 — identity anchor at position 1 when locked.
+        identity_anchor_layer,
         inputs
             .operator_context
             .map(str::trim)
@@ -199,11 +224,17 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
         (None, false) => Some(body),
     };
 
-    // KB-01 — append the prompt-disclosure guard when a skill or persona is in
-    // play (the injection surface). `None` system (no skill/persona/context at
-    // all) stays `None` — a bare prompt gets no guard.
+    // KB-01 — append the prompt-disclosure guard when a skill, persona, or
+    // identity-lock is in play (the injection surface). `None` system (no
+    // skill/persona/context at all) stays `None` — a bare prompt gets no guard.
+    // GOLD-ADAPT-JV-MODE-01: identity_locked triggers the guard independently
+    // of the skill/persona fields.
     let system = match system {
-        Some(s) if skill_prompt_expanded.is_some() || persona.is_some() => {
+        Some(s)
+            if skill_prompt_expanded.is_some()
+                || persona.is_some()
+                || inputs.identity_locked =>
+        {
             Some(format!("{s}\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"))
         }
         other => other,
@@ -232,6 +263,8 @@ mod tests {
             mcp_catalogue: None,
             persona_override: None,
             moral_core: None,
+            identity_anchor: None,
+            identity_locked: false,
         }
     }
 
@@ -444,6 +477,8 @@ mod tests {
             mcp_catalogue: Some("# Available MCP Tools\n## Server `fs`\n- read_file"),
             persona_override: Some("concise"),
             moral_core: None,
+            identity_anchor: None,
+            identity_locked: false,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -512,6 +547,8 @@ mod tests {
             mcp_catalogue: None,
             persona_override: None,
             moral_core: None,
+            identity_anchor: None,
+            identity_locked: false,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -550,6 +587,8 @@ mod tests {
             mcp_catalogue: None,
             persona_override: Some("warm"),
             moral_core: None,
+            identity_anchor: None,
+            identity_locked: false,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
