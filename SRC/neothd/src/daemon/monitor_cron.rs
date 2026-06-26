@@ -25,13 +25,14 @@ use std::path::{Path, PathBuf};
 
 use crate::config::MonitorConfig;
 use crate::memory::scorecard::{
-    ScorecardHistory, compute_quality_scorecard, HEALTHY_THRESHOLD,
+    PipelineHistory, ScorecardHistory, compute_quality_scorecard, HEALTHY_THRESHOLD,
 };
 use crate::wal::{
     events::{
         EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_CHANNEL_SILENCE_ALERT,
         EVENT_TYPE_COMPACTION_AUTH_FAILED, EVENT_TYPE_CRASH_LOG_ALERT,
-        EVENT_TYPE_RECOVERY_TRUNCATED, EVENT_TYPE_WAL_CRC_ALERT,
+        EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK, EVENT_TYPE_RECOVERY_TRUNCATED,
+        EVENT_TYPE_WAL_CRC_ALERT,
     },
     writer::WalWriterHandle,
 };
@@ -573,6 +574,112 @@ pub fn run_scorecard_tick(home: &Path, now_unix: i64, history: &mut ScorecardHis
     }
 }
 
+/// GOLD-ADAPT-MEM-11 — 15-point per-subsystem pipeline scorecard tick.
+///
+/// Opens the memory store read-only in a synchronous scope (the connection is
+/// dropped before any `.await` — SEND SAFETY for rusqlite::Connection which is
+/// `!Send`), runs `read_and_compute_pipeline_scorecard`, pushes to `history`,
+/// and emits a `0x9F MEMORY_PIPELINE_SCORECARD_TICK` WAL frame unconditionally
+/// every tick so the operator gets a time-series audit trail via
+/// `neoth wal show --type memory_pipeline_scorecard_tick`.
+///
+/// All failures are warn-logged; the monitor loop must not be disrupted by a
+/// missing or locked store, a serialize error, or a WAL write error.
+pub async fn run_pipeline_scorecard_tick(
+    home: &std::path::Path,
+    now_unix: i64,
+    writer: &WalWriterHandle,
+    history: &mut PipelineHistory,
+) {
+    use crate::memory::scorecard::read_and_compute_pipeline_scorecard;
+
+    // ── 1. Open DB, compute scorecard, drop connection — all sync ────────────
+    let store_path = home.join(".neoth").join("views.db");
+    let result = {
+        // Tight sync scope: open, query, drop.
+        match crate::memory::store::open(&store_path) {
+            Ok(conn) => {
+                let r = read_and_compute_pipeline_scorecard(&conn, now_unix);
+                // conn is dropped here (end of block)
+                r
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "pipeline scorecard tick: cannot open memory store");
+                return;
+            }
+        }
+    };
+
+    let sc = match result {
+        Ok(sc) => sc,
+        Err(e) => {
+            tracing::warn!(error = %e, "pipeline scorecard tick: query failed");
+            return;
+        }
+    };
+
+    // ── 2. Log + push to history ──────────────────────────────────────────────
+    let overall_grade = sc.overall_grade;
+    let overall_composite = sc.overall_composite;
+    let is_healthy = sc.is_healthy;
+
+    if is_healthy {
+        tracing::debug!(
+            grade = overall_grade.as_str(),
+            composite = overall_composite,
+            "memory pipeline scorecard: healthy (MEM-11)",
+        );
+    } else {
+        // Warn on each subsystem that is below grade C.
+        for sub in &sc.subsystems {
+            if !sub.grade.is_healthy() {
+                tracing::warn!(
+                    subsystem = sub.name,
+                    grade = sub.grade.as_str(),
+                    score = sub.score,
+                    "memory pipeline scorecard: subsystem below healthy threshold (MEM-11)",
+                );
+            }
+        }
+        tracing::warn!(
+            grade = overall_grade.as_str(),
+            composite = overall_composite,
+            threshold = crate::memory::scorecard::HEALTHY_THRESHOLD,
+            "memory pipeline scorecard: overall below healthy threshold (MEM-11)",
+        );
+    }
+
+    history.push(sc.clone());
+
+    // ── 3. Emit 0x9F WAL frame (best-effort, unconditional) ──────────────────
+    let payload_value = serde_json::json!({
+        "ts_unix": now_unix,
+        "overall_grade": overall_grade.as_str(),
+        "overall_composite": overall_composite,
+        "subsystems": sc.subsystems.iter().map(|s| serde_json::json!({
+            "name": s.name,
+            "score": s.score,
+            "grade": s.grade.as_str(),
+        })).collect::<Vec<_>>(),
+    });
+    let payload = match serde_json::to_vec(&payload_value) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "pipeline scorecard tick: failed to serialize WAL payload");
+            return;
+        }
+    };
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK, &payload)
+        .flags(crate::wal::EventFlags::SYNTHETIC)
+        .build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(
+            error = %e,
+            "pipeline scorecard tick: WAL append failed (advisory — not fatal)"
+        );
+    }
+}
+
 /// GOLD-ADOPT-27 — at monitor start, probe every channel's config-completeness
 /// and `warn!` any that are actively misconfigured (e.g. one of a required
 /// token pair). Best-effort: a missing config/creds file → no warning. The full
@@ -611,6 +718,8 @@ pub fn spawn_monitor_cron_loop(
         let mut emit_state = MonitorEmitState::default();
         // JV-MEM-15 — 7-day scorecard history ring buffer (headless, no DB writes).
         let mut scorecard_history = ScorecardHistory::default();
+        // GOLD-ADAPT-MEM-11 — 15-point pipeline scorecard history ring buffer.
+        let mut pipeline_history = PipelineHistory::default();
         tracing::info!(
             interval_secs = interval.as_secs(),
             min_repeat_alert_secs = config.min_repeat_alert_secs,
@@ -644,6 +753,14 @@ pub fn spawn_monitor_cron_loop(
 
             // JV-MEM-15 — quality scorecard tick (best-effort; never fails the loop).
             run_scorecard_tick(&home, crate::time::now_unix_i64(), &mut scorecard_history);
+            // GOLD-ADAPT-MEM-11 — 15-point pipeline scorecard tick.
+            run_pipeline_scorecard_tick(
+                &home,
+                crate::time::now_unix_i64(),
+                &writer,
+                &mut pipeline_history,
+            )
+            .await;
         }
     }))
 }
@@ -924,6 +1041,81 @@ mod tests {
                 writer
             )
             .is_none()
+        );
+    }
+
+    // ── GOLD-ADAPT-MEM-11: pipeline scorecard tick emits 0x9F frame ──────────
+
+    #[tokio::test]
+    async fn pipeline_scorecard_tick_emits_0x9f_wal_frame() {
+        use crate::memory::scorecard::PipelineHistory;
+        use crate::wal::events::EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK;
+
+        // 1. Set up tempdir with a real views.db (empty store is fine — probes
+        //    return 0-counts and map to neutral fallbacks).
+        let dir = tempfile::tempdir().unwrap();
+        // The store path is home/.neoth/views.db
+        let neoth_home = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_home).unwrap();
+        let store_path = neoth_home.join("views.db");
+        let _conn = crate::memory::store::open(&store_path).unwrap();
+        drop(_conn); // close so the tick can re-open it
+
+        // 2. Spin up a real WAL writer.
+        let seg = dir.path().join("pipeline-scorecard.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        // 3. Call the tick.
+        let now_unix = crate::time::now_unix_i64();
+        let mut history = PipelineHistory::default();
+        run_pipeline_scorecard_tick(dir.path(), now_unix, &writer, &mut history).await;
+
+        // 4. Assert exactly ONE 0x9F frame was written.
+        assert_eq!(
+            count_frames(&seg, EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK),
+            1,
+            "pipeline scorecard tick must emit exactly one 0x9F WAL frame"
+        );
+
+        // 5. Decode the frame payload and verify structure.
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                let subs = v.get("subsystems").unwrap().as_array().unwrap();
+                assert_eq!(
+                    subs.len(),
+                    15,
+                    "payload must carry exactly 15 subsystem entries"
+                );
+                assert!(
+                    v.get("overall_grade").is_some(),
+                    "payload must contain overall_grade"
+                );
+                assert!(
+                    v.get("overall_composite").is_some(),
+                    "payload must contain overall_composite"
+                );
+                break;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+
+        // 6. Assert history received the entry.
+        assert_eq!(history.len(), 1, "history must hold one entry after the tick");
+        assert!(
+            history.latest().unwrap().is_healthy,
+            "empty store must produce a healthy scorecard"
         );
     }
 

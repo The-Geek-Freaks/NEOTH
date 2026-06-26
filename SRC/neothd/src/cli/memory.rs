@@ -126,6 +126,13 @@ pub struct MemoryArgs {
     #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin", "people"])]
     pub embed_backfill: bool,
 
+    /// GOLD-ADAPT-MEM-11 — print the 15-point per-subsystem memory pipeline
+    /// scorecard. Reads `~/.neoth/views.db` live; honours `--db` and `--output`.
+    /// Exit 0 when overall grade is C or above; exit 1 when below healthy
+    /// threshold so scripts can gate on memory health.
+    #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin", "people", "embed_backfill"])]
+    pub pipeline_scorecard: bool,
+
     /// Max rows for `--tier` recall.
     #[arg(long, default_value = "20")]
     pub limit: usize,
@@ -169,6 +176,9 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     }
     if args.embed_backfill {
         return run_memory_embed_backfill(&args).await;
+    }
+    if args.pipeline_scorecard {
+        return run_memory_pipeline_scorecard(&args).await;
     }
 
     let home = FreedomConfig::default_neoth_home();
@@ -923,6 +933,76 @@ pub(crate) fn unembedded_episode_ids(
     Ok(rows)
 }
 
+/// `neoth memory --pipeline-scorecard` — GOLD-ADAPT-MEM-11.
+///
+/// Reads the live views.db and prints the 15-point per-subsystem pipeline
+/// scorecard. In Table mode each subsystem is one row (name | score% | grade).
+/// In JSON/JSONL mode the full [`PipelineScorecard`] struct is emitted.
+///
+/// Returns `Ok(())` regardless of grade so the caller decides on exit code;
+/// the `--pipeline-scorecard` subcommand exits 1 via a signal-error when the
+/// overall grade is below C (HEALTHY_THRESHOLD) — same pattern as doctor.
+async fn run_memory_pipeline_scorecard(args: &MemoryArgs) -> Result<()> {
+    use crate::memory::{scorecard, store};
+
+    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path)
+        .with_context(|| format!("open views.db for pipeline-scorecard: {}", db_path.display()))?;
+
+    let now_unix = crate::time::now_unix_i64();
+    let sc = scorecard::read_and_compute_pipeline_scorecard(&conn, now_unix)
+        .with_context(|| "compute pipeline scorecard")?;
+
+    match args.output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&sc)?);
+        }
+        OutputFormat::Table => {
+            println!(
+                "# Memory pipeline scorecard (MEM-11) — overall: {} ({:.1}%)",
+                sc.overall_grade,
+                sc.overall_composite * 100.0,
+            );
+            println!();
+            println!("  {:<32}  {:>7}  {:>5}", "subsystem", "score%", "grade");
+            println!("  {}  {}  {}", "-".repeat(32), "-".repeat(7), "-".repeat(5));
+            for sub in &sc.subsystems {
+                println!(
+                    "  {:<32}  {:>6.1}%  {:>5}",
+                    sub.name,
+                    sub.score * 100.0,
+                    sub.grade,
+                );
+            }
+            println!("  {}  {}  {}", "-".repeat(32), "-".repeat(7), "-".repeat(5));
+            println!(
+                "  {:<32}  {:>6.1}%  {:>5}",
+                "OVERALL",
+                sc.overall_composite * 100.0,
+                sc.overall_grade,
+            );
+            println!();
+            if sc.is_healthy {
+                println!("  status: HEALTHY (grade {} >= C threshold)", sc.overall_grade);
+            } else {
+                println!(
+                    "  status: UNHEALTHY (grade {} < C threshold — inspect subsystems above)",
+                    sc.overall_grade
+                );
+            }
+        }
+    }
+
+    // Non-zero exit when unhealthy so scripts can gate: `neoth memory --pipeline-scorecard || alert`
+    if !sc.is_healthy {
+        anyhow::bail!(
+            "memory pipeline scorecard: overall grade {} is below the healthy threshold (C)",
+            sc.overall_grade
+        );
+    }
+    Ok(())
+}
+
 /// `neoth memory --archive YYYY-MM-DD` — list session MD files for one day.
 async fn run_memory_archive(args: &MemoryArgs, day: &str) -> Result<()> {
     use crate::memory::archive;
@@ -1018,6 +1098,7 @@ mod tests {
             people: false,
             rebuild_index: false,
             embed_backfill: false,
+            pipeline_scorecard: false,
             limit: 20,
             db: Some(db),
             output: OutputFormat::Table,

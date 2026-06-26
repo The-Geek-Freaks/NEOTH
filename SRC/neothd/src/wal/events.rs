@@ -1262,6 +1262,14 @@ pub const EVENT_TYPE_CONSOLIDATION_SWEEP_STARTED: u8 = 0x9D;
 /// ts_unix}`.
 pub const EVENT_TYPE_CONSOLIDATION_SWEEP_DONE: u8 = 0x9E;
 
+/// `0x9F MEMORY_PIPELINE_SCORECARD_TICK` — GOLD-ADAPT-MEM-11. The monitor cron
+/// emitted a per-subsystem 15-point memory-pipeline scorecard. Payload (JSON):
+/// `{ts_unix, overall_grade, overall_composite, subsystems:[{name,score,grade}]}`.
+/// Emitted unconditionally every monitor tick (not gated on is_healthy) so the
+/// operator gets a time-series audit trail via `neoth wal show
+/// --type memory_pipeline_scorecard_tick`.
+pub const EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK: u8 = 0x9F;
+
 // ---- 0xA0..=0xAF  Permissions / autonomy (R-23) ---------------------------
 
 /// Permission decision returned `Allow` (after a possible Confirm round-trip).
@@ -2810,6 +2818,8 @@ const _: () = {
         || EVENT_TYPE_CONSOLIDATION_SWEEP_STARTED > 0x9F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONSOLIDATION_SWEEP_DONE < 0x90
         || EVENT_TYPE_CONSOLIDATION_SWEEP_DONE > 0x9F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK < 0x90
+        || EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK > 0x9F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PERMISSION_GRANTED < 0xA0 || EVENT_TYPE_PERMISSION_GRANTED > 0xAF) as usize];
     let _ = [(); 1]
@@ -3190,6 +3200,10 @@ mod tests {
             (
                 "CONSOLIDATION_SWEEP_DONE",
                 EVENT_TYPE_CONSOLIDATION_SWEEP_DONE,
+            ),
+            (
+                "MEMORY_PIPELINE_SCORECARD_TICK",
+                EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK,
             ),
             ("PERMISSION_GRANTED", EVENT_TYPE_PERMISSION_GRANTED),
             ("PERMISSION_DENIED", EVENT_TYPE_PERMISSION_DENIED),
