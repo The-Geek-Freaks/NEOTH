@@ -72,12 +72,39 @@ pub fn current_global_invoker() -> Option<&'static Arc<dyn PluginInvoker>> {
 }
 
 /// What the dispatcher decided after running every applicable hook.
+///
+/// ## Exit-code semantics (logical analogues — NEOTH has no shell-exec action)
+///
+/// | Analogue | Variant / path | Meaning |
+/// |----------|----------------|---------|
+/// | Exit 0   | `Continue`     | Pipeline proceeds. Covers the fully-normal case (no hooks matched, Allow hooks matched, Replace hooks rewrote the body). |
+/// | Exit 1   | `Continue` (warn path) | Warn-and-continue. Optional-plugin-failure (`required = false`) and bad-regex-skip (`fail_fast = false`) both produce a `Continue` after emitting a `warn` log. They are non-blocking — the operator's turn is NOT dropped. |
+/// | Exit 2   | `Block`        | Pipeline stops. Produced by `HookAction::Block`, a required-Plugin failure (missing or erroring invoker), or a bad-regex with `fail_fast = true`. Callers **must** abort the current turn (bail the `enforce_preflight` gate or the post-reply pipeline). |
+///
+/// Note: `HookAction::Command` (shell-out) does NOT exist in NEOTH. That
+/// workload is routed through `HookAction::Plugin { plugin_id }` which
+/// dispatches to a sandboxed WASM plugin via the daemon's registered
+/// `PluginInvoker`. Exit-code semantics therefore apply at the Rust enum
+/// level, not at a child-process level.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StageOutcome {
-    /// Pipeline continues. Body is the (possibly replaced) text.
+    /// **Exit-0 equivalent** — pipeline proceeds. `body` is the (possibly
+    /// replaced) text; `hits` names every hook that ran and matched.
+    ///
+    /// Warn-and-continue paths (optional-plugin-failure with `required=false`,
+    /// bad-regex-skip with `fail_fast=false`) also resolve to this variant —
+    /// they are the **exit-1 analogue**: logged at `warn` level but
+    /// never blocking.
     Continue { body: String, hits: Vec<String> },
-    /// Pipeline stops. `reason` is the operator-visible explanation,
-    /// `name` is the hook that blocked. Callers usually drop the turn.
+    /// **Exit-2 equivalent** — pipeline stops. `reason` is the
+    /// operator-visible explanation; `name` is the hook that triggered the
+    /// block. Callers **must** abort the current turn (drop the WAL writer,
+    /// await the join, then `anyhow::bail!`).
+    ///
+    /// Produced by:
+    /// - `HookAction::Block { reason }` (explicit operator block)
+    /// - required-Plugin failure: invoker missing **or** invoker returned `Err`
+    /// - bad-regex with `fail_fast = true` (AR-03 strict-mode escalation)
     Block { name: String, reason: String },
 }
 
@@ -758,6 +785,81 @@ mod tests {
                 assert_eq!(hits, vec!["a", "b"]);
             }
             other => panic!("fail_fast must not block well-formed chain: {other:?}"),
+        }
+    }
+
+    // ── CCPARITY-EXIT-CODE: pin exit-code 0/1/2 semantics ───────────────
+
+    #[test]
+    fn exit_code_1_analogue_optional_plugin_failure_does_not_block() {
+        // EXIT-1 ANALOGUE — an optional-plugin failure (required=false)
+        // must produce StageOutcome::Continue, NOT Block. This pins the
+        // "warn-and-continue" contract: the stage is degraded but the
+        // operator's turn is NOT aborted. Any regression that accidentally
+        // promotes the warn path to Block would break this test.
+        //
+        // Stage: PreProviderCall (the pre-tool-call gate, omc's PreToolUse).
+        // Invoker: FailingInvoker — returns Err on every call.
+        // Hook: optional (required=false), so failure = exit-1 analogue.
+        let hooks = vec![plugin_hook(
+            "optional-audit",
+            HookStage::PreProviderCall,
+            "unreliable-plugin",
+        )];
+        let out = run_stage_with_plugins(
+            HookStage::PreProviderCall,
+            "tool input text",
+            &hooks,
+            Some(&FailingInvoker),
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Continue { body, hits } => {
+                assert_eq!(
+                    body, "tool input text",
+                    "optional plugin failure must not mutate body"
+                );
+                assert_eq!(
+                    hits,
+                    vec!["optional-audit".to_string()],
+                    "hit must be recorded even when plugin errors"
+                );
+            }
+            StageOutcome::Block { name, reason } => {
+                panic!(
+                    "exit-1 analogue (optional plugin failure) must NOT block \
+                     — got Block {{ name: {name:?}, reason: {reason:?} }}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn exit_code_2_analogue_block_action_aborts_pre_tool_call() {
+        // EXIT-2 ANALOGUE — a HookAction::Block at PreProviderCall (the
+        // pre-tool-call gate) must produce StageOutcome::Block. This pins
+        // that an operator-written deny hook actually aborts the tool call
+        // before it reaches the provider, matching the "exit-2 = abort turn"
+        // contract documented on StageOutcome::Block.
+        //
+        // Stage: PreProviderCall (omc's PreToolUse — the ONLY pre-tool gate).
+        // Action: HookAction::Block { reason: "not allowed" }.
+        let hooks = vec![block_hook("deny", HookStage::PreProviderCall, "not allowed")];
+        let out = run_stage(HookStage::PreProviderCall, "tool input text", &hooks).unwrap();
+        match out {
+            StageOutcome::Block { name, reason } => {
+                assert_eq!(name, "deny", "block must name the hook that triggered it");
+                assert_eq!(
+                    reason, "not allowed",
+                    "block reason must be the operator's deny message"
+                );
+            }
+            StageOutcome::Continue { .. } => {
+                panic!(
+                    "exit-2 analogue (Block action at PreProviderCall) must NOT \
+                     Continue — the tool call must be aborted"
+                );
+            }
         }
     }
 }

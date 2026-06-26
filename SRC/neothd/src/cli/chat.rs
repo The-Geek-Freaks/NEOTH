@@ -3536,6 +3536,18 @@ enum HookOutcome {
 /// `HOOK_REPLACED` when the body changed and `HOOK_BLOCKED` when a hook
 /// stopped the pipeline. Audit frames are best-effort — append failures
 /// log a warning but never propagate.
+///
+/// ## Exit-code semantics surfaced at this adapter layer
+///
+/// | Analogue | `HookOutcome` variant | Caller action |
+/// |----------|-----------------------|---------------|
+/// | Exit 0   | `Continue(body)`      | Proceed; use the returned body. |
+/// | Exit 1   | `Continue(body)` (warn path) | Proceed; a `warn` log was emitted inside the dispatcher for the optional-plugin-failure or bad-regex-skip. No action required at this layer. |
+/// | Exit 2   | `Blocked { name, reason }` | **Abort the turn.** Callers (`enforce_preflight` at `PrePipeline`/`PreProviderCall`, `run_post_reply_pipelines` at `PostProviderCall`) must drop the WAL writer, await its join handle, then `anyhow::bail!`. |
+///
+/// The `Blocked` WAL frame (`EVENT_TYPE_HOOK_BLOCKED = 0x81`) is emitted here
+/// before returning so every abort is traceable without the caller duplicating
+/// the WAL write.
 async fn run_hook_stage(
     stage: crate::hooks::HookStage,
     body: &str,

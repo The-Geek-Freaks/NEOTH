@@ -46,6 +46,11 @@ pub enum HookStage {
     PrePipeline,
     /// Right before `provider.complete()`. Last chance to mutate the
     /// outbound payload.
+    ///
+    /// Maps to Claude Code's `PreToolUse` event (omc cross-pollination Q-6).
+    /// A `Block` outcome here (**exit-2 equivalent**) aborts the tool call
+    /// before it reaches the provider — `enforce_preflight` in `cli/chat.rs`
+    /// bails the turn when `run_hook_stage` returns `HookOutcome::Blocked`.
     PreProviderCall,
     /// Immediately after `provider.complete()` returns. Sees the reply
     /// text; can replace, block, or pass through.
