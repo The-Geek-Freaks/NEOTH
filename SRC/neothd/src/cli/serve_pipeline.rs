@@ -1097,9 +1097,62 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // a healthy filesystem the combined latency is sub-30ms.
             let channel_home = crate::config::FreedomConfig::default_neoth_home();
             let channel_cwd = std::env::current_dir().unwrap_or_else(|_| channel_home.clone());
-            let operator_blocks = crate::memory::operator_md::assemble(&channel_home, &channel_cwd)
-                .await
+            // GOLD-CCPARITY-SUBDIR-MD-01 — resolve operator_md_extra_dirs from
+            // a fresh config snapshot. channel_home is a pure path derivation
+            // (no full config load), so we need a separate load here. Falls
+            // back to empty on error (same policy as all channel-path config reads).
+            let channel_extra_dirs: Vec<std::path::PathBuf> = {
+                let snap = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+                snap.memory
+                    .operator_md_extra_dirs
+                    .iter()
+                    .map(|s| {
+                        let p = std::path::PathBuf::from(s);
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            channel_cwd.join(s)
+                        }
+                    })
+                    .collect()
+            };
+            let operator_blocks = crate::memory::operator_md::assemble(
+                &channel_home,
+                &channel_cwd,
+                &channel_extra_dirs,
+            )
+            .await
+            .unwrap_or_default();
+            // GOLD-CCPARITY-SUBDIR-MD-01 — emit SUBDIR_MD_LOADED (0x8C) WAL
+            // frames for each successfully loaded SubDir block. Callers-emit
+            // pattern (same as HINT_LOADED 0x58): the loader stays writer-free.
+            for b in operator_blocks
+                .iter()
+                .filter(|b| b.source == crate::memory::operator_md::BlockSource::SubDir)
+            {
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "path": b.path.display().to_string(),
+                    "bytes": b.content.len(),
+                    "ts_unix": now_unix,
+                }))
                 .unwrap_or_default();
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_SUBDIR_MD_LOADED,
+                    &payload,
+                )
+                .build();
+                if let Err(e) = writer.append(header, payload).await {
+                    warn!(
+                        error = %e,
+                        path = %b.path.display(),
+                        "SUBDIR_MD_LOADED WAL append failed (channel path)"
+                    );
+                }
+            }
             let operator_context = if operator_blocks.is_empty() {
                 None
             } else {

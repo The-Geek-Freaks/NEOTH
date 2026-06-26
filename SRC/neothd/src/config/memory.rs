@@ -22,6 +22,13 @@ pub struct MemoryConfig {
     /// provider like any other turn.
     #[serde(default = "default_recall_shortcut")]
     pub recall_shortcut: bool,
+    /// GOLD-CCPARITY-SUBDIR-MD-01 — additional directories whose nearest
+    /// NEOTH.md is merged into the operator-context block on every turn.
+    /// Mirrors Claude Code's `additionalDirectories`. Paths may be absolute
+    /// or relative to the process CWD. The dedup guard silently skips any
+    /// dir that resolves (canonically) to the same path as `home` or `cwd`.
+    #[serde(default)]
+    pub operator_md_extra_dirs: Vec<String>,
 }
 
 // Manual impl (not derived): `recall_shortcut` must default `true` on BOTH
@@ -35,6 +42,7 @@ impl Default for MemoryConfig {
             vector_index: VectorIndexConfig::default(),
             name_sessions: false,
             recall_shortcut: true,
+            operator_md_extra_dirs: Vec::new(),
         }
     }
 }

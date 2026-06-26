@@ -14,6 +14,7 @@
 //! Future hooks (deferred to phase-25 follow-up): TTL on memory entries,
 //! frontmatter parsing, semantic re-rank by relevance to current prompt.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -23,10 +24,30 @@ use super::{BlockSource, MemoryBlock};
 
 /// Assemble all operator-md context blocks. `home` is `~/.neoth/`; `cwd` is
 /// the operator's current working directory (for project-scoped overrides).
+/// `extra_dirs` is a list of additional directories whose NEOTH.md files are
+/// merged into the operator-context block (GOLD-CCPARITY-SUBDIR-MD-01 —
+/// mirrors Claude Code's `additionalDirectories`). Paths equal to `home` or
+/// `cwd` (by canonical comparison) are silently skipped to prevent
+/// double-loading.
 ///
 /// Never errors on missing files. Returns Ok with whatever was found.
-pub async fn assemble(home: &Path, cwd: &Path) -> Result<Vec<MemoryBlock>> {
+pub async fn assemble(
+    home: &Path,
+    cwd: &Path,
+    extra_dirs: &[PathBuf],
+) -> Result<Vec<MemoryBlock>> {
     let mut blocks: Vec<MemoryBlock> = Vec::new();
+
+    // Build a set of canonical paths already covered by steps 1 + 2, used as
+    // the dedup guard for extra_dirs in step 2b. Best-effort: if canonicalize
+    // fails (path doesn't exist yet) we skip insertion rather than erroring.
+    let mut seen_canonical: HashSet<PathBuf> = HashSet::new();
+    if let Ok(c) = std::fs::canonicalize(home) {
+        seen_canonical.insert(c);
+    }
+    if let Ok(c) = std::fs::canonicalize(cwd) {
+        seen_canonical.insert(c);
+    }
 
     // 1. Global ~/.neoth/NEOTH.md
     let global = home.join("NEOTH.md");
@@ -41,6 +62,41 @@ pub async fn assemble(home: &Path, cwd: &Path) -> Result<Vec<MemoryBlock>> {
         if let Some(b) = try_load(&project, BlockSource::Project).await? {
             debug!(path = %project.display(), bytes = b.content.len(), "loaded project NEOTH.md");
             blocks.push(b);
+        }
+    }
+
+    // 2b. Sub-directory extra_dirs — GOLD-CCPARITY-SUBDIR-MD-01.
+    // For each dir, canonicalize and check against `seen_canonical` to avoid
+    // double-loading when the caller passes home or cwd as an extra dir. On
+    // Windows, PathBuf::eq is case-sensitive so canonical comparison is the
+    // only safe approach.
+    for dir in extra_dirs {
+        // Canonical check: skip if this dir resolves to the same inode as home
+        // or cwd. On error (path doesn't exist) we still attempt the load —
+        // try_load returns Ok(None) for missing files, which is correct.
+        let is_dupe = std::fs::canonicalize(dir)
+            .map(|c| seen_canonical.contains(&c))
+            .unwrap_or(false);
+        if is_dupe {
+            debug!(
+                path = %dir.display(),
+                "extra_dir equals home or cwd (canonical) — skipping to prevent double-load"
+            );
+            continue;
+        }
+        let subdir_md = dir.join("NEOTH.md");
+        if let Some(b) = try_load(&subdir_md, BlockSource::SubDir).await? {
+            debug!(
+                path = %subdir_md.display(),
+                bytes = b.content.len(),
+                "loaded subdir NEOTH.md (GOLD-CCPARITY-SUBDIR-MD-01)"
+            );
+            blocks.push(b);
+            // Register this dir so a later duplicate extra_dir entry is also
+            // skipped (e.g. two extra_dirs that both resolve to the same path).
+            if let Ok(c) = std::fs::canonicalize(dir) {
+                seen_canonical.insert(c);
+            }
         }
     }
 
@@ -133,7 +189,7 @@ mod tests {
         let cwd = dir.path().join("proj");
         fs::create_dir_all(&home).await.unwrap();
         fs::create_dir_all(&cwd).await.unwrap();
-        let blocks = assemble(&home, &cwd).await.unwrap();
+        let blocks = assemble(&home, &cwd, &[]).await.unwrap();
         assert!(blocks.is_empty());
     }
 
@@ -148,7 +204,7 @@ mod tests {
             .await
             .unwrap();
 
-        let blocks = assemble(&home, &cwd).await.unwrap();
+        let blocks = assemble(&home, &cwd, &[]).await.unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].source, BlockSource::Global);
         assert!(blocks[0].content.contains("Be blunt"));
@@ -168,7 +224,7 @@ mod tests {
             .await
             .unwrap();
 
-        let blocks = assemble(&home, &cwd).await.unwrap();
+        let blocks = assemble(&home, &cwd, &[]).await.unwrap();
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].source, BlockSource::Global);
         assert_eq!(blocks[1].source, BlockSource::Project);
@@ -193,7 +249,7 @@ mod tests {
         .await
         .unwrap();
 
-        let blocks = assemble(&home, &home).await.unwrap();
+        let blocks = assemble(&home, &home, &[]).await.unwrap();
         // Global NEOTH.md absent; rules x 2; no project (cwd == home).
         assert_eq!(blocks.len(), 2);
         assert!(blocks.iter().all(|b| b.source == BlockSource::Rule));
@@ -224,7 +280,7 @@ mod tests {
         .await
         .unwrap();
 
-        let blocks = assemble(&home, &home).await.unwrap();
+        let blocks = assemble(&home, &home, &[]).await.unwrap();
         assert_eq!(blocks.len(), 2);
         assert!(blocks.iter().all(|b| b.source == BlockSource::Memory));
     }
@@ -236,7 +292,7 @@ mod tests {
         fs::create_dir_all(&home).await.unwrap();
         fs::write(home.join("NEOTH.md"), "   \n\t\n").await.unwrap();
 
-        let blocks = assemble(&home, &home).await.unwrap();
+        let blocks = assemble(&home, &home, &[]).await.unwrap();
         assert!(blocks.is_empty());
     }
 
@@ -277,8 +333,117 @@ mod tests {
         .await
         .unwrap();
 
-        let blocks = assemble(&home, &home).await.unwrap();
+        let blocks = assemble(&home, &home, &[]).await.unwrap();
         assert_eq!(blocks.len(), 1);
         assert!(blocks[0].path.ends_with("local.md"));
+    }
+
+    // ── GOLD-CCPARITY-SUBDIR-MD-01 — extra_dirs integration tests ────────────
+
+    #[tokio::test]
+    async fn subdir_extra_dir_neoth_md_is_merged() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        let cwd = dir.path().join("root");
+        let sub = dir.path().join("root/packages/core");
+        fs::create_dir_all(&home).await.unwrap();
+        fs::create_dir_all(&cwd).await.unwrap();
+        fs::create_dir_all(&sub).await.unwrap();
+        fs::write(home.join("NEOTH.md"), "Global").await.unwrap();
+        fs::write(sub.join("NEOTH.md"), "Sub-project rules")
+            .await
+            .unwrap();
+
+        let blocks = assemble(&home, &cwd, &[sub.clone()]).await.unwrap();
+        // Global + SubDir (cwd/NEOTH.md absent)
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].source, BlockSource::Global);
+        assert_eq!(blocks[1].source, BlockSource::SubDir);
+        assert!(blocks[1].content.contains("Sub-project rules"));
+        assert_eq!(blocks[1].path, sub.join("NEOTH.md"));
+    }
+
+    #[tokio::test]
+    async fn dedup_guard_skips_extra_dir_equal_to_home() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        fs::create_dir_all(&home).await.unwrap();
+        fs::write(home.join("NEOTH.md"), "Global").await.unwrap();
+        // Passing home as an extra_dir must NOT double-load the global NEOTH.md.
+        let blocks = assemble(&home, &home, &[home.clone()]).await.unwrap();
+        assert_eq!(blocks.len(), 1, "home as extra_dir must be deduped");
+        assert_eq!(blocks[0].source, BlockSource::Global);
+    }
+
+    #[tokio::test]
+    async fn dedup_guard_skips_extra_dir_equal_to_cwd() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        let cwd = dir.path().join("proj");
+        fs::create_dir_all(&home).await.unwrap();
+        fs::create_dir_all(&cwd).await.unwrap();
+        fs::write(cwd.join("NEOTH.md"), "Project").await.unwrap();
+        // Passing cwd as an extra_dir must NOT double-load the project NEOTH.md.
+        let blocks = assemble(&home, &cwd, &[cwd.clone()]).await.unwrap();
+        assert_eq!(blocks.len(), 1, "cwd as extra_dir must be deduped");
+        assert_eq!(blocks[0].source, BlockSource::Project);
+    }
+
+    #[tokio::test]
+    async fn missing_subdir_neoth_md_is_silently_skipped() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        let cwd = dir.path().join("proj");
+        // sub exists as a dir but has no NEOTH.md
+        let sub = dir.path().join("proj/sub");
+        fs::create_dir_all(&home).await.unwrap();
+        fs::create_dir_all(&cwd).await.unwrap();
+        fs::create_dir_all(&sub).await.unwrap();
+        let blocks = assemble(&home, &cwd, &[sub]).await.unwrap();
+        assert!(blocks.is_empty(), "missing NEOTH.md in sub must not error");
+    }
+
+    #[tokio::test]
+    async fn multiple_extra_dirs_all_merged() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        let cwd = dir.path().join("root");
+        let sub_a = dir.path().join("root/a");
+        let sub_b = dir.path().join("root/b");
+        fs::create_dir_all(&home).await.unwrap();
+        fs::create_dir_all(&cwd).await.unwrap();
+        fs::create_dir_all(&sub_a).await.unwrap();
+        fs::create_dir_all(&sub_b).await.unwrap();
+        fs::write(home.join("NEOTH.md"), "Global").await.unwrap();
+        fs::write(sub_a.join("NEOTH.md"), "Sub A rules").await.unwrap();
+        fs::write(sub_b.join("NEOTH.md"), "Sub B rules").await.unwrap();
+
+        let blocks = assemble(&home, &cwd, &[sub_a, sub_b]).await.unwrap();
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].source, BlockSource::Global);
+        assert_eq!(blocks[1].source, BlockSource::SubDir);
+        assert_eq!(blocks[2].source, BlockSource::SubDir);
+        let contents: Vec<&str> = blocks.iter().map(|b| b.content.as_str()).collect();
+        assert!(contents.iter().any(|c| c.contains("Sub A rules")));
+        assert!(contents.iter().any(|c| c.contains("Sub B rules")));
+    }
+
+    #[tokio::test]
+    async fn duplicate_extra_dir_entries_are_deduped() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        let cwd = dir.path().join("root");
+        let sub = dir.path().join("root/sub");
+        fs::create_dir_all(&home).await.unwrap();
+        fs::create_dir_all(&cwd).await.unwrap();
+        fs::create_dir_all(&sub).await.unwrap();
+        fs::write(sub.join("NEOTH.md"), "Sub rules").await.unwrap();
+
+        // Same sub passed twice — should load only once.
+        let blocks = assemble(&home, &cwd, &[sub.clone(), sub.clone()])
+            .await
+            .unwrap();
+        assert_eq!(blocks.len(), 1, "duplicate extra_dir must be deduped");
+        assert_eq!(blocks[0].source, BlockSource::SubDir);
     }
 }

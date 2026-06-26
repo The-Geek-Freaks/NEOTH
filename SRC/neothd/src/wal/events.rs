@@ -1158,6 +1158,18 @@ pub const EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT: u8 = 0x8A;
 /// `HOOK_FIRED`): high-cadence once-hooks do not warrant an fsync per skip.
 pub const EVENT_TYPE_HOOK_SKIPPED_ONCE: u8 = 0x8B;
 
+/// `0x8C SUBDIR_MD_LOADED` — GOLD-CCPARITY-SUBDIR-MD-01. A sub-directory
+/// NEOTH.md was successfully merged into the operator-context block on this
+/// turn via `memory::operator_md::assemble` `extra_dirs` walking. Mirrors
+/// Claude Code's `additionalDirectories` feature.
+///
+/// Payload: `{ "path": "<abs-path>", "bytes": <usize>, "ts_unix": <u64> }`.
+///
+/// Hooks-lifecycle band (0x80..=0x8F). Batchable — advisory, high-cadence,
+/// re-derivable (the sub-dir file can be re-read on next turn); no fsync per
+/// frame (same policy as `HINT_LOADED` 0x58).
+pub const EVENT_TYPE_SUBDIR_MD_LOADED: u8 = 0x8C;
+
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
 /// One event moved from `idx_episode` (hot) into `idx_consolidated` (warm).
@@ -2066,6 +2078,10 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             // GOLD-CCPARITY-ONCE: skip frames are advisory + high-cadence;
             // batch behind the next sync-on-write frame (same policy as HOOK_FIRED).
             | EVENT_TYPE_HOOK_SKIPPED_ONCE
+            // GOLD-CCPARITY-SUBDIR-MD-01: sub-dir md load is advisory +
+            // high-cadence (one per extra_dir per turn); batch behind next
+            // sync-on-write frame (same policy as HINT_LOADED 0x58).
+            | EVENT_TYPE_SUBDIR_MD_LOADED
             | EVENT_TYPE_LOCAL_INFERENCE_START
             | EVENT_TYPE_LOCAL_INFERENCE_END
             // SL-01b gossip diagnostics are high-cadence + re-derivable; batch
@@ -2328,6 +2344,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "onboarding_complete_confirmed",
         EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED,
     ),
+    // GOLD-CCPARITY-SUBDIR-MD-01: sub-dir NEOTH.md merged into operator-context.
+    ("subdir_md_loaded", EVENT_TYPE_SUBDIR_MD_LOADED),
     // PWF-02: session-catchup PreCompact + SessionStart recovery.
     // `neoth wal show --type mode_checkpoint` surfaces every session-start +
     // pre-compact boundary written by the chat/channel pipelines.
@@ -2760,6 +2778,8 @@ const _: () = {
         || EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_SKIPPED_ONCE < 0x80
         || EVENT_TYPE_HOOK_SKIPPED_ONCE > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_SUBDIR_MD_LOADED < 0x80
+        || EVENT_TYPE_SUBDIR_MD_LOADED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]
@@ -3134,6 +3154,7 @@ mod tests {
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),
             ("HOOK_ERROR", EVENT_TYPE_HOOK_ERROR),
             ("HOOK_SKIPPED_ONCE", EVENT_TYPE_HOOK_SKIPPED_ONCE),
+            ("SUBDIR_MD_LOADED", EVENT_TYPE_SUBDIR_MD_LOADED),
             ("SUBAGENT_REVIEW_STAGE", EVENT_TYPE_SUBAGENT_REVIEW_STAGE),
             (
                 "TEACHER_ESCALATION_ATTEMPTED",

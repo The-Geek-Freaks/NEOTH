@@ -53,6 +53,9 @@ pub enum BlockSource {
     Rule,
     /// `~/.neoth/memory/*.md` — typed memories, referenced from `memory/MEMORY.md`.
     Memory,
+    /// Sub-directory NEOTH.md found via nearest-ancestor walk of extra_dirs.
+    /// GOLD-CCPARITY-SUBDIR-MD-01 — mirrors Claude Code's `additionalDirectories`.
+    SubDir,
 }
 
 /// Total length of all assembled blocks in bytes. Cheap helper for the
@@ -74,6 +77,7 @@ pub fn render(blocks: &[MemoryBlock]) -> String {
             BlockSource::Project => "project",
             BlockSource::Rule => "rule",
             BlockSource::Memory => "memory",
+            BlockSource::SubDir => "subdir",
         };
         out.push_str(&format!("## {label}: {}\n", b.path.display()));
         out.push_str(b.content.trim());

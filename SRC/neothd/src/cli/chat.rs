@@ -256,6 +256,22 @@ async fn build_prompt_bundle(
     slash_skill_name: Option<String>,
 ) -> (PromptBundle, FreedomConfig, String, std::path::PathBuf) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    // GOLD-CCPARITY-SUBDIR-MD-01 — resolve extra_dirs from config; relative
+    // paths are joined to cwd so operators can write `packages/core` in
+    // freedom.yaml without needing absolute paths.
+    let extra_dirs: Vec<std::path::PathBuf> = config
+        .memory
+        .operator_md_extra_dirs
+        .iter()
+        .map(|s| {
+            let p = std::path::PathBuf::from(s);
+            if p.is_absolute() {
+                p
+            } else {
+                cwd.join(s)
+            }
+        })
+        .collect();
     let skills_dir = home.join("skills");
     // E-22 chat-route (Session 21, 2026-05-23): swap raw `load_all` for
     // the SkillRegistry path so the chat call goes through the same
@@ -267,18 +283,50 @@ async fn build_prompt_bundle(
     // registry build (no watcher, no shared state).
     let (blocks_res, registry_res) = match crate::skills::registry::global() {
         Some(reg) => {
-            let blocks = crate::memory::operator_md::assemble(&home, &cwd).await;
+            let blocks =
+                crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs).await;
             (blocks, Ok::<_, anyhow::Error>(reg))
         }
         None => {
             let (b, r) = tokio::join!(
-                crate::memory::operator_md::assemble(&home, &cwd),
+                crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs),
                 crate::skills::SkillRegistry::load(&skills_dir),
             );
             (b, r)
         }
     };
     let blocks = blocks_res.unwrap_or_default();
+    // GOLD-CCPARITY-SUBDIR-MD-01 — emit one SUBDIR_MD_LOADED (0x8C) WAL frame
+    // per successfully loaded SubDir block. Callers-emit pattern (same as
+    // HINT_LOADED 0x58): WAL writes stay in cli/ so the pure loader stays
+    // free of writer handles. Best-effort: a failed append logs warn + continues.
+    for b in blocks
+        .iter()
+        .filter(|b| b.source == crate::memory::operator_md::BlockSource::SubDir)
+    {
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "path": b.path.display().to_string(),
+            "bytes": b.content.len(),
+            "ts_unix": now_unix,
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_SUBDIR_MD_LOADED,
+            &payload,
+        )
+        .build();
+        if let Err(e) = writer.append(header, payload).await {
+            tracing::warn!(
+                error = %e,
+                path = %b.path.display(),
+                "SUBDIR_MD_LOADED WAL append failed"
+            );
+        }
+    }
     let rendered_md = if blocks.is_empty() {
         None
     } else {

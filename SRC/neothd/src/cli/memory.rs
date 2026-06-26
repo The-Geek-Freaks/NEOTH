@@ -175,7 +175,7 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
     info!(home = %home.display(), cwd = %cwd.display(), "assembling operator context");
 
-    let blocks = assemble(&home, &cwd).await?;
+    let blocks = assemble(&home, &cwd, &[]).await?;
     if blocks.is_empty() {
         println!(
             "no operator context loaded (no ~/.neoth/NEOTH.md, no rules/, no memory/).\n\
@@ -262,6 +262,7 @@ fn source_label(s: BlockSource) -> &'static str {
         BlockSource::Project => "project",
         BlockSource::Rule => "rule",
         BlockSource::Memory => "memory",
+        BlockSource::SubDir => "subdir",
     }
 }
 
