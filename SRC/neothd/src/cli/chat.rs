@@ -191,6 +191,11 @@ struct PromptBundle {
     /// block can selectively rebuild the system prompt per-agent without
     /// re-running all the async I/O.
     agent_raw_layers: AgentRawLayers,
+    /// GOLD-CCPARITY-MODEL-02 — model resolved from the matched skill's
+    /// `manifest.model` field, or `None` when no skill matched / the
+    /// matched skill carries no per-skill model override.
+    /// Priority chain: Dispatch.model > skill.manifest.model > args.model.
+    resolved_model: Option<String>,
 }
 
 /// GOLD-ADAPT-OH-13 — raw enrichment layer strings, threaded from
@@ -404,12 +409,15 @@ async fn build_prompt_bundle(
     let mut skill_tool_allowlist: Option<Vec<String>> = None;
     // GOLD-ADAPT-OH-13: extended to 3-tuple to capture `delegate_to` from the
     // matched skill manifest without requiring a second scan of `skill_match`.
-    let (skill_layer, used_skill_id, skill_delegate_to): (
+    // GOLD-CCPARITY-MODEL-02: extended to 4-tuple to capture `skill_model`
+    // from the matched skill's `manifest.model` field.
+    let (skill_layer, used_skill_id, skill_delegate_to, skill_model): (
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
     ) = if eval_suppress {
-        (None, None, None)
+        (None, None, None, None)
     } else if let Some(resolved) = mode_hit {
         let parent = installed_skills
             .iter()
@@ -425,11 +433,15 @@ async fn build_prompt_bundle(
         // top of the parent's thin base (shared primitive — same rule as the
         // channel path in serve_pipeline.rs).
         let layer = crate::skills::router::compose_mode_skill_layer(parent, resolved);
+        // GOLD-CCPARITY-MODEL-02: parent skill's model override still applies
+        // when a mode is active — the mode is a behaviour variant of its
+        // parent and inherits the parent's model selection.
+        let model = parent.and_then(|s| s.manifest.model.clone());
         // Mode activation is its own audit path — review-gate
         // dispatching via /agent is the explicit operator path,
         // so no used_skill_id surfaces here (mirrors the prior
         // `_skill_match` discard). Mode paths never carry delegate_to.
-        (layer, None, None)
+        (layer, None, None, model)
     } else {
         // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
         // PF-01 (Session 30): Stage-2 runs when EITHER keyword Stage-1
@@ -492,11 +504,15 @@ async fn build_prompt_bundle(
         let delegate = skill_match
             .as_ref()
             .and_then(|m| m.skill.manifest.delegate_to.clone());
+        // GOLD-CCPARITY-MODEL-02: capture per-skill model override.
+        let model = skill_match
+            .as_ref()
+            .and_then(|m| m.skill.manifest.model.clone());
         // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
         skill_tool_allowlist = skill_match
             .as_ref()
             .map(|m| m.skill.manifest.tool_allowlist.clone());
-        (layer, id, delegate)
+        (layer, id, delegate, model)
     };
     // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
     let mut skill_layer = skill_layer;
@@ -678,6 +694,7 @@ async fn build_prompt_bundle(
             skill_tool_allowlist,
             plan_attest_hash,
             agent_raw_layers,
+            resolved_model: skill_model,
         },
         config,
         prompt,
@@ -706,6 +723,11 @@ enum PreflightOutcome {
         prompt: String,
         quota_path: std::path::PathBuf,
         hooks: Vec<crate::hooks::schema::HookDef>,
+        /// GOLD-CCPARITY-MODEL-02 — agent-level model override extracted from
+        /// `Dispatch.model` in the sub-agent dispatch branch. `None` on
+        /// non-agent turns; the skill-level model is carried separately via
+        /// `PromptBundle::resolved_model` and merged at the call site.
+        resolved_model: Option<String>,
     },
 }
 
@@ -927,8 +949,16 @@ async fn enforce_preflight(
     // in the merged registry (built-ins + `~/.neoth/commands/*.toml`).
     // Matched commands replace the system prompt; the args become the
     // user-facing prompt body. Non-commands pass through untouched.
+    // GOLD-CCPARITY-MODEL-02 — agent-level model override extracted from
+    // Dispatch.model before the dispatch is consumed by the prompt/system build.
+    // This is set to Some(...) only on the agent dispatch path; non-agent
+    // turns carry None here and use skill_model (from PromptBundle) as the
+    // next fallback in the priority chain.
+    let mut preflight_resolved_model: Option<String> = None;
     let (final_prompt, final_system) = if let Some(d) = agent_dispatch {
         info!(agent = %d.agent_name, "sub-agent dispatch");
+        // GOLD-CCPARITY-MODEL-02: capture agent model BEFORE d is moved.
+        preflight_resolved_model = d.model.clone();
         // GOLD-ADAPT-OH-13: emit WAL 0xFC AGENT_DISPATCHED with omit-flags mask.
         {
             let f = &d.omit_flags;
@@ -1180,6 +1210,7 @@ async fn enforce_preflight(
         prompt,
         quota_path,
         hooks,
+        resolved_model: preflight_resolved_model,
     })
 }
 
@@ -1220,6 +1251,10 @@ async fn dispatch_provider(
     predicted_cost: &crate::providers::cost::CostEstimate,
     skill_tool_allowlist: Option<Vec<String>>,
     turn_id: &str,
+    // GOLD-CCPARITY-MODEL-02 — effective model after the priority chain:
+    // Dispatch.model > skill.manifest.model > args.model.
+    // `None` means no override was resolved; falls back to `args.model`.
+    override_model: Option<String>,
 ) -> Result<DispatchOutput> {
     let provider_name = provider.name();
     // GOLD-ADAPT-ODY-27 — wrap the user prompt with the active output-format
@@ -1256,10 +1291,15 @@ async fn dispatch_provider(
     let merged_system = Some(crate::cli::clarify_chat::augment_system(
         crate::providers::context_guards::apply_code_discipline_preamble(final_system.as_deref()),
     ));
+    // GOLD-CCPARITY-MODEL-02: apply the priority chain —
+    // Dispatch.model > skill.manifest.model > args.model.
+    // `override_model` already holds the winner of the first two tiers
+    // (merged at the call site in run_chat_with).
+    let effective_model = override_model.or_else(|| args.model.clone());
     let req = Request {
         prompt: final_prompt.clone(),
         system: merged_system.clone(),
-        model: args.model.clone(),
+        model: effective_model.clone(),
         temperature: args.temperature,
         top_p: args.top_p,
         sampling_seed: args.sampling_seed,
@@ -1292,7 +1332,10 @@ async fn dispatch_provider(
                 let _ = j.append(&TurnEvent::ProviderRequest {
                     ts_unix: ts,
                     provider: provider_name.to_string(),
-                    model: args.model.clone().unwrap_or_default(),
+                    // GOLD-CCPARITY-MODEL-02: log the actual effective model
+                    // (agent/skill override wins over args.model) so the audit
+                    // trace accurately reflects which model was used this turn.
+                    model: effective_model.clone().unwrap_or_default(),
                 });
                 Some(j)
             }
@@ -3168,6 +3211,7 @@ pub async fn run_chat_with(
             skill_tool_allowlist,
             plan_attest_hash,
             agent_raw_layers,
+            resolved_model: skill_model,
         },
         config,
         prompt,
@@ -3184,6 +3228,7 @@ pub async fn run_chat_with(
         prompt,
         quota_path,
         hooks,
+        agent_model,
     ) = match enforce_preflight(
         combined_system,
         prompt,
@@ -3209,6 +3254,7 @@ pub async fn run_chat_with(
             prompt,
             quota_path,
             hooks,
+            resolved_model,
         } => (
             writer,
             writer_join,
@@ -3219,8 +3265,16 @@ pub async fn run_chat_with(
             prompt,
             quota_path,
             hooks,
+            resolved_model,
         ),
     };
+    // GOLD-CCPARITY-MODEL-02 — merge the model priority chain:
+    //   agent override (from Dispatch.model) > skill override (from
+    //   skill.manifest.model) > operator default (args.model).
+    // `agent_model` and `skill_model` are both Option<String>; the first
+    // Some wins. `dispatch_provider` receives the pre-resolved winner and
+    // applies it to the Request — args.model is never mutated.
+    let effective_model = agent_model.or(skill_model);
     let DispatchOutput {
         response_text,
         final_input_tokens,
@@ -3246,6 +3300,7 @@ pub async fn run_chat_with(
         skill_tool_allowlist,
         // F4/D21 — turn id = the WAL event id, hex; filesystem-safe + unique/turn.
         &format!("{raw_event_id:016x}"),
+        effective_model,
     )
     .await?;
 
@@ -8160,6 +8215,162 @@ mod tests {
         assert!(out.starts_with("Operator role: solo dev.\n"));
         assert!(out.contains("BCP-47 'zh-CN'"));
         assert!(out.ends_with("\n\n# NEOTH.md body"));
+    }
+
+    // ── GOLD-CCPARITY-MODEL-02: dispatch_provider model-override tests ───────
+
+    /// Provider that captures the `model` field of the last Request it received.
+    /// Distinct from `SystemCapturingProvider` (captures system) — we need model.
+    struct ModelCapturingProvider {
+        seen_model: std::sync::Arc<std::sync::Mutex<Option<Option<String>>>>,
+    }
+
+    #[async_trait]
+    impl Provider for ModelCapturingProvider {
+        fn name(&self) -> &'static str {
+            "model-capture"
+        }
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            *self.seen_model.lock().unwrap() = Some(req.model.clone());
+            Ok(Completion {
+                text: "model-captured".into(),
+                model: req.model.clone().unwrap_or_else(|| "default".into()),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+            })
+        }
+    }
+
+    /// Helper: run dispatch_provider with the given override_model and args.model,
+    /// return the model field the provider saw.
+    async fn run_dispatch_capture_model(
+        override_model: Option<String>,
+        args_model: Option<String>,
+    ) -> Option<String> {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("test.wal");
+        let quota_path = dir.path().join("quota.json");
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let provider = ModelCapturingProvider {
+            seen_model: seen.clone(),
+        };
+
+        let args = ChatArgs {
+            message: Some("test prompt".to_string()),
+            model: args_model,
+            system: None,
+            edit: false,
+            config: None,
+            wal_segment: None,
+            stream: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+        };
+
+        let config = FreedomConfig::default();
+        let cost = crate::providers::cost::CostEstimate {
+            input_tokens: 1,
+            output_tokens_est: 1,
+            input_eur: 0.0,
+            output_eur: 0.0,
+            total_eur: 0.0,
+        };
+
+        let (writer, writer_join) = wal_spawn(seg).expect("wal_spawn");
+        let result = dispatch_provider(
+            "test prompt".to_string(),
+            None,
+            &args,
+            &provider,
+            &config,
+            writer,
+            writer_join,
+            quota_path,
+            "test prompt",
+            &cost,
+            None,
+            "0000000000000001",
+            override_model,
+        )
+        .await;
+
+        match result {
+            Ok(_) => {
+                // The provider recorded what model it saw.
+                seen.lock()
+                    .unwrap()
+                    .clone()
+                    .expect("provider must have been called")
+            }
+            // If dispatch_provider bails for an unrelated reason, fall
+            // through — tests below guard specific model values.
+            Err(_) => seen.lock().unwrap().clone().flatten(),
+        }
+    }
+
+    #[tokio::test]
+    async fn model_override_skill_wins_over_none_args_model() {
+        // skill.manifest.model = Some("claude-haiku-4-5"), args.model = None
+        // → Request.model == Some("claude-haiku-4-5")
+        let seen = run_dispatch_capture_model(
+            Some("claude-haiku-4-5".to_string()),
+            None,
+        )
+        .await;
+        assert_eq!(
+            seen.as_deref(),
+            Some("claude-haiku-4-5"),
+            "skill model override must reach the provider when args.model is None"
+        );
+    }
+
+    #[tokio::test]
+    async fn model_override_args_model_wins_when_no_override() {
+        // override_model = None, args.model = Some("claude-opus-4-7")
+        // → Request.model == Some("claude-opus-4-7")
+        let seen = run_dispatch_capture_model(
+            None,
+            Some("claude-opus-4-7".to_string()),
+        )
+        .await;
+        assert_eq!(
+            seen.as_deref(),
+            Some("claude-opus-4-7"),
+            "args.model must be used when override_model is None"
+        );
+    }
+
+    #[tokio::test]
+    async fn model_override_wins_over_args_model() {
+        // override_model = Some("claude-haiku-4-5"), args.model = Some("claude-opus-4-7")
+        // → Request.model == Some("claude-haiku-4-5") (override wins)
+        let seen = run_dispatch_capture_model(
+            Some("claude-haiku-4-5".to_string()),
+            Some("claude-opus-4-7".to_string()),
+        )
+        .await;
+        assert_eq!(
+            seen.as_deref(),
+            Some("claude-haiku-4-5"),
+            "override_model must beat args.model (agent/skill > default)"
+        );
+    }
+
+    #[tokio::test]
+    async fn model_override_both_none_yields_none() {
+        // override_model = None, args.model = None → Request.model == None
+        // (backward compat: providers use their own default)
+        let seen = run_dispatch_capture_model(None, None).await;
+        assert!(
+            seen.is_none(),
+            "both None must yield None model in Request (backward compat)"
+        );
     }
 }
 

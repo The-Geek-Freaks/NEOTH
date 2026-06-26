@@ -64,6 +64,14 @@ pub struct SkillManifest {
     /// the enrichment rebuild to prevent double-injection.
     #[serde(default)]
     pub delegate_to: Option<String>,
+    /// GOLD-CCPARITY-MODEL-02 — per-skill model override. When set, any turn
+    /// that activates this skill routes through the named model instead of
+    /// the operator's default `args.model`. Priority chain (highest first):
+    ///   Dispatch.model (agent) > skill.manifest.model > args.model
+    /// Accepts any model id string the active provider understands
+    /// (e.g. `"claude-haiku-4-5"`, `"gpt-4o-mini"`). `None` = use default.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// QM-3 mode-spectrum enum. Controls how template-heavy the output
@@ -215,6 +223,12 @@ impl Skill {
     /// resolver. `None` opts the skill out of auto-update probes.
     pub fn source(&self) -> Option<&str> {
         self.manifest.source.as_deref()
+    }
+
+    /// GOLD-CCPARITY-MODEL-02 — per-skill model override, or `None` when
+    /// the skill defers to the operator's default provider model.
+    pub fn model(&self) -> Option<&str> {
+        self.manifest.model.as_deref()
     }
 }
 
@@ -384,6 +398,7 @@ system_prompt: "do stuff"
             modes: vec![],
             enabled: true,
             delegate_to: None,
+            model: None,
         };
         let s = Skill {
             manifest,
@@ -394,5 +409,59 @@ system_prompt: "do stuff"
         assert_eq!(s.tags(), &["one".to_string(), "two".to_string()]);
         assert_eq!(s.homepage(), Some("https://x"));
         assert!(s.is_enabled());
+        assert!(s.model().is_none());
+    }
+
+    // ── GOLD-CCPARITY-MODEL-02 model field tests ──────────────────────────
+
+    #[test]
+    fn model_field_parses_from_yaml() {
+        let yaml = r#"
+id: fast-skill
+description: uses haiku
+trigger_keywords: ["quick"]
+system_prompt: "be fast"
+model: claude-haiku-4-5
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(m.model.as_deref(), Some("claude-haiku-4-5"));
+    }
+
+    #[test]
+    fn model_field_defaults_to_none_when_absent() {
+        let yaml = r#"
+id: default-skill
+description: no model override
+trigger_keywords: ["default"]
+system_prompt: "use default model"
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert!(m.model.is_none(), "model field should default to None");
+    }
+
+    #[test]
+    fn skill_model_accessor_proxies_manifest() {
+        let manifest = SkillManifest {
+            id: "m".into(),
+            description: "d".into(),
+            version: "1.0.0".into(),
+            trigger_keywords: vec![],
+            system_prompt: "p".into(),
+            tool_allowlist: vec![],
+            author: None,
+            tags: vec![],
+            homepage: None,
+            source: None,
+            modes: vec![],
+            enabled: true,
+            delegate_to: None,
+            model: Some("claude-opus-4-7".into()),
+        };
+        let s = Skill {
+            manifest,
+            path: std::path::PathBuf::from("/tmp/m"),
+            content_hash: String::new(),
+        };
+        assert_eq!(s.model(), Some("claude-opus-4-7"));
     }
 }

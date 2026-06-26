@@ -166,6 +166,7 @@ mod tests {
                 modes,
                 enabled: true,
                 delegate_to: None,
+                model: None,
             },
             path: PathBuf::from(format!("<test>/{id}/skill.yaml")),
             content_hash: String::new(),

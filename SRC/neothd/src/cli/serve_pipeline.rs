@@ -1027,10 +1027,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // deployment model bypassed the gate `neoth chat` enforced.
             // A mode is a behaviour variant of its parent skill, so the
             // PARENT skill's allowlist still applies when a mode is active.
-            let (mut skill_layer, used_skill_id, channel_skill_allowlist): (
+            // GOLD-CCPARITY-MODEL-02: expanded to 4-tuple to capture per-skill
+            // model override from the matched skill's `manifest.model` field.
+            let (mut skill_layer, used_skill_id, channel_skill_allowlist, channel_skill_model): (
                 Option<String>,
                 Option<String>,
                 Option<Vec<String>>,
+                Option<String>,
             ) = if let Some(resolved) = mode_hit {
                 let parent = installed_skills
                     .iter()
@@ -1046,7 +1049,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // CLI path in cli/chat.rs, so the two can't drift).
                 let layer = crate::skills::router::compose_mode_skill_layer(parent, resolved);
                 let allowlist = channel_skill_allowlist(parent);
-                (layer, None, allowlist)
+                // GOLD-CCPARITY-MODEL-02: parent skill's model override applies
+                // when a mode is active (mode inherits parent skill model).
+                let skill_model = parent.and_then(|s| s.manifest.model.clone());
+                (layer, None, allowlist, skill_model)
             } else {
                 // Full-auto mode raises the Stage-1 confidence floor so the
                 // now-fully-populated skill library can't false-activate on a
@@ -1078,8 +1084,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .as_ref()
                     .map(|m| m.skill.system_prompt().to_string());
                 let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+                // GOLD-CCPARITY-MODEL-02: capture skill model BEFORE passing
+                // skill_match ref to channel_skill_allowlist to avoid reborrow.
+                let skill_model = skill_match
+                    .as_ref()
+                    .and_then(|m| m.skill.manifest.model.clone());
                 let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
-                (layer, id, allowlist)
+                (layer, id, allowlist, skill_model)
             };
 
             let channel_mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
@@ -1515,7 +1526,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 system: system_override
                     .clone()
                     .map(crate::cli::clarify_chat::augment_system),
-                model: None,
+                // GOLD-CCPARITY-MODEL-02: apply per-skill model override on the
+                // channel path. The channel path has no agent dispatch, so only
+                // the skill tier of the priority chain applies here.
+                model: channel_skill_model,
                 ..Default::default()
             };
             // K-Wire-3 v2 2026-05-17: council smart-trigger for channels.

@@ -97,6 +97,7 @@ fn skill_with_allowlist(id: &str, kws: &[&str], allow: &[&str]) -> crate::skills
             modes: vec![],
             enabled: true,
             delegate_to: None,
+            model: None,
         },
         path: std::path::PathBuf::from(format!("/tmp/{id}/skill.yaml")),
         content_hash: String::new(),

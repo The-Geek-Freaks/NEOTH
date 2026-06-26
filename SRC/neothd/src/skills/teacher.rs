@@ -225,6 +225,7 @@ fn write_skill_md(skill_id: &str, corrected_text: &str) -> Result<()> {
         modes: vec![],
         enabled: true,
         delegate_to: None,
+        model: None,
     };
 
     let yaml = serde_yaml::to_string(&manifest)?;
