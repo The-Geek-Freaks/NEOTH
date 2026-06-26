@@ -199,6 +199,14 @@ pub(crate) fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<
         many => many.join(", "),
     };
     println!("  Channel:   {channel_line}");
+    // JV-IMP-08: surface import intent so migration operators see it confirmed.
+    if let Some(ref p) = state.import_memory {
+        println!(
+            "  Import:    {} (run `neoth-migrate dry-run --manifest {}` to preview)",
+            p.display(),
+            p.display()
+        );
+    }
     // Pick #34 (Session 14, operator-flow audit-fix Flow#1): surface
     // the consent-gate requirement BEFORE the operator runs `neoth
     // chat` and hits the consent-prompt cold. The gate exists for

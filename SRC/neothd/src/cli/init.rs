@@ -1963,6 +1963,45 @@ mod tests {
         );
     }
 
+    // --- JV-IMP-08: import intent surfaces in freedom.yaml ---
+
+    #[tokio::test]
+    async fn step6f_import_intent_surfaces_in_freedom_yaml() {
+        // Proves the full path:
+        //   --import-memory flag
+        //   → step6f records state.import_memory
+        //   → write_config serialises it to freedom.yaml
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("my-manifest.yaml");
+        std::fs::write(&manifest, "sources: []\n").unwrap();
+
+        let mut state = fixture_state();
+        // Clear import_memory so fixture_state's pre-populated value doesn't interfere.
+        state.import_memory = None;
+        let args = args_with_flag(|a| a.import_memory = Some(manifest.clone()));
+
+        // Step records intent and pushes the step marker.
+        step6f_import_memory(&args, false, &mut state).unwrap();
+        assert_eq!(state.import_memory.as_ref(), Some(&manifest));
+        assert!(
+            state
+                .steps_completed
+                .contains(&(WizardStep::ImportMemory as u8)),
+            "ImportMemory step marker must be pushed"
+        );
+
+        // write_config persists the path to freedom.yaml.
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_dir).unwrap();
+        write_config(&neoth_dir, &state).await.unwrap();
+
+        let yaml = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
+        assert!(
+            yaml.contains("import_memory"),
+            "freedom.yaml must contain the import_memory field; got:\n{yaml}"
+        );
+    }
+
     // --- GOLD-HON-10: step 1d onboarding mode (new vs migration) ---
 
     #[test]

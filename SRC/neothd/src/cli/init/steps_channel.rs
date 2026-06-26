@@ -504,7 +504,8 @@ pub(crate) fn step6f_import_memory(
             let raw: String =
                 dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt(
-                        "  Path to your import-manifest.yaml (see the neoth-migrate examples)",
+                        "  Path to your import-manifest.yaml \
+                         (schema: neoth-migrate/examples/import-manifest.example.yaml)",
                     )
                     .allow_empty(true)
                     .interact_text()
@@ -542,8 +543,14 @@ pub(crate) fn step6f_import_memory(
         {
             println!();
             println!("  Intent recorded. Run the migration when ready:");
-            println!("      $ neoth-migrate dry-run");
-            println!("      $ neoth-migrate apply --confirm");
+            println!(
+                "      $ neoth-migrate dry-run --manifest {}",
+                path.display()
+            );
+            println!(
+                "      $ neoth-migrate apply  --manifest {} --confirm",
+                path.display()
+            );
             println!(
                 "  The wizard never auto-applies — migration writes WAL frames you can't undo."
             );

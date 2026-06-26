@@ -13,11 +13,31 @@
 #   json_dir       — a directory of .json / .ajson files
 #   json_file      — a single .json file
 #   sqlite         — a .db file (or a directory containing one)
-#   lance_arrow    — a LanceDB directory (counts datasets)
-#   git_tree       — a directory of git repos (counts repos)
-#   faiss_flat     — a directory of .bin flat-vector files
+#   lance_arrow    — a LanceDB directory (counts datasets, SCAN-ONLY — apply is a no-op)
+#   git_tree       — a directory of git repos (counts repos, SCAN-ONLY — apply is a no-op)
+#   faiss_flat     — a directory of .bin flat-vector files (SCAN-ONLY — apply is a no-op)
 #
-# `hint` is optional and only shown in the dry-run report.
+# `hint` is optional and serves two mutually-exclusive purposes:
+#
+#   1. Sub-format discriminator (sqlite kind only) — tells the reader which
+#      schema the .db file follows so it can extract the right tables:
+#        hint: "hermes"      — Hermes / neothd memory store
+#        hint: "openhuman"   — OpenHuman sqlite exports
+#        hint: "cq-commons"  — CQ-Commons knowledge DB
+#        hint: "veronica"    — Veronica assistant DB
+#      Without a hint the sqlite reader attempts a generic key/value scan.
+#
+#   2. Scope override (all kinds) — prefix "scope:" to pin where imported
+#      claims land in idx_groundtruth instead of defaulting to "global":
+#        hint: "scope:global"     — store in the global scope (default)
+#        hint: "scope:host:myhostname" — restrict to a specific host scope
+#      The "scope:" prefix is stripped before writing; the remainder is the
+#      scope tag. A hint that does NOT start with "scope:" is treated as a
+#      sub-format key (case 1 above) and scope defaults to "global".
+#
+#   NOTE: sub-format key and scope override are mutually exclusive per source.
+#   If you need both (e.g. Hermes DB in a non-global scope), split the source
+#   into two entries using a wrapper script that exports to a JSON file first.
 
 sources:
   - name: notes_vault
