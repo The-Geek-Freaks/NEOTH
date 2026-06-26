@@ -81,6 +81,21 @@ pub struct SkillManifest {
     /// Windows). When unset, all path-gated skills activate normally.
     #[serde(default)]
     pub paths: Vec<String>,
+    /// GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget override.
+    /// When set, any turn that activates this skill overrides
+    /// `MAX_THINKING_TOKENS` to the corresponding token count before the
+    /// provider spawn, making the model spend more (or less) thinking budget
+    /// on this skill's domain. `None` = use the provider default (10 000).
+    ///
+    /// Valid YAML values: `low` (1 024), `medium` (4 096),
+    /// `high` (16 384), `max` (32 000).
+    ///
+    /// Example `skill.yaml`:
+    /// ```yaml
+    /// effort: high
+    /// ```
+    #[serde(default)]
+    pub effort: Option<crate::providers::effort_override::EffortBudget>,
 }
 
 /// QM-3 mode-spectrum enum. Controls how template-heavy the output
@@ -244,6 +259,12 @@ impl Skill {
     /// Empty slice means the skill is always eligible (no path gate).
     pub fn paths(&self) -> &[String] {
         &self.manifest.paths
+    }
+
+    /// GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget from the
+    /// skill manifest. `None` means the provider default applies.
+    pub fn effort(&self) -> Option<crate::providers::effort_override::EffortBudget> {
+        self.manifest.effort
     }
 }
 
@@ -415,6 +436,7 @@ system_prompt: "do stuff"
             delegate_to: None,
             model: None,
             paths: vec![],
+            effort: None,
         };
         let s = Skill {
             manifest,
@@ -502,6 +524,7 @@ system_prompt: "do stuff"
             delegate_to: None,
             model: None,
             paths: vec!["**/*.rs".into()],
+            effort: None,
         };
         let s = Skill {
             manifest,
@@ -529,6 +552,7 @@ system_prompt: "do stuff"
             delegate_to: None,
             model: Some("claude-opus-4-7".into()),
             paths: vec![],
+            effort: None,
         };
         let s = Skill {
             manifest,
@@ -536,5 +560,64 @@ system_prompt: "do stuff"
             content_hash: String::new(),
         };
         assert_eq!(s.model(), Some("claude-opus-4-7"));
+    }
+
+    // ── GOLD-CCPARITY-EFFORT-03 schema tests ─────────────────────────────────
+
+    #[test]
+    fn effort_field_parses_high_from_yaml() {
+        let yaml = r#"
+id: deep-think
+description: high reasoning skill
+trigger_keywords: ["analyze"]
+system_prompt: "think deeply"
+effort: high
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(
+            m.effort,
+            Some(crate::providers::effort_override::EffortBudget::High)
+        );
+    }
+
+    #[test]
+    fn effort_field_defaults_to_none_when_absent() {
+        let yaml = r#"
+id: quick-skill
+description: no effort override
+trigger_keywords: ["quick"]
+system_prompt: "be quick"
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert!(m.effort.is_none(), "effort must default to None");
+    }
+
+    #[test]
+    fn effort_accessor_proxies_manifest() {
+        use crate::providers::effort_override::EffortBudget;
+        let manifest = SkillManifest {
+            id: "e".into(),
+            description: "d".into(),
+            version: "1.0.0".into(),
+            trigger_keywords: vec![],
+            system_prompt: "p".into(),
+            tool_allowlist: vec![],
+            author: None,
+            tags: vec![],
+            homepage: None,
+            source: None,
+            modes: vec![],
+            enabled: true,
+            delegate_to: None,
+            model: None,
+            paths: vec![],
+            effort: Some(EffortBudget::Max),
+        };
+        let s = Skill {
+            manifest,
+            path: std::path::PathBuf::from("/tmp/e"),
+            content_hash: String::new(),
+        };
+        assert_eq!(s.effort(), Some(EffortBudget::Max));
     }
 }

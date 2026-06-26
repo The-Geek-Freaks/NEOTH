@@ -1081,6 +1081,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             stop_sequences: Vec::new(),
+            thinking_budget: None,
         };
         let resp = adapter.complete(req).await.expect("Ouro completion");
         assert!(!resp.text.is_empty(), "completion must produce text");
@@ -1115,6 +1116,7 @@ mod tests {
             top_p: None,
             sampling_seed: Some(7),
             stop_sequences: Vec::new(),
+            thinking_budget: None,
         };
         let resp = adapter.complete(req).await.expect("Ouro completion");
         let text = resp.text.trim();
@@ -1156,6 +1158,7 @@ mod tests {
             top_p: None,
             sampling_seed: Some(7),
             stop_sequences: Vec::new(),
+            thinking_budget: None,
         };
         // Baseline — full_resequence (default; ensure the var is unset).
         // Hold the env lock across the entire complete() call so no
@@ -1277,6 +1280,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             stop_sequences: Vec::new(),
+            thinking_budget: None,
         };
         let mut stream = adapter.stream(req).await.expect("Ouro stream");
         let mut chunks = 0;

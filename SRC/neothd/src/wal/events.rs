@@ -1051,6 +1051,14 @@ pub const EVENT_TYPE_KANBAN_TASK_PROGRESS: u8 = 0x77;
 /// Immediate-sync: dependency graph changes are audit-critical.
 pub const EVENT_TYPE_KANBAN_TASK_DEP_ADDED: u8 = 0x78;
 
+/// `0x7A SKILL_EFFORT_APPLIED` — GOLD-CCPARITY-EFFORT-03. A per-skill
+/// reasoning-budget was applied to a turn. Emitted best-effort in
+/// `dispatch_provider` (cli/chat.rs) before the provider spawn when
+/// `req.thinking_budget` is `Some`. Payload:
+/// `{effort: str, budget_tokens: u32, ts_unix: i64}`.
+/// `effort` is one of `low` / `medium` / `high` / `max`.
+pub const EVENT_TYPE_SKILL_EFFORT_APPLIED: u8 = 0x7A;
+
 /// `0x79 KANBAN_TASK_DEP_REMOVED` — GOLD-ADAPT-HERMES-08. A dependency
 /// edge between two tasks was removed. Payload:
 /// `{task_id, depends_on_task_id, ts}`.
@@ -2871,6 +2879,9 @@ const _: () = {
         || EVENT_TYPE_KANBAN_TASK_DEP_ADDED > 0x7F) as usize];
     let _ = [(); 1][(EVENT_TYPE_KANBAN_TASK_DEP_REMOVED < 0x70
         || EVENT_TYPE_KANBAN_TASK_DEP_REMOVED > 0x7F) as usize];
+    // GOLD-CCPARITY-EFFORT-03: 0x7A SKILL_EFFORT_APPLIED in coding-workflow band.
+    let _ = [(); 1][(EVENT_TYPE_SKILL_EFFORT_APPLIED < 0x70
+        || EVENT_TYPE_SKILL_EFFORT_APPLIED > 0x7F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0

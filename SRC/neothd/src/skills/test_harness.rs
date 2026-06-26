@@ -203,6 +203,7 @@ mod tests {
                 delegate_to: None,
                 model: None,
                 paths: vec![],
+                effort: None,
             },
             path: PathBuf::from("/tmp/test-skill/skill.yaml"),
             content_hash: String::new(),

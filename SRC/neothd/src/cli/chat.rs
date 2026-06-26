@@ -196,6 +196,11 @@ struct PromptBundle {
     /// matched skill carries no per-skill model override.
     /// Priority chain: Dispatch.model > skill.manifest.model > args.model.
     resolved_model: Option<String>,
+    /// GOLD-CCPARITY-EFFORT-03 — per-skill effort/reasoning-budget resolved
+    /// from the matched skill's `manifest.effort` field. `None` = provider
+    /// default (10 000 tokens). Threaded to `dispatch_provider` which maps
+    /// it to `req.thinking_budget` before the provider spawn.
+    resolved_effort: Option<crate::providers::effort_override::EffortBudget>,
 }
 
 /// GOLD-ADAPT-OH-13 — raw enrichment layer strings, threaded from
@@ -426,13 +431,17 @@ async fn build_prompt_bundle(
     // matched skill manifest without requiring a second scan of `skill_match`.
     // GOLD-CCPARITY-MODEL-02: extended to 4-tuple to capture `skill_model`
     // from the matched skill's `manifest.model` field.
-    let (skill_layer, used_skill_id, skill_delegate_to, skill_model): (
+    // GOLD-CCPARITY-EFFORT-03: extended to 5-tuple to capture `skill_effort`
+    // from the matched skill's `manifest.effort` field.
+    #[allow(clippy::type_complexity)]
+    let (skill_layer, used_skill_id, skill_delegate_to, skill_model, skill_effort): (
         Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<crate::providers::effort_override::EffortBudget>,
     ) = if eval_suppress {
-        (None, None, None, None)
+        (None, None, None, None, None)
     } else if let Some(resolved) = mode_hit {
         let parent = installed_skills
             .iter()
@@ -452,11 +461,14 @@ async fn build_prompt_bundle(
         // when a mode is active — the mode is a behaviour variant of its
         // parent and inherits the parent's model selection.
         let model = parent.and_then(|s| s.manifest.model.clone());
+        // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
+        // when a mode is active — mode inherits parent effort setting.
+        let effort = parent.and_then(|s| s.manifest.effort);
         // Mode activation is its own audit path — review-gate
         // dispatching via /agent is the explicit operator path,
         // so no used_skill_id surfaces here (mirrors the prior
         // `_skill_match` discard). Mode paths never carry delegate_to.
-        (layer, None, None, model)
+        (layer, None, None, model, effort)
     } else {
         // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
         // PF-01 (Session 30): Stage-2 runs when EITHER keyword Stage-1
@@ -530,11 +542,15 @@ async fn build_prompt_bundle(
         let model = skill_match
             .as_ref()
             .and_then(|m| m.skill.manifest.model.clone());
+        // GOLD-CCPARITY-EFFORT-03: capture per-skill effort/reasoning-budget.
+        let effort = skill_match
+            .as_ref()
+            .and_then(|m| m.skill.manifest.effort);
         // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
         skill_tool_allowlist = skill_match
             .as_ref()
             .map(|m| m.skill.manifest.tool_allowlist.clone());
-        (layer, id, delegate, model)
+        (layer, id, delegate, model, effort)
     };
     // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
     let mut skill_layer = skill_layer;
@@ -717,6 +733,8 @@ async fn build_prompt_bundle(
             plan_attest_hash,
             agent_raw_layers,
             resolved_model: skill_model,
+            // GOLD-CCPARITY-EFFORT-03: thread the per-skill effort to dispatch_provider.
+            resolved_effort: skill_effort,
         },
         config,
         prompt,
@@ -1277,6 +1295,9 @@ async fn dispatch_provider(
     // Dispatch.model > skill.manifest.model > args.model.
     // `None` means no override was resolved; falls back to `args.model`.
     override_model: Option<String>,
+    // GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget. `None` = provider
+    // default. Mapped to `req.thinking_budget` before provider spawn.
+    override_effort: Option<crate::providers::effort_override::EffortBudget>,
 ) -> Result<DispatchOutput> {
     let provider_name = provider.name();
     // GOLD-ADAPT-ODY-27 — wrap the user prompt with the active output-format
@@ -1318,6 +1339,30 @@ async fn dispatch_provider(
     // `override_model` already holds the winner of the first two tiers
     // (merged at the call site in run_chat_with).
     let effective_model = override_model.or_else(|| args.model.clone());
+    // GOLD-CCPARITY-EFFORT-03: map the per-skill effort variant to a
+    // concrete token count and store it on the Request so the provider
+    // (claude_cli) can inject MAX_THINKING_TOKENS before spawning.
+    let thinking_budget =
+        override_effort.map(crate::providers::effort_override::effort_to_tokens);
+    // Best-effort WAL audit before the provider spawn — emit SKILL_EFFORT_APPLIED
+    // (0x7A) when an effort override is active so the operator can audit which
+    // skill drove the reasoning-budget change. Non-fatal: WAL errors are
+    // logged-and-ignored consistent with the rest of dispatch_provider.
+    if let Some(budget_tokens) = thinking_budget {
+        use crate::wal::events::EVENT_TYPE_SKILL_EFFORT_APPLIED;
+        let ts = crate::time::now_unix_i64();
+        let effort_str = override_effort
+            .map(|e| e.as_str())
+            .unwrap_or("none");
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "effort": effort_str,
+            "budget_tokens": budget_tokens,
+            "ts_unix": ts,
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::make_header(EVENT_TYPE_SKILL_EFFORT_APPLIED, &payload);
+        let _ = writer.append(header, payload).await;
+    }
     let req = Request {
         prompt: final_prompt.clone(),
         system: merged_system.clone(),
@@ -1326,6 +1371,8 @@ async fn dispatch_provider(
         top_p: args.top_p,
         sampling_seed: args.sampling_seed,
         stop_sequences: Vec::new(),
+        // GOLD-CCPARITY-EFFORT-03: per-call thinking-budget override.
+        thinking_budget,
     };
 
     let started = std::time::Instant::now();
@@ -3234,6 +3281,8 @@ pub async fn run_chat_with(
             plan_attest_hash,
             agent_raw_layers,
             resolved_model: skill_model,
+            // GOLD-CCPARITY-EFFORT-03: per-skill effort resolved in build_prompt_bundle.
+            resolved_effort: skill_effort,
         },
         config,
         prompt,
@@ -3323,6 +3372,8 @@ pub async fn run_chat_with(
         // F4/D21 — turn id = the WAL event id, hex; filesystem-safe + unique/turn.
         &format!("{raw_event_id:016x}"),
         effective_model,
+        // GOLD-CCPARITY-EFFORT-03: per-skill reasoning-budget (None = provider default).
+        skill_effort,
     )
     .await?;
 
@@ -8319,6 +8370,8 @@ mod tests {
             None,
             "0000000000000001",
             override_model,
+            // GOLD-CCPARITY-EFFORT-03: no effort override in model-capture tests.
+            None,
         )
         .await;
 
@@ -8392,6 +8445,151 @@ mod tests {
         assert!(
             seen.is_none(),
             "both None must yield None model in Request (backward compat)"
+        );
+    }
+
+    // ── GOLD-CCPARITY-EFFORT-03: dispatch_provider effort-override tests ─────
+
+    /// Provider that captures the `thinking_budget` field of the Request.
+    /// Mirrors `ModelCapturingProvider` pattern — same shape, different field.
+    struct EffortCapturingProvider {
+        seen_budget: std::sync::Arc<std::sync::Mutex<Option<Option<u32>>>>,
+    }
+
+    #[async_trait]
+    impl Provider for EffortCapturingProvider {
+        fn name(&self) -> &'static str {
+            "effort-capture"
+        }
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            *self.seen_budget.lock().unwrap() = Some(req.thinking_budget);
+            Ok(Completion {
+                text: "effort-captured".into(),
+                model: "effort-capture".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+            })
+        }
+    }
+
+    /// Helper: run dispatch_provider with `override_effort`, return the
+    /// `thinking_budget` the provider saw on the Request.
+    async fn run_dispatch_capture_effort(
+        override_effort: Option<crate::providers::effort_override::EffortBudget>,
+    ) -> Option<u32> {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("effort_test.wal");
+        let quota_path = dir.path().join("quota.json");
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let provider = EffortCapturingProvider {
+            seen_budget: seen.clone(),
+        };
+
+        let args = ChatArgs {
+            message: Some("effort test".to_string()),
+            model: None,
+            system: None,
+            edit: false,
+            config: None,
+            wal_segment: None,
+            stream: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+        };
+
+        let config = FreedomConfig::default();
+        let cost = crate::providers::cost::CostEstimate {
+            input_tokens: 1,
+            output_tokens_est: 1,
+            input_eur: 0.0,
+            output_eur: 0.0,
+            total_eur: 0.0,
+        };
+
+        let (writer, writer_join) = wal_spawn(seg).expect("wal_spawn");
+        let result = dispatch_provider(
+            "effort test".to_string(),
+            None,
+            &args,
+            &provider,
+            &config,
+            writer,
+            writer_join,
+            quota_path,
+            "effort test",
+            &cost,
+            None,
+            "0000000000000002",
+            None, // override_model
+            override_effort,
+        )
+        .await;
+
+        match result {
+            Ok(_) => seen
+                .lock()
+                .unwrap()
+                .expect("provider must have been called"),
+            Err(_) => seen.lock().unwrap().flatten(),
+        }
+    }
+
+    #[tokio::test]
+    async fn effort_high_maps_to_16384_tokens_in_dispatch() {
+        use crate::providers::effort_override::EffortBudget;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::High)).await;
+        assert_eq!(
+            budget,
+            Some(16_384),
+            "EffortBudget::High must produce thinking_budget=16384 on Request"
+        );
+    }
+
+    #[tokio::test]
+    async fn effort_low_maps_to_1024_tokens_in_dispatch() {
+        use crate::providers::effort_override::EffortBudget;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::Low)).await;
+        assert_eq!(
+            budget,
+            Some(1_024),
+            "EffortBudget::Low must produce thinking_budget=1024 on Request"
+        );
+    }
+
+    #[tokio::test]
+    async fn effort_medium_maps_to_4096_tokens_in_dispatch() {
+        use crate::providers::effort_override::EffortBudget;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::Medium)).await;
+        assert_eq!(
+            budget,
+            Some(4_096),
+            "EffortBudget::Medium must produce thinking_budget=4096 on Request"
+        );
+    }
+
+    #[tokio::test]
+    async fn effort_max_maps_to_32000_tokens_in_dispatch() {
+        use crate::providers::effort_override::EffortBudget;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::Max)).await;
+        assert_eq!(
+            budget,
+            Some(32_000),
+            "EffortBudget::Max must produce thinking_budget=32000 on Request"
+        );
+    }
+
+    #[tokio::test]
+    async fn effort_none_yields_no_thinking_budget_in_dispatch() {
+        let budget = run_dispatch_capture_effort(None).await;
+        assert_eq!(
+            budget, None,
+            "override_effort=None must leave thinking_budget=None (backward compat)"
         );
     }
 }

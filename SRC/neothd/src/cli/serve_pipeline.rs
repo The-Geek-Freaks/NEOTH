@@ -1029,11 +1029,21 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // PARENT skill's allowlist still applies when a mode is active.
             // GOLD-CCPARITY-MODEL-02: expanded to 4-tuple to capture per-skill
             // model override from the matched skill's `manifest.model` field.
-            let (mut skill_layer, used_skill_id, channel_skill_allowlist, channel_skill_model): (
+            // GOLD-CCPARITY-EFFORT-03: expanded to 5-tuple to capture per-skill
+            // effort/reasoning-budget from the matched skill's `manifest.effort` field.
+            #[allow(clippy::type_complexity)]
+            let (
+                mut skill_layer,
+                used_skill_id,
+                channel_skill_allowlist,
+                channel_skill_model,
+                channel_skill_effort,
+            ): (
                 Option<String>,
                 Option<String>,
                 Option<Vec<String>>,
                 Option<String>,
+                Option<crate::providers::effort_override::EffortBudget>,
             ) = if let Some(resolved) = mode_hit {
                 let parent = installed_skills
                     .iter()
@@ -1052,7 +1062,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // GOLD-CCPARITY-MODEL-02: parent skill's model override applies
                 // when a mode is active (mode inherits parent skill model).
                 let skill_model = parent.and_then(|s| s.manifest.model.clone());
-                (layer, None, allowlist, skill_model)
+                // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
+                // when a mode is active (mode inherits parent effort setting).
+                let skill_effort = parent.and_then(|s| s.manifest.effort);
+                (layer, None, allowlist, skill_model, skill_effort)
             } else {
                 // Full-auto mode raises the Stage-1 confidence floor so the
                 // now-fully-populated skill library can't false-activate on a
@@ -1090,8 +1103,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let skill_model = skill_match
                     .as_ref()
                     .and_then(|m| m.skill.manifest.model.clone());
+                // GOLD-CCPARITY-EFFORT-03: capture per-skill effort override.
+                let skill_effort = skill_match
+                    .as_ref()
+                    .and_then(|m| m.skill.manifest.effort);
                 let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
-                (layer, id, allowlist, skill_model)
+                (layer, id, allowlist, skill_model, skill_effort)
             };
 
             let channel_mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
@@ -1531,6 +1548,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // channel path. The channel path has no agent dispatch, so only
                 // the skill tier of the priority chain applies here.
                 model: channel_skill_model,
+                // GOLD-CCPARITY-EFFORT-03: apply per-skill reasoning-budget on the
+                // channel path. Maps EffortBudget variant → token count so the
+                // claude_cli adapter can inject MAX_THINKING_TOKENS before spawn.
+                thinking_budget: channel_skill_effort
+                    .map(crate::providers::effort_override::effort_to_tokens),
                 ..Default::default()
             };
             // K-Wire-3 v2 2026-05-17: council smart-trigger for channels.

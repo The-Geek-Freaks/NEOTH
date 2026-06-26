@@ -443,6 +443,59 @@ fn cached_scrubbed_env() -> &'static [(String, String)] {
     CACHE.get_or_init(scrub_outbound_env).as_slice()
 }
 
+/// GOLD-CCPARITY-EFFORT-03 — spawn `claude` with a per-call env override on
+/// top of the cached scrubbed env. This is the correct injection point for
+/// `MAX_THINKING_TOKENS`: `cached_scrubbed_env()` is a `OnceLock` and cannot
+/// be mutated per-call, so we clone it into a fresh vec and apply the override
+/// before spawning. Cost: one `Vec::clone` (~80-150 small `(String,String)` pairs)
+/// per call that carries an effort override — negligible vs the LLM round-trip.
+///
+/// `extra_overrides` is a slice of `(key, value)` pairs applied via
+/// `inject_or_override` AFTER the cached scrub, so they always win over the
+/// scrubbed defaults (the same order `scrub_outbound_env` uses for its own
+/// mandatory injections).
+fn spawn_claude_with_extra_env(
+    binary: &str,
+    args: &[String],
+    extra_overrides: &[(&str, String)],
+) -> std::io::Result<tokio::process::Child> {
+    let mut env: Vec<(String, String)> = cached_scrubbed_env().to_vec();
+    for (key, value) in extra_overrides {
+        inject_or_override(&mut env, key, value);
+    }
+    #[cfg(windows)]
+    {
+        let mut cmd = tokio::process::Command::new("cmd");
+        cmd.arg("/C").arg(binary);
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd.env_clear();
+        for (k, v) in &env {
+            cmd.env(k, v);
+        }
+        cmd.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = tokio::process::Command::new(binary);
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd.env_clear();
+        for (k, v) in &env {
+            cmd.env(k, v);
+        }
+        cmd.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+    }
+}
+
 /// Return the current process env with NEOTH + operator-declared harness
 /// vars stripped + mandatory bridge.py-derived env knobs injected. Whitelist-style
 /// for clarity: keep PATH, HOME, USERPROFILE, APPDATA, anything Claude
@@ -651,7 +704,19 @@ impl Provider for ClaudeCliAdapter {
                 ],
                 &self.resume_session_id,
             );
-            let mut child = spawn_claude(&self.binary, &args).with_context(|| {
+            // GOLD-CCPARITY-EFFORT-03: same per-call MAX_THINKING_TOKENS override
+            // as complete_uncached — use spawn_claude_with_extra_env when the
+            // request carries a thinking_budget, plain spawn_claude otherwise.
+            let mut child = if let Some(budget) = req.thinking_budget {
+                spawn_claude_with_extra_env(
+                    &self.binary,
+                    &args,
+                    &[("MAX_THINKING_TOKENS", budget.to_string())],
+                )
+            } else {
+                spawn_claude(&self.binary, &args)
+            }
+            .with_context(|| {
                 format!(
                     "spawn `{} --print --model {}` for streaming",
                     self.binary, model
@@ -773,7 +838,21 @@ async fn complete_uncached(
         &["--print", "--model", &model, "--output-format", "json"],
         &resume_session_id,
     );
-    let mut child = spawn_claude(binary, &args).with_context(|| {
+    // GOLD-CCPARITY-EFFORT-03: when the request carries a per-skill thinking
+    // budget, override MAX_THINKING_TOKENS before spawning so this specific
+    // call uses the skill-declared token count instead of the cached default
+    // (10 000). We use `spawn_claude_with_extra_env` rather than mutating the
+    // `OnceLock`-cached env (which is immutable post-startup by contract).
+    let mut child = if let Some(budget) = req.thinking_budget {
+        spawn_claude_with_extra_env(
+            binary,
+            &args,
+            &[("MAX_THINKING_TOKENS", budget.to_string())],
+        )
+    } else {
+        spawn_claude(binary, &args)
+    }
+    .with_context(|| {
         format!(
             "spawn `{binary} --print --model {model}`. Is the claude CLI installed and on PATH?"
         )

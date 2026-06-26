@@ -288,6 +288,7 @@ pub async fn extract(provider: &dyn Provider, window: &AttributedWindow) -> Resu
         top_p: None,
         sampling_seed: Some(seed_from_window(window)),
         stop_sequences: vec![],
+        thinking_budget: None,
     };
     let completion = provider
         .complete(req)

@@ -152,6 +152,7 @@ async fn run_bg_headless(
         top_p: None,
         sampling_seed: None,
         stop_sequences: vec![],
+        thinking_budget: None,
     };
     let completion = provider.complete(req).await?;
     Ok(completion.text)

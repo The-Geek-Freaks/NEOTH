@@ -109,6 +109,15 @@ pub struct Request {
     /// (per-adapter pickup follows the same pattern as
     /// `temperature` / `top_p`).
     pub stop_sequences: Vec<String>,
+    /// GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget override.
+    /// When `Some(n)`, the `claude_cli` adapter overrides
+    /// `MAX_THINKING_TOKENS` to `n` for this specific call before
+    /// spawning the claude binary. `None` = use the adapter default
+    /// (currently 10 000 tokens, set in `scrub_outbound_env`).
+    /// Other adapters (openai, local_qwen, …) ignore this field via
+    /// `Default::default()` — it is `Option<u32>` so the default is
+    /// always `None`, zero cost when unused.
+    pub thinking_budget: Option<u32>,
 }
 
 /// One delta during a streaming response. `delta` is incremental new text

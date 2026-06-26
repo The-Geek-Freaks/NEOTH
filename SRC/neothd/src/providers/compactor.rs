@@ -147,6 +147,7 @@ impl CompactingProvider {
                 top_p: None,
                 sampling_seed: None,
                 stop_sequences: vec![],
+                thinking_budget: None,
             };
             match util.complete(summary_req).await {
                 Ok(c) => c.text,
@@ -349,6 +350,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             stop_sequences: vec![],
+            thinking_budget: None,
         };
         let result = cp.complete(req).await.unwrap();
         assert_eq!(result.text, "inner_reply");
@@ -380,6 +382,7 @@ mod tests {
             top_p: None,
             sampling_seed: None,
             stop_sequences: vec![],
+            thinking_budget: None,
         };
         let result = cp.complete(req).await.unwrap();
         assert_eq!(result.text, "inner_reply");
