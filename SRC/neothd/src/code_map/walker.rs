@@ -18,10 +18,12 @@
 //!     the caller's choice.
 
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use anyhow::Result;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::symbols::{Symbol, extract_symbols};
 
@@ -168,6 +170,19 @@ pub struct RepoFile {
     pub bytes: u64,
     /// Newline-counted line count. `0` for empty files.
     pub loc: u64,
+    /// SHA-256 hex digest of the file contents. Used by the incremental
+    /// re-indexer (CBM-04) to skip files whose content + mtime are
+    /// unchanged since the last persist. `#[serde(default)]` keeps
+    /// existing JSON serialised maps backward-compatible (v1 had no
+    /// hash column).
+    #[serde(default)]
+    pub sha256: String,
+    /// File modification time as nanoseconds since UNIX epoch. Stored
+    /// as `u64` in-memory; persisted as `i64` in SQLite (matching the
+    /// existing `scanned_at INTEGER` pattern). `0` when the OS returns
+    /// an error from `metadata().modified()`.
+    #[serde(default)]
+    pub mtime_ns: u64,
     /// Extracted top-level declarations. Populated only when the
     /// builder ran with `with_symbols(true)`; empty otherwise so
     /// callers don't have to special-case Phase-1 maps.
@@ -297,15 +312,39 @@ impl RepoMapBuilder {
                 break;
             }
             let path = entry.path();
-            let bytes = match path.metadata() {
-                Ok(m) => m.len(),
+            let meta = match path.metadata() {
+                Ok(m) => m,
                 Err(_) => continue,
             };
+            let bytes = meta.len();
             if bytes > self.max_file_bytes {
                 report.oversize_skipped += 1;
                 continue;
             }
-            let loc = count_lines(path).unwrap_or(0);
+
+            // Single read — used for LOC, hash, and (if with_symbols) symbol
+            // extraction. Avoids double I/O when both are enabled.
+            let raw = match std::fs::read(path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let loc = count_lines_from_bytes(&raw);
+
+            // mtime_ns: nanoseconds since UNIX epoch. Fallback 0 on error
+            // (e.g. platforms that don't expose sub-second precision).
+            let mtime_ns: u64 = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+
+            // SHA-256 of the raw file bytes — authoritative skip guard.
+            let sha256 = {
+                let digest = Sha256::digest(&raw);
+                format!("{digest:x}")
+            };
+
             let language = Language::from_path(path);
             let rel = path
                 .strip_prefix(&root_canonical)
@@ -315,15 +354,11 @@ impl RepoMapBuilder {
                 .to_string_lossy()
                 .replace('\\', "/");
 
-            // Symbol extraction: opt-in, only for code languages, and
-            // only when the file is small enough that the regex scan
-            // stays cheap. The file was already passed the size cap
-            // above, so we re-read here without an additional bound.
+            // Symbol extraction: opt-in, only for code languages. File bytes
+            // are already in `raw` — convert to &str without a second read.
             let symbols = if self.with_symbols && language.is_code() {
-                match std::fs::read_to_string(path) {
-                    Ok(text) => extract_symbols(&text, language),
-                    Err(_) => Vec::new(),
-                }
+                let text = String::from_utf8_lossy(&raw);
+                extract_symbols(&text, language)
             } else {
                 Vec::new()
             };
@@ -333,6 +368,8 @@ impl RepoMapBuilder {
                 language,
                 bytes,
                 loc,
+                sha256,
+                mtime_ns,
                 symbols,
             });
             report.total_files += 1;
@@ -354,21 +391,16 @@ impl RepoMapBuilder {
     }
 }
 
-/// Count newline characters. Empty file → 0. Bounded read at
-/// [`DEFAULT_MAX_FILE_BYTES`] in the caller; this fn reads the whole
-/// file into memory only when the caller already passed the cap
-/// check.
-fn count_lines(path: &Path) -> Result<u64> {
-    let bytes = std::fs::read(path)?;
-    let count = bytes.iter().filter(|&&b| b == b'\n').count() as u64;
-    // Add 1 for the last line if file doesn't end with newline +
-    // is non-empty (typical for source code).
-    let final_count = if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+/// Count newline characters from already-read bytes. Empty file → 0.
+/// Adds 1 for the last line when the file doesn't end with a newline
+/// and is non-empty (typical for source code).
+fn count_lines_from_bytes(raw: &[u8]) -> u64 {
+    let count = raw.iter().filter(|&&b| b == b'\n').count() as u64;
+    if !raw.is_empty() && raw.last() != Some(&b'\n') {
         count + 1
     } else {
         count
-    };
-    Ok(final_count)
+    }
 }
 
 #[cfg(test)]

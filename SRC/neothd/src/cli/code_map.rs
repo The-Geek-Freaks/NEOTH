@@ -357,6 +357,7 @@ fn run_persist(
                 "root": map.root,
                 "db_path": db_path.to_string_lossy(),
                 "files_inserted": stats.files_inserted,
+                "files_skipped_unchanged": stats.files_skipped_unchanged,
                 "symbols_inserted": stats.symbols_inserted,
                 "edges_inserted": edges_inserted,
                 "prior_files_replaced": stats.prior_files_replaced,
@@ -372,15 +373,16 @@ fn run_persist(
         }
         OutputFormat::Table => {
             println!("# code-map persist");
-            println!("  root:                 {}", map.root);
-            println!("  db:                   {}", db_path.display());
-            println!("  files inserted:       {}", stats.files_inserted);
-            println!("  symbols inserted:     {}", stats.symbols_inserted);
-            println!("  edges inserted:       {edges_inserted}");
-            println!("  prior files replaced: {}", stats.prior_files_replaced);
+            println!("  root:                   {}", map.root);
+            println!("  db:                     {}", db_path.display());
+            println!("  files inserted:         {}", stats.files_inserted);
+            println!("  files skipped (no-op):  {}", stats.files_skipped_unchanged);
+            println!("  symbols inserted:       {}", stats.symbols_inserted);
+            println!("  edges inserted:         {edges_inserted}");
+            println!("  prior files replaced:   {}", stats.prior_files_replaced);
             println!();
             println!(
-                "(re-run replaces this root's snapshot atomically; \
+                "(re-run replaces changed files only; unchanged files are skipped. \
                       use `neoth code-map load` to read it back)"
             );
         }

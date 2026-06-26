@@ -236,6 +236,8 @@ mod tests {
                     language: Language::Rust,
                     bytes: 600,
                     loc: 50,
+                    sha256: String::new(),
+                    mtime_ns: 0,
                     symbols: vec![
                         Symbol {
                             name: "AuthError".into(),
@@ -259,6 +261,8 @@ mod tests {
                     language: Language::Rust,
                     bytes: 200,
                     loc: 20,
+                    sha256: String::new(),
+                    mtime_ns: 0,
                     symbols: vec![Symbol {
                         name: "Config".into(),
                         kind: SymbolKind::Struct,
@@ -270,6 +274,8 @@ mod tests {
                     language: Language::Markdown,
                     bytes: 100,
                     loc: 10,
+                    sha256: String::new(),
+                    mtime_ns: 0,
                     symbols: vec![], // no symbols — must be skipped
                 },
             ],
@@ -404,6 +410,8 @@ mod tests {
                 language: Language::Rust,
                 bytes: 100,
                 loc: 10,
+                sha256: String::new(),
+                mtime_ns: 0,
                 symbols: vec![
                     Symbol {
                         name: format!("Struct{i}"),
@@ -514,6 +522,8 @@ mod tests {
                     language: Language::Rust,
                     bytes: 100,
                     loc: 10,
+                    sha256: String::new(),
+                    mtime_ns: 0,
                     symbols: vec![Symbol {
                         name: "B".into(),
                         kind: SymbolKind::Struct,
@@ -525,6 +535,8 @@ mod tests {
                     language: Language::Rust,
                     bytes: 100,
                     loc: 10,
+                    sha256: String::new(),
+                    mtime_ns: 0,
                     symbols: vec![Symbol {
                         name: "A".into(),
                         kind: SymbolKind::Struct,

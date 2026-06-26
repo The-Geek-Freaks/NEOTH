@@ -8089,6 +8089,8 @@ mod tests {
                 language: Language::Rust,
                 bytes: 200,
                 loc: 30,
+                sha256: String::new(),
+                mtime_ns: 0,
                 symbols: vec![Symbol {
                     name: "auth_middleware".into(),
                     kind: SymbolKind::Function,

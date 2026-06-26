@@ -329,6 +329,8 @@ mod tests {
                     language: Language::Rust,
                     bytes: 200,
                     loc: 30,
+                    sha256: String::new(),
+                    mtime_ns: 0,
                     symbols: vec![
                         Symbol {
                             name: "auth_middleware".into(),
@@ -347,6 +349,8 @@ mod tests {
                     language: Language::Rust,
                     bytes: 150,
                     loc: 20,
+                    sha256: String::new(),
+                    mtime_ns: 0,
                     symbols: vec![Symbol {
                         name: "Config".into(),
                         kind: SymbolKind::Struct,
