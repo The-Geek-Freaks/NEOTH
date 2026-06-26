@@ -146,13 +146,62 @@ pub const DEFAULT_MIN_WEIGHT: usize = 1;
 /// hits. A single generic single-word keyword (weight 1) no longer activates.
 pub const FULL_AUTO_MIN_WEIGHT: usize = 2;
 
+/// GOLD-CCPARITY-PATHS-01 — path-glob gate check.
+///
+/// Returns `true` when the skill should be considered for this turn:
+///   - `paths` is empty (skill has no gate) → always eligible.
+///   - `active_files` is empty (operator context unknown) → always eligible
+///     (backward-compat; channel path always passes `&[]`).
+///   - Otherwise: at least one active file must match one of the
+///     gitignore-style glob patterns in `paths` (via the `ignore` crate,
+///     same semantics as `.gitignore`).
+///
+/// Returns `false` ONLY when the skill has patterns AND active_files is
+/// non-empty AND NO file matches any pattern — the skill is gated out.
+fn passes_path_gate(paths: &[String], active_files: &[String]) -> bool {
+    if paths.is_empty() || active_files.is_empty() {
+        return true;
+    }
+    use ignore::gitignore::GitignoreBuilder;
+    // Use "/" as the root so that `**/*.rs` resolves against absolute paths.
+    // We prepend "/" to each active file before matching so the gitignore
+    // engine sees a rooted path and `**` anchors correctly against it.
+    // This is purely an in-memory pattern check — no filesystem I/O occurs.
+    let root = std::path::Path::new("/");
+    let mut builder = GitignoreBuilder::new(root);
+    for p in paths {
+        // Ignore add errors — malformed patterns are silently skipped.
+        let _ = builder.add_line(None, p);
+    }
+    let Ok(gi) = builder.build() else {
+        return true; // Build failure → fail open (always eligible).
+    };
+    active_files.iter().any(|f| {
+        // Strip any leading slashes so we can consistently re-root the path.
+        let stripped = f.trim_start_matches(|c| c == '/' || c == '\\');
+        let abs = root.join(stripped);
+        // In gitignore semantics, `Match::Ignore` means the pattern COVERS
+        // this file (the gitignore rule would hide it). `Match::Whitelist`
+        // means a negation (`!`) rule re-includes it. `Match::None` means
+        // no rule matched at all. For skill path gating we treat
+        // `Match::Ignore` as "the skill's pattern covers this file → eligible".
+        matches!(
+            gi.matched_path_or_any_parents(&abs, false),
+            ignore::Match::Ignore(_)
+        )
+    })
+}
+
 /// Pick the best matching skill, if any. Stage-1 keyword scan only.
 ///
 /// Uses [`DEFAULT_MIN_WEIGHT`] — see [`route_with_min_weight`] to raise the
 /// confidence floor (full-auto mode does, to keep a fully-populated skill
 /// library from false-activating on generic single tokens).
+///
+/// Passes `&[]` for `active_files` so all path-gated skills always activate
+/// (backward-compat for callers that do not have an editor file context).
 pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
-    route_with_min_weight(message, skills, DEFAULT_MIN_WEIGHT)
+    route_with_min_weight(message, skills, DEFAULT_MIN_WEIGHT, &[])
 }
 
 /// Stage-1 keyword router with an explicit confidence floor. A skill activates
@@ -160,10 +209,18 @@ pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
 /// `>= min_weight`. The winner is the highest summed weight, ties broken by
 /// skill id alphabetically (stable, deterministic). `embedding_score` is left
 /// `None` — Stage-2 cosine re-rank is a separate path.
+///
+/// `active_files` — the set of files the operator's editor currently has open,
+/// as relative (or absolute) path strings. Used by the GOLD-CCPARITY-PATHS-01
+/// path-glob gate: skills that declare a `paths:` list in their manifest are
+/// skipped before the keyword scan when none of the active files match. Pass
+/// `&[]` to disable the gate (all skills eligible) — this is the correct value
+/// for channel turns and any caller without an editor file context.
 pub fn route_with_min_weight<'a>(
     message: &str,
     skills: &'a [Skill],
     min_weight: usize,
+    active_files: &[String],
 ) -> Option<RouteMatch<'a>> {
     let haystack = lowercase_tokens(message);
     if haystack.is_empty() {
@@ -173,6 +230,10 @@ pub fn route_with_min_weight<'a>(
     let mut best: Option<(usize, &Skill, Vec<String>)> = None;
     for skill in skills {
         if !skill.is_enabled() {
+            continue;
+        }
+        // GOLD-CCPARITY-PATHS-01: path-glob gate — short-circuit before keyword scan.
+        if !passes_path_gate(skill.paths(), active_files) {
             continue;
         }
         let mut hits = Vec::new();
@@ -423,6 +484,7 @@ mod tests {
                 enabled,
                 delegate_to: None,
                 model: None,
+                paths: vec![],
             },
             path: PathBuf::from(format!("/tmp/{id}/skill.yaml")),
             content_hash: String::new(),
@@ -573,7 +635,7 @@ mod tests {
             "default floor must preserve historical single-token match"
         );
         assert!(
-            route_with_min_weight("got any ideas for dinner", &skills, FULL_AUTO_MIN_WEIGHT)
+            route_with_min_weight("got any ideas for dinner", &skills, FULL_AUTO_MIN_WEIGHT, &[])
                 .is_none(),
             "full-auto floor must suppress a lone generic single-word trigger"
         );
@@ -587,6 +649,7 @@ mod tests {
             "we should pay down tech debt this sprint",
             &skills,
             FULL_AUTO_MIN_WEIGHT,
+            &[],
         )
         .expect("a 4-word trigger (weight 4) must clear the full-auto floor");
         assert_eq!(m.skill.id(), "debt");
@@ -596,8 +659,13 @@ mod tests {
     fn two_single_tokens_survive_full_auto_floor() {
         // Two distinct single-word hits = summed weight 2 = intentional enough.
         let skills = vec![skill("news", &["news", "headlines"], true)];
-        let m = route_with_min_weight("the news and the headlines", &skills, FULL_AUTO_MIN_WEIGHT)
-            .expect("two distinct single-token hits (weight 2) must clear the floor");
+        let m = route_with_min_weight(
+            "the news and the headlines",
+            &skills,
+            FULL_AUTO_MIN_WEIGHT,
+            &[],
+        )
+        .expect("two distinct single-token hits (weight 2) must clear the floor");
         assert_eq!(m.skill.id(), "news");
     }
 
@@ -1095,6 +1163,7 @@ mod tests {
                 enabled,
                 delegate_to: None,
                 model: None,
+                paths: vec![],
             },
             path: PathBuf::from(format!("/tmp/{id}/skill.yaml")),
             content_hash: String::new(),
@@ -1327,6 +1396,90 @@ mod tests {
         assert!(
             cosine_rerank(&msg, &skills, &embs).is_none(),
             "score below threshold MUST be rejected"
+        );
+    }
+
+    // ── GOLD-CCPARITY-PATHS-01: path-glob gating ─────────────────────────────
+
+    #[test]
+    fn paths_gate_none_when_active_files_match_no_pattern() {
+        // paths = ["**/*.rs"] and active_files = ["main.py"] → no match → None
+        let mut s = skill("rust-skill", &["refactor"], true);
+        s.manifest.paths = vec!["**/*.rs".to_string()];
+        let skills = [s];
+        let active = vec!["main.py".to_string()];
+        let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &active);
+        assert!(result.is_none(), "skill must be gated out when no active file matches");
+    }
+
+    #[test]
+    fn paths_gate_some_when_active_file_matches_pattern() {
+        // paths = ["**/*.rs"] and active_files = ["lib.rs"] → match → Some
+        let mut s = skill("rust-skill", &["refactor"], true);
+        s.manifest.paths = vec!["**/*.rs".to_string()];
+        let skills = [s];
+        let active = vec!["lib.rs".to_string()];
+        let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &active);
+        assert!(result.is_some(), "skill must activate when an active file matches");
+        assert_eq!(result.unwrap().skill.id(), "rust-skill");
+    }
+
+    #[test]
+    fn paths_empty_always_activates_backward_compat() {
+        // paths = [] → gate is off → activates regardless of active_files
+        let s = skill("no-gate", &["refactor"], true);
+        // with files
+        let skills1 = [s.clone()];
+        let active = vec!["main.py".to_string()];
+        let r1 = route_with_min_weight("refactor this", &skills1, DEFAULT_MIN_WEIGHT, &active);
+        assert!(r1.is_some(), "empty paths must always activate (backward compat)");
+        // without files
+        let skills2 = [s];
+        let r2 = route_with_min_weight("refactor this", &skills2, DEFAULT_MIN_WEIGHT, &[]);
+        assert!(r2.is_some(), "empty paths + empty active_files must activate");
+    }
+
+    #[test]
+    fn paths_gate_empty_active_files_always_activates() {
+        // paths non-empty BUT active_files empty → always activate
+        // (CLI has no active files set; channel path always passes &[])
+        let mut s = skill("rust-skill", &["refactor"], true);
+        s.manifest.paths = vec!["**/*.rs".to_string()];
+        let skills = [s];
+        let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &[]);
+        assert!(result.is_some(), "empty active_files disables the gate entirely");
+    }
+
+    #[test]
+    fn paths_gate_allows_skill_when_one_of_many_files_matches() {
+        // Multiple active files — only one needs to match.
+        let mut s = skill("rust-skill", &["refactor"], true);
+        s.manifest.paths = vec!["**/*.rs".to_string()];
+        let skills = [s];
+        let active = vec![
+            "index.ts".to_string(),
+            "README.md".to_string(),
+            "src/lib.rs".to_string(),
+        ];
+        let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &active);
+        assert!(result.is_some(), "skill activates when any one active file matches");
+    }
+
+    #[test]
+    fn paths_gate_selects_matching_skill_over_gated_out_skill() {
+        // Two skills both have keyword "refactor". One is gated to *.rs (no match),
+        // the other has no gate. The ungated one must win.
+        let mut gated = skill("rust-skill", &["refactor"], true);
+        gated.manifest.paths = vec!["**/*.rs".to_string()];
+        let ungated = skill("general-skill", &["refactor"], true);
+        let skills = [gated, ungated];
+        let active = vec!["main.py".to_string()];
+        let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &active);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().skill.id(),
+            "general-skill",
+            "gated-out skill must not win over an ungated one"
         );
     }
 }

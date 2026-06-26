@@ -222,6 +222,21 @@ struct AgentRawLayers {
     identity_locked: bool,
 }
 
+/// GOLD-CCPARITY-PATHS-01 — read the operator's active editor files from the
+/// `NEOTH_ACTIVE_FILES` environment variable. Paths are separated by `;` on
+/// Windows and `:` on Unix. Returns an empty Vec when the variable is unset
+/// or empty — this disables path gating (all skills activate normally).
+fn read_env_active_files() -> Vec<String> {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    std::env::var("NEOTH_ACTIVE_FILES")
+        .unwrap_or_default()
+        .split(sep)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
 async fn build_prompt_bundle(
     config: FreedomConfig,
     prompt: String,
@@ -460,8 +475,15 @@ async fn build_prompt_bundle(
         } else {
             crate::skills::router::DEFAULT_MIN_WEIGHT
         };
-        let mut skill_match =
-            crate::skills::router::route_with_min_weight(&prompt, &installed_skills, stage1_floor);
+        // GOLD-CCPARITY-PATHS-01: read active editor files from env so path-gated
+        // skills only activate when the operator is working in matching files.
+        let active_files = read_env_active_files();
+        let mut skill_match = crate::skills::router::route_with_min_weight(
+            &prompt,
+            &installed_skills,
+            stage1_floor,
+            &active_files,
+        );
         if skill_match.is_none() || config.skills.always_embed_route {
             if let Some(embed_provider) =
                 crate::providers::embed_provider_from_config(&config).await

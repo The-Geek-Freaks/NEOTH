@@ -83,6 +83,7 @@ pub fn build_manifest(params: &CreateParams) -> Result<(SkillManifest, String)> 
         enabled: true,
         delegate_to: None,
         model: None,
+        paths: vec![],
     };
 
     let yaml = serde_yaml::to_string(&manifest).context("serialise SkillManifest to YAML")?;

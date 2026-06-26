@@ -1071,6 +1071,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     &sanitized_text,
                     &installed_skills,
                     stage1_floor,
+                    &[], // GOLD-CCPARITY-PATHS-01: channel path has no editor context; empty = always-activate
                 );
                 if let Some(m) = &skill_match {
                     info!(

@@ -72,6 +72,15 @@ pub struct SkillManifest {
     /// (e.g. `"claude-haiku-4-5"`, `"gpt-4o-mini"`). `None` = use default.
     #[serde(default)]
     pub model: Option<String>,
+    /// GOLD-CCPARITY-PATHS-01 — file-path gating. When non-empty, the skill
+    /// auto-activates ONLY when at least one of the operator's active files
+    /// matches one of these gitignore-style glob patterns (e.g. `"**/*.rs"`,
+    /// `"src/**"`). Empty list = always activate (backward-compat default).
+    /// The router reads the operator's active files from the
+    /// `NEOTH_ACTIVE_FILES` environment variable (`:` on Unix, `;` on
+    /// Windows). When unset, all path-gated skills activate normally.
+    #[serde(default)]
+    pub paths: Vec<String>,
 }
 
 /// QM-3 mode-spectrum enum. Controls how template-heavy the output
@@ -229,6 +238,12 @@ impl Skill {
     /// the skill defers to the operator's default provider model.
     pub fn model(&self) -> Option<&str> {
         self.manifest.model.as_deref()
+    }
+
+    /// GOLD-CCPARITY-PATHS-01 — path-glob gate patterns for this skill.
+    /// Empty slice means the skill is always eligible (no path gate).
+    pub fn paths(&self) -> &[String] {
+        &self.manifest.paths
     }
 }
 
@@ -399,6 +414,7 @@ system_prompt: "do stuff"
             enabled: true,
             delegate_to: None,
             model: None,
+            paths: vec![],
         };
         let s = Skill {
             manifest,
@@ -439,6 +455,62 @@ system_prompt: "use default model"
         assert!(m.model.is_none(), "model field should default to None");
     }
 
+    // ── GOLD-CCPARITY-PATHS-01 schema tests ──────────────────────────────────
+
+    #[test]
+    fn paths_field_parses_from_yaml() {
+        let yaml = r#"
+id: rust-skill
+description: Rust coding assistant
+trigger_keywords: ["refactor"]
+system_prompt: "be rusty"
+paths:
+  - "**/*.rs"
+  - "src/**"
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(m.paths, vec!["**/*.rs".to_string(), "src/**".to_string()]);
+    }
+
+    #[test]
+    fn paths_field_defaults_to_empty_when_absent() {
+        let yaml = r#"
+id: no-gate-skill
+description: no path gate
+trigger_keywords: ["hello"]
+system_prompt: "do stuff"
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert!(m.paths.is_empty(), "paths must default to empty Vec");
+    }
+
+    #[test]
+    fn skill_paths_accessor_proxies_manifest() {
+        let manifest = SkillManifest {
+            id: "p".into(),
+            description: "d".into(),
+            version: "1.0.0".into(),
+            trigger_keywords: vec![],
+            system_prompt: "p".into(),
+            tool_allowlist: vec![],
+            author: None,
+            tags: vec![],
+            homepage: None,
+            source: None,
+            modes: vec![],
+            enabled: true,
+            delegate_to: None,
+            model: None,
+            paths: vec!["**/*.rs".into()],
+        };
+        let s = Skill {
+            manifest,
+            path: std::path::PathBuf::from("/tmp/p"),
+            content_hash: String::new(),
+        };
+        assert_eq!(s.paths(), &["**/*.rs".to_string()]);
+    }
+
     #[test]
     fn skill_model_accessor_proxies_manifest() {
         let manifest = SkillManifest {
@@ -456,6 +528,7 @@ system_prompt: "use default model"
             enabled: true,
             delegate_to: None,
             model: Some("claude-opus-4-7".into()),
+            paths: vec![],
         };
         let s = Skill {
             manifest,
