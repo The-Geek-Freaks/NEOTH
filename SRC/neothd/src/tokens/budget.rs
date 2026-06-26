@@ -104,6 +104,68 @@ pub fn count_total(items: &[BlockItem]) -> u32 {
     items.iter().map(|i| i.tokens).sum()
 }
 
+/// Hard cap applied after the 85 % scaling so a 1M-token model
+/// does not set an 850k budget (no benefit; the real win is lifting
+/// from 100k → 170k for Claude/GPT-4o).
+pub const CAP_200K: u32 = 200_000;
+
+/// Fraction of the discovered context window used as the effective cap.
+const WINDOW_SCALE_FRAC: f64 = 0.85;
+
+/// (model-name-stem, context-window-tokens) lookup table.
+/// Stem matching is case-insensitive substring — longest-matching key wins.
+/// Only cloud models with windows above the 100k static default are listed;
+/// local models are covered by `coding::model_profile::KNOWN_PROFILES` and
+/// operators set `tokens.max_per_request` in freedom.yaml to match.
+static KNOWN_CONTEXT_WINDOWS: &[(&str, u32)] = &[
+    ("claude-opus-4-7", 200_000),
+    ("claude-sonnet-4-6", 200_000),
+    ("claude-haiku-4-5", 200_000),
+    ("claude-opus-4", 200_000),   // alias family
+    ("claude-sonnet-4", 200_000),
+    ("gpt-4.1", 1_047_576),
+    ("gpt-4o", 128_000),
+    ("gemini-2.5-pro", 1_000_000),
+    ("gemini-2.5-flash", 1_000_000),
+    ("gemini-2.0", 1_000_000),
+];
+
+/// Resolve the effective token cap for a single provider request.
+///
+/// Logic (in priority order):
+/// 1. Look `model_name` up in `KNOWN_CONTEXT_WINDOWS` (longest-matching
+///    stem, case-insensitive). If found, scale by `WINDOW_SCALE_FRAC`
+///    (0.85) and clamp to `CAP_200K` (200_000).
+/// 2. Apply `min(scaled, operator_cap)` so the operator's explicit
+///    ceiling is always respected.
+/// 3. No match → return `operator_cap` unchanged (current behaviour).
+///
+/// `_provider_name` is reserved for future per-provider overrides
+/// (e.g. Bedrock API vs. claude_cli may report different windows for
+/// the same model string). Unused today; kept in signature to avoid a
+/// later breaking change.
+pub fn effective_cap(
+    _provider_name: &str,
+    model_name: &str,
+    operator_cap: u32,
+) -> u32 {
+    let lower = model_name.to_ascii_lowercase();
+    // Longest-key-wins: find the entry whose stem is the longest
+    // substring of the lowercased model name.
+    let best = KNOWN_CONTEXT_WINDOWS
+        .iter()
+        .filter(|(stem, _)| lower.contains(*stem))
+        .max_by_key(|(stem, _)| stem.len());
+    match best {
+        None => operator_cap,
+        Some((_, window)) => {
+            let scaled = (*window as f64 * WINDOW_SCALE_FRAC) as u32;
+            let capped = scaled.min(CAP_200K);
+            capped.min(operator_cap)
+        }
+    }
+}
+
 /// Per-block snapshot (for the audit detail).
 fn snapshot_per_block(items: &[BlockItem]) -> Vec<(Block, u32, u32)> {
     use std::collections::BTreeMap;
@@ -492,5 +554,59 @@ mod tests {
     #[test]
     fn count_total_empty_zero() {
         assert_eq!(count_total(&[]), 0);
+    }
+
+    // ── effective_cap ─────────────────────────────────────────────
+
+    #[test]
+    fn effective_cap_scales_claude_opus_to_170k() {
+        // 200_000 × 0.85 = 170_000; operator_cap > 170_000 so no clamp.
+        let cap = effective_cap("claude_cli", "claude-opus-4-7", 200_000);
+        assert_eq!(cap, 170_000);
+    }
+
+    #[test]
+    fn effective_cap_clamps_to_operator_cap_when_lower() {
+        // operator set a tight 50_000; effective_cap must not exceed it.
+        let cap = effective_cap("anthropic_api", "claude-opus-4-7", 50_000);
+        assert_eq!(cap, 50_000);
+    }
+
+    #[test]
+    fn effective_cap_returns_operator_cap_for_unknown_model() {
+        let cap = effective_cap("local_qwen", "qwen3-30b-a3b", 100_000);
+        assert_eq!(cap, 100_000);
+    }
+
+    #[test]
+    fn effective_cap_gpt4o_128k_scales_to_108800() {
+        // 128_000 × 0.85 = 108_800; min(108_800, CAP_200K) = 108_800.
+        let cap = effective_cap("openai_api", "gpt-4o", 200_000);
+        assert_eq!(cap, 108_800);
+    }
+
+    #[test]
+    fn effective_cap_gemini_pro_clamped_to_200k() {
+        // 1_000_000 × 0.85 = 850_000 → clamped to CAP_200K (200_000).
+        let cap = effective_cap("gemini_api", "gemini-2.5-pro", 200_000);
+        assert_eq!(cap, 200_000);
+    }
+
+    #[test]
+    fn dispatch_provider_cap_resolves_via_effective_cap() {
+        // Simulate dispatch_provider: model="claude-opus-4-7", operator_cap=200_000.
+        // The auto-scaler must yield 170_000 (85% of 200k window),
+        // NOT the raw operator_cap of 200_000.
+        let cap = effective_cap("claude_cli", "claude-opus-4-7", 200_000);
+        assert_eq!(
+            cap, 170_000,
+            "dispatch_provider must use auto-scaled cap for claude-opus-4-7"
+        );
+        // Verify it still respects a tight operator ceiling (50k < 170k → clamp).
+        let tight = effective_cap("claude_cli", "claude-opus-4-7", 50_000);
+        assert_eq!(tight, 50_000);
+        // operator_cap=100k is also below the 170k window-scale → clamp to 100k.
+        let mid = effective_cap("claude_cli", "claude-opus-4-7", 100_000);
+        assert_eq!(mid, 100_000);
     }
 }

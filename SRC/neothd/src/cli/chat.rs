@@ -1998,6 +1998,17 @@ async fn run_post_reply_pipelines(
     prompt_token_estimate: u32,
     turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
 ) -> Result<()> {
+    // ODY-16: auto-scale token cap from discovered model context window
+    // (85% × window, hard-capped at 200K, ≤ operator_cap).
+    // Used by the turn-end context bar further below.
+    let resolved_cap: u32 = {
+        let model_name_for_cap = model_for_estimate(&args, &config);
+        crate::tokens::budget::effective_cap(
+            provider.name(),
+            &model_name_for_cap,
+            config.tokens.max_per_request,
+        )
+    };
     // ── TOML hooks: PostProviderCall (Phase 29 R-15) ─────────────────────
     // Last chance to mutate or block the model's reply before it lands in
     // the WAL + reaches the operator. Already-printed streaming output
@@ -2714,7 +2725,7 @@ async fn run_post_reply_pipelines(
             .unwrap_or(prompt_token_estimate)
             .saturating_add(final_output_tokens.unwrap_or(0));
         if let Some(bar) =
-            crate::cli::chat_display::render_context_bar(used, config.tokens.max_per_request)
+            crate::cli::chat_display::render_context_bar(used, resolved_cap)
         {
             eprintln!("{bar}");
         }
@@ -3027,6 +3038,18 @@ pub async fn run_chat_with(
     });
     let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
 
+    // ODY-16: auto-scale token cap from discovered model context window
+    // (85% × window, hard-capped at 200K, ≤ operator_cap).
+    // Declared here so enforce_budget below uses it.
+    let resolved_cap: u32 = {
+        let model_name_for_cap = model_for_estimate(&args, &config);
+        crate::tokens::budget::effective_cap(
+            provider.name(),
+            &model_name_for_cap,
+            config.tokens.max_per_request,
+        )
+    };
+
     // ── ARCH-04 integration: pre-flight block-layer budget check ─────────
     //
     // Convert the bundle entries we just built (Block::A + Block::E
@@ -3065,7 +3088,9 @@ pub async fn run_chat_with(
             .collect();
         let estimate: u32 = items.iter().map(|i| i.tokens).sum();
         let mut items_mut = items;
-        let cap = config.tokens.max_per_request;
+        // ODY-16: use the auto-scaled cap (85% × discovered window, ≤200K,
+        // ≤operator_cap) declared at the top of dispatch_provider.
+        let cap = resolved_cap;
         if let Some(detail) = crate::tokens::budget::enforce_budget(&mut items_mut, cap) {
             // Emit BUDGET_EXCEEDED audit frame BEFORE PROVIDER_REQUEST
             // so the audit-chain consumer sees them in cause-then-
