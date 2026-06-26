@@ -62,6 +62,14 @@ pub enum GateError {
     #[error("MCP `{server}::{tool}` blocked by the active skill's tool_allowlist")]
     SkillAllowlistBlocked { server: String, tool: String },
 
+    /// GOLD-CCPARITY-SA-DENY-01 — the active sub-agent's `disallowedTools`
+    /// denylist explicitly forbids this tool. This check runs BEFORE the
+    /// server-level allowlist so a denied tool never reaches the wire even
+    /// if the server gate would have allowed it. The denylist lets operators
+    /// harden a sub-agent's blast radius without rewriting the global gate.
+    #[error("MCP `{server}::{tool}` blocked by sub-agent disallowedTools denylist")]
+    AgentDenylistBlocked { server: String, tool: String },
+
     /// Reviewer-1 P1-A (2026-05-20): server config has neither an
     /// `allow_tools` list nor `trust_all_tools: true`. Secure-by-
     /// default denies every tool call until the operator opts in. The
@@ -562,6 +570,53 @@ pub async fn enforce_skill_allowlist(
     })
 }
 
+/// GOLD-CCPARITY-SA-DENY-01 — enforce the active sub-agent's
+/// `disallowedTools` denylist. Called from the dispatch loop BEFORE
+/// [`enforce_skill_allowlist`] and before the MCP server is even spawned
+/// (no point starting a subprocess for a tool the agent explicitly forbids).
+///
+/// Semantics:
+///   - `None` (no sub-agent active this turn) ⇒ `Ok(())` — no denylist gate.
+///   - `Some(empty)` (sub-agent has an empty `disallowedTools`) ⇒ `Ok(())`.
+///   - `Some(non-empty)` AND tool in list ⇒ WAL `MCP_TOOL_REJECTED` (0xC1)
+///     emitted with `reason = "tool in sub-agent disallowedTools denylist"`,
+///     then `Err(GateError::AgentDenylistBlocked)`.
+///   - `Some(non-empty)` AND tool NOT in list ⇒ `Ok(())`.
+///
+/// The `reason` string in the WAL frame distinguishes denylist blocks from
+/// skill-allowlist blocks — both reuse `EVENT_TYPE_MCP_TOOL_REJECTED` (0xC1)
+/// per the WAL band allocation (all 0xC-band slots are allocated; no new byte
+/// is needed).
+pub async fn enforce_agent_denylist(
+    disallowed: Option<&[String]>,
+    server: &str,
+    tool: &str,
+    writer: Option<&WalWriterHandle>,
+    now_unix: i64,
+) -> Result<(), GateError> {
+    let Some(list) = disallowed else {
+        return Ok(());
+    };
+    if list.is_empty() || !list.iter().any(|t| t == tool) {
+        return Ok(());
+    }
+    if let Some(w) = writer {
+        emit_reject(
+            w,
+            server,
+            tool,
+            "tool in sub-agent disallowedTools denylist",
+            now_unix,
+        )
+        .await
+        .map_err(GateError::Wal)?;
+    }
+    Err(GateError::AgentDenylistBlocked {
+        server: server.to_string(),
+        tool: tool.to_string(),
+    })
+}
+
 async fn emit_reject(
     writer: &WalWriterHandle,
     server: &str,
@@ -663,6 +718,60 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, GateError::SkillAllowlistBlocked { .. }));
+    }
+
+    // ── GOLD-CCPARITY-SA-DENY-01: enforce_agent_denylist ───────────────────
+
+    #[tokio::test]
+    async fn agent_denylist_none_passes() {
+        // No sub-agent active this turn → gate is a no-op.
+        assert!(enforce_agent_denylist(None, "srv", "anything", None, 0)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn agent_denylist_empty_list_passes() {
+        let empty: Vec<String> = vec![];
+        assert!(
+            enforce_agent_denylist(Some(&empty), "srv", "anything", None, 0)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_denylist_listed_tool_blocked_with_correct_variant() {
+        let list = vec!["X".to_string()];
+        let err = enforce_agent_denylist(Some(&list), "srv", "X", None, 0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, GateError::AgentDenylistBlocked { ref server, ref tool }
+                if server == "srv" && tool == "X"),
+            "wrong variant or fields: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_denylist_unlisted_tool_passes() {
+        let list = vec!["X".to_string()];
+        assert!(enforce_agent_denylist(Some(&list), "srv", "Y", None, 0)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn agent_denylist_error_message_contains_discriminator() {
+        let list = vec!["shell_exec".to_string()];
+        let err = enforce_agent_denylist(Some(&list), "myserver", "shell_exec", None, 0)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("myserver") && msg.contains("shell_exec"),
+            "error message must name server and tool: {msg}"
+        );
     }
 
     #[test]

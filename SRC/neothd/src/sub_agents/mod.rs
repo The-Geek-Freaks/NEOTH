@@ -51,6 +51,11 @@ pub struct Dispatch {
     pub system: String,
     pub model: Option<String>,
     pub allowed_tools: Vec<String>,
+    /// GOLD-CCPARITY-SA-DENY-01 — tools this sub-agent is explicitly
+    /// forbidden from calling. Populated from [`SubAgent::disallowed_tools`].
+    /// The MCP gate enforces this BEFORE the server-level allowlist runs,
+    /// so even a tool the server permits is blocked when listed here.
+    pub disallowed_tools: Vec<String>,
     /// The user-facing prompt body — `/agent <name> <body>` strips the
     /// `/agent <name>` prefix and forwards `<body>` here.
     pub prompt: String,
@@ -86,6 +91,7 @@ pub fn parse_agent_invocation(text: &str, agents: &[SubAgent]) -> Option<Dispatc
         system: agent.system.clone(),
         model: agent.model.clone(),
         allowed_tools: agent.tools.clone(),
+        disallowed_tools: agent.disallowed_tools.clone(),
         prompt: body.to_string(),
         omit_flags: agent.to_omit_flags(),
     })
@@ -102,6 +108,7 @@ mod parse_tests {
             model: Some("opus".into()),
             system: "be a planner".into(),
             tools: vec!["recall".into()],
+            disallowed_tools: vec![],
             enabled: true,
             omit_operator_context: true,
             omit_mcp_catalogue: true,
@@ -120,6 +127,7 @@ mod parse_tests {
         assert_eq!(d.system, "be a planner");
         assert_eq!(d.model.as_deref(), Some("opus"));
         assert_eq!(d.allowed_tools, vec!["recall"]);
+        assert!(d.disallowed_tools.is_empty(), "fixture has no denylist");
         assert_eq!(d.prompt, "build a feature");
     }
 

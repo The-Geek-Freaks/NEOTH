@@ -768,6 +768,15 @@ enum PreflightOutcome {
         /// non-agent turns; the skill-level model is carried separately via
         /// `PromptBundle::resolved_model` and merged at the call site.
         resolved_model: Option<String>,
+        /// GOLD-CCPARITY-SA-DENY-01 — agent allow-list extracted from
+        /// `Dispatch.allowed_tools` before `d` is moved. Empty vec when no
+        /// sub-agent fired this turn; overrides the skill allow-list in the
+        /// use_loop branch of dispatch_provider when non-empty.
+        agent_allowed_tools: Vec<String>,
+        /// GOLD-CCPARITY-SA-DENY-01 — agent denylist extracted from
+        /// `Dispatch.disallowed_tools` before `d` is moved. Empty vec when
+        /// no sub-agent fired or agent has no denylist.
+        agent_disallowed_tools: Vec<String>,
     },
 }
 
@@ -902,6 +911,7 @@ async fn enforce_preflight(
                     system: agent.system.clone(),
                     model: agent.model.clone(),
                     allowed_tools: agent.tools.clone(),
+                    disallowed_tools: agent.disallowed_tools.clone(),
                     prompt: prompt.clone(),
                     omit_flags: agent.to_omit_flags(),
                 })
@@ -1000,10 +1010,21 @@ async fn enforce_preflight(
     // turns carry None here and use skill_model (from PromptBundle) as the
     // next fallback in the priority chain.
     let mut preflight_resolved_model: Option<String> = None;
+    // GOLD-CCPARITY-SA-DENY-01 — capture agent tool lists BEFORE d is moved,
+    // mirroring the GOLD-CCPARITY-MODEL-02 precedent for d.model. These flow
+    // into the use_loop branch below to:
+    //   (a) override the effective skill_allowlist with the agent's own allow-list
+    //       when the agent declares one (narrower is safer);
+    //   (b) pass the agent denylist slice into run_mcp_dispatch_loop.
+    let mut agent_allowed_tools: Vec<String> = vec![];
+    let mut agent_disallowed_tools: Vec<String> = vec![];
     let (final_prompt, final_system) = if let Some(d) = agent_dispatch {
         info!(agent = %d.agent_name, "sub-agent dispatch");
         // GOLD-CCPARITY-MODEL-02: capture agent model BEFORE d is moved.
         preflight_resolved_model = d.model.clone();
+        // GOLD-CCPARITY-SA-DENY-01: capture tool lists BEFORE d is moved.
+        agent_allowed_tools = d.allowed_tools.clone();
+        agent_disallowed_tools = d.disallowed_tools.clone();
         // GOLD-ADAPT-OH-13: emit WAL 0xFC AGENT_DISPATCHED with omit-flags mask.
         {
             let f = &d.omit_flags;
@@ -1258,6 +1279,8 @@ async fn enforce_preflight(
         quota_path,
         hooks,
         resolved_model: preflight_resolved_model,
+        agent_allowed_tools,
+        agent_disallowed_tools,
     })
 }
 
@@ -1305,6 +1328,14 @@ async fn dispatch_provider(
     // GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget. `None` = provider
     // default. Mapped to `req.thinking_budget` before provider spawn.
     override_effort: Option<crate::providers::effort_override::EffortBudget>,
+    // GOLD-CCPARITY-SA-DENY-01 — sub-agent allow-list and denylist. Both
+    // propagated from enforce_preflight via PreflightOutcome::Continue.
+    // `agent_allowed_tools`: when non-empty, overrides skill_tool_allowlist
+    // in the use_loop branch (agent's own scope is narrower/safer).
+    // `agent_disallowed_tools`: threaded into run_mcp_dispatch_loop as the
+    // denylist; empty = no denylist restriction.
+    agent_allowed_tools: Vec<String>,
+    agent_disallowed_tools: Vec<String>,
 ) -> Result<DispatchOutput> {
     let provider_name = provider.name();
     // GOLD-ADAPT-ODY-27 — wrap the user prompt with the active output-format
@@ -1804,7 +1835,24 @@ async fn dispatch_provider(
             info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
             // SC-11 — scope the MCP gate to the matched skill's
             // tool_allowlist (empty/None ⇒ no skill-level restriction).
-            let skill_allowlist = skill_tool_allowlist.as_deref();
+            // GOLD-CCPARITY-SA-DENY-01: when a sub-agent is active and
+            // declares its own allow-list, that list OVERRIDES the skill
+            // allow-list (the agent's scope is narrower; secure-by-default).
+            // An empty agent allow-list means "no tool restriction" — do NOT
+            // replace a non-empty skill allowlist with an empty agent one.
+            let effective_skill_allowlist: Option<Vec<String>> = if !agent_allowed_tools.is_empty() {
+                Some(agent_allowed_tools.clone())
+            } else {
+                skill_tool_allowlist.clone()
+            };
+            let skill_allowlist = effective_skill_allowlist.as_deref();
+            // GOLD-CCPARITY-SA-DENY-01: denylist slice — None when empty so
+            // the gate fn fast-paths on the None branch (no iteration).
+            let agent_disallowed_slice: Option<&[String]> = if agent_disallowed_tools.is_empty() {
+                None
+            } else {
+                Some(&agent_disallowed_tools)
+            };
             // GOLD-ADAPT-MEM-05 — snapshot session state BEFORE the dispatch loop
             // (which compacts tool-results/context via the CompressionRuntime
             // below) so `compaction_guard::restore_latest` / `neoth recover` can
@@ -1862,6 +1910,9 @@ async fn dispatch_provider(
                 skill_allowlist,
                 config.goal.max_turns,
                 &config.security,
+                // GOLD-CCPARITY-SA-DENY-01 — active sub-agent denylist (None
+                // when no sub-agent fired this turn or agent has no denylist).
+                agent_disallowed_slice,
                 crate::mcp::goal_tracker::GoalContext {
                     goal: config.goal.goal.clone(),
                     grind: config.goal.grind.clone(),
@@ -3321,6 +3372,8 @@ pub async fn run_chat_with(
         quota_path,
         hooks,
         agent_model,
+        agent_allowed_tools,
+        agent_disallowed_tools,
     ) = match enforce_preflight(
         combined_system,
         prompt,
@@ -3348,6 +3401,8 @@ pub async fn run_chat_with(
             quota_path,
             hooks,
             resolved_model,
+            agent_allowed_tools,
+            agent_disallowed_tools,
         } => (
             writer,
             writer_join,
@@ -3359,6 +3414,8 @@ pub async fn run_chat_with(
             quota_path,
             hooks,
             resolved_model,
+            agent_allowed_tools,
+            agent_disallowed_tools,
         ),
     };
     // GOLD-CCPARITY-MODEL-02 — merge the model priority chain:
@@ -3396,6 +3453,9 @@ pub async fn run_chat_with(
         effective_model,
         // GOLD-CCPARITY-EFFORT-03: per-skill reasoning-budget (None = provider default).
         skill_effort,
+        // GOLD-CCPARITY-SA-DENY-01: agent tool lists from enforce_preflight.
+        agent_allowed_tools,
+        agent_disallowed_tools,
     )
     .await?;
 
@@ -5918,6 +5978,10 @@ pub(crate) async fn run_mcp_dispatch_loop(
     max_iterations: u32,
     // GOLD-ADOPT-23 P0 — egress + dangerous-command risk policy gate.
     security_policy: &crate::config::SecurityPolicy,
+    // GOLD-CCPARITY-SA-DENY-01 — active sub-agent denylist. `None` when
+    // no sub-agent fired (channel path) or agent has no denylist. Threaded
+    // into run_tool_loop_with_cap → dispatch_one → enforce_agent_denylist.
+    agent_disallowed_tools: Option<&[String]>,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
     goal_context: crate::mcp::goal_tracker::GoalContext,
     // GOLD-ADOPT-18 — subdirectory-hint injection toggle (freedom.yaml::hints.enabled).
@@ -6021,6 +6085,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
         skill_allowlist,
         max_iterations.max(1),
         security_policy,
+        // GOLD-CCPARITY-SA-DENY-01 — thread the denylist through.
+        agent_disallowed_tools,
         goal_context,
         hints_enabled,
         compaction,
@@ -8458,6 +8524,9 @@ mod tests {
             override_model,
             // GOLD-CCPARITY-EFFORT-03: no effort override in model-capture tests.
             None,
+            // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
+            vec![],
+            vec![],
         )
         .await;
 
@@ -8614,6 +8683,9 @@ mod tests {
             "0000000000000002",
             None, // override_model
             override_effort,
+            // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
+            vec![],
+            vec![],
         )
         .await;
 

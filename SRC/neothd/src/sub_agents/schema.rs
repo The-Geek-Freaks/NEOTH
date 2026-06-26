@@ -90,6 +90,17 @@ pub struct SubAgent {
     /// into the tool dispatcher when host tools land.
     #[serde(default)]
     pub tools: Vec<String>,
+    /// Names of host tools this sub-agent is explicitly FORBIDDEN from
+    /// calling, even if the server-level `allow_tools` list permits them.
+    /// Takes priority over `tools` allow-list — if a tool appears in both,
+    /// the denylist wins. Operators use this to harden a sub-agent's blast
+    /// radius without rewriting the server-level gate.
+    ///
+    /// ```toml
+    /// disallowedTools = ["shell_exec", "file_write"]
+    /// ```
+    #[serde(default, rename = "disallowedTools")]
+    pub disallowed_tools: Vec<String>,
     /// Disable an override without deleting the file.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -133,6 +144,12 @@ impl SubAgent {
     /// True if this agent is allowed to call `tool_name`.
     pub fn allows_tool(&self, tool_name: &str) -> bool {
         self.tools.iter().any(|t| t == tool_name)
+    }
+
+    /// True if this agent's denylist forbids `tool_name`.
+    /// The denylist WINS over the allow-list: a tool in both is denied.
+    pub fn denies_tool(&self, tool_name: &str) -> bool {
+        self.disallowed_tools.iter().any(|t| t == tool_name)
     }
 
     /// GOLD-ADAPT-OH-13 — convert this agent's `omit_*` TOML fields into
@@ -304,6 +321,7 @@ mod tests {
             model: None,
             system: "s".into(),
             tools: vec![],
+            disallowed_tools: vec![],
             enabled: true,
             omit_operator_context: true,
             omit_mcp_catalogue: true,
@@ -313,6 +331,55 @@ mod tests {
             omit_repo_context: true,
         };
         assert!(!a.allows_tool("anything"));
+    }
+
+    #[test]
+    fn denies_tool_returns_true_for_listed_tool() {
+        let a = SubAgent {
+            name: "n".into(),
+            description: "d".into(),
+            model: None,
+            system: "s".into(),
+            tools: vec!["safe_tool".into(), "dangerous_tool".into()],
+            disallowed_tools: vec!["dangerous_tool".into()],
+            enabled: true,
+            omit_operator_context: true,
+            omit_mcp_catalogue: true,
+            omit_moral_core: false,
+            omit_preset: true,
+            omit_recall: true,
+            omit_repo_context: true,
+        };
+        assert!(a.denies_tool("dangerous_tool"), "listed tool must be denied");
+        assert!(!a.denies_tool("safe_tool"), "non-listed tool must not be denied");
+    }
+
+    #[test]
+    fn disallowed_tools_parsed_from_toml() {
+        let toml_src = r#"
+            name = "hardened"
+            description = "Hardened agent"
+            system = "Be careful."
+            tools = ["shell_exec", "file_read", "file_write"]
+            disallowedTools = ["shell_exec", "file_write"]
+        "#;
+        let a: SubAgent = toml::from_str(toml_src).unwrap();
+        assert_eq!(a.disallowed_tools, vec!["shell_exec", "file_write"]);
+        assert!(a.denies_tool("shell_exec"));
+        assert!(a.denies_tool("file_write"));
+        assert!(!a.denies_tool("file_read"));
+    }
+
+    #[test]
+    fn disallowed_tools_defaults_empty_when_absent() {
+        let toml_src = r#"
+            name = "plain"
+            description = "No denylist"
+            system = "Normal agent."
+        "#;
+        let a: SubAgent = toml::from_str(toml_src).unwrap();
+        assert!(a.disallowed_tools.is_empty());
+        assert!(!a.denies_tool("anything"));
     }
 
     // ── GOLD-ADAPT-OH-13: omit_ flag tests ─────────────────────────────

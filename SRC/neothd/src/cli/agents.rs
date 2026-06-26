@@ -177,6 +177,7 @@ mod tests {
             model: None,
             system: format!("system for {name}"),
             tools: vec!["recall".into()],
+            disallowed_tools: vec![],
             enabled: true,
             omit_operator_context: true,
             omit_mcp_catalogue: true,

@@ -90,6 +90,9 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         skill_allowlist,
         DEFAULT_MAX_ITERATIONS,
         security_policy,
+        // GOLD-CCPARITY-SA-DENY-01 — no sub-agent denylist for the
+        // convenience wrapper (test/CLI callers; no sub-agent context).
+        None,
         crate::mcp::goal_tracker::GoalContext::empty(),
         true, // GOLD-ADOPT-18 — hints default-on for the convenience wrapper.
         // GOLD-ADOPT-19 — compaction off in the bare wrapper; the chat path
@@ -118,6 +121,13 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     max_iterations: u32,
     // GOLD-ADOPT-23 P0 — egress + dangerous-command policy gate.
     security_policy: &crate::config::SecurityPolicy,
+    // GOLD-CCPARITY-SA-DENY-01 — sub-agent denylist threaded from
+    // chat.rs → run_mcp_dispatch_loop → here → dispatch_one. `None`
+    // when no sub-agent is active (channel path, test callers). This
+    // param is intentionally after security_policy so the existing
+    // call-site ordering (GoalContext, hints_enabled, compaction, …)
+    // comes after and is unambiguous at the one new wire point.
+    agent_disallowed_tools: Option<&[String]>,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
     goal_context: crate::mcp::goal_tracker::GoalContext,
     // GOLD-ADOPT-18 — subdirectory-hint injection toggle (`freedom.yaml::hints.enabled`,
@@ -487,6 +497,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 rollback_policy,
                 skill_allowlist,
                 smart_cache.as_mut(),
+                agent_disallowed_tools,
             )
             .await
             {
@@ -757,6 +768,10 @@ async fn dispatch_one(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
     smart_approve: Option<&mut crate::mcp::smart_approve::ReadOnlyCache>,
+    // GOLD-CCPARITY-SA-DENY-01 — sub-agent denylist. Checked BEFORE the
+    // skill allowlist and before the MCP server is spawned. None = no
+    // sub-agent active (no denylist check). Some(empty) = no restriction.
+    agent_disallowed_tools: Option<&[String]>,
 ) -> std::result::Result<String, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -765,12 +780,26 @@ async fn dispatch_one(
             list_enabled_ids(servers)
         ));
     };
+    // GOLD-CCPARITY-SA-DENY-01 — sub-agent denylist runs FIRST, before
+    // the skill allowlist and before the server is spawned. A denied tool
+    // never touches the wire regardless of what the server gate would permit.
+    let now_unix = crate::time::now_unix_i64();
+    if let Err(e) = crate::mcp::gate::enforce_agent_denylist(
+        agent_disallowed_tools,
+        &call.server,
+        &call.tool,
+        writer,
+        now_unix,
+    )
+    .await
+    {
+        return Err(format!("dispatch `{}::{}`: {e}", call.server, call.tool));
+    }
     // SC-11 — the active skill's tool_allowlist gates BEFORE we even
     // spawn the server (no point starting an MCP subprocess for a tool
     // the matched skill isn't allowed to call). Empty/None ⇒ no
     // restriction; the server-level allowlist still runs inside
     // invoke_with_audit afterwards.
-    let now_unix = crate::time::now_unix_i64();
     if let Err(e) = crate::mcp::gate::enforce_skill_allowlist(
         skill_allowlist,
         &call.server,
@@ -1225,6 +1254,7 @@ mod tests {
             None,
             3, // max_iterations
             &crate::config::SecurityPolicy::default(),
+            None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist in this test
             crate::mcp::goal_tracker::GoalContext {
                 goal: None,
                 grind: Some("keep iterating".into()),
@@ -1353,6 +1383,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(), // dangerous_commands = Deny
+            None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1407,6 +1438,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(), // dangerous = Deny
+            None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1521,6 +1553,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(),
+            None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1580,6 +1613,7 @@ mod tests {
             None,
             3,
             &crate::config::SecurityPolicy::default(),
+            None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
             crate::mcp::goal_tracker::GoalContext {
                 goal: None,
                 grind: Some("ship the feature".into()),
@@ -1618,6 +1652,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(),
+            None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1709,6 +1744,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(),
+            None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1915,5 +1951,134 @@ mod tests {
             result.is_err(),
             "M3: an un-persistable single-use consumption must fail-closed (Err), not warn-and-proceed"
         );
+    }
+
+    // ── GOLD-CCPARITY-SA-DENY-01: sub-agent denylist integration ───────────
+    //
+    // These tests drive the full dispatch loop with a denylist active and
+    // verify that the blocked call is counted as failed and the denylist
+    // error string ("disallowedTools") appears in the threaded-back result.
+    // We cannot do a "success" integration test without a live MCP server,
+    // so the positive path is covered by the gate unit tests in mcp/gate.rs.
+
+    #[tokio::test]
+    async fn agent_denylist_blocks_tool_even_when_server_allowlist_would_permit() {
+        // The LLM emits a call for "dangerous_tool" on server "test_srv".
+        // The agent denylist lists "dangerous_tool".
+        // Even if the server were configured to allow the tool, the denylist
+        // fires FIRST (before the server lookup), so the call is counted as
+        // failed and the loop terminates (all-fail early-exit, 1 call).
+        let reply = r#"I'll invoke it.
+```mcp-tool-call
+{"server": "test_srv", "tool": "dangerous_tool", "arguments": {}}
+```
+"#;
+        let mut driver = ScriptedDriver::new(vec![reply, "(unreached)"]);
+        let servers = McpServers::default(); // no servers configured → "no enabled MCP server"
+        let denylist = vec!["dangerous_tool".to_string()];
+
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "do the thing".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            Some(&denylist), // GOLD-CCPARITY-SA-DENY-01: active denylist
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // The denylist blocked the call — counted as failed.
+        assert_eq!(outcome.failed_calls, 1, "denylist block must count as failed_call");
+        assert_eq!(outcome.successful_calls, 0);
+        // Loop terminated on the all-blocked round.
+        assert_eq!(outcome.iterations, 1);
+        // The failure reason in the threaded-back prompt must name the tool.
+        let prompts = driver.seen_prompts.lock().unwrap();
+        // Only the initial prompt was sent (the loop broke before re-issuing).
+        assert_eq!(prompts.len(), 1, "loop must not re-issue after all-failed denylist round");
+    }
+
+    #[tokio::test]
+    async fn agent_denylist_empty_does_not_block() {
+        // With an empty denylist, the call falls through to the "no enabled
+        // MCP server" gate (not the denylist gate) — a different error, but
+        // still failed_calls == 1 and the loop terminates.
+        let reply = r#"```mcp-tool-call
+{"server": "ghost_srv", "tool": "safe_tool", "arguments": {}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![reply, "(unreached)"]);
+        let servers = McpServers::default();
+        let empty_denylist: Vec<String> = vec![];
+
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "go".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            Some(&empty_denylist), // empty → no restriction from denylist
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Failed because the server doesn't exist (not because of denylist).
+        assert_eq!(outcome.failed_calls, 1);
+        assert_eq!(outcome.successful_calls, 0);
+        // The final_text from the driver is the initial response (no re-issue).
+        assert!(outcome.final_text.contains("mcp-tool-call"), "initial response preserved");
+    }
+
+    #[tokio::test]
+    async fn agent_denylist_none_does_not_block() {
+        // No sub-agent active (None denylist) → same behaviour as above, the
+        // call fails on "no enabled MCP server", not on denylist.
+        let reply = r#"```mcp-tool-call
+{"server": "ghost_srv", "tool": "any_tool", "arguments": {}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![reply]);
+        let servers = McpServers::default();
+
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "go".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            None, // no denylist
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Failed on server-not-found, not denylist — same outcome shape.
+        assert_eq!(outcome.failed_calls, 1);
+        assert_eq!(outcome.successful_calls, 0);
     }
 }

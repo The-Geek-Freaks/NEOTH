@@ -1887,6 +1887,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     goal_max_turns,
                     // GOLD-ADOPT-23 P0 — risk policy gate (live config snapshot).
                     &config_for_handler.security,
+                    // GOLD-CCPARITY-SA-DENY-01 — no sub-agent dispatch on
+                    // the channel path today; denylist is always None here.
+                    None,
                     // GOLD-ADOPT-22 — Goal/Grind nudge context (live snapshot).
                     crate::mcp::goal_tracker::GoalContext {
                         goal: config_for_handler.goal.goal.clone(),
