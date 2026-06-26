@@ -96,6 +96,18 @@ pub struct SkillManifest {
     /// ```
     #[serde(default)]
     pub effort: Option<crate::providers::effort_override::EffortBudget>,
+
+    /// GOLD-CCPARITY-SKILLVIS-01 — per-skill routing visibility declared in
+    /// `skill.yaml`. The operator-side `freedom.yaml::skills.visibility_overrides`
+    /// map takes precedence over this field; the loader stamps the override value
+    /// directly into this field at load time so the router never re-reads
+    /// `freedom.yaml`. Default `on` — backward-compatible, all skills auto-route.
+    ///
+    /// ```yaml
+    /// visibility: name_only
+    /// ```
+    #[serde(default)]
+    pub visibility: crate::config::SkillVisibility,
 }
 
 /// QM-3 mode-spectrum enum. Controls how template-heavy the output
@@ -265,6 +277,15 @@ impl Skill {
     /// skill manifest. `None` means the provider default applies.
     pub fn effort(&self) -> Option<crate::providers::effort_override::EffortBudget> {
         self.manifest.effort
+    }
+
+    /// GOLD-CCPARITY-SKILLVIS-01 — effective routing visibility for this skill.
+    /// Returns the value stamped into the manifest at load time, which may be
+    /// the manifest's own `visibility:` field or an operator override from
+    /// `freedom.yaml::skills.visibility_overrides` (the loader merges them).
+    /// Default `SkillVisibility::On` — all skills auto-route unless changed.
+    pub fn visibility(&self) -> crate::config::SkillVisibility {
+        self.manifest.visibility
     }
 }
 
@@ -437,6 +458,7 @@ system_prompt: "do stuff"
             model: None,
             paths: vec![],
             effort: None,
+            visibility: Default::default(),
         };
         let s = Skill {
             manifest,
@@ -525,6 +547,7 @@ system_prompt: "do stuff"
             model: None,
             paths: vec!["**/*.rs".into()],
             effort: None,
+            visibility: Default::default(),
         };
         let s = Skill {
             manifest,
@@ -553,6 +576,7 @@ system_prompt: "do stuff"
             model: Some("claude-opus-4-7".into()),
             paths: vec![],
             effort: None,
+            visibility: Default::default(),
         };
         let s = Skill {
             manifest,
@@ -560,6 +584,95 @@ system_prompt: "do stuff"
             content_hash: String::new(),
         };
         assert_eq!(s.model(), Some("claude-opus-4-7"));
+    }
+
+    // ── GOLD-CCPARITY-SKILLVIS-01 schema tests ───────────────────────────────
+
+    #[test]
+    fn skillvis_visibility_field_defaults_to_on_when_absent() {
+        let yaml = r#"
+id: no-vis-skill
+description: no visibility field
+trigger_keywords: ["hello"]
+system_prompt: "do stuff"
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(
+            m.visibility,
+            crate::config::SkillVisibility::On,
+            "visibility must default to On when absent from YAML"
+        );
+    }
+
+    #[test]
+    fn skillvis_visibility_name_only_round_trips() {
+        let yaml = r#"
+id: manual-skill
+description: manual only
+trigger_keywords: ["cmd"]
+system_prompt: "manual"
+visibility: name_only
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(m.visibility, crate::config::SkillVisibility::NameOnly);
+    }
+
+    #[test]
+    fn skillvis_visibility_user_invocable_only_round_trips() {
+        let yaml = r#"
+id: oper-skill
+description: operator only
+trigger_keywords: ["op"]
+system_prompt: "op"
+visibility: user_invocable_only
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(
+            m.visibility,
+            crate::config::SkillVisibility::UserInvocableOnly
+        );
+    }
+
+    #[test]
+    fn skillvis_visibility_off_round_trips() {
+        let yaml = r#"
+id: dead-skill
+description: disabled skill
+trigger_keywords: ["dead"]
+system_prompt: "dead"
+visibility: "off"
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(m.visibility, crate::config::SkillVisibility::Off);
+    }
+
+    #[test]
+    fn skillvis_accessor_proxies_manifest() {
+        let manifest = SkillManifest {
+            id: "v".into(),
+            description: "d".into(),
+            version: "1.0.0".into(),
+            trigger_keywords: vec![],
+            system_prompt: "p".into(),
+            tool_allowlist: vec![],
+            author: None,
+            tags: vec![],
+            homepage: None,
+            source: None,
+            modes: vec![],
+            enabled: true,
+            delegate_to: None,
+            model: None,
+            paths: vec![],
+            effort: None,
+            visibility: crate::config::SkillVisibility::NameOnly,
+        };
+        let s = Skill {
+            manifest,
+            path: std::path::PathBuf::from("/tmp/v"),
+            content_hash: String::new(),
+        };
+        assert_eq!(s.visibility(), crate::config::SkillVisibility::NameOnly);
     }
 
     // ── GOLD-CCPARITY-EFFORT-03 schema tests ─────────────────────────────────
@@ -612,6 +725,7 @@ system_prompt: "be quick"
             model: None,
             paths: vec![],
             effort: Some(EffortBudget::Max),
+            visibility: Default::default(),
         };
         let s = Skill {
             manifest,

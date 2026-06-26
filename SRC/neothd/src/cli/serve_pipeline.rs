@@ -1190,9 +1190,39 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 } else {
                     crate::skills::router::DEFAULT_MIN_WEIGHT
                 };
+                // GOLD-CCPARITY-SKILLVIS-01 — channel path visibility pre-filter.
+                // Channel messages never carry CLI slash commands, so
+                // `slash_skill_name = None` always: `NameOnly` and
+                // `UserInvocableOnly` skills are never auto-routed here. `Off`
+                // skills were already removed at load time (enabled=false).
+                let channel_vis_filtered: std::sync::Arc<Vec<crate::skills::schema::Skill>>;
+                let routing_skills: &[crate::skills::schema::Skill] = {
+                    let needs_filter = installed_skills.iter().any(|s| {
+                        !matches!(
+                            s.manifest.visibility,
+                            crate::config::SkillVisibility::On
+                        )
+                    });
+                    if needs_filter {
+                        let filtered: Vec<_> = installed_skills
+                            .iter()
+                            .filter(|s| {
+                                matches!(
+                                    s.manifest.visibility,
+                                    crate::config::SkillVisibility::On
+                                )
+                            })
+                            .cloned()
+                            .collect();
+                        channel_vis_filtered = std::sync::Arc::new(filtered);
+                        &channel_vis_filtered
+                    } else {
+                        &installed_skills
+                    }
+                };
                 let skill_match = crate::skills::router::route_with_min_weight(
                     &sanitized_text,
-                    &installed_skills,
+                    routing_skills,
                     stage1_floor,
                     &[], // GOLD-CCPARITY-PATHS-01: channel path has no editor context; empty = always-activate
                 );

@@ -590,5 +590,6 @@ _Landed via the `_looptools/build_loop.js` autonomous loop; each was `[x]`-flipp
 - [x] **GOLD-CCPARITY-STATUS-MSG** statusMessage field on HookDef + wire into emit_hook_frame — `aebc8cb`
 - [x] **GOLD-CCPARITY-ONCE** once-per-session hook firing + wire into run_hook_stage/serve_pipeline — `07b8af2`
 - [x] **GOLD-CCPARITY-SA-DENY-01** sub-agent disallowedTools denylist + wire into mcp/gate.rs:check — `e1f7926`
+- [x] **GOLD-CCPARITY-SKILLVIS-01** per-skill visibility override map — ✅ DONE: `SkillVisibility` enum (`On/NameOnly/UserInvocableOnly/Off`) in `config/policy.rs`; `SkillsConfig.visibility_overrides` map + loader-time `Off` gate + manifest stamp for `NameOnly`/`UserInvocableOnly` in `skills/loader.rs:load_all`; visibility pre-filter in `cli/chat.rs:build_prompt_bundle` (slash_skill_name param, WAL 0x29 per suppressed skill) + channel-path inline filter in `cli/serve_pipeline.rs:build_pipeline_handler`. 10 tests green.
 
-_Still open: GOLD-CCPARITY-SKILLVIS-01 + GOLD-CCPARITY-SUBDIR-MD-01 (in the build queue — will self-record here via the fixed loop script). Deferred: SA-MEM-01, ASYNC-REWAKE. Skipped (verify-first): LISTBDGT-01 (contradicts NEOTH lazy-routing), FORK-04 (moot — single-turn-per-process)._
+_Still open: GOLD-CCPARITY-SUBDIR-MD-01 (in the build queue). Deferred: SA-MEM-01, ASYNC-REWAKE. Skipped (verify-first): LISTBDGT-01 (contradicts NEOTH lazy-routing), FORK-04 (moot — single-turn-per-process)._

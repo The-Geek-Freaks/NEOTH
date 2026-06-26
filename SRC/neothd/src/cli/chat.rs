@@ -249,6 +249,11 @@ async fn build_prompt_bundle(
     prompt_bundle_hash: &str,
     home: std::path::PathBuf,
     writer: &crate::wal::writer::WalWriterHandle,
+    // GOLD-CCPARITY-SKILLVIS-01 — lowercased skill id when the turn was
+    // initiated by an explicit `/skill-id` slash invocation; `None` on
+    // every normal (non-slash) turn. Used by the visibility pre-filter
+    // to decide whether `NameOnly` / `UserInvocableOnly` skills are eligible.
+    slash_skill_name: Option<String>,
 ) -> (PromptBundle, FreedomConfig, String, std::path::PathBuf) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
     let skills_dir = home.join("skills");
@@ -409,6 +414,94 @@ async fn build_prompt_bundle(
             "eval-session active — all skills suppressed per ARCH-07"
         );
     }
+
+    // ── GOLD-CCPARITY-SKILLVIS-01 — visibility pre-filter ────────────────────
+    // `Off` skills were already removed at load time (enabled=false → router
+    // skips them). Here we remove `NameOnly` and `UserInvocableOnly` skills
+    // from the auto-routing pool unless the current turn was initiated by a
+    // matching explicit `/skill-id` slash invocation. This keeps the router
+    // pure — it never needs to know about visibility; filtering happens before
+    // it is called (same architecture as the path-gate filter for PATHS-01).
+    let installed_skills: std::sync::Arc<Vec<crate::skills::schema::Skill>> = {
+        let needs_filter = installed_skills.iter().any(|s| {
+            !matches!(
+                s.manifest.visibility,
+                crate::config::SkillVisibility::On
+            )
+        });
+        if needs_filter && !eval_suppress {
+            let slash_name = slash_skill_name.as_deref();
+            let mut skipped_vis: Vec<String> = Vec::new();
+            let filtered: Vec<_> = installed_skills
+                .iter()
+                .filter(|s| match s.manifest.visibility {
+                    crate::config::SkillVisibility::On => true,
+                    crate::config::SkillVisibility::NameOnly
+                    | crate::config::SkillVisibility::UserInvocableOnly => {
+                        // Eligible only when the operator typed /skill-id
+                        let eligible =
+                            slash_name.map_or(false, |n| n == s.id());
+                        if !eligible {
+                            skipped_vis.push(s.id().to_string());
+                        }
+                        eligible
+                    }
+                    crate::config::SkillVisibility::Off => false, // shouldn't reach (disabled at load)
+                })
+                .cloned()
+                .collect();
+            // Best-effort WAL audit: one 0x29 frame per suppressed skill so
+            // the audit log captures "this skill was available but gated by
+            // visibility". Mirrors the eval-session emit block above.
+            for skipped_id in &skipped_vis {
+                let reason = installed_skills
+                    .iter()
+                    .find(|s| s.id() == skipped_id)
+                    .map(|s| match s.manifest.visibility {
+                        crate::config::SkillVisibility::NameOnly => "visibility_name_only",
+                        crate::config::SkillVisibility::UserInvocableOnly => {
+                            "visibility_user_invocable_only"
+                        }
+                        _ => "visibility_off",
+                    })
+                    .unwrap_or("visibility_name_only");
+                let content_hash = installed_skills
+                    .iter()
+                    .find(|s| s.id() == skipped_id)
+                    .map(|s| s.content_hash.as_str())
+                    .unwrap_or("");
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "skill_id": skipped_id,
+                    "content_hash": content_hash,
+                    "reason": reason,
+                    "prompt_bundle_hash": prompt_bundle_hash,
+                    "slash_skill_name": slash_skill_name,
+                    "ts_unix": crate::time::now_unix_secs(),
+                }))
+                .unwrap_or_default();
+                let header =
+                    crate::wal::make_header(EVENT_TYPE_SKILL_INJECT_SKIPPED, &payload);
+                if let Err(e) = writer.append(header, payload).await {
+                    warn!(
+                        skill = %skipped_id,
+                        error = %e,
+                        "SKILL_INJECT_SKIPPED (visibility) emit failed (non-fatal)"
+                    );
+                }
+            }
+            if !skipped_vis.is_empty() {
+                info!(
+                    count = skipped_vis.len(),
+                    slash_name = ?slash_skill_name,
+                    "SKILLVIS-01: {} skill(s) gated by NameOnly/UserInvocableOnly visibility on non-slash turn",
+                    skipped_vis.len()
+                );
+            }
+            std::sync::Arc::new(filtered)
+        } else {
+            installed_skills
+        }
+    };
 
     // QM-3 + QM-23 (2026-05-22 Session 20): ModeRegistry trigger_phrases
     // beat the broader skill keyword scan when they hit. The matched
@@ -3337,6 +3430,16 @@ pub async fn run_chat_with(
     // it BEFORE the system-prompt assembly is mandatory — the parallel
     // load just shaves the serial cost off the front edge.
     let home = FreedomConfig::default_neoth_home();
+    // GOLD-CCPARITY-SKILLVIS-01 — determine slash-invocation BEFORE calling
+    // build_prompt_bundle so the visibility pre-filter can gate NameOnly /
+    // UserInvocableOnly skills. We parse the invocation here (before the slash
+    // command dispatch in enforce_preflight) and check whether the name matches
+    // a skill id. The full slash-command dispatch still runs in enforce_preflight
+    // as before — this is a read-only pre-check for the visibility gate only.
+    let slash_skill_name: Option<String> = match crate::slash::parse_invocation(&prompt) {
+        crate::slash::Invocation::Command { name, .. } => Some(name.to_lowercase()),
+        _ => None,
+    };
     let (
         PromptBundle {
             combined_system,
@@ -3350,7 +3453,16 @@ pub async fn run_chat_with(
         config,
         prompt,
         home,
-    ) = build_prompt_bundle(config, prompt, &args, &prompt_bundle_hash, home, &writer).await;
+    ) = build_prompt_bundle(
+        config,
+        prompt,
+        &args,
+        &prompt_bundle_hash,
+        home,
+        &writer,
+        slash_skill_name,
+    )
+    .await;
 
     // GOLD-CCPARITY-ONCE: session-scoped fired set. One run_chat_with call =
     // one CLI session. Created here before enforce_preflight so the same set

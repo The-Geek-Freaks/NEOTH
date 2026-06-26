@@ -85,7 +85,7 @@ pub use ops::{
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
-    FeedsConfig, SecurityPolicy, SkillsConfig, TokensConfig,
+    FeedsConfig, SecurityPolicy, SkillsConfig, SkillVisibility, TokensConfig,
 };
 pub use provider::{ClaudeCliBackendCfg, ClaudeCliConfig, ClaudeCliTmuxConfig, TmuxSessionScope};
 pub use rollback::RollbackConfig;

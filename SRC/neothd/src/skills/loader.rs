@@ -151,6 +151,40 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
         }
     }
 
+    // ── GOLD-CCPARITY-SKILLVIS-01 — freedom.yaml skills.visibility_overrides ──
+    // `Off` overrides are applied here at load time (removes them from the
+    // routing pool entirely, same as the `disabled` blocklist). Other visibility
+    // levels (`NameOnly`, `UserInvocableOnly`) are NOT applied at load time —
+    // they are routing-time decisions that depend on whether the turn was
+    // slash-invoked. The loader stamps the operator override directly into the
+    // manifest's `visibility` field so the router never re-reads `freedom.yaml`.
+    // Note: runs AFTER the `disabled` blocklist so a conflicting `Off` + `disabled`
+    // both leave the skill disabled (redundant but safe).
+    let visibility_overrides = read_visibility_overrides(skills_dir);
+    if !visibility_overrides.is_empty() {
+        for skill in by_id.values_mut() {
+            if let Some(&vis) = visibility_overrides.get(&skill.manifest.id.to_lowercase()) {
+                if vis == crate::config::SkillVisibility::Off {
+                    skill.manifest.enabled = false;
+                    debug!(
+                        id = %skill.manifest.id,
+                        "skill visibility=off via freedom.yaml::skills.visibility_overrides; disabled"
+                    );
+                } else {
+                    // Stamp the operator override into the manifest so the routing
+                    // pre-filter in `build_prompt_bundle` / channel path can check it
+                    // without re-reading freedom.yaml on every turn.
+                    skill.manifest.visibility = vis;
+                    debug!(
+                        id = %skill.manifest.id,
+                        visibility = ?vis,
+                        "skill visibility override stamped via freedom.yaml::skills.visibility_overrides"
+                    );
+                }
+            }
+        }
+    }
+
     let mut out: Vec<Skill> = by_id.into_values().collect();
     out.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
     Ok(out)
@@ -235,6 +269,56 @@ fn read_enable_all_bundled(skills_dir: &Path) -> bool {
         .and_then(|s| s.get("enable_all_bundled"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
+}
+
+/// GOLD-CCPARITY-SKILLVIS-01 — read `skills.visibility_overrides: { <id>: <vis>, … }`
+/// from the `freedom.yaml` next to `<skills_dir>`. Returns a map of lowercased skill
+/// ids to their `SkillVisibility` override value. Same raw-`Value` walk + missing-
+/// is-empty semantics as [`read_disabled_skill_ids`], so a fresh install with no
+/// `freedom.yaml` (or the key absent) is unaffected.
+///
+/// Unrecognised visibility strings are silently skipped (forward-compat: a future
+/// variant in a newer NEOTH won't break an older binary). Ids not in the map stay
+/// at their manifest default (`On`).
+fn read_visibility_overrides(
+    skills_dir: &Path,
+) -> std::collections::HashMap<String, crate::config::SkillVisibility> {
+    let Some(home) = skills_dir.parent() else {
+        return std::collections::HashMap::new();
+    };
+    let freedom_path = home.join("freedom.yaml");
+    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
+        return std::collections::HashMap::new();
+    };
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return std::collections::HashMap::new();
+    };
+    let Some(map_val) = value
+        .get("skills")
+        .and_then(|s| s.get("visibility_overrides"))
+        .and_then(|v| v.as_mapping())
+    else {
+        return std::collections::HashMap::new();
+    };
+    let mut out = std::collections::HashMap::new();
+    for (k, v) in map_val {
+        let Some(id) = k.as_str() else { continue };
+        let Some(vis_str) = v.as_str() else { continue };
+        // Deserialise from a single-value YAML snippet — reuses serde_yaml so
+        // the string values ("on", "off", "name_only", "user_invocable_only") match
+        // the `#[serde(rename_all = "snake_case")]` on `SkillVisibility`.
+        let vis_yaml = format!("\"{}\"", vis_str);
+        let Ok(vis) = serde_yaml::from_str::<crate::config::SkillVisibility>(&vis_yaml) else {
+            warn!(
+                id = %id,
+                value = %vis_str,
+                "unknown visibility_overrides value in freedom.yaml; skipped"
+            );
+            continue;
+        };
+        out.insert(id.trim().to_lowercase(), vis);
+    }
+    out
 }
 
 /// Decode every entry in [`super::bundled::BUNDLED_SKILLS`] into a `Skill`.
@@ -747,5 +831,154 @@ system_prompt: |
                 .unwrap_or_else(|| panic!("{id} is bundled"));
             assert!(s.is_enabled(), "{id} must be enabled by default");
         }
+    }
+
+    // ── GOLD-CCPARITY-SKILLVIS-01 tests ───────────────────────────────────────
+
+    /// Test 1: `visibility_overrides: { raskal: off }` disables the skill at
+    /// load time (same effect as `disabled` blocklist), leaving siblings active.
+    #[tokio::test]
+    async fn ccparity_skillvis_off_via_freedom_yaml_disables_skill() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  visibility_overrides:\n    raskal: off\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let raskal = skills
+            .iter()
+            .find(|s| s.id() == "raskal")
+            .expect("raskal is bundled");
+        let lowkey = skills
+            .iter()
+            .find(|s| s.id() == "lowkey_base")
+            .expect("lowkey_base is bundled");
+
+        assert!(
+            !raskal.is_enabled(),
+            "raskal with visibility=off must be disabled at load time"
+        );
+        assert!(
+            lowkey.is_enabled(),
+            "lowkey_base (not overridden) must stay enabled"
+        );
+    }
+
+    /// Test 2: `visibility_overrides: { my-skill: name_only }` stamps the
+    /// `NameOnly` variant into the manifest without disabling the skill.
+    #[tokio::test]
+    async fn ccparity_skillvis_name_only_stamped_on_manifest() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "my-skill",
+            "id: my-skill\ndescription: test skill\nversion: \"1.0.0\"\nsystem_prompt: hi\ntrigger_keywords: [\"x\"]\n",
+        )
+        .await;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  visibility_overrides:\n    my-skill: name_only\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let s = skills
+            .iter()
+            .find(|s| s.id() == "my-skill")
+            .expect("my-skill loaded");
+
+        assert!(
+            s.is_enabled(),
+            "name_only skill must stay enabled (routing-time gate, not load-time disable)"
+        );
+        assert_eq!(
+            s.visibility(),
+            crate::config::SkillVisibility::NameOnly,
+            "manifest must carry the stamped NameOnly override"
+        );
+    }
+
+    /// Test 3: A skill with no `visibility:` in its YAML defaults to `On`.
+    #[tokio::test]
+    async fn ccparity_skillvis_manifest_default_is_on() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "plain-skill",
+            "id: plain-skill\ndescription: no visibility field\nversion: \"1.0.0\"\nsystem_prompt: go\ntrigger_keywords: [\"go\"]\n",
+        )
+        .await;
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let s = skills
+            .iter()
+            .find(|s| s.id() == "plain-skill")
+            .expect("plain-skill loaded");
+
+        assert_eq!(
+            s.visibility(),
+            crate::config::SkillVisibility::On,
+            "skill without explicit visibility must default to On"
+        );
+    }
+
+    /// Test 4: `user_invocable_only` visibility is stamped correctly.
+    #[tokio::test]
+    async fn ccparity_skillvis_user_invocable_only_stamped() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "manual-skill",
+            "id: manual-skill\ndescription: manual only\nversion: \"1.0.0\"\nsystem_prompt: manual\ntrigger_keywords: [\"manual\"]\n",
+        )
+        .await;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  visibility_overrides:\n    manual-skill: user_invocable_only\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let s = skills
+            .iter()
+            .find(|s| s.id() == "manual-skill")
+            .expect("manual-skill loaded");
+
+        assert!(s.is_enabled(), "user_invocable_only skill must stay enabled");
+        assert_eq!(
+            s.visibility(),
+            crate::config::SkillVisibility::UserInvocableOnly,
+            "manifest must carry the stamped UserInvocableOnly override"
+        );
+    }
+
+    /// Test 5: `visibility_overrides` key is case-insensitive (matches the
+    /// `disabled` blocklist contract).
+    #[tokio::test]
+    async fn ccparity_skillvis_override_is_case_insensitive() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  visibility_overrides:\n    RASKAL: off\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let raskal = skills
+            .iter()
+            .find(|s| s.id() == "raskal")
+            .expect("raskal is bundled");
+
+        assert!(
+            !raskal.is_enabled(),
+            "visibility=off key match must be case-insensitive (RASKAL → raskal)"
+        );
     }
 }

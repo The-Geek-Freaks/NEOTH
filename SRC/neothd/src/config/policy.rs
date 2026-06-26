@@ -2,6 +2,48 @@
 
 use serde::{Deserialize, Serialize};
 
+/// GOLD-CCPARITY-SKILLVIS-01 — per-skill routing visibility.
+///
+/// Controls whether a skill participates in automatic keyword/embedding routing
+/// or is only reachable via an explicit `/skill-id` slash invocation.
+///
+/// Set in the skill's own `skill.yaml` as a default, or overridden per-skill
+/// in `freedom.yaml::skills.visibility_overrides` (operator wins over manifest).
+///
+/// ```yaml
+/// # skill.yaml example (per-skill default)
+/// visibility: name_only
+///
+/// # freedom.yaml example (operator override)
+/// skills:
+///   visibility_overrides:
+///     raskal: off
+///     pm-create-prd: user_invocable_only
+/// ```
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillVisibility {
+    /// Auto-routed and slash-invocable (default).
+    /// The skill participates in both Stage-1 keyword scan and Stage-2
+    /// embedding re-rank on every turn — existing behaviour.
+    #[default]
+    On,
+    /// Name appears in skill listings but the skill is never auto-routed.
+    /// Resolves only when the operator explicitly types `/skill-id`.
+    /// Use for powerful skills that should not activate on keyword accidents.
+    NameOnly,
+    /// Same routing behaviour as `NameOnly` — not auto-routed; explicit slash
+    /// invocation only. Semantic distinction: intended for skills the operator
+    /// added and wants to trigger manually rather than by the keyword router.
+    /// Appears in listings identically to `NameOnly`.
+    UserInvocableOnly,
+    /// Skill is completely inactive — never loads into the routing pool.
+    /// Equivalent to `disabled` but set from the operator's `freedom.yaml`
+    /// without editing the skill's own `skill.yaml` (which an upgrade would
+    /// overwrite). Applied at load time in `skills::loader::load_all`.
+    Off,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SkillsConfig {
     /// Suppress skill injection during eval sessions.
@@ -111,6 +153,27 @@ pub struct SkillsConfig {
     /// (see [`crate::memory::summarize_prompt::SummarizePromptLayers`]).
     #[serde(default)]
     pub meeting_summary: MeetingSummaryConfig,
+
+    /// GOLD-CCPARITY-SKILLVIS-01 — per-skill visibility overrides.
+    /// Operator sets this in `freedom.yaml` to restrict routing of specific
+    /// skills without editing `skill.yaml` (which an upgrade would overwrite).
+    /// Keys are skill ids (case-insensitive match); values are the effective
+    /// `SkillVisibility`. Skills NOT in the map use their manifest's `visibility`
+    /// field (default `on` — backward-compatible).
+    ///
+    /// `Off` overrides are applied at load time in `skills::loader::load_all`
+    /// (same effect as the `disabled` blocklist). `NameOnly` and
+    /// `UserInvocableOnly` are stored into the manifest and applied as a
+    /// routing-time pre-filter in `build_prompt_bundle` / the channel path.
+    ///
+    /// ```yaml
+    /// skills:
+    ///   visibility_overrides:
+    ///     raskal: off
+    ///     pm-create-prd: user_invocable_only
+    /// ```
+    #[serde(default)]
+    pub visibility_overrides: std::collections::HashMap<String, SkillVisibility>,
 }
 
 /// GOLD-ADAPT-SPEAKR-01 — config mirror of the 5 summarize prompt layers.
@@ -177,6 +240,7 @@ impl Default for SkillsConfig {
             enabled: Vec::new(),
             enable_all_bundled: false,
             meeting_summary: MeetingSummaryConfig::default(),
+            visibility_overrides: std::collections::HashMap::new(),
         }
     }
 }

@@ -204,6 +204,7 @@ mod tests {
                 model: None,
                 paths: vec![],
                 effort: None,
+                visibility: Default::default(),
             },
             path: PathBuf::from("/tmp/test-skill/skill.yaml"),
             content_hash: String::new(),
