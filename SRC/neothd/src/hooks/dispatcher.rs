@@ -331,6 +331,7 @@ mod tests {
             matcher: None,
             action: HookAction::Allow,
             status_message: None,
+            once: false,
         }
     }
 
@@ -347,6 +348,7 @@ mod tests {
                 template: template.into(),
             },
             status_message: None,
+            once: false,
         }
     }
 
@@ -361,6 +363,7 @@ mod tests {
                 reason: reason.into(),
             },
             status_message: None,
+            once: false,
         }
     }
 
@@ -376,6 +379,7 @@ mod tests {
                 required: false,
             },
             status_message: None,
+            once: false,
         }
     }
 
@@ -391,6 +395,7 @@ mod tests {
                 required: true,
             },
             status_message: None,
+            once: false,
         }
     }
 
@@ -539,6 +544,7 @@ mod tests {
                 template: "n/a".into(),
             },
             status_message: None,
+            once: false,
         }];
         let out = run_stage(HookStage::PreProviderCall, "anything", &hooks).unwrap();
         match out {
@@ -575,6 +581,7 @@ mod tests {
             }),
             action: HookAction::Block { reason: "x".into() },
             status_message: None,
+            once: false,
         };
         let good = allow_hook("good", HookStage::PreProviderCall);
         let out = run_stage(HookStage::PreProviderCall, "x", &[bad, good]).unwrap();
@@ -737,6 +744,7 @@ mod tests {
                 reason: "should-not-fire".into(),
             },
             status_message: None,
+            once: false,
         };
         let good = allow_hook("good", HookStage::PreProviderCall);
         let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, good], None, false)
@@ -761,6 +769,7 @@ mod tests {
             }),
             action: HookAction::Allow,
             status_message: None,
+            once: false,
         };
         let later = allow_hook("never-runs", HookStage::PreProviderCall);
         let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, later], None, true)

@@ -707,6 +707,7 @@ kind = "allow"
             }),
             action: HookAction::Allow,
             status_message: None,
+            once: false,
         };
         assert!(h.is_enabled());
     }

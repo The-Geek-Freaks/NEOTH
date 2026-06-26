@@ -396,6 +396,10 @@ pub(crate) struct ReplyProvenance {
 /// egress policy — a no-provider recall reply is gated **identically** to a
 /// model reply. The `CHANNEL_EGRESS` frame is emitted only here (post-gate), so
 /// a suppressed reply is never falsely attested as egressed.
+///
+/// `session_fired_once` is the session-scoped once-gate set (GOLD-CCPARITY-ONCE).
+/// Hooks with `once = true` that are already in the set are pre-filtered before
+/// the dispatcher runs; on first firing the name is inserted.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn release_channel_reply(
     writer: &WalWriterHandle,
@@ -411,24 +415,74 @@ pub(crate) async fn release_channel_reply(
     // the reply from their chat. `None` preserves the pre-GOOSE-03
     // fail-closed behaviour for all non-channel and test call sites.
     channel_asker: Option<Arc<dyn crate::permissions::gate::ChannelAsker>>,
+    // GOLD-CCPARITY-ONCE: session-scoped fired set. Created once per channel
+    // session (outside the per-message loop) and passed by &mut ref so the
+    // PreEgress once-gate is shared across turns.
+    session_fired_once: &mut std::collections::HashSet<String>,
 ) -> Result<Option<OutboundMessage>> {
-    // ── PreEgress hooks ───────────────────────────────────────────────
+    // ── PreEgress hooks (GOLD-CCPARITY-ONCE: pre-filter once=true hooks) ──
     // Last filter before the channel adapter sends the reply. A Replace
     // rewrites the outbound text (per-messenger formatting, profanity
     // scrub); a Block silently drops it with a HOOK_BLOCKED audit frame.
-    let reply_text = match crate::hooks::run_stage(crate::hooks::HookStage::PreEgress, body, hooks)
-    {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Pre-filter once=true hooks that already fired this session.
+    let mut skipped_once_egress: Vec<String> = Vec::new();
+    let active_egress_hooks: Vec<crate::hooks::schema::HookDef> = hooks
+        .iter()
+        .filter(|h| {
+            if h.once()
+                && h.stage == crate::hooks::HookStage::PreEgress
+                && h.is_enabled()
+                && session_fired_once.contains(&h.name)
+            {
+                skipped_once_egress.push(h.name.clone());
+                false
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect();
+
+    // Emit HOOK_SKIPPED_ONCE for each suppressed hook.
+    for name in &skipped_once_egress {
+        if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+            "name": name,
+            "stage": "pre_egress",
+            "ts_unix": ts_unix,
+        })) {
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
+                &payload,
+            )
+            .build();
+            if let Err(e) = writer.append(header, payload).await {
+                warn!(error = %e, "WAL append PreEgress HOOK_SKIPPED_ONCE failed");
+            }
+        }
+    }
+
+    let reply_text = match crate::hooks::run_stage(
+        crate::hooks::HookStage::PreEgress,
+        body,
+        &active_egress_hooks,
+    ) {
         Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
             for name in &hits {
+                // Record once=true hooks as fired.
+                if hooks.iter().any(|h| h.name == *name && h.once()) {
+                    session_fired_once.insert(name.clone());
+                }
                 if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
                     "name": name,
                     "stage": "pre_egress",
                     "channel": channel_str,
                     "recipient_hash": sender_hash,
-                    "ts_unix": std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0),
+                    "ts_unix": ts_unix,
                 })) {
                     let header = crate::wal::HeaderBuilder::new(
                         crate::wal::events::EVENT_TYPE_HOOK_FIRED,
@@ -577,6 +631,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         });
     // Keep a second Arc into the bus for the UUID-reply fast-path (submit_response).
     let confirm_bus_for_reply = confirm_bus;
+
+    // GOLD-CCPARITY-ONCE: session-scoped fired set for the channel handler.
+    // The PipelineHandler is a Fn (not FnMut), so we use Arc<Mutex<HashSet>>
+    // to share mutable state across per-message calls. One channel session
+    // (one call to build_pipeline_handler) = one session_fired_once set —
+    // resets when the daemon restarts or the channel reconnects.
+    let session_fired_once_arc: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>> =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+
     Box::new(move |inbound: InboundMessage| {
         let provider = Arc::clone(&provider);
         let writer = writer.clone();
@@ -596,6 +659,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         // mid-message config-flip is impossible.
         let config_for_handler = reload_controller.latest();
         let views_conn = views_conn.clone();
+        // GOLD-CCPARITY-ONCE: clone the session Arc so the async future owns it.
+        let session_fired_once = Arc::clone(&session_fired_once_arc);
         Box::pin(async move {
             let mut inbound = inbound;
             // PII guard: the sender id is a phone number for WhatsApp. Hash it
@@ -668,7 +733,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             };
             let channel_str = inbound.channel.as_str();
 
-            // ── PreChannelIngress hooks (Phase 29 R-15) ───────────────────
+            // ── PreChannelIngress hooks (Phase 29 R-15 + GOLD-CCPARITY-ONCE) ─
             // Fire operator-defined hooks before the sanitizer + WAL
             // ingress frame. A Replace rewrites the inbound text (e.g.
             // redact secrets that the operator typo'd into a channel);
@@ -686,22 +751,65 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 );
                 Default::default()
             });
+            let ingress_ts_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
+            let mut skipped_once_ingress: Vec<String> = Vec::new();
+            let active_ingress_hooks: Vec<crate::hooks::schema::HookDef> = {
+                let fired = session_fired_once.lock().await;
+                hooks
+                    .iter()
+                    .filter(|h| {
+                        if h.once()
+                            && h.stage == crate::hooks::HookStage::PreChannelIngress
+                            && h.is_enabled()
+                            && fired.contains(&h.name)
+                        {
+                            skipped_once_ingress.push(h.name.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .cloned()
+                    .collect()
+            };
+            for name in &skipped_once_ingress {
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "name": name,
+                    "stage": "pre_channel_ingress",
+                    "ts_unix": ingress_ts_unix,
+                })) {
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(e) = writer.append(header, payload).await {
+                        warn!(error = %e, "WAL append PreChannelIngress HOOK_SKIPPED_ONCE failed");
+                    }
+                }
+            }
             let hooked_text: String = match crate::hooks::run_stage(
                 crate::hooks::HookStage::PreChannelIngress,
                 raw_text,
-                &hooks,
+                &active_ingress_hooks,
             ) {
                 Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
+                    let mut fired = session_fired_once.lock().await;
                     for name in &hits {
+                        // Record once=true hooks as fired.
+                        if hooks.iter().any(|h| h.name == *name && h.once()) {
+                            fired.insert(name.clone());
+                        }
                         let payload = match serde_json::to_vec(&serde_json::json!({
                             "name": name,
                             "stage": "pre_channel_ingress",
                             "channel": channel_str,
                             "sender_id_hash": sender_hash,
-                            "ts_unix": std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0),
+                            "ts_unix": ingress_ts_unix,
                         })) {
                             Ok(p) => p,
                             Err(e) => {
@@ -890,6 +998,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             input_tokens: None,
                             output_tokens: None,
                         };
+                        let mut fired = session_fired_once.lock().await;
                         return release_channel_reply(
                             &writer,
                             &hooks,
@@ -900,6 +1009,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             &recall_reply,
                             &provenance,
                             channel_asker.as_ref().map(Arc::clone),
+                            &mut fired,
                         )
                         .await;
                     }
@@ -1416,7 +1526,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     }
                 };
 
-            // ── Operator hooks at PreProviderCall (Phase 29 R-15 H-3) ─────
+            // ── Operator hooks at PreProviderCall (Phase 29 R-15 H-3
+            //    + GOLD-CCPARITY-ONCE) ──────────────────────────────────────
             // Loaded fresh per turn so operator edits to `~/.neoth/hooks/`
             // take effect without daemon restart. Block-action stops the
             // turn (no provider call, no reply); replace mutates the
@@ -1433,10 +1544,53 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 );
                 Default::default()
             });
+            let provider_call_ts_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
+            let mut skipped_once_provider: Vec<String> = Vec::new();
+            let active_provider_hooks: Vec<crate::hooks::schema::HookDef> = {
+                let fired = session_fired_once.lock().await;
+                hooks
+                    .iter()
+                    .filter(|h| {
+                        if h.once()
+                            && h.stage == crate::hooks::HookStage::PreProviderCall
+                            && h.is_enabled()
+                            && fired.contains(&h.name)
+                        {
+                            skipped_once_provider.push(h.name.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .cloned()
+                    .collect()
+            };
+            for name in &skipped_once_provider {
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "name": name,
+                    "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
+                    "ts_unix": provider_call_ts_unix,
+                })) {
+                    let header = crate::wal::make_header(
+                        crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
+                        &payload,
+                    );
+                    if let Err(e) = writer.append(header, payload).await {
+                        tracing::warn!(
+                            error = %e,
+                            "WAL append PreProviderCall HOOK_SKIPPED_ONCE failed"
+                        );
+                    }
+                }
+            }
             let (final_prompt, hook_hits) = match crate::hooks::run_stage(
                 crate::hooks::HookStage::PreProviderCall,
                 &final_prompt,
-                &hooks,
+                &active_provider_hooks,
             ) {
                 Ok(crate::hooks::StageOutcome::Continue { body, hits }) => (body, hits),
                 Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
@@ -1469,25 +1623,34 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     (final_prompt, Vec::new())
                 }
             };
-            for name in &hook_hits {
-                let payload = match serde_json::to_vec(&serde_json::json!({
-                    "name": name,
-                    "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
-                })) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            hook = %name,
-                            "HOOK_FIRED audit payload serialisation failed; frame skipped"
-                        );
-                        continue;
+            {
+                let mut fired = session_fired_once.lock().await;
+                for name in &hook_hits {
+                    // GOLD-CCPARITY-ONCE: record once=true hooks as fired.
+                    if hooks.iter().any(|h| h.name == *name && h.once()) {
+                        fired.insert(name.clone());
                     }
-                };
-                let header =
-                    crate::wal::make_header(crate::wal::events::EVENT_TYPE_HOOK_FIRED, &payload);
-                if let Err(e) = writer.append(header, payload).await {
-                    tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
+                    let payload = match serde_json::to_vec(&serde_json::json!({
+                        "name": name,
+                        "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
+                    })) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                hook = %name,
+                                "HOOK_FIRED audit payload serialisation failed; frame skipped"
+                            );
+                            continue;
+                        }
+                    };
+                    let header = crate::wal::make_header(
+                        crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                        &payload,
+                    );
+                    if let Err(e) = writer.append(header, payload).await {
+                        tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
+                    }
                 }
             }
 
@@ -2338,6 +2501,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 input_tokens: completion.input_tokens,
                 output_tokens: completion.output_tokens,
             };
+            let mut fired = session_fired_once.lock().await;
             release_channel_reply(
                 &writer,
                 &hooks,
@@ -2348,6 +2512,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &completion.text,
                 &provenance,
                 channel_asker,
+                &mut fired,
             )
             .await
         })
@@ -2797,6 +2962,8 @@ mod tests {
             input_tokens: None,
             output_tokens: None,
         };
+        let mut session_fired_once_test: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let out = release_channel_reply(
             &writer,
             &[], // no hooks → Continue verbatim
@@ -2807,6 +2974,7 @@ mod tests {
             "here is what I recall about rust",
             &prov,
             None, // no confirm bus in this test
+            &mut session_fired_once_test,
         )
         .await
         .expect("release ok");
@@ -2841,6 +3009,8 @@ mod tests {
             input_tokens: None,
             output_tokens: None,
         };
+        let mut session_fired_once_test2: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let out = release_channel_reply(
             &writer,
             &[],
@@ -2851,6 +3021,7 @@ mod tests {
             "secret operator memory",
             &prov,
             None, // no confirm bus in this test
+            &mut session_fired_once_test2,
         )
         .await
         .expect("release ok (gate Deny is Ok(None), not Err)");

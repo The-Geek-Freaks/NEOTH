@@ -789,6 +789,11 @@ async fn enforce_preflight(
     plan_attest_hash: Option<String>,
     // GOLD-ADAPT-OH-13: raw enrichment layers for selective agent rebuild.
     agent_raw_layers: AgentRawLayers,
+    // GOLD-CCPARITY-ONCE: session-scoped set of once=true hook names that have
+    // already fired. Passed by &mut ref so PrePipeline + PreProviderCall share
+    // the same set — a once=true hook fired at PrePipeline is suppressed at
+    // PreProviderCall within the same session.
+    session_fired_once: &mut std::collections::HashSet<String>,
 ) -> Result<PreflightOutcome> {
     // ── Permission gate (Phase 28b AU-4) + C-14 cost preview ───────────────
     // Real `eur_estimate` from the cost predictor — feeds both the
@@ -1214,6 +1219,7 @@ async fn enforce_preflight(
         &final_prompt,
         &hooks,
         &writer,
+        session_fired_once,
     )
     .await?
     {
@@ -1229,6 +1235,7 @@ async fn enforce_preflight(
         &final_prompt,
         &hooks,
         &writer,
+        session_fired_once,
     )
     .await?
     {
@@ -2109,6 +2116,10 @@ async fn run_post_reply_pipelines(
     current_session_id: String,
     prompt_token_estimate: u32,
     turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
+    // GOLD-CCPARITY-ONCE: session-scoped fired set threaded from run_chat_with
+    // through enforce_preflight to here so PostProviderCall shares the same
+    // once-guard as PrePipeline and PreProviderCall.
+    session_fired_once: &mut std::collections::HashSet<String>,
 ) -> Result<()> {
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
@@ -2131,6 +2142,7 @@ async fn run_post_reply_pipelines(
         &response_text,
         &hooks,
         &writer,
+        session_fired_once,
     )
     .await?
     {
@@ -3289,6 +3301,15 @@ pub async fn run_chat_with(
         home,
     ) = build_prompt_bundle(config, prompt, &args, &prompt_bundle_hash, home, &writer).await;
 
+    // GOLD-CCPARITY-ONCE: session-scoped fired set. One run_chat_with call =
+    // one CLI session. Created here before enforce_preflight so the same set
+    // is shared across PrePipeline, PreProviderCall, and PostProviderCall
+    // within the single turn (and the same set is reused across multi-turn
+    // batch sessions if run_chat_with is called in a loop). For the CLI path
+    // this function is called once per invocation, so the set lives exactly
+    // as long as the session.
+    let mut session_fired_once: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     let (
         writer,
         writer_join,
@@ -3311,6 +3332,7 @@ pub async fn run_chat_with(
         &home,
         plan_attest_hash,
         agent_raw_layers,
+        &mut session_fired_once,
     )
     .await?
     {
@@ -3400,6 +3422,7 @@ pub async fn run_chat_with(
         current_session_id,
         prompt_token_estimate,
         turn_journal,
+        &mut session_fired_once,
     )
     .await
 }
@@ -3548,14 +3571,52 @@ enum HookOutcome {
 /// The `Blocked` WAL frame (`EVENT_TYPE_HOOK_BLOCKED = 0x81`) is emitted here
 /// before returning so every abort is traceable without the caller duplicating
 /// the WAL write.
+///
+/// `session_fired_once` is a session-scoped set of hook names that have already
+/// fired this session (GOLD-CCPARITY-ONCE). Hooks with `once = true` that appear
+/// in this set are **pre-filtered** before calling the dispatcher — this ensures
+/// their `Replace` actions are never applied (cannot undo a replace post-hoc).
+/// On first firing the name is inserted; on subsequent firings a
+/// `HOOK_SKIPPED_ONCE` (0x8B) WAL frame is emitted instead of `HOOK_FIRED`.
 async fn run_hook_stage(
     stage: crate::hooks::HookStage,
     body: &str,
     hooks: &[crate::hooks::schema::HookDef],
     writer: &crate::wal::writer::WalWriterHandle,
+    session_fired_once: &mut std::collections::HashSet<String>,
 ) -> Result<HookOutcome> {
+    // GOLD-CCPARITY-ONCE: pre-filter once=true hooks that already fired.
+    // Emit HOOK_SKIPPED_ONCE for each suppressed hook. Only hooks that match
+    // this stage are relevant (disabled hooks are ignored by the dispatcher
+    // anyway, so we don't need to gate on is_enabled here).
+    let mut skipped_once_names: Vec<String> = Vec::new();
+    let active_hooks: Vec<crate::hooks::schema::HookDef> = hooks
+        .iter()
+        .filter(|h| {
+            if h.once() && h.stage == stage && h.is_enabled() && session_fired_once.contains(&h.name) {
+                skipped_once_names.push(h.name.clone());
+                false // suppress: exclude from dispatcher
+            } else {
+                true // pass through
+            }
+        })
+        .cloned()
+        .collect();
+
+    // Emit HOOK_SKIPPED_ONCE for every suppressed once-hook at this stage.
+    for name in &skipped_once_names {
+        emit_hook_frame(
+            writer,
+            crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
+            name,
+            stage,
+            None,
+        )
+        .await;
+    }
+
     let before = body.to_string();
-    let outcome = crate::hooks::run_stage(stage, body, hooks)?;
+    let outcome = crate::hooks::run_stage(stage, body, &active_hooks)?;
     match outcome {
         crate::hooks::StageOutcome::Continue { body: after, hits } => {
             for name in &hits {
@@ -3575,6 +3636,11 @@ async fn run_hook_stage(
                     status_note,
                 )
                 .await;
+                // GOLD-CCPARITY-ONCE: if this hook has once=true, record it as
+                // fired so subsequent calls in this session suppress it.
+                if hooks.iter().any(|h| h.name == *name && h.once()) {
+                    session_fired_once.insert(name.clone());
+                }
             }
             if !hits.is_empty() && after != before {
                 emit_hook_frame(
@@ -8610,6 +8676,202 @@ mod tests {
         assert_eq!(
             budget, None,
             "override_effort=None must leave thinking_budget=None (backward compat)"
+        );
+    }
+
+    // ── GOLD-CCPARITY-ONCE: run_hook_stage once-gate tests ──────────────────
+    //
+    // These tests exercise run_hook_stage directly with a real (temp-file) WAL
+    // writer and a session_fired_once HashSet, verifying:
+    //   1. First call → HOOK_FIRED, name inserted into set.
+    //   2. Second call with same set → HOOK_SKIPPED_ONCE, no second HOOK_FIRED.
+    //   3. Fresh HashSet → fires again (independent session).
+    //   4. once=false hook fires every time with no HOOK_SKIPPED_ONCE.
+
+    /// Decode all frames from a WAL file after the segment header and collect
+    /// event types into a Vec so tests can assert on them without caring about
+    /// byte offsets.
+    async fn collect_event_types(seg: &std::path::Path) -> Vec<u8> {
+        let bytes = tokio::fs::read(seg).await.unwrap();
+        let mut cursor = &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
+        let mut types = Vec::new();
+        while !cursor.is_empty() {
+            let Ok(frame) = crate::wal::frame::decode_frame(cursor) else {
+                break;
+            };
+            types.push(frame.header.event_type);
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        types
+    }
+
+    #[tokio::test]
+    async fn ccparity_once_fires_exactly_once_across_two_stages_in_one_session() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("once_test.wal");
+
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let hook = crate::hooks::schema::HookDef {
+            name: "startup-banner".into(),
+            stage: crate::hooks::HookStage::PrePipeline,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: crate::hooks::schema::HookAction::Allow,
+            status_message: None,
+            once: true,
+        };
+        let hooks = vec![hook];
+        let mut session_fired_once: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        // Call 1 — first firing. Must emit HOOK_FIRED and insert name.
+        let outcome = run_hook_stage(
+            crate::hooks::HookStage::PrePipeline,
+            "hello",
+            &hooks,
+            &writer,
+            &mut session_fired_once,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(outcome, HookOutcome::Continue(ref b) if b == "hello"),
+            "first firing must Continue with unchanged body"
+        );
+        assert!(
+            session_fired_once.contains("startup-banner"),
+            "name must be in fired set after first firing"
+        );
+
+        // Call 2 — same session_fired_once — must suppress, emit HOOK_SKIPPED_ONCE.
+        let outcome2 = run_hook_stage(
+            crate::hooks::HookStage::PrePipeline,
+            "world",
+            &hooks,
+            &writer,
+            &mut session_fired_once,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(outcome2, HookOutcome::Continue(ref b) if b == "world"),
+            "suppressed once-hook must still Continue (not Block)"
+        );
+
+        // Call 3 — fresh session set — must fire again (independent session).
+        let mut new_session: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let outcome3 = run_hook_stage(
+            crate::hooks::HookStage::PrePipeline,
+            "fresh",
+            &hooks,
+            &writer,
+            &mut new_session,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(outcome3, HookOutcome::Continue(ref b) if b == "fresh"),
+            "new session must fire once-hook again"
+        );
+        assert!(
+            new_session.contains("startup-banner"),
+            "name must be in new session set after firing"
+        );
+
+        // Drain writer so WAL file is complete.
+        drop(writer);
+        let _ = join.await;
+
+        // Verify WAL: exactly 2 HOOK_FIRED (call1 + call3) and exactly 1
+        // HOOK_SKIPPED_ONCE (call2).
+        let types = collect_event_types(&seg).await;
+        let fired_count = types
+            .iter()
+            .filter(|&&t| t == crate::wal::events::EVENT_TYPE_HOOK_FIRED)
+            .count();
+        let skipped_count = types
+            .iter()
+            .filter(|&&t| t == crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE)
+            .count();
+        assert_eq!(
+            fired_count, 2,
+            "must emit HOOK_FIRED for call1 and call3 (new session), got {fired_count}"
+        );
+        assert_eq!(
+            skipped_count, 1,
+            "must emit exactly one HOOK_SKIPPED_ONCE for call2 (same session), got {skipped_count}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ccparity_once_false_fires_on_every_turn() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("always_test.wal");
+
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let hook = crate::hooks::schema::HookDef {
+            name: "audit-log".into(),
+            stage: crate::hooks::HookStage::PrePipeline,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: crate::hooks::schema::HookAction::Allow,
+            status_message: None,
+            once: false, // default behaviour — fires every time
+        };
+        let hooks = vec![hook];
+        let mut session_fired_once: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        // Two calls with the same session set. Both must fire.
+        run_hook_stage(
+            crate::hooks::HookStage::PrePipeline,
+            "turn1",
+            &hooks,
+            &writer,
+            &mut session_fired_once,
+        )
+        .await
+        .unwrap();
+        run_hook_stage(
+            crate::hooks::HookStage::PrePipeline,
+            "turn2",
+            &hooks,
+            &writer,
+            &mut session_fired_once,
+        )
+        .await
+        .unwrap();
+
+        drop(writer);
+        let _ = join.await;
+
+        let types = collect_event_types(&seg).await;
+        let fired_count = types
+            .iter()
+            .filter(|&&t| t == crate::wal::events::EVENT_TYPE_HOOK_FIRED)
+            .count();
+        let skipped_count = types
+            .iter()
+            .filter(|&&t| t == crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE)
+            .count();
+        assert_eq!(
+            fired_count, 2,
+            "once=false hook must emit HOOK_FIRED on every turn, got {fired_count}"
+        );
+        assert_eq!(
+            skipped_count, 0,
+            "once=false hook must never emit HOOK_SKIPPED_ONCE, got {skipped_count}"
+        );
+        // fired set stays empty — once=false hooks do NOT populate it.
+        assert!(
+            !session_fired_once.contains("audit-log"),
+            "once=false hook must not populate session_fired_once"
         );
     }
 }

@@ -1147,6 +1147,17 @@ pub const EVENT_TYPE_GOAL_JUDGED: u8 = 0x89;
 /// free slot after 0x89 (GOAL_JUDGED).
 pub const EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT: u8 = 0x8A;
 
+/// `0x8B HOOK_SKIPPED_ONCE` — GOLD-CCPARITY-ONCE. A hook with `once = true`
+/// was suppressed because it already fired this session (the session-scoped
+/// `fired_once` set already contained its name). The pipeline continues
+/// normally — suppression is NOT a block; it is purely a delivery-count cap.
+///
+/// Payload: `{ "name": "<hook-name>", "stage": "<stage>", "ts_unix": <u64> }`.
+///
+/// Hooks-lifecycle band (0x80..=0x8F). Batch-able (same policy as
+/// `HOOK_FIRED`): high-cadence once-hooks do not warrant an fsync per skip.
+pub const EVENT_TYPE_HOOK_SKIPPED_ONCE: u8 = 0x8B;
+
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
 /// One event moved from `idx_episode` (hot) into `idx_consolidated` (warm).
@@ -2052,6 +2063,9 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             | EVENT_TYPE_HOOK_BLOCKED
             | EVENT_TYPE_HOOK_REPLACED
             | EVENT_TYPE_HOOK_ERROR
+            // GOLD-CCPARITY-ONCE: skip frames are advisory + high-cadence;
+            // batch behind the next sync-on-write frame (same policy as HOOK_FIRED).
+            | EVENT_TYPE_HOOK_SKIPPED_ONCE
             | EVENT_TYPE_LOCAL_INFERENCE_START
             | EVENT_TYPE_LOCAL_INFERENCE_END
             // SL-01b gossip diagnostics are high-cadence + re-derivable; batch
@@ -2744,6 +2758,8 @@ const _: () = {
         [(EVENT_TYPE_GOAL_JUDGED < 0x80 || EVENT_TYPE_GOAL_JUDGED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT < 0x80
         || EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_HOOK_SKIPPED_ONCE < 0x80
+        || EVENT_TYPE_HOOK_SKIPPED_ONCE > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]
@@ -3117,6 +3133,7 @@ mod tests {
             ("HOOK_BLOCKED", EVENT_TYPE_HOOK_BLOCKED),
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),
             ("HOOK_ERROR", EVENT_TYPE_HOOK_ERROR),
+            ("HOOK_SKIPPED_ONCE", EVENT_TYPE_HOOK_SKIPPED_ONCE),
             ("SUBAGENT_REVIEW_STAGE", EVENT_TYPE_SUBAGENT_REVIEW_STAGE),
             (
                 "TEACHER_ESCALATION_ATTEMPTED",

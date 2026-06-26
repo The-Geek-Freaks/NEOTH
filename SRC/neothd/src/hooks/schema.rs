@@ -63,6 +63,16 @@ pub struct HookDef {
     /// ignore unknown JSON fields are unaffected by hooks that carry this.
     #[serde(default)]
     pub status_message: Option<String>,
+    /// GOLD-CCPARITY-ONCE — when `true` this hook fires **at most once per
+    /// session**. Subsequent firings in the same session are suppressed and
+    /// recorded as `HOOK_SKIPPED_ONCE` (0x8B) WAL frames instead of
+    /// `HOOK_FIRED` (0x80). A new session (new `run_chat_with` invocation or
+    /// new channel inbound-message loop) resets the fired-set.
+    ///
+    /// Default is `false` (fire on every matching message — existing behaviour).
+    /// TOML: `once = true`.
+    #[serde(default)]
+    pub once: bool,
 }
 
 impl HookDef {
@@ -88,6 +98,13 @@ impl HookDef {
     /// frames so audit consumers and operator UIs receive live progress text.
     pub fn status_message(&self) -> Option<&str> {
         self.status_message.as_deref()
+    }
+
+    /// GOLD-CCPARITY-ONCE — returns whether this hook should fire at most once
+    /// per session. The caller tracks fired hook names in a `HashSet<String>`
+    /// scoped to the session lifetime and suppresses subsequent firings.
+    pub fn once(&self) -> bool {
+        self.once
     }
 }
 
@@ -293,6 +310,38 @@ mod tests {
             Some("running safety check...".to_string()),
             "status_message field must be populated"
         );
+    }
+
+    // ── GOLD-CCPARITY-ONCE: once field TOML round-trips ─────────────────
+
+    #[test]
+    fn ccparity_once_defaults_to_false_when_absent() {
+        let toml_src = r#"
+            name = "audit"
+            stage = "pre_provider_call"
+            [action]
+            kind = "allow"
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        assert!(
+            !h.once(),
+            "once must default to false when omitted (backward-compat)"
+        );
+        assert!(!h.once, "once field must be false when absent");
+    }
+
+    #[test]
+    fn ccparity_once_parses_true() {
+        let toml_src = r#"
+            name = "startup-banner"
+            stage = "pre_pipeline"
+            once = true
+            [action]
+            kind = "allow"
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        assert!(h.once(), "once() must return true when TOML sets once = true");
+        assert!(h.once, "once field must be true");
     }
 
     #[test]
