@@ -17,7 +17,7 @@
 //!
 //! | Range          | Purpose                                                |
 //! |----------------|--------------------------------------------------------|
-//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors |
+//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21) |
 //! | `0x10..=0x1F`  | Daemon lifecycle (BOOT, SHUTDOWN, UPDATE_RAN, …)        |
 //! | `0x20..=0x2F`  | LLM provider lifecycle (REQUEST/RESPONSE/ERROR/STREAM) |
 //! | `0x2A..=0x2B`  | (reserved Phase 10 D14b) local Qwen3 inference trace   |
@@ -72,6 +72,40 @@ pub const EVENT_TYPE_TURN_JOURNAL_CLOSED: u8 = 0x06;
 /// The daemon NEVER deletes orphaned journals automatically — removal
 /// is an explicit operator action only.
 pub const EVENT_TYPE_STALE_INTERRUPTED: u8 = 0x07;
+
+// ── GOLD-ADAPT-ODY-21 outbound webhook audit (0x08..=0x0A) ──────────────────
+// Three consecutive slots in the 0x01..=0x0F memory+recall band (0x08–0x0A
+// are the first free slots in that band). These are webhook-delivery audit
+// frames emitted by the WAL-tail reader cron (`daemon/webhook_manager.rs`).
+// They are NOT emitted inline in the hot chat/serve_pipeline turn loop —
+// the cron consumes source events already on disk and records delivery results.
+
+/// `0x08 WEBHOOK_DELIVERED` — GOLD-ADAPT-ODY-21. An outbound HMAC-SHA256-signed
+/// HTTPS POST to a registered operator endpoint succeeded (HTTP 2xx). The
+/// delivery cron emits this after each successful fan-out so an operator can
+/// audit every external notification: `neoth wal show --type webhook_delivered`.
+///
+/// Payload (JSON): `{event_name, endpoint_url_hash (xxh3-64 hex, NEVER raw URL),
+/// status_code, ts_unix}`.
+pub const EVENT_TYPE_WEBHOOK_DELIVERED: u8 = 0x08;
+
+/// `0x09 WEBHOOK_SSRF_BLOCKED` — GOLD-ADAPT-ODY-21. The SSRF guard REJECTED the
+/// destination URL after DNS resolution: the resolved IP fell within RFC-1918,
+/// CGNAT (100.64/10), loopback (127/8, ::1), link-local (169.254/16),
+/// multicast, or the `http://` scheme was used instead of `https://`. The
+/// request was NOT sent. Immediate-sync (a blocked-SSRF is a security event).
+///
+/// Payload (JSON): `{event_name, endpoint_url_hash, reason, ts_unix}`.
+pub const EVENT_TYPE_WEBHOOK_SSRF_BLOCKED: u8 = 0x09;
+
+/// `0x0A WEBHOOK_FAILED` — GOLD-ADAPT-ODY-21. An outbound webhook POST was
+/// attempted (passed the SSRF guard) but failed: network error, DNS resolution
+/// error, TLS failure, or a non-2xx HTTP response. Best-effort / non-fatal —
+/// the cron continues to the next endpoint. Records the failure so an operator
+/// can identify a broken receiver via `neoth wal show --type webhook_failed`.
+///
+/// Payload (JSON): `{event_name, endpoint_url_hash, error, ts_unix}`.
+pub const EVENT_TYPE_WEBHOOK_FAILED: u8 = 0x0A;
 
 // ---- 0x10..=0x1F  Daemon lifecycle ----------------------------------------
 
@@ -2047,6 +2081,10 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
 pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("raw_text", EVENT_TYPE_RAW_TEXT),
     ("reinforce", EVENT_TYPE_REINFORCE),
+    // GOLD-ADAPT-ODY-21 webhook audit (0x08..=0x0A, memory+recall band).
+    ("webhook_delivered", EVENT_TYPE_WEBHOOK_DELIVERED),
+    ("webhook_ssrf_blocked", EVENT_TYPE_WEBHOOK_SSRF_BLOCKED),
+    ("webhook_failed", EVENT_TYPE_WEBHOOK_FAILED),
     ("turn_journal_opened", EVENT_TYPE_TURN_JOURNAL_OPENED),
     ("turn_journal_closed", EVENT_TYPE_TURN_JOURNAL_CLOSED),
     ("stale_interrupted", EVENT_TYPE_STALE_INTERRUPTED),
@@ -2497,6 +2535,15 @@ const _: () = {
     let _ =
         [(); 1][(EVENT_TYPE_STALE_INTERRUPTED < 0x01 || EVENT_TYPE_STALE_INTERRUPTED > 0x0F)
             as usize];
+    // GOLD-ADAPT-ODY-21 — webhook audit (0x08..=0x0A) in the memory+recall band.
+    let _ =
+        [(); 1][(EVENT_TYPE_WEBHOOK_DELIVERED < 0x01 || EVENT_TYPE_WEBHOOK_DELIVERED > 0x0F)
+            as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_WEBHOOK_SSRF_BLOCKED < 0x01 || EVENT_TYPE_WEBHOOK_SSRF_BLOCKED > 0x0F)
+            as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_WEBHOOK_FAILED < 0x01 || EVENT_TYPE_WEBHOOK_FAILED > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_BOOT < 0x10 || EVENT_TYPE_BOOT > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SHUTDOWN < 0x10 || EVENT_TYPE_SHUTDOWN > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_INSTALLER_RAN < 0x10 || EVENT_TYPE_INSTALLER_RAN > 0x1F) as usize];
@@ -2931,6 +2978,10 @@ mod tests {
         let codes = [
             ("RAW_TEXT", EVENT_TYPE_RAW_TEXT),
             ("REINFORCE", EVENT_TYPE_REINFORCE),
+            // GOLD-ADAPT-ODY-21 webhook audit.
+            ("WEBHOOK_DELIVERED", EVENT_TYPE_WEBHOOK_DELIVERED),
+            ("WEBHOOK_SSRF_BLOCKED", EVENT_TYPE_WEBHOOK_SSRF_BLOCKED),
+            ("WEBHOOK_FAILED", EVENT_TYPE_WEBHOOK_FAILED),
             ("BOOT", EVENT_TYPE_BOOT),
             ("SHUTDOWN", EVENT_TYPE_SHUTDOWN),
             ("INSTALLER_RAN", EVENT_TYPE_INSTALLER_RAN),

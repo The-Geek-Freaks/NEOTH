@@ -193,5 +193,11 @@ pub mod self_map_task;
 /// [`bg_jobs::BgJobRegistry`]: completed jobs get their callbacks invoked,
 /// are removed from the registry, and produce a [`bg_monitor::JobCompleteReport`].
 pub mod bg_monitor;
+/// GOLD-ADAPT-ODY-21 — outbound webhook manager cron. WAL-tail reader that
+/// fires HMAC-SHA256-signed HTTPS POSTs to registered endpoints whenever
+/// session/chat WAL frames arrive. SSRF guard: DNS-resolve + RFC-1918 block.
+/// Emits `0x08 WEBHOOK_DELIVERED` / `0x09 WEBHOOK_SSRF_BLOCKED` /
+/// `0x0A WEBHOOK_FAILED` audit frames.
+pub mod webhook_manager;
 // Telemetry static-enforcement lives at `tests/no_outbound_network.rs` —
 // runs on every `cargo test` and blocks PRs. No daemon-side module needed.

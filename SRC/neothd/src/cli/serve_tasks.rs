@@ -510,6 +510,33 @@ pub(crate) fn spawn_session_health_cron(
     handle
 }
 
+/// GOLD-ADAPT-ODY-21 — spawn the outbound webhook manager cron. Tail-reads new
+/// WAL frames (`0x9A`/`0x21`/`0x01`/`0x32`) and fans them out as HMAC-signed
+/// HTTPS POSTs. SSRF guard blocks RFC-1918/CGNAT/loopback. Emits
+/// `0x08`/`0x09`/`0x0A` audit frames. `None` when
+/// `webhook_manager.enabled = false` (the default — opt-in).
+pub(crate) fn spawn_webhook_manager_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+    home_dir: &std::path::Path,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::webhook_manager::spawn_webhook_manager_loop(
+        config.webhook_manager.clone(),
+        wal_dir.to_path_buf(),
+        home_dir.to_path_buf(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.webhook_manager.interval_secs,
+            endpoints = config.webhook_manager.endpoints.len(),
+            "webhook-manager cron loop spawned (GOLD-ADAPT-ODY-21)"
+        );
+    }
+    handle
+}
+
 /// GOLD-FEAT-09 — spawn the daemon watchdog / auto-recovery cron. `None` when
 /// `watchdog.enabled = false`. The restart ACTION (spawning a service) is gated
 /// to `Elevated`/`Full` autonomy, resolved once here and passed as a plain
@@ -2780,6 +2807,9 @@ pub(crate) struct BackgroundHandles {
     pub drift_alert_cron_handle: Option<JoinHandle<()>>,
     pub token_anomaly_cron_handle: Option<JoinHandle<()>>,
     pub session_health_cron_handle: Option<JoinHandle<()>>,
+    /// GOLD-ADAPT-ODY-21 — outbound webhook manager cron handle.
+    /// `None` when `webhook_manager.enabled = false` (the default).
+    pub webhook_manager_handle: Option<JoinHandle<()>>,
     pub regression_cron_handle: Option<JoinHandle<()>>,
     pub recall_latency_cron_handle: Option<JoinHandle<()>>,
     pub profile_adapt_cron_handle: Option<JoinHandle<()>>,
@@ -2885,6 +2915,7 @@ pub(crate) async fn shutdown_background_tasks(
         drift_alert_cron_handle,
         token_anomaly_cron_handle,
         session_health_cron_handle,
+        webhook_manager_handle,
         regression_cron_handle,
         recall_latency_cron_handle,
         profile_adapt_cron_handle,
@@ -3094,6 +3125,9 @@ pub(crate) async fn shutdown_background_tasks(
     // GOLD-ADAPT-VIEW-05 — abort the session-health cron (same drain-before-close
     // order so an in-flight 0x6F frame isn't lost).
     crate::cli::serve_tasks::abort_optional(session_health_cron_handle).await;
+    // GOLD-ADAPT-ODY-21 — abort the webhook-manager cron (same drain-before-close
+    // order so in-flight 0x08/0x09/0x0A audit frames aren't lost).
+    crate::cli::serve_tasks::abort_optional(webhook_manager_handle).await;
     // Abort the ADV-14 regression-anchor cron (same drain-before-close order
     // so an in-flight 0x3F frame isn't lost).
     crate::cli::serve_tasks::abort_optional(regression_cron_handle).await;

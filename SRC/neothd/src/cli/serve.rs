@@ -963,6 +963,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let session_health_cron_handle =
         crate::cli::serve_tasks::spawn_session_health_cron(&config, &wal_dir, writer.clone());
 
+    // GOLD-ADAPT-ODY-21 — outbound webhook manager cron. Tail-reads new WAL
+    // frames and fans them out as HMAC-signed HTTPS POSTs to registered
+    // endpoints. SSRF guard blocks RFC-1918/CGNAT/loopback. Emits
+    // 0x08/0x09/0x0A audit frames. Default OFF — opt-in via
+    // `webhook_manager.enabled = true`.
+    let webhook_manager_handle = crate::cli::serve_tasks::spawn_webhook_manager_cron(
+        &config,
+        &wal_dir,
+        &crate::config::FreedomConfig::default_neoth_home(),
+        writer.clone(),
+    );
+
     // GOLD-FEAT-09 — daemon watchdog / auto-recovery cron. Default OFF → no
     // idle task; opt-in via `watchdog.enabled = true`. The restart action is
     // gated to Elevated/Full autonomy inside the spawn helper.
@@ -1676,6 +1688,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         drift_alert_cron_handle,
         token_anomaly_cron_handle,
         session_health_cron_handle,
+        webhook_manager_handle,
         regression_cron_handle,
         recall_latency_cron_handle,
         profile_adapt_cron_handle,

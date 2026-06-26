@@ -910,3 +910,109 @@ impl SelfImprovementCollectorConfig {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
 }
+
+// ── GOLD-ADAPT-ODY-21 — outbound webhook manager ─────────────────────────────
+
+/// Which WAL-sourced event triggers an outbound webhook call.
+///
+/// Each variant maps to one or more source WAL frames the cron tail-reads:
+/// - `SessionCreated` ← `0x9A MODE_CHECKPOINT` with `phase` starting with
+///   `"chat:session-start"` or `"channel:session-start"`.
+/// - `ChatCompleted` ← `0x21 PROVIDER_RESPONSE`.
+/// - `ChatMessage` ← `0x01 RAW_TEXT` (CLI path) or `0x32 CHANNEL_INGRESS`
+///   (messaging-channel path).
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookEvent {
+    SessionCreated,
+    ChatCompleted,
+    ChatMessage,
+}
+
+/// One outbound webhook endpoint registration.
+///
+/// The `secret` field is a [`crate::secret::SecretString`] — it is never
+/// echoed in `Debug`, never serialised to the WAL, and is zeroed on drop.
+/// YAML example:
+/// ```yaml
+/// url: "https://example.com/hooks/neoth"
+/// secret: "s3cr3t"
+/// events: [session_created, chat_completed]
+/// ```
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct WebhookEndpointConfig {
+    /// The HTTPS URL to POST to. `http://` URLs are rejected by the SSRF guard
+    /// at delivery time (the guard also performs DNS resolution and blocks
+    /// RFC-1918 / CGNAT / loopback / link-local / multicast targets).
+    pub url: String,
+    /// HMAC-SHA256 signing secret. Sent as `X-NEOTH-Signature: hmac-sha256=<hex>`.
+    /// Required (empty string ⇒ no signature header, logs a warning).
+    pub secret: crate::secret::SecretString,
+    /// Events that trigger delivery to this endpoint. Empty ⇒ all three.
+    pub events: Vec<WebhookEvent>,
+}
+
+impl Default for WebhookEndpointConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            secret: crate::secret::SecretString::from(""),
+            events: vec![
+                WebhookEvent::SessionCreated,
+                WebhookEvent::ChatCompleted,
+                WebhookEvent::ChatMessage,
+            ],
+        }
+    }
+}
+
+/// Default tail-scan interval: 5 seconds.
+pub const DEFAULT_WEBHOOK_MANAGER_INTERVAL_SECS: u64 = 5;
+
+/// GOLD-ADAPT-ODY-21 — outbound webhook manager configuration.
+///
+/// The webhook manager is a WAL-tail reader cron. It scans new frames of
+/// types `0x9A` / `0x21` / `0x01` / `0x32` since its last cursor, fans
+/// them out to registered endpoints as HMAC-signed HTTPS POSTs, and emits
+/// `0x08 WEBHOOK_DELIVERED` / `0x09 WEBHOOK_SSRF_BLOCKED` / `0x0A
+/// WEBHOOK_FAILED` audit frames. Default OFF — opt-in via
+/// `webhook_manager.enabled = true`.
+///
+/// YAML example:
+/// ```yaml
+/// webhook_manager:
+///   enabled: true
+///   interval_secs: 5
+///   endpoints:
+///     - url: "https://n8n.example.com/webhook/neoth"
+///       secret: "mysecret"
+///       events: [session_created, chat_completed, chat_message]
+/// ```
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct WebhookManagerConfig {
+    /// Master switch. Default `false` (opt-in).
+    pub enabled: bool,
+    /// WAL tail-scan cadence in seconds. Default 5. Floor 1.
+    pub interval_secs: u64,
+    /// Registered outbound endpoints.
+    pub endpoints: Vec<WebhookEndpointConfig>,
+}
+
+impl Default for WebhookManagerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_WEBHOOK_MANAGER_INTERVAL_SECS,
+            endpoints: Vec::new(),
+        }
+    }
+}
+
+impl WebhookManagerConfig {
+    /// Tick interval as a `Duration`, clamped to a 1 s minimum.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(1))
+    }
+}

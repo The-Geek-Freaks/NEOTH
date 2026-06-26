@@ -526,6 +526,13 @@ pub struct FreedomConfig {
     /// GOLD-ADAPT-VIEW-05 — session-health / outcome cron. Default OFF.
     #[serde(default)]
     pub session_health: SessionHealthConfig,
+    /// GOLD-ADAPT-ODY-21 — outbound webhook manager cron. Tail-reads new WAL
+    /// frames of types `0x9A` (session.created), `0x21` (chat.completed),
+    /// `0x01`/`0x32` (chat.message) and fans them out to registered HTTPS
+    /// endpoints as HMAC-SHA256-signed POSTs. Emits `0x08`/`0x09`/`0x0A`
+    /// audit frames. Default OFF — opt-in via `webhook_manager.enabled: true`.
+    #[serde(default)]
+    pub webhook_manager: crate::config::automation::WebhookManagerConfig,
     /// ADV-14 — longitudinal recall-regression anchor cron. When `enabled`,
     /// the daemon weekly re-asks the anchor queries, re-embeds the answers,
     /// and emits `0x3F REGRESSION_ALERT` for any whose cosine to the cutover
