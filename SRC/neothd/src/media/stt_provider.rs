@@ -27,6 +27,8 @@
 //! - **Vosk** — a C-FFI engine (cmake + C++), same build-risk class as
 //!   whisper-rs/piper-rs; deferred. `make_stt_provider` returns a clear error.
 
+use std::path::PathBuf;
+
 use async_trait::async_trait;
 
 use super::stt_dispatch::{
@@ -313,6 +315,220 @@ impl SttProviderImpl for AzureSpeechClient {
     }
 }
 
+// ── JV-VOICE-02/03: FasterWhisperProvider ───────────────────────────────────
+
+/// JV-VOICE-02/03 — `faster-whisper` Python CLI subprocess provider. Uses
+/// CTranslate2 int8 quantisation for significantly faster CPU transcription
+/// compared to the candle-based path. Requires `pip install faster-whisper`.
+/// Model files (tiny / base / small) are downloaded on first use by the CLI.
+///
+/// The subprocess is invoked as:
+///   `faster-whisper --model <size> --device cpu --compute_type int8
+///    --output_format json --language <lang|auto> <wav_path>`
+///
+/// Output: JSONL — one JSON object per segment, each line:
+///   `{"text": "...", "start": 0.0, "end": 1.2}`
+pub struct FasterWhisperProvider {
+    /// Whisper model size: "tiny", "base", "small". "tiny" is the default —
+    /// fast on CPU, ~75 MB download, sufficient for short voice commands.
+    pub model_size: String,
+}
+
+impl FasterWhisperProvider {
+    pub fn new() -> Self {
+        Self {
+            model_size: "tiny".to_string(),
+        }
+    }
+
+    pub fn with_model(model_size: impl Into<String>) -> Self {
+        Self {
+            model_size: model_size.into(),
+        }
+    }
+}
+
+impl Default for FasterWhisperProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Probe whether `faster-whisper` is available on PATH.
+pub fn faster_whisper_exe() -> Option<PathBuf> {
+    crate::media::tts_provider::find_on_path("faster-whisper")
+}
+
+/// Write raw f32 mono 16 kHz PCM bytes into a minimal WAV file buffer that
+/// faster-whisper's CLI can consume. We do not depend on the `hound` crate
+/// here — the WAV header is small and fixed.
+pub fn pcm_bytes_to_wav(audio_bytes: &[u8]) -> Vec<u8> {
+    // audio_bytes is expected to be raw little-endian f32 PCM at 16 kHz mono.
+    // WAV format: PCM float (format tag 3) OR we convert to i16 (format tag 1).
+    // CTranslate2 / faster-whisper accepts 16-bit PCM WAV — convert f32 → i16.
+    let samples_f32: Vec<f32> = audio_bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    let samples_i16: Vec<i16> = samples_f32
+        .iter()
+        .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+        .collect();
+    let data_len = (samples_i16.len() * 2) as u32;
+    let sample_rate: u32 = 16_000;
+    let channels: u16 = 1;
+    let bits_per_sample: u16 = 16;
+    let byte_rate = sample_rate * channels as u32 * (bits_per_sample / 8) as u32;
+    let block_align = channels * (bits_per_sample / 8);
+    let chunk_size = 36 + data_len;
+    let mut wav = Vec::with_capacity(44 + data_len as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&chunk_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&bits_per_sample.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for s in &samples_i16 {
+        wav.extend_from_slice(&s.to_le_bytes());
+    }
+    wav
+}
+
+/// Parse faster-whisper's JSONL stdout. Each line is one segment:
+///   `{"text": "hello", "start": 0.0, "end": 1.2}`
+/// Returns (full_text, segments).
+pub fn parse_faster_whisper_output(stdout: &[u8]) -> (String, Vec<TextSegment>) {
+    let mut segments = Vec::new();
+    for line in stdout.split(|&b| b == b'\n') {
+        let line = line.trim_ascii();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        let text = v
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let start_ms =
+            (v.get("start").and_then(|x| x.as_f64()).unwrap_or(0.0) * 1000.0).max(0.0) as u32;
+        let end_ms =
+            (v.get("end").and_then(|x| x.as_f64()).unwrap_or(0.0) * 1000.0).max(0.0) as u32;
+        segments.push(TextSegment {
+            start_ms,
+            end_ms,
+            text,
+        });
+    }
+    let full = segments
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (full.trim().to_string(), segments)
+}
+
+#[async_trait]
+impl SttProviderImpl for FasterWhisperProvider {
+    fn kind(&self) -> SttProviderKind {
+        SttProviderKind::FasterWhisperLocal
+    }
+
+    async fn transcribe(
+        &self,
+        audio: &[u8],
+        request: &TranscriptionRequest,
+    ) -> Result<TranscriptionResult, String> {
+        let exe = faster_whisper_exe().ok_or_else(|| {
+            "faster-whisper not found on PATH — install with: pip install faster-whisper"
+                .to_string()
+        })?;
+
+        // Write audio to a temp WAV file. faster-whisper CLI requires a file
+        // path; it cannot read from stdin.
+        let tmp_dir = std::env::temp_dir();
+        let tmp_path = tmp_dir.join(format!(
+            "neoth-fw-{}.wav",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        ));
+        // Determine if audio is already WAV bytes or raw f32 PCM. We probe the
+        // RIFF header; if missing, treat as raw f32 PCM and wrap in WAV.
+        let wav_bytes = if audio.starts_with(b"RIFF") {
+            audio.to_vec()
+        } else {
+            pcm_bytes_to_wav(audio)
+        };
+        std::fs::write(&tmp_path, &wav_bytes)
+            .map_err(|e| format!("faster-whisper: write tmp WAV: {e}"))?;
+
+        let language = if request.language.is_empty() {
+            "auto".to_string()
+        } else {
+            request.language.clone()
+        };
+
+        // Pitfall: faster-whisper --output_format json writes JSONL (one JSON
+        // object per line), not a single JSON array. parse_faster_whisper_output
+        // handles this correctly by splitting on newlines.
+        // This async fn uses tokio::process (not std::process). The audio.rs
+        // sync fallback path uses std::process::Command to avoid nested-runtime
+        // panic inside spawn_blocking.
+        let result = tokio::process::Command::new(&exe)
+            .args([
+                "--model",
+                &self.model_size,
+                "--device",
+                "cpu",
+                "--compute_type",
+                "int8",
+                "--output_format",
+                "json",
+                "--language",
+                &language,
+                tmp_path.to_str().unwrap_or(""),
+            ])
+            .env("PYTHONIOENCODING", "utf-8")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await;
+
+        let _ = std::fs::remove_file(&tmp_path);
+
+        let out = result.map_err(|e| format!("faster-whisper spawn: {e}"))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!(
+                "faster-whisper exited {:?}: {}",
+                out.status,
+                stderr.trim()
+            ));
+        }
+
+        let (full_text, segments) = parse_faster_whisper_output(&out.stdout);
+        let cleaned = crate::media::stt_postprocess::clean_transcript(&full_text);
+        Ok(TranscriptionResult {
+            text: cleaned,
+            segments,
+            language: request.language.clone(),
+            confidence: None,
+        })
+    }
+}
+
 /// MM-01b bridge: build a live STT provider for `kind` from operator creds.
 /// Cloud kinds (OpenAI Whisper / Azure Speech) are live; the local candle
 /// backend + Vosk are deferred (see module docs).
@@ -343,6 +559,8 @@ pub fn make_stt_provider(
             let region = azure_region.ok_or("azure speech requires a region")?;
             Ok(Box::new(AzureSpeechClient::new(region, key)))
         }
+        // JV-VOICE-02/03 — local, no API key, no cloud gate.
+        SttProviderKind::FasterWhisperLocal => Ok(Box::new(FasterWhisperProvider::new())),
         SttProviderKind::WhisperRsLocal => Err(
             "local whisper STT is deferred — wire it over the existing candle \
              `providers::whisper::WhisperEngine` with a bytes->PCM decode bridge"
@@ -720,6 +938,104 @@ mod tests {
                 confidence: None,
             })
         }
+    }
+
+    // ── FasterWhisperProvider surface ────────────────────────────
+
+    #[test]
+    fn faster_whisper_provider_kind_roundtrip() {
+        let p = FasterWhisperProvider::new();
+        assert_eq!(p.kind(), SttProviderKind::FasterWhisperLocal);
+        assert!(matches!(p.kind(), SttProviderKind::FasterWhisperLocal));
+    }
+
+    #[test]
+    fn faster_whisper_provider_is_local() {
+        assert!(SttProviderKind::FasterWhisperLocal.is_local());
+        assert!(!SttProviderKind::FasterWhisperLocal.requires_credentials());
+    }
+
+    #[test]
+    fn make_stt_provider_faster_whisper_local_constructs() {
+        let on = cloud_on();
+        let p = make_stt_provider(SttProviderKind::FasterWhisperLocal, None, None, &on);
+        assert!(p.is_ok());
+        assert_eq!(p.unwrap().kind(), SttProviderKind::FasterWhisperLocal);
+        // Local — constructible even when cloud flag is off.
+        let off = crate::config::MediaConfig::default();
+        let p2 = make_stt_provider(SttProviderKind::FasterWhisperLocal, None, None, &off);
+        assert!(p2.is_ok());
+    }
+
+    #[test]
+    fn pcm_bytes_to_wav_produces_valid_riff_header() {
+        // 100 f32 samples of silence
+        let samples: Vec<f32> = vec![0.0_f32; 100];
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let wav = pcm_bytes_to_wav(&bytes);
+        assert!(wav.starts_with(b"RIFF"), "WAV must start with RIFF");
+        assert_eq!(&wav[8..12], b"WAVE", "WAVE marker must be present");
+        assert_eq!(&wav[12..16], b"fmt ", "fmt chunk must be present");
+        // 44-byte header + 2 bytes/sample * 100 samples = 244 total.
+        assert_eq!(wav.len(), 44 + 100 * 2);
+    }
+
+    #[test]
+    fn pcm_bytes_to_wav_passthrough_when_already_riff() {
+        // If input is already WAV (starts with RIFF), the provider wraps as-is.
+        // pcm_bytes_to_wav itself always converts — the provider checks upstream.
+        let wav_input = b"RIFF\x00\x00\x00\x00WAVEfmt ".to_vec();
+        // pcm_bytes_to_wav interprets bytes as f32 → must not crash on non-f32.
+        // Just check it doesn't panic with a small buffer.
+        let _ = pcm_bytes_to_wav(&wav_input[..4]);
+    }
+
+    #[test]
+    fn parse_faster_whisper_output_empty() {
+        let (text, segs) = parse_faster_whisper_output(b"");
+        assert!(text.is_empty());
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn parse_faster_whisper_output_single_segment() {
+        let jsonl = br#"{"text": "hello world", "start": 0.0, "end": 1.5}"#;
+        let (text, segs) = parse_faster_whisper_output(jsonl);
+        assert_eq!(text, "hello world");
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].start_ms, 0);
+        assert_eq!(segs[0].end_ms, 1500);
+        assert_eq!(segs[0].text, "hello world");
+    }
+
+    #[test]
+    fn parse_faster_whisper_output_multiple_segments_joined() {
+        let jsonl = b"{\"text\": \"hello\", \"start\": 0.0, \"end\": 1.0}\n{\"text\": \"world\", \"start\": 1.0, \"end\": 2.0}\n";
+        let (text, segs) = parse_faster_whisper_output(jsonl);
+        assert_eq!(text, "hello world");
+        assert_eq!(segs.len(), 2);
+    }
+
+    #[test]
+    fn parse_faster_whisper_output_skips_malformed_lines() {
+        let jsonl = b"{\"text\": \"ok\", \"start\": 0.0, \"end\": 1.0}\nnot-json\n";
+        let (text, segs) = parse_faster_whisper_output(jsonl);
+        assert_eq!(text, "ok");
+        assert_eq!(segs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn faster_whisper_provider_returns_err_when_exe_missing() {
+        if faster_whisper_exe().is_some() {
+            return; // installed — skip missing-exe test path
+        }
+        let p = FasterWhisperProvider::new();
+        let audio = vec![0u8; 64]; // dummy
+        let err = p.transcribe(&audio, &req("en")).await.unwrap_err();
+        assert!(
+            err.contains("faster-whisper not found"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

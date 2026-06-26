@@ -33,6 +33,13 @@ pub enum SttProvider {
     AzureSpeech,
     #[serde(rename = "vosk")]
     Vosk,
+    /// JV-VOICE-02/03 — `faster-whisper` Python CLI subprocess with int8
+    /// quantisation. Significantly faster than the candle-based `WhisperRsLocal`
+    /// on CPU (CTranslate2 backend), requires `pip install faster-whisper`.
+    /// Model files are downloaded on first use by the CLI itself. Local, no
+    /// network for inference, private transcript.
+    #[serde(rename = "faster_whisper_local")]
+    FasterWhisperLocal,
 }
 
 impl SttProvider {
@@ -42,11 +49,15 @@ impl SttProvider {
             Self::OpenAiWhisperApi => "openai_whisper_api",
             Self::AzureSpeech => "azure_speech",
             Self::Vosk => "vosk",
+            Self::FasterWhisperLocal => "faster_whisper_local",
         }
     }
 
     pub fn is_local(self) -> bool {
-        matches!(self, Self::WhisperRsLocal | Self::Vosk)
+        matches!(
+            self,
+            Self::WhisperRsLocal | Self::Vosk | Self::FasterWhisperLocal
+        )
     }
 
     pub fn requires_credentials(self) -> bool {
@@ -61,6 +72,9 @@ impl SttProvider {
             Self::OpenAiWhisperApi => "OpenAI Whisper API — best quality, paid + cloud",
             Self::AzureSpeech => "Azure Speech — cloud, regional endpoints, paid",
             Self::Vosk => "Vosk — local offline, smaller memory, lower accuracy than whisper",
+            Self::FasterWhisperLocal => {
+                "faster-whisper int8 — local subprocess, CTranslate2, faster than candle, needs pip install"
+            }
         }
     }
 }
@@ -413,12 +427,17 @@ mod tests {
         assert_eq!(SttProvider::OpenAiWhisperApi.as_str(), "openai_whisper_api");
         assert_eq!(SttProvider::AzureSpeech.as_str(), "azure_speech");
         assert_eq!(SttProvider::Vosk.as_str(), "vosk");
+        assert_eq!(
+            SttProvider::FasterWhisperLocal.as_str(),
+            "faster_whisper_local"
+        );
     }
 
     #[test]
     fn provider_locality_classification() {
         assert!(SttProvider::WhisperRsLocal.is_local());
         assert!(SttProvider::Vosk.is_local());
+        assert!(SttProvider::FasterWhisperLocal.is_local());
         assert!(!SttProvider::OpenAiWhisperApi.is_local());
         assert!(!SttProvider::AzureSpeech.is_local());
     }
@@ -429,6 +448,7 @@ mod tests {
         assert!(SttProvider::AzureSpeech.requires_credentials());
         assert!(!SttProvider::WhisperRsLocal.requires_credentials());
         assert!(!SttProvider::Vosk.requires_credentials());
+        assert!(!SttProvider::FasterWhisperLocal.requires_credentials());
     }
 
     #[test]
@@ -438,9 +458,18 @@ mod tests {
             SttProvider::OpenAiWhisperApi,
             SttProvider::AzureSpeech,
             SttProvider::Vosk,
+            SttProvider::FasterWhisperLocal,
         ] {
             assert!(!p.description().is_empty(), "{:?}", p);
         }
+    }
+
+    #[test]
+    fn faster_whisper_local_serde_roundtrip() {
+        let json = serde_json::to_string(&SttProvider::FasterWhisperLocal).unwrap();
+        assert_eq!(json, "\"faster_whisper_local\"");
+        let back: SttProvider = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, SttProvider::FasterWhisperLocal);
     }
 
     // ── model size surface ────────────────────────────────────────

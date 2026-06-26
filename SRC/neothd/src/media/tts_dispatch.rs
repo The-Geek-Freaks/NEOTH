@@ -69,6 +69,12 @@ pub enum TtsProvider {
     /// Lowest quality but zero install footprint — sensible default
     /// before the operator opts into a real model.
     SystemNative,
+    /// JV-VOICE-01 — `edge-tts` Python CLI subprocess. Windows-native free
+    /// TTS using Microsoft's neural voices over a local subprocess call;
+    /// no API key required. Requires `pip install edge-tts` on the operator
+    /// machine. Higher quality than SAPI (`SystemNative`), lower latency
+    /// than full cloud REST (no auth round-trip). Output: MP3 via stdout.
+    EdgeTts,
 }
 
 impl TtsProvider {
@@ -79,12 +85,16 @@ impl TtsProvider {
             Self::AzureTts => "azure_tts",
             Self::ElevenLabs => "eleven_labs",
             Self::SystemNative => "system_native",
+            Self::EdgeTts => "edge_tts",
         }
     }
 
     /// True when the provider runs locally (no network).
     pub fn is_local(self) -> bool {
-        matches!(self, Self::Piper | Self::Coqui | Self::SystemNative)
+        matches!(
+            self,
+            Self::Piper | Self::Coqui | Self::SystemNative | Self::EdgeTts
+        )
     }
 
     /// True when the provider requires a paid account or API key.
@@ -102,6 +112,9 @@ impl TtsProvider {
             Self::AzureTts => "Azure TTS — cloud, high quality, requires API key",
             Self::ElevenLabs => "ElevenLabs — cloud, best multilingual, paid",
             Self::SystemNative => "OS-native (say/espeak-ng/SAPI) — zero install, lowest quality",
+            Self::EdgeTts => {
+                "edge-tts — local subprocess, Microsoft neural voices, free, needs pip install"
+            }
         }
     }
 }
@@ -271,6 +284,23 @@ pub fn pick_voice_for_locale(locale: &str, provider: TtsProvider) -> Option<&'st
         (TtsProvider::AzureTts, "de" | "de-de" | "de_de") => Some("de-DE-KatjaNeural"),
         (TtsProvider::AzureTts, "en" | "en-us" | "en_us") => Some("en-US-AriaNeural"),
         (TtsProvider::ElevenLabs, "de" | "de-de" | "de_de") => Some("Rachel"),
+        // EdgeTts voices — Microsoft neural voice IDs (same pool as AzureTts).
+        (TtsProvider::EdgeTts, "de" | "de-de" | "de_de") => Some("de-DE-KatjaNeural"),
+        (TtsProvider::EdgeTts, "de-at" | "de_at") => Some("de-AT-IngridNeural"),
+        (TtsProvider::EdgeTts, "de-ch" | "de_ch") => Some("de-CH-LeniNeural"),
+        (TtsProvider::EdgeTts, "en" | "en-us" | "en_us") => Some("en-US-AriaNeural"),
+        (TtsProvider::EdgeTts, "en-gb" | "en_gb") => Some("en-GB-SoniaNeural"),
+        (TtsProvider::EdgeTts, "en-au" | "en_au") => Some("en-AU-NatashaNeural"),
+        (TtsProvider::EdgeTts, "fr" | "fr-fr" | "fr_fr") => Some("fr-FR-DeniseNeural"),
+        (TtsProvider::EdgeTts, "es" | "es-es" | "es_es") => Some("es-ES-ElviraNeural"),
+        (TtsProvider::EdgeTts, "it" | "it-it" | "it_it") => Some("it-IT-ElsaNeural"),
+        (TtsProvider::EdgeTts, "pt" | "pt-br" | "pt_br") => Some("pt-BR-FranciscaNeural"),
+        (TtsProvider::EdgeTts, "nl" | "nl-nl" | "nl_nl") => Some("nl-NL-ColetteNeural"),
+        (TtsProvider::EdgeTts, "pl" | "pl-pl" | "pl_pl") => Some("pl-PL-ZofiaNeural"),
+        (TtsProvider::EdgeTts, "ru" | "ru-ru" | "ru_ru") => Some("ru-RU-SvetlanaNeural"),
+        (TtsProvider::EdgeTts, "ja" | "ja-jp" | "ja_jp") => Some("ja-JP-NanamiNeural"),
+        (TtsProvider::EdgeTts, "zh" | "zh-cn" | "zh_cn") => Some("zh-CN-XiaoxiaoNeural"),
+        (TtsProvider::EdgeTts, "ko" | "ko-kr" | "ko_kr") => Some("ko-KR-SunHiNeural"),
         _ => None,
     }
 }
@@ -304,6 +334,7 @@ mod tests {
         assert_eq!(TtsProvider::AzureTts.as_str(), "azure_tts");
         assert_eq!(TtsProvider::ElevenLabs.as_str(), "eleven_labs");
         assert_eq!(TtsProvider::SystemNative.as_str(), "system_native");
+        assert_eq!(TtsProvider::EdgeTts.as_str(), "edge_tts");
     }
 
     #[test]
@@ -311,6 +342,7 @@ mod tests {
         assert!(TtsProvider::Piper.is_local());
         assert!(TtsProvider::Coqui.is_local());
         assert!(TtsProvider::SystemNative.is_local());
+        assert!(TtsProvider::EdgeTts.is_local());
         assert!(!TtsProvider::AzureTts.is_local());
         assert!(!TtsProvider::ElevenLabs.is_local());
     }
@@ -322,6 +354,7 @@ mod tests {
         assert!(!TtsProvider::Piper.requires_credentials());
         assert!(!TtsProvider::Coqui.requires_credentials());
         assert!(!TtsProvider::SystemNative.requires_credentials());
+        assert!(!TtsProvider::EdgeTts.requires_credentials());
     }
 
     #[test]
@@ -332,6 +365,7 @@ mod tests {
             TtsProvider::AzureTts,
             TtsProvider::ElevenLabs,
             TtsProvider::SystemNative,
+            TtsProvider::EdgeTts,
         ] {
             assert!(!p.description().is_empty(), "{:?}", p);
         }
@@ -520,6 +554,41 @@ mod tests {
     fn pick_voice_for_locale_unknown_returns_none() {
         assert!(pick_voice_for_locale("xx", TtsProvider::Piper).is_none());
         assert!(pick_voice_for_locale("de", TtsProvider::SystemNative).is_none());
+    }
+
+    #[test]
+    fn pick_voice_for_locale_edge_tts_de_returns_katja_neural() {
+        assert_eq!(
+            pick_voice_for_locale("de-DE", TtsProvider::EdgeTts),
+            Some("de-DE-KatjaNeural"),
+        );
+        assert_eq!(
+            pick_voice_for_locale("de", TtsProvider::EdgeTts),
+            Some("de-DE-KatjaNeural"),
+        );
+    }
+
+    #[test]
+    fn pick_voice_for_locale_edge_tts_en_us_returns_aria_neural() {
+        assert_eq!(
+            pick_voice_for_locale("en-US", TtsProvider::EdgeTts),
+            Some("en-US-AriaNeural"),
+        );
+        assert_eq!(
+            pick_voice_for_locale("en", TtsProvider::EdgeTts),
+            Some("en-US-AriaNeural"),
+        );
+    }
+
+    #[test]
+    fn pick_voice_for_locale_edge_tts_unknown_returns_none() {
+        assert!(pick_voice_for_locale("xx", TtsProvider::EdgeTts).is_none());
+    }
+
+    #[test]
+    fn edge_tts_provider_is_local_not_cloud() {
+        assert!(TtsProvider::EdgeTts.is_local());
+        assert!(!TtsProvider::EdgeTts.requires_credentials());
     }
 
     // ── serde ─────────────────────────────────────────────────────

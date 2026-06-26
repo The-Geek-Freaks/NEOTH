@@ -85,10 +85,30 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     })
 }
 
-/// Best-effort transcription. Returns `(text, status_string)`. When the
-/// model artifacts are not yet cached, leaves `text` empty + reports
-/// "model not cached, run `neothd hardware` then pre-fetch".
+/// Best-effort transcription. Returns `(text, status_string)`.
+///
+/// Priority order:
+///   1. **faster-whisper** (JV-VOICE-02/03): probe for `faster-whisper` on
+///      PATH; if present, write samples to a tmp WAV, invoke the CLI with
+///      `--model tiny --compute_type int8`, and parse JSONL output. This path
+///      fires WITHOUT the model-cache check — faster-whisper downloads its
+///      own models on first use (into `~/.cache/huggingface/`).
+///   2. **candle WhisperEngine** (existing path): fires when
+///      `faster-whisper` is absent but the candle model artifacts are cached.
+///   3. **model not cached**: both paths unavailable — empty text.
+///
+/// Pitfall: we are inside `spawn_blocking`; the faster-whisper path MUST use
+/// `std::process::Command` (synchronous) to avoid nested-runtime panic.
 fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
+    // ── Path 1: faster-whisper subprocess (JV-VOICE-02/03) ─────────────────
+    if let Some(exe) = crate::media::stt_provider::faster_whisper_exe() {
+        if let Some((text, status)) = transcribe_via_faster_whisper(&exe, samples) {
+            return (text, status);
+        }
+        // faster-whisper present but failed — fall through to candle path.
+    }
+
+    // ── Path 2: candle WhisperEngine ────────────────────────────────────────
     let cache_dir = whisper_cache_dir();
     let tokenizer = cache_dir.join(crate::providers::whisper::TOKENIZER_FILE);
     let config = cache_dir.join(crate::providers::whisper::CONFIG_FILE);
@@ -125,6 +145,95 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
         ),
         Err(()) => (String::new(), "transcription failed"),
     }
+}
+
+/// JV-VOICE-02/03 — invoke faster-whisper CLI synchronously (must be inside
+/// `spawn_blocking`; uses `std::process::Command` to avoid nested-runtime
+/// panic). Returns `Some((text, status))` on success or clean not-found, `None`
+/// to signal "try the next path".
+fn transcribe_via_faster_whisper(
+    exe: &std::path::Path,
+    samples: &[f32],
+) -> Option<(String, &'static str)> {
+    // Convert f32 PCM → minimal WAV bytes that faster-whisper can consume.
+    let wav = {
+        let samples_i16: Vec<i16> = samples
+            .iter()
+            .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+            .collect();
+        let data_len = (samples_i16.len() * 2) as u32;
+        let sample_rate: u32 = TARGET_SAMPLE_RATE;
+        let chunk_size = 36 + data_len;
+        let mut w = Vec::with_capacity(44 + data_len as usize);
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&chunk_size.to_le_bytes());
+        w.extend_from_slice(b"WAVE");
+        w.extend_from_slice(b"fmt ");
+        w.extend_from_slice(&16u32.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        w.extend_from_slice(&1u16.to_le_bytes()); // channels
+        w.extend_from_slice(&sample_rate.to_le_bytes());
+        w.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte_rate
+        w.extend_from_slice(&2u16.to_le_bytes()); // block_align
+        w.extend_from_slice(&16u16.to_le_bytes()); // bits_per_sample
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&data_len.to_le_bytes());
+        for s in &samples_i16 {
+            w.extend_from_slice(&s.to_le_bytes());
+        }
+        w
+    };
+
+    let tmp_dir = std::env::temp_dir();
+    // Use a thread-local timestamp-nanosecond suffix to avoid collisions when
+    // multiple audio extractions run concurrently inside spawn_blocking threads.
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let tmp_path = tmp_dir.join(format!("neoth-fw-audio-{suffix}.wav"));
+    if std::fs::write(&tmp_path, &wav).is_err() {
+        return None; // can't write → fall through
+    }
+
+    let result = std::process::Command::new(exe)
+        .args([
+            "--model",
+            "tiny",
+            "--device",
+            "cpu",
+            "--compute_type",
+            "int8",
+            "--output_format",
+            "json",
+            "--language",
+            "auto",
+            tmp_path.to_str().unwrap_or(""),
+        ])
+        .env("PYTHONIOENCODING", "utf-8")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null())
+        .output();
+
+    let _ = std::fs::remove_file(&tmp_path);
+
+    let out = result.ok()?;
+    if !out.status.success() {
+        // faster-whisper failed — log + fall through to candle.
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        tracing::debug!(
+            "faster-whisper exited {:?} — falling back to candle: {}",
+            out.status,
+            stderr.trim()
+        );
+        return None;
+    }
+
+    let (raw_text, _segs) =
+        crate::media::stt_provider::parse_faster_whisper_output(&out.stdout);
+    let cleaned = crate::media::stt_postprocess::clean_transcript(&raw_text);
+    Some((cleaned, "transcribed-faster-whisper"))
 }
 
 fn whisper_cache_dir() -> std::path::PathBuf {

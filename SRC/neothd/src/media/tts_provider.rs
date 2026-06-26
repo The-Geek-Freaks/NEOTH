@@ -26,6 +26,7 @@
 //!   its own crate or REST client; they land as separate modules
 //!   implementing the same trait.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::tts_dispatch::{TtsFormat, TtsProvider as TtsProviderKind, TtsRequest, TtsResponse};
@@ -180,6 +181,149 @@ pub fn build_native_args(
                 ],
             )
         }
+    }
+}
+
+// ── JV-VOICE-01: EdgeTts provider ───────────────────────────────────────────
+
+/// JV-VOICE-01 — `edge-tts` subprocess provider. Invokes the `edge-tts` Python
+/// CLI (installed via `pip install edge-tts`) and reads MP3 audio from its
+/// stdout. Local, free, no API key. Quality: Microsoft neural voices.
+///
+/// The subprocess is invoked as:
+///   `edge-tts --text <text> --voice <voice> --rate <rate>% --write-media -`
+///
+/// stdout = raw MP3 bytes. stderr is captured for error diagnostics.
+/// On Windows, `PYTHONIOENCODING=utf-8` is injected so non-ASCII text
+/// (e.g. German umlauts) survives the subprocess pipe.
+pub struct EdgeTtsProvider;
+
+impl EdgeTtsProvider {
+    pub fn new() -> Self {
+        EdgeTtsProvider
+    }
+}
+
+impl Default for EdgeTtsProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Build the argv for the `edge-tts` CLI subprocess. Pure fn — separated so
+/// the arg-shape is testable without spawning a subprocess.
+///
+/// `rate` is a signed percentage offset (0 = normal, +10 = 10% faster,
+/// -10 = 10% slower).  Edge-TTS expects the format `+10%` / `-10%` / `+0%`.
+pub fn build_edge_args(text: &str, voice: &str, rate: i8) -> Vec<OsString> {
+    let rate_str = if rate >= 0 {
+        format!("+{rate}%")
+    } else {
+        format!("{rate}%")
+    };
+    vec![
+        OsString::from("--text"),
+        OsString::from(text),
+        OsString::from("--voice"),
+        OsString::from(voice),
+        OsString::from("--rate"),
+        OsString::from(rate_str),
+        OsString::from("--write-media"),
+        OsString::from("-"),
+    ]
+}
+
+/// Probe whether the `edge-tts` executable is available on PATH. Returns the
+/// resolved path when found.
+pub fn edge_tts_exe() -> Option<PathBuf> {
+    // `edge-tts` is the canonical PyPI entry point name; on Windows it
+    // is also exposed as `edge-tts.exe` inside the Scripts directory.
+    find_on_path("edge-tts")
+}
+
+/// Probe PATH for `name`, optionally appending `.exe` on Windows. Returns the
+/// first matching absolute path found. Zero-dep alternative to the `which` crate.
+pub fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        // Try the bare name first, then with `.exe` on Windows.
+        for candidate_name in candidate_names(name) {
+            let candidate = dir.join(&candidate_name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn candidate_names(name: &str) -> Vec<std::ffi::OsString> {
+    let mut names = vec![std::ffi::OsString::from(name)];
+    #[cfg(target_os = "windows")]
+    if !name.ends_with(".exe") && !name.ends_with(".cmd") && !name.ends_with(".bat") {
+        names.push(std::ffi::OsString::from(format!("{name}.exe")));
+        // Python entry points on Windows are sometimes installed as .cmd wrappers.
+        names.push(std::ffi::OsString::from(format!("{name}.cmd")));
+    }
+    names
+}
+
+#[async_trait::async_trait]
+impl TtsProvider for EdgeTtsProvider {
+    fn kind(&self) -> TtsProviderKind {
+        TtsProviderKind::EdgeTts
+    }
+
+    async fn synth(&self, request: &TtsRequest) -> Result<TtsResponse, String> {
+        if request.text.is_empty() {
+            return Err("empty text — nothing to synthesise".to_string());
+        }
+        let exe = edge_tts_exe().ok_or_else(|| {
+            "edge-tts not found on PATH — install with: pip install edge-tts".to_string()
+        })?;
+
+        // Pick a voice: request voice_id if set, otherwise fall back to the
+        // locale-driven default for EdgeTts, otherwise use the en-US Aria voice.
+        let voice = if !request.voice_id.is_empty() {
+            request.voice_id.clone()
+        } else {
+            super::tts_dispatch::pick_voice_for_locale(&request.locale, TtsProviderKind::EdgeTts)
+                .unwrap_or("en-US-AriaNeural")
+                .to_string()
+        };
+
+        let args = build_edge_args(&request.text, &voice, 0);
+        let out = tokio::process::Command::new(&exe)
+            .args(&args)
+            // Non-ASCII text (German umlauts, etc.) must survive the Windows
+            // code-page boundary on the subprocess stdout pipe.
+            .env("PYTHONIOENCODING", "utf-8")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+            .map_err(|e| format!("edge-tts spawn ({}): {e}", exe.display()))?;
+
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!(
+                "edge-tts exited with {:?}: {}",
+                out.status,
+                stderr.trim()
+            ));
+        }
+        if out.stdout.is_empty() {
+            return Err("edge-tts produced no audio output".to_string());
+        }
+        // Duration estimate: MP3 at ~48 kbps typical (edge-tts default).
+        // 48 000 bits/s → 6 000 bytes/s → approx ms = bytes * 1000 / 6000.
+        let approx_duration_ms = (out.stdout.len() as u64 * 1000 / 6_000) as u32;
+        Ok(TtsResponse {
+            audio_bytes: out.stdout,
+            format: TtsFormat::Mp3,
+            duration_ms: approx_duration_ms,
+        })
     }
 }
 
@@ -437,6 +581,82 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .starts_with("neoth-tts-")
+        );
+    }
+
+    // ── EdgeTtsProvider surface ───────────────────────────────────
+
+    #[test]
+    fn build_edge_args_includes_text_voice_and_rate() {
+        let args = build_edge_args("hello world", "en-US-AriaNeural", 0);
+        let flat: Vec<_> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(flat.contains(&"--text".to_string()));
+        assert!(flat.contains(&"hello world".to_string()));
+        assert!(flat.contains(&"--voice".to_string()));
+        assert!(flat.contains(&"en-US-AriaNeural".to_string()));
+        assert!(flat.contains(&"--rate".to_string()));
+        assert!(flat.iter().any(|a| a == "+0%"), "rate 0 → +0%");
+        assert!(flat.contains(&"--write-media".to_string()));
+        assert!(flat.contains(&"-".to_string()));
+    }
+
+    #[test]
+    fn build_edge_args_positive_rate_has_plus_prefix() {
+        let args = build_edge_args("hi", "v", 10);
+        let flat: Vec<_> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(flat.iter().any(|a| a == "+10%"));
+    }
+
+    #[test]
+    fn build_edge_args_negative_rate_no_plus_prefix() {
+        let args = build_edge_args("hi", "v", -5);
+        let flat: Vec<_> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(flat.iter().any(|a| a == "-5%"));
+    }
+
+    #[test]
+    fn edge_tts_provider_kind_is_edge_tts() {
+        let p = EdgeTtsProvider::new();
+        assert_eq!(p.kind(), TtsProviderKind::EdgeTts);
+    }
+
+    #[test]
+    fn edge_tts_provider_kind_is_local() {
+        assert!(TtsProviderKind::EdgeTts.is_local());
+    }
+
+    #[tokio::test]
+    async fn edge_tts_provider_rejects_empty_text() {
+        let p = EdgeTtsProvider::new();
+        let r = req("", "");
+        let result = p.synth(&r).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty text"));
+    }
+
+    #[tokio::test]
+    async fn edge_tts_provider_returns_err_when_exe_missing() {
+        // If edge-tts is not on PATH (common in CI), the provider must return
+        // a clear error rather than panic.
+        if edge_tts_exe().is_some() {
+            // edge-tts IS installed — skip the missing-exe path.
+            return;
+        }
+        let p = EdgeTtsProvider::new();
+        let r = req("hello", "en-US-AriaNeural");
+        let err = p.synth(&r).await.unwrap_err();
+        assert!(
+            err.contains("edge-tts not found"),
+            "unexpected error: {err}"
         );
     }
 

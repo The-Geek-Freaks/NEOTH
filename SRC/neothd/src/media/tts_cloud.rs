@@ -26,7 +26,7 @@
 use async_trait::async_trait;
 
 use super::tts_dispatch::{TtsFormat, TtsProvider as TtsProviderKind, TtsRequest, TtsResponse};
-use super::tts_provider::{SystemNativeProvider, TtsProvider};
+use super::tts_provider::{EdgeTtsProvider, SystemNativeProvider, TtsProvider};
 use crate::providers::http_client;
 use crate::secret::SecretString;
 
@@ -235,6 +235,10 @@ pub fn make_tts_provider(
     }
     match kind {
         TtsProviderKind::SystemNative => Ok(Box::new(SystemNativeProvider::new())),
+        // JV-VOICE-01 — EdgeTts is local (is_local() == true): the P0 cloud gate
+        // above does NOT apply. No API key required; relies on the `edge-tts`
+        // Python CLI installed by the operator.
+        TtsProviderKind::EdgeTts => Ok(Box::new(EdgeTtsProvider::new())),
         TtsProviderKind::ElevenLabs => {
             let key = api_key.ok_or("elevenlabs requires an api key")?;
             Ok(Box::new(ElevenLabsClient::new(key)))
@@ -247,7 +251,7 @@ pub fn make_tts_provider(
         TtsProviderKind::Piper | TtsProviderKind::Coqui => Err(format!(
             "{kind:?} local TTS is deferred — needs an ONNX/C++ engine dep \
              (piper-rs / onnxruntime) + a voice-model download. Use system_native, \
-             elevenlabs, or azure_tts."
+             edge_tts, elevenlabs, or azure_tts."
         )),
     }
 }
@@ -379,6 +383,13 @@ mod tests {
                 .kind(),
             TtsProviderKind::SystemNative
         );
+        // EdgeTts is local — constructible without API key and with cloud flag off.
+        assert_eq!(
+            make_tts_provider(TtsProviderKind::EdgeTts, None, None, &on)
+                .unwrap()
+                .kind(),
+            TtsProviderKind::EdgeTts
+        );
         assert_eq!(
             make_tts_provider(
                 TtsProviderKind::ElevenLabs,
@@ -446,6 +457,17 @@ mod tests {
         );
         // Local stays constructible regardless of the flag.
         assert!(make_tts_provider(TtsProviderKind::SystemNative, None, None, &off).is_ok());
+        // EdgeTts likewise local — unaffected by cloud_tts_enabled flag.
+        assert!(make_tts_provider(TtsProviderKind::EdgeTts, None, None, &off).is_ok());
+    }
+
+    #[test]
+    fn factory_edge_tts_requires_no_api_key() {
+        // P0 guard: EdgeTts is local; cloud flag irrelevant; no key required.
+        let off = crate::config::MediaConfig::default();
+        let provider = make_tts_provider(TtsProviderKind::EdgeTts, None, None, &off);
+        assert!(provider.is_ok());
+        assert_eq!(provider.unwrap().kind(), TtsProviderKind::EdgeTts);
     }
 
     #[tokio::test]

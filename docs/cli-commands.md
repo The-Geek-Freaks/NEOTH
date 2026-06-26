@@ -1869,6 +1869,24 @@ ADV-03 item 4 Phase 6: list every profile delta the daemon queued in `idx_profil
 
 - `--limit <LIMIT>`
 
+### `neoth profile persona`
+
+GOLD-ADAPT-JV-MODE-01 — manage the identity-locked persona mode
+
+#### `neoth profile persona apply`
+
+Apply a persona mode (identity-lock). Currently only `loyal-buddy`
+
+- `<NAME>` — Mode name: `loyal-buddy`
+
+#### `neoth profile persona clear`
+
+Clear the persona mode (remove identity lock)
+
+#### `neoth profile persona show`
+
+Show the current persona mode
+
 ### `neoth profile preset`
 
 P-02 (Workstream B follow-up, Session 22) — manage profile presets that shape tone / verbosity / clarifying behaviour
