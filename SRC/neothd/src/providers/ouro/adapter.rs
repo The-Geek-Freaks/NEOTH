@@ -124,11 +124,12 @@ struct LoadedOuro {
     /// compares a per-instance `DeviceId`, so two `device_for` calls
     /// would yield non-interoperable devices on real CUDA/Metal.
     device: candle_core::Device,
-    /// GOLD-ADAPT-KV-01 — cross-request prefix-KV reuse cache (opt-in via
-    /// `NEOTH_OURO_PREFIX_KV=1` + per_loop; default inert). Bounded; lives behind
-    /// the same model lock + is cleared on daemon restart with the rest of
+    /// GOLD-ADAPT-KV-03 — two-tier KV cache (hot LRU + CPU-RAM cold LRU).
+    /// KV-01 gate (`NEOTH_OURO_KV_CACHE_MODE=per_loop` + `NEOTH_OURO_PREFIX_KV=1`)
+    /// still applies — this field is never accessed unless both are set.
+    /// Lives behind the same model lock; cleared on daemon restart with the rest of
     /// `LoadedOuro`, so no stale KV survives a tokenizer/model swap.
-    prefix_kv_cache: super::prefix_kv_cache::PrefixKvCache,
+    prefix_kv_cache: super::kv_offload::KvOffloadCache,
 }
 
 /// `LocalOuroAdapter` — operator-facing chat + embed provider
@@ -448,10 +449,19 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         model,
         tokenizer,
         eos_id,
-        device,
-        // GOLD-ADAPT-KV-01 — small bound: an operator runs one or a few system
-        // prompts, so a handful of cached prefixes covers the live set.
-        prefix_kv_cache: super::prefix_kv_cache::PrefixKvCache::new(8),
+        device: device.clone(),
+        // GOLD-ADAPT-KV-03 — two-tier LRU; caps read once at model-load time.
+        prefix_kv_cache: {
+            let hot_cap: usize = std::env::var("NEOTH_OURO_KV_HOT_CAP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8);
+            let cold_cap: usize = std::env::var("NEOTH_OURO_KV_COLD_CAP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(32);
+            super::kv_offload::KvOffloadCache::new(hot_cap, cold_cap, device)
+        },
     });
     Ok(())
 }
@@ -534,18 +544,13 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
         let prefix_ids = &prompt_ids[..prefix_token_count];
         let suffix_ids = &prompt_ids[prefix_token_count..];
         let cache_key = super::prefix_kv_cache::PrefixKvCache::key(prefix_ids);
-        // Clone the snapshot OUT of the cache entry first so the immutable borrow
-        // of `prefix_kv_cache` ends before the mutable `model` access below.
-        let hit = loaded
+        // GOLD-ADAPT-KV-03 — probe hot then cold; collision-check (prefix_ids
+        // equality) is applied inside `KvOffloadCache::get` for both tiers.
+        let hit_snap = loaded
             .prefix_kv_cache
-            .get(cache_key)
-            .map(|e| (e.snapshot.clone(), e.prefix_ids.clone()))
-            // GR-fix: verify the cached prefix actually equals this prefix. The
-            // PrefixKvCache key is a hash; a collision must be treated as a MISS
-            // (safe full prefill below), not waved through by a debug_assert that
-            // is a no-op in release and then a corrupt restore_all_kv.
-            .filter(|(_, cached_prefix)| cached_prefix.as_slice() == prefix_ids);
-        if let Some((snap, _cached_prefix)) = hit {
+            .get(cache_key, prefix_ids)
+            .context("Ouro: KV-03 two-tier cache get")?;
+        if let Some(snap) = hit_snap {
             loaded.model.restore_all_kv(snap);
         } else {
             // MISS: full prefill of the prefix at offset 0, then snapshot + cache.
@@ -559,13 +564,16 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
                 .forward(&prefix_input, 0)
                 .context("Ouro: prefix forward (KV-01 miss)")?;
             let snap = loaded.model.snapshot_all_kv();
-            loaded.prefix_kv_cache.insert(
-                cache_key,
-                super::prefix_kv_cache::PrefixKvEntry {
-                    snapshot: snap,
-                    prefix_ids: prefix_ids.to_vec(),
-                },
-            );
+            loaded
+                .prefix_kv_cache
+                .insert(
+                    cache_key,
+                    super::prefix_kv_cache::PrefixKvEntry {
+                        snapshot: snap,
+                        prefix_ids: prefix_ids.to_vec(),
+                    },
+                )
+                .context("Ouro: KV-03 cache insert")?;
         }
         // HIT + MISS converge: the caches now hold the prefix at positions
         // `0..prefix_len`; forward the suffix at `seqlen_offset = prefix_len`.
