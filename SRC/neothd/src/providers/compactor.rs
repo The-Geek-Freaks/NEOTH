@@ -1,4 +1,7 @@
 //! GOLD-ADAPT-HARNESS-03 — message-history compaction middleware.
+//! GOLD-ADAPT-ODY-06 — raises threshold to 0.85 and wires SELF_SUMMARY_SYSTEM_PROMPT
+//! into the utility summarisation call so the compactor uses the Odysseus
+//! self-summary persona.
 //!
 //! [`CompactingProvider`] is a decorator that wraps any `Box<dyn Provider>`.
 //! On every call it estimates the token count of the flat `prompt + system`
@@ -136,12 +139,16 @@ impl CompactingProvider {
         let summary = if old_zone.is_empty() {
             String::new()
         } else if let Some(util) = &self.utility {
+            // GOLD-ADAPT-ODY-06: pass the Odysseus self-summary system prompt so
+            // the utility provider receives the structured compaction persona.
             let summary_req = Request {
                 prompt: format!(
                     "Summarise the following conversation history concisely, \
                      preserving key facts, decisions, and context:\n\n{old_zone}"
                 ),
-                system: None,
+                system: Some(
+                    crate::context::compactor::SELF_SUMMARY_SYSTEM_PROMPT.to_owned(),
+                ),
                 model: None,
                 temperature: Some(0.3),
                 top_p: None,
@@ -411,5 +418,142 @@ mod tests {
         // If disabled, caller should never construct CompactingProvider at all.
         // Verify the default config has disabled = false (default).
         assert!(!cfg.history_compaction_enabled);
+    }
+
+    // -------------------------------------------------------------------------
+    // GOLD-ADAPT-ODY-06 tests
+
+    /// A utility stub that captures the `system` field of the Request it receives.
+    /// Used to verify SELF_SUMMARY_SYSTEM_PROMPT is wired into the utility call.
+    struct SystemCapture(Arc<Mutex<Option<String>>>);
+    #[async_trait]
+    impl Provider for SystemCapture {
+        fn name(&self) -> &'static str {
+            "capture"
+        }
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            *self.0.lock().unwrap() = req.system.clone();
+            Ok(Completion {
+                text: "SUMMARY".into(),
+                model: "capture".into(),
+                latency: Duration::from_millis(0),
+                input_tokens: None,
+                output_tokens: None,
+            })
+        }
+        async fn stream(&self, _: Request) -> Result<ChunkStream> {
+            unimplemented!()
+        }
+    }
+
+    /// ODY-06: the utility summarisation request must carry SELF_SUMMARY_SYSTEM_PROMPT
+    /// as its `system` field, and that prompt must contain the word "DENSE".
+    #[tokio::test]
+    async fn self_summary_prompt_used_as_utility_system() {
+        let captured_system = Arc::new(Mutex::new(None::<String>));
+        let (inner, _ic) = StubProvider::new("inner");
+        let cp = CompactingProvider::new(
+            Box::new(inner),
+            Some(Box::new(SystemCapture(Arc::clone(&captured_system)))),
+            /* max_tokens */ 100,
+            /* threshold */ 0.85, // ODY-06 threshold
+            /* keep_recent */ 50,
+            None,
+        );
+        // 500 chars → ~125 tokens → over 85-token threshold (100 * 0.85 = 85)
+        let req = Request {
+            prompt: "x".repeat(500),
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            stop_sequences: vec![],
+            thinking_budget: None,
+        };
+        cp.complete(req).await.unwrap();
+        let sys = captured_system.lock().unwrap().clone();
+        assert!(sys.is_some(), "utility must receive a system prompt (ODY-06)");
+        let sys = sys.unwrap();
+        assert!(
+            sys.contains("DENSE"),
+            "SELF_SUMMARY_SYSTEM_PROMPT must contain the word DENSE; got: {sys:.120}"
+        );
+    }
+
+    /// ODY-06: with threshold_fraction=0.85 and max_tokens=100, compaction fires
+    /// at ~85 tokens (≈340 chars) and must NOT fire at 80 chars (≈20 tokens).
+    #[tokio::test]
+    async fn threshold_0_85_fires_at_correct_token_count() {
+        // Under threshold: 80 chars ≈ 20 tokens — should NOT compact
+        let (inner_under, ic_under) = StubProvider::new("inner_reply");
+        let (util_under, _) = StubProvider::new("SUMMARY");
+        let cp_under = CompactingProvider::new(
+            Box::new(inner_under),
+            Some(Box::new(util_under)),
+            100,
+            0.85,
+            50,
+            None,
+        );
+        let req_under = Request {
+            prompt: "x".repeat(80),
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            stop_sequences: vec![],
+            thinking_budget: None,
+        };
+        cp_under.complete(req_under.clone()).await.unwrap();
+        {
+            let calls = ic_under.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0], "x".repeat(80), "should not compact under threshold");
+        }
+
+        // Over threshold: 500 chars ≈ 125 tokens — SHOULD compact
+        let (inner_over, ic_over) = StubProvider::new("inner_reply");
+        let (util_over, _) = StubProvider::new("SUMMARY_TEXT");
+        let cp_over = CompactingProvider::new(
+            Box::new(inner_over),
+            Some(Box::new(util_over)),
+            100,
+            0.85,
+            50,
+            None,
+        );
+        let req_over = Request {
+            prompt: "x".repeat(500),
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            stop_sequences: vec![],
+            thinking_budget: None,
+        };
+        cp_over.complete(req_over).await.unwrap();
+        {
+            let calls = ic_over.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert!(
+                calls[0].starts_with("[CONTEXT SUMMARY:"),
+                "over-threshold should produce summary block; got: {:.80}",
+                calls[0]
+            );
+        }
+    }
+
+    /// ODY-06: default TokensConfig threshold must now be 0.85, not 0.80.
+    #[test]
+    fn default_threshold_is_0_85() {
+        let cfg = TokensConfig::default();
+        assert!(
+            (cfg.history_compaction_threshold - 0.85).abs() < f32::EPSILON,
+            "default threshold must be 0.85 (ODY-06); got {}",
+            cfg.history_compaction_threshold
+        );
     }
 }

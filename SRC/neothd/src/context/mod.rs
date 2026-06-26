@@ -8,6 +8,7 @@
 //! tool chain doesn't blow the model's context window.
 
 pub mod compaction;
+pub mod compactor;
 pub mod compress;
 
 pub use compaction::{

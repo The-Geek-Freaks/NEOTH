@@ -385,7 +385,7 @@ pub struct TokensConfig {
     #[serde(default)]
     pub history_compaction_enabled: bool,
     /// Fraction of `max_per_request` at which compaction fires.
-    /// Default 0.8 — fire when prompt + system exceed 80 % of the cap.
+    /// Default 0.85 — fire when prompt + system exceed 85% of the cap (ODY-06).
     #[serde(default = "TokensConfig::default_history_compaction_threshold")]
     pub history_compaction_threshold: f32,
     /// Characters of the most-recent prompt to preserve verbatim
@@ -411,8 +411,9 @@ impl TokensConfig {
     pub fn default_max_per_request() -> u32 {
         100_000
     }
+    /// GOLD-ADAPT-ODY-06 — raised from 0.80 to 0.85 per spec ("85% fill").
     pub fn default_history_compaction_threshold() -> f32 {
-        0.8
+        0.85
     }
     pub fn default_history_keep_recent_chars() -> usize {
         4_000
