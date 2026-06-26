@@ -131,6 +131,13 @@ pub mod session_health_cron;
 /// `~/.neoth/synthesis/YYYY-WW.md`. WAL-free; off by default
 /// (`synthesis_cron.enabled = false`).
 pub mod synthesis_cron;
+/// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron. Scans cs.AI/cs.LG
+/// (operator-configurable `arxiv_skill_scan.topics`) on a 6h cadence,
+/// extracts 1-3 actionable takeaways per paper via the shared LLM provider,
+/// and writes each to `idx_groundtruth` (`source = "arxiv-skill-scan"`,
+/// `scope = "arxiv-learning"`, `FactState::Candidate`). WAL-free; off by
+/// default (`arxiv_skill_scan.enabled = false`). Requires a wired provider.
+pub mod arxiv_skill_scan_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

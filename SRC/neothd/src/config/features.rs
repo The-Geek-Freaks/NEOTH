@@ -473,6 +473,39 @@ impl Default for ArxivIngestConfig {
     }
 }
 
+/// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron config.
+///
+/// Scans `topics` on a cadence (default 6h), extracts 1-3 actionable
+/// takeaways per paper via the shared LLM provider, and writes each
+/// takeaway to `idx_groundtruth` as `source = "arxiv-skill-scan"` /
+/// `scope = "arxiv-learning"` / `FactState::Candidate`. Facts surface
+/// into recall/council via the existing `groundtruth::surface_for_recall`
+/// path. Requires a wired provider — no provider → task not spawned.
+/// WAL-free (groundtruth insert is the durable record).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ArxivSkillScanConfig {
+    /// Master switch. Default `false` — opt in via freedom.yaml.
+    pub enabled: bool,
+    /// arXiv query strings to scan. Default: `["cat:cs.AI", "cat:cs.LG"]`.
+    pub topics: Vec<String>,
+    /// Tick interval in seconds. `None` = 21_600 (6h).
+    pub interval_secs: Option<u64>,
+    /// Max results fetched per topic per tick. `None` = 10.
+    pub max_per_topic: Option<usize>,
+}
+
+impl Default for ArxivSkillScanConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            topics: vec!["cat:cs.AI".to_string(), "cat:cs.LG".to_string()],
+            interval_secs: None,
+            max_per_topic: None,
+        }
+    }
+}
+
 /// NOOB-UX-3 plugin runtime gates.
 ///
 /// `wasm.enabled` — master switch for the WASM plugin host.

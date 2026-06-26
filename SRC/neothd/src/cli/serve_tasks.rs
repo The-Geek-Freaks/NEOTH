@@ -171,6 +171,42 @@ pub(crate) fn spawn_arxiv_ingest(
     }
 }
 
+/// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron spawner.
+///
+/// Returns `Some(handle)` when `arxiv_skill_scan.enabled`, the topics list is
+/// non-empty, AND a shared provider is wired (provider required for LLM
+/// extraction). Any missing gate → `None` (no task spawned, warn logged).
+pub(crate) fn spawn_arxiv_skill_scan(
+    config: &FreedomConfig,
+    shared_provider: &Option<Arc<dyn Provider>>,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    if !config.arxiv_skill_scan.enabled {
+        return None;
+    }
+    if config.arxiv_skill_scan.topics.is_empty() {
+        warn!("arxiv_skill_scan enabled but no topics configured; not spawning");
+        return None;
+    }
+    let Some(provider) = shared_provider.as_ref().map(Arc::clone) else {
+        warn!("arxiv_skill_scan enabled but no provider wired; not spawning (provider required for extraction)");
+        return None;
+    };
+    info!(
+        topics = config.arxiv_skill_scan.topics.len(),
+        "arxiv skill-scan cron enabled"
+    );
+    Some(crate::daemon::arxiv_skill_scan_cron::spawn(
+        FreedomConfig::default_neoth_home(),
+        config.arxiv_skill_scan.topics.clone(),
+        provider,
+        config
+            .arxiv_skill_scan
+            .interval_secs
+            .map(std::time::Duration::from_secs),
+        config.arxiv_skill_scan.max_per_topic,
+    ))
+}
+
 /// C-05c — installer_ran sidecar ingester. `neoth install` drops
 /// `~/.neoth/installer_ran_<ts>.json` after a successful install. Polls every
 /// 5s, appends a `0x12 INSTALLER_RAN` WAL frame per sidecar, removes the file.
@@ -2834,6 +2870,10 @@ pub(crate) struct BackgroundHandles {
     pub self_improvement_collector_handle: Option<JoinHandle<()>>,
     pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
+    /// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron handle.
+    /// WAL-free; `None` when `arxiv_skill_scan.enabled = false` (default)
+    /// or no provider is wired.
+    pub arxiv_skill_scan_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub rss_feed_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub tmux_sweeper_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub n8n_api_shutdown: Arc<tokio::sync::Notify>,
@@ -2929,6 +2969,7 @@ pub(crate) async fn shutdown_background_tasks(
         self_improvement_collector_handle,
         dreaming_task,
         arxiv_ingest_task,
+        arxiv_skill_scan_task,
         rss_feed_task,
         tmux_sweeper_task,
         n8n_api_shutdown,
@@ -3172,6 +3213,10 @@ pub(crate) async fn shutdown_background_tasks(
     // EL-02 arXiv ingest task — abort on shutdown. Mid-pass abort at
     // worst drops one topic's fetch, which the next boot re-runs.
     crate::cli::serve_tasks::abort_optional(arxiv_ingest_task).await;
+
+    // GOLD-ADAPT-MEM-16 arXiv skill-scan cron — WAL-free; mid-pass abort
+    // at worst drops one paper's takeaway extraction. Next tick re-runs.
+    crate::cli::serve_tasks::abort_optional(arxiv_skill_scan_task).await;
 
     // GOLD-ADOPT-26 RSS feed poller — abort BEFORE the WAL writer drains
     // (it emits 0x4E/0x4F). Mid-pass abort drops one feed's fetch, which the
@@ -3568,6 +3613,11 @@ mod tests {
         assert!(
             spawn_arxiv_ingest(&cfg, &None).is_none(),
             "arxiv disabled → None"
+        );
+        // GOLD-ADAPT-MEM-16: skill-scan disabled by default + no provider → None.
+        assert!(
+            spawn_arxiv_skill_scan(&cfg, &None).is_none(),
+            "arxiv_skill_scan disabled + no provider → None"
         );
         // NN-MEM-06: contradiction-resolve is off by default → no task spawned.
         assert!(

@@ -72,7 +72,7 @@ pub use automation::{
     TokenAnomalyConfig, WatchdogConfig,
 };
 pub use features::{
-    ArxivIngestConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
+    ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
     DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS, DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS,
     DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE, DreamingConfig, EcologyConfig, EmailConfig, FallbackConfig,
     GoalConfig, HintsConfig, HookChainConfig, LiveDeliveryConfig, MediaConfig, OmiConfig,
@@ -505,6 +505,15 @@ pub struct FreedomConfig {
     /// the ctx knowledge store keyed `arxiv:<id>`.
     #[serde(default)]
     pub arxiv: ArxivIngestConfig,
+
+    /// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron. Off by default. When
+    /// `arxiv_skill_scan.enabled: true` and a provider is wired, the daemon
+    /// scans `topics` (default cs.AI/cs.LG) on a 6h cadence, extracts 1-3
+    /// actionable takeaways per paper via LLM, and writes each to
+    /// `idx_groundtruth` (`source = "arxiv-skill-scan"`, `scope =
+    /// "arxiv-learning"`). Facts surface into recall/council automatically.
+    #[serde(default)]
+    pub arxiv_skill_scan: ArxivSkillScanConfig,
 
     /// C-16 (Session 21) — operator opt-in for proactive channel
     /// messaging. When `enabled = true`, the daemon's cron + the

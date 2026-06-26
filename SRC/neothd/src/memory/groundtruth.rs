@@ -54,6 +54,11 @@ pub enum Source {
     /// attested (starts `Candidate`, corroboration required). Written as
     /// `source = "synthesis-cron"` in SQLite.
     Synthesis,
+    /// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron. Actionable takeaways
+    /// extracted from cs.AI/cs.LG papers by `daemon::arxiv_skill_scan_cron`;
+    /// NOT operator-attested (starts `Candidate`, corroboration required).
+    /// Written as `source = "arxiv-skill-scan"` / `scope = "arxiv-learning"`.
+    ArxivScan,
 }
 
 impl Source {
@@ -72,6 +77,7 @@ impl Source {
             Source::BulkText => "bulk-text",
             Source::Omi => "omi",
             Source::Synthesis => "synthesis-cron",
+            Source::ArxivScan => "arxiv-skill-scan",
         }
     }
 

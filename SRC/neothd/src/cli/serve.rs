@@ -667,6 +667,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let arxiv_ingest_task = crate::cli::serve_tasks::spawn_arxiv_ingest(&config, &shared_provider);
 
+    // ── 5b-quart. ArXiv skill-scan cron — GOLD-ADAPT-MEM-16 ────────────────
+    //
+    // Scans cs.AI/cs.LG on a 6h cadence, extracts 1-3 actionable takeaways
+    // per paper via the shared provider, and writes each to `idx_groundtruth`
+    // (source = "arxiv-skill-scan", scope = "arxiv-learning", Candidate).
+    // Facts surface into recall/council automatically via surface_for_recall.
+    // Off by default; requires both `arxiv_skill_scan.enabled: true` AND a
+    // wired provider. WAL-free.
+    let arxiv_skill_scan_task =
+        crate::cli::serve_tasks::spawn_arxiv_skill_scan(&config, &shared_provider);
+
     // ── 5b-ter. RSS / Atom / JSON-Feed poller — GOLD-ADOPT-26 ──────────────
     //
     // Polls `config.feeds.entries` on a cadence (default 1h), SSRF-validates
@@ -1702,6 +1713,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         self_improvement_collector_handle,
         dreaming_task,
         arxiv_ingest_task,
+        arxiv_skill_scan_task,
         rss_feed_task,
         tmux_sweeper_task,
         n8n_api_shutdown,
