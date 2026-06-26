@@ -706,6 +706,7 @@ kind = "allow"
                 pattern: ".*".into(),
             }),
             action: HookAction::Allow,
+            status_message: None,
         };
         assert!(h.is_enabled());
     }

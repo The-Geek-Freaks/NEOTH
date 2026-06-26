@@ -53,6 +53,16 @@ pub struct HookDef {
     #[serde(default)]
     pub matcher: Option<HookMatcher>,
     pub action: HookAction,
+    /// CCPARITY-STATUS-MSG — optional human-readable progress text surfaced
+    /// in the `HOOK_FIRED` WAL frame's `note` field when this hook executes.
+    /// Operators use this to label what a hook is doing in audit logs and
+    /// operator UIs: `status_message = "scanning for credential leaks…"`.
+    ///
+    /// When absent the `note` field in the WAL payload is `null` (existing
+    /// behaviour, fully backward-compatible). WAL readers that already
+    /// ignore unknown JSON fields are unaffected by hooks that carry this.
+    #[serde(default)]
+    pub status_message: Option<String>,
 }
 
 impl HookDef {
@@ -70,6 +80,14 @@ impl HookDef {
     /// the loader sort + the dispatcher walk.
     pub fn effective_priority(&self) -> i32 {
         self.priority.unwrap_or(Self::DEFAULT_PRIORITY)
+    }
+
+    /// CCPARITY-STATUS-MSG — returns the operator-set progress text for this
+    /// hook, or `None` when the field was omitted in TOML. Consumed by
+    /// `run_hook_stage` to populate the `note` field of `HOOK_FIRED` WAL
+    /// frames so audit consumers and operator UIs receive live progress text.
+    pub fn status_message(&self) -> Option<&str> {
+        self.status_message.as_deref()
     }
 }
 
@@ -251,5 +269,49 @@ mod tests {
         "#;
         let h: HookDef = toml::from_str(toml_src).unwrap();
         assert!(!h.is_enabled());
+    }
+
+    // ── CCPARITY-STATUS-MSG: status_message TOML round-trips ────────────
+
+    #[test]
+    fn ccparity_status_msg_parses_when_present() {
+        let toml_src = r#"
+            name = "safety-scan"
+            stage = "pre_provider_call"
+            status_message = "running safety check..."
+            [action]
+            kind = "allow"
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        assert_eq!(
+            h.status_message(),
+            Some("running safety check..."),
+            "status_message accessor must return the TOML value when set"
+        );
+        assert_eq!(
+            h.status_message,
+            Some("running safety check...".to_string()),
+            "status_message field must be populated"
+        );
+    }
+
+    #[test]
+    fn ccparity_status_msg_defaults_to_none_when_absent() {
+        let toml_src = r#"
+            name = "audit"
+            stage = "pre_provider_call"
+            [action]
+            kind = "allow"
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        assert_eq!(
+            h.status_message(),
+            None,
+            "status_message must be None when omitted from TOML (backward-compat)"
+        );
+        assert!(
+            h.status_message.is_none(),
+            "status_message field must be None"
+        );
     }
 }

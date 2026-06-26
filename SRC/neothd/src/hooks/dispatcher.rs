@@ -330,6 +330,7 @@ mod tests {
             priority: None,
             matcher: None,
             action: HookAction::Allow,
+            status_message: None,
         }
     }
 
@@ -345,6 +346,7 @@ mod tests {
             action: HookAction::Replace {
                 template: template.into(),
             },
+            status_message: None,
         }
     }
 
@@ -358,6 +360,7 @@ mod tests {
             action: HookAction::Block {
                 reason: reason.into(),
             },
+            status_message: None,
         }
     }
 
@@ -372,6 +375,7 @@ mod tests {
                 plugin_id: plugin_id.into(),
                 required: false,
             },
+            status_message: None,
         }
     }
 
@@ -386,6 +390,7 @@ mod tests {
                 plugin_id: plugin_id.into(),
                 required: true,
             },
+            status_message: None,
         }
     }
 
@@ -533,6 +538,7 @@ mod tests {
             action: HookAction::Replace {
                 template: "n/a".into(),
             },
+            status_message: None,
         }];
         let out = run_stage(HookStage::PreProviderCall, "anything", &hooks).unwrap();
         match out {
@@ -568,6 +574,7 @@ mod tests {
                 pattern: "[invalid".into(),
             }),
             action: HookAction::Block { reason: "x".into() },
+            status_message: None,
         };
         let good = allow_hook("good", HookStage::PreProviderCall);
         let out = run_stage(HookStage::PreProviderCall, "x", &[bad, good]).unwrap();
@@ -729,6 +736,7 @@ mod tests {
             action: HookAction::Block {
                 reason: "should-not-fire".into(),
             },
+            status_message: None,
         };
         let good = allow_hook("good", HookStage::PreProviderCall);
         let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, good], None, false)
@@ -752,6 +760,7 @@ mod tests {
                 pattern: "[invalid".into(),
             }),
             action: HookAction::Allow,
+            status_message: None,
         };
         let later = allow_hook("never-runs", HookStage::PreProviderCall);
         let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, later], None, true)

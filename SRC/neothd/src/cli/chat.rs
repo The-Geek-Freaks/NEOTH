@@ -3559,12 +3559,20 @@ async fn run_hook_stage(
     match outcome {
         crate::hooks::StageOutcome::Continue { body: after, hits } => {
             for name in &hits {
+                // CCPARITY-STATUS-MSG: look up the fired hook's status_message
+                // and pass it as the `note` field in the HOOK_FIRED WAL frame.
+                // The hooks slice is available here (borrowed for the full fn);
+                // the lookup is O(n) over a small operator-defined set (≤20).
+                let status_note = hooks
+                    .iter()
+                    .find(|h| h.name == *name)
+                    .and_then(|h| h.status_message());
                 emit_hook_frame(
                     writer,
                     crate::wal::events::EVENT_TYPE_HOOK_FIRED,
                     name,
                     stage,
-                    None,
+                    status_note,
                 )
                 .await;
             }

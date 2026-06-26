@@ -1067,7 +1067,12 @@ pub const EVENT_TYPE_KANBAN_TASK_DEP_REMOVED: u8 = 0x79;
 // ---- 0x80..=0x8F  Hook lifecycle (Phase 29 R-15) --------------------------
 
 /// A hook fired at a pipeline stage (matcher passed, action ran). Payload:
-/// `{name, stage, action_kind, ts}`. Phase 29 H-4.
+/// `{name, stage, note, ts_unix}`. Phase 29 H-4.
+///
+/// `note` carries the operator-set `status_message` from the hook's TOML
+/// definition when present (CCPARITY-STATUS-MSG); `null` when the field
+/// was omitted. WAL readers that already ignore unknown JSON fields are
+/// unaffected — this is a payload-level additive change.
 pub const EVENT_TYPE_HOOK_FIRED: u8 = 0x80;
 /// A `block` hook stopped the pipeline. Payload: `{name, stage, reason, ts}`.
 pub const EVENT_TYPE_HOOK_BLOCKED: u8 = 0x81;
