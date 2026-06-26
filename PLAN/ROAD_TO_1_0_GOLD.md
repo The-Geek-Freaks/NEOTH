@@ -6,7 +6,7 @@
 
 **What is NEOTH?** A local-first sovereign personal-AI daemon written in Rust. Single operator, runs on the operator's machine. Core primitives: hemisphere council (Left/Right/Cerebellum provider routing), append-only WAL audit log (cryptographically signed frames), consent-gated tool execution, skills system, memory tiers (hot/warm/cold + groundtruth), channel adapters (Telegram, WhatsApp, Slack, Discord, Keet/Pears), and a coding-buddy subsystem. The binary is `neothd` (daemon + CLI). A GUI companion `neothd-gui` runs Slint. Architecture spec: `PLAN/00_DESIGN_v1.1_FINAL.md`.
 
-**Current HEAD:** `3df06b5` · branch `main` · clean.
+**Current HEAD:** `e1f7926` · branch `main` · clean.
 
 **What this file is:** The single source of truth for every task needed to reach the 1.0 GOLD release tag. Read it from top to bottom. Pick the first `[ ]` OPEN task in a workstream, do it, flip it to `[x]`, update `PLAN/PROGRESS_v1_0.md` in the same commit, push. Repeat.
 

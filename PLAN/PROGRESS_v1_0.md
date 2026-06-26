@@ -563,3 +563,32 @@ Three of A5's earlier CRITICAL items overlap with F4's ADV-01/02/03 findings —
 - **Additional effort: ~95-130 person-days** on top of the original 210-260. Total v1.0 scope: ~305-390 person-days.
 - **WAL band conflict resolved:** F2 HO-07 originally claimed `0x38..0x3B`, then `0x3C..0x3F` for monitor events, but both bands collided (`0x38 CHANNEL_EDIT`, `0x3C CHANNEL_PRIVILEGE_BLOCKED`, `0x3E EVAL_CRITICAL_DIVERGENCE`). **SHIPPED in the cron band instead** (Session 34, 2026-06-02): `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` / `0x4A CHANNEL_SILENCE_ALERT` — semantically a scheduled-watch-job, adjacent to `0x47 RESOURCE_PRESSURE_ALERT`.
 - **Operator picks still needed:** GR-01 (WhatsApp A or B) / GR-02 (flapping A or B) / GR-03 (Trust Ledger lane) / HO-04 (R-2 + R-02 Phase 3 four decisions). All four block their respective lane starts.
+
+---
+
+## Autonomous build-loop ships (2026-06-24 → 06-26) — backfilled 2026-06-26
+
+_Landed via the `_looptools/build_loop.js` autonomous loop; each was `[x]`-flipped in `ROAD_TO_1_0_GOLD.md` + pushed per-item, but the loop's build prompt omitted PROGRESS_v1_0.md until the script was fixed 2026-06-26. Backfilled from the origin/main commit log (commit subjects authoritative)._
+
+- [x] **GOLD-ADAPT-JV-VOICE-01..03** local edge-tts + faster-whisper int8 STT — `446e434`
+- [x] **GOLD-ADAPT-JV-MODE-01** loyal-buddy identity-locked persona + wire into enriched_request/ingress/serve — `e348550`
+- [x] **GOLD-ADAPT-OH-03** server-side onboarding completion gate + wire into serve.rs boot — `359bb3e`
+- [x] **GOLD-ADAPT-HERMES-08** SSE kanban live events + wire into serve/serve_tasks — `e175e42`
+- [x] **GOLD-ADAPT-OH-05** cross-platform Ollama silent install + wizard — `5485793`
+- [x] **GOLD-ADAPT-PWF-02** session-catchup WAL 0x9A checkpoint + resume — `320b2d7`
+- [x] **GOLD-ADAPT-GOOSE-03** UUID-keyed approval suspend/resume — `e5f005a`
+- [x] **GOLD-ADAPT-CCS-02** hex-ssh-mcp Elevated autonomy gate + 14 tools — `d1c16ad`
+- [x] **GOLD-ADAPT-SYS-01** mobile-mcp MCP server + auto_register installer — `20972f6`
+- [x] **GOLD-ADAPT-TUDU-01** tududi 8-tool MCP server + wizard step6i — `1a4ce11`
+- [x] **GOLD-ADAPT-ODY-16** context-budget auto-scaling (85% of discovered window, cap 200K) + wire into enforce_budget + context bar — `f0474da`
+- [x] **GOLD-ADAPT-JV-IMP-08** import-manifest schema + wizard STEP_6F_IMPORT_MEMORY wire-up — `d332750`
+- [x] **GOLD-ADAPT-ODY-21** outbound webhook manager (SSRF guard DNS→block RFC1918/CGNAT/loopback + HMAC-SHA256, HTTPS-only) fully wired into FreedomConfig + serve spawn + shutdown abort — `3dda0c7`
+- [x] **GOLD-CCPARITY-MODEL-02** per-skill/per-agent `model:` override + wire into dispatch_provider — `24a53e7`
+- [x] **GOLD-CCPARITY-PATHS-01** paths-glob gating on SkillManifest + route_with_min_weight (active_files) — `926c1ca`
+- [x] **GOLD-CCPARITY-EFFORT-03** per-skill effort/reasoning-budget + wire into dispatch_provider — `7d5a544`
+- [x] **GOLD-CCPARITY-EXIT-CODE** pin hook exit-code 0/1/2 semantics + pre-tool Block-abort tests — `fb42eb6`
+- [x] **GOLD-CCPARITY-STATUS-MSG** statusMessage field on HookDef + wire into emit_hook_frame — `aebc8cb`
+- [x] **GOLD-CCPARITY-ONCE** once-per-session hook firing + wire into run_hook_stage/serve_pipeline — `07b8af2`
+- [x] **GOLD-CCPARITY-SA-DENY-01** sub-agent disallowedTools denylist + wire into mcp/gate.rs:check — `e1f7926`
+
+_Still open: GOLD-CCPARITY-SKILLVIS-01 + GOLD-CCPARITY-SUBDIR-MD-01 (in the build queue — will self-record here via the fixed loop script). Deferred: SA-MEM-01, ASYNC-REWAKE. Skipped (verify-first): LISTBDGT-01 (contradicts NEOTH lazy-routing), FORK-04 (moot — single-turn-per-process)._
