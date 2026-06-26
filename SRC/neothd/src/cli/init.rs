@@ -948,6 +948,9 @@ mod tests {
             hmac_backup_offered: false,
             // GOLD-ADAPT-OH-03: fixture has telegram configured → flag is true.
             onboarding_complete: true,
+            // GOLD-ADAPT-OH-11: fixture represents a post-wizard state where
+            // chat has not yet happened → write_config will reset this to false.
+            chat_onboarding_completed: false,
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }

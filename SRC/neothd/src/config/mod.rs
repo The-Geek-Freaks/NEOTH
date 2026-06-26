@@ -707,6 +707,23 @@ pub struct FreedomConfig {
     /// already has a channel configured.
     #[serde(default)]
     pub onboarding_complete: bool,
+
+    /// GOLD-ADAPT-OH-11 — set to `false` by `write_config` at wizard completion;
+    /// flipped to `true` by `cli/chat.rs::run_post_reply_pipelines` after the
+    /// operator's first successful chat turn. Gates a one-time first-chat hint in
+    /// the CLI ("Run `neoth doctor` to check status…").
+    /// Old freedom.yaml files (missing field) default to `true` via
+    /// `#[serde(default = "default_true")]` so existing operators are NOT shown
+    /// the hint retroactively — only fresh wizard runs see it.
+    #[serde(default = "default_true")]
+    pub chat_onboarding_completed: bool,
+}
+
+/// GOLD-ADAPT-OH-11 — serde default returning `true` so that existing
+/// `freedom.yaml` files that predate this field treat chat as already
+/// introduced (no retroactive hint spam for long-running operators).
+fn default_true() -> bool {
+    true
 }
 
 /// AUDIT-RPC-01 — audit-RPC listener config. Default: disabled (the daemon

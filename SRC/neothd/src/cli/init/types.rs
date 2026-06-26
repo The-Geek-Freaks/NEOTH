@@ -567,6 +567,12 @@ pub struct WizardState {
     /// clean (missing field → false → secondary probe applied at daemon boot).
     #[serde(default)]
     pub onboarding_complete: bool,
+    /// GOLD-ADAPT-OH-11 — mirrored from FreedomConfig; reset to `false` by
+    /// `write_config` so every fresh wizard run re-arms the first-chat hint.
+    /// `#[serde(default)]` keeps old WizardState round-trips clean (missing
+    /// field → false → overwritten to false by write_config anyway).
+    #[serde(default)]
+    pub chat_onboarding_completed: bool,
     pub steps_completed: Vec<u8>,
 }
 

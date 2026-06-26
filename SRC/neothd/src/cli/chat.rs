@@ -3055,6 +3055,18 @@ async fn run_post_reply_pipelines(
         }
     }
 
+    // GOLD-ADAPT-OH-11: flip chat_onboarding_completed = true on first successful
+    // chat turn. Only persists when the flag is currently false (no-op on every
+    // subsequent turn). Uses save_public_to_default_path which strips all secrets
+    // before writing — never writes raw keys to freedom.yaml.
+    if !config.chat_onboarding_completed {
+        let mut updated = config.clone();
+        updated.chat_onboarding_completed = true;
+        if let Err(e) = updated.save_public_to_default_path() {
+            tracing::warn!(error = %e, "OH-11: could not persist chat_onboarding_completed=true (non-fatal)");
+        }
+    }
+
     drop(writer);
     let _ = writer_join.await;
     Ok(())
@@ -3075,6 +3087,17 @@ pub async fn run_chat_with(
     let first_tour_home = crate::config::FreedomConfig::default_neoth_home();
     if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
         println!("[neoth] {greeting}");
+    }
+
+    // GOLD-ADAPT-OH-11: one-time first-chat hint. Fires on the first `neoth chat`
+    // after a fresh `neoth init` (write_config sets the flag false). Suppressed
+    // for existing operators (default_true serde default) and after the first
+    // successful turn (run_post_reply_pipelines flips it true).
+    if !config.chat_onboarding_completed {
+        println!(
+            "[neoth] First chat! Run `neoth doctor` to check system status, \
+             or `neoth recall --help` to explore your memory."
+        );
     }
 
     // HERMES-02 — deliver any completed background sessions at next idle.

@@ -427,6 +427,11 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     // credentials.yaml — the secondary boot-time probe catches those correctly.
     public_state.onboarding_complete = !configured_channels(state).is_empty();
 
+    // GOLD-ADAPT-OH-11: wizard always resets chat_onboarding_completed = false
+    // so the first-chat hint fires on the next `neoth chat` after (re-)init.
+    // This correctly re-arms the hint on `neoth init --force` runs too.
+    public_state.chat_onboarding_completed = false;
+
     let freedom_yaml = neoth_dir.join("freedom.yaml");
     let serialized = serde_yaml::to_string(&public_state)
         .context("serialize WizardState as YAML for freedom.yaml")?;

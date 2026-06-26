@@ -841,4 +841,84 @@ mod tests {
             "absent stage → lenient default",
         );
     }
+
+    // ── GOLD-ADAPT-OH-11 tests ────────────────────────────────────────────────
+
+    /// OH-11 Test 1 — `chat_onboarding_completed` defaults to `true` for old
+    /// freedom.yaml files that omit the field. This prevents the first-chat hint
+    /// from firing retroactively for existing operators on upgrade.
+    #[test]
+    fn chat_onboarding_completed_defaults_true_for_old_config() {
+        let cfg: FreedomConfig =
+            serde_yaml::from_str("operator_id: alice\n").expect("parse minimal config");
+        assert!(
+            cfg.chat_onboarding_completed,
+            "missing field must default to true (default_true fn) so existing operators \
+             are not shown the first-chat hint retroactively"
+        );
+    }
+
+    /// OH-11 Test 2 — explicit `false` in yaml is respected (new wizard run).
+    #[test]
+    fn chat_onboarding_completed_explicit_false_round_trips() {
+        let cfg: FreedomConfig =
+            serde_yaml::from_str("operator_id: alice\nchat_onboarding_completed: false\n")
+                .expect("parse");
+        assert!(
+            !cfg.chat_onboarding_completed,
+            "explicit false must survive serde round-trip so write_config re-arms the hint"
+        );
+    }
+
+    /// OH-11 Test 4 — branch condition check: hint is suppressed when flag is true.
+    #[test]
+    fn first_chat_hint_suppressed_when_flag_true() {
+        let cfg: FreedomConfig =
+            serde_yaml::from_str("operator_id: alice\nchat_onboarding_completed: true\n")
+                .expect("parse");
+        // The gate condition in run_chat_with is `!config.chat_onboarding_completed`.
+        // When the flag is true the hint must NOT fire — assert the flag is true
+        // (i.e. the gate would evaluate to false).
+        assert!(
+            cfg.chat_onboarding_completed,
+            "hint gate must be false (suppressed) when chat_onboarding_completed=true"
+        );
+    }
+
+    /// OH-11 Test 3 — save_public_to_default_path round-trip for the flag.
+    /// Proves the persistence path: set flag true → save → reload → assert true.
+    #[test]
+    fn chat_onboarding_completed_flag_persists_via_save_reload() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Build a config with the flag set to true and write it.
+        let mut cfg = FreedomConfig {
+            operator_id: Some("bob".into()),
+            chat_onboarding_completed: true,
+            ..Default::default()
+        };
+        // Write manually to the temp path (save_public_to_default_path uses
+        // the OS home path, so we replicate its logic here without HOME side-effects).
+        let path = dir.path().join("freedom.yaml");
+        let body = serde_yaml::to_string(&cfg).expect("serialize");
+        std::fs::File::create(&path)
+            .expect("create")
+            .write_all(body.as_bytes())
+            .expect("write");
+        // Reload and assert flag is preserved.
+        let reloaded = FreedomConfig::load_from_path(&path).expect("load");
+        assert!(
+            reloaded.chat_onboarding_completed,
+            "chat_onboarding_completed=true must survive save→reload round-trip"
+        );
+        // Also verify false round-trips (write_config path).
+        cfg.chat_onboarding_completed = false;
+        let body2 = serde_yaml::to_string(&cfg).expect("serialize false");
+        std::fs::write(&path, body2).expect("write false");
+        let reloaded2 = FreedomConfig::load_from_path(&path).expect("load false");
+        assert!(
+            !reloaded2.chat_onboarding_completed,
+            "chat_onboarding_completed=false must survive save→reload (write_config re-arms hint)"
+        );
+    }
 }

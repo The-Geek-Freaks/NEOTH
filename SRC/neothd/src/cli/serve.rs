@@ -180,6 +180,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let oh03_payload = serde_json::json!({
             "operator_id": config.operator_id.as_deref().unwrap_or(""),
             "onboarding_complete": config.onboarding_complete,
+            // GOLD-ADAPT-OH-11: richer boot-audit snapshot — chat flag included
+            // in the existing 0xFD frame (additive JSON; backward-compatible).
+            "chat_onboarding_completed": config.chat_onboarding_completed,
             "ts_unix": now_ns / 1_000_000_000u64,
         })
         .to_string()
