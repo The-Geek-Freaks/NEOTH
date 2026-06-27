@@ -40,6 +40,7 @@ pub mod trace_replay;
 pub mod demo;
 pub mod device_profile;
 pub mod onboarding_status;
+pub mod companion;
 pub mod completions;
 pub mod computer_use;
 pub mod connect;
@@ -595,6 +596,12 @@ pub enum Commands {
     /// + credential sidecar) and prints a pass/warn/fail checklist.
     /// Exit code 1 iff any check FAILed; warnings don't change exit.
     Security(security::SecurityArgs),
+
+    /// GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time
+    /// phone-pairing invite (rendezvous topic + PSK) and show it as a QR code
+    /// with a URL fallback. Display-only; the P2P pairing transport is a
+    /// follow-up.
+    Companion(companion::CompanionArgs),
 
     /// Daemon-state snapshot — WAL bytes, tier counts, channels, autonomy.
     /// Phase 33c BS-1. Pure read, no IPC, no daemon required.
@@ -1446,6 +1453,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             // shape (checklist with status markers), so it doesn't
             // share the global_output channel-switch.
             security::run_security(args).await?;
+        }
+        Commands::Companion(args) => {
+            // GOLD-COMPANION-P2P-01: mints invite, shows QR, and drives the
+            // Noise P2P listener until the phone pairs or the TTL expires.
+            // No global_output channel switch, like `neoth security`.
+            companion::run_companion(args).await?;
         }
         Commands::Profile(mut args) => {
             args.output = global_output;

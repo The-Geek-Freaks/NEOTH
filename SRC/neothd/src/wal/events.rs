@@ -17,7 +17,7 @@
 //!
 //! | Range          | Purpose                                                |
 //! |----------------|--------------------------------------------------------|
-//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21); 0x0B..=0x0C = companion pairing audit (GOLD-ADAPT-ODY-24) |
+//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21); 0x0B..=0x0C = companion pairing audit (GOLD-ADAPT-ODY-24); 0x0D..=0x0E = companion P2P Noise audit (GOLD-COMPANION-P2P-01) |
 //! | `0x10..=0x1F`  | Daemon lifecycle (BOOT, SHUTDOWN, UPDATE_RAN, …)        |
 //! | `0x20..=0x2F`  | LLM provider lifecycle (REQUEST/RESPONSE/ERROR/STREAM) |
 //! | `0x2A..=0x2B`  | (reserved Phase 10 D14b) local Qwen3 inference trace   |
@@ -137,6 +137,38 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_COMPANION_REVOKED > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COMPANION_PAIRED <= EVENT_TYPE_WEBHOOK_FAILED) as usize];
     let _ = [(); 1][(EVENT_TYPE_COMPANION_REVOKED <= EVENT_TYPE_COMPANION_PAIRED) as usize];
+};
+
+// ── GOLD-COMPANION-P2P-01 companion P2P Noise pairing audit (0x0D..=0x0E) ──
+// Two free slots in the 0x01..=0x0F band (immediately after 0x0B..=0x0C).
+// These frames are emitted by the Hyperswarm/Noise P2P listener in
+// `daemon::companion::run_companion_p2p_listener` when a phone connects and
+// successfully authenticates the PSK (0x0D) or is rejected (0x0E).
+
+/// `0x0D COMPANION_P2P_PAIRED` — GOLD-COMPANION-P2P-01. A companion phone
+/// connected over the Hyperswarm Noise channel, passed the PSK check, and
+/// received a minted bearer token. The raw token is NEVER written to the WAL;
+/// only xxh3-64 hashes of the token and the topic are recorded.
+///
+/// Payload (JSON): `{topic_hash_xxh3 (hex), peer_pk_hex, token_hash_xxh3 (hex), ts_unix}`.
+pub const EVENT_TYPE_COMPANION_P2P_PAIRED: u8 = 0x0D;
+
+/// `0x0E COMPANION_P2P_REJECTED` — GOLD-COMPANION-P2P-01. A companion phone
+/// connected over the Hyperswarm Noise channel but failed the PSK check
+/// (wrong PSK, short read, or connection closed before the PSK frame arrived).
+/// The invite is burned on the first rejection to prevent brute-force.
+///
+/// Payload (JSON): `{topic_hash_xxh3 (hex), peer_pk_hex, reason, ts_unix}`.
+pub const EVENT_TYPE_COMPANION_P2P_REJECTED: u8 = 0x0E;
+
+// Compile-time band-guard: 0x0D and 0x0E must fit in 0x01..=0x0F and must
+// follow 0x0C (COMPANION_REVOKED).
+const _: () = {
+    let _ = [(); 1][(EVENT_TYPE_COMPANION_P2P_PAIRED > 0x0F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_COMPANION_P2P_REJECTED > 0x0F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_COMPANION_P2P_PAIRED <= EVENT_TYPE_COMPANION_REVOKED) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_COMPANION_P2P_REJECTED <= EVENT_TYPE_COMPANION_P2P_PAIRED) as usize];
 };
 
 // ---- 0x10..=0x1F  Daemon lifecycle ----------------------------------------
@@ -2217,6 +2249,9 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     // GOLD-ADAPT-ODY-24 companion pairing audit (0x0B..=0x0C, memory+recall band).
     ("companion_paired", EVENT_TYPE_COMPANION_PAIRED),
     ("companion_revoked", EVENT_TYPE_COMPANION_REVOKED),
+    // GOLD-COMPANION-P2P-01 companion P2P Noise pairing audit (0x0D..=0x0E).
+    ("companion_p2p_paired", EVENT_TYPE_COMPANION_P2P_PAIRED),
+    ("companion_p2p_rejected", EVENT_TYPE_COMPANION_P2P_REJECTED),
     ("turn_journal_opened", EVENT_TYPE_TURN_JOURNAL_OPENED),
     ("turn_journal_closed", EVENT_TYPE_TURN_JOURNAL_CLOSED),
     ("stale_interrupted", EVENT_TYPE_STALE_INTERRUPTED),

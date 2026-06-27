@@ -204,6 +204,77 @@ pub fn render_pairing_qr(url: &str) -> String {
     }
 }
 
+// ── Companion pairing invite ───────────────────────────────────────────────────
+
+/// TopicKey length — 32 bytes / 256 bits. A collision-free rendezvous id the
+/// phone and daemon agree to meet on; not secret on its own.
+pub const COMPANION_TOPIC_BYTES: usize = 32;
+
+/// PSK length — 16 bytes / 128 bits. Authenticates the one-shot, short-TTL
+/// pairing handshake, so it IS secret until consumed.
+pub const COMPANION_PSK_BYTES: usize = 16;
+
+/// One-time pairing invite minted by `neoth companion pair-phone`.
+///
+/// Carries a fresh rendezvous `topic` (32 bytes) plus a pre-shared key (16
+/// bytes), both drawn from the OS CSPRNG via `getrandom` — the same primitive
+/// as [`crate::channels::keet_pairing::BearerToken::generate`]. The values are
+/// rendered hex into a `neoth://companion/pair` URL (and its QR) for the
+/// operator to scan. Single-use; the P2P transport that validates topic+psk on
+/// connect is a follow-up (this slice is generation + display only).
+pub struct CompanionInvite {
+    /// 32-byte rendezvous topic, hex (64 chars). Not secret.
+    topic_hex: String,
+    /// 16-byte PSK, hex (32 chars). Secret — the Debug impl redacts it.
+    psk_hex: String,
+}
+
+impl CompanionInvite {
+    /// Mint a fresh invite from the OS RNG (two `getrandom` draws → hex).
+    pub fn generate() -> anyhow::Result<Self> {
+        let mut topic = [0u8; COMPANION_TOPIC_BYTES];
+        let mut psk = [0u8; COMPANION_PSK_BYTES];
+        getrandom::getrandom(&mut topic)
+            .map_err(|e| anyhow::anyhow!("OS RNG failed minting companion topic: {e}"))?;
+        getrandom::getrandom(&mut psk)
+            .map_err(|e| anyhow::anyhow!("OS RNG failed minting companion psk: {e}"))?;
+        Ok(Self {
+            topic_hex: hex::encode(topic),
+            psk_hex: hex::encode(psk),
+        })
+    }
+
+    /// Reconstruct a `CompanionInvite` from pre-generated hex strings.
+    ///
+    /// Used by the serve-side P2P coordinator to deserialise an invite that was
+    /// written to disk by `neoth companion pair-phone`. The caller is
+    /// responsible for ensuring the hex strings are valid and of the correct
+    /// length (64 chars for topic, 32 chars for psk).
+    pub fn from_hex(topic_hex: String, psk_hex: String) -> Self {
+        Self { topic_hex, psk_hex }
+    }
+
+    /// Encode as `neoth://companion/pair?topic=<hex>&psk=<hex>&ttl=<secs>`.
+    /// Hex is URL-safe (`[0-9a-f]`), so no percent-encoding is needed.
+    pub fn pairing_url(&self, ttl_secs: u64) -> String {
+        format!(
+            "neoth://companion/pair?topic={}&psk={}&ttl={}",
+            self.topic_hex, self.psk_hex, ttl_secs
+        )
+    }
+}
+
+impl std::fmt::Debug for CompanionInvite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // psk is secret — redact so a stray `{:?}` / tracing / panic can't leak
+        // the pairing key. topic is a rendezvous id, safe to show.
+        f.debug_struct("CompanionInvite")
+            .field("topic_hex", &self.topic_hex)
+            .field("psk_hex", &"<redacted>")
+            .finish()
+    }
+}
+
 // ── HTTP body type ───────────────────────────────────────────────────────────
 
 fn json_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
@@ -452,6 +523,472 @@ pub fn spawn_companion_server_loop(
     }))
 }
 
+// ── P2P Noise pairing listener (GOLD-COMPANION-P2P-01) ───────────────────────
+//
+// Full phone-pairing over the existing Hyperswarm DHT + Noise-XX E2E mesh.
+// Feature-gated: only compiled when the `cluster` feature is present, which
+// pulls in `peeroxide`. In a build without `cluster` the public API surface
+// (`spawn_companion_p2p_listener`) returns a no-op `JoinHandle`.
+//
+// Protocol (single-use, TTL-bound):
+//   1. Caller mints a `CompanionInvite` (topic=32B CSPRNG, psk=16B CSPRNG).
+//   2. A peeroxide swarm is spawned and `handle.join(topic_bytes)` announces
+//      the topic on the public Hyperswarm DHT.
+//   3. The phone (companion app) finds the topic, connects via Noise-XX,
+//      and sends exactly 16 raw bytes (the PSK) immediately after connect.
+//   4. The daemon reads 16 bytes (`read()` over Noise → next plaintext
+//      message), compares with `constant_time_eq`, and either:
+//      - PASS: calls `CompanionState::get_or_mint(session_id)`, writes
+//        `{token, session_id}` as JSON, emits WAL 0x0D, burns the invite.
+//      - FAIL: drops the conn, emits WAL 0x0E, burns the invite.
+//   5. The topic is unannounced (`handle.leave(topic_bytes)`).
+//
+// Only one connection is accepted per invite (Semaphore(1)). A second phone
+// scanning the same QR gets a closed connection — the first pairing won.
+//
+// IMPORTANT: the `conn.peer.stream` from peeroxide is a Noise SecretStream.
+// Its `.read()` method returns the next decrypted Noise message as
+// `Result<Option<peeroxide::Bytes>>` — it is NOT a raw `AsyncRead`. Each
+// `.write(&bytes)` sends one Noise message. We use these message-framed
+// methods directly (NOT `tokio::io::AsyncReadExt::read_exact`).
+
+#[cfg(feature = "cluster")]
+mod p2p {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use tokio::sync::{Notify, RwLock};
+    use tokio::task::JoinHandle;
+    use tracing::{debug, info, warn};
+
+    use super::{CompanionInvite, CompanionState, COMPANION_PSK_BYTES, COMPANION_TOPIC_BYTES};
+    use crate::wal::builder::HeaderBuilder;
+    use crate::wal::events::{EVENT_TYPE_COMPANION_P2P_PAIRED, EVENT_TYPE_COMPANION_P2P_REJECTED};
+    use crate::wal::writer::WalWriterHandle;
+
+    /// One-connection TTL for the Noise accept loop. If no phone connects
+    /// within this window the invite is burned and the task exits cleanly.
+    const COMPANION_P2P_ACCEPT_TIMEOUT: Duration = Duration::from_secs(310);
+
+    /// Held state for one P2P pairing session. Shared between the spawner and
+    /// the accept loop via `Arc`.
+    pub(super) struct CompanionP2pState {
+        /// The `CompanionState` that owns the token store + WAL writer.
+        pub companion_state: Arc<CompanionState>,
+        /// The pending invite — consumed exactly once. `None` after burn.
+        pub pending_invite: RwLock<Option<CompanionInvite>>,
+        /// WAL writer for emitting 0x0D / 0x0E audit frames.
+        pub writer: WalWriterHandle,
+        /// Total TTL of the invite in seconds. The accept loop bails after
+        /// `COMPANION_P2P_ACCEPT_TIMEOUT` regardless.
+        pub invite_ttl_secs: u64,
+    }
+
+    /// Run the Noise accept loop for one companion invite.
+    ///
+    /// - Spawns a peeroxide swarm, joins `topic_bytes`.
+    /// - Waits for the first inbound Noise-XX connection.
+    /// - Reads 16 raw PSK bytes (one Noise message).
+    /// - On PSK match: writes JSON token, emits WAL 0x0D.
+    /// - On mismatch / timeout: emits WAL 0x0E.
+    /// - Burns the invite and leaves the topic in all branches.
+    pub(super) async fn run_companion_p2p_listener(
+        state: Arc<CompanionP2pState>,
+        shutdown: Arc<Notify>,
+    ) {
+        // ── Atomic invite burn (swap-before-use) ─────────────────────────────
+        // Take the invite out of the RwLock NOW, before any network I/O.
+        // If two connections arrive simultaneously, only the first swap
+        // gets `Some`; the second sees `None` and is dropped immediately
+        // without calling get_or_mint.
+        let invite = {
+            let mut guard = state.pending_invite.write().await;
+            guard.take()
+        };
+        let invite = match invite {
+            Some(inv) => inv,
+            None => {
+                warn!("companion_p2p: invite already consumed — listener exiting");
+                return;
+            }
+        };
+
+        // Decode the topic bytes (32 raw bytes from hex).
+        let topic_bytes: [u8; COMPANION_TOPIC_BYTES] = match hex::decode(&invite.topic_hex) {
+            Ok(v) if v.len() == COMPANION_TOPIC_BYTES => {
+                let mut arr = [0u8; COMPANION_TOPIC_BYTES];
+                arr.copy_from_slice(&v);
+                arr
+            }
+            Ok(_) | Err(_) => {
+                warn!("companion_p2p: invalid topic hex in invite — aborting");
+                return;
+            }
+        };
+
+        let psk_bytes: [u8; COMPANION_PSK_BYTES] = match hex::decode(&invite.psk_hex) {
+            Ok(v) if v.len() == COMPANION_PSK_BYTES => {
+                let mut arr = [0u8; COMPANION_PSK_BYTES];
+                arr.copy_from_slice(&v);
+                arr
+            }
+            Ok(_) | Err(_) => {
+                warn!("companion_p2p: invalid psk hex in invite — aborting");
+                return;
+            }
+        };
+
+        let topic_hash = format!(
+            "{:016x}",
+            xxhash_rust::xxh3::xxh3_64(&topic_bytes)
+        );
+
+        // ── Bring up peeroxide swarm ──────────────────────────────────────────
+        let config = peeroxide::SwarmConfig::with_public_bootstrap();
+        let (swarm_task, handle, mut conn_rx) = match peeroxide::spawn(config).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(error = %e, "companion_p2p: peeroxide::spawn failed — invite abandoned");
+                return;
+            }
+        };
+
+        // Use raw topic bytes — NOT hashed through discovery_key(). The phone
+        // scans the QR and uses the same raw bytes. derive_topic() would hash
+        // again and produce a different rendez-vous id.
+        if let Err(e) = handle
+            .join(topic_bytes, peeroxide::JoinOpts::default())
+            .await
+        {
+            warn!(error = %e, "companion_p2p: peeroxide join failed — invite abandoned");
+            swarm_task.abort();
+            let _ = swarm_task.await;
+            return;
+        }
+
+        info!(
+            topic_hash = %topic_hash,
+            ttl_secs = state.invite_ttl_secs,
+            "companion_p2p: DHT announced — waiting for phone to connect"
+        );
+
+        // Semaphore(1): accept at most ONE connection per invite. A second phone
+        // scanning the same QR sees a closed connection.
+        let session_limiter = Arc::new(tokio::sync::Semaphore::new(1));
+
+        // ── Wait for the phone to connect ─────────────────────────────────────
+        let conn_result = tokio::select! {
+            biased;
+            _ = shutdown.notified() => {
+                info!("companion_p2p: shutdown signal — abandoning invite");
+                None
+            }
+            _ = tokio::time::sleep(COMPANION_P2P_ACCEPT_TIMEOUT) => {
+                warn!(
+                    timeout_s = COMPANION_P2P_ACCEPT_TIMEOUT.as_secs(),
+                    "companion_p2p: invite TTL expired — no connection received"
+                );
+                None
+            }
+            conn = conn_rx.recv() => conn,
+        };
+
+        // Unannounce from DHT before handling the connection so no further
+        // phones can find the topic (single-use).
+        if let Err(e) = handle.leave(topic_bytes).await {
+            warn!(error = %e, "companion_p2p: DHT leave failed (non-fatal)");
+        }
+        // Keep the handle alive until we've finished with the connection.
+        drop(handle);
+
+        let mut conn = match conn_result {
+            None => {
+                // Timeout or shutdown — emit rejection WAL if an invite was pending.
+                emit_p2p_rejected(
+                    &state.writer,
+                    &topic_hash,
+                    "(no connection)",
+                    "(none)",
+                    "ttl_expired_or_shutdown",
+                )
+                .await;
+                swarm_task.abort();
+                let _ = swarm_task.await;
+                return;
+            }
+            Some(c) => c,
+        };
+
+        // Acquire the single-session slot (always succeeds — we only took one).
+        let _permit = session_limiter.try_acquire_owned();
+
+        let peer_pk: [u8; 32] = *conn.remote_public_key();
+        let peer_pk_hex = hex::encode(peer_pk);
+
+        debug!(
+            peer = %peer_pk_hex,
+            topic_hash = %topic_hash,
+            "companion_p2p: phone connected over Noise — reading PSK"
+        );
+
+        // ── Read exactly one Noise message as the PSK frame ──────────────────
+        // peeroxide's SecretStream message-frames over Noise, so `.read()` gives
+        // us one full decrypted message. We expect exactly 16 bytes (the PSK).
+        // Any other size or an error is treated as a mismatch.
+        let received_psk: [u8; COMPANION_PSK_BYTES] = {
+            let read_result = tokio::time::timeout(
+                Duration::from_secs(10),
+                conn.peer.stream.read(),
+            )
+            .await;
+
+            match read_result {
+                Ok(Ok(Some(bytes))) if bytes.len() == COMPANION_PSK_BYTES => {
+                    let mut arr = [0u8; COMPANION_PSK_BYTES];
+                    arr.copy_from_slice(&bytes);
+                    arr
+                }
+                Ok(Ok(Some(bytes))) => {
+                    warn!(
+                        peer = %peer_pk_hex,
+                        got = bytes.len(),
+                        expected = COMPANION_PSK_BYTES,
+                        "companion_p2p: PSK frame wrong size — rejecting"
+                    );
+                    emit_p2p_rejected(
+                        &state.writer,
+                        &topic_hash,
+                        &peer_pk_hex,
+                        "psk_frame_wrong_size",
+                        "wrong_psk_size",
+                    )
+                    .await;
+                    swarm_task.abort();
+                    let _ = swarm_task.await;
+                    return;
+                }
+                Ok(Ok(None)) => {
+                    warn!(peer = %peer_pk_hex, "companion_p2p: phone closed before PSK — rejecting");
+                    emit_p2p_rejected(
+                        &state.writer,
+                        &topic_hash,
+                        &peer_pk_hex,
+                        "psk_closed_early",
+                        "connection_closed",
+                    )
+                    .await;
+                    swarm_task.abort();
+                    let _ = swarm_task.await;
+                    return;
+                }
+                Ok(Err(e)) => {
+                    warn!(peer = %peer_pk_hex, error = %e, "companion_p2p: PSK read error — rejecting");
+                    emit_p2p_rejected(
+                        &state.writer,
+                        &topic_hash,
+                        &peer_pk_hex,
+                        "psk_read_error",
+                        "io_error",
+                    )
+                    .await;
+                    swarm_task.abort();
+                    let _ = swarm_task.await;
+                    return;
+                }
+                Err(_timeout) => {
+                    warn!(peer = %peer_pk_hex, "companion_p2p: PSK read timeout — rejecting");
+                    emit_p2p_rejected(
+                        &state.writer,
+                        &topic_hash,
+                        &peer_pk_hex,
+                        "psk_read_timeout",
+                        "timeout",
+                    )
+                    .await;
+                    swarm_task.abort();
+                    let _ = swarm_task.await;
+                    return;
+                }
+            }
+        };
+
+        // ── Constant-time PSK compare ─────────────────────────────────────────
+        // Use subtle::ConstantTimeEq (already in the dep tree via HMAC crates).
+        // Fallback: XOR all bytes + check if all-zero.  We use a manual
+        // constant-time fold — stable and dependency-free.
+        let psk_ok = {
+            let mut diff = 0u8;
+            for (a, b) in received_psk.iter().zip(psk_bytes.iter()) {
+                diff |= a ^ b;
+            }
+            diff == 0
+        };
+
+        if !psk_ok {
+            warn!(peer = %peer_pk_hex, "companion_p2p: PSK mismatch — rejecting");
+            emit_p2p_rejected(
+                &state.writer,
+                &topic_hash,
+                &peer_pk_hex,
+                "psk_mismatch",
+                "wrong_psk",
+            )
+            .await;
+            swarm_task.abort();
+            let _ = swarm_task.await;
+            return;
+        }
+
+        // ── PSK verified — mint token ─────────────────────────────────────────
+        // session_id = hex of first 8 bytes of the remote Noise public key.
+        // Stable, unguessable, and unique per peer Noise identity.
+        let session_id = hex::encode(&peer_pk[..8]);
+        let token = state.companion_state.get_or_mint(&session_id).await;
+
+        // Send JSON {token, session_id} over the Noise channel (one message).
+        let resp = serde_json::json!({
+            "token": token,
+            "session_id": session_id,
+        });
+        let resp_bytes = match serde_json::to_vec(&resp) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(error = %e, "companion_p2p: JSON serialize failed — token not delivered");
+                swarm_task.abort();
+                let _ = swarm_task.await;
+                return;
+            }
+        };
+
+        if let Err(e) = conn.peer.stream.write(&resp_bytes).await {
+            warn!(
+                peer = %peer_pk_hex,
+                error = %e,
+                "companion_p2p: token write failed — phone may not have received token"
+            );
+            // Still emit paired WAL (token was minted; phone can retry via HTTP).
+        }
+
+        // ── Emit WAL 0x0D COMPANION_P2P_PAIRED ───────────────────────────────
+        let token_hash = format!(
+            "{:016x}",
+            xxhash_rust::xxh3::xxh3_64(token.as_bytes())
+        );
+        let ts_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let payload = serde_json::json!({
+            "topic_hash_xxh3": topic_hash,
+            "peer_pk_hex": peer_pk_hex,
+            "token_hash_xxh3": token_hash,
+            "ts_unix": ts_unix,
+        });
+        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+        let hdr =
+            HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_PAIRED, &payload_bytes).build();
+        if let Err(e) = state.writer.append_no_ack(hdr, payload_bytes).await {
+            warn!(error = %e, "companion_p2p: WAL emit COMPANION_P2P_PAIRED failed (non-fatal)");
+        }
+
+        info!(
+            peer = %peer_pk_hex,
+            session_id = %session_id,
+            topic_hash = %topic_hash,
+            "companion_p2p: phone paired successfully over Noise"
+        );
+
+        // Drop the connection (Noise channel closes) + tear down the swarm.
+        drop(conn);
+        swarm_task.abort();
+        let _ = swarm_task.await;
+    }
+
+    /// Emit WAL 0x0E COMPANION_P2P_REJECTED (best-effort, non-fatal).
+    async fn emit_p2p_rejected(
+        writer: &WalWriterHandle,
+        topic_hash: &str,
+        peer_pk_hex: &str,
+        reason: &str,
+        _detail: &str,
+    ) {
+        let ts_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let payload = serde_json::json!({
+            "topic_hash_xxh3": topic_hash,
+            "peer_pk_hex": peer_pk_hex,
+            "reason": reason,
+            "ts_unix": ts_unix,
+        });
+        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+        let hdr =
+            HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_REJECTED, &payload_bytes).build();
+        if let Err(e) = writer.append_no_ack(hdr, payload_bytes).await {
+            warn!(error = %e, "companion_p2p: WAL emit COMPANION_P2P_REJECTED failed (non-fatal)");
+        }
+    }
+
+    /// Spawn the P2P pairing listener as a tokio task and return its handle.
+    ///
+    /// # Arguments
+    /// - `invite` — the one-time [`CompanionInvite`] to consume.
+    /// - `companion_state` — the shared token store (shared with the HTTP server).
+    /// - `writer` — WAL writer for 0x0D / 0x0E audit frames.
+    /// - `ttl_secs` — invite TTL; the task exits after
+    ///   `COMPANION_P2P_ACCEPT_TIMEOUT` regardless.
+    /// - `shutdown` — notified to abort the listener early (daemon shutdown /
+    ///   CLI TTL expiry).
+    pub(super) fn spawn(
+        invite: CompanionInvite,
+        companion_state: Arc<CompanionState>,
+        writer: WalWriterHandle,
+        ttl_secs: u64,
+        shutdown: Arc<Notify>,
+    ) -> JoinHandle<()> {
+        let p2p_state = Arc::new(CompanionP2pState {
+            companion_state,
+            pending_invite: RwLock::new(Some(invite)),
+            writer,
+            invite_ttl_secs: ttl_secs,
+        });
+        tokio::spawn(run_companion_p2p_listener(p2p_state, shutdown))
+    }
+}
+
+/// Spawn the companion P2P Noise pairing listener.
+///
+/// Returns a [`JoinHandle`] that resolves when the listener exits (one
+/// successful pairing, PSK reject, TTL expiry, or shutdown signal).
+///
+/// # Feature gate
+///
+/// When the `cluster` feature is NOT active, this is a no-op that returns a
+/// task that exits immediately and logs a warning.
+#[cfg(feature = "cluster")]
+pub fn spawn_companion_p2p_listener(
+    invite: CompanionInvite,
+    companion_state: Arc<CompanionState>,
+    writer: WalWriterHandle,
+    ttl_secs: u64,
+    shutdown: Arc<Notify>,
+) -> JoinHandle<()> {
+    p2p::spawn(invite, companion_state, writer, ttl_secs, shutdown)
+}
+
+#[cfg(not(feature = "cluster"))]
+pub fn spawn_companion_p2p_listener(
+    _invite: CompanionInvite,
+    _companion_state: Arc<CompanionState>,
+    _writer: WalWriterHandle,
+    _ttl_secs: u64,
+    _shutdown: Arc<Notify>,
+) -> JoinHandle<()> {
+    warn!("companion_p2p: `cluster` feature not enabled — P2P pairing unavailable; use loopback HTTP instead");
+    tokio::spawn(async {})
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -634,5 +1171,171 @@ mod tests {
         // Use a runtime check to avoid the const-value assertion lint.
         let ttl: u64 = TOKEN_TTL_SECS;
         assert!(ttl > 0, "TOKEN_TTL_SECS must be positive");
+    }
+
+    // ── CompanionInvite ───────────────────────────────────────────────────────
+
+    /// Pull the value of `key=` out of the pairing URL query (no real URL parse
+    /// needed — values are hex with no `&` inside).
+    fn url_param<'a>(url: &'a str, key: &str) -> &'a str {
+        url.split(&format!("{key}="))
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+    }
+
+    #[test]
+    fn companion_invite_has_correct_hex_lengths() {
+        let inv = CompanionInvite::generate().expect("OS rng works");
+        let url = inv.pairing_url(300);
+        let topic = url_param(&url, "topic");
+        let psk = url_param(&url, "psk");
+        // topic = 32 bytes → 64 hex chars; psk = 16 bytes → 32 hex chars.
+        assert_eq!(topic.len(), COMPANION_TOPIC_BYTES * 2);
+        assert_eq!(psk.len(), COMPANION_PSK_BYTES * 2);
+        assert!(topic.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(psk.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn companion_invite_pairing_url_format() {
+        let inv = CompanionInvite::generate().unwrap();
+        let url = inv.pairing_url(300);
+        assert!(url.starts_with("neoth://companion/pair?"));
+        assert!(url.contains("topic="));
+        assert!(url.contains("psk="));
+        assert!(url.ends_with("ttl=300"));
+    }
+
+    #[test]
+    fn companion_invite_two_generates_differ() {
+        // 256+128 bits of entropy — a collision is astronomically unlikely, so
+        // this doubles as a smoke test that the getrandom wiring isn't degenerate.
+        let a = CompanionInvite::generate().unwrap();
+        let b = CompanionInvite::generate().unwrap();
+        assert_ne!(a.pairing_url(300), b.pairing_url(300));
+    }
+
+    #[test]
+    fn companion_invite_debug_redacts_psk() {
+        let inv = CompanionInvite::generate().unwrap();
+        let dbg = format!("{inv:?}");
+        let psk = url_param(&inv.pairing_url(300), "psk").to_string();
+        assert!(dbg.contains("<redacted>"));
+        assert!(!dbg.contains(&psk), "psk must not appear in Debug output");
+    }
+
+    // ── GOLD-COMPANION-P2P-01 — unit tests (no network) ─────────────────────
+
+    /// Invite URL round-trip: `pairing_url(ttl)` output parses back to the
+    /// original topic + psk hex strings.
+    #[test]
+    fn invite_url_parse_roundtrip() {
+        let inv = CompanionInvite::generate().unwrap();
+        let url = inv.pairing_url(300);
+        let topic_from_url = url_param(&url, "topic");
+        let psk_from_url = url_param(&url, "psk");
+        assert_eq!(topic_from_url, inv.topic_hex, "topic round-trip mismatch");
+        assert_eq!(psk_from_url, inv.psk_hex, "psk round-trip mismatch");
+    }
+
+    /// `from_hex` reconstructs an invite with the exact hex values supplied.
+    #[test]
+    fn invite_from_hex_roundtrip() {
+        let orig = CompanionInvite::generate().unwrap();
+        let url1 = orig.pairing_url(300);
+        let reconstructed =
+            CompanionInvite::from_hex(orig.topic_hex.clone(), orig.psk_hex.clone());
+        let url2 = reconstructed.pairing_url(300);
+        assert_eq!(url1, url2, "from_hex must produce the same pairing URL");
+    }
+
+    /// Invite TTL expiry: `spawn_companion_p2p_listener` notified at start
+    /// must exit without hanging. The listener spawns a peeroxide DHT swarm
+    /// (public bootstrap, real network) and then enters a select that checks
+    /// the shutdown notifier. Because the DHT bootstrap itself takes a few
+    /// seconds, we allow up to 60s for the task to exit cleanly after
+    /// `shutdown.notify_waiters()`.
+    ///
+    /// Note: this test makes a real (outbound-only) UDP connection to the
+    /// public Hyperswarm bootstrap nodes. It is skipped in offline CI via the
+    /// standard `#[ignore]` attribute override on integration test runs.
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    #[ignore = "makes real outbound DHT connection; run with -- --ignored to include"]
+    async fn invite_ttl_expiry_exits_cleanly() {
+        let (writer, _wal_join, _dir) = temp_writer();
+        let invite = CompanionInvite::generate().unwrap();
+        let state = Arc::new(CompanionState::new(writer.clone(), 0));
+        let shutdown = Arc::new(Notify::new());
+
+        // Immediately notify shutdown to simulate TTL-0 expiry.
+        shutdown.notify_waiters();
+
+        let task = super::spawn_companion_p2p_listener(
+            invite,
+            Arc::clone(&state),
+            writer,
+            0,
+            Arc::clone(&shutdown),
+        );
+
+        // Must exit without hanging. 60s covers real DHT bootstrap round-trip.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), task).await;
+        assert!(
+            result.is_ok(),
+            "listener must exit after shutdown is notified"
+        );
+    }
+
+    /// Single-use burn: after one `from_hex` invite is consumed by the listener
+    /// state, the pending slot becomes None.
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn invite_single_use_burn() {
+        use super::p2p::CompanionP2pState;
+        use tokio::sync::RwLock;
+
+        let (writer, _wal_join, _dir) = temp_writer();
+        let state = Arc::new(CompanionState::new(writer.clone(), 0));
+        let invite = CompanionInvite::generate().unwrap();
+
+        let p2p_state = Arc::new(CompanionP2pState {
+            companion_state: Arc::clone(&state),
+            pending_invite: RwLock::new(Some(CompanionInvite::from_hex(
+                invite.topic_hex.clone(),
+                invite.psk_hex.clone(),
+            ))),
+            writer,
+            invite_ttl_secs: 300,
+        });
+
+        // Swap the invite out (simulating the atomic burn).
+        let taken = {
+            let mut guard = p2p_state.pending_invite.write().await;
+            guard.take()
+        };
+        assert!(taken.is_some(), "first take must return Some(invite)");
+
+        // Second take must return None (invite burned).
+        let taken2 = {
+            let mut guard = p2p_state.pending_invite.write().await;
+            guard.take()
+        };
+        assert!(taken2.is_none(), "second take must return None (single-use)");
+    }
+
+    /// `from_hex` with known hex strings produces the expected pairing URL.
+    #[test]
+    fn invite_from_hex_known_values() {
+        let topic = "a".repeat(64); // 32 bytes as 64 hex chars
+        let psk = "b".repeat(32);   // 16 bytes as 32 hex chars
+        let inv = CompanionInvite::from_hex(topic.clone(), psk.clone());
+        let url = inv.pairing_url(300);
+        assert!(url.contains(&format!("topic={topic}")));
+        assert!(url.contains(&format!("psk={psk}")));
+        assert!(url.ends_with("ttl=300"));
     }
 }

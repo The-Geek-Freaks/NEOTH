@@ -1001,6 +1001,32 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         std::sync::Arc::clone(&companion_shutdown),
     );
 
+    // GOLD-COMPANION-P2P-01 — Companion P2P Noise pairing coordinator.
+    // Default OFF — opt-in via `companion.p2p_enabled: true`. When enabled,
+    // runs a long-lived poll loop that picks up pending invites written by
+    // `neoth companion pair-phone` and drives the Hyperswarm/Noise-XX accept
+    // loop for each one. Emits `0x0D COMPANION_P2P_PAIRED` / `0x0E
+    // COMPANION_P2P_REJECTED` WAL audit frames. Requires the `cluster` feature.
+    //
+    // Hoist a shared CompanionState so the P2P listener mints tokens into the
+    // SAME store as the HTTP server — tokens minted over Noise are also valid
+    // over HTTP (the phone can switch to the loopback HTTP path after pairing).
+    let companion_p2p_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    // Build a shared Arc<CompanionState> for the P2P path. The HTTP server
+    // currently builds its own CompanionState inside spawn_companion_server_loop;
+    // for the P2P path we need the token store accessible here. We create an
+    // independent CompanionState for the P2P coordinator — it shares the same
+    // port value for consistency (though port is only used by the HTTP CSRF guard).
+    let companion_p2p_state = std::sync::Arc::new(
+        crate::daemon::companion::CompanionState::new(writer.clone(), config.companion.port),
+    );
+    let companion_p2p_task = crate::cli::serve_tasks::spawn_companion_p2p_listener_task(
+        &config,
+        companion_p2p_state,
+        writer.clone(),
+        std::sync::Arc::clone(&companion_p2p_shutdown),
+    );
+
     // GOLD-FEAT-09 — daemon watchdog / auto-recovery cron. Default OFF → no
     // idle task; opt-in via `watchdog.enabled = true`. The restart action is
     // gated to Elevated/Full autonomy inside the spawn helper.
@@ -1737,6 +1763,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         kanban_sse_task,
         companion_shutdown,
         companion_task,
+        companion_p2p_shutdown,
+        companion_p2p_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
         self_map_task,

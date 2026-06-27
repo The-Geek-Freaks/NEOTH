@@ -350,6 +350,14 @@ Phase 3a — find every persisted file that declares a symbol matching NAME exac
 
 - `<NAME>` — Symbol name to look up
 
+## `neoth companion`
+
+GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time phone-pairing invite (rendezvous topic + PSK) and show it as a QR code with a URL fallback. Display-only; the P2P pairing transport is a follow-up
+
+### `neoth companion pair-phone`
+
+Mint a one-time phone-pairing invite, show a QR code, and wait for the companion app to connect over the Hyperswarm P2P mesh. The invite is single-use and expires after a short TTL. Requires the `cluster` feature
+
 ## `neoth completions`
 
 Emit a shell-completion script. `neoth completions zsh > _neoth`, `neoth completions bash > /etc/bash_completion.d/neoth`, etc

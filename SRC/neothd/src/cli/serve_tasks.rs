@@ -601,6 +601,159 @@ pub(crate) fn spawn_companion_server(
     handle
 }
 
+/// GOLD-COMPANION-P2P-01 — spawn a long-running serve-side companion P2P listener
+/// task.
+///
+/// Returns `None` when `config.companion.p2p_enabled = false` (the default) or
+/// when the `cluster` feature is NOT compiled in (peeroxide unavailable).
+///
+/// When enabled, the task runs for the daemon's lifetime. It waits for an
+/// invite to be stored by `neoth companion pair-phone` and then drives the
+/// Noise-XX accept loop for that invite. After the invite is consumed (paired
+/// or rejected), it waits for the next one. This allows the operator to
+/// repeatedly run `neoth companion pair-phone` without restarting the daemon.
+///
+/// Note: the current implementation drives one invite at a time. The
+/// serve-side task is the coordination point; `neoth companion pair-phone`
+/// spawns the P2P listener inline when run as a standalone CLI command and
+/// does NOT require `p2p_enabled = true` in the config — it drives its own
+/// transient swarm.
+pub(crate) fn spawn_companion_p2p_listener_task(
+    config: &FreedomConfig,
+    companion_state: std::sync::Arc<crate::daemon::companion::CompanionState>,
+    writer: WalWriterHandle,
+    shutdown: std::sync::Arc<tokio::sync::Notify>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !config.companion.p2p_enabled {
+        return None;
+    }
+
+    #[cfg(not(feature = "cluster"))]
+    {
+        warn!(
+            "companion_p2p: p2p_enabled=true in config but `cluster` feature not compiled — \
+             P2P pairing unavailable; falling back to loopback HTTP only"
+        );
+        let _ = (companion_state, writer, shutdown);
+        return None;
+    }
+
+    #[cfg(feature = "cluster")]
+    {
+        // The serve-side task is a long-running coordination loop. It wraps a
+        // Notify-based channel: `neoth companion pair-phone` (running as a
+        // separate process) cannot directly notify this task. Instead, the
+        // serve-side task polls a well-known invite file
+        // (~/.neoth/companion_pending_invite.json) every 2s, and when it finds
+        // one, it loads + deletes the file then calls spawn_companion_p2p_listener.
+        //
+        // This decoupled design avoids IPC complexity while the companion mobile
+        // codebase is out of scope. It also means the daemon never holds an open
+        // P2P swarm unless an invite is actually pending.
+        use crate::daemon::companion::CompanionInvite;
+
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let invite_path = home.join("companion_pending_invite.json");
+        let shutdown_clone = std::sync::Arc::clone(&shutdown);
+
+        info!(
+            "companion_p2p: serve-side P2P coordinator spawned \
+             (polls {} every 2s for pending invites)",
+            invite_path.display()
+        );
+
+        let task = tokio::spawn(async move {
+            loop {
+                // Poll for a pending invite file written by `neoth companion pair-phone
+                // --write-invite-for-serve`.
+                tokio::select! {
+                    biased;
+                    _ = shutdown_clone.notified() => {
+                        info!("companion_p2p: serve-side coordinator received shutdown");
+                        break;
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+                }
+
+                if !invite_path.exists() {
+                    continue;
+                }
+
+                // Load and immediately delete the file (atomic single-use).
+                let invite_json = match std::fs::read_to_string(&invite_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!(error = %e, "companion_p2p: failed to read invite file");
+                        continue;
+                    }
+                };
+                // Delete before using so a second daemon loop or a race can't
+                // pick it up.
+                let _ = std::fs::remove_file(&invite_path);
+
+                let invite: serde_json::Value = match serde_json::from_str(&invite_json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "companion_p2p: invite file JSON parse failed");
+                        continue;
+                    }
+                };
+
+                let topic_hex = match invite["topic_hex"].as_str() {
+                    Some(s) => s.to_string(),
+                    None => {
+                        warn!("companion_p2p: invite file missing topic_hex");
+                        continue;
+                    }
+                };
+                let psk_hex = match invite["psk_hex"].as_str() {
+                    Some(s) => s.to_string(),
+                    None => {
+                        warn!("companion_p2p: invite file missing psk_hex");
+                        continue;
+                    }
+                };
+                let ttl_secs = invite["ttl_secs"].as_u64().unwrap_or(300);
+
+                // Reconstruct a CompanionInvite from the file.
+                let p2p_invite = CompanionInvite::from_hex(topic_hex, psk_hex);
+                let per_invite_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+
+                info!("companion_p2p: serve-side coordinator picked up pending invite");
+
+                // Spawn the single-invite listener and await it (blocks the
+                // coordinator loop until the invite is consumed — by design,
+                // only one pairing is active at a time).
+                let sub_shutdown = std::sync::Arc::clone(&per_invite_shutdown);
+                let task = crate::daemon::companion::spawn_companion_p2p_listener(
+                    p2p_invite,
+                    std::sync::Arc::clone(&companion_state),
+                    writer.clone(),
+                    ttl_secs,
+                    sub_shutdown,
+                );
+
+                tokio::pin!(task);
+                tokio::select! {
+                    biased;
+                    _ = shutdown_clone.notified() => {
+                        per_invite_shutdown.notify_waiters();
+                        // Abort the in-flight invite listener and wait for it to stop.
+                        task.abort();
+                        let _ = task.await;
+                        break;
+                    }
+                    _ = &mut task => {
+                        // Invite consumed; loop back and poll for the next one.
+                    }
+                }
+            }
+        });
+
+        Some(task)
+    }
+}
+
 /// GOLD-FEAT-09 — spawn the daemon watchdog / auto-recovery cron. `None` when
 /// `watchdog.enabled = false`. The restart ACTION (spawning a service) is gated
 /// to `Elevated`/`Full` autonomy, resolved once here and passed as a plain
@@ -2914,6 +3067,14 @@ pub(crate) struct BackgroundHandles {
     pub companion_shutdown: Arc<tokio::sync::Notify>,
     /// GOLD-ADAPT-ODY-24 — task handle for the companion loopback hyper server.
     pub companion_task: Option<JoinHandle<()>>,
+    /// GOLD-COMPANION-P2P-01 — shutdown notifier for the companion P2P Noise
+    /// pairing coordinator (serve-side long-running task). Notified to stop the
+    /// poll loop and abort any in-flight single-invite listener.
+    pub companion_p2p_shutdown: Arc<tokio::sync::Notify>,
+    /// GOLD-COMPANION-P2P-01 — task handle for the companion P2P coordinator.
+    /// `None` when `companion.p2p_enabled = false` (default) or `cluster`
+    /// feature not compiled in.
+    pub companion_p2p_task: Option<JoinHandle<()>>,
     pub obsidian_task: Option<JoinHandle<anyhow::Result<()>>>,
     /// OH-14 — periodic self-wiki rebuild cron handle.
     /// WAL-emitting (0xFA); `None` when `obsidian_vault` or source dir
@@ -3010,6 +3171,8 @@ pub(crate) async fn shutdown_background_tasks(
         kanban_sse_task,
         companion_shutdown,
         companion_task,
+        companion_p2p_shutdown,
+        companion_p2p_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
         self_map_task,
@@ -3285,6 +3448,15 @@ pub(crate) async fn shutdown_background_tasks(
     // before Obsidian) matching the WAL-emitting task ordering discipline.
     companion_shutdown.notify_waiters();
     if let Some(task) = companion_task {
+        let _ = task.await;
+    }
+
+    // GOLD-COMPANION-P2P-01: drain the companion P2P Noise coordinator.
+    // WAL-emitting (0x0D/0x0E) — must be shut down BEFORE drop(writer) so any
+    // in-flight COMPANION_P2P_PAIRED or COMPANION_P2P_REJECTED frames land.
+    // Placed immediately after the HTTP companion drain to preserve ordering.
+    companion_p2p_shutdown.notify_waiters();
+    if let Some(task) = companion_p2p_task {
         let _ = task.await;
     }
 

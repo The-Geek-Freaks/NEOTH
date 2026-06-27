@@ -1079,6 +1079,18 @@ pub struct CompanionConfig {
     /// Loopback port the hyper server binds. Default 9745. Override only
     /// when 9745 collides with another local service.
     pub port: u16,
+    /// GOLD-COMPANION-P2P-01 — enable the Hyperswarm/Noise P2P pairing listener.
+    ///
+    /// When `true`, `neoth serve` spawns a long-running background task that
+    /// waits for invites to be stored (via `neoth companion pair-phone`) and
+    /// drives the Noise-XX accept loop for each one. Default `false` — the
+    /// P2P listener is opt-in because it requires the `cluster` feature
+    /// (peeroxide) and makes an outbound DHT connection.
+    ///
+    /// `neoth companion pair-phone` drives the P2P listener inline regardless
+    /// of this setting — this flag controls the serve-side long-running loop
+    /// that allows pairing while the daemon is running.
+    pub p2p_enabled: bool,
 }
 
 fn default_companion_port() -> u16 {
@@ -1090,6 +1102,7 @@ impl Default for CompanionConfig {
         Self {
             enabled: false,
             port: default_companion_port(),
+            p2p_enabled: false,
         }
     }
 }
