@@ -451,6 +451,7 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         eos_id,
         device: device.clone(),
         // GOLD-ADAPT-KV-03 — two-tier LRU; caps read once at model-load time.
+        // GOLD-ADAPT-KV-04 — disk cold tier; opt-in via NEOTH_OURO_KV_DISK=1.
         prefix_kv_cache: {
             let hot_cap: usize = std::env::var("NEOTH_OURO_KV_HOT_CAP")
                 .ok()
@@ -460,7 +461,27 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(32);
-            super::kv_offload::KvOffloadCache::new(hot_cap, cold_cap, device)
+            // KV-04: read NEOTH_OURO_KV_DISK=1 to enable the disk tier.
+            // Resolve the kv_cache directory the same way config::neoth_home() does:
+            // NEOTH_HOME env var (if non-empty) = the home dir itself; otherwise
+            // HOME / USERPROFILE + ".neoth". No `dirs` crate dep needed.
+            let disk_dir: Option<std::path::PathBuf> =
+                if std::env::var("NEOTH_OURO_KV_DISK").as_deref() == Ok("1") {
+                    let neoth_home: PathBuf = match std::env::var("NEOTH_HOME") {
+                        Ok(v) if !v.is_empty() => PathBuf::from(v),
+                        _ => {
+                            let home = std::env::var("HOME")
+                                .map(PathBuf::from)
+                                .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
+                                .unwrap_or_else(|_| PathBuf::from("."));
+                            home.join(".neoth")
+                        }
+                    };
+                    Some(neoth_home.join("kv_cache"))
+                } else {
+                    None
+                };
+            super::kv_offload::KvOffloadCache::new(hot_cap, cold_cap, device, disk_dir)
         },
     });
     Ok(())
