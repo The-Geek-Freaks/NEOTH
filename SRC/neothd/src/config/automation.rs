@@ -911,6 +911,50 @@ impl SelfImprovementCollectorConfig {
     }
 }
 
+// ── GOLD-ADAPT-ODY-20 — auto-skill extraction from MCP-loop agent runs ───────
+
+/// GOLD-ADAPT-ODY-20 — auto-skill extraction config (`freedom.yaml::auto_skill_extract`).
+///
+/// When `enabled`, `run_post_reply_pipelines` (cli/chat.rs) fires a single
+/// provider call after any turn where `mcp_tool_calls >= min_tool_calls` to
+/// distil `{title, steps, tags, confidence, computer_executable}`. Extractions
+/// above `confidence_threshold` that are `computer_executable` are staged in
+/// the operator's proactive review queue (`~/.neoth/proposals/`) as
+/// `ProposalKind::Skill` — same consumer path as KF-04 and HERMES-06 GAP-A.
+///
+/// Default OFF (operator opt-in, `enabled: false`).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct AutoSkillExtractConfig {
+    /// Master switch. Default `false` (opt-in). When off, the post-turn
+    /// extraction call is never made and no proposals are staged.
+    pub enabled: bool,
+    /// Minimum MCP tool-call count in a turn before extraction runs.
+    /// Default 2 — single-tool turns rarely contain a reusable procedure.
+    pub min_tool_calls: u32,
+    /// Confidence floor. Extractions strictly below this are discarded.
+    /// Range 0.0..=1.0. Default 0.6.
+    pub confidence_threshold: f32,
+}
+
+fn default_auto_skill_confidence() -> f32 {
+    0.6
+}
+
+fn default_auto_skill_min_tool_calls() -> u32 {
+    2
+}
+
+impl Default for AutoSkillExtractConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_tool_calls: default_auto_skill_min_tool_calls(),
+            confidence_threshold: default_auto_skill_confidence(),
+        }
+    }
+}
+
 // ── GOLD-ADAPT-ODY-21 — outbound webhook manager ─────────────────────────────
 
 /// Which WAL-sourced event triggers an outbound webhook call.

@@ -17,8 +17,9 @@ use tracing::{info, warn};
 use crate::config::FreedomConfig;
 use crate::providers::{self, CompletionChunk, Request};
 use crate::wal::events::{
-    EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN, EVENT_TYPE_PROVIDER_REQUEST,
-    EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT, EVENT_TYPE_SKILL_INJECT_SKIPPED,
+    EVENT_TYPE_AUTO_SKILL_EXTRACTED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN,
+    EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_SKILL_INJECT_SKIPPED,
 };
 use crate::wal::spawn as wal_spawn;
 
@@ -1446,6 +1447,11 @@ struct DispatchOutput {
     /// (+ 0x06 anchor) by `run_post_reply_pipelines` after the response is
     /// recorded. `None` when the journal failed to open (non-fatal).
     turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
+    /// GOLD-ADAPT-ODY-20 — number of successful MCP tool-calls in this turn.
+    /// Populated from `LoopOutcome.successful_calls` in the MCP-dispatch branch;
+    /// `0` in the single-provider (no-loop) branch. Used by
+    /// `run_post_reply_pipelines` to gate auto-skill extraction.
+    mcp_tool_calls: u32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1653,6 +1659,12 @@ async fn dispatch_provider(
     // GOLD-SEC-16: the cluster local-load gauge only exists with the `cluster` feature.
     #[cfg(feature = "cluster")]
     let inflight_guard = crate::cluster::local_load::inflight_guard();
+
+    // GOLD-ADAPT-ODY-20 — capture the MCP successful-call count so
+    // `run_post_reply_pipelines` can gate auto-skill extraction.
+    // Set to `outcome.successful_calls` in the MCP-dispatch branch; stays 0
+    // in the stream branch and the single-provider (no-loop) branch.
+    let mut mcp_tool_calls: u32 = 0;
 
     let (response_text, final_input_tokens, final_output_tokens, model_used) = if args.stream {
         // B-1 follow-up (Session 13) — streaming-branch audit gap.
@@ -2123,6 +2135,8 @@ async fn dispatch_provider(
                 hit_cap = outcome.hit_cap,
                 "MCP dispatch loop complete"
             );
+            // GOLD-ADAPT-ODY-20 — capture for auto-skill extraction gate.
+            mcp_tool_calls = outcome.successful_calls;
             println!("{}", outcome.final_text);
             (
                 outcome.final_text,
@@ -2295,6 +2309,9 @@ async fn dispatch_provider(
         final_prompt,
         final_system,
         turn_journal: journal,
+        // GOLD-ADAPT-ODY-20 — 0 on stream/single-provider paths; populated from
+        // `outcome.successful_calls` in the MCP-dispatch branch above.
+        mcp_tool_calls,
     })
 }
 
@@ -2334,6 +2351,9 @@ async fn run_post_reply_pipelines(
     // through enforce_preflight to here so PostProviderCall shares the same
     // once-guard as PrePipeline and PreProviderCall.
     session_fired_once: &mut std::collections::HashSet<String>,
+    // GOLD-ADAPT-ODY-20 — number of successful MCP tool-calls in this turn.
+    // Gates auto-skill extraction (default threshold: ≥ 2). `0` on non-MCP turns.
+    mcp_tool_calls: u32,
 ) -> Result<()> {
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
@@ -3075,6 +3095,47 @@ async fn run_post_reply_pipelines(
         {
             eprintln!("{note}");
         }
+
+        // GOLD-ADAPT-ODY-20 — auto-skill extraction (post-turn, MCP turns only).
+        // Best-effort: never fails the turn. Fires only when enabled + the MCP
+        // dispatch loop ran ≥ min_tool_calls calls. Proposal written to
+        // `~/.neoth/proposals/` for operator review via `neoth proactive list`.
+        if mcp_tool_calls >= config.auto_skill_extract.min_tool_calls
+            && config.auto_skill_extract.enabled
+        {
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            if let Some(proposal) = crate::skills::auto_extract::maybe_extract_skill(
+                &prompt,
+                &response_text,
+                mcp_tool_calls,
+                provider,
+                &config.auto_skill_extract,
+            )
+            .await
+            {
+                // WAL audit: 0x7B AUTO_SKILL_EXTRACTED (best-effort, advisory).
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "title_hash_xxh3": xxhash_rust::xxh3::xxh3_64(proposal.title.as_bytes()),
+                    "tool_call_count": mcp_tool_calls,
+                    "ts_unix": crate::time::now_unix_i64(),
+                })) {
+                    let hdr = crate::wal::make_header(
+                        EVENT_TYPE_AUTO_SKILL_EXTRACTED,
+                        &payload,
+                    );
+                    let _ = writer.append(hdr, payload).await;
+                }
+                // Stage + enqueue in the proactive review queue (dedup via proposal id).
+                let queue_path = home.join("proactive_queue.json");
+                let mut q = crate::proactive::ProactiveQueue::load_from(&queue_path)
+                    .unwrap_or_default();
+                if let Ok((_, _enqueued)) = crate::proactive::action_staging::stage_and_enqueue(
+                    &home, proposal, &mut q,
+                ) {
+                    let _ = q.save_to(&queue_path);
+                }
+            }
+        }
     }
 
     // GOLD-ADAPT-OH-11: flip chat_onboarding_completed = true on first successful
@@ -3641,6 +3702,7 @@ pub async fn run_chat_with(
         final_prompt,
         final_system,
         turn_journal,
+        mcp_tool_calls,
     } = dispatch_provider(
         final_prompt,
         final_system,
@@ -3688,6 +3750,8 @@ pub async fn run_chat_with(
         prompt_token_estimate,
         turn_journal,
         &mut session_fired_once,
+        // GOLD-ADAPT-ODY-20 — thread through for auto-skill extraction gate.
+        mcp_tool_calls,
     )
     .await
 }

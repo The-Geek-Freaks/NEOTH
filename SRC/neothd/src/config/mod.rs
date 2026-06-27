@@ -58,18 +58,18 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use automation::{
-    BgMonitorConfig, ConsolidationSweepConfig, DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS,
-    DEFAULT_DRIFT_ALERT_INTERVAL_SECS, DEFAULT_GUIDANCE_CRON_INTERVAL_SECS,
-    DEFAULT_INACTIVITY_GAP_SECS, DEFAULT_MONITOR_INTERVAL_SECS,
-    DEFAULT_PATTERN_CRON_INTERVAL_SECS, DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
-    DEFAULT_RECALL_LATENCY_INTERVAL_SECS, DEFAULT_REGRESSION_INTERVAL_SECS,
-    DEFAULT_RESOURCE_WATCH_INTERVAL_SECS, DEFAULT_SESSION_HEALTH_INTERVAL_SECS,
-    DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
-    DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, GuidanceCronConfig, MonitorConfig,
-    KanbanSseConfig, N8nApiConfig, PatternCronConfig, ProactiveConfig, ProfileAdaptConfig,
-    RecallLatencyConfig,
-    RegressionAnchorConfig, ResourceWatchConfig, SessionHealthConfig, SynthesisCronConfig,
-    TokenAnomalyConfig, WatchdogConfig,
+    AutoSkillExtractConfig, BgMonitorConfig, ConsolidationSweepConfig,
+    DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS, DEFAULT_DRIFT_ALERT_INTERVAL_SECS,
+    DEFAULT_GUIDANCE_CRON_INTERVAL_SECS, DEFAULT_INACTIVITY_GAP_SECS,
+    DEFAULT_MONITOR_INTERVAL_SECS, DEFAULT_PATTERN_CRON_INTERVAL_SECS,
+    DEFAULT_PROFILE_ADAPT_INTERVAL_SECS, DEFAULT_RECALL_LATENCY_INTERVAL_SECS,
+    DEFAULT_REGRESSION_INTERVAL_SECS, DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
+    DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS,
+    DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS, DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig,
+    GuidanceCronConfig, KanbanSseConfig, MonitorConfig, N8nApiConfig, PatternCronConfig,
+    ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig,
+    ResourceWatchConfig, SessionHealthConfig, SynthesisCronConfig, TokenAnomalyConfig,
+    WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -535,6 +535,14 @@ pub struct FreedomConfig {
     /// GOLD-ADAPT-VIEW-05 — session-health / outcome cron. Default OFF.
     #[serde(default)]
     pub session_health: SessionHealthConfig,
+    /// GOLD-ADAPT-ODY-20 — auto-skill extraction from MCP-loop agent runs.
+    /// After a turn with ≥ `min_tool_calls` tool-calls, a single provider call
+    /// distils a `{title,steps,tags,confidence}` block; extractions above
+    /// `confidence_threshold` that are computer-executable are staged in the
+    /// proactive review queue (`~/.neoth/proposals/`). Default OFF (opt-in).
+    #[serde(default)]
+    pub auto_skill_extract: AutoSkillExtractConfig,
+
     /// GOLD-ADAPT-ODY-21 — outbound webhook manager cron. Tail-reads new WAL
     /// frames of types `0x9A` (session.created), `0x21` (chat.completed),
     /// `0x01`/`0x32` (chat.message) and fans them out to registered HTTPS

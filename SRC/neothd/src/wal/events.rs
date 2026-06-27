@@ -1059,6 +1059,18 @@ pub const EVENT_TYPE_KANBAN_TASK_DEP_ADDED: u8 = 0x78;
 /// `effort` is one of `low` / `medium` / `high` / `max`.
 pub const EVENT_TYPE_SKILL_EFFORT_APPLIED: u8 = 0x7A;
 
+/// `0x7B AUTO_SKILL_EXTRACTED` — GOLD-ADAPT-ODY-20. After ≥ 2 tool-calls in
+/// a single turn, LLM distillation yielded a skill candidate above the
+/// confidence threshold (default 0.6) AND marked it computer-executable.
+/// The candidate was staged in the proactive review queue
+/// (`~/.neoth/proposals/`) under `ProposalKind::Skill`. Best-effort
+/// (advisory) — never fails the turn. Consumer: `neoth proactive list/show`.
+///
+/// Payload (JSON): `{title_hash_xxh3: u64, tool_call_count: u32, ts_unix: i64}`.
+/// Title body lives in the proposal JSON; the WAL frame records only the
+/// hash so the audit chain stays compact.
+pub const EVENT_TYPE_AUTO_SKILL_EXTRACTED: u8 = 0x7B;
+
 /// `0x79 KANBAN_TASK_DEP_REMOVED` — GOLD-ADAPT-HERMES-08. A dependency
 /// edge between two tasks was removed. Payload:
 /// `{task_id, depends_on_task_id, ts}`.
@@ -2374,6 +2386,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     // `neoth wal show --type mode_checkpoint` surfaces every session-start +
     // pre-compact boundary written by the chat/channel pipelines.
     ("mode_checkpoint", EVENT_TYPE_MODE_CHECKPOINT),
+    // GOLD-ADAPT-ODY-20: auto-skill extraction from MCP-loop agent runs.
+    ("auto_skill_extracted", EVENT_TYPE_AUTO_SKILL_EXTRACTED),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -2951,6 +2965,9 @@ const _: () = {
     // GOLD-CCPARITY-EFFORT-03: 0x7A SKILL_EFFORT_APPLIED in coding-workflow band.
     let _ = [(); 1][(EVENT_TYPE_SKILL_EFFORT_APPLIED < 0x70
         || EVENT_TYPE_SKILL_EFFORT_APPLIED > 0x7F) as usize];
+    // GOLD-ADAPT-ODY-20: 0x7B AUTO_SKILL_EXTRACTED in coding-workflow band.
+    let _ = [(); 1][(EVENT_TYPE_AUTO_SKILL_EXTRACTED < 0x70
+        || EVENT_TYPE_AUTO_SKILL_EXTRACTED > 0x7F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0
@@ -3582,6 +3599,18 @@ mod tests {
                 "0x{code:02X} escaped coding band 0x70..=0x7F",
             );
         }
+    }
+
+    /// GOLD-ADAPT-ODY-20: 0x7B AUTO_SKILL_EXTRACTED is in the coding-workflow
+    /// band (0x70..=0x7F). Pin the literal so the runbook token
+    /// `neoth wal show --type auto_skill_extracted` stays correct.
+    #[test]
+    fn auto_skill_extracted_is_0x7b_in_coding_band() {
+        assert_eq!(EVENT_TYPE_AUTO_SKILL_EXTRACTED, 0x7B);
+        assert!(
+            (0x70..=0x7F).contains(&EVENT_TYPE_AUTO_SKILL_EXTRACTED),
+            "0x7B escaped coding band 0x70..=0x7F",
+        );
     }
 
     #[test]
