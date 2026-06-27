@@ -34,7 +34,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
-use clap::Args;
+use clap::{Args, Subcommand};
 use tracing::warn;
 
 use crate::daemon::self_map_task::check_graphify_available;
@@ -50,29 +50,83 @@ const GRAPH_TREE_NAME: &str = "GRAPH_TREE.html";
 /// the scope column in idx_groundtruth stays readable.
 const MAX_SCOPE_CORPUS_LEN: usize = 40;
 
+/// GOLD-ADAPT-GRAPH-04 — Read-only graphify query sub-commands.
+///
+/// Extends `neoth graph <path>` (update) with BFS query, node explain,
+/// affected-set, and community-tree sub-commands. All sub-commands:
+///  - Require `<path>` on `GraphArgs` (so graphify finds the right
+///    `graphify-out/graph.json` relative to the corpus root — pitfall #6).
+///  - Call `check_graphify_available()` before spawning the subprocess.
+///  - Stream graphify stdout back to the terminal.
+///  - Are non-destructive (read `graph.json`; never modify the corpus).
+///
+/// When `GraphArgs::cmd` is `None` the original update+vault pipeline runs
+/// (backward-compatible — `neoth graph <path>` still works unchanged).
+#[derive(Subcommand, Debug, Clone)]
+pub enum GraphCmd {
+    /// BFS/keyword search over the knowledge graph.
+    ///
+    /// Example: `neoth graph ~/myrepo query "what calls FreedomConfig"`
+    Query {
+        /// The question to ask graphify's BFS traversal.
+        #[arg(value_name = "QUESTION")]
+        question: String,
+    },
+    /// Full node context: callers, callees, community membership.
+    ///
+    /// Example: `neoth graph ~/myrepo explain "FreedomConfig"`
+    Explain {
+        /// Node name / symbol to explain.
+        #[arg(value_name = "NODE")]
+        node: String,
+    },
+    /// Impact / affected set — what other nodes break if this node changes.
+    ///
+    /// Example: `neoth graph ~/myrepo affected "FreedomConfig"`
+    Affected {
+        /// Node name / symbol to analyse for downstream impact.
+        #[arg(value_name = "NODE")]
+        node: String,
+    },
+    /// Community overview tree (default depth 2).
+    ///
+    /// Example: `neoth graph ~/myrepo tree --depth 3`
+    Tree {
+        /// Maximum community nesting depth to display. Defaults to graphify's
+        /// own default (typically 2) when omitted.
+        #[arg(long, value_name = "N")]
+        depth: Option<u8>,
+    },
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct GraphArgs {
     /// Root directory of the corpus to map. graphify's `update` is run
     /// with this as its working directory, so `graphify-out/` will appear
     /// directly inside it.
+    ///
+    /// Also required for query sub-commands: graphify reads
+    /// `<PATH>/graphify-out/graph.json` when answering queries — always
+    /// pass the same corpus root you used during `neoth graph <path>`.
     #[arg(value_name = "PATH")]
     pub path: PathBuf,
 
     /// Override the vault subdirectory name. Defaults to the last component of
     /// PATH (e.g. `mycorp` for `/home/user/projects/mycorp`). Must not be
     /// `NEOTH-Self` (reserved for the GRAPH-05 self-map cron).
+    /// Only applies to the update (default) path; ignored by query sub-commands.
     #[arg(long, value_name = "NAME")]
     pub subdir: Option<String>,
 
     /// Probe graphify and run `graphifyy update`, but skip the vault copy and
     /// groundtruth ingest. Useful to verify graphify runs before committing
-    /// to the full pipeline.
+    /// to the full pipeline. Update path only.
     #[arg(long)]
     pub dry_run: bool,
 
     /// Copy GRAPH_REPORT.md + GRAPH_TREE.html into the vault but skip the
     /// groundtruth ingest pass. The files will be browsable in Obsidian but
-    /// will not appear in `neoth recall` results.
+    /// will not appear in `neoth recall` results. Update path only.
     #[arg(long)]
     pub no_ingest: bool,
 
@@ -80,13 +134,96 @@ pub struct GraphArgs {
     /// "Community N" placeholders to semantic names using the configured provider.
     /// Requires `obsidian_vault` AND a non-local provider (anthropic_api /
     /// openai_api / openai_compat / claude_cli) in freedom.yaml. Skip with a
-    /// warning when a local candle provider is configured.
+    /// warning when a local candle provider is configured. Update path only.
     #[arg(long, default_value_t = false)]
     pub label: bool,
+
+    /// GOLD-ADAPT-GRAPH-04: optional read-only sub-command (query / explain /
+    /// affected / tree). When absent, the update+vault pipeline runs as before.
+    #[command(subcommand)]
+    pub cmd: Option<GraphCmd>,
+}
+
+/// GOLD-ADAPT-GRAPH-04: Run a read-only graphify query sub-command.
+///
+/// Canonicalises `corpus_path` → sets cwd → spawns `python -m graphifyy <subcmd> [arg]`
+/// → streams stdout back to the terminal. Errors out cleanly if graphify is absent or
+/// exits non-zero.
+async fn run_graph_query(args: &GraphArgs, cmd: &GraphCmd) -> anyhow::Result<()> {
+    let corpus_path = args
+        .path
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "GRAPH-04: resolve corpus path `{}` for query sub-command",
+                args.path.display()
+            )
+        })?;
+
+    // Probe graphify before spawning — gives a clean error instead of a
+    // `No module named graphifyy` from the subprocess.
+    check_graphify_available()
+        .await
+        .context("GRAPH-04: graphify probe failed")?;
+
+    // Build the argv for the graphify sub-command.
+    let mut argv: Vec<String> = vec!["-m".into(), "graphifyy".into()];
+    match cmd {
+        GraphCmd::Query { question } => {
+            argv.push("query".into());
+            argv.push(question.clone());
+        }
+        GraphCmd::Explain { node } => {
+            argv.push("explain".into());
+            argv.push(node.clone());
+        }
+        GraphCmd::Affected { node } => {
+            argv.push("affected".into());
+            argv.push(node.clone());
+        }
+        GraphCmd::Tree { depth } => {
+            argv.push("tree".into());
+            if let Some(d) = depth {
+                argv.push("--depth".into());
+                argv.push(d.to_string());
+            }
+        }
+    }
+
+    // Stream output: inherit stdout/stderr so the operator sees graphify's
+    // coloured output in real time (same pattern used by the wizard's subprocess
+    // spawns — no buffering, no silent truncation on large graphs).
+    let status = tokio::process::Command::new("python")
+        .args(&argv)
+        .current_dir(&corpus_path)
+        .status()
+        .await
+        .with_context(|| {
+            format!(
+                "GRAPH-04: spawn `python {}` in `{}`",
+                argv.join(" "),
+                corpus_path.display()
+            )
+        })?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "GRAPH-04: graphify sub-command exited non-zero ({}) in `{}`",
+            status,
+            corpus_path.display()
+        );
+    }
+
+    Ok(())
 }
 
 /// Entry point for `neoth graph <path>`.
 pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
+    // ── GOLD-ADAPT-GRAPH-04: dispatch query sub-commands before the update path ──
+    if let Some(ref cmd) = args.cmd {
+        return run_graph_query(&args, cmd).await;
+    }
+
     // ── Step 1: load config and gate on obsidian_vault ──────────────────────
     let cfg = crate::config::FreedomConfig::load_from_default_path()
         .context("GRAPH-06: load freedom.yaml")?;
@@ -455,6 +592,124 @@ mod tests {
             assert!(args.dry_run);
             assert!(args.no_ingest);
             assert_eq!(args.subdir.as_deref(), Some("custom-name"));
+            // No sub-command → update path.
+            assert!(args.cmd.is_none());
+        } else {
+            panic!("expected Commands::Graph");
+        }
+    }
+
+    // ── GOLD-ADAPT-GRAPH-04: query sub-command parse tests ───────────────────
+
+    /// `neoth graph <path> query "<q>"` parses into GraphCmd::Query.
+    #[test]
+    fn graph_query_subcommand_parses() {
+        use clap::Parser;
+        use crate::cli::{Cli, Commands};
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "graph",
+            "/tmp/myrepo",
+            "query",
+            "what calls FreedomConfig",
+        ])
+        .unwrap();
+        if let Commands::Graph(args) = cli.command {
+            match args.cmd {
+                Some(GraphCmd::Query { question }) => {
+                    assert_eq!(question, "what calls FreedomConfig");
+                }
+                other => panic!("expected GraphCmd::Query, got {other:?}"),
+            }
+        } else {
+            panic!("expected Commands::Graph");
+        }
+    }
+
+    /// `neoth graph <path> explain "<node>"` parses into GraphCmd::Explain.
+    #[test]
+    fn graph_explain_subcommand_parses() {
+        use clap::Parser;
+        use crate::cli::{Cli, Commands};
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "graph",
+            "/tmp/myrepo",
+            "explain",
+            "FreedomConfig",
+        ])
+        .unwrap();
+        if let Commands::Graph(args) = cli.command {
+            match args.cmd {
+                Some(GraphCmd::Explain { node }) => {
+                    assert_eq!(node, "FreedomConfig");
+                }
+                other => panic!("expected GraphCmd::Explain, got {other:?}"),
+            }
+        } else {
+            panic!("expected Commands::Graph");
+        }
+    }
+
+    /// `neoth graph <path> affected "<node>"` parses into GraphCmd::Affected.
+    #[test]
+    fn graph_affected_subcommand_parses() {
+        use clap::Parser;
+        use crate::cli::{Cli, Commands};
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "graph",
+            "/tmp/myrepo",
+            "affected",
+            "recall",
+        ])
+        .unwrap();
+        if let Commands::Graph(args) = cli.command {
+            match args.cmd {
+                Some(GraphCmd::Affected { node }) => {
+                    assert_eq!(node, "recall");
+                }
+                other => panic!("expected GraphCmd::Affected, got {other:?}"),
+            }
+        } else {
+            panic!("expected Commands::Graph");
+        }
+    }
+
+    /// `neoth graph <path> tree` parses into GraphCmd::Tree with no depth.
+    #[test]
+    fn graph_tree_subcommand_parses_no_depth() {
+        use clap::Parser;
+        use crate::cli::{Cli, Commands};
+        let cli = Cli::try_parse_from(["neoth", "graph", "/tmp/myrepo", "tree"]).unwrap();
+        if let Commands::Graph(args) = cli.command {
+            match args.cmd {
+                Some(GraphCmd::Tree { depth }) => {
+                    assert!(depth.is_none(), "depth must default to None when omitted");
+                }
+                other => panic!("expected GraphCmd::Tree, got {other:?}"),
+            }
+        } else {
+            panic!("expected Commands::Graph");
+        }
+    }
+
+    /// `neoth graph <path> tree --depth 3` parses depth correctly.
+    #[test]
+    fn graph_tree_subcommand_parses_with_depth() {
+        use clap::Parser;
+        use crate::cli::{Cli, Commands};
+        let cli = Cli::try_parse_from([
+            "neoth", "graph", "/tmp/myrepo", "tree", "--depth", "3",
+        ])
+        .unwrap();
+        if let Commands::Graph(args) = cli.command {
+            match args.cmd {
+                Some(GraphCmd::Tree { depth }) => {
+                    assert_eq!(depth, Some(3u8));
+                }
+                other => panic!("expected GraphCmd::Tree(depth=3), got {other:?}"),
+            }
         } else {
             panic!("expected Commands::Graph");
         }

@@ -344,6 +344,33 @@ pub(crate) fn check_pptmaster_python(_home: &Path) -> CheckOutcome {
     }
 }
 
+/// GOLD-ADAPT-GRAPH-04 — advisory gate for the `graphify` skill.
+///
+/// Probes whether graphifyy is importable on the operator's Python via
+/// `python -m graphifyy --version` (sync). The skill ALWAYS routes and loads
+/// regardless of this result — the gate is ADVISORY. When graphifyy is absent
+/// the skill's system_prompt instructs the LLM to surface the install hint.
+/// PASS when graphifyy is importable; WARN with install hint otherwise.
+pub(crate) fn check_graphify_python(_home: &Path) -> CheckOutcome {
+    let installed = crate::config::installer::is_graphify_installed();
+    CheckOutcome {
+        name: "graphify python",
+        status: if installed {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Warn
+        },
+        detail: if installed {
+            "graphifyy importable — `graphify` skill and `neoth graph` CLI ready".to_string()
+        } else {
+            format!(
+                "graphifyy not found — install with `{}`; then `neoth graph <path>` works",
+                crate::config::installer::GRAPHIFY_INSTALL_CMD
+            )
+        },
+    }
+}
+
 /// GOLD-ADAPT-DOC-04 — advisory gate for the `officecli_*` skill family (11 skills).
 ///
 /// Probes whether the officecli binary is on PATH via `officecli --version`.
@@ -400,6 +427,8 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_pptmaster_python,
     // GOLD-ADAPT-DOC-04 (2026-06-23) — officecli binary gate (11 skills).
     check_officecli_binary,
+    // GOLD-ADAPT-GRAPH-04 (2026-06-27) — graphify Python gate (advisory).
+    check_graphify_python,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -542,6 +571,29 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               generated script. Restart `neoth doctor` to confirm. If \
               Python is not on PATH at all, install Python 3.10+ first \
               from python.org.",
+    },
+    // GOLD-ADAPT-GRAPH-04 (2026-06-27) — graphify python gate.
+    CheckDoc {
+        name: "graphify python",
+        purpose: "GOLD-ADAPT-GRAPH-04 advisory gate for the `graphify` \
+                  bundled skill. Probes whether graphifyy is importable \
+                  on the operator's Python by running `python -m graphifyy \
+                  --version` (Windows) or `python3 -m graphifyy --version` \
+                  (Linux/macOS). PASS = graphifyy present, the `graphify` \
+                  skill is fully operational and `neoth graph` CLI works. \
+                  WARN = graphifyy absent, the skill still routes and the \
+                  LLM will surface the install hint in its reply. The gate \
+                  is ADVISORY: skill routing is never suppressed.",
+        common_failures: "Fresh Python install without graphifyy; \
+                         operator using a virtual environment that is not \
+                         active when the daemon probes; Python not on PATH \
+                         (Windows without system Python); graphifyy \
+                         installed as `graphify` (wrong package name — \
+                         the pip package is `graphifyy` with a double y).",
+        fix: "Run `pip install graphifyy` (or `pip3 install graphifyy` \
+              on Linux/macOS) in the Python environment the daemon uses. \
+              Restart `neoth doctor` to confirm PASS. If Python is not on \
+              PATH at all, install Python 3.10+ from python.org first.",
     },
     // GOLD-ADAPT-DOC-04 (2026-06-23) — officecli binary gate.
     CheckDoc {

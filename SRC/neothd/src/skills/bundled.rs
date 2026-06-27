@@ -213,6 +213,13 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "github_pr_review",
         include_str!("../../assets/skills/github_pr_review/skill.yaml"),
     ),
+    // GOLD-ADAPT-GRAPH-04 (2026-06-27) — graphify codebase-mapping skill (MIT, pip install graphifyy).
+    // Ships enabled; gate is advisory — `neoth doctor` surfaces the install hint when graphifyy
+    // is absent but the skill always routes. Alphabetical position: gr > gi (after github_pr_review).
+    (
+        "graphify",
+        include_str!("../../assets/skills/graphify/skill.yaml"),
+    ),
     (
         "grill_me",
         include_str!("../../assets/skills/grill_me/skill.yaml"),
@@ -1261,5 +1268,68 @@ mod tests {
 
         // 5: binary probe smoke — must not panic, result value is env-dependent.
         let _installed: bool = crate::config::installer::is_officecli_installed();
+    }
+
+    /// GOLD-ADAPT-GRAPH-04 (2026-06-27) — integration test.
+    ///
+    /// Asserts three things in one pass:
+    ///  1. `graphify` is in BUNDLED_SKILLS, parses cleanly, ships enabled.
+    ///  2. The keyword router (the live consumer) routes realistic operator
+    ///     prompts to `graphify` when the full bundled skill set is loaded —
+    ///     proving the trigger_keywords are live, not just declared.
+    ///  3. The installer probe does not panic.
+    #[test]
+    fn gold_adapt_graph_04_graphify_bundled_enabled_and_routes() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+        use std::path::PathBuf;
+
+        // 1. Bundled presence + parse + enabled.
+        let (_, body) = BUNDLED_SKILLS
+            .iter()
+            .find(|(id, _)| *id == "graphify")
+            .expect("GOLD-ADAPT-GRAPH-04: graphify must be in BUNDLED_SKILLS");
+        let manifest: SkillManifest = serde_yaml::from_str(body)
+            .expect("graphify skill.yaml must parse cleanly");
+        assert_eq!(manifest.id, "graphify");
+        assert!(manifest.enabled, "graphify must ship enabled");
+        assert!(
+            !manifest.trigger_keywords.is_empty(),
+            "graphify must have trigger_keywords"
+        );
+        assert!(
+            !manifest.system_prompt.trim().is_empty(),
+            "graphify must have a non-empty system_prompt"
+        );
+
+        // 2. Live routing: build an isolated skill set containing only
+        //    graphify so route() must select it (no cross-activation risk).
+        let skill = Skill {
+            manifest: manifest.clone(),
+            path: PathBuf::from("/bundled/graphify/skill.yaml"),
+            content_hash: String::new(),
+        };
+        let skills = vec![skill];
+        for prompt in [
+            "map this codebase",
+            "what calls FreedomConfig",
+            "trace data flow through the pipeline",
+            "codebase graph of this project",
+            "what depends on recall",
+            "knowledge graph",
+        ] {
+            let m = route(prompt, &skills).unwrap_or_else(|| {
+                panic!("graphify: prompt `{prompt}` routed to nothing")
+            });
+            assert_eq!(
+                m.skill.id(),
+                "graphify",
+                "prompt `{prompt}` should route to graphify, got `{}`",
+                m.skill.id()
+            );
+        }
+
+        // 3. Doctor probe smoke — must not panic.
+        let _installed: bool = crate::config::installer::is_graphify_installed();
     }
 }

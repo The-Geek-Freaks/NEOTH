@@ -50,6 +50,35 @@ pub fn is_pptmaster_installed() -> bool {
         .unwrap_or(false)
 }
 
+/// `pip install graphifyy` install hint surfaced by `neoth doctor` for the
+/// `graphify` skill when graphifyy is not importable.
+///
+/// ## GOLD-ADAPT-GRAPH-04 (2026-06-27)
+///
+/// Added for the `graphify` bundled skill (graphifyy pip gate). Ships enabled;
+/// gate is advisory — the skill routes even when graphifyy is absent and the
+/// system_prompt instructs the LLM to surface the install hint.
+pub const GRAPHIFY_INSTALL_CMD: &str = "pip install graphifyy";
+
+/// Returns `true` iff `python -m graphifyy --version` exits 0 — meaning
+/// graphifyy is importable in the operator's Python environment.
+///
+/// Returns `false` on any error (Python not on PATH, graphifyy not installed,
+/// subprocess spawn failure). Never panics.
+///
+/// ## Sync vs async
+///
+/// `daemon/self_map_task::check_graphify_available` is the async equivalent
+/// used in the daemon cron path. This sync version mirrors the same argv but
+/// uses `std::process::Command` for the doctor's synchronous check surface.
+pub fn is_graphify_installed() -> bool {
+    std::process::Command::new(python_bin())
+        .args(["-m", "graphifyy", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Install URL for the officecli binary, surfaced by `neoth doctor` when the
 /// binary is absent. Operators download officecli from this URL and place it
 /// on their PATH before enabling the `officecli_*` skill family.
@@ -113,6 +142,22 @@ mod tests {
         // On non-Windows: must be "python3"
         #[cfg(not(target_os = "windows"))]
         assert_eq!(bin, "python3");
+    }
+
+    /// GOLD-ADAPT-GRAPH-04: graphifyy probe must not panic regardless of
+    /// whether graphifyy is on PATH. CI runners may not have it.
+    #[test]
+    fn graphify_probe_does_not_panic() {
+        let _ = is_graphify_installed();
+    }
+
+    /// GOLD-ADAPT-GRAPH-04: the install command must be a pip install command.
+    #[test]
+    fn graphify_install_cmd_is_pip() {
+        assert!(
+            GRAPHIFY_INSTALL_CMD.starts_with("pip install"),
+            "GRAPHIFY_INSTALL_CMD must be a pip install command, got: {GRAPHIFY_INSTALL_CMD}"
+        );
     }
 
     /// GOLD-ADAPT-DOC-04: officecli probe must not panic regardless of
