@@ -1196,6 +1196,26 @@ pub const EVENT_TYPE_SUBDIR_MD_LOADED: u8 = 0x8C;
 /// re-derivable from the env/config on next turn; no fsync per frame.
 pub const EVENT_TYPE_TZ_CONTEXT_INJECTED: u8 = 0x8D;
 
+/// `0x8E PTY_SESSION_STARTED` — GOLD-ADAPT-HERMES-11. A `neoth terminal`
+/// invocation spawned a PTY-backed subprocess via `providers::pty_session`.
+/// Emitted by `cli::terminal` before the I/O loop starts. Audit-critical
+/// (the session may invoke a cloud CLI such as `claude`): immediate-sync by
+/// default. Payload (JSON): `{ session_id, command, ts_unix }`.
+///
+/// Hooks-lifecycle band (0x80..=0x8F), slot 0x8E — second-to-last free slot
+/// after 0x8D TZ_CONTEXT_INJECTED. Requires `--features pty-subprocess`.
+pub const EVENT_TYPE_PTY_SESSION_STARTED: u8 = 0x8E;
+
+/// `0x8F PTY_SESSION_ENDED` — GOLD-ADAPT-HERMES-11. Companion to
+/// `0x8E PTY_SESSION_STARTED`: emitted when the PTY subprocess exits (clean
+/// EOF, timeout, or explicit kill). Best-effort one-shot writer (same pattern
+/// as `BG_SESSION_DONE`). Payload (JSON):
+/// `{ session_id, exit_code: i32 | null, ts_unix }`.
+///
+/// Hooks-lifecycle band (0x80..=0x8F), slot 0x8F — last free slot.
+/// Requires `--features pty-subprocess`.
+pub const EVENT_TYPE_PTY_SESSION_ENDED: u8 = 0x8F;
+
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
 /// One event moved from `idx_episode` (hot) into `idx_consolidated` (warm).
@@ -2388,6 +2408,9 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("mode_checkpoint", EVENT_TYPE_MODE_CHECKPOINT),
     // GOLD-ADAPT-ODY-20: auto-skill extraction from MCP-loop agent runs.
     ("auto_skill_extracted", EVENT_TYPE_AUTO_SKILL_EXTRACTED),
+    // GOLD-ADAPT-HERMES-11: PTY terminal session lifecycle.
+    ("pty_session_started", EVENT_TYPE_PTY_SESSION_STARTED),
+    ("pty_session_ended", EVENT_TYPE_PTY_SESSION_ENDED),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -2820,6 +2843,11 @@ const _: () = {
         || EVENT_TYPE_SUBDIR_MD_LOADED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TZ_CONTEXT_INJECTED < 0x80
         || EVENT_TYPE_TZ_CONTEXT_INJECTED > 0x8F) as usize];
+    // GOLD-ADAPT-HERMES-11: PTY session lifecycle (0x8E/0x8F) in hooks band.
+    let _ = [(); 1][(EVENT_TYPE_PTY_SESSION_STARTED < 0x80
+        || EVENT_TYPE_PTY_SESSION_STARTED > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PTY_SESSION_ENDED < 0x80
+        || EVENT_TYPE_PTY_SESSION_ENDED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]

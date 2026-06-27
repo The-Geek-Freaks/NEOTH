@@ -864,10 +864,34 @@ Show the active goal + grind (the default — also runs with no subcommand via t
 GOLD-ADAPT-GRAPH-06 — run graphify on any user-supplied corpus and file the output into the Obsidian vault + wiki ground-truth so `neoth recall` can answer questions about the mapped repository
 
 - `<PATH>` — Root directory of the corpus to map. graphify's `update` is run with this as its working directory, so `graphify-out/` will appear directly inside it
-- `--subdir <NAME>` — Override the vault subdirectory name. Defaults to the last component of PATH (e.g. `mycorp` for `/home/user/projects/mycorp`). Must not be `NEOTH-Self` (reserved for the GRAPH-05 self-map cron)
-- `--dry-run <DRY_RUN>` — Probe graphify and run `graphifyy update`, but skip the vault copy and groundtruth ingest. Useful to verify graphify runs before committing to the full pipeline
-- `--no-ingest <NO_INGEST>` — Copy GRAPH_REPORT.md + GRAPH_TREE.html into the vault but skip the groundtruth ingest pass. The files will be browsable in Obsidian but will not appear in `neoth recall` results
-- `--label <LABEL>` — GRAPH-07: after `graphify update`, also run `graphify label` to rename "Community N" placeholders to semantic names using the configured provider. Requires `obsidian_vault` AND a non-local provider (anthropic_api / openai_api / openai_compat / claude_cli) in freedom.yaml. Skip with a warning when a local candle provider is configured
+- `--subdir <NAME>` — Override the vault subdirectory name. Defaults to the last component of PATH (e.g. `mycorp` for `/home/user/projects/mycorp`). Must not be `NEOTH-Self` (reserved for the GRAPH-05 self-map cron). Only applies to the update (default) path; ignored by query sub-commands
+- `--dry-run <DRY_RUN>` — Probe graphify and run `graphifyy update`, but skip the vault copy and groundtruth ingest. Useful to verify graphify runs before committing to the full pipeline. Update path only
+- `--no-ingest <NO_INGEST>` — Copy GRAPH_REPORT.md + GRAPH_TREE.html into the vault but skip the groundtruth ingest pass. The files will be browsable in Obsidian but will not appear in `neoth recall` results. Update path only
+- `--label <LABEL>` — GRAPH-07: after `graphify update`, also run `graphify label` to rename "Community N" placeholders to semantic names using the configured provider. Requires `obsidian_vault` AND a non-local provider (anthropic_api / openai_api / openai_compat / claude_cli) in freedom.yaml. Skip with a warning when a local candle provider is configured. Update path only
+
+### `neoth graph affected`
+
+Impact / affected set — what other nodes break if this node changes
+
+- `<NODE>` — Node name / symbol to analyse for downstream impact
+
+### `neoth graph explain`
+
+Full node context: callers, callees, community membership
+
+- `<NODE>` — Node name / symbol to explain
+
+### `neoth graph query`
+
+BFS/keyword search over the knowledge graph
+
+- `<QUESTION>` — The question to ask graphify's BFS traversal
+
+### `neoth graph tree`
+
+Community overview tree (default depth 2)
+
+- `--depth <N>` — Maximum community nesting depth to display. Defaults to graphify's own default (typically 2) when omitted
 
 ## `neoth groundtruth`
 
@@ -1319,6 +1343,7 @@ Inspect the assembled NEOTH.md operator context
 - `--people <PEOPLE>` — GOLD-ADAPT-OH-10 — print the per-person relationship ranking (recency × frequency × reciprocity × depth, clamped). Pure read of `~/.neoth/people.json`, no behaviour change. Honours `--limit` (default 20; `--limit 0` returns the full ranking)
 - `--rebuild-index <REBUILD_INDEX>` — V10-08 — rebuild the HNSW embedding index from scratch by scanning all rows in `idx_embedding`. Writes the snapshot to `<neoth_home>/embeddings.hnsw`. Use after a database restore or when the snapshot is missing or corrupted. Safe to interrupt: the snapshot is written atomically (temp-file + rename)
 - `--embed-backfill <EMBED_BACKFILL>` — GOLD-ADAPT-MEMGRAPH-01 — backfill episode embeddings into idx_embedding for every hot-tier episode that has no embedding row yet. Runs outside the hot ingest path (which is sync-in-tx and cannot call async embed). Honours `--limit` (default 20; `--limit 0` = unbounded) and `--db`. No-ops cleanly when no embed provider is configured
+- `--pipeline-scorecard <PIPELINE_SCORECARD>` — GOLD-ADAPT-MEM-11 — print the 15-point per-subsystem memory pipeline scorecard. Reads `~/.neoth/views.db` live; honours `--db` and `--output`. Exit 0 when overall grade is C or above; exit 1 when below healthy threshold so scripts can gate on memory health
 - `--limit <LIMIT>` — Max rows for `--tier` recall
 - `--db <PATH>` — Override the views.db path for `--tier`
 
@@ -2555,6 +2580,17 @@ Build the payload + POST it once + print the outcome. Honours `telemetry.enabled
 ### `neoth telemetry status`
 
 Print resolved endpoint + on/off + opt-in posture. Default when no subcommand is given
+
+## `neoth terminal`
+
+GOLD-ADAPT-HERMES-11 — Integrated PTY terminal per session. Requires `--features pty-subprocess`. Spawns a subprocess in a real PTY (Windows ConPTY / Unix openpty), records WAL frames `0x8E PTY_SESSION_STARTED` and `0x8F PTY_SESSION_ENDED`
+
+- `<COMMAND>` — Command to spawn inside the PTY (e.g. `claude`, `bash`, `cmd`)
+- `<ARGS>` — Extra arguments passed to the command
+- `--rows <ROWS>` — PTY height in rows (default: 40)
+- `--cols <COLS>` — PTY width in columns (default: 200)
+- `--timeout-secs <TIMEOUT_SECS>` — Headless read timeout in seconds (used when stdin is not a TTY). The process is killed after this many seconds if it has not exited
+- `--session-label <SESSION_LABEL>` — Human-readable label stored in traces/logs (not in WAL payloads)
 
 ## `neoth todo`
 

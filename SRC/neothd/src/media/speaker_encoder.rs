@@ -149,7 +149,7 @@ pub fn embed_samples(samples: &[f32]) -> Option<Vec<f32>> {
     for v in &mut mean {
         *v /= n;
     }
-    let mut var = vec![0.0f32; N_MELS];
+    let mut var = [0.0f32; N_MELS];
     for f in &frames {
         for (m, v) in f.iter().enumerate() {
             let d = v - mean[m];

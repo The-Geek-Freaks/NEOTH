@@ -144,9 +144,8 @@ mod tests {
         // SAFETY: we hold `env_lock`, so no other test is racing this env var.
         unsafe { std::env::remove_var("NEOTH_TZ") };
         let r = f();
-        match was {
-            Some(v) => unsafe { std::env::set_var("NEOTH_TZ", &v) },
-            None => {}
+        if let Some(v) = was {
+            unsafe { std::env::set_var("NEOTH_TZ", &v) }
         }
         r
     }

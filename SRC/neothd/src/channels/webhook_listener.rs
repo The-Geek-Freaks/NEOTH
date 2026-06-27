@@ -1852,12 +1852,14 @@ mod tests {
         // GR-012b: a verified webhook body spooled before a (simulated) crash
         // must be re-dispatched by the startup drain, then its spool file deleted;
         // a corrupt spool entry is dropped (never wedges the boot).
-        let _env = crate::test_env::lock();
         let home = tempfile::tempdir().unwrap();
-        // SAFETY: env access is serialized by the test_env lock above.
-        unsafe {
-            std::env::set_var("NEOTH_HOME", home.path());
-        }
+        {
+            let _env = crate::test_env::lock();
+            // SAFETY: env access is serialized by the test_env lock above.
+            unsafe {
+                std::env::set_var("NEOTH_HOME", home.path());
+            }
+        } // drop _env before any await point
 
         let raw = r#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.DRAIN","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
         let path = spool_inbound_body("wamid.DRAIN", raw, "meta").expect("spool write");

@@ -489,7 +489,7 @@ async fn build_prompt_bundle(
                     | crate::config::SkillVisibility::UserInvocableOnly => {
                         // Eligible only when the operator typed /skill-id
                         let eligible =
-                            slash_name.map_or(false, |n| n == s.id());
+                            slash_name.is_some_and(|n| n == s.id());
                         if !eligible {
                             skipped_vis.push(s.id().to_string());
                         }

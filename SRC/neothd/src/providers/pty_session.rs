@@ -98,6 +98,22 @@ impl PtySpawn {
 
 // ── Feature-gated implementation ────────────────────────────────────
 
+/// Generate a short session-id slug for WAL correlation.
+/// Uses unix-nanos XOR a call-count so two spawns in the same nanosecond
+/// stay distinct. Not cryptographic; scoped to operator-local audit.
+fn new_session_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let cnt = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let raw = (cnt.wrapping_mul(0x9e37_79b9)) ^ u64::from(ns);
+    format!("pty-{raw:016x}")
+}
+
 #[cfg(feature = "pty-subprocess")]
 #[allow(unused_imports)] // re-exported for v0.2 ClaudeCliAdapter wiring
 pub use real::PtySession;
@@ -115,10 +131,16 @@ mod real {
     /// PTY-backed subprocess. Holds the master end + the child handle.
     /// Drop kills the child + closes the master to free the pty pair
     /// kernel-side even if the operator forgot to `kill()`.
+    ///
+    /// `session_id` is a stable slug emitted in WAL frames 0x8E/0x8F so
+    /// `neoth wal show --type pty_session_started` can correlate the start
+    /// and end of a single PTY lifecycle.
     pub struct PtySession {
         master: Box<dyn MasterPty + Send>,
         child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
         spawn: PtySpawn,
+        /// Stable identifier for WAL correlation (0x8E/0x8F frames).
+        pub session_id: String,
     }
 
     impl PtySession {
@@ -151,6 +173,7 @@ mod real {
             Ok(Self {
                 master,
                 child: Arc::new(Mutex::new(child)),
+                session_id: super::new_session_id(),
                 spawn,
             })
         }
@@ -230,6 +253,27 @@ mod real {
             matches!(guard.try_wait(), Ok(None))
         }
 
+        /// Wait for the child to exit and return its exit code (None on
+        /// Windows ConPTY paths where the code is unavailable).
+        pub fn wait_exit_code(&self) -> Option<i32> {
+            let Ok(mut guard) = self.child.lock() else {
+                return None;
+            };
+            guard.wait().ok().and_then(|status| {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    Some(status.code().unwrap_or_else(|| {
+                        status.signal().map(|s| -(s as i32)).unwrap_or(-1)
+                    }))
+                }
+                #[cfg(not(unix))]
+                {
+                    status.code()
+                }
+            })
+        }
+
         pub fn spawn_params(&self) -> &PtySpawn {
             &self.spawn
         }
@@ -253,6 +297,9 @@ mod stub {
     #[derive(Debug)]
     pub struct PtySession {
         _phantom: std::marker::PhantomData<()>,
+        /// Stable identifier field present in both real + stub so callers
+        /// can read `session.session_id` regardless of feature gate.
+        pub session_id: String,
     }
 
     impl PtySession {
@@ -281,6 +328,9 @@ mod stub {
         pub fn is_alive(&self) -> bool {
             false
         }
+        pub fn wait_exit_code(&self) -> Option<i32> {
+            None
+        }
         pub fn spawn_params(&self) -> &'static PtySpawn {
             static EMPTY: std::sync::OnceLock<PtySpawn> = std::sync::OnceLock::new();
             EMPTY.get_or_init(|| PtySpawn::new(""))
@@ -294,6 +344,69 @@ mod stub {
 /// configurations.
 pub const fn feature_compiled_in() -> bool {
     cfg!(feature = "pty-subprocess")
+}
+
+// ── WAL helpers (GOLD-ADAPT-HERMES-11) ─────────────────────────────────────
+//
+// These are best-effort: a WAL write failure must NEVER abort a PTY session.
+// Pattern mirrors `cli::bg_session::emit_bg_done_wal_sync` exactly.
+
+/// Emit a `0x8E PTY_SESSION_STARTED` frame via the supplied WAL writer handle
+/// (async, called from `cli::terminal::run_terminal` before the I/O loop).
+/// Payload: `{ session_id, command, ts_unix }`.
+pub async fn emit_wal_started(
+    writer: &crate::wal::writer::WalWriterHandle,
+    session_id: &str,
+    command: &str,
+) {
+    use crate::wal::events::EVENT_TYPE_PTY_SESSION_STARTED;
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "session_id": session_id,
+        "command": command,
+        "ts_unix": crate::time::now_unix_secs(),
+    })) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PTY_SESSION_STARTED, &payload).build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "pty_session: WAL PTY_SESSION_STARTED append failed (best-effort)");
+    }
+}
+
+/// Emit a `0x8F PTY_SESSION_ENDED` frame via a one-shot WAL writer
+/// (sync, called from `cli::terminal::run_terminal` after the I/O loop).
+/// Uses the same `spawn` + `try_append_sync` pattern as `emit_bg_done_wal_sync`.
+/// Payload: `{ session_id, exit_code, ts_unix }`.
+pub fn emit_wal_ended_sync(session_id: &str, exit_code: Option<i32>) {
+    use crate::wal::events::EVENT_TYPE_PTY_SESSION_ENDED;
+    let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
+    if let Some(p) = segment.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let exit_val: serde_json::Value = match exit_code {
+        Some(c) => serde_json::Value::Number(c.into()),
+        None => serde_json::Value::Null,
+    };
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "session_id": session_id,
+        "exit_code": exit_val,
+        "ts_unix": crate::time::now_unix_secs(),
+    })) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "pty_session: WAL writer spawn failed for PTY_SESSION_ENDED");
+            return;
+        }
+    };
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PTY_SESSION_ENDED, &payload).build();
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(error = %e, "pty_session: PTY_SESSION_ENDED append failed (best-effort)");
+    }
 }
 
 #[cfg(test)]

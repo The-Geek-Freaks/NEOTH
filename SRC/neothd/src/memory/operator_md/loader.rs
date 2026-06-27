@@ -354,7 +354,7 @@ mod tests {
             .await
             .unwrap();
 
-        let blocks = assemble(&home, &cwd, &[sub.clone()]).await.unwrap();
+        let blocks = assemble(&home, &cwd, std::slice::from_ref(&sub)).await.unwrap();
         // Global + SubDir (cwd/NEOTH.md absent)
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].source, BlockSource::Global);
@@ -370,7 +370,7 @@ mod tests {
         fs::create_dir_all(&home).await.unwrap();
         fs::write(home.join("NEOTH.md"), "Global").await.unwrap();
         // Passing home as an extra_dir must NOT double-load the global NEOTH.md.
-        let blocks = assemble(&home, &home, &[home.clone()]).await.unwrap();
+        let blocks = assemble(&home, &home, std::slice::from_ref(&home)).await.unwrap();
         assert_eq!(blocks.len(), 1, "home as extra_dir must be deduped");
         assert_eq!(blocks[0].source, BlockSource::Global);
     }
@@ -384,7 +384,7 @@ mod tests {
         fs::create_dir_all(&cwd).await.unwrap();
         fs::write(cwd.join("NEOTH.md"), "Project").await.unwrap();
         // Passing cwd as an extra_dir must NOT double-load the project NEOTH.md.
-        let blocks = assemble(&home, &cwd, &[cwd.clone()]).await.unwrap();
+        let blocks = assemble(&home, &cwd, std::slice::from_ref(&cwd)).await.unwrap();
         assert_eq!(blocks.len(), 1, "cwd as extra_dir must be deduped");
         assert_eq!(blocks[0].source, BlockSource::Project);
     }

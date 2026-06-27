@@ -9,8 +9,8 @@
 //!   - `wal::frame` — CRC corruption rejected by `decode_frame`
 //!   - `wal::compaction` — compaction-marker tamper detection
 //!   - `wal::redact` — redaction in sealed/compressed segments, corrupt-magic refusal
-//! `tests/memory_wal_rotation.rs` proves rotation / per-segment cursor / missing
-//! file / non-`.wal` junk / sort order.
+//!   - `tests/memory_wal_rotation.rs` proves rotation / per-segment cursor / missing
+//!     file / non-`.wal` junk / sort order.
 //!
 //! NONE of them prove the property an operator actually relies on after a crash:
 //! that the indexer, fed a segment whose final frame was half-written when the

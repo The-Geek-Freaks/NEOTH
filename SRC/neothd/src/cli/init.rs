@@ -1554,7 +1554,7 @@ mod tests {
         );
         assert_eq!(
             WizardStep::ALL.len(),
-            21,
+            22,
             "WizardStep variant count drifted"
         );
     }

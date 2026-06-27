@@ -631,6 +631,9 @@ impl EcapaTdnn {
         // 3. Convert to tensor [1, N_MELS, n_frames] (batch=1, channels, time).
         // Channel-major layout: all frames for mel-bin 0, then bin 1, …
         let mut flat = Vec::with_capacity(N_MELS * n_frames);
+        // Channel-major: bin 0 across all frames, then bin 1, …
+        // needless_range_loop: index pattern is intentional (transposed layout).
+        #[allow(clippy::needless_range_loop)]
         for m in 0..N_MELS {
             for t in 0..n_frames {
                 flat.push(frames[t][m]);

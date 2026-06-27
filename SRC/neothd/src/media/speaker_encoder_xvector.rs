@@ -332,6 +332,9 @@ impl XVectorEncoder {
         // Layout: channel-major — all samples for mel bin 0, then all for bin 1, …
         // This matches candle's Conv1d expectation: [batch, in_channels, length].
         let mut flat = Vec::with_capacity(N_MELS * n_frames);
+        // Channel-major: bin 0 across all frames, then bin 1, …
+        // needless_range_loop: index pattern is intentional (transposed layout).
+        #[allow(clippy::needless_range_loop)]
         for m in 0..N_MELS {
             for t in 0..n_frames {
                 flat.push(frames[t][m]);

@@ -286,14 +286,14 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "log_analyzer",
         include_str!("../../assets/skills/log_analyzer/skill.yaml"),
     ),
+    (
+        "lowkey_base",
+        include_str!("../../assets/skills/lowkey_base/skill.yaml"),
+    ),
     // GOLD-ADAPT-JV-MODE-01 (2026-06-24) — identity-locked loyal-buddy persona.
     (
         "loyal_buddy",
         include_str!("../../assets/skills/loyal_buddy/skill.yaml"),
-    ),
-    (
-        "lowkey_base",
-        include_str!("../../assets/skills/lowkey_base/skill.yaml"),
     ),
     (
         "magi_ultra",
@@ -924,8 +924,11 @@ mod tests {
                 !manifest.system_prompt.trim().is_empty(),
                 "bundled skill `{id}` has empty system_prompt"
             );
+            // Persona skills are hard-wired via PersonaMode; the router never
+            // picks them up, so empty trigger_keywords is intentional.
+            let is_persona = manifest.tags.iter().any(|t| t == "persona");
             assert!(
-                !manifest.trigger_keywords.is_empty(),
+                is_persona || !manifest.trigger_keywords.is_empty(),
                 "bundled skill `{id}` has no trigger_keywords — router would miss it"
             );
         }

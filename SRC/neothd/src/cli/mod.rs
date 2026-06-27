@@ -147,6 +147,8 @@ pub mod status;
 pub mod streaming_buffer;
 pub mod supervisor;
 pub mod telemetry;
+/// GOLD-ADAPT-HERMES-11 — integrated PTY terminal per session.
+pub mod terminal;
 pub mod todo;
 pub mod tour;
 pub mod transfer;
@@ -457,6 +459,12 @@ pub enum Commands {
     ///
     /// Pure read-only; no network, no mutation.
     Privacy(privacy::PrivacyArgs),
+
+    /// GOLD-ADAPT-HERMES-11 — Integrated PTY terminal per session.
+    /// Requires `--features pty-subprocess`. Spawns a subprocess in a real
+    /// PTY (Windows ConPTY / Unix openpty), records WAL frames
+    /// `0x8E PTY_SESSION_STARTED` and `0x8F PTY_SESSION_ENDED`.
+    Terminal(terminal::TerminalArgs),
 
     /// NOOB-UX-5 first-launch tour. `neoth tour` walks the operator
     /// through chat / memory / consent / privacy-audit / where-to-go.
@@ -1231,6 +1239,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Privacy(mut args) => {
             args.output = global_output;
             privacy::run_privacy(args).await?;
+        }
+        Commands::Terminal(args) => {
+            terminal::run_terminal(args, global_output)?;
         }
         Commands::Tour(mut args) => {
             args.output = global_output;
