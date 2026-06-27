@@ -258,6 +258,10 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
 }
 
 fn candidate_names(name: &str) -> Vec<std::ffi::OsString> {
+    // `names` is only mutated under the windows cfg below; on other targets
+    // the `mut` is unused and trips CI's `-D unused-mut` (the Windows-only
+    // dev loop never compiles this path).
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut names = vec![std::ffi::OsString::from(name)];
     #[cfg(target_os = "windows")]
     if !name.ends_with(".exe") && !name.ends_with(".cmd") && !name.ends_with(".bat") {
