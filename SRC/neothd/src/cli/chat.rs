@@ -1393,6 +1393,32 @@ async fn enforce_preflight(
             anyhow::bail!("hook `{name}` blocked the turn at pre_pipeline: {reason}");
         }
     };
+    // GOLD-ADAPT-ODY-28 — prepend user-local TZ context BEFORE the
+    // PreProviderCall hook stage so every hook (token-limit, policy,
+    // audit, canonical-prompt-hash) operates on the exact prompt that
+    // the provider will receive. Resolve once; WAL audit uses the same
+    // resolved value (tz-double-resolve fix). Best-effort: no-op when
+    // unconfigured.
+    let tz_opt = crate::cli::user_tz::resolve_tz_name(config);
+    let final_prompt = if let Some(ref tz_name) = tz_opt {
+        crate::cli::user_tz::maybe_prepend_tz_with_name(&final_prompt, tz_name)
+    } else {
+        final_prompt
+    };
+    // WAL audit — batchable, non-fatal.
+    if let Some(ref tz_name) = tz_opt {
+        use crate::wal::events::EVENT_TYPE_TZ_CONTEXT_INJECTED;
+        let utc_offset_str = crate::cli::user_tz::utc_offset_for(tz_name);
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "tz_name": tz_name,
+            "utc_offset_str": utc_offset_str,
+            "ts_unix": crate::time::now_unix_i64(),
+        }))
+        .unwrap_or_default();
+        let hdr = crate::wal::make_header(EVENT_TYPE_TZ_CONTEXT_INJECTED, &payload);
+        let _ = writer.append(hdr, payload).await;
+    }
+
     let final_prompt = match run_hook_stage(
         crate::hooks::HookStage::PreProviderCall,
         &final_prompt,
@@ -1503,29 +1529,6 @@ async fn dispatch_provider(
             Err(_) => final_prompt,
         }
     };
-    // GOLD-ADAPT-ODY-28 — prepend user-local TZ context to the user-role turn.
-    // Per-message prefix (not system prompt) — keeps prefix-cache clean.
-    // Best-effort: resolve_tz_name returns None when unconfigured → no-op.
-    // Resolve once so WAL audit-TZ and injected-TZ use the SAME value (tz-double-resolve fix).
-    let tz_opt = crate::cli::user_tz::resolve_tz_name(config);
-    let final_prompt = if let Some(ref tz_name) = tz_opt {
-        crate::cli::user_tz::maybe_prepend_tz_with_name(&final_prompt, tz_name)
-    } else {
-        final_prompt
-    };
-    // WAL audit — batchable, non-fatal.
-    if let Some(ref tz_name) = tz_opt {
-        use crate::wal::events::EVENT_TYPE_TZ_CONTEXT_INJECTED;
-        let utc_offset_str = crate::cli::user_tz::utc_offset_for(tz_name);
-        let payload = serde_json::to_vec(&serde_json::json!({
-            "tz_name": tz_name,
-            "utc_offset_str": utc_offset_str,
-            "ts_unix": crate::time::now_unix_i64(),
-        }))
-        .unwrap_or_default();
-        let hdr = crate::wal::make_header(EVENT_TYPE_TZ_CONTEXT_INJECTED, &payload);
-        let _ = writer.append(hdr, payload).await;
-    }
     // ── Provider call (sync OR stream) ────────────────────────────────────
     // R-04 2026-05-17: clone final_prompt + final_system here rather
     // than move so the LOWKEY refusal-recovery path post-reply can
