@@ -1478,6 +1478,11 @@ struct DispatchOutput {
     /// `0` in the single-provider (no-loop) branch. Used by
     /// `run_post_reply_pipelines` to gate auto-skill extraction.
     mcp_tool_calls: u32,
+    /// REVFIX-EXCERPTS-01 — structured per-call records from the dispatch loop.
+    /// Fed to `maybe_extract_skill` so the distiller sees tool names + args +
+    /// outcomes instead of a blind 512-char response prefix.
+    /// Empty on the stream / single-provider (no-loop) branches.
+    mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1669,6 +1674,9 @@ async fn dispatch_provider(
     // Set to `outcome.successful_calls` in the MCP-dispatch branch; stays 0
     // in the stream branch and the single-provider (no-loop) branch.
     let mut mcp_tool_calls: u32 = 0;
+    // REVFIX-EXCERPTS-01 — structured per-call records; populated in the
+    // MCP-dispatch branch from `outcome.tool_call_records`; empty otherwise.
+    let mut mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord> = Vec::new();
 
     let (response_text, final_input_tokens, final_output_tokens, model_used) = if args.stream {
         // B-1 follow-up (Session 13) — streaming-branch audit gap.
@@ -2141,6 +2149,8 @@ async fn dispatch_provider(
             );
             // GOLD-ADAPT-ODY-20 — capture for auto-skill extraction gate.
             mcp_tool_calls = outcome.successful_calls;
+            // REVFIX-EXCERPTS-01 — capture structured call records for digest.
+            mcp_tool_records = outcome.tool_call_records;
             println!("{}", outcome.final_text);
             (
                 outcome.final_text,
@@ -2316,6 +2326,9 @@ async fn dispatch_provider(
         // GOLD-ADAPT-ODY-20 — 0 on stream/single-provider paths; populated from
         // `outcome.successful_calls` in the MCP-dispatch branch above.
         mcp_tool_calls,
+        // REVFIX-EXCERPTS-01 — empty on stream/single-provider paths; populated
+        // from `outcome.tool_call_records` in the MCP-dispatch branch above.
+        mcp_tool_records,
     })
 }
 
@@ -2358,6 +2371,10 @@ async fn run_post_reply_pipelines(
     // GOLD-ADAPT-ODY-20 — number of successful MCP tool-calls in this turn.
     // Gates auto-skill extraction (default threshold: ≥ 2). `0` on non-MCP turns.
     mcp_tool_calls: u32,
+    // REVFIX-EXCERPTS-01 — structured per-call records for skill-digest extraction.
+    // Empty on non-MCP turns; the distiller falls back to the blind response
+    // prefix when this slice is empty (backward compat with unit-test paths).
+    mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord>,
 ) -> Result<()> {
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
@@ -3112,6 +3129,7 @@ async fn run_post_reply_pipelines(
                 &prompt,
                 &response_text,
                 mcp_tool_calls,
+                &mcp_tool_records,
                 provider,
                 &config.auto_skill_extract,
             )
@@ -3707,6 +3725,7 @@ pub async fn run_chat_with(
         final_system,
         turn_journal,
         mcp_tool_calls,
+        mcp_tool_records,
     } = dispatch_provider(
         final_prompt,
         final_system,
@@ -3756,6 +3775,8 @@ pub async fn run_chat_with(
         &mut session_fired_once,
         // GOLD-ADAPT-ODY-20 — thread through for auto-skill extraction gate.
         mcp_tool_calls,
+        // REVFIX-EXCERPTS-01 — structured call records for digest-based extraction.
+        mcp_tool_records,
     )
     .await
 }

@@ -39,6 +39,22 @@ use crate::wal::writer::WalWriterHandle;
 /// via [`run_tool_loop_with_cap`].
 pub const DEFAULT_MAX_ITERATIONS: u32 = 5;
 
+/// Compact per-call record accumulated while the dispatch loop runs.
+/// Passed to `skills::auto_extract::maybe_extract_skill` so the distilling
+/// LLM sees the structured tool digest instead of a blind response prefix.
+#[derive(Debug, Clone)]
+pub struct ToolCallRecord {
+    /// MCP server name (e.g. `"filesystem"`).
+    pub server: String,
+    /// Tool name (e.g. `"read_file"`).
+    pub tool: String,
+    /// Key arguments summary, truncated to 120 chars — keeps the digest
+    /// token-bounded regardless of how large the actual args JSON is.
+    pub args_summary: String,
+    /// `true` if `dispatch_one` returned `Ok`; `false` on any error.
+    pub success: bool,
+}
+
 /// Outcome of one dispatcher run.
 #[derive(Debug, Clone)]
 pub struct LoopOutcome {
@@ -52,6 +68,9 @@ pub struct LoopOutcome {
     pub successful_calls: u32,
     /// Total parse errors + dispatch failures across all iterations.
     pub failed_calls: u32,
+    /// Per-call records for structured skill-digest extraction.
+    /// Empty on the stream / single-provider paths.
+    pub tool_call_records: Vec<ToolCallRecord>,
 }
 
 /// Caller-supplied completion driver. Takes the (already-assembled)
@@ -151,6 +170,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     let mut hit_cap = false;
     let mut successful_calls = 0u32;
     let mut failed_calls = 0u32;
+    let mut tool_call_records: Vec<ToolCallRecord> = Vec::new();
     let mut current_text;
     // GOLD-ADAPT-GOOSE-02 — pluggable pre-dispatch safety chain: the stuck-loop
     // guard (GOLD-ADOPT-20) + the dangerous-command/egress risk policy
@@ -504,6 +524,15 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 Ok(rendered) => {
                     successful_calls += 1;
                     iteration_had_success = true;
+                    // REVFIX-EXCERPTS-01 — accumulate a compact call record so
+                    // the post-turn skill distiller sees structured tool digest
+                    // instead of a blind 512-char response prefix.
+                    tool_call_records.push(ToolCallRecord {
+                        server: call.server.clone(),
+                        tool: call.tool.clone(),
+                        args_summary: summarize_args(&call.arguments),
+                        success: true,
+                    });
                     // GR-127 — record the dirs this call touched ONLY after it
                     // passed EVERY gate (repetition + risk + skill-allowlist +
                     // autonomy, all inside dispatch_one) and was actually invoked.
@@ -542,6 +571,14 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 }
                 Err(reason) => {
                     failed_calls += 1;
+                    // REVFIX-EXCERPTS-01 — record failed calls too so the
+                    // digest reflects the full picture (success=false).
+                    tool_call_records.push(ToolCallRecord {
+                        server: call.server.clone(),
+                        tool: call.tool.clone(),
+                        args_summary: summarize_args(&call.arguments),
+                        success: false,
+                    });
                     tool_result_blocks.push(format_failure(call, &reason));
                 }
             }
@@ -621,6 +658,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         hit_cap,
         successful_calls,
         failed_calls,
+        tool_call_records,
     })
 }
 
@@ -882,6 +920,22 @@ fn format_failure(call: &ParsedToolCall, reason: &str) -> String {
         "```mcp-tool-result\n{{\"server\": \"{}\", \"tool\": \"{}\", \"status\": \"FAILED\"}}\n{fenced_reason}\n```",
         call.server, call.tool,
     )
+}
+
+/// REVFIX-EXCERPTS-01 — compact a tool-call argument map into a ≤ 120-char
+/// summary string for the structured skill-digest. Serializes the JSON value
+/// and truncates so a single argument blob with a huge payload cannot crowd
+/// out all other records in the 1 200-char digest cap.
+fn summarize_args(args: &serde_json::Value) -> String {
+    let s = args.to_string();
+    // 120 chars is enough for key args like `{"path":"/some/dir/file.rs"}`.
+    // The truncation marker leaves room for an ellipsis without going over.
+    if s.chars().count() <= 120 {
+        s
+    } else {
+        let truncated: String = s.chars().take(117).collect();
+        format!("{truncated}…")
+    }
 }
 
 /// GOLD-ADOPT-23 (operator points 3+4) — append a DISTINCT-TYPE risk-gate audit

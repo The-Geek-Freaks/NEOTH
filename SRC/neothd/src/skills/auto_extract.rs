@@ -20,7 +20,7 @@ use crate::skills::creator::{build_manifest, CreateParams};
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-const EXTRACT_PROMPT_TMPL: &str = r#"You are a skill-extraction assistant. Given a user query and an assistant response that involved multiple tool calls, extract a reusable skill if the interaction contains a computer-executable, repeatable procedure.
+const EXTRACT_PROMPT_TMPL: &str = r#"You are a skill-extraction assistant. Given a user query and a digest of the MCP tool calls that were made, extract a reusable skill if the interaction contains a computer-executable, repeatable procedure.
 
 Respond with ONLY valid JSON — no explanation, no markdown fences. The JSON must have exactly these fields:
 {
@@ -39,7 +39,7 @@ Rules:
 USER QUERY:
 {PROMPT}
 
-ASSISTANT RESPONSE (summary):
+TOOL CALL DIGEST (from the MCP run):
 {RESPONSE}
 "#;
 
@@ -101,6 +101,7 @@ pub async fn maybe_extract_skill(
     prompt: &str,
     response: &str,
     tool_call_count: u32,
+    tool_records: &[crate::mcp::dispatch_loop::ToolCallRecord],
     provider: &dyn crate::providers::Provider,
     config: &AutoSkillExtractConfig,
 ) -> Option<ProposedAction> {
@@ -109,10 +110,15 @@ pub async fn maybe_extract_skill(
         return None;
     }
 
-    // Build the extraction prompt. Truncate inputs so we don't blow the
-    // context window of a utility call (512 chars each is plenty for signals).
+    // REVFIX-EXCERPTS-01 — build the {RESPONSE} slot from the structured tool
+    // digest when records are available; fall back to the blind 512-char response
+    // prefix for callers that don't pass records (e.g. unit tests with &[]).
     let prompt_excerpt = truncate_to(prompt, 512);
-    let response_excerpt = truncate_to(response, 512);
+    let response_excerpt = if tool_records.is_empty() {
+        truncate_to(response, 512)
+    } else {
+        build_tool_digest(tool_records, 1200)
+    };
     let extraction_prompt = EXTRACT_PROMPT_TMPL
         .replace("{PROMPT}", &prompt_excerpt)
         .replace("{RESPONSE}", &response_excerpt);
@@ -216,6 +222,32 @@ pub async fn maybe_extract_skill(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// REVFIX-EXCERPTS-01 — build a structured tool-call digest string from the
+/// per-call records accumulated by the dispatch loop. Each record is formatted
+/// as `tool: {server}/{tool} args={args_summary} → ok|err`, joined by newlines.
+/// The total output is capped to `cap` bytes so the digest slot in the
+/// extraction prompt can't blow the utility-provider context window.
+pub fn build_tool_digest(
+    records: &[crate::mcp::dispatch_loop::ToolCallRecord],
+    cap: usize,
+) -> String {
+    let mut out = String::new();
+    for r in records {
+        let outcome = if r.success { "ok" } else { "err" };
+        let line = format!(
+            "tool: {}/{} args={} → {}\n",
+            r.server, r.tool, r.args_summary, outcome
+        );
+        // Stop appending if the next line would exceed the cap.
+        if out.len() + line.len() > cap {
+            out.push_str("…(truncated)");
+            break;
+        }
+        out.push_str(&line);
+    }
+    out
+}
 
 fn truncate_to(s: &str, max_chars: usize) -> String {
     let mut chars = s.chars();
@@ -333,7 +365,7 @@ mod tests {
             r#"{"title":"x","steps":["run ls"],"tags":[],"confidence":0.9,"computer_executable":true}"#,
         );
         let config = default_config(); // min_tool_calls = 2
-        let result = maybe_extract_skill("q", "a", 1, &mock, &config).await;
+        let result = maybe_extract_skill("q", "a", 1, &[], &mock, &config).await;
         assert!(result.is_none(), "should be None when tool_call_count < min_tool_calls");
     }
 
@@ -343,7 +375,7 @@ mod tests {
             r#"{"title":"t","steps":["run ls"],"tags":[],"confidence":0.4,"computer_executable":true}"#,
         );
         let config = default_config(); // threshold = 0.6
-        let result = maybe_extract_skill("q", "a", 3, &mock, &config).await;
+        let result = maybe_extract_skill("q", "a", 3, &[], &mock, &config).await;
         assert!(result.is_none(), "should be None when confidence < threshold");
     }
 
@@ -352,14 +384,14 @@ mod tests {
         let mock = MockProvider::returning(
             r#"{"title":"t","steps":["think about it"],"tags":[],"confidence":0.9,"computer_executable":false}"#,
         );
-        let result = maybe_extract_skill("q", "a", 3, &mock, &default_config()).await;
+        let result = maybe_extract_skill("q", "a", 3, &[], &mock, &default_config()).await;
         assert!(result.is_none(), "should be None when computer_executable is false");
     }
 
     #[tokio::test]
     async fn extract_returns_none_on_bad_json() {
         let mock = MockProvider::returning("not json at all");
-        let result = maybe_extract_skill("q", "a", 3, &mock, &default_config()).await;
+        let result = maybe_extract_skill("q", "a", 3, &[], &mock, &default_config()).await;
         assert!(result.is_none(), "should be None when LLM returns non-JSON");
     }
 
@@ -372,6 +404,7 @@ mod tests {
             "debug my docker container",
             "I ran docker ps and checked logs...",
             3,
+            &[],
             &mock,
             &default_config(),
         )
@@ -397,8 +430,8 @@ mod tests {
         let json = r#"{"title":"run-tests","steps":["cargo test"],"tags":["rust"],"confidence":0.75,"computer_executable":true}"#;
         let mock1 = MockProvider::returning(json);
         let mock2 = MockProvider::returning(json);
-        let r1 = maybe_extract_skill("q", "a", 2, &mock1, &default_config()).await.unwrap();
-        let r2 = maybe_extract_skill("q", "a", 2, &mock2, &default_config()).await.unwrap();
+        let r1 = maybe_extract_skill("q", "a", 2, &[], &mock1, &default_config()).await.unwrap();
+        let r2 = maybe_extract_skill("q", "a", 2, &[], &mock2, &default_config()).await.unwrap();
         // The ids must be byte-for-byte equal: content-only hash, no timestamp component.
         assert_eq!(r1.id, r2.id, "same content must produce the same proposal id across calls");
         assert!(r1.id.contains("skill"), "id should contain kind 'skill'");
@@ -414,7 +447,7 @@ mod tests {
         let mock = MockProvider::returning(
             "```json\n{\"title\":\"ls-files\",\"steps\":[\"ls -la\"],\"tags\":[\"files\"],\"confidence\":0.7,\"computer_executable\":true}\n```",
         );
-        let result = maybe_extract_skill("q", "a", 2, &mock, &default_config()).await;
+        let result = maybe_extract_skill("q", "a", 2, &[], &mock, &default_config()).await;
         assert!(result.is_some(), "should handle markdown-fenced JSON");
     }
 
@@ -431,5 +464,149 @@ mod tests {
     #[test]
     fn strip_fences_no_op() {
         assert_eq!(strip_markdown_fences("{}"), "{}");
+    }
+
+    // ── build_tool_digest unit tests ──────────────────────────────────────────
+
+    #[test]
+    fn digest_contains_all_tool_names() {
+        use crate::mcp::dispatch_loop::ToolCallRecord;
+        let records = vec![
+            ToolCallRecord {
+                server: "shell".to_string(),
+                tool: "run_command".to_string(),
+                args_summary: r#"{"cmd":"cargo test"}"#.to_string(),
+                success: true,
+            },
+            ToolCallRecord {
+                server: "filesystem".to_string(),
+                tool: "read_file".to_string(),
+                args_summary: r#"{"path":"/src/lib.rs"}"#.to_string(),
+                success: true,
+            },
+        ];
+        let digest = build_tool_digest(&records, 1200);
+        assert!(digest.contains("shell/run_command"), "digest must contain first tool");
+        assert!(digest.contains("filesystem/read_file"), "digest must contain second tool");
+        assert!(digest.contains("→ ok"), "success records must show ok");
+    }
+
+    #[test]
+    fn digest_marks_failed_calls() {
+        use crate::mcp::dispatch_loop::ToolCallRecord;
+        let records = vec![ToolCallRecord {
+            server: "shell".to_string(),
+            tool: "run_command".to_string(),
+            args_summary: "{}".to_string(),
+            success: false,
+        }];
+        let digest = build_tool_digest(&records, 1200);
+        assert!(digest.contains("→ err"), "failed records must show err");
+    }
+
+    #[test]
+    fn digest_is_bounded_by_cap() {
+        use crate::mcp::dispatch_loop::ToolCallRecord;
+        // Build 50 records; at ~50 chars each the raw total far exceeds a 200-char cap.
+        let records: Vec<ToolCallRecord> = (0..50)
+            .map(|i| ToolCallRecord {
+                server: "s".to_string(),
+                tool: format!("tool_{i}"),
+                args_summary: "{}".to_string(),
+                success: true,
+            })
+            .collect();
+        let cap = 200;
+        let digest = build_tool_digest(&records, cap);
+        // The digest must fit within a small margin (the truncation marker is short).
+        assert!(
+            digest.len() <= cap + 20,
+            "digest exceeded cap: {} bytes",
+            digest.len()
+        );
+    }
+
+    // ── Digest path integration test ─────────────────────────────────────────
+
+    /// REVFIX-EXCERPTS-01 — when ToolCallRecords are provided the distiller
+    /// must see the structured digest, NOT the blind response prefix.
+    #[tokio::test]
+    async fn extract_uses_tool_digest_not_response_prefix() {
+        use crate::mcp::dispatch_loop::ToolCallRecord;
+        use std::sync::{Arc, Mutex};
+
+        // A MockProvider that captures the exact prompt it receives.
+        struct CapturingMock {
+            captured: Arc<Mutex<String>>,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::providers::Provider for CapturingMock {
+            fn name(&self) -> &'static str {
+                "capturing-mock"
+            }
+            async fn complete(
+                &self,
+                req: crate::providers::Request,
+            ) -> anyhow::Result<crate::providers::Completion> {
+                *self.captured.lock().unwrap() = req.prompt.clone();
+                Ok(crate::providers::Completion {
+                    text: r#"{"title":"run-cargo-test","steps":["cargo test"],"tags":["rust"],"confidence":0.82,"computer_executable":true}"#.to_string(),
+                    model: "mock".to_string(),
+                    latency: std::time::Duration::ZERO,
+                    input_tokens: None,
+                    output_tokens: None,
+                })
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(String::new()));
+        let mock = CapturingMock { captured: captured.clone() };
+
+        // A dummy response string whose first 512 chars MUST NOT appear in the prompt.
+        let dummy_response: String = "X".repeat(600);
+
+        let records = vec![
+            ToolCallRecord {
+                server: "shell".to_string(),
+                tool: "run_command".to_string(),
+                args_summary: r#"{"cmd":"cargo test"}"#.to_string(),
+                success: true,
+            },
+            ToolCallRecord {
+                server: "filesystem".to_string(),
+                tool: "read_file".to_string(),
+                args_summary: r#"{"path":"/src/lib.rs"}"#.to_string(),
+                success: true,
+            },
+        ];
+
+        let result = maybe_extract_skill(
+            "run my tests",
+            &dummy_response,
+            2,
+            &records,
+            &mock,
+            &default_config(),
+        )
+        .await;
+
+        assert!(result.is_some(), "should produce a proposal from tool-digest path");
+
+        let prompt_seen = captured.lock().unwrap().clone();
+        // The distiller MUST see the tool digest, not the blind response prefix.
+        assert!(
+            prompt_seen.contains("shell/run_command"),
+            "distiller prompt must contain first tool from digest"
+        );
+        assert!(
+            prompt_seen.contains("filesystem/read_file"),
+            "distiller prompt must contain second tool from digest"
+        );
+        // The dummy response characters (XXXX…) must NOT be in the prompt.
+        assert!(
+            !prompt_seen.contains("XXXXXXXXXX"),
+            "distiller prompt must NOT contain the blind response prefix"
+        );
     }
 }
