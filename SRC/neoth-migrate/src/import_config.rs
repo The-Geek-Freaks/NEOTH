@@ -50,24 +50,9 @@ fn is_sensitive_field(name: &str) -> bool {
         .any(|kw| low.contains(kw))
 }
 
-/// Strip all sensitive fields from a JSON object (recursively).  Returns
-/// the sanitised value.  Non-object values pass through unchanged.
-fn sanitise(v: serde_json::Value) -> serde_json::Value {
-    match v {
-        serde_json::Value::Object(map) => {
-            let cleaned: serde_json::Map<String, serde_json::Value> = map
-                .into_iter()
-                .filter(|(k, _)| !is_sensitive_field(k))
-                .map(|(k, v)| (k, sanitise(v)))
-                .collect();
-            serde_json::Value::Object(cleaned)
-        }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(sanitise).collect())
-        }
-        other => other,
-    }
-}
+// `sanitise_count` / `sanitise_counting` (below) is the live secret-stripper
+// wired into `import_config`; the earlier standalone `sanitise` was a dead
+// duplicate (removed — it failed CI's workspace `clippy -D warnings`).
 
 // ── OpenClaw wire shapes ──────────────────────────────────────────────
 
@@ -379,7 +364,7 @@ mod tests {
             "secret": "another-secret",
             "base_url": "https://api.openai.com/v1"
         });
-        let clean = sanitise(v);
+        let clean = sanitise_count(v).0;
         let obj = clean.as_object().unwrap();
         assert!(!obj.contains_key("api_key"), "api_key must be dropped");
         assert!(!obj.contains_key("secret"), "secret must be dropped");
@@ -395,7 +380,7 @@ mod tests {
                 "name": "keep_me"
             }
         });
-        let clean = sanitise(v);
+        let clean = sanitise_count(v).0;
         let inner = clean["outer"].as_object().unwrap();
         assert!(!inner.contains_key("inner_key"));
         assert!(inner.contains_key("name"));
