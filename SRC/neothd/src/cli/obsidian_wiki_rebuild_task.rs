@@ -36,16 +36,20 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// `interval = None` → [`DEFAULT_INTERVAL`].
 /// `subdir = None` → `"NEOTH-Wiki"` (matches the `neoth obsidian wiki-build`
 /// CLI default).
+/// `views_db = None` → [`crate::memory::store::default_path`] (production
+/// default). Pass `Some(path)` in tests to isolate the SQLite DB from the
+/// real `~/.neoth/views.db` and prevent parallel-test races.
 pub fn spawn(
     vault: PathBuf,
     source_dir: PathBuf,
     subdir: Option<String>,
     interval: Option<Duration>,
     writer: WalWriterHandle,
+    views_db: Option<PathBuf>,
 ) -> JoinHandle<anyhow::Result<()>> {
     let subdir = subdir.unwrap_or_else(|| "NEOTH-Wiki".to_string());
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
-    tokio::spawn(async move { run(vault, source_dir, subdir, interval, writer).await })
+    tokio::spawn(async move { run(vault, source_dir, subdir, interval, writer, views_db).await })
 }
 
 async fn run(
@@ -54,6 +58,7 @@ async fn run(
     subdir: String,
     interval: Duration,
     writer: WalWriterHandle,
+    views_db: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     info!(
         vault = %vault.display(),
@@ -68,18 +73,25 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        if let Err(e) = run_one_tick(&vault, &source_dir, &subdir, &writer).await {
+        if let Err(e) = run_one_tick(&vault, &source_dir, &subdir, &writer, views_db.clone()).await
+        {
             warn!(error = %e, "obsidian wiki-rebuild tick failed (will retry next interval)");
         }
     }
 }
 
 /// One rebuild tick: build → ingest → emit WAL frame.
+///
+/// `views_db` overrides the path used to open the ground-truth SQLite
+/// database. Production callers pass `None` → resolves via
+/// [`crate::memory::store::default_path`]. Tests pass `Some(isolated_path)`
+/// to prevent parallel-test races on the real `~/.neoth/views.db`.
 async fn run_one_tick(
     vault: &Path,
     source_dir: &Path,
     subdir: &str,
     writer: &WalWriterHandle,
+    views_db: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     // Guard: source directory must exist or the wiki builder produces nothing
     // useful. Treat absence as a warn+skip rather than a daemon-level error.
@@ -142,8 +154,13 @@ async fn run_one_tick(
     }
 
     // Step 4: refresh ground-truth pointers in idx_groundtruth (best-effort).
+    // `db_path` is resolved now (on the async task) so the spawn_blocking
+    // closure captures an owned PathBuf rather than calling default_path()
+    // inside the blocking thread — avoids any HOME env-var read inside a
+    // thread that could race with other concurrent tests.
+    let db_path = views_db.unwrap_or_else(crate::memory::store::default_path);
     let ingest_result = tokio::task::spawn_blocking(move || {
-        let conn = crate::memory::store::open(&crate::memory::store::default_path())
+        let conn = crate::memory::store::open(&db_path)
             .context("obsidian wiki-rebuild: open views.db")?;
         crate::wiki::ingest_sources(&conn, &sources, now_ns)
             .context("obsidian wiki-rebuild: ingest_sources failed")
@@ -190,6 +207,7 @@ mod tests {
             Some("NEOTH-Wiki".into()),
             Some(Duration::from_millis(50)),
             writer,
+            None,
         );
         // Let the task burn the first tick and enter the loop.
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -206,6 +224,10 @@ mod tests {
 
         let vault_dir = tempfile::tempdir().unwrap();
         let wal_dir = tempfile::tempdir().unwrap();
+        // Isolated views.db: each test gets its own tempdir so concurrent tests
+        // never contend on the real ~/.neoth/views.db (parallel-suite flake fix).
+        let views_db_dir = tempfile::tempdir().unwrap();
+        let views_db_path = views_db_dir.path().join(".neoth").join("views.db");
         let (writer, writer_join) =
             crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
 
@@ -217,6 +239,8 @@ mod tests {
             // window — first tick is burned per cron pattern.
             Some(Duration::from_millis(30)),
             writer.clone(),
+            // Isolated DB path — no race on ~/.neoth/views.db under parallel suite.
+            Some(views_db_path),
         );
 
         // Wait for the first real (non-burned) tick to write wiki pages.

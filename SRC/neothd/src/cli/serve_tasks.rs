@@ -70,7 +70,7 @@ pub(crate) fn spawn_obsidian_wiki_rebuild(
         .obsidian_wiki_rebuild_secs
         .map(std::time::Duration::from_secs);
     Some(crate::cli::obsidian_wiki_rebuild_task::spawn(
-        vault, source_dir, None, interval, writer,
+        vault, source_dir, None, interval, writer, None,
     ))
 }
 
