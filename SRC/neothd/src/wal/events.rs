@@ -17,7 +17,7 @@
 //!
 //! | Range          | Purpose                                                |
 //! |----------------|--------------------------------------------------------|
-//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21) |
+//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21); 0x0B..=0x0C = companion pairing audit (GOLD-ADAPT-ODY-24) |
 //! | `0x10..=0x1F`  | Daemon lifecycle (BOOT, SHUTDOWN, UPDATE_RAN, …)        |
 //! | `0x20..=0x2F`  | LLM provider lifecycle (REQUEST/RESPONSE/ERROR/STREAM) |
 //! | `0x2A..=0x2B`  | (reserved Phase 10 D14b) local Qwen3 inference trace   |
@@ -106,6 +106,38 @@ pub const EVENT_TYPE_WEBHOOK_SSRF_BLOCKED: u8 = 0x09;
 ///
 /// Payload (JSON): `{event_name, endpoint_url_hash, error, ts_unix}`.
 pub const EVENT_TYPE_WEBHOOK_FAILED: u8 = 0x0A;
+
+// ── GOLD-ADAPT-ODY-24 companion pairing audit (0x0B..=0x0C) ────────────────
+// Two consecutive free slots in the 0x01..=0x0F memory+recall band.
+// These are companion-session audit frames emitted by the loopback companion
+// server when a phone mints or a session revokes a bearer token.
+
+/// `0x0B COMPANION_PAIRED` — GOLD-ADAPT-ODY-24. A companion phone minted a
+/// chat-scoped bearer token via `POST /api/v1/companion/pair`. The raw token
+/// is NEVER written to the WAL; only the xxh3-64 hash of the token is
+/// recorded so an operator can audit which sessions are active without
+/// exposing the live credential.
+///
+/// Payload (JSON): `{session_id, token_hash_xxh3 (hex), ts_unix}`.
+pub const EVENT_TYPE_COMPANION_PAIRED: u8 = 0x0B;
+
+/// `0x0C COMPANION_REVOKED` — GOLD-ADAPT-ODY-24. A companion session token
+/// was explicitly revoked (e.g. via a future `neoth companion revoke` CLI or
+/// automatic TTL expiry sweep). Audits the revocation so an operator can
+/// correlate the end of a pairing session.
+///
+/// Payload (JSON): `{session_id, token_hash_xxh3 (hex), reason, ts_unix}`.
+pub const EVENT_TYPE_COMPANION_REVOKED: u8 = 0x0C;
+
+// Compile-time band-guard assertions: both codes must fit in 0x01..=0x0F.
+// These mirror the webhook-audit assertions above and will produce a
+// const-eval index-OOB if the assignment ever drifts out of band.
+const _: () = {
+    let _ = [(); 1][(EVENT_TYPE_COMPANION_PAIRED > 0x0F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_COMPANION_REVOKED > 0x0F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_COMPANION_PAIRED <= EVENT_TYPE_WEBHOOK_FAILED) as usize];
+    let _ = [(); 1][(EVENT_TYPE_COMPANION_REVOKED <= EVENT_TYPE_COMPANION_PAIRED) as usize];
+};
 
 // ---- 0x10..=0x1F  Daemon lifecycle ----------------------------------------
 
@@ -2182,6 +2214,9 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("webhook_delivered", EVENT_TYPE_WEBHOOK_DELIVERED),
     ("webhook_ssrf_blocked", EVENT_TYPE_WEBHOOK_SSRF_BLOCKED),
     ("webhook_failed", EVENT_TYPE_WEBHOOK_FAILED),
+    // GOLD-ADAPT-ODY-24 companion pairing audit (0x0B..=0x0C, memory+recall band).
+    ("companion_paired", EVENT_TYPE_COMPANION_PAIRED),
+    ("companion_revoked", EVENT_TYPE_COMPANION_REVOKED),
     ("turn_journal_opened", EVENT_TYPE_TURN_JOURNAL_OPENED),
     ("turn_journal_closed", EVENT_TYPE_TURN_JOURNAL_CLOSED),
     ("stale_interrupted", EVENT_TYPE_STALE_INTERRUPTED),
@@ -2650,6 +2685,13 @@ const _: () = {
             as usize];
     let _ =
         [(); 1][(EVENT_TYPE_WEBHOOK_FAILED < 0x01 || EVENT_TYPE_WEBHOOK_FAILED > 0x0F) as usize];
+    // GOLD-ADAPT-ODY-24 — companion pairing audit (0x0B..=0x0C) in the memory+recall band.
+    let _ =
+        [(); 1][(EVENT_TYPE_COMPANION_PAIRED < 0x01 || EVENT_TYPE_COMPANION_PAIRED > 0x0F)
+            as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_COMPANION_REVOKED < 0x01 || EVENT_TYPE_COMPANION_REVOKED > 0x0F)
+            as usize];
     let _ = [(); 1][(EVENT_TYPE_BOOT < 0x10 || EVENT_TYPE_BOOT > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SHUTDOWN < 0x10 || EVENT_TYPE_SHUTDOWN > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_INSTALLER_RAN < 0x10 || EVENT_TYPE_INSTALLER_RAN > 0x1F) as usize];
@@ -3107,6 +3149,9 @@ mod tests {
             ("WEBHOOK_DELIVERED", EVENT_TYPE_WEBHOOK_DELIVERED),
             ("WEBHOOK_SSRF_BLOCKED", EVENT_TYPE_WEBHOOK_SSRF_BLOCKED),
             ("WEBHOOK_FAILED", EVENT_TYPE_WEBHOOK_FAILED),
+            // GOLD-ADAPT-ODY-24 companion pairing audit.
+            ("COMPANION_PAIRED", EVENT_TYPE_COMPANION_PAIRED),
+            ("COMPANION_REVOKED", EVENT_TYPE_COMPANION_REVOKED),
             ("BOOT", EVENT_TYPE_BOOT),
             ("SHUTDOWN", EVENT_TYPE_SHUTDOWN),
             ("INSTALLER_RAN", EVENT_TYPE_INSTALLER_RAN),

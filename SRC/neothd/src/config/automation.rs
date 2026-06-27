@@ -1060,3 +1060,36 @@ impl WebhookManagerConfig {
         std::time::Duration::from_secs(self.interval_secs.max(1))
     }
 }
+
+/// GOLD-ADAPT-ODY-24 — `freedom.yaml::companion` shape.
+///
+/// Companion LAN pairing server. A phone scans a QR code displayed at
+/// `neoth init` or via `neoth companion qr`, connects to the loopback-only
+/// HTTP server, and mints a chat-scoped bearer token.
+///
+/// Default OFF (`enabled: false`) — opt-in via `companion.enabled: true`
+/// in freedom.yaml or via the wizard step. Port defaults to 9745 (no
+/// collision with n8n_api:9744, kanban_sse:9432, healthz).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CompanionConfig {
+    /// Master switch. Default `false` — the companion server never spawns
+    /// until the operator opts in.
+    pub enabled: bool,
+    /// Loopback port the hyper server binds. Default 9745. Override only
+    /// when 9745 collides with another local service.
+    pub port: u16,
+}
+
+fn default_companion_port() -> u16 {
+    9745
+}
+
+impl Default for CompanionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_companion_port(),
+        }
+    }
+}

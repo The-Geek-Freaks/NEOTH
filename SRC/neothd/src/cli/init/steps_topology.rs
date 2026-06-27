@@ -1069,6 +1069,89 @@ pub(crate) fn step5d_profile_approval_gate(
     Ok(())
 }
 
+/// Step 6k — GOLD-ADAPT-ODY-24: companion LAN pairing offer.
+///
+/// Detects the operative LAN IP via a UDP-connect probe (no packet sent),
+/// renders a QR code to stdout, and prompts the operator to enable the
+/// companion server in freedom.yaml. On acceptance, sets
+/// `state.companion.enabled = true` (port defaults to 9745) so
+/// `write_config` serialises `companion.enabled: true` into freedom.yaml.
+///
+/// Non-interactive: prints a skip notice and returns.
+/// Interactive (wizard feature): shows QR + Confirm prompt.
+///
+/// The QR payload is `http://<LAN-IP>:9745/pair` — the companion app
+/// scans this and immediately calls `POST /api/v1/companion/pair` with a
+/// `session_id` to mint a bearer token.
+pub(crate) async fn step6k_companion_pairing_offer(
+    interactive: bool,
+    state: &mut crate::cli::init::types::WizardState,
+) -> Result<()> {
+    if !interactive {
+        println!(
+            "[neoth init] optional companion LAN pairing — skip for now. \
+             Enable later by setting `companion.enabled: true` in ~/.neoth/freedom.yaml \
+             (port: 9745). The companion app scans a QR code to mint a bearer token."
+        );
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        use crate::daemon::companion::{detect_lan_ip, render_pairing_qr};
+
+        // Detect LAN IP. Falls back to 127.0.0.1 when offline/VPN.
+        let lan_ip = detect_lan_ip().await;
+        let pairing_url = format!("http://{}:{}/pair", lan_ip, state.companion.port);
+
+        println!(
+            "\n[6k/9] companion LAN pairing (optional) — lets a phone scan a QR code \
+             to mint a chat-scoped bearer token, enabling companion-app access to this \
+             NEOTH session over your local network.\n\
+             \n\
+             The companion server binds to 127.0.0.1 (loopback only — your phone \
+             connects via the LAN IP listed in the QR). The bearer token is minted \
+             per-session and expires after 24h.\n\
+             \n\
+             Pairing URL: {pairing_url}\n"
+        );
+
+        // Render QR code. Falls back gracefully if generation fails.
+        let qr = render_pairing_qr(&pairing_url);
+        if !qr.is_empty() {
+            println!("{qr}");
+        } else {
+            println!("  (QR render unavailable — use the URL above directly)");
+        }
+        println!("  Raw URL: {pairing_url}\n");
+
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(format!(
+                "Enable companion LAN pairing server at {pairing_url}? (port {})",
+                state.companion.port
+            ))
+            .default(false)
+            .interact()
+            .context("companion pairing offer confirm")?;
+
+        if want {
+            state.companion.enabled = true;
+            println!(
+                "  ✓ companion server enabled (port {})\n  \
+                 → Start NEOTH and scan the QR with your companion app.",
+                state.companion.port
+            );
+        } else {
+            println!(
+                "  → skipped (enable later: set `companion.enabled: true` \
+                 in ~/.neoth/freedom.yaml)"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

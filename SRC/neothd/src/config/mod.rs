@@ -58,7 +58,7 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use automation::{
-    AutoSkillExtractConfig, BgMonitorConfig, ConsolidationSweepConfig,
+    AutoSkillExtractConfig, BgMonitorConfig, CompanionConfig, ConsolidationSweepConfig,
     DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS, DEFAULT_DRIFT_ALERT_INTERVAL_SECS,
     DEFAULT_GUIDANCE_CRON_INTERVAL_SECS, DEFAULT_INACTIVITY_GAP_SECS,
     DEFAULT_MONITOR_INTERVAL_SECS, DEFAULT_PATTERN_CRON_INTERVAL_SECS,
@@ -666,6 +666,12 @@ pub struct FreedomConfig {
     /// opts in via `kanban_sse.enabled: true` + optional `port` override.
     #[serde(default)]
     pub kanban_sse: KanbanSseConfig,
+    /// GOLD-ADAPT-ODY-24 — Companion LAN pairing server. A phone scans a QR
+    /// code (displayed at `neoth init` step 6k or via `neoth companion qr`)
+    /// and mints a chat-scoped bearer token via `POST /api/v1/companion/pair`.
+    /// Loopback-only; default OFF (`enabled: false`). Port defaults to 9745.
+    #[serde(default)]
+    pub companion: CompanionConfig,
     /// PC-01 — OS-tool surface (file/folder access). Default DENY-ALL: an
     /// empty `tools.os.allowed_paths` means NEOTH can read no operator file.
     /// Operators at `elevated`/`full` autonomy opt in by listing absolute

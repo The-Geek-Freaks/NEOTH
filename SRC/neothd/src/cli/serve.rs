@@ -989,6 +989,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         writer.clone(),
     );
 
+    // GOLD-ADAPT-ODY-24 — Companion LAN pairing server. Default OFF — opt-in
+    // via `companion.enabled: true`. Mints chat-scoped bearer tokens for phones
+    // that scan the QR code shown at `neoth init` step 6k. Loopback-only
+    // (127.0.0.1:9745). Emits `0x0B COMPANION_PAIRED` WAL audit frames.
+    let companion_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let companion_task = crate::cli::serve_tasks::spawn_companion_server(
+        &config,
+        &crate::config::FreedomConfig::default_neoth_home(),
+        writer.clone(),
+        std::sync::Arc::clone(&companion_shutdown),
+    );
+
     // GOLD-FEAT-09 — daemon watchdog / auto-recovery cron. Default OFF → no
     // idle task; opt-in via `watchdog.enabled = true`. The restart action is
     // gated to Elevated/Full autonomy inside the spawn helper.
@@ -1723,6 +1735,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         n8n_api_task,
         kanban_sse_shutdown,
         kanban_sse_task,
+        companion_shutdown,
+        companion_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
         self_map_task,

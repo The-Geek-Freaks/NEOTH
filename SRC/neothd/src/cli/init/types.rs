@@ -588,6 +588,13 @@ pub struct WizardState {
     /// field → false → overwritten to false by write_config anyway).
     #[serde(default)]
     pub chat_onboarding_completed: bool,
+    /// GOLD-ADAPT-ODY-24 — set by `step6k_companion_pairing_offer` when the
+    /// operator opts into the companion LAN pairing server. Serialises into
+    /// `freedom.yaml::companion.enabled` via the `write_config` path (the
+    /// WizardState YAML shape mirrors FreedomConfig — companion block is
+    /// included via `#[serde(default)]` on both sides).
+    #[serde(default)]
+    pub companion: crate::config::CompanionConfig,
     pub steps_completed: Vec<u8>,
 }
 

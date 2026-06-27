@@ -573,6 +573,34 @@ pub(crate) fn spawn_webhook_manager_cron(
     handle
 }
 
+/// GOLD-ADAPT-ODY-24 — spawn the companion LAN pairing server.
+///
+/// Reads `config.companion.enabled` and `config.companion.port`. Creates the
+/// `Arc<Notify>` shutdown notifier, calls
+/// `daemon::companion::spawn_companion_server_loop`, and returns the pair.
+/// Returns `(Arc::new(Notify::new()), None)` when `config.companion.enabled ==
+/// false` (the default — opt-in via `companion.enabled: true`).
+pub(crate) fn spawn_companion_server(
+    config: &FreedomConfig,
+    home_dir: &std::path::Path,
+    writer: WalWriterHandle,
+    shutdown: std::sync::Arc<tokio::sync::Notify>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let handle = crate::daemon::companion::spawn_companion_server_loop(
+        config.companion.clone(),
+        home_dir.to_path_buf(),
+        writer,
+        shutdown,
+    );
+    if handle.is_some() {
+        info!(
+            port = config.companion.port,
+            "companion LAN pairing server spawned (GOLD-ADAPT-ODY-24)"
+        );
+    }
+    handle
+}
+
 /// GOLD-FEAT-09 — spawn the daemon watchdog / auto-recovery cron. `None` when
 /// `watchdog.enabled = false`. The restart ACTION (spawning a service) is gated
 /// to `Elevated`/`Full` autonomy, resolved once here and passed as a plain
@@ -2882,6 +2910,10 @@ pub(crate) struct BackgroundHandles {
     pub kanban_sse_shutdown: Arc<tokio::sync::Notify>,
     /// GOLD-ADAPT-HERMES-08 — task handle for the kanban SSE hyper server.
     pub kanban_sse_task: Option<JoinHandle<()>>,
+    /// GOLD-ADAPT-ODY-24 — shutdown notifier for the companion LAN pairing server.
+    pub companion_shutdown: Arc<tokio::sync::Notify>,
+    /// GOLD-ADAPT-ODY-24 — task handle for the companion loopback hyper server.
+    pub companion_task: Option<JoinHandle<()>>,
     pub obsidian_task: Option<JoinHandle<anyhow::Result<()>>>,
     /// OH-14 — periodic self-wiki rebuild cron handle.
     /// WAL-emitting (0xFA); `None` when `obsidian_vault` or source dir
@@ -2976,6 +3008,8 @@ pub(crate) async fn shutdown_background_tasks(
         n8n_api_task,
         kanban_sse_shutdown,
         kanban_sse_task,
+        companion_shutdown,
+        companion_task,
         obsidian_task,
         obsidian_wiki_rebuild_task,
         self_map_task,
@@ -3241,6 +3275,16 @@ pub(crate) async fn shutdown_background_tasks(
     // then see the TCP close. WAL-free — safe to stop after n8n_api.
     kanban_sse_shutdown.notify_waiters();
     if let Some(task) = kanban_sse_task {
+        let _ = task.await;
+    }
+
+    // GOLD-ADAPT-ODY-24: drain the companion LAN pairing server. Notify breaks
+    // the accept loop; in-flight mint requests finish their existing response.
+    // WAL-emitting (0x0B) — must be shut down BEFORE drop(writer) so any
+    // in-flight COMPANION_PAIRED frame isn't lost. Placed here (after kanban_sse,
+    // before Obsidian) matching the WAL-emitting task ordering discipline.
+    companion_shutdown.notify_waiters();
+    if let Some(task) = companion_task {
         let _ = task.await;
     }
 

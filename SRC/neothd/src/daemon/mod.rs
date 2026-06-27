@@ -36,6 +36,12 @@ pub mod backup_retention;
 /// `kanban_sse.enabled = true` in freedom.yaml. Bearer-auth + hyper 1.x
 /// + broadcast fan-out from `coding::store` mutations.
 pub mod kanban_sse;
+/// GOLD-ADAPT-ODY-24 — Companion LAN pairing server. Binds loopback port 9745
+/// (default) when `companion.enabled = true` in freedom.yaml. A phone scans
+/// the QR code displayed at `neoth init` to mint a chat-scoped bearer token
+/// via `POST /api/v1/companion/pair` (POST-only, SameSite=Lax CSRF guard,
+/// loopback-only bind, WAL `0x0B`/`0x0C` audit frames).
+pub mod companion;
 pub mod clock_floor;
 pub mod credentials_import_sidecar;
 pub mod detect_complete_sidecar;

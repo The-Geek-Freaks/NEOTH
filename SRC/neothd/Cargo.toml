@@ -531,6 +531,10 @@ strsim              = "0.11"
 natural             = "0.5"
 # R-9 vision: pure-Rust image decode (PNG, JPEG, WebP, GIF). No system deps.
 image               = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# GOLD-ADAPT-ODY-24 — terminal QR code rendering for companion LAN pairing.
+# `default-features = false` avoids pulling the heavy `image` dep twice.
+# Unicode Dense1x2 block art renderer works without any image feature.
+qrcode              = { version = "0.14", default-features = false }
 # Hardware probe — cross-platform CPU + RAM + (later) GPU info. Pure
 # Rust, supports Windows + Linux + macOS without system deps. Used by
 # the onboarding wizard so operators see what their hardware can do.

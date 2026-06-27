@@ -120,6 +120,9 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // No checkpoint save needed (re-offerable each run; device prerequisites
     // vary per operator session).
     step6j_mobile_mcp_offer(interactive).await?;
+    // GOLD-ADAPT-ODY-24 — companion LAN pairing offer. No checkpoint save
+    // needed (re-offerable each run; LAN topology may differ per session).
+    step6k_companion_pairing_offer(interactive, &mut state).await?;
     step6h_install_recommended(&args, interactive, &neoth_dir);
     step7_autonomy(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
@@ -951,6 +954,8 @@ mod tests {
             // GOLD-ADAPT-OH-11: fixture represents a post-wizard state where
             // chat has not yet happened → write_config will reset this to false.
             chat_onboarding_completed: false,
+            // GOLD-ADAPT-ODY-24: companion is off by default in fixture state.
+            companion: crate::config::CompanionConfig::default(),
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
