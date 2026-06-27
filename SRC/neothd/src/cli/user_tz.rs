@@ -114,6 +114,27 @@ pub fn maybe_prepend_tz(prompt: &str, config: &crate::config::FreedomConfig) -> 
     }
 }
 
+/// Prepend a TZ context block using an already-resolved IANA timezone name.
+///
+/// Use this variant when the caller has already called [`resolve_tz_name`] to
+/// avoid a second resolution (and the accompanying env-var read + parse), so
+/// the WAL audit-TZ and the injected-TZ are guaranteed to come from the same
+/// resolved value.
+///
+/// Returns `prompt.to_owned()` unchanged when `tz_name` is empty or invalid.
+/// When TZ is active, returns `"<context>\n\n<prompt>"`.
+pub fn maybe_prepend_tz_with_name(prompt: &str, tz_name: &str) -> String {
+    if tz_name.is_empty() {
+        return prompt.to_owned();
+    }
+    let context = format_tz_context(tz_name);
+    if context.is_empty() {
+        prompt.to_owned()
+    } else {
+        format!("{context}\n\n{prompt}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

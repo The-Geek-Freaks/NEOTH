@@ -1783,9 +1783,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             };
             // GOLD-ADAPT-ODY-28 — user-local TZ context inject (channel path mirror).
             // Per-message prefix (not system prompt) — keeps prefix-cache clean.
+            // Resolve once so WAL audit-TZ and injected-TZ use the SAME value (tz-double-resolve fix).
             let tz_opt_ch = crate::cli::user_tz::resolve_tz_name(&config_for_handler);
-            let final_prompt = if tz_opt_ch.is_some() {
-                crate::cli::user_tz::maybe_prepend_tz(&final_prompt, &config_for_handler)
+            let final_prompt = if let Some(ref tz_name_ch) = tz_opt_ch {
+                crate::cli::user_tz::maybe_prepend_tz_with_name(&final_prompt, tz_name_ch)
             } else {
                 final_prompt
             };

@@ -1506,9 +1506,10 @@ async fn dispatch_provider(
     // GOLD-ADAPT-ODY-28 — prepend user-local TZ context to the user-role turn.
     // Per-message prefix (not system prompt) — keeps prefix-cache clean.
     // Best-effort: resolve_tz_name returns None when unconfigured → no-op.
+    // Resolve once so WAL audit-TZ and injected-TZ use the SAME value (tz-double-resolve fix).
     let tz_opt = crate::cli::user_tz::resolve_tz_name(config);
-    let final_prompt = if tz_opt.is_some() {
-        crate::cli::user_tz::maybe_prepend_tz(&final_prompt, config)
+    let final_prompt = if let Some(ref tz_name) = tz_opt {
+        crate::cli::user_tz::maybe_prepend_tz_with_name(&final_prompt, tz_name)
     } else {
         final_prompt
     };

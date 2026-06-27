@@ -331,13 +331,17 @@ impl TtsProvider for EdgeTtsProvider {
     }
 }
 
-/// Generate a deterministic temp filename inside `workdir` for a
-/// given request. Same input → same filename → callers can cache
-/// (the dispatcher's `cached_filename` is the long-term key; this
-/// is the short-lived per-synth file).
+/// Generate a per-process temp filename inside `workdir` for a given request.
+///
+/// The key incorporates `std::process::id()` so that parallel identical TTS
+/// requests in concurrent processes (or test workers) do not collide on the
+/// same temp file — tts-tempfile fix. The long-term cache key lives in the
+/// dispatcher's `cached_filename`; this file is the short-lived per-synth path.
 pub fn temp_output_path(workdir: &Path, request: &TtsRequest) -> PathBuf {
+    let pid = std::process::id();
     let key = format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
+        pid,
         request.text,
         request.voice_id,
         request.format.as_str()

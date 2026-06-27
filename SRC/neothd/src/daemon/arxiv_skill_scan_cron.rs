@@ -159,7 +159,13 @@ pub async fn run_one_scan_pass(
 
             // DB write: open a NEW connection INSIDE spawn_blocking.
             // rusqlite Connection is !Send — never pass it across an .await.
+            // MEM-16 arxiv-provenance: capture paper metadata so each fact is
+            // content-addressed and auditable (arxiv_id, pdf_url, published, categories/topic).
             let paper_title = paper.title.clone();
+            let paper_id = paper.id.clone();
+            let paper_pdf_url = paper.pdf_url.clone();
+            let paper_published = paper.published.clone();
+            let paper_categories = paper.categories.clone();
             let db = db_path.clone();
             let rows: Vec<String> = learnings;
             let inserted = tokio::task::spawn_blocking(move || -> usize {
@@ -170,9 +176,13 @@ pub async fn run_one_scan_pass(
                         return 0;
                     }
                 };
+                let topic_tag = paper_categories.first().map(|s| s.as_str()).unwrap_or("unknown");
                 let mut n = 0usize;
                 for fact in rows {
-                    let statement = format!("[arxiv] {paper_title}: {fact}");
+                    // Enrich statement with paper provenance so recall surfaces context.
+                    let statement = format!(
+                        "[arxiv:{paper_id}] {paper_title} ({paper_published}, {topic_tag}, {paper_pdf_url}): {fact}"
+                    );
                     match groundtruth::insert(&conn, &statement, &Source::ArxivScan, "arxiv-learning", now_ns) {
                         Ok(_) => n += 1,
                         Err(e) => {

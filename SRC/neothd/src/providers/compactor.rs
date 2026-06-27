@@ -25,6 +25,8 @@ use async_trait::async_trait;
 use serde_json::json;
 use tracing::warn;
 
+use sha2::{Digest, Sha256};
+
 use crate::config::policy::TokensConfig;
 use crate::providers::{ChunkStream, Completion, Provider, Request};
 use crate::tokens::budget::count_tokens;
@@ -42,6 +44,10 @@ struct CompactionPayload<'a> {
     kept_chars: usize,
     threshold_tokens: u32,
     model: &'a str,
+    /// SHA-256 hex of the pre-compaction old_zone text. Content-addresses the
+    /// raw snapshot so the audit record can prove (or disprove) that the
+    /// summary dropped a constraint — ODY-06 compactor-rawhash fix.
+    raw_hash: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -184,12 +190,16 @@ impl CompactingProvider {
                 .as_ref()
                 .map(|u| u.name())
                 .unwrap_or("none");
+            // ODY-06 compactor-rawhash: content-address the pre-compaction raw text
+            // so the audit record can verify summary fidelity.
+            let raw_hash = hex::encode(Sha256::digest(old_zone.as_bytes()));
             let payload_json = json!(CompactionPayload {
                 original_chars,
                 summarised_chars,
                 kept_chars,
                 threshold_tokens: self.threshold_tokens(),
                 model: model_name,
+                raw_hash,
             });
             match serde_json::to_vec(&payload_json) {
                 Ok(bytes) => {
