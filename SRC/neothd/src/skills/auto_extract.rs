@@ -14,7 +14,7 @@
 
 use crate::config::automation::AutoSkillExtractConfig;
 use crate::proactive::action_staging::{
-    make_proposal_id, ProposalKind, ProposedAction, ProposalStatus,
+    make_proposal_id_content_only, ProposalKind, ProposedAction, ProposalStatus,
 };
 use crate::skills::creator::{build_manifest, CreateParams};
 
@@ -186,11 +186,13 @@ pub async fn maybe_extract_skill(
     };
 
     let ts = crate::time::now_unix_i64();
-    let proposal_id = make_proposal_id(
+    // Dedup is content-only: same {title, draft_yaml} at any timestamp → same id.
+    // The timestamp is NOT part of the hash so re-extracting the same skill
+    // in a later run produces the same proposal id (stable dedup across time).
+    let proposal_id = make_proposal_id_content_only(
         ProposalKind::Skill,
         &extracted.title,
         &draft_yaml,
-        ts,
     );
 
     let rationale = format!(
@@ -387,18 +389,24 @@ mod tests {
 
     #[tokio::test]
     async fn extract_dedup_is_deterministic() {
-        // Two calls with identical inputs produce the same proposal id.
+        // Two calls with identical inputs produce the SAME proposal id — even if
+        // wall-clock time differs between calls. This is the core dedup guarantee:
+        // re-extracting the same skill in a later run must not create a duplicate
+        // proposal. The content-only id hash (title + draft_yaml, no timestamp)
+        // makes this stable across time.
         let json = r#"{"title":"run-tests","steps":["cargo test"],"tags":["rust"],"confidence":0.75,"computer_executable":true}"#;
         let mock1 = MockProvider::returning(json);
         let mock2 = MockProvider::returning(json);
         let r1 = maybe_extract_skill("q", "a", 2, &mock1, &default_config()).await.unwrap();
         let r2 = maybe_extract_skill("q", "a", 2, &mock2, &default_config()).await.unwrap();
-        // Same title + same YAML produced in the same second → deterministic id prefix.
-        // We can't pin the exact timestamp, but the kind + slug must match.
+        // The ids must be byte-for-byte equal: content-only hash, no timestamp component.
+        assert_eq!(r1.id, r2.id, "same content must produce the same proposal id across calls");
         assert!(r1.id.contains("skill"), "id should contain kind 'skill'");
-        assert!(r2.id.contains("skill"), "id should contain kind 'skill'");
         assert_eq!(r1.kind, r2.kind);
         assert_eq!(r1.draft_yaml, r2.draft_yaml);
+        // generated_ts_unix is a separate, time-varying field — NOT in the id.
+        // We can't assert equality here (different wall-clock seconds), but the
+        // id must remain stable regardless of it.
     }
 
     #[tokio::test]

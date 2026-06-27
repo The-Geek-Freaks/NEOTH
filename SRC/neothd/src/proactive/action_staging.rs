@@ -168,6 +168,29 @@ pub fn make_proposal_id(
     format!("{}-{}-{}", generated_ts_unix, kind.as_str(), short)
 }
 
+/// Content-only variant of [`make_proposal_id`].
+///
+/// Format `<kind>-<short-hash>` where the hash covers ONLY `(title,
+/// draft_yaml)` — NOT the timestamp. Two extractions of the same skill
+/// at different wall-clock times produce the **same** id, enabling
+/// stable dedup across runs. `generated_ts_unix` is still stored on
+/// the [`ProposedAction`] record for display/ordering; it just does not
+/// enter the identity hash.
+///
+/// Use this for auto-extract paths where idempotency-across-time is the
+/// goal. Use [`make_proposal_id`] for cron/config proposals that are
+/// legitimately different across ticks even with equal content.
+pub fn make_proposal_id_content_only(
+    kind: ProposalKind,
+    title: &str,
+    draft_yaml: &str,
+) -> String {
+    let hash_input = format!("{title}|{draft_yaml}");
+    let hash = xxhash_rust::xxh3::xxh3_64(hash_input.as_bytes());
+    let short = format!("{:08x}", hash & 0xFFFF_FFFF);
+    format!("{}-{}", kind.as_str(), short)
+}
+
 /// Directory under `home` that holds staged proposal JSON files.
 pub fn proposals_dir(home: &Path) -> PathBuf {
     home.join("proposals")
@@ -401,6 +424,38 @@ mod tests {
     fn make_proposal_id_prefix_is_kind_and_timestamp() {
         let id = make_proposal_id(ProposalKind::Skill, "x", "y", 1_700_000_000);
         assert!(id.starts_with("1700000000-skill-"));
+    }
+
+    // ── make_proposal_id_content_only tests ───────────────────────────────
+
+    #[test]
+    fn content_only_id_stable_across_different_timestamps() {
+        // Same content at different timestamps → same id (the core dedup guarantee).
+        let a = make_proposal_id_content_only(ProposalKind::Skill, "my-skill", "yaml: body");
+        let b = make_proposal_id_content_only(ProposalKind::Skill, "my-skill", "yaml: body");
+        assert_eq!(a, b, "content-only id must be timestamp-independent");
+    }
+
+    #[test]
+    fn content_only_id_differs_for_different_content() {
+        let a = make_proposal_id_content_only(ProposalKind::Skill, "skill-a", "yaml: a");
+        let b = make_proposal_id_content_only(ProposalKind::Skill, "skill-b", "yaml: a");
+        assert_ne!(a, b, "different title must produce different id");
+        let c = make_proposal_id_content_only(ProposalKind::Skill, "skill-a", "yaml: b");
+        assert_ne!(a, c, "different draft_yaml must produce different id");
+    }
+
+    #[test]
+    fn content_only_id_format_is_kind_hash() {
+        let id = make_proposal_id_content_only(ProposalKind::Skill, "x", "y");
+        // Format is "<kind>-<8hex>" — no timestamp prefix.
+        assert!(id.starts_with("skill-"), "id must start with kind");
+        let parts: Vec<&str> = id.splitn(2, '-').collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], "skill");
+        // Hash suffix is exactly 8 hex chars.
+        assert_eq!(parts[1].len(), 8, "hash suffix must be 8 hex chars");
+        assert!(parts[1].chars().all(|c| c.is_ascii_hexdigit()), "suffix must be hex");
     }
 
     #[test]
