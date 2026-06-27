@@ -1781,6 +1781,27 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             } else {
                 final_prompt
             };
+            // GOLD-ADAPT-ODY-28 — user-local TZ context inject (channel path mirror).
+            // Per-message prefix (not system prompt) — keeps prefix-cache clean.
+            let tz_opt_ch = crate::cli::user_tz::resolve_tz_name(&config_for_handler);
+            let final_prompt = if tz_opt_ch.is_some() {
+                crate::cli::user_tz::maybe_prepend_tz(&final_prompt, &config_for_handler)
+            } else {
+                final_prompt
+            };
+            // WAL audit — batchable, non-fatal.
+            if let Some(ref tz_name) = tz_opt_ch {
+                use crate::wal::events::EVENT_TYPE_TZ_CONTEXT_INJECTED;
+                let utc_offset_str = crate::cli::user_tz::utc_offset_for(tz_name);
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "tz_name": tz_name,
+                    "utc_offset_str": utc_offset_str,
+                    "ts_unix": crate::time::now_unix_i64(),
+                }))
+                .unwrap_or_default();
+                let hdr = crate::wal::make_header(EVENT_TYPE_TZ_CONTEXT_INJECTED, &payload);
+                let _ = writer.append(hdr, payload).await;
+            }
             let req = Request {
                 prompt: final_prompt.clone(),
                 // HERMES-03b hook A — inject the clarification protocol into the

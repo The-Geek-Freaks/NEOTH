@@ -1497,6 +1497,28 @@ async fn dispatch_provider(
             Err(_) => final_prompt,
         }
     };
+    // GOLD-ADAPT-ODY-28 — prepend user-local TZ context to the user-role turn.
+    // Per-message prefix (not system prompt) — keeps prefix-cache clean.
+    // Best-effort: resolve_tz_name returns None when unconfigured → no-op.
+    let tz_opt = crate::cli::user_tz::resolve_tz_name(config);
+    let final_prompt = if tz_opt.is_some() {
+        crate::cli::user_tz::maybe_prepend_tz(&final_prompt, config)
+    } else {
+        final_prompt
+    };
+    // WAL audit — batchable, non-fatal.
+    if let Some(ref tz_name) = tz_opt {
+        use crate::wal::events::EVENT_TYPE_TZ_CONTEXT_INJECTED;
+        let utc_offset_str = crate::cli::user_tz::utc_offset_for(tz_name);
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "tz_name": tz_name,
+            "utc_offset_str": utc_offset_str,
+            "ts_unix": crate::time::now_unix_i64(),
+        }))
+        .unwrap_or_default();
+        let hdr = crate::wal::make_header(EVENT_TYPE_TZ_CONTEXT_INJECTED, &payload);
+        let _ = writer.append(hdr, payload).await;
+    }
     // ── Provider call (sync OR stream) ────────────────────────────────────
     // R-04 2026-05-17: clone final_prompt + final_system here rather
     // than move so the LOWKEY refusal-recovery path post-reply can

@@ -717,6 +717,18 @@ pub struct FreedomConfig {
     /// the hint retroactively — only fresh wizard runs see it.
     #[serde(default = "default_true")]
     pub chat_onboarding_completed: bool,
+
+    /// GOLD-ADAPT-ODY-28 — IANA timezone name for user-local TZ context injection.
+    /// When set, every provider turn prepends a concise time-context block to the
+    /// user message so the LLM can anchor scheduling references correctly.
+    /// Env override: `NEOTH_TZ` takes priority over this field.
+    /// Example: `"Europe/Berlin"`, `"America/New_York"`. `None` = no inject (default).
+    ///
+    /// The block is placed in the USER-role message (not system prompt) so the
+    /// prefix-cached system block is never polluted. The user turn already busts
+    /// prefix cache on every message, so per-turn time content adds no cache cost.
+    #[serde(default)]
+    pub user_tz: Option<String>,
 }
 
 /// GOLD-ADAPT-OH-11 — serde default returning `true` so that existing

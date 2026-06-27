@@ -1170,6 +1170,20 @@ pub const EVENT_TYPE_HOOK_SKIPPED_ONCE: u8 = 0x8B;
 /// frame (same policy as `HINT_LOADED` 0x58).
 pub const EVENT_TYPE_SUBDIR_MD_LOADED: u8 = 0x8C;
 
+/// `0x8D TZ_CONTEXT_INJECTED` — GOLD-ADAPT-ODY-28. Emitted once per turn when
+/// a user-local TZ context block is prepended to the user prompt. Batchable.
+///
+/// The inject fires when `NEOTH_TZ` env var or `freedom.yaml::user_tz` is set
+/// to a valid IANA timezone name. The block is prepended to the USER-role
+/// message (not system prompt) so the LLM can anchor scheduling references
+/// correctly without polluting the prefix-cached system block.
+///
+/// Payload: `{ "tz_name": "<IANA-name>", "utc_offset_str": "±HH:MM", "ts_unix": <u64> }`.
+///
+/// Hooks-lifecycle band (0x80..=0x8F). Batchable — advisory, per-turn,
+/// re-derivable from the env/config on next turn; no fsync per frame.
+pub const EVENT_TYPE_TZ_CONTEXT_INJECTED: u8 = 0x8D;
+
 // ---- 0x90..=0x9F  Memory tiers (R-22..R-24) -------------------------------
 
 /// One event moved from `idx_episode` (hot) into `idx_consolidated` (warm).
@@ -2354,6 +2368,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     // GOLD-CCPARITY-SUBDIR-MD-01: sub-dir NEOTH.md merged into operator-context.
     ("subdir_md_loaded", EVENT_TYPE_SUBDIR_MD_LOADED),
+    // GOLD-ADAPT-ODY-28: user-local TZ context injected into user-role turn.
+    ("tz_context_injected", EVENT_TYPE_TZ_CONTEXT_INJECTED),
     // PWF-02: session-catchup PreCompact + SessionStart recovery.
     // `neoth wal show --type mode_checkpoint` surfaces every session-start +
     // pre-compact boundary written by the chat/channel pipelines.
@@ -2788,6 +2804,8 @@ const _: () = {
         || EVENT_TYPE_HOOK_SKIPPED_ONCE > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SUBDIR_MD_LOADED < 0x80
         || EVENT_TYPE_SUBDIR_MD_LOADED > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_TZ_CONTEXT_INJECTED < 0x80
+        || EVENT_TYPE_TZ_CONTEXT_INJECTED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]
