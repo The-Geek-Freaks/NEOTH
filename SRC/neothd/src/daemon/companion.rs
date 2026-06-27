@@ -1,7 +1,14 @@
-//! GOLD-ADAPT-ODY-24 — Companion LAN pairing server.
+//! GOLD-ADAPT-ODY-24 — Companion local-pairing server.
 //!
-//! Binds `127.0.0.1:9745` (default, configurable via
+//! Binds `127.0.0.1:{port}` (default port 9745, configurable via
 //! `freedom.yaml::companion.port`) when `companion.enabled = true`.
+//!
+//! ## Scope: localhost / local-browser companion
+//!
+//! This is a **localhost** companion — it is accessible only from the same
+//! machine (loopback bind + peer-IP check).  A phone on the LAN cannot reach
+//! it.  Real LAN pairing (bind `0.0.0.0`, Host-header allowlist, rate-limit
+//! on the pair endpoint) is tracked as a follow-up item.
 //!
 //! ## Sub-systems
 //!
@@ -15,10 +22,10 @@
 //!    requests whose `Origin` header is present but does not match the
 //!    loopback host. Returns `{token, session_id}` + `Set-Cookie` on success.
 //!
-//! 3. **LAN-IP UDP probe** — `UdpSocket::connect("8.8.8.8:80")` trick:
-//!    no packet is sent, but the OS selects the route and
-//!    `local_addr()` yields the operative LAN IP. Falls back to
-//!    `127.0.0.1` when no default route exists.
+//! 3. **LAN-IP UDP probe** (`detect_lan_ip`) — available for future use;
+//!    currently not called during server spawn because the bind is loopback-
+//!    only and the advertised pairing URL must match what the server actually
+//!    serves.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -431,11 +438,14 @@ pub fn spawn_companion_server_loop(
         };
 
         // Log the pairing URL so the operator can see it in `neoth serve` output.
-        let lan_ip = detect_lan_ip().await;
-        let pairing_url = format!("http://{}:{}/pair", lan_ip, config.port);
+        // NOTE: The server binds 127.0.0.1 (loopback only) — the URL must reflect
+        // that.  Real LAN pairing (phone scan → 0.0.0.0 bind + host-header check)
+        // is a follow-up; advertising a LAN IP here while binding loopback would
+        // be misleading and non-functional.
+        let pairing_url = format!("http://127.0.0.1:{}/api/v1/companion/pair", config.port);
         info!(
             url = %pairing_url,
-            "companion: pairing URL (scan QR at init or share manually)"
+            "companion: local pairing URL (localhost browser app; LAN pairing is a follow-up)"
         );
 
         run_companion_server(listener, state, shutdown).await;

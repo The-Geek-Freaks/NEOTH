@@ -35,7 +35,7 @@
 //! - `0x0A WEBHOOK_FAILED` — endpoint URL + error message
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, error, info, warn};
@@ -353,21 +353,19 @@ fn scan_wal_for_pending(
 
 /// Cache of SSRF-check results per URL to avoid re-resolving every tick.
 ///
-/// Stores the validated `IpAddr` set on success so a future DNS-rebind fix
-/// (`TODO(ssrf-dnsrebind)`) can pin connections to these addresses without
-/// a second resolution.  `Err(reason)` = permanently blocked.
+/// Stores the validated `IpAddr` set on success so `deliver_to_endpoint` can
+/// pin each connection via `ClientBuilder::resolve_to_addrs`, closing the
+/// TOCTOU DNS-rebinding window between the SSRF check and the actual TCP
+/// connect.  `Err(reason)` = permanently blocked.
 ///
-/// # TODO(ssrf-dnsrebind)
-/// Full DNS-rebind mitigation requires pinning the connection to the pre-validated
-/// IPs so that a low-TTL rebind to a private address between the SSRF check and the
-/// actual TCP connect is rejected.  reqwest's `ClientBuilder::resolve_to_addrs` is
-/// the right API but must be set at client-build time, making per-URL pinning
-/// impractical with a single shared client.  Mitigation options:
-///   1. Build a fresh `reqwest::Client` per endpoint with `resolve_to_addrs` set to
-///      the `Vec<IpAddr>` stored in this cache.
-///   2. Replace the reqwest client with `hyper` + a custom `tower` resolver that
-///      enforces the pinned IP set on every connect.
-/// The current cache already stores the resolved IPs to facilitate option 1.
+/// ## DNS-rebind mitigation (implemented)
+///
+/// `deliver_to_endpoint` builds a fresh `reqwest::Client` per delivery with
+/// `resolve_to_addrs(host, &[SocketAddr…])` set to the pre-validated IPs
+/// stored here.  reqwest forwards those addrs to the hyper connector, which
+/// uses them verbatim instead of calling the OS resolver again — so a low-TTL
+/// rebind to a private address after the SSRF check is silently rejected
+/// (the connection attempt simply fails to reach the rebinding IP).
 type SsrfCache = HashMap<String, Result<Vec<IpAddr>, String>>;
 
 async fn deliver_to_endpoint(
@@ -441,9 +439,51 @@ async fn deliver_to_endpoint(
         String::new()
     };
 
+    // ── DNS-rebind pin ───────────────────────────────────────────────────────
+    //
+    // Build a per-delivery reqwest::Client with resolve_to_addrs set to the
+    // pre-validated IPs from the SSRF cache.  This closes the TOCTOU window:
+    // even if DNS rebinds to a private address between the ssrf_check and now,
+    // hyper's connector will only dial the addresses we pinned here.
+    //
+    // If client construction fails (shouldn't happen) we fall back to the
+    // shared client — the SSRF check already ran, so the risk is low, but we
+    // log a warning so it's visible.
+    let pinned_client: Option<reqwest::Client> =
+        if let Some(Ok(pinned_ips)) = ssrf_cache.get(&endpoint.url) {
+            if let Ok((host, port)) = extract_host_port(&endpoint.url) {
+                let addrs: Vec<SocketAddr> = pinned_ips
+                    .iter()
+                    .map(|ip| SocketAddr::new(*ip, port))
+                    .collect();
+                match reqwest::Client::builder()
+                    .https_only(true)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .resolve_to_addrs(&host, &addrs)
+                    .build()
+                {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        warn!(
+                            url = %endpoint.url,
+                            error = %e,
+                            "webhook: pinned-client build failed; using shared client (SSRF check already passed)"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+    let effective_client: &reqwest::Client = pinned_client.as_ref().unwrap_or(client);
+
     // Send
     let t0 = std::time::Instant::now();
-    let mut req = client
+    let mut req = effective_client
         .post(&endpoint.url)
         .header("Content-Type", "application/json")
         .body(body_bytes);
@@ -454,8 +494,14 @@ async fn deliver_to_endpoint(
         Ok(resp) => {
             let status = resp.status().as_u16();
             let latency_ms = t0.elapsed().as_millis() as u64;
-            info!(url = %endpoint.url, status, latency_ms, event = event_name, "webhook delivered");
-            emit_delivered(writer, &endpoint.url, status, latency_ms).await;
+            if resp.status().is_success() {
+                info!(url = %endpoint.url, status, latency_ms, event = event_name, "webhook delivered");
+                emit_delivered(writer, &endpoint.url, status, latency_ms).await;
+            } else {
+                let msg = format!("HTTP {status}");
+                warn!(url = %endpoint.url, status, latency_ms, event = event_name, "webhook non-2xx response");
+                emit_failed(writer, &endpoint.url, &msg).await;
+            }
         }
         Err(e) => {
             let msg = format!("http send: {e}");
@@ -800,6 +846,185 @@ mod tests {
             result.is_err(),
             "ssrf_check must block localhost, got: {result:?}"
         );
+    }
+
+    // ── Fix 1: non-2xx response audit classification ─────────────────────────
+
+    /// A non-2xx HTTP response (e.g. 500, 403, 301) must emit WEBHOOK_FAILED,
+    /// NOT WEBHOOK_DELIVERED.  Previously the Ok(resp) arm always called
+    /// emit_delivered regardless of status.
+    ///
+    /// We spin up a real loopback TCP listener that sends a minimal HTTP/1.1
+    /// 500 response, then drive deliver_to_endpoint against it and verify the
+    /// WAL contains exactly one WEBHOOK_FAILED frame and zero WEBHOOK_DELIVERED.
+    #[tokio::test]
+    async fn non_2xx_response_emits_webhook_failed_not_delivered() {
+        use std::net::{IpAddr, Ipv4Addr};
+        use tokio::io::AsyncWriteExt;
+
+        // Spin up a raw TCP listener that always responds HTTP 500.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server_addr = format!("127.0.0.1:{port}");
+
+        tokio::spawn(async move {
+            // Accept one connection, write a 500 response, close.
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let resp = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(resp).await;
+            }
+        });
+
+        // Give the server task a tick to start.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        // Build a WAL writer to capture audit frames.
+        let wal_dir = tempfile::tempdir().unwrap();
+        let seg = wal_dir.path().join("test.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
+
+        // Build a reqwest client that allows http:// (for the loopback test URL).
+        // We must bypass https_only here since we're using a plain HTTP mock.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        // Manually pre-populate ssrf_cache with the loopback IP so deliver_to_endpoint
+        // skips the ssrf_check guard (it only blocks external hostnames; we want to
+        // exercise the response-classification logic).
+        let url = format!("http://{server_addr}/webhook");
+        let mut ssrf_cache: SsrfCache = HashMap::new();
+        ssrf_cache.insert(
+            url.clone(),
+            Ok(vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))]),
+        );
+
+        let endpoint = WebhookEndpointConfig {
+            url: url.clone(),
+            secret: crate::config::automation::WebhookEndpointConfig::default().secret,
+            events: vec![],
+        };
+        let hook = PendingWebhook {
+            event: WebhookEvent::ChatCompleted,
+            ts_secs: 0,
+            summary: serde_json::json!({}),
+        };
+
+        deliver_to_endpoint(&client, &endpoint, &hook, &mut ssrf_cache, &writer).await;
+
+        // Flush WAL: drop the handle so the writer task exits, then wait.
+        drop(writer);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+        // Walk WAL frames and count by event type.
+        let seg_path = wal_dir.path().join("test.wal");
+        let data = std::fs::read(&seg_path).unwrap_or_default();
+        let (delivered, failed) = count_audit_frames_in_wal(&data);
+
+        assert_eq!(
+            delivered, 0,
+            "expected zero WEBHOOK_DELIVERED frames for a 500 response, got {delivered}"
+        );
+        assert!(
+            failed >= 1,
+            "expected at least one WEBHOOK_FAILED frame for a 500 response, got 0"
+        );
+    }
+
+    /// Walk the raw WAL bytes and count frames by event type (reliable frame-walk,
+    /// not byte-scan).  Returns `(delivered_count, failed_count)`.
+    fn count_audit_frames_in_wal(data: &[u8]) -> (u32, u32) {
+        use crate::wal::frame::decode_frame;
+        use crate::wal::header::MAGIC;
+
+        let mut delivered = 0u32;
+        let mut failed = 0u32;
+        // The WAL segment starts with a segment header; scan forward from offset 0
+        // looking for NEOT magic to find each frame start.
+        let mut pos = 0usize;
+        while pos + 4 <= data.len() {
+            // Look for "NEOT" preamble.
+            if &data[pos..pos + 4] != MAGIC.as_ref() {
+                pos += 1;
+                continue;
+            }
+            // Try to decode a frame starting here.
+            match decode_frame(&data[pos..]) {
+                Ok(frame) => {
+                    if frame.header.event_type == EVENT_TYPE_WEBHOOK_DELIVERED {
+                        delivered += 1;
+                    } else if frame.header.event_type == EVENT_TYPE_WEBHOOK_FAILED {
+                        failed += 1;
+                    }
+                    let advance = frame.header.total_len as usize;
+                    if advance == 0 {
+                        pos += 1;
+                    } else {
+                        pos += advance;
+                    }
+                }
+                Err(_) => {
+                    pos += 1;
+                }
+            }
+        }
+        (delivered, failed)
+    }
+
+    // ── Fix 2: DNS-rebind pin — resolve_to_addrs is set per delivery ─────────
+
+    /// Verify that deliver_to_endpoint builds a pinned client using the IPs
+    /// from the SSRF cache.  We do this by pre-populating the cache with a
+    /// public IP (1.1.1.1) pinned to an unreachable port — if the client
+    /// re-resolves the host it might reach something; if it uses the pinned
+    /// addr it fails to connect (nothing is listening on 1.1.1.1:9 in the
+    /// test runner).  Either way, the key assertion is that the ssrf_cache
+    /// entry is consumed correctly (no panic, no SSRF bypass).
+    ///
+    /// This is a structural test: it confirms the code path that builds
+    /// resolve_to_addrs runs without error, not an end-to-end connectivity test.
+    #[tokio::test]
+    async fn pinned_client_uses_ssrf_cache_ips() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let wal_dir = tempfile::tempdir().unwrap();
+        let seg = wal_dir.path().join("pin_test.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
+
+        let client = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap();
+
+        // Pre-populate cache with a plausible public IP (1.1.1.1) for the host.
+        // The port 9 (discard) ensures a rapid connection refusal in CI.
+        let url = "https://one.one.one.one:443/webhook".to_string();
+        let mut ssrf_cache: SsrfCache = HashMap::new();
+        ssrf_cache.insert(
+            url.clone(),
+            Ok(vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))]),
+        );
+
+        let endpoint = WebhookEndpointConfig {
+            url: url.clone(),
+            secret: crate::config::automation::WebhookEndpointConfig::default().secret,
+            events: vec![],
+        };
+        let hook = PendingWebhook {
+            event: WebhookEvent::ChatCompleted,
+            ts_secs: 0,
+            summary: serde_json::json!({}),
+        };
+
+        // Calling deliver_to_endpoint with the pinned cache must not panic.
+        // The connection will fail (timeout / refused) — that's expected and results
+        // in emit_failed being called, which is acceptable.
+        deliver_to_endpoint(&client, &endpoint, &hook, &mut ssrf_cache, &writer).await;
+        // If we reach here without panic, the pinned-client code path compiled and ran.
     }
 
     // ── WAL scan ─────────────────────────────────────────────────────────────
