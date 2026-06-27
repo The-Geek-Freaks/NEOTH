@@ -126,6 +126,43 @@
 //!   - `src/sources/hackernews.rs` — explicit self-reflection source fetching
 //!                                    public HN Firebase API stories for tech
 //!                                    currency gap analysis.
+//!   - `src/cli/serve.rs`          — GOOSE-03 operator-approval gate: sends
+//!                                    an elicitation message to the operator's
+//!                                    Telegram bot (token + user-id from
+//!                                    FreedomConfig) when a GOOSE action needs
+//!                                    human approval.  Fire-and-forget;
+//!                                    never auto-triggered; same opt-in
+//!                                    category as the Telegram channel adapter.
+//!   - `src/cli/doctor/checks/live_probes.rs`
+//!                                  — `neoth doctor` live connectivity probes
+//!                                    (HTTP-GET + TCP-connect).  Operator-
+//!                                    initiated diagnostic only; timeout-bounded
+//!                                    + TLS-verifying; dials operator-configured
+//!                                    endpoints, never automatic phone-home.
+//!   - `src/daemon/webhook_manager.rs`
+//!                                  — operator-configured outbound webhook
+//!                                    delivery (enabled=false by default).
+//!                                    https_only, redirect(Policy::none)
+//!                                    for SSRF prevention, HMAC-signed,
+//!                                    WAL-audited.  `#[cfg(test)]` unit
+//!                                    at line 753 builds the same client for
+//!                                    a contract test; dials no external host.
+//!   - `src/security/dep_health.rs`
+//!                                  — GOLD-ADAPT-SNYK-03b: queries
+//!                                    `registry.npmjs.org` for deprecated /
+//!                                    abandoned package signals before install.
+//!                                    Operator-triggered; fails-open on any
+//!                                    network error.  Same supply-chain gate
+//!                                    category as `security/osv_check.rs`.
+//!   - `src/daemon/companion.rs`   — `#[cfg(test)]` loopback tests: spin up
+//!                                    the companion HTTP server on 127.0.0.1:0
+//!                                    and use reqwest to hit that exact port.
+//!                                    Never dials external addresses.
+//!   - `src/daemon/kanban_sse.rs`  — `#[cfg(test)]` loopback tests: spin up
+//!                                    the kanban SSE server on 127.0.0.1:0
+//!                                    (accept guard rejects non-loopback peers)
+//!                                    and use reqwest to consume that port.
+//!                                    Never dials external addresses.
 //!
 //! Adding a new allowed path means editing both the codebase AND this
 //! file, which makes the audit trail loud.
@@ -162,6 +199,42 @@ const ALLOWED_PREFIXES: &[&str] = &[
     // GOLD-ADOPT-11 — live HuggingFace GGUF-variant lookup builds a
     // timeout-bounded client for the HF model-search API.
     "src/models/gguf_variants.rs",
+    // GOOSE-03 operator-approval gate — send the human-readable elicitation
+    // message to the operator's Telegram bot when `telegram_token` +
+    // `telegram_user_id` are configured in FreedomConfig.  Fire-and-forget;
+    // a failed delivery lets the gate time out (fail-closed).  The token and
+    // user-id are operator-supplied; no implicit outbound; same
+    // operator-opt-in category as the Telegram channel adapter in channels/.
+    "src/cli/serve.rs",
+    // `neoth doctor` live connectivity probes — operator-initiated diagnostic
+    // subcommand.  `http_get_probe` builds a timeout-bounded TLS-verifying
+    // ClientBuilder; `tcp_connect_probe` opens a raw TcpStream to the
+    // operator-configured endpoint.  Never runs automatically — triggered by
+    // the explicit `neoth doctor` CLI invocation.
+    "src/cli/doctor/checks/live_probes.rs",
+    // Webhook delivery cron — operator-configured outbound POST to registered
+    // webhook URLs.  Production client: https_only(true), redirect(Policy::none)
+    // to prevent SSRF via 3xx, 10 s timeout, SSRF IP-block guard, HMAC-signed
+    // payload, WAL-audited delivery.  Enabled only when
+    // `webhook_manager.enabled = true` in FreedomConfig (default: false).
+    // #[cfg(test)] unit at line 753 builds the same client to verify the
+    // Policy::none contract — dials no external host.
+    "src/daemon/webhook_manager.rs",
+    // GOLD-ADAPT-SNYK-03b — queries `registry.npmjs.org/<pkg>` for deprecated /
+    // abandoned signals before `npm install -g`.  Operator-triggered (install
+    // wizard / `neoth security dep-health`); fails-open on any network error so
+    // an offline install is never bricked.  Same supply-chain gate category
+    // as `security/osv_check.rs`.
+    "src/security/dep_health.rs",
+    // Test-loopback: companion server unit tests spin up an axum listener on
+    // 127.0.0.1:0, then use reqwest::Client::new() to hit that exact loopback
+    // port.  Never dials any external address.  #[cfg(test)] block at line 447.
+    "src/daemon/companion.rs",
+    // Test-loopback: kanban SSE unit tests spin up the SSE HTTP server on
+    // 127.0.0.1:0 (loopback-only accept guard: `if !peer.ip().is_loopback()
+    // { continue; }`), then use reqwest::Client::new() to consume that local
+    // port.  Never dials any external address.  #[cfg(test)] block at line 259.
+    "src/daemon/kanban_sse.rs",
 ];
 
 const FORBIDDEN_PATTERNS: &[&str] = &[
