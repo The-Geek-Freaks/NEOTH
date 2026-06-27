@@ -263,6 +263,15 @@ pub fn default_table() -> ModelRoleTable {
             "cohere_api",
             ProviderRoles::default().with(ModelRole::Flagship, "command-a-plus-05-2026"),
         )
+        // GOLD-ADAPT-ODY-15: GitHub Copilot exposes gpt-4o (Flagship/Balanced)
+        // and gpt-4o-mini (Fast) via its chat completions endpoint.
+        .with_provider(
+            "copilot_api",
+            ProviderRoles::default()
+                .with(ModelRole::Flagship, "gpt-4o")
+                .with(ModelRole::Balanced, "gpt-4o")
+                .with(ModelRole::Fast, "gpt-4o-mini"),
+        )
 }
 
 /// GOLD-PROG-14 / [neoth_model_version_agnostic] — the provider's CURRENT top
@@ -438,6 +447,7 @@ mod tests {
             "aws_bedrock",
             "azure_openai",
             "local_qwen",
+            "copilot_api", // GOLD-ADAPT-ODY-15
         ] {
             assert!(
                 t.resolve(id, ModelRole::Flagship).is_some(),

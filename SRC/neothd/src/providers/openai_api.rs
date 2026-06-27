@@ -51,6 +51,19 @@ impl OpenAiAdapter {
         Self::build(endpoint, api_key, default_model, "openai_compat")
     }
 
+    /// GOLD-ADAPT-ODY-15 — Copilot-endpoint variant. Identical wire format to
+    /// `new_openai` but names itself `"copilot_api"` so `Provider::name()`
+    /// returns the correct cost-table key. The session token is a short-lived
+    /// credential managed by `CopilotAdapter::fetch_or_refresh_token`; this
+    /// constructor just records it as the bearer key for the one call.
+    pub fn new_copilot(
+        endpoint: String,
+        session_token: SecretString,
+        default_model: String,
+    ) -> Result<Self> {
+        Self::build(endpoint, session_token, default_model, "copilot_api")
+    }
+
     fn build(
         endpoint: String,
         api_key: SecretString,

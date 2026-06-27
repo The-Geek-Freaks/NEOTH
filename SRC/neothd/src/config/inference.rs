@@ -76,6 +76,11 @@ pub enum InferenceProvider {
     /// path). Hybrid wire format: OpenAI-like request (messages with a
     /// `system` role) + Anthropic-like response (`message.content[].text`).
     Cohere,
+    /// GOLD-ADAPT-ODY-15 — GitHub Copilot via OAuth PAT + short-lived session
+    /// token. Zero per-token cost for GitHub Copilot subscribers. Uses the
+    /// OpenAI-compatible `api.githubcopilot.com` endpoint; session token is
+    /// refreshed from `api.github.com/copilot_internal/v2/token` as needed.
+    GitHubCopilot,
 }
 
 impl InferenceProvider {
@@ -91,6 +96,7 @@ impl InferenceProvider {
             InferenceProvider::AzureOpenAi => "azure_openai",
             InferenceProvider::LocalOuro => "local_ouro",
             InferenceProvider::Cohere => "cohere_api",
+            InferenceProvider::GitHubCopilot => "copilot_api",
         }
     }
 
@@ -115,6 +121,9 @@ impl InferenceProvider {
                 "Local Ouro thinking-models via candle (ByteDance LoopLM, Apache-2.0; 4× compute, explicit reasoning prose)"
             }
             InferenceProvider::Cohere => "Cohere v2 Chat API (key required, BILLED per-token)",
+            InferenceProvider::GitHubCopilot => {
+                "GitHub Copilot (OAuth PAT, zero per-token cost for GH Copilot subscribers)"
+            }
         }
     }
 
@@ -130,6 +139,7 @@ impl InferenceProvider {
             "aws_bedrock" | "bedrock" => Some(Self::AwsBedrock),
             "azure_openai" | "azure" => Some(Self::AzureOpenAi),
             "local_ouro" | "ouro" => Some(Self::LocalOuro),
+            "copilot_api" | "copilot" | "github_copilot" => Some(Self::GitHubCopilot),
             _ => None,
         }
     }
@@ -175,6 +185,7 @@ impl InferenceProvider {
             InferenceProvider::AzureOpenAi => ProviderKind::AzureOpenAi,
             InferenceProvider::LocalOuro => ProviderKind::LocalOuro,
             InferenceProvider::Cohere => ProviderKind::Cohere,
+            InferenceProvider::GitHubCopilot => ProviderKind::GitHubCopilot,
         }
     }
 }

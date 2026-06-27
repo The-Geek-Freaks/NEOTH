@@ -86,6 +86,7 @@ pub(crate) async fn step5_provider(
                    --provider openai_api   (provide --provider-key sk-...)\n  \
                    --provider gemini_api   (provide --provider-key ...)\n  \
                    --provider local_qwen   (no key needed, ~3 GB local model)\n  \
+                   --provider copilot_api  (provide --provider-key <github_pat>)\n  \
                    --provider openai_compat --provider-endpoint <URL>   (OpenRouter / vLLM / etc.)"
             );
         }
@@ -113,6 +114,10 @@ pub(crate) async fn step5_provider(
                 (
                     ProviderKind::LocalQwen,
                     "local_qwen — Qwen2/Qwen3 dense on your hardware (~3 GB cached, CPU + GPU). No GPU? Pick openai_compat + OpenRouter instead.",
+                ),
+                (
+                    ProviderKind::GitHubCopilot,
+                    "copilot_api (GitHub Copilot — OAuth PAT, zero per-token cost for GH subscribers)",
                 ),
                 (ProviderKind::Skip, "skip (configure later)"),
             ];
@@ -340,6 +345,32 @@ pub(crate) async fn step5_provider(
                      deployment-name-as-model schema) ships in Phase 2."
                 );
             }
+        }
+        ProviderKind::GitHubCopilot => {
+            // GOLD-ADAPT-ODY-15 — Copilot OAuth provider.
+            // No endpoint prompt needed (defaults to api.githubcopilot.com).
+            // Collect the GitHub PAT (provider_key) that the session-token
+            // endpoint will authenticate with.
+            if interactive {
+                println!(
+                    "  copilot_api uses your GitHub Copilot subscription — no per-token metering. \
+                     Requires a GitHub PAT with `copilot` scope (Settings → Developer settings → \
+                     Personal access tokens → Fine-grained; scope: Copilot Editor Context). \
+                     Your PAT is stored locally in credentials.yaml (mlock + zeroize)."
+                );
+            }
+            let key = prompt_provider_key(args, interactive, kind)?;
+            if let Some(k) = key {
+                state.provider_key = Some(crate::secret::SecretString::from(k));
+            }
+            use crate::providers::model_roles::ModelRole;
+            let bundled_default = crate::providers::default_model(
+                "copilot_api",
+                ModelRole::Flagship,
+                "gpt-4o",
+            );
+            state.provider_model =
+                Some(args.provider_model.clone().unwrap_or(bundled_default));
         }
         ProviderKind::Skip => {
             if interactive {

@@ -56,6 +56,18 @@ pub enum ProviderKind {
     #[serde(rename = "azure_openai", alias = "azure_open_ai")]
     #[value(name = "azure_openai", alias = "azure_open_ai")]
     AzureOpenAi,
+    /// GOLD-ADAPT-ODY-15 — GitHub Copilot via OAuth PAT + short-lived session
+    /// token. Zero per-token cost for GitHub Copilot subscribers (flat
+    /// subscription). Uses the OpenAI-compatible `api.githubcopilot.com`
+    /// endpoint authenticated via `api.github.com/copilot_internal/v2/token`.
+    ///
+    /// COR-Copilot: `rename_all = "snake_case"` would emit `git_hub_copilot`
+    /// — not the canonical `copilot_api` slug. Pin both the serde wire form
+    /// and the clap value to `copilot_api`; accept `github_copilot` as a
+    /// human-friendly alias so operators who type the long form still work.
+    #[serde(rename = "copilot_api", alias = "github_copilot")]
+    #[value(name = "copilot_api", alias = "github_copilot")]
+    GitHubCopilot,
     /// No provider yet; configure later via `neoth provider add`.
     Skip,
 }
@@ -77,6 +89,7 @@ impl ProviderKind {
             ProviderKind::LocalOuro => "local_ouro",
             ProviderKind::AwsBedrock => "aws_bedrock",
             ProviderKind::AzureOpenAi => "azure_openai",
+            ProviderKind::GitHubCopilot => "copilot_api",
             ProviderKind::Skip => "skip",
         }
     }
@@ -116,6 +129,7 @@ impl ProviderKind {
             | ProviderKind::LocalOuro
             | ProviderKind::AzureOpenAi
             | ProviderKind::Cohere
+            | ProviderKind::GitHubCopilot
             | ProviderKind::Skip => return None,
         })
     }
@@ -137,6 +151,7 @@ impl ProviderKind {
             ProviderKind::LocalOuro => I::LocalOuro,
             ProviderKind::AwsBedrock => I::AwsBedrock,
             ProviderKind::AzureOpenAi => I::AzureOpenAi,
+            ProviderKind::GitHubCopilot => I::GitHubCopilot,
             ProviderKind::Skip => I::ClaudeCli, // unreachable in practice
         }
     }

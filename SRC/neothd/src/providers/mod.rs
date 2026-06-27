@@ -24,6 +24,8 @@ pub mod circuit_breaker_stream;
 pub mod compactor;
 pub mod claude_cli;
 pub mod claude_pid_hunter;
+/// GOLD-ADAPT-ODY-15 — GitHub Copilot OAuth provider (zero per-token cost for GH subscribers).
+pub mod copilot;
 pub mod claude_retry;
 pub mod claude_session;
 pub mod claude_tmux;
@@ -398,7 +400,8 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
         return Err(anyhow::anyhow!(
             "freedom.yaml::profile.learn_provider = `{learn_name}` is not a recognised provider \
              slug. Valid: local_qwen, local_ouro, claude_cli, openai_api, openai_compat, \
-             gemini_api, aws_bedrock, azure_openai, skip. Edit + re-run `neoth reload`. \
+             gemini_api, aws_bedrock, azure_openai, copilot_api, skip. Edit + re-run \
+             `neoth reload`. \
              (Antigravity CLI surfaces via the same `gemini_api` provider — `agy` is the \
              operator-side CLI, gemini_api is the upstream REST endpoint it auths against.)"
         ));
@@ -812,6 +815,17 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 deployment,
                 api_version,
             )?))
+        }
+        ProviderKind::GitHubCopilot => {
+            // GOLD-ADAPT-ODY-15: PAT → short-lived session token → OpenAI-compat completions.
+            // provider_key holds the operator's GitHub PAT (with `copilot` scope).
+            // provider_endpoint and provider_model may be left unset — the adapter
+            // defaults to `https://api.githubcopilot.com` and `gpt-4o` respectively.
+            let pat = require_provider_key(config, "copilot_api")?;
+            let model = config.provider_model.clone().unwrap_or_else(|| {
+                default_model("copilot_api", model_roles::ModelRole::Flagship, "gpt-4o")
+            });
+            Ok(Box::new(copilot::CopilotAdapter::new(pat, model)?))
         }
         ProviderKind::Skip => {
             anyhow::bail!("provider was set to `skip` during init. Run `neoth provider add`.")
@@ -1297,6 +1311,27 @@ mod tests {
                 "expected local-qwen-related error, got: {e}"
             );
         }
+    }
+
+    /// GOLD-ADAPT-ODY-15 integration test: proves `from_config` dispatches to
+    /// `CopilotAdapter` for `ProviderKind::GitHubCopilot`. This is the canonical
+    /// consumer wire — every other builder (`from_config_for_role`, `fallback_chain_from_config`,
+    /// etc.) calls this function, so a passing test here covers all paths.
+    #[tokio::test]
+    async fn from_config_copilot_arm_constructs_adapter() {
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::GitHubCopilot);
+        cfg.provider_key = Some(crate::secret::SecretString::from(
+            "ghp_test_pat_000000000000000000000000",
+        ));
+        cfg.provider_model = Some("gpt-4o".to_string());
+        let provider = from_config(&cfg).await.expect("CopilotAdapter must construct");
+        // name() == "copilot_api" proves the correct arm was reached.
+        assert_eq!(
+            provider.name(),
+            "copilot_api",
+            "from_config(GitHubCopilot) must return a provider named copilot_api"
+        );
     }
 
     #[tokio::test]

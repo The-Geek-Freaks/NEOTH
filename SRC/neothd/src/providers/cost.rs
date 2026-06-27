@@ -127,7 +127,12 @@ pub fn lookup_price(provider: &str, model: &str) -> Option<PriceRow> {
             output_eur_per_mtok: 0.55, // ~$0.6
         }),
         // Local — always free
-        ("local_qwen" | "local_ouro", _) => Some(PriceRow::free()),
+        ("local_qwen" | "local_ouro" | "local_abliterated", _) => Some(PriceRow::free()),
+        // GitHub Copilot — flat subscription; zero marginal per-token cost.
+        // GOLD-ADAPT-ODY-15: without this arm, predict() falls back to the
+        // €15/€60 per-Mtok unknown_high_estimate and the autonomy gate prompts
+        // on every chat turn for a subscription-free provider.
+        ("copilot_api", _) => Some(PriceRow::free()),
         _ => None,
     }
 }

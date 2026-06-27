@@ -55,6 +55,7 @@ const ALL_PROVIDERS: &[InferenceProvider] = &[
     InferenceProvider::AzureOpenAi,
     InferenceProvider::LocalOuro,
     InferenceProvider::Cohere,
+    InferenceProvider::GitHubCopilot,
 ];
 
 fn is_compat_aware(p: InferenceProvider) -> bool {
@@ -379,12 +380,13 @@ mod tests {
                 | InferenceProvider::AwsBedrock
                 | InferenceProvider::AzureOpenAi
                 | InferenceProvider::LocalOuro
-                | InferenceProvider::Cohere => true,
+                | InferenceProvider::Cohere
+                | InferenceProvider::GitHubCopilot => true,
             }
         }
         assert_eq!(
             ALL_PROVIDERS.len(),
-            10,
+            11,
             "ALL_PROVIDERS must enumerate every InferenceProvider variant"
         );
         for p in ALL_PROVIDERS {

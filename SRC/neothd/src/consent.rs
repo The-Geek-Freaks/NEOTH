@@ -40,7 +40,8 @@ pub fn is_cloud(kind: ProviderKind) -> bool {
         | ProviderKind::Cohere
         | ProviderKind::OpenaiCompat
         | ProviderKind::AwsBedrock
-        | ProviderKind::AzureOpenAi => true,
+        | ProviderKind::AzureOpenAi
+        | ProviderKind::GitHubCopilot => true,
         ProviderKind::LocalQwen | ProviderKind::LocalOuro | ProviderKind::Skip => false,
     }
 }
@@ -59,6 +60,7 @@ pub fn slug(kind: ProviderKind) -> &'static str {
         ProviderKind::LocalOuro => "local_ouro",
         ProviderKind::AwsBedrock => "aws_bedrock",
         ProviderKind::AzureOpenAi => "azure_openai",
+        ProviderKind::GitHubCopilot => "copilot_api",
         ProviderKind::Skip => "skip",
     }
 }
@@ -75,6 +77,7 @@ pub fn kind_from_slug(s: &str) -> Option<ProviderKind> {
         "local_ouro" => Some(ProviderKind::LocalOuro),
         "aws_bedrock" => Some(ProviderKind::AwsBedrock),
         "azure_openai" => Some(ProviderKind::AzureOpenAi),
+        "copilot_api" => Some(ProviderKind::GitHubCopilot),
         "skip" => Some(ProviderKind::Skip),
         _ => None,
     }
@@ -90,6 +93,7 @@ fn cloud_label(kind: ProviderKind) -> &'static str {
         ProviderKind::OpenaiCompat => "the configured OpenAI-compatible endpoint",
         ProviderKind::AwsBedrock => "AWS Bedrock (region + IAM credential chain)",
         ProviderKind::AzureOpenAi => "Azure OpenAI (api-version + deployment name)",
+        ProviderKind::GitHubCopilot => "GitHub Copilot (api.githubcopilot.com)",
         ProviderKind::LocalQwen => "local Qwen (no remote network)",
         ProviderKind::LocalOuro => "local Ouro thinking-models (no remote network)",
         ProviderKind::Skip => "no provider",
@@ -442,6 +446,7 @@ mod tests {
         assert!(is_cloud(ProviderKind::OpenaiCompat));
         assert!(is_cloud(ProviderKind::AwsBedrock));
         assert!(is_cloud(ProviderKind::AzureOpenAi));
+        assert!(is_cloud(ProviderKind::GitHubCopilot)); // GOLD-ADAPT-ODY-15
         // Local + skip never gate.
         assert!(!is_cloud(ProviderKind::LocalQwen));
         assert!(!is_cloud(ProviderKind::LocalOuro));
@@ -458,6 +463,7 @@ mod tests {
             ProviderKind::LocalQwen,
             ProviderKind::AwsBedrock,
             ProviderKind::AzureOpenAi,
+            ProviderKind::GitHubCopilot, // GOLD-ADAPT-ODY-15
             ProviderKind::Skip,
         ] {
             assert_eq!(kind_from_slug(slug(kind)), Some(kind), "{kind:?}");

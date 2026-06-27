@@ -427,9 +427,12 @@ pub(crate) fn catalog_key_for_provider(
         I::OpenAiCompat => "openai_compat",
         I::Gemini => "gemini_api",
         I::AwsBedrock => "aws_bedrock",
-        // Local Qwen + AzureOpenAi + Cohere don't have a model-catalog
-        // source today — fall through to bundled defaults.
-        I::LocalQwen | I::LocalOuro | I::AzureOpenAi | I::Cohere => return None,
+        // Local + no-catalog providers fall through to bundled defaults.
+        // GitHubCopilot uses whatever model the operator configures (gpt-4o
+        // default) — no NEOTH-side catalog discovery for Copilot's endpoint.
+        I::LocalQwen | I::LocalOuro | I::AzureOpenAi | I::Cohere | I::GitHubCopilot => {
+            return None
+        }
     })
 }
 
