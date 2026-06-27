@@ -38,6 +38,18 @@ const RESERVED: &[(&str, &str)] = &[
          distinct 0x52..0x55 risk-gate event types; 0xCF stays registered ONLY for \
          replaying pre-split WALs and intentionally has no new emit site",
     ),
+    (
+        "EVENT_TYPE_REFLECTION_OBSERVATION_STAGED",
+        "Defined ahead of its producer: the reflection-observation staging emit \
+         lands with that self-improve consumer; registered now to pin the byte. \
+         Wire on consumer landing, then remove from RESERVED.",
+    ),
+    (
+        "EVENT_TYPE_SKILL_PERF_SUGGESTION",
+        "Defined ahead of its producer: the skill-performance suggestion emit lands \
+         with the skill-perf analysis consumer; registered now to pin the byte. \
+         Wire on consumer landing, then remove from RESERVED.",
+    ),
 ];
 
 #[test]
