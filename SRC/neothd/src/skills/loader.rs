@@ -510,12 +510,18 @@ mod tests {
         // Every skill must carry trigger_keywords (a manifest with an
         // empty list is a router miss waiting to happen) + a non-empty
         // system_prompt (the whole point of the skill).
+        // Exception: persona-mode skills (e.g. `loyal_buddy`) are hard-wired
+        // via PersonaMode, not the keyword router — their trigger_keywords are
+        // intentionally empty so the router never picks them up accidentally.
+        const PERSONA_MODE_SKILLS: &[&str] = &["loyal_buddy"];
         for s in &skills {
-            assert!(
-                !s.trigger_keywords().is_empty(),
-                "skill `{}` has no trigger_keywords",
-                s.id()
-            );
+            if !PERSONA_MODE_SKILLS.contains(&s.id()) {
+                assert!(
+                    !s.trigger_keywords().is_empty(),
+                    "skill `{}` has no trigger_keywords",
+                    s.id()
+                );
+            }
             assert!(
                 !s.manifest.system_prompt.trim().is_empty(),
                 "skill `{}` has empty system_prompt",

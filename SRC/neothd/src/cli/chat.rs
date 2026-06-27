@@ -6754,10 +6754,18 @@ mod tests {
             "recall short-circuit must not call the provider"
         );
 
-        // WAL: exactly one frame after the segment header — RAW_TEXT — and
-        // NOTHING after it (no PROVIDER_REQUEST).
+        // WAL: SegmentHeader, then MODE_CHECKPOINT (PWF-02 session-start anchor),
+        // then RAW_TEXT — and NOTHING after RAW_TEXT (no PROVIDER_REQUEST).
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
+        // PWF-02: skip the MODE_CHECKPOINT frame that now precedes RAW_TEXT.
+        let cp = decode_frame(frames).expect("decode MODE_CHECKPOINT frame");
+        assert_eq!(
+            cp.header.event_type,
+            crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT,
+            "first frame after segment header must be MODE_CHECKPOINT (PWF-02)"
+        );
+        let frames = &frames[cp.header.total_len as usize..];
         let dec0 = decode_frame(frames).expect("decode RAW_TEXT frame");
         assert_eq!(
             dec0.header.event_type,
@@ -6850,10 +6858,18 @@ mod tests {
             .await
             .expect("chat run_with succeeds");
 
-        // The WAL must contain: SegmentHeader, then RAW_TEXT (raw prompt
-        // for recall), then PROVIDER_REQUEST, then PROVIDER_RESPONSE.
+        // The WAL must contain: SegmentHeader, MODE_CHECKPOINT (PWF-02),
+        // RAW_TEXT, PROVIDER_REQUEST, then PROVIDER_RESPONSE.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
+
+        // PWF-02: skip the MODE_CHECKPOINT frame that now precedes RAW_TEXT.
+        let cp = decode_frame(frames).expect("decode MODE_CHECKPOINT frame");
+        assert_eq!(
+            cp.header.event_type,
+            crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT,
+        );
+        let frames = &frames[cp.header.total_len as usize..];
 
         use crate::wal::events::EVENT_TYPE_RAW_TEXT;
         let dec0 = decode_frame(frames).expect("decode RAW_TEXT frame");
@@ -7263,9 +7279,17 @@ mod tests {
             .await
             .expect("streaming run");
 
-        // WAL layout: SegmentHeader, RAW_TEXT, REQUEST, CHUNK, CHUNK, RESPONSE.
+        // WAL layout: SegmentHeader, MODE_CHECKPOINT (PWF-02), RAW_TEXT, REQUEST, CHUNK, CHUNK, RESPONSE.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
+
+        // PWF-02: skip the MODE_CHECKPOINT frame that now precedes RAW_TEXT.
+        let cp = decode_frame(frames).expect("MODE_CHECKPOINT");
+        assert_eq!(
+            cp.header.event_type,
+            crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT,
+        );
+        let frames = &frames[cp.header.total_len as usize..];
 
         use crate::wal::events::EVENT_TYPE_RAW_TEXT;
         let dec0 = decode_frame(frames).expect("RAW_TEXT");
@@ -7324,15 +7348,25 @@ mod tests {
             dec3.header.event_type,
             crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK
         );
-        let rest = &rest[dec3.header.total_len as usize..];
+        let mut rest = &rest[dec3.header.total_len as usize..];
 
-        let dec4 = decode_frame(rest).expect("RESPONSE");
-        assert_eq!(dec4.header.event_type, EVENT_TYPE_PROVIDER_RESPONSE);
-        let resp_payload: serde_json::Value = serde_json::from_slice(dec4.payload).unwrap();
-        assert_eq!(resp_payload["streamed"], true);
-        assert_eq!(resp_payload["input_tokens"], 5);
-        assert_eq!(resp_payload["output_tokens"], 3);
-        assert_eq!(resp_payload["model"], "mock-stream-1");
+        // Skip any instrumentation frames (e.g. TOKEN_TPS_SAMPLE 0x69) that
+        // may be emitted between the last chunk and PROVIDER_RESPONSE — these
+        // are non-deterministic telemetry and not part of the test's contract.
+        loop {
+            let frame = decode_frame(rest).expect("frame after CHUNK 2");
+            if frame.header.event_type == EVENT_TYPE_PROVIDER_RESPONSE {
+                let resp_payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).unwrap();
+                assert_eq!(resp_payload["streamed"], true);
+                assert_eq!(resp_payload["input_tokens"], 5);
+                assert_eq!(resp_payload["output_tokens"], 3);
+                assert_eq!(resp_payload["model"], "mock-stream-1");
+                break;
+            }
+            rest = &rest[frame.header.total_len as usize..];
+        }
+        // (response assertions handled in the loop above)
     }
 
     #[tokio::test]
@@ -7414,10 +7448,18 @@ mod tests {
         let result = run_chat_with(args, config, &FailingProvider).await;
         assert!(result.is_err());
 
-        // The RAW_TEXT + PROVIDER_REQUEST frames must still be on disk —
-        // writes happen before provider call.
+        // The MODE_CHECKPOINT + RAW_TEXT + PROVIDER_REQUEST frames must still be
+        // on disk — writes happen before provider call.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
+
+        // PWF-02: skip the MODE_CHECKPOINT frame that now precedes RAW_TEXT.
+        let cp = decode_frame(frames).expect("MODE_CHECKPOINT");
+        assert_eq!(
+            cp.header.event_type,
+            crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT,
+        );
+        let frames = &frames[cp.header.total_len as usize..];
 
         use crate::wal::events::EVENT_TYPE_RAW_TEXT;
         let dec0 = decode_frame(frames).expect("RAW_TEXT");

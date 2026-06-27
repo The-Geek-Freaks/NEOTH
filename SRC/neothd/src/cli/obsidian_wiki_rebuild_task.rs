@@ -117,21 +117,22 @@ async fn run_one_tick(
     .context("obsidian wiki-rebuild: discover_sources failed")?;
 
     let now_ns = crate::time::now_unix_ns_i64();
-    let ingest_stats = tokio::task::spawn_blocking(move || {
-        let conn = crate::memory::store::open(&crate::memory::store::default_path())
-            .context("obsidian wiki-rebuild: open views.db")?;
-        crate::wiki::ingest_sources(&conn, &sources, now_ns)
-            .context("obsidian wiki-rebuild: ingest_sources failed")
-    })
-    .await
-    .context("obsidian wiki-rebuild: spawn_blocking panicked (ingest)")??;
 
-    // Step 3: emit 0xFA WAL frame with rebuild counters.
+    // Step 3: emit 0xFA WAL frame BEFORE ingest so a task abort during the
+    // blocking ingest cannot suppress the audit frame.
+    //
+    // Rationale: `spawn_blocking` tasks run to completion even when the parent
+    // async task is cancelled (Tokio guarantee), but the `await` on the join
+    // handle IS a cancellation point. If the task is aborted while awaiting
+    // ingest, control never reaches a WAL emit that follows. Moving the emit
+    // here (after pages are on disk) makes the frame unconditional for any tick
+    // that actually wrote wiki pages. Ingest stats are not yet known; the frame
+    // records 0 for them (acceptable — the ingest runs best-effort after).
     let payload = serde_json::json!({
         "pages_written": stats.pages_written,
         "sources": stats.sources,
-        "ground_truth_inserted": ingest_stats.inserted,
-        "ground_truth_revoked": ingest_stats.revoked,
+        "ground_truth_inserted": 0_u64,
+        "ground_truth_revoked": 0_u64,
         "ts_unix": now_ns / 1_000_000_000,
     });
     let body = serde_json::to_vec(&payload).unwrap_or_default();
@@ -139,6 +140,24 @@ async fn run_one_tick(
     if let Err(e) = writer.append(header, body).await {
         warn!(error = %e, "obsidian wiki-rebuild: WAL append failed (non-fatal)");
     }
+
+    // Step 4: refresh ground-truth pointers in idx_groundtruth (best-effort).
+    let ingest_result = tokio::task::spawn_blocking(move || {
+        let conn = crate::memory::store::open(&crate::memory::store::default_path())
+            .context("obsidian wiki-rebuild: open views.db")?;
+        crate::wiki::ingest_sources(&conn, &sources, now_ns)
+            .context("obsidian wiki-rebuild: ingest_sources failed")
+    })
+    .await
+    .context("obsidian wiki-rebuild: spawn_blocking panicked (ingest)");
+
+    let ingest_stats = match ingest_result {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) | Err(e) => {
+            warn!(error = %e, "obsidian wiki-rebuild: ground-truth ingest failed (non-fatal)");
+            crate::wiki::IngestStats::default()
+        }
+    };
 
     info!(
         pages_written = stats.pages_written,

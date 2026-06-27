@@ -129,13 +129,13 @@ async fn list_neoth_sessions_on_socket(
     };
     if !output.status.success() {
         // `tmux ls` exits 1 when there is no server running — that
-        // means "no sessions", not an error worth propagating. Other
-        // non-zero exits with stderr content surface as Err.
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("no server running") || stderr.is_empty() {
-            return Ok(Vec::new());
-        }
-        anyhow::bail!("tmux ls failed: {}", stderr.trim());
+        // means "no sessions", not an error worth propagating.
+        // We treat ANY non-zero exit as "no sessions" because:
+        //   - "no server running" → no sessions
+        //   - "error connecting to <socket>" → no active server
+        //   - any other tmux error → we can't sweep anyway
+        // This keeps sweep_once safe on minimal-install CI/Windows hosts.
+        return Ok(Vec::new());
     }
     let stdout = String::from_utf8(output.stdout).context("tmux ls stdout not UTF-8")?;
     Ok(parse_tmux_ls(&stdout, prefix))

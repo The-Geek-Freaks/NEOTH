@@ -833,8 +833,10 @@ mod tests {
                 "idx_kanban_comment".to_string(),
                 "idx_kanban_session".to_string(),
                 "idx_kanban_task".to_string(),
+                "idx_kanban_task_dep".to_string(),
+                "idx_kanban_task_event".to_string(),
             ],
-            "all three kanban tables must exist after ensure_schema"
+            "all five kanban tables must exist after ensure_schema"
         );
     }
 
