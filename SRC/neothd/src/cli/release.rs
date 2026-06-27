@@ -377,6 +377,13 @@ fn load_signing_key(key_path: &std::path::Path) -> Result<ReleaseKeypair> {
 mod tests {
     use super::*;
 
+    // All tests that read or mutate NEOTH_RELEASE_MINISIGN_SECRET must hold this
+    // lock for the duration of the env-sensitive section.  cargo test is
+    // multi-threaded: without serialisation, sign_prefers_secret_env_over_file's
+    // set_var races with load_signing_key in keygen_then_pubkey_then_sign, causing
+    // the wrong key to be used for signing → verify fails (observed on Linux CI).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn keygen_then_pubkey_then_sign_roundtrips_on_disk() {
         let dir = tempfile::tempdir().unwrap();
@@ -392,7 +399,13 @@ mod tests {
         // sign a file → a .minisig that verifies against the saved pubkey.
         let artifact = dir.path().join("neoth.tar.gz");
         std::fs::write(&artifact, b"artifact bytes").unwrap();
-        sign(&key_path, &artifact, Some("ci"), OutputFormat::Table).unwrap();
+        // Hold ENV_LOCK while calling sign() so no concurrent test can inject
+        // NEOTH_RELEASE_MINISIGN_SECRET into our process env and cause
+        // load_signing_key to pick up a different key.
+        {
+            let _guard = ENV_LOCK.lock().unwrap();
+            sign(&key_path, &artifact, Some("ci"), OutputFormat::Table).unwrap();
+        }
 
         let sig_path = dir.path().join("neoth.tar.gz.minisig");
         assert!(sig_path.exists());
@@ -444,11 +457,17 @@ mod tests {
         let file_kp = ReleaseKeypair::generate().unwrap();
         sig_keygen::save_secret_key(&key_path, &file_kp, false).unwrap();
 
-        // SAFETY: test-only env mutation; the assertion runs before any other
-        // thread could read it (single-threaded test).
-        unsafe { std::env::set_var(SECRET_ENV, &env_b64) };
-        let loaded = load_signing_key(&key_path).unwrap();
-        unsafe { std::env::remove_var(SECRET_ENV) };
+        // Hold ENV_LOCK for the entire set_var → load → remove_var window so no
+        // other test (keygen_roundtrip) calls load_signing_key while the var is set.
+        let loaded = {
+            let _guard = ENV_LOCK.lock().unwrap();
+            // SAFETY: env mutation is serialised by ENV_LOCK across all tests in
+            // this module that touch NEOTH_RELEASE_MINISIGN_SECRET.
+            unsafe { std::env::set_var(SECRET_ENV, &env_b64) };
+            let result = load_signing_key(&key_path).unwrap();
+            unsafe { std::env::remove_var(SECRET_ENV) };
+            result
+        };
 
         // The env key won, not the file key.
         assert_eq!(loaded.public_key_base64(), env_kp.public_key_base64());
