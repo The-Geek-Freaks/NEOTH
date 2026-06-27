@@ -1399,7 +1399,7 @@ All of the following must be `[x]` before tagging `v1.0-gold`:
 
 **Progress tracker:**
 - `PLAN/PROGRESS_v1_0.md` — the live OPEN/DONE tracker; must be updated in the same commit as each task.
-- `PLAN/PROGRESS_v1_0_GOLD.md` — the live OPEN/DONE tracker; must be updated in the same commit as each task.
+- `PLAN/PROGRESS_v1_0.md` — the live OPEN/DONE tracker (also the GOLD tracker; `PROGRESS_v1_0_GOLD.md` does not exist); must be updated in the same commit as each task.
 **Architecture spec:** `PLAN/00_DESIGN_v1.1_FINAL.md` — authoritative design. SPEC files: `PLAN/SPEC_*.md`.
 ### GOLD-CCPARITY — Claude-Code best-practice parity (recon wf_44140f85, 2026-06-26)
 

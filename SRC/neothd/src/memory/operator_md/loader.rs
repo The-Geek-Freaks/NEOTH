@@ -5,6 +5,8 @@
 //!   2. `<cwd>/NEOTH.md`               (Project)
 //!   3. `~/.neoth/rules/index.md` + every `*.md` it lists (Rule)
 //!   4. `~/.neoth/memory/MEMORY.md` + every `*.md` it references (Memory)
+//!   5. Each `extra_dirs` entry / `NEOTH.md`  (SubDir — GOLD-CCPARITY-SUBDIR-MD-01,
+//!      mirrors Claude Code's `additionalDirectories`; merged after Project, before Rule)
 //!
 //! "References" in (3) and (4) = markdown link syntax `[…](path.md)` where
 //! `path.md` is resolved relative to the index file's directory. Anything

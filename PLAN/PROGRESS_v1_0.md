@@ -1,6 +1,6 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-06-12
+**Created:** 2026-05-24  **Last updated:** 2026-06-27
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 
 **Predecessor archive:** `PLAN/PROGRESS_v0_2_FINAL.md` (4612 lines, historical record of v0.1 → v0.2 closeout)
