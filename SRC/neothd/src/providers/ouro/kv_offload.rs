@@ -94,6 +94,11 @@ pub struct KvOffloadCache {
     /// KV-04: when `Some`, cold evictions are written atomically to
     /// `<disk_dir>/<key_hex>.kv.bin`. `None` = disk tier disabled.
     disk_dir: Option<PathBuf>,
+    /// KV-04 quota: max total bytes for `<disk_dir>/*.kv.bin`, enforced by
+    /// `prune_disk` (LRU-by-mtime) at construction and after every disk write.
+    /// From `NEOTH_OURO_KV_DISK_CAP_MB` (default 512 MB). Unused when
+    /// `disk_dir` is `None`.
+    disk_cap_bytes: u64,
 }
 
 impl KvOffloadCache {
@@ -107,6 +112,7 @@ impl KvOffloadCache {
     pub fn new(hot_cap: usize, cold_cap: usize, device: Device, disk_dir: Option<PathBuf>) -> Self {
         let hot = LruCache::new(NonZeroUsize::new(hot_cap.max(1)).unwrap());
         let cold = LruCache::new(NonZeroUsize::new(cold_cap.max(1)).unwrap());
+        let disk_cap_bytes = Self::disk_cap_bytes_from_env();
         if let Some(ref dir) = disk_dir {
             if let Err(e) = std::fs::create_dir_all(dir) {
                 tracing::warn!(
@@ -114,10 +120,76 @@ impl KvOffloadCache {
                     err = %e,
                     "KV-04: could not create kv_cache dir; disk tier disabled"
                 );
-                return Self { hot, cold, device, disk_dir: None };
+                return Self { hot, cold, device, disk_dir: None, disk_cap_bytes };
+            }
+            // Enforce the quota at startup so a cache that grew past the cap in a
+            // previous run (or under a since-lowered cap) is trimmed before we
+            // start adding more entries this run.
+            Self::prune_disk(dir, disk_cap_bytes);
+        }
+        Self { hot, cold, device, disk_dir, disk_cap_bytes }
+    }
+
+    /// Disk-tier quota in bytes from `NEOTH_OURO_KV_DISK_CAP_MB` (default 512 MB).
+    /// A value of `0` means "prune everything" — the disk tier effectively never
+    /// retains across writes (still functions as a within-tick spill).
+    fn disk_cap_bytes_from_env() -> u64 {
+        std::env::var("NEOTH_OURO_KV_DISK_CAP_MB")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(512)
+            .saturating_mul(1024 * 1024)
+    }
+
+    /// KV-04 quota enforcement: keep `<dir>/*.kv.bin` under `cap_bytes` by
+    /// deleting the least-recently-modified entries first (mtime is the LRU
+    /// signal — `read_from_disk` touches it on every hit). Also sweeps stale
+    /// `*.kv.bin.tmp` files left by a crash mid-write. All errors are non-fatal:
+    /// a full or unwritable disk must never abort inference.
+    fn prune_disk(dir: &Path, cap_bytes: u64) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+        let mut total: u64 = 0;
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            // Sweep stale temp files from interrupted atomic writes.
+            if name.ends_with(".kv.bin.tmp") {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            if !name.ends_with(".kv.bin") {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let size = meta.len();
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            total = total.saturating_add(size);
+            files.push((path, size, mtime));
+        }
+        if total <= cap_bytes {
+            return;
+        }
+        // Least-recently-modified first.
+        files.sort_by_key(|(_, _, mtime)| *mtime);
+        for (path, size, _) in files {
+            if total <= cap_bytes {
+                break;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(size);
+                tracing::debug!(
+                    file = %path.display(),
+                    "KV-04: pruned disk cache entry over quota"
+                );
             }
         }
-        Self { hot, cold, device, disk_dir }
     }
 
     /// Probe hot → cold → disk. Returns `Ok(Some(snap))` on any tier hit,
@@ -273,6 +345,8 @@ impl KvOffloadCache {
                     );
                 } else {
                     tracing::debug!(key = evicted_key, "KV-04: cold eviction → disk");
+                    // Enforce the disk quota after growing the cache.
+                    Self::prune_disk(dir, self.disk_cap_bytes);
                 }
                 // Re-insert so cold.put below finds room (we manually popped the LRU).
                 // Note: we DON'T re-insert the cold entry — it's been written to disk;
@@ -356,6 +430,14 @@ impl KvOffloadCache {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e).with_context(|| format!("KV-04: read {}", path.display())),
         };
+
+        // LRU bump: touch mtime on a disk hit so `prune_disk` evicts genuinely
+        // cold entries last (mtime is the LRU signal). Best-effort — a read-only
+        // or racing FS just keeps the old mtime. `write(true)` opens without
+        // truncating the file we just read.
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&path) {
+            let _ = f.set_modified(std::time::SystemTime::now());
+        }
 
         let mut pos = 0usize;
 
@@ -932,6 +1014,51 @@ mod tests {
         // Verify collision guard on disk: wrong prefix_ids → miss (not corrupt restore).
         let miss = cache2.get(kb, &[99u32]).unwrap();
         assert!(miss.is_none(), "wrong prefix_ids on disk lookup must be a miss");
+    }
+
+    #[test]
+    fn disk_prune_evicts_lru_over_cap_and_sweeps_tmp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        // Three 100-byte entries with distinct mtimes (key 0 oldest … key 2 newest).
+        let mk = |key: u64, mtime_secs: u64| {
+            let p = dir.join(format!("{key:016x}.kv.bin"));
+            std::fs::write(&p, vec![0u8; 100]).unwrap();
+            let mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime_secs);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(mtime)
+                .unwrap();
+            p
+        };
+        let p_old = mk(0, 1_000); // least-recently-modified
+        let _p_mid = mk(1, 2_000);
+        let _p_new = mk(2, 3_000);
+        // A stale temp file from a crashed atomic write must be swept regardless of cap.
+        let tmp_file = dir.join("00000000deadbeef.kv.bin.tmp");
+        std::fs::write(&tmp_file, vec![0u8; 50]).unwrap();
+
+        // Cap = 250 bytes: 3×100 = 300 > 250 → exactly the oldest entry is pruned.
+        KvOffloadCache::prune_disk(dir, 250);
+
+        assert!(!p_old.exists(), "least-recently-modified entry must be pruned over cap");
+        assert!(!tmp_file.exists(), "stale .kv.bin.tmp must be swept");
+        let total: u64 = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.path()
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|n| n.ends_with(".kv.bin"))
+                    .unwrap_or(false)
+            })
+            .map(|e| e.metadata().unwrap().len())
+            .sum();
+        assert!(total <= 250, "disk total {total} must be ≤ cap 250 after prune");
     }
 
     #[test]
