@@ -369,7 +369,9 @@ fn scan_wal_for_pending(
 type SsrfCache = HashMap<String, Result<Vec<IpAddr>, String>>;
 
 async fn deliver_to_endpoint(
-    client: &reqwest::Client,
+    // ponytail: retained for caller-signature stability; the fail-closed delivery
+    // below uses only the per-request pinned client, never this shared one.
+    _client: &reqwest::Client,
     endpoint: &WebhookEndpointConfig,
     hook: &PendingWebhook,
     ssrf_cache: &mut SsrfCache,
@@ -439,23 +441,23 @@ async fn deliver_to_endpoint(
         String::new()
     };
 
-    // ── DNS-rebind pin ───────────────────────────────────────────────────────
+    // ── DNS-rebind pin (FAIL-CLOSED) ─────────────────────────────────────────
     //
-    // Build a per-delivery reqwest::Client with resolve_to_addrs set to the
-    // pre-validated IPs from the SSRF cache.  This closes the TOCTOU window:
+    // Build a per-delivery reqwest::Client with resolve_to_addrs pinned to the
+    // pre-validated IPs from the SSRF cache. This closes the TOCTOU window:
     // even if DNS rebinds to a private address between the ssrf_check and now,
-    // hyper's connector will only dial the addresses we pinned here.
+    // hyper's connector only dials the addresses we pinned here.
     //
-    // If client construction fails (shouldn't happen) we fall back to the
-    // shared client — the SSRF check already ran, so the risk is low, but we
-    // log a warning so it's visible.
-    let pinned_client: Option<reqwest::Client> =
-        if let Some(Ok(pinned_ips)) = ssrf_cache.get(&endpoint.url) {
-            if let Ok((host, port)) = extract_host_port(&endpoint.url) {
-                let addrs: Vec<SocketAddr> = pinned_ips
-                    .iter()
-                    .map(|ip| SocketAddr::new(*ip, port))
-                    .collect();
+    // FAIL-CLOSED: if a pinned client cannot be built for ANY reason we drop the
+    // delivery (emit_failed + return) instead of falling back to the unpinned
+    // shared client — that fallback would reopen the very DNS-rebind hole the pin
+    // closes. After the SSRF gate above, the cache is always `Some(Ok(_))` and the
+    // host parse always succeeds, so the non-build arms below are defensive.
+    let pinned_client: reqwest::Client = match ssrf_cache.get(&endpoint.url) {
+        Some(Ok(pinned_ips)) => match extract_host_port(&endpoint.url) {
+            Ok((host, port)) => {
+                let addrs: Vec<SocketAddr> =
+                    pinned_ips.iter().map(|ip| SocketAddr::new(*ip, port)).collect();
                 match reqwest::Client::builder()
                     .https_only(true)
                     .timeout(std::time::Duration::from_secs(10))
@@ -463,23 +465,37 @@ async fn deliver_to_endpoint(
                     .resolve_to_addrs(&host, &addrs)
                     .build()
                 {
-                    Ok(c) => Some(c),
+                    Ok(c) => c,
                     Err(e) => {
-                        warn!(
+                        error!(
                             url = %endpoint.url,
                             error = %e,
-                            "webhook: pinned-client build failed; using shared client (SSRF check already passed)"
+                            "webhook: pinned-client build failed — failing closed (no unpinned fallback)"
                         );
-                        None
+                        emit_failed(writer, &endpoint.url, &format!("pinned-client build: {e}")).await;
+                        return;
                     }
                 }
-            } else {
-                None
             }
-        } else {
-            None
-        };
-    let effective_client: &reqwest::Client = pinned_client.as_ref().unwrap_or(client);
+            Err(e) => {
+                error!(
+                    url = %endpoint.url,
+                    error = %e,
+                    "webhook: host parse failed at pin stage — failing closed"
+                );
+                emit_failed(writer, &endpoint.url, &format!("pin host parse: {e}")).await;
+                return;
+            }
+        },
+        // Unreachable after the SSRF gate, but fail closed defensively rather than
+        // ever sending over an unpinned client.
+        _ => {
+            error!(url = %endpoint.url, "webhook: no pinned IPs at delivery stage — failing closed");
+            emit_failed(writer, &endpoint.url, "no pinned IPs (ssrf cache miss)").await;
+            return;
+        }
+    };
+    let effective_client: &reqwest::Client = &pinned_client;
 
     // Send
     let t0 = std::time::Instant::now();
