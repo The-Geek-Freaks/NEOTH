@@ -287,6 +287,8 @@ mod tests {
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,
                 output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
         fn name(&self) -> &'static str {

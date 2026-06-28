@@ -236,6 +236,8 @@ mod tests {
                 latency: std::time::Duration::from_millis(1),
                 input_tokens: Some(1),
                 output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }

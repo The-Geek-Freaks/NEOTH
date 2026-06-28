@@ -656,6 +656,8 @@ mod tests {
                 latency: Duration::from_millis(1),
                 input_tokens: Some(0),
                 output_tokens: Some(0),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }

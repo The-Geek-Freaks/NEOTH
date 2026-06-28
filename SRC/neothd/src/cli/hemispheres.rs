@@ -974,6 +974,8 @@ mod tests {
                 latency: std::time::Duration::from_millis(1),
                 input_tokens: Some(req.prompt.split_whitespace().count() as u32),
                 output_tokens: Some(2),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }

@@ -373,6 +373,8 @@ mod tests {
                     latency: Duration::from_millis(1),
                     input_tokens: Some(10),
                     output_tokens: Some(20),
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
                 }),
                 Err(e) => Err(anyhow::anyhow!(e)),
             }
@@ -563,6 +565,8 @@ mod tests {
                 latency: Duration::from_millis(1),
                 input_tokens: None,
                 output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             },
             reframing_id: "operator_authority",
         };

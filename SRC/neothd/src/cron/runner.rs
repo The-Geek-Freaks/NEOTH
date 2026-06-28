@@ -506,6 +506,8 @@ mod workstream_c_tests {
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
                 output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }
@@ -870,6 +872,8 @@ mod workstream_c_tests {
                 latency: Duration::from_millis(1),
                 input_tokens: Some(10),
                 output_tokens: Some(120),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }
