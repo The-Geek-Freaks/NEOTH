@@ -70,13 +70,22 @@ use crate::secret::SecretString;
 
 /// One completion result. `text` is the full final response; `latency` is
 /// wall-clock time from request to last token. Day-5b will add streaming.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Completion {
     pub text: String,
     pub model: String,
     pub latency: Duration,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
+    /// VIEW-03 — tokens written into the Anthropic prompt cache this turn
+    /// (billed at 1.25× the normal input rate). `None` for all non-Anthropic
+    /// adapters and for Anthropic calls where no cache_control breakpoint was
+    /// active. Other adapters leave this `None` via `Default::default()`.
+    pub cache_creation_tokens: Option<u32>,
+    /// VIEW-03 — tokens served from the Anthropic prompt cache this turn
+    /// (billed at 0.10× the normal input rate). `None` when cache was cold
+    /// or for non-Anthropic providers.
+    pub cache_read_tokens: Option<u32>,
 }
 
 /// A request to send to a Provider. Plain text for Day-5 MVP; multimodal
@@ -131,6 +140,12 @@ pub struct CompletionChunk {
     pub done: bool,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
+    /// VIEW-03 — cache creation tokens from the final done-chunk usage block.
+    /// Only populated by the `anthropic_api` streaming path on the last chunk;
+    /// all other adapters and non-final chunks leave this `None`.
+    pub cache_creation_tokens: Option<u32>,
+    /// VIEW-03 — cache read tokens from the final done-chunk usage block.
+    pub cache_read_tokens: Option<u32>,
 }
 
 /// Stream of completion chunks. Each `Result::Ok` carries one chunk; the
@@ -180,6 +195,11 @@ pub trait Provider: Send + Sync {
             done: true,
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
+            // VIEW-03 — propagate cache tokens from the fallback complete() path
+            // so the streaming usage_log call site captures them even when the
+            // adapter uses the default single-chunk stream implementation.
+            cache_creation_tokens: completion.cache_creation_tokens,
+            cache_read_tokens: completion.cache_read_tokens,
         };
         Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
     }

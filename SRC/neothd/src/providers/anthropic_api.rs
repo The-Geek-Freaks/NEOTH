@@ -203,6 +203,20 @@ impl Provider for AnthropicAdapter {
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
                 output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
+                // VIEW-03 — thread cache token counts through so usage_log can
+                // persist them and compute net savings. Filter zero → None so
+                // other adapters (which leave these as default 0) stay None and
+                // never pollute the anthropic-only economics with bogus zeroes.
+                cache_creation_tokens: parsed
+                    .usage
+                    .as_ref()
+                    .map(|u| u.cache_creation_input_tokens)
+                    .filter(|&n| n > 0),
+                cache_read_tokens: parsed
+                    .usage
+                    .as_ref()
+                    .map(|u| u.cache_read_input_tokens)
+                    .filter(|&n| n > 0),
             })
         })
         .await
@@ -296,6 +310,15 @@ struct ContentBlock {
 struct AnthropicUsage {
     input_tokens: u32,
     output_tokens: u32,
+    /// VIEW-03 — tokens written into the prompt cache this turn (billed at
+    /// 125% of the normal input rate). Zero when no cache_control breakpoint
+    /// was active or when the response predates the cache feature.
+    #[serde(default)]
+    cache_creation_input_tokens: u32,
+    /// VIEW-03 — tokens served from the prompt cache this turn (billed at
+    /// 10% of the normal input rate). Zero when the cache was cold.
+    #[serde(default)]
+    cache_read_input_tokens: u32,
 }
 
 #[cfg(test)]
@@ -536,5 +559,78 @@ mod tests {
             msg.contains("no text content") || msg.contains("max_tokens"),
             "error must explain WHY; got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn mock_200_with_cache_tokens_populates_completion_fields() {
+        // VIEW-03: when the Anthropic response includes
+        // cache_creation_input_tokens / cache_read_input_tokens, the
+        // adapter must surface them as Some(n) on the Completion.
+        // Zero values must map to None (filtered via `.filter(|&n| n > 0)`).
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg_cache_test",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-mock",
+                "content": [{ "type": "text", "text": "cached reply" }],
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": 20,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 1000,
+                    "cache_read_input_tokens": 800
+                }
+            })))
+            .mount(&mock)
+            .await;
+        let adapter = build_adapter_against(&mock.uri());
+        let completion = adapter
+            .complete(Request {
+                prompt: "hi".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("200 with cache tokens must succeed");
+        assert_eq!(completion.text, "cached reply");
+        assert_eq!(completion.cache_creation_tokens, Some(1000));
+        assert_eq!(completion.cache_read_tokens, Some(800));
+        // standard tokens still parsed correctly alongside cache tokens.
+        assert_eq!(completion.input_tokens, Some(20));
+        assert_eq!(completion.output_tokens, Some(5));
+    }
+
+    #[tokio::test]
+    async fn mock_200_zero_cache_tokens_maps_to_none() {
+        // Explicit zero cache fields in the wire response must produce None
+        // (not Some(0)) — zero values are filtered out at the adapter level
+        // so callers can use `.is_some()` as "cache was active" check.
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "content": [{ "type": "text", "text": "no cache" }],
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 3,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0
+                }
+            })))
+            .mount(&mock)
+            .await;
+        let adapter = build_adapter_against(&mock.uri());
+        let completion = adapter
+            .complete(Request {
+                prompt: "no cache".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("zero-cache 200 must succeed");
+        assert_eq!(completion.cache_creation_tokens, None);
+        assert_eq!(completion.cache_read_tokens, None);
     }
 }

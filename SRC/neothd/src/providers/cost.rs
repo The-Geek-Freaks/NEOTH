@@ -257,6 +257,33 @@ pub fn actual_cost_usd(provider: &str, model: &str, input_tokens: u32, output_to
     input_usd + output_usd
 }
 
+/// VIEW-03 — compute the net cache savings (USD) for a completed Anthropic call.
+///
+/// cache_read tokens cost 10% of the normal input rate (saving 90%);
+/// cache_creation tokens cost 125% of normal input (a 25% premium).
+/// Net savings = read_savings - write_premium (can be negative on the first
+/// turn with a large creation count and no reads yet — that is correct
+/// economics; do NOT clamp to zero).
+///
+/// Returns 0.0 for providers with no price row (local / unknown).
+pub fn cache_savings_usd(
+    provider: &str,
+    model: &str,
+    cache_creation_tokens: u32,
+    cache_read_tokens: u32,
+) -> f64 {
+    let Some(price) = lookup_price(provider, model) else {
+        return 0.0;
+    };
+    const EUR_TO_USD_INV: f64 = 1.0 / 0.92;
+    let input_usd_per_tok = price.input_eur_per_mtok as f64 * EUR_TO_USD_INV / 1_000_000.0;
+    // cache_read costs 10% of normal input → saves 90%
+    let read_savings = cache_read_tokens as f64 * input_usd_per_tok * 0.90;
+    // cache_creation costs 125% of normal input → 25% premium (cost, not saving)
+    let write_premium = cache_creation_tokens as f64 * input_usd_per_tok * 0.25;
+    read_savings - write_premium
+}
+
 /// Convenience: compute the cost in any display currency in one call.
 pub fn actual_cost_in(
     provider: &str,

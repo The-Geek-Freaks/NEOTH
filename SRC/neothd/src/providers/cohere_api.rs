@@ -198,6 +198,8 @@ impl Provider for CohereAdapter {
                 latency,
                 input_tokens,
                 output_tokens,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         })
         .await

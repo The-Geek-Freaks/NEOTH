@@ -762,6 +762,8 @@ impl Provider for ClaudeCliAdapter {
                                 done: false,
                                 input_tokens: None,
                                 output_tokens: None,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
                             };
                         }
                         StreamEvent::Usage { input, output } => {
@@ -802,6 +804,8 @@ impl Provider for ClaudeCliAdapter {
                     done: true,
                     input_tokens,
                     output_tokens,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
                 };
             };
 
@@ -948,6 +952,8 @@ async fn complete_uncached(
         latency,
         input_tokens: envelope.usage.as_ref().map(|u| u.input_tokens),
         output_tokens: envelope.usage.as_ref().map(|u| u.output_tokens),
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
     })
 }
 
@@ -1251,6 +1257,8 @@ async fn complete_tmux_uncached(
         // Token counting via `/cost` scrape is a follow-up.
         input_tokens: None,
         output_tokens: None,
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
     })
 }
 

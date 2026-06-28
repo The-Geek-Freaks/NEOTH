@@ -163,6 +163,17 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
         roll.total_p50_latency_ms,
         roll.total_p90_latency_ms,
     );
+    // VIEW-03 — cache token economics (shown only when cache was used).
+    if roll.total_cache_creation_tokens > 0 || roll.total_cache_read_tokens > 0 {
+        let savings_in_target = convert_from_usd(roll.total_cache_savings_usd, currency);
+        println!(
+            "  cache: created={} read={}  net savings={}{}",
+            roll.total_cache_creation_tokens,
+            roll.total_cache_read_tokens,
+            format_amount(savings_in_target.abs(), currency),
+            if roll.total_cache_savings_usd < 0.0 { " (cost)" } else { "" },
+        );
+    }
     if roll.per_provider.is_empty() {
         println!("  (no events in window — check ~/.neoth/usage/)");
         return;
@@ -239,6 +250,7 @@ mod tests {
                     cost_usd: 0.001,
                     latency_ms: 10,
                     ok: true,
+                    ..Default::default()
                 },
             )
             .unwrap();

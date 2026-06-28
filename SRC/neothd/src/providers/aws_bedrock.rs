@@ -239,6 +239,8 @@ impl Provider for AwsBedrockAdapter {
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
                 output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         })
         .await

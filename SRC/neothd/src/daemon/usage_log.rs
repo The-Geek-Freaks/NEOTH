@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 /// One persisted usage event. Wire shape matches the JSONL we write
 /// to disk + the JSON the Slint panel will read.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct UsageEvent {
     /// Unix seconds at record time.
     pub ts_unix: i64,
@@ -45,6 +45,24 @@ pub struct UsageEvent {
     /// True when the call completed successfully; false for errors
     /// (timeout, breaker open, parsed-error response, etc.).
     pub ok: bool,
+    /// VIEW-03 — tokens written into the Anthropic prompt cache this turn
+    /// (billed at 1.25× the normal input rate). Zero for non-Anthropic
+    /// providers and for calls without a `cache_control` breakpoint.
+    /// `#[serde(default)]` ensures pre-VIEW-03 JSONL lines deserialise
+    /// as 0 without error.
+    #[serde(default)]
+    pub cache_creation_tokens: u32,
+    /// VIEW-03 — tokens served from the Anthropic prompt cache this turn
+    /// (billed at 0.10× the normal input rate). Zero when cache was cold
+    /// or for non-Anthropic providers.
+    #[serde(default)]
+    pub cache_read_tokens: u32,
+    /// VIEW-03 — net cache savings in USD for this call
+    /// (read_savings − write_premium; can be negative on first-turn
+    /// creation when no reads offset the 25% write premium yet).
+    /// Zero for non-Anthropic providers.
+    #[serde(default)]
+    pub cache_savings_usd: f64,
 }
 
 /// Daily-keyed rollup for a single provider/model pair.
@@ -62,6 +80,10 @@ pub struct PerProviderTotals {
     /// calls in the window. The mean alone hides tail latency; p90 surfaces it.
     pub p50_latency_ms: u64,
     pub p90_latency_ms: u64,
+    /// VIEW-03 — cache token economics for this provider across the window.
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_savings_usd: f64,
 }
 
 /// Aggregate across the requested time range.
@@ -83,6 +105,10 @@ pub struct UsageRollup {
     /// USD/day + the 30-day projection. Zero when the window has no spend.
     pub burn_rate_usd_per_day: f64,
     pub projected_monthly_usd: f64,
+    /// VIEW-03 — cache token economics aggregated across all providers.
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_cache_savings_usd: f64,
     /// Per-provider breakdown, sorted by `provider` alphabetically.
     pub per_provider: Vec<PerProviderTotals>,
 }
@@ -116,6 +142,7 @@ pub fn append(home: &Path, event: &UsageEvent) -> std::io::Result<()> {
 
 /// Convenience: build an event with the current unix-seconds + write
 /// it in one go. Caller passes the components.
+#[allow(clippy::too_many_arguments)]
 pub fn record_now(
     home: &Path,
     provider: &str,
@@ -125,6 +152,9 @@ pub fn record_now(
     cost_usd: f64,
     latency_ms: u64,
     ok: bool,
+    cache_creation_tokens: u32,
+    cache_read_tokens: u32,
+    cache_savings_usd: f64,
 ) -> std::io::Result<UsageEvent> {
     let now = crate::time::now_unix_i64();
     let ev = UsageEvent {
@@ -136,6 +166,9 @@ pub fn record_now(
         cost_usd,
         latency_ms,
         ok,
+        cache_creation_tokens,
+        cache_read_tokens,
+        cache_savings_usd,
     };
     append(home, &ev)?;
     Ok(ev)
@@ -158,6 +191,7 @@ pub fn record_now(
 ///
 /// `home` is an explicit parameter so the function is unit-testable
 /// against a tempdir without touching the operator's real `~/.neoth`.
+#[allow(clippy::too_many_arguments)]
 pub fn record_provider_call(
     home: &Path,
     provider: &str,
@@ -166,20 +200,32 @@ pub fn record_provider_call(
     output_tokens: Option<u32>,
     latency_ms: u64,
     ok: bool,
+    cache_creation_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
 ) -> std::io::Result<UsageEvent> {
-    let (input, output, cost) = if ok {
+    let (input, output, cost, cc_tok, cr_tok, savings) = if ok {
         let i = input_tokens.unwrap_or(0);
         let o = output_tokens.unwrap_or(0);
+        let cc = cache_creation_tokens.unwrap_or(0);
+        let cr = cache_read_tokens.unwrap_or(0);
+        let savings =
+            crate::providers::cost::cache_savings_usd(provider, model, cc, cr);
         (
             i,
             o,
             crate::providers::cost::actual_cost_usd(provider, model, i, o),
+            cc,
+            cr,
+            savings,
         )
     } else {
         // Error path: nothing worth charging — zero tokens, zero cost.
-        (0, 0, 0.0)
+        (0, 0, 0.0, 0, 0, 0.0)
     };
-    record_now(home, provider, model, input, output, cost, latency_ms, ok)
+    record_now(
+        home, provider, model, input, output, cost, latency_ms, ok,
+        cc_tok, cr_tok, savings,
+    )
 }
 
 /// GR-15 — best-effort convenience over [`record_provider_call`] that
@@ -187,6 +233,7 @@ pub fn record_provider_call(
 /// I/O error. This is what the hot chat / council / MCP-loop paths
 /// call: a stuck disk must never break the operator's reply, but the
 /// dropped usage row is surfaced as a `warn!` (no silent swallow).
+#[allow(clippy::too_many_arguments)]
 pub fn record_provider_call_best_effort(
     provider: &str,
     model: &str,
@@ -194,6 +241,8 @@ pub fn record_provider_call_best_effort(
     output_tokens: Option<u32>,
     latency_ms: u64,
     ok: bool,
+    cache_creation_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
 ) {
     let home = crate::config::FreedomConfig::default_neoth_home();
     if let Err(e) = record_provider_call(
@@ -204,6 +253,8 @@ pub fn record_provider_call_best_effort(
         output_tokens,
         latency_ms,
         ok,
+        cache_creation_tokens,
+        cache_read_tokens,
     ) {
         tracing::warn!(error = %e, ok, "usage_log append failed (non-fatal)");
     }
@@ -251,6 +302,9 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
             roll.total_input_tokens += ev.input_tokens as u64;
             roll.total_output_tokens += ev.output_tokens as u64;
             roll.total_cost_usd += ev.cost_usd;
+            roll.total_cache_creation_tokens += ev.cache_creation_tokens as u64;
+            roll.total_cache_read_tokens += ev.cache_read_tokens as u64;
+            roll.total_cache_savings_usd += ev.cache_savings_usd;
             if ev.ok {
                 roll.total_ok_count += 1;
             } else {
@@ -266,6 +320,9 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
             totals.input_tokens += ev.input_tokens as u64;
             totals.output_tokens += ev.output_tokens as u64;
             totals.cost_usd += ev.cost_usd;
+            totals.cache_creation_tokens += ev.cache_creation_tokens as u64;
+            totals.cache_read_tokens += ev.cache_read_tokens as u64;
+            totals.cache_savings_usd += ev.cache_savings_usd;
             if ev.ok {
                 totals.ok_count += 1;
             } else {
@@ -370,6 +427,7 @@ mod tests {
             cost_usd: 0.0015,
             latency_ms: 800,
             ok: true,
+            ..Default::default()
         };
         append(dir.path(), &ev).unwrap();
         let file = jsonl_file_for_ts(dir.path(), ev.ts_unix);
@@ -392,6 +450,7 @@ mod tests {
             cost_usd: 0.01,
             latency_ms: 1200,
             ok: true,
+            ..Default::default()
         };
         append(dir.path(), &ev).unwrap();
         ev.ts_unix += 5;
@@ -428,6 +487,7 @@ mod tests {
                     cost_usd: 0.001,
                     latency_ms: 100,
                     ok: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -473,6 +533,7 @@ mod tests {
                     cost_usd: 0.0,
                     latency_ms: 0,
                     ok,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -498,6 +559,7 @@ mod tests {
                     cost_usd: 0.0,
                     latency_ms: ms,
                     ok: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -536,6 +598,7 @@ mod tests {
                     cost_usd: 0.0,
                     latency_ms: ms,
                     ok: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -565,6 +628,7 @@ mod tests {
                     cost_usd: cost,
                     latency_ms: 1,
                     ok: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -594,6 +658,7 @@ mod tests {
                     cost_usd: 0.0,
                     latency_ms: 0,
                     ok: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -625,6 +690,9 @@ mod tests {
             0.0001,
             500,
             true,
+            0,
+            0,
+            0.0,
         )
         .unwrap();
         let file = jsonl_file_for_ts(dir.path(), ev.ts_unix);
@@ -647,6 +715,8 @@ mod tests {
             Some(50),
             250,
             true,
+            None,
+            None,
         )
         .unwrap();
         assert!(ev.ok);
@@ -674,6 +744,8 @@ mod tests {
             Some(999),
             80,
             false,
+            None,
+            None,
         )
         .unwrap();
         assert!(!ev.ok);
@@ -685,8 +757,9 @@ mod tests {
     #[test]
     fn record_provider_call_none_tokens_treated_as_zero() {
         let dir = tempdir().unwrap();
-        let ev = record_provider_call(dir.path(), "local_qwen", "qwen2.5-7b", None, None, 10, true)
-            .unwrap();
+        let ev =
+            record_provider_call(dir.path(), "local_qwen", "qwen2.5-7b", None, None, 10, true, None, None)
+                .unwrap();
         assert_eq!(ev.input_tokens, 0);
         assert_eq!(ev.output_tokens, 0);
         // Unpriced local model → cost 0.0 (drift guard: actual_cost_usd
@@ -705,6 +778,8 @@ mod tests {
             Some(7),
             33,
             true,
+            None,
+            None,
         )
         .unwrap();
         let roll = aggregate(dir.path(), 0, i64::MAX);
@@ -712,5 +787,73 @@ mod tests {
         assert_eq!(roll.total_ok_count, 1);
         assert_eq!(roll.total_input_tokens, 5);
         assert_eq!(roll.total_output_tokens, 7);
+    }
+
+    // ── VIEW-03: cache token economics ────────────────────────────────────
+
+    #[test]
+    fn cache_token_economics_round_trip_through_aggregate() {
+        // Two calls: first creates cache (cc=100, cr=0), second reads it
+        // (cc=0, cr=300).  Net savings = read_savings − write_premium; signs
+        // may differ but the TOTAL must equal the sum of per-event values.
+        let dir = tempdir().unwrap();
+        record_provider_call(
+            dir.path(),
+            "anthropic_api",
+            "claude-opus-4-7",
+            Some(500),
+            Some(100),
+            300,
+            true,
+            Some(100), // cache creation
+            None,
+        )
+        .unwrap();
+        record_provider_call(
+            dir.path(),
+            "anthropic_api",
+            "claude-opus-4-7",
+            Some(200),
+            Some(50),
+            150,
+            true,
+            None,
+            Some(300), // cache read
+        )
+        .unwrap();
+        let roll = aggregate(dir.path(), 0, i64::MAX);
+        assert_eq!(roll.total_call_count, 2);
+        // Totals must match the sum of both events.
+        assert_eq!(roll.total_cache_creation_tokens, 100);
+        assert_eq!(roll.total_cache_read_tokens, 300);
+        // per-provider must also carry the values.
+        assert_eq!(roll.per_provider.len(), 1);
+        let pp = &roll.per_provider[0];
+        assert_eq!(pp.cache_creation_tokens, 100);
+        assert_eq!(pp.cache_read_tokens, 300);
+        // savings stored in rollup must equal sum of event savings.
+        let expected_savings = roll.total_cache_savings_usd;
+        // round-trip: savings in pp must match total (single provider).
+        assert!((pp.cache_savings_usd - expected_savings).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pre_view03_jsonl_line_deserialises_with_zero_cache_fields() {
+        // Old JSONL lines have no cache_* keys → must deserialise as zeros
+        // (backward-compat via #[serde(default)]).
+        let line = r#"{"ts_unix":1779494400,"provider":"openai_api","model":"gpt-4.1","input_tokens":10,"output_tokens":5,"cost_usd":0.001,"latency_ms":200,"ok":true}"#;
+        let ev: UsageEvent = serde_json::from_str(line).unwrap();
+        assert_eq!(ev.cache_creation_tokens, 0);
+        assert_eq!(ev.cache_read_tokens, 0);
+        assert_eq!(ev.cache_savings_usd, 0.0);
+        // And it round-trips through aggregate without panic.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(crate::daemon::usage_log::usage_dir(dir.path())).unwrap();
+        let path = crate::daemon::usage_log::jsonl_file_for_ts(dir.path(), 1_779_494_400);
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+        let roll = aggregate(dir.path(), 0, i64::MAX);
+        assert_eq!(roll.total_call_count, 1);
+        assert_eq!(roll.total_cache_creation_tokens, 0);
+        assert_eq!(roll.total_cache_savings_usd, 0.0);
     }
 }

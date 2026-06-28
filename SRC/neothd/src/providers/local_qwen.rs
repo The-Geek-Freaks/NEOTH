@@ -724,6 +724,8 @@ fn run_stream(
                     done: false,
                     input_tokens: None,
                     output_tokens: None,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
                 };
                 if tx.blocking_send(Ok(chunk)).is_err() {
                     // Receiver dropped — bail without emitting done.
@@ -741,6 +743,8 @@ fn run_stream(
         done: true,
         input_tokens: Some(input_token_count as u32),
         output_tokens: Some(new_tokens.len() as u32),
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
     };
     let _ = tx.blocking_send(Ok(final_chunk));
     Ok(())
@@ -982,6 +986,8 @@ fn run_forward(
         latency: started.elapsed(),
         input_tokens: Some(input_token_count as u32),
         output_tokens: Some(new_tokens.len() as u32),
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
     })
 }
 

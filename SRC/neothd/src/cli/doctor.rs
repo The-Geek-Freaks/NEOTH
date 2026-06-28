@@ -775,6 +775,7 @@ mod tests {
                     cost_usd: 0.0,
                     latency_ms: 50,
                     ok: i != 0,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -801,6 +802,7 @@ mod tests {
                     cost_usd: 0.0,
                     latency_ms: 50,
                     ok: i % 2 == 0,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -837,6 +839,7 @@ mod tests {
                     cost_usd: 0.0,
                     latency_ms: 10,
                     ok: false,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -890,6 +893,7 @@ mod tests {
                 cost_usd: 1.5,
                 latency_ms: 500,
                 ok: true,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -920,6 +924,7 @@ mod tests {
                 cost_usd: 1.70,
                 latency_ms: 0,
                 ok: true,
+                ..Default::default()
             },
         )
         .unwrap();

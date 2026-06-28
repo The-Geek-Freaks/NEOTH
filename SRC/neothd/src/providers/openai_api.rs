@@ -199,6 +199,8 @@ impl Provider for OpenAiAdapter {
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
                 output_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         })
         .await

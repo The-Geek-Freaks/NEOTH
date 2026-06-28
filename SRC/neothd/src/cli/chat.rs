@@ -1726,8 +1726,10 @@ async fn dispatch_provider(
         };
         let mut acc = String::new();
         let mut chunk_count: u32 = 0;
-        let mut input_tokens = None;
-        let mut output_tokens = None;
+        let mut input_tokens: Option<u32> = None;
+        let mut output_tokens: Option<u32> = None;
+        let mut cache_creation_tokens: Option<u32> = None;
+        let mut cache_read_tokens: Option<u32> = None;
         let mut model_used = args.model.clone().unwrap_or_default();
         if model_used.is_empty() {
             model_used = config
@@ -1780,6 +1782,8 @@ async fn dispatch_provider(
                         }
                         input_tokens = chunk.input_tokens;
                         output_tokens = chunk.output_tokens;
+                        cache_creation_tokens = chunk.cache_creation_tokens;
+                        cache_read_tokens = chunk.cache_read_tokens;
                         break;
                     }
                 }
@@ -1837,6 +1841,8 @@ async fn dispatch_provider(
                 output_tokens,
                 elapsed_ms,
                 true,
+                cache_creation_tokens,
+                cache_read_tokens,
             );
             publish_provider_responded(
                 provider_name,
@@ -2193,6 +2199,8 @@ async fn dispatch_provider(
                         completion.output_tokens,
                         elapsed_ms,
                         true,
+                        completion.cache_creation_tokens,
+                        completion.cache_read_tokens,
                     );
                     publish_provider_responded(
                         provider_name,
@@ -2245,6 +2253,8 @@ async fn dispatch_provider(
                         None,
                         elapsed_ms,
                         false,
+                        None,
+                        None,
                     );
                     if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
                         record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
@@ -4271,6 +4281,8 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     c.output_tokens,
                     elapsed_ms,
                     true,
+                    c.cache_creation_tokens,
+                    c.cache_read_tokens,
                 );
                 // GOLD-WIRE-10: the council's per-hemisphere provider response
                 // is the first real producer on the domain-event bus. Each
@@ -4309,6 +4321,8 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     None,
                     elapsed_ms,
                     false,
+                    None,
+                    None,
                 );
                 Err(e.to_string())
             }
@@ -6336,6 +6350,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
                             c.output_tokens,
                             elapsed_ms,
                             true,
+                            c.cache_creation_tokens,
+                            c.cache_read_tokens,
                         );
                         publish_provider_responded(
                             provider_name,
@@ -6357,6 +6373,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
                             None,
                             elapsed_ms,
                             false,
+                            None,
+                            None,
                         );
                         Err(e)
                     }
@@ -6711,6 +6729,8 @@ mod tests {
                 latency: Duration::from_millis(7),
                 input_tokens: Some(12),
                 output_tokens: Some(8),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }
@@ -6736,6 +6756,8 @@ mod tests {
                 latency: Duration::from_millis(1),
                 input_tokens: Some(0),
                 output_tokens: Some(0),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }
@@ -7096,6 +7118,8 @@ mod tests {
                     latency: Duration::from_millis(11),
                     input_tokens: Some(5),
                     output_tokens: Some(1),
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
                 })
             }
         }
@@ -7218,18 +7242,24 @@ mod tests {
                         done: false,
                         input_tokens: None,
                         output_tokens: None,
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
                     }),
                     Ok(CompletionChunk {
                         delta: "world".into(),
                         done: false,
                         input_tokens: None,
                         output_tokens: None,
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
                     }),
                     Ok(CompletionChunk {
                         delta: String::new(),
                         done: true,
                         input_tokens: Some(5),
                         output_tokens: Some(3),
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
                     }),
                 ];
                 Ok(Box::pin(stream::iter(chunks)))
@@ -7518,6 +7548,8 @@ mod tests {
                 latency: Duration::from_millis(1),
                 input_tokens: None,
                 output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }
@@ -8083,6 +8115,8 @@ mod tests {
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
                 output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }
@@ -8801,6 +8835,8 @@ mod tests {
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
                 output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }
@@ -8962,6 +8998,8 @@ mod tests {
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
                 output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         }
     }

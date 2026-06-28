@@ -157,6 +157,8 @@ impl Provider for GeminiAdapter {
                     .usage_metadata
                     .as_ref()
                     .map(|u| u.candidates_token_count),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             })
         })
         .await

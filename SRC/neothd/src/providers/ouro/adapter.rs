@@ -695,6 +695,8 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
         latency: started.elapsed(),
         input_tokens: Some(input_token_count as u32),
         output_tokens: Some(new_tokens.len() as u32),
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
     })
 }
 
@@ -776,6 +778,8 @@ impl Provider for LocalOuroAdapter {
                 done: true,
                 input_tokens: completion.input_tokens,
                 output_tokens: completion.output_tokens,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             };
             Ok(Box::pin(stream::iter(vec![Ok(chunk)])) as ChunkStream)
         })
