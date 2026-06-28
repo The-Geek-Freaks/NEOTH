@@ -231,33 +231,33 @@ mod tests {
         let (writer, writer_join) =
             crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
 
-        let task = spawn(
-            vault_dir.path().to_path_buf(),
-            plan_dir.path().to_path_buf(),
-            Some("NEOTH-Wiki".into()),
-            // Very tight interval so the second tick fires inside the test
-            // window — first tick is burned per cron pattern.
-            Some(Duration::from_millis(30)),
-            writer.clone(),
-            // Isolated DB path — no race on ~/.neoth/views.db under parallel suite.
+        // Drive ONE full tick to completion directly instead of spawn()+abort().
+        // The old spawn/abort path raced under the parallel suite: it waited for
+        // the wiki INDEX file (written in build step 1) and then aborted, which
+        // under CPU contention could cancel the task BEFORE the ingest + WAL
+        // append (final step) emitted the 0xFA frame → `found_fa` flaked false.
+        // run_one_tick runs build → ingest → WAL-append synchronously, so the
+        // 0xFA frame is always emitted before we scan for it; `views_db` is an
+        // isolated tempdir so the ingest never reads HOME (the other race).
+        run_one_tick(
+            vault_dir.path(),
+            plan_dir.path(),
+            "NEOTH-Wiki",
+            &writer,
             Some(views_db_path),
-        );
+        )
+        .await
+        .expect("one rebuild tick must succeed");
 
-        // Wait for the first real (non-burned) tick to write wiki pages.
-        let wiki_index = vault_dir
-            .path()
-            .join("NEOTH-Wiki")
-            .join("NEOTH-Wiki-Index.md");
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !wiki_index.exists() && std::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        task.abort();
-        let _ = task.await;
+        // Flush the WAL writer so the 0xFA frame is durable before we scan.
         drop(writer);
         let _ = writer_join.await;
 
         // Pages must be on disk.
+        let wiki_index = vault_dir
+            .path()
+            .join("NEOTH-Wiki")
+            .join("NEOTH-Wiki-Index.md");
         assert!(
             wiki_index.exists(),
             "index page must exist after cron tick"

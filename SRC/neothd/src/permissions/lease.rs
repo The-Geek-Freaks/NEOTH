@@ -198,6 +198,30 @@ pub struct LeaseStore {
     pub leases: Vec<CapabilityLease>,
 }
 
+/// Retry a transient filesystem op a few times. On Windows, the AV / Search
+/// indexer can hold a brief handle on a just-written file, so the next open or
+/// rename fails with a sharing/access violation that clears within a few ms.
+/// Unix never hits this — the first attempt succeeds. Wraps I/O errors ONLY;
+/// callers keep parse/validation failures OUTSIDE this (those are permanent and
+/// must not be retried). Fail-closed is preserved: if every attempt fails, the
+/// last error is returned so the caller still denies.
+fn retry_transient_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut attempt = 0u32;
+    loop {
+        match op() {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= 5 {
+                    return Err(e);
+                }
+                // 5,10,15,20ms backoff — clears a transient Windows handle.
+                std::thread::sleep(std::time::Duration::from_millis(u64::from(attempt) * 5));
+            }
+        }
+    }
+}
+
 impl LeaseStore {
     /// Default filename under `~/.neoth/`.
     pub fn default_path(home: &Path) -> std::path::PathBuf {
@@ -211,7 +235,7 @@ impl LeaseStore {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let body = std::fs::read_to_string(path)
+        let body = retry_transient_io(|| std::fs::read_to_string(path))
             .with_context(|| format!("read leases at {}", path.display()))?;
         serde_json::from_str(&body)
             .with_context(|| format!("parse leases JSON at {}", path.display()))
@@ -228,7 +252,7 @@ impl LeaseStore {
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, body.as_bytes())
             .with_context(|| format!("write {}", tmp.display()))?;
-        std::fs::rename(&tmp, path)
+        retry_transient_io(|| std::fs::rename(&tmp, path))
             .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
         Ok(())
     }

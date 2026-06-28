@@ -396,13 +396,36 @@ mod tests {
 
     #[test]
     fn default_pidfile_lives_under_neoth_home() {
-        // Reads the process-global NEOTH_HOME via default_pidfile();
-        // take the env lock so a concurrent setter (cli::mode tests)
-        // can't swap NEOTH_HOME to a tempdir mid-read. See
-        // crate::test_env.
+        // `default_pidfile()` reads the process-global NEOTH_HOME. Taking the
+        // env lock is not enough on its own: a sibling test that sets NEOTH_HOME
+        // to a tempdir and then DROPS the lock across an `.await` (e.g.
+        // `cron::runner`) leaves the var pointing at a tempdir with NO `.neoth`
+        // substring while the lock is free — racing this read. So instead of
+        // depending on ambient global state, set NEOTH_HOME ourselves under the
+        // lock to a path that DOES contain `.neoth`, read, then restore the
+        // prior value. Deterministic regardless of any concurrent env mutation.
         let _env = crate::test_env::lock();
+        let home = tempdir().unwrap();
+        let neoth_home = home.path().join(".neoth");
+        let prior = std::env::var_os("NEOTH_HOME");
+        // SAFETY: the crate env lock is held for the whole set→read→restore
+        // critical section; this is a plain `#[test]` with no `.await`, so the
+        // guard never crosses a suspension point.
+        unsafe {
+            std::env::set_var("NEOTH_HOME", &neoth_home);
+        }
         let p = default_pidfile();
-        assert!(p.to_string_lossy().contains(".neoth"));
-        assert_eq!(p.file_name().and_then(|s| s.to_str()), Some("neothd.pid"),);
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("NEOTH_HOME", v),
+                None => std::env::remove_var("NEOTH_HOME"),
+            }
+        }
+        assert!(
+            p.to_string_lossy().contains(".neoth"),
+            "default_pidfile must live under a .neoth dir, got {}",
+            p.display()
+        );
+        assert_eq!(p.file_name().and_then(|s| s.to_str()), Some("neothd.pid"));
     }
 }

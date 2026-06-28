@@ -1,7 +1,9 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-06-27
+**Created:** 2026-05-24  **Last updated:** 2026-06-28
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
+>
+> **Test-isolation (2026-06-28):** fixed 3 parallel-suite-only `neothd --lib` flakes (green in isolation / under `--test-threads=1`, intermittently red under full parallel) — `daemon::pidfile::default_pidfile_lives_under_neoth_home` now sets+restores its OWN `NEOTH_HOME` under `test_env::lock()` (was reading ambient global, raced by `cron::runner`'s drop-lock-across-await); `cli::obsidian_wiki_rebuild_task::one_tick_rebuilds_wiki_pages_in_vault` now drives `run_one_tick()` to completion instead of `spawn()`+wait-for-index+`abort()` (the abort cancelled the task before the 0xFA WAL frame); `mcp::dispatch_loop::active_lease_lifts_dangerous_block_and_audits` green via a transient-I/O retry in `LeaseStore::load`/`save` (Windows AV sharing-violation on `leases.json` → fail-closed lift; also hardens prod). Full parallel `cargo test -p neothd --lib` green ×20 consecutive; `clippy --workspace --all-targets -D warnings` clean.
 
 **Predecessor archive:** `PLAN/PROGRESS_v0_2_FINAL.md` (4612 lines, historical record of v0.1 → v0.2 closeout)
 **Reference docs:**
