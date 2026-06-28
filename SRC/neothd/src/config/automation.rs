@@ -1061,6 +1061,49 @@ impl WebhookManagerConfig {
     }
 }
 
+/// GOLD-ADAPT-AWE-PROV-01 — `freedom.yaml::oai_serve` shape.
+///
+/// OpenRouter-compat `/v1/models` (and future `/v1/chat/completions`) serve
+/// adapter. Binds `127.0.0.1:9746` (loopback only) so Cline, Continue,
+/// OpenCode, Goose, and any other OpenRouter-aware coding assistant can
+/// discover NEOTH's models catalog without bespoke per-client config.
+///
+/// Default OFF (`enabled: false`) — operator opts in via
+/// `oai_serve.enabled: true` in freedom.yaml. Port 9746 is one above the
+/// companion server (9745); operators running 9746 for another service should
+/// set an alternate port via `oai_serve.port`.
+///
+/// ## Auth policy
+///
+/// `/v1/models` is intentionally unauthenticated (read-only discovery,
+/// matching Ollama's convention). The loopback bind (`127.0.0.1`) is the
+/// security boundary. A future `/v1/chat/completions` endpoint will reuse
+/// the n8n_api bearer token.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct OaiServeConfig {
+    /// Master switch. Default `false` — the hyper task never spawns until
+    /// the operator opts in.
+    pub enabled: bool,
+    /// Loopback port the hyper server binds. Defaults to
+    /// [`DEFAULT_OAI_SERVE_PORT`] (9746). Override only when 9746 collides
+    /// with another local service.
+    pub port: u16,
+}
+
+/// Default port for the OpenRouter-compat oai_serve adapter.
+/// One above the companion server (9745); two above n8n_api (9744).
+pub const DEFAULT_OAI_SERVE_PORT: u16 = 9746;
+
+impl Default for OaiServeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: DEFAULT_OAI_SERVE_PORT,
+        }
+    }
+}
+
 /// GOLD-ADAPT-ODY-24 — `freedom.yaml::companion` shape.
 ///
 /// Companion LAN pairing server. A phone scans a QR code displayed at

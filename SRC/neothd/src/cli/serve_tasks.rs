@@ -1449,6 +1449,28 @@ pub(crate) fn spawn_kanban_sse(
     }
 }
 
+/// GOLD-ADAPT-AWE-PROV-01 — OpenRouter-compat oai_serve adapter.
+///
+/// Binds `127.0.0.1:<config.oai_serve.port>` (default 9746) when
+/// `oai_serve.enabled = true`. Serves `GET /v1/models` in OpenRouter wire
+/// format so Cline, Continue, OpenCode, Goose and similar clients can
+/// discover NEOTH's models catalog. No auth token required — the endpoint is
+/// read-only and the loopback bind is the security boundary.
+///
+/// Returns `None` when `oai_serve.enabled = false` (the default) or the bind
+/// fails (error logged at `error!`; daemon continues without the adapter).
+pub(crate) fn spawn_oai_serve(
+    config: &FreedomConfig,
+    oai_serve_shutdown: &Arc<tokio::sync::Notify>,
+) -> Option<JoinHandle<()>> {
+    let home = FreedomConfig::default_neoth_home();
+    crate::oai_serve::server::spawn_server(
+        std::sync::Arc::new(config.clone()),
+        home,
+        std::sync::Arc::clone(oai_serve_shutdown),
+    )
+}
+
 /// `/healthz` + `/metrics` listener (Phase 33c BS-1). Off by default; opt in via
 /// `freedom.yaml::observability_listen: "127.0.0.1:PORT"`. Loopback by design.
 /// `None` when unset or the host:port is invalid. WAL-free.
@@ -3063,6 +3085,12 @@ pub(crate) struct BackgroundHandles {
     pub kanban_sse_shutdown: Arc<tokio::sync::Notify>,
     /// GOLD-ADAPT-HERMES-08 — task handle for the kanban SSE hyper server.
     pub kanban_sse_task: Option<JoinHandle<()>>,
+    /// GOLD-ADAPT-AWE-PROV-01 — shutdown notifier for the OpenRouter-compat
+    /// oai_serve hyper server. Notified to break the accept loop and drain.
+    pub oai_serve_shutdown: Arc<tokio::sync::Notify>,
+    /// GOLD-ADAPT-AWE-PROV-01 — task handle for the oai_serve hyper server.
+    /// `None` when `oai_serve.enabled = false` (the default) or bind fails.
+    pub oai_serve_task: Option<JoinHandle<()>>,
     /// GOLD-ADAPT-ODY-24 — shutdown notifier for the companion LAN pairing server.
     pub companion_shutdown: Arc<tokio::sync::Notify>,
     /// GOLD-ADAPT-ODY-24 — task handle for the companion loopback hyper server.
@@ -3169,6 +3197,8 @@ pub(crate) async fn shutdown_background_tasks(
         n8n_api_task,
         kanban_sse_shutdown,
         kanban_sse_task,
+        oai_serve_shutdown,
+        oai_serve_task,
         companion_shutdown,
         companion_task,
         companion_p2p_shutdown,
@@ -3438,6 +3468,15 @@ pub(crate) async fn shutdown_background_tasks(
     // then see the TCP close. WAL-free — safe to stop after n8n_api.
     kanban_sse_shutdown.notify_waiters();
     if let Some(task) = kanban_sse_task {
+        let _ = task.await;
+    }
+
+    // GOLD-ADAPT-AWE-PROV-01: drain the OpenRouter-compat oai_serve adapter.
+    // Notify breaks the accept loop; in-flight /v1/models responses finish
+    // then the task exits. WAL-free (read-only) — safe to stop after
+    // kanban_sse, before companion (which is WAL-emitting).
+    oai_serve_shutdown.notify_waiters();
+    if let Some(task) = oai_serve_task {
         let _ = task.await;
     }
 

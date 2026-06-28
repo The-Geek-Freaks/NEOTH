@@ -61,15 +61,15 @@ pub use automation::{
     AutoSkillExtractConfig, BgMonitorConfig, CompanionConfig, ConsolidationSweepConfig,
     DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS, DEFAULT_DRIFT_ALERT_INTERVAL_SECS,
     DEFAULT_GUIDANCE_CRON_INTERVAL_SECS, DEFAULT_INACTIVITY_GAP_SECS,
-    DEFAULT_MONITOR_INTERVAL_SECS, DEFAULT_PATTERN_CRON_INTERVAL_SECS,
+    DEFAULT_MONITOR_INTERVAL_SECS, DEFAULT_OAI_SERVE_PORT, DEFAULT_PATTERN_CRON_INTERVAL_SECS,
     DEFAULT_PROFILE_ADAPT_INTERVAL_SECS, DEFAULT_RECALL_LATENCY_INTERVAL_SECS,
     DEFAULT_REGRESSION_INTERVAL_SECS, DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
     DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS,
     DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS, DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig,
-    GuidanceCronConfig, KanbanSseConfig, MonitorConfig, N8nApiConfig, PatternCronConfig,
-    ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig,
-    ResourceWatchConfig, SessionHealthConfig, SynthesisCronConfig, TokenAnomalyConfig,
-    WatchdogConfig,
+    GuidanceCronConfig, KanbanSseConfig, MonitorConfig, N8nApiConfig, OaiServeConfig,
+    PatternCronConfig, ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig,
+    RegressionAnchorConfig, ResourceWatchConfig, SessionHealthConfig, SynthesisCronConfig,
+    TokenAnomalyConfig, WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -666,6 +666,14 @@ pub struct FreedomConfig {
     /// opts in via `kanban_sse.enabled: true` + optional `port` override.
     #[serde(default)]
     pub kanban_sse: KanbanSseConfig,
+    /// GOLD-ADAPT-AWE-PROV-01 — OpenRouter-compat `/v1/models` serve adapter.
+    /// Binds `127.0.0.1:9746` (loopback only). Lets Cline, Continue, OpenCode,
+    /// Goose and any other OpenRouter-aware coding assistant discover NEOTH's
+    /// models catalog without bespoke per-client config. Default OFF (`enabled:
+    /// false`). `/v1/models` is unauthenticated (read-only; loopback is the
+    /// security boundary). Port defaults to 9746.
+    #[serde(default)]
+    pub oai_serve: OaiServeConfig,
     /// GOLD-ADAPT-ODY-24 — Companion LAN pairing server. A phone scans a QR
     /// code (displayed at `neoth init` step 6k or via `neoth companion qr`)
     /// and mints a chat-scoped bearer token via `POST /api/v1/companion/pair`.

@@ -125,6 +125,7 @@ pub mod media;
 pub mod memory;
 pub mod models;
 pub mod n8n_api;
+pub mod oai_serve;
 pub mod os_tools;
 pub mod paperless;
 pub mod permissions;

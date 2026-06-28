@@ -789,6 +789,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let (kanban_sse_task, _kanban_sse_tx) =
         crate::cli::serve_tasks::spawn_kanban_sse(&config, &writer, &kanban_sse_shutdown);
 
+    // ── 5c-ter-bis. Spawn OpenRouter-compat /v1/models serve adapter — GOLD-ADAPT-AWE-PROV-01
+    //
+    // Loopback-only (127.0.0.1:9746 default). Serves GET /v1/models in
+    // OpenRouter wire format so Cline/Continue/OpenCode/Goose can discover
+    // NEOTH's models catalog. No auth required — read-only; loopback is the
+    // security boundary. Default OFF — operator opts in via
+    // `oai_serve.enabled: true` in freedom.yaml.
+    let oai_serve_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let oai_serve_task =
+        crate::cli::serve_tasks::spawn_oai_serve(&config, &oai_serve_shutdown);
+
     // ── 5c-bis. Spawn /healthz + /metrics listener — Phase 33c BS-1 ────────
     //
     // Optional, off by default. Operator opts in by setting
@@ -1761,6 +1772,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         n8n_api_task,
         kanban_sse_shutdown,
         kanban_sse_task,
+        oai_serve_shutdown,
+        oai_serve_task,
         companion_shutdown,
         companion_task,
         companion_p2p_shutdown,
