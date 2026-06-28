@@ -529,9 +529,178 @@ impl SttProviderImpl for FasterWhisperProvider {
     }
 }
 
+// ── HANDY-05: WhisperLocalProvider ──────────────────────────────────────────
+
+/// Local candle-based STT provider wrapping the shared `WhisperEngine`.
+///
+/// Shares the engine with `media::audio::transcribe_if_cached` via
+/// `providers::whisper::GLOBAL_WHISPER_ENGINE` (`init_global_engine_sync`).
+/// The engine's idle-watcher task frees VRAM after the configured idle
+/// timeout (default 120 s) between transcription calls.
+///
+/// Audio bytes are decoded from WAV/MP3/… → 16 kHz mono f32 PCM via
+/// symphonia (same codec path as `media::audio::decode_from_bytes`).
+pub struct WhisperLocalProvider {
+    engine: std::sync::Arc<crate::providers::whisper::WhisperEngine>,
+}
+
+impl WhisperLocalProvider {
+    /// Build a provider using (or lazily initialising) the global
+    /// `WhisperEngine`. Returns an error if model artifacts are not cached.
+    pub fn new() -> Result<Self, String> {
+        let engine =
+            crate::providers::whisper::init_global_engine_sync(None)
+                .map_err(|e| format!("whisper local: {e:#}"))?;
+        Ok(Self { engine })
+    }
+}
+
+/// Decode `audio` bytes (WAV/MP3/FLAC/Ogg/M4A) into 16 kHz mono f32 PCM
+/// for the candle Whisper engine. This is the decode path from
+/// `media::audio::decode_from_bytes`, extracted for reuse in
+/// `WhisperLocalProvider::transcribe`.
+fn decode_audio_bytes_to_pcm(audio: &[u8], mime_hint: &str) -> Result<Vec<f32>, String> {
+    use std::io::Cursor;
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error as SymError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let cursor = Cursor::new(audio.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+    let mut hint = Hint::new();
+    if !mime_hint.is_empty() {
+        hint.mime_type(mime_hint);
+    }
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| format!("whisper local: audio probe: {e}"))?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or("whisper local: no default track in container")?;
+    let track_id = track.id;
+    let codec_params = track.codec_params.clone();
+    let original_sr = match codec_params.sample_rate {
+        Some(sr) if sr > 0 => sr,
+        _ => {
+            return Err(
+                "whisper local: codec reported no/zero sample rate".to_string(),
+            )
+        }
+    };
+    let channels = codec_params.channels.map(|c| c.count()).unwrap_or(1);
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("whisper local: codec init: {e}"))?;
+
+    let mut decoded_mono: Vec<f32> = Vec::new();
+    let mut buf: Option<SampleBuffer<f32>> = None;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(SymError::ResetRequired) => break,
+            Err(e) => return Err(format!("whisper local: packet: {e}")),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(audio_buf) => {
+                let spec = *audio_buf.spec();
+                if buf.is_none() {
+                    buf = Some(SampleBuffer::<f32>::new(audio_buf.capacity() as u64, spec));
+                }
+                if let Some(b) = buf.as_mut() {
+                    b.copy_interleaved_ref(audio_buf);
+                    let ch = channels.max(1);
+                    let frame_count = b.samples().len() / ch;
+                    let samples = b.samples();
+                    for f in 0..frame_count {
+                        let mut sum = 0f32;
+                        for c in 0..ch {
+                            sum += samples[f * ch + c];
+                        }
+                        decoded_mono.push(sum / ch as f32);
+                    }
+                }
+            }
+            Err(SymError::DecodeError(_)) => continue,
+            Err(SymError::IoError(_)) => break,
+            Err(e) => return Err(format!("whisper local: decode: {e}")),
+        }
+    }
+
+    // Resample to 16 kHz if needed (same path as media::audio).
+    let target_sr = crate::media::audio::TARGET_SAMPLE_RATE;
+    let pcm = if original_sr == target_sr {
+        decoded_mono
+    } else {
+        crate::media::resampler::resample_mono(&decoded_mono, original_sr, target_sr)
+    };
+    Ok(pcm)
+}
+
+#[async_trait::async_trait]
+impl SttProviderImpl for WhisperLocalProvider {
+    fn kind(&self) -> SttProviderKind {
+        SttProviderKind::WhisperRsLocal
+    }
+
+    async fn transcribe(
+        &self,
+        audio: &[u8],
+        request: &TranscriptionRequest,
+    ) -> Result<TranscriptionResult, String> {
+        // Decode audio bytes → 16 kHz f32 PCM (synchronously on spawn_blocking).
+        let audio_owned = audio.to_vec();
+        let mime = if audio_owned.starts_with(b"RIFF") {
+            "audio/wav"
+        } else if audio_owned.starts_with(b"ID3") || audio_owned.starts_with(&[0xFF, 0xFB]) {
+            "audio/mpeg"
+        } else {
+            ""
+        };
+        let mime_str = mime.to_string();
+        let pcm = tokio::task::spawn_blocking(move || decode_audio_bytes_to_pcm(&audio_owned, &mime_str))
+            .await
+            .map_err(|e| format!("whisper local: decode join: {e}"))??;
+
+        // Build WhisperOptions from the STT request (language passthrough).
+        let mut opts = crate::providers::whisper::WhisperOptions::default();
+        if !request.language.is_empty() {
+            opts.language = request.language.clone();
+            opts.auto_detect_language = false;
+        }
+
+        let text = self
+            .engine
+            .transcribe(&pcm, opts)
+            .await
+            .map_err(|e| format!("whisper local: transcribe: {e:#}"))?;
+
+        let cleaned = crate::media::stt_postprocess::clean_transcript(&text);
+        Ok(TranscriptionResult {
+            text: cleaned,
+            segments: vec![],
+            language: request.language.clone(),
+            confidence: None,
+        })
+    }
+}
+
 /// MM-01b bridge: build a live STT provider for `kind` from operator creds.
 /// Cloud kinds (OpenAI Whisper / Azure Speech) are live; the local candle
-/// backend + Vosk are deferred (see module docs).
+/// backend (HANDY-05) is now wired; Vosk is deferred.
 pub fn make_stt_provider(
     kind: SttProviderKind,
     api_key: Option<SecretString>,
@@ -561,11 +730,10 @@ pub fn make_stt_provider(
         }
         // JV-VOICE-02/03 — local, no API key, no cloud gate.
         SttProviderKind::FasterWhisperLocal => Ok(Box::new(FasterWhisperProvider::new())),
-        SttProviderKind::WhisperRsLocal => Err(
-            "local whisper STT is deferred — wire it over the existing candle \
-             `providers::whisper::WhisperEngine` with a bytes->PCM decode bridge"
-                .to_string(),
-        ),
+        // HANDY-05 — local candle engine, now wired.
+        SttProviderKind::WhisperRsLocal => {
+            Ok(Box::new(WhisperLocalProvider::new()?))
+        }
         SttProviderKind::Vosk => Err(
             "vosk STT is deferred — a C-FFI engine (cmake + C++ toolchain), same \
              build-risk class as whisper-rs"
@@ -873,6 +1041,9 @@ mod tests {
             )
             .is_err()
         );
+        // HANDY-05: WhisperRsLocal is now wired but still returns Err in test/CI
+        // environments where the model artifacts are not cached (~/.neoth/models/).
+        // The error is "model not cached", not "deferred". is_err() remains correct.
         assert!(make_stt_provider(SttProviderKind::WhisperRsLocal, None, None, &on).is_err());
         assert!(make_stt_provider(SttProviderKind::Vosk, None, None, &on).is_err());
     }

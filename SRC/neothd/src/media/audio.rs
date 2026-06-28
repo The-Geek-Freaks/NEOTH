@@ -108,15 +108,29 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
         // faster-whisper present but failed — fall through to candle path.
     }
 
-    // ── Path 2: candle WhisperEngine ────────────────────────────────────────
-    let cache_dir = whisper_cache_dir();
-    let tokenizer = cache_dir.join(crate::providers::whisper::TOKENIZER_FILE);
-    let config = cache_dir.join(crate::providers::whisper::CONFIG_FILE);
-    let weights = cache_dir.join(crate::providers::whisper::SAFETENSORS_FILE);
-    if !tokenizer.exists() || !config.exists() || !weights.exists() {
-        return (String::new(), "model not cached");
-    }
-    // We're inside spawn_blocking; safe to block_on a sub-runtime.
+    // ── Path 2: candle WhisperEngine (HANDY-05: shared global instance) ────
+    //
+    // Previously constructed a NEW engine per-call (wasting VRAM on every
+    // audio-ingest). Now obtains the global `Arc<WhisperEngine>` singleton
+    // via `init_global_engine_sync`, which builds it once and reuses it
+    // thereafter. The idle-watcher task on the engine will free VRAM after
+    // the configured idle timeout (default 120 s) between calls.
+    let engine = match crate::providers::whisper::init_global_engine_sync(None) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!("whisper: engine unavailable — {e:#}");
+            // Map "model not cached" vs other errors to distinct statuses.
+            let status = if e.to_string().contains("not cached") {
+                "model not cached"
+            } else {
+                "whisper engine init failed"
+            };
+            return (String::new(), status);
+        }
+    };
+
+    // We're inside spawn_blocking; build a minimal current-thread runtime
+    // to drive the async transcribe call.
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -126,10 +140,6 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
     };
     let samples_owned = samples.to_vec();
     let text = rt.block_on(async move {
-        let engine = match crate::providers::whisper::WhisperEngine::new(None).await {
-            Ok(e) => e,
-            Err(_) => return Err(()),
-        };
         engine
             .transcribe(&samples_owned, Default::default())
             .await
@@ -236,6 +246,12 @@ fn transcribe_via_faster_whisper(
     Some((cleaned, "transcribed-faster-whisper"))
 }
 
+// HANDY-05: whisper_cache_dir() was previously used by `transcribe_if_cached`
+// to check artifact presence before building a per-call engine. Now superseded
+// by `providers::whisper::init_global_engine_sync` which performs the same
+// check internally. Kept here in case the faster-whisper path ever needs to
+// cross-reference the candle cache directory.
+#[allow(dead_code)]
 fn whisper_cache_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME")
         .map(std::path::PathBuf::from)

@@ -310,7 +310,7 @@ impl Default for OmiConfig {
 /// MM-01b/02b/03b — cloud media opt-ins. ALL default OFF (`false`). Each flag,
 /// when `true`, means the operator has accepted that THIS media type leaves the
 /// device for a cloud provider. Audio/image/video are more sensitive than text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct MediaConfig {
     /// Cloud speech-to-text (OpenAI Whisper / Azure Speech). On = your AUDIO
@@ -348,6 +348,36 @@ pub struct MediaConfig {
     /// the matcher is a no-op on empty embeddings, so labelling activates
     /// automatically the moment embeddings flow.
     pub auto_speaker_labels: bool,
+    /// GOLD-ADAPT-HANDY-05 — idle unload window for the local candle Whisper engine.
+    ///
+    /// When `Some(n)`, the shared `WhisperEngine` drops its `LoadedWhisper`
+    /// (freeing VRAM / RAM) after `n` seconds of inactivity; the next
+    /// transcription request reloads the model from the cached safetensors
+    /// (~1-5 s). `None` or `Some(0)` = keep loaded forever after first use.
+    ///
+    /// Default `Some(120)` (2 minutes). Applies to both the `transcribe_if_cached`
+    /// audio-ingest path and the `WhisperRsLocal` STT-provider path.
+    #[serde(default = "default_whisper_idle_unload_secs")]
+    pub whisper_idle_unload_secs: Option<u64>,
+}
+
+fn default_whisper_idle_unload_secs() -> Option<u64> {
+    Some(120)
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            cloud_stt_enabled: false,
+            cloud_tts_enabled: false,
+            cloud_vision_enabled: false,
+            video_frame_upload_enabled: false,
+            required_audit_for_cloud_media: false,
+            auto_speaker_labels: false,
+            // HANDY-05 — default 2-minute idle unload; matches serde default.
+            whisper_idle_unload_secs: default_whisper_idle_unload_secs(),
+        }
+    }
 }
 
 /// EM-02b — CalDAV calendar-write knobs.
