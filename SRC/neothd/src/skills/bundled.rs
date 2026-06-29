@@ -72,9 +72,19 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "archon",
         include_str!("../../assets/skills/archon/skill.yaml"),
     ),
+    // GOLD-ADAPT-HERMES-10 (2026-06-29) — on-demand arXiv scan (Jarvis active-skill port).
+    (
+        "arxiv_scanner",
+        include_str!("../../assets/skills/arxiv_scanner/skill.yaml"),
+    ),
     (
         "brainstorming",
         include_str!("../../assets/skills/brainstorming/skill.yaml"),
+    ),
+    // GOLD-ADAPT-HERMES-10 (2026-06-29) — task-driven browser automation (Jarvis active-skill port).
+    (
+        "browser_use",
+        include_str!("../../assets/skills/browser_use/skill.yaml"),
     ),
     // GOLD-ADAPT-SKILL2-06 (2026-06-19) — bundled skill.
     (
@@ -194,6 +204,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "engineering_testing_strategy",
         include_str!("../../assets/skills/engineering_testing_strategy/skill.yaml"),
+    ),
+    // GOLD-ADAPT-HERMES-10 (2026-06-29) — prompt/skill self-evolution proposer (Jarvis active-skill port).
+    (
+        "evolver",
+        include_str!("../../assets/skills/evolver/skill.yaml"),
     ),
     (
         "executing_plans",
@@ -1334,5 +1349,86 @@ mod tests {
 
         // 3. Doctor probe smoke — must not panic.
         let _installed: bool = crate::config::installer::is_graphify_installed();
+    }
+
+    /// GOLD-ADAPT-HERMES-10 (2026-06-29) — the 3 ported Jarvis active-skills
+    /// (arxiv_scanner, browser_use, evolver) must be bundled, parse, ship
+    /// enabled, and each route from its own distinctive trigger phrases with no
+    /// cross-activation among the three — proving they are live, not just files.
+    #[test]
+    fn gold_adapt_hermes_10_skills_bundled_enabled_and_route() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+        use std::path::PathBuf;
+
+        // (id, prompts that must route exclusively to it)
+        let pack: &[(&str, &[&str])] = &[
+            (
+                "arxiv_scanner",
+                &[
+                    "scan arxiv for recent papers on diffusion models",
+                    "what are the latest arxiv papers on RLHF",
+                    "do a preprint scan on quantization",
+                ],
+            ),
+            (
+                "browser_use",
+                &[
+                    "use the browser to fill out the form on this site",
+                    "navigate to the dashboard and extract the table",
+                    "click through the checkout flow",
+                ],
+            ),
+            (
+                "evolver",
+                &[
+                    "evolve the prompt based on these failing transcripts",
+                    "iterate on this prompt so it stops hallucinating",
+                    "evolve this skill to fix the missed triggers",
+                ],
+            ),
+        ];
+
+        // Build the 3-skill set once so route() picks among real competitors.
+        let skills: Vec<Skill> = pack
+            .iter()
+            .map(|(id, _)| {
+                let (_, body) = BUNDLED_SKILLS
+                    .iter()
+                    .find(|(bid, _)| bid == id)
+                    .unwrap_or_else(|| panic!("HERMES-10: skill `{id}` not bundled"));
+                let manifest: SkillManifest = serde_yaml::from_str(body)
+                    .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+                assert_eq!(manifest.id, *id, "`{id}` manifest id mismatch");
+                assert!(manifest.enabled, "`{id}` must ship enabled (proactive use)");
+                assert!(
+                    !manifest.trigger_keywords.is_empty(),
+                    "`{id}` must have trigger_keywords"
+                );
+                assert!(
+                    !manifest.system_prompt.trim().is_empty(),
+                    "`{id}` must have a non-empty system_prompt"
+                );
+                Skill {
+                    manifest,
+                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    content_hash: String::new(),
+                }
+            })
+            .collect();
+
+        for (id, prompts) in pack {
+            for prompt in *prompts {
+                let m = route(prompt, &skills).unwrap_or_else(|| {
+                    panic!("HERMES-10: `{id}` prompt `{prompt}` routed to nothing")
+                });
+                assert_eq!(
+                    m.skill.id(),
+                    *id,
+                    "prompt `{prompt}` should route to `{id}`, got `{}`",
+                    m.skill.id()
+                );
+            }
+        }
     }
 }
