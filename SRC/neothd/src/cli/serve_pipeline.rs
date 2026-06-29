@@ -2037,6 +2037,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &mcp_servers_for_loop,
                         &writer,
                         &config_for_handler,
+                        // P4 — channel path is headless (no TTY): elicitation off.
+                        &crate::cli::elicitation::ElicitationHandler::Disabled,
                     )
                     .await
                     {

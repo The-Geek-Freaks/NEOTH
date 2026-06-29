@@ -290,11 +290,15 @@ pub struct LoopConfig {
     /// `council::self_reflect::refine`. Default `false` (opt-in: adds an
     /// extra provider call per round).
     pub refine_enabled: bool,
-    /// Optional total-token cap across all rounds. When `Some(n)` and the
-    /// accumulated (estimated) tokens exceed `n`, the loop exits with
-    /// `StopReason::BudgetExceeded` instead of starting another round.
-    /// `None` (default) = no budget gate.
-    pub token_budget: Option<u64>,
+    /// Optional cumulative TOOL-CALL cap across all rounds. When `Some(n)` and the
+    /// accumulated tool calls (successful + failed) exceed `n`, the loop exits with
+    /// `StopReason::BudgetExceeded` instead of starting another round. This is a
+    /// tool-call budget, NOT an LLM-token budget (the dispatch loop doesn't surface
+    /// per-round token usage) — named honestly so the operator isn't misled.
+    /// `None` (default) = no budget gate. `serde(alias)` keeps older
+    /// `token_budget:` freedom.yaml keys working.
+    #[serde(alias = "token_budget")]
+    pub tool_call_budget: Option<u64>,
 }
 
 impl Default for LoopConfig {
@@ -304,7 +308,7 @@ impl Default for LoopConfig {
             max_rounds: 3,
             auto_invoke_on_dissent: false,
             refine_enabled: false,
-            token_budget: None,
+            tool_call_budget: None,
         }
     }
 }

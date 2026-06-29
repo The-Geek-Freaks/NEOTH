@@ -127,8 +127,9 @@ pub struct ChatArgs {
     /// `run_mcp_dispatch_loop` call. Each round is one full dispatch; the
     /// engine evaluates `--until` criteria after each round and stops when
     /// all are satisfied or `--iterations` is hit. Requires MCP autoroute to
-    /// be on (same gate as the existing dispatch path).
-    #[arg(long)]
+    /// be on (same gate as the existing dispatch path). Flag is `--loop`
+    /// (the product name); `--loop-mode` stays accepted as an alias.
+    #[arg(long = "loop", alias = "loop-mode")]
     pub loop_mode: bool,
 
     /// GOLD-LOOP-01 — maximum outer loop rounds (overrides
@@ -2180,7 +2181,7 @@ async fn dispatch_provider(
                     } else {
                         vec![]
                     },
-                    token_budget: config.loop_config.token_budget,
+                    tool_call_budget: config.loop_config.tool_call_budget,
                     autonomy: config.autonomy,
                     refine_enabled: config.loop_config.refine_enabled,
                     neoth_home: FreedomConfig::default_neoth_home(),
@@ -2197,6 +2198,13 @@ async fn dispatch_provider(
                     &mcp_servers_for_loop,
                     &writer,
                     config,
+                    // P4 — elicitation is live in loop mode too on the interactive
+                    // TTY (same gate as the single-dispatch path below).
+                    if config.elicitation.enabled {
+                        &crate::cli::elicitation::ElicitationHandler::Cli
+                    } else {
+                        &crate::cli::elicitation::ElicitationHandler::Disabled
+                    },
                 )
                 .await
                 {
@@ -6326,6 +6334,12 @@ pub(crate) async fn dispatch_council_with_recovery(
                 &crate::mcp::McpServers::default(),
                 writer,
                 config,
+                // P4 — interactive chat session: honour the elicitation gate.
+                if config.elicitation.enabled {
+                    &crate::cli::elicitation::ElicitationHandler::Cli
+                } else {
+                    &crate::cli::elicitation::ElicitationHandler::Disabled
+                },
             )
             .await
             {

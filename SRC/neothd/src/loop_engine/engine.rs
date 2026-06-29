@@ -40,9 +40,12 @@ pub struct LoopConfig {
     /// Structural stop criteria passed to `StopConditionVerifier`. Empty means
     /// no structured gate — any round exit is accepted.
     pub until: Vec<String>,
-    /// Optional cumulative token budget across all rounds (best-effort; uses
-    /// `successful_calls` as a proxy when real token counts are unavailable).
-    pub token_budget: Option<u64>,
+    /// Optional cumulative TOOL-CALL budget across all rounds — an outer safety
+    /// gate on how much tool work the loop may do (sum of successful + failed
+    /// calls). NOT an LLM-token budget: the inner dispatch loop does not surface
+    /// per-round token usage, so this counts tool calls. Named accordingly so the
+    /// operator isn't misled. `None` = no cap (bounded only by `max_rounds`).
+    pub tool_call_budget: Option<u64>,
     /// Autonomy level — controls whether `StopConditionVerifier` actually
     /// gates the stop or passes through immediately (below Elevated).
     pub autonomy: AutonomyLevel,
@@ -65,7 +68,7 @@ impl LoopConfig {
         Self {
             max_rounds: cfg.max_rounds,
             until,
-            token_budget: cfg.token_budget,
+            tool_call_budget: cfg.tool_call_budget,
             autonomy,
             refine_enabled: cfg.refine_enabled,
             neoth_home,
@@ -81,7 +84,7 @@ impl LoopConfig {
         Self {
             max_rounds: 1,
             until: Vec::new(),
-            token_budget: None,
+            tool_call_budget: None,
             autonomy,
             refine_enabled: false,
             neoth_home,
@@ -97,7 +100,7 @@ pub enum StopReason {
     Converged,
     /// `max_rounds` reached without verifier approval.
     CapHit,
-    /// Token budget exceeded (see `LoopConfig::token_budget`).
+    /// Tool-call budget exceeded (see `LoopConfig::tool_call_budget`).
     BudgetExceeded,
 }
 
@@ -133,7 +136,10 @@ pub struct LoopRunRecord {
     pub prompt_hash: String,
     pub rounds_run: u32,
     pub stop_reason: StopReason,
-    pub total_tokens_used: Option<u64>,
+    /// Total tool calls across all rounds (the `tool_call_budget` accumulator).
+    /// `serde(alias)` keeps older `total_tokens_used` records readable.
+    #[serde(alias = "total_tokens_used")]
+    pub total_tool_calls: Option<u64>,
     pub per_round: Vec<LoopRound>,
     pub final_text: String,
     pub ts_start: i64,
@@ -143,7 +149,7 @@ pub struct LoopRunRecord {
 /// Mutable state threaded through the loop.
 pub struct LoopState {
     pub current_round: u32,
-    pub accumulated_tokens: u64,
+    pub accumulated_tool_calls: u64,
     pub stop_verifier: StopConditionVerifier,
 }
 
@@ -151,7 +157,7 @@ impl LoopState {
     fn new(config: &LoopConfig) -> Self {
         Self {
             current_round: 0,
-            accumulated_tokens: 0,
+            accumulated_tool_calls: 0,
             stop_verifier: StopConditionVerifier::new(config.until.iter().map(|s| s.as_str())),
         }
     }
@@ -244,8 +250,8 @@ fn extract_evidence(text: &str) -> Vec<String> {
 /// the criteria declared in `config.until` are satisfied; if so the loop
 /// exits with `StopReason::Converged`. At L2+ autonomy and when
 /// `config.refine_enabled = true`, a self-reflect refine pass fires when
-/// quality is below threshold. The loop also respects a token budget
-/// (`config.token_budget`) as an outer safety gate.
+/// quality is below threshold. The loop also respects a tool-call budget
+/// (`config.tool_call_budget`) as an outer safety gate.
 ///
 /// Returns `Ok(LoopRunRecord)` on any normal exit (Converged / CapHit /
 /// BudgetExceeded). Returns `Err` only when the first round itself fails
@@ -254,10 +260,11 @@ fn extract_evidence(text: &str) -> Vec<String> {
 pub async fn run_loop(
     config: &LoopConfig,
     provider: &dyn crate::providers::Provider,
-    req: crate::providers::Request,
+    mut req: crate::providers::Request,
     servers: &crate::mcp::McpServers,
     writer: &WalWriterHandle,
     freedom: &crate::config::FreedomConfig,
+    elicitation: &crate::cli::elicitation::ElicitationHandler,
 ) -> Result<LoopRunRecord> {
     let loop_id = new_loop_id();
     let prompt_hash = format!(
@@ -266,6 +273,10 @@ pub async fn run_loop(
     );
     let ts_start = now_unix();
     let has_until = !config.until.is_empty();
+    // P2 — the stable task prompt. Each round after the first re-bases `req.prompt`
+    // on this plus the previous round's output, so the loop actually iterates
+    // (refine/extend) instead of re-running the identical prompt every round.
+    let base_prompt = req.prompt.clone();
 
     // --- WAL: LOOP_STARTED ---
     emit_wal(
@@ -322,13 +333,13 @@ pub async fn run_loop(
         // Token budget check before each round (except the first — we need
         // at least one round to produce any output).
         if round_num > 1 {
-            if let Some(budget) = config.token_budget {
-                if state.accumulated_tokens >= budget {
+            if let Some(budget) = config.tool_call_budget {
+                if state.accumulated_tool_calls >= budget {
                     info!(
                         loop_id = %loop_id,
-                        accumulated = state.accumulated_tokens,
+                        accumulated_tool_calls = state.accumulated_tool_calls,
                         budget,
-                        "loop-engine: token budget exceeded — stopping"
+                        "loop-engine: tool-call budget exceeded — stopping"
                     );
                     stop_reason = StopReason::BudgetExceeded;
                     break;
@@ -363,14 +374,20 @@ pub async fn run_loop(
             compaction,
             compression.clone(),
             judge_provider,
-            // GOLD-ADOPT-17 — loop-engine runs headless (no TTY); always Disabled.
-            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            // GOLD-ADOPT-17 / P4 — elicitation is supplied by the caller:
+            // `Cli` on the interactive `neoth chat --loop` TTY (so mid-turn
+            // elicitation works in loop mode too), `Disabled` on the headless
+            // serve/channel path. No longer hard-wired off.
+            elicitation,
         )
         .await?;
 
-        // Accumulate token proxy (successful + failed calls as a unit).
-        let round_units = outcome.successful_calls as u64 + outcome.failed_calls as u64;
-        state.accumulated_tokens = state.accumulated_tokens.saturating_add(round_units);
+        // Accumulate the round's tool-call count (successful + failed). This is a
+        // tool-call budget, NOT a token budget — it's an outer safety gate on how
+        // much tool work the loop may do, named honestly so the operator isn't
+        // misled into thinking `tool_call_budget` counts LLM tokens.
+        let round_calls = outcome.successful_calls as u64 + outcome.failed_calls as u64;
+        state.accumulated_tool_calls = state.accumulated_tool_calls.saturating_add(round_calls);
 
         // --- Self-reflect refine pass (L2+ autonomy + refine_enabled) ---
         let mut refine_fired = false;
@@ -461,6 +478,18 @@ pub async fn run_loop(
 
         final_text = round_text;
 
+        // P2 — feed this round's output into the NEXT round's request so the
+        // loop iterates on its own work (refine/extend/correct) rather than
+        // re-running the identical prompt. The original task stays the stable
+        // base; only the LATEST output is attached (not compounded every round).
+        if round_num < config.max_rounds && !stop_approved {
+            req.prompt = format!(
+                "{base_prompt}\n\n## Previous round (#{round_num}) produced:\n{final_text}\n\n\
+                 ## Now: build on and improve the above toward the task — refine, fill gaps, \
+                 or correct mistakes. Do not merely repeat it."
+            );
+        }
+
         if stop_approved {
             info!(
                 loop_id = %loop_id,
@@ -508,8 +537,8 @@ pub async fn run_loop(
         prompt_hash,
         rounds_run,
         stop_reason,
-        total_tokens_used: if state.accumulated_tokens > 0 {
-            Some(state.accumulated_tokens)
+        total_tool_calls: if state.accumulated_tool_calls > 0 {
+            Some(state.accumulated_tool_calls)
         } else {
             None
         },
@@ -563,7 +592,7 @@ mod tests {
             prompt_hash: "deadbeef01234567".into(),
             rounds_run: 2,
             stop_reason: StopReason::Converged,
-            total_tokens_used: Some(42),
+            total_tool_calls: Some(42),
             per_round: vec![LoopRound {
                 round_num: 1,
                 iterations: 3,
@@ -595,7 +624,7 @@ mod tests {
             prompt_hash: "aabbccdd".into(),
             rounds_run: 1,
             stop_reason: StopReason::CapHit,
-            total_tokens_used: None,
+            total_tool_calls: None,
             per_round: vec![],
             final_text: "hello".into(),
             ts_start: 0,
@@ -640,7 +669,7 @@ mod tests {
             max_rounds: 5,
             auto_invoke_on_dissent: true,
             refine_enabled: true,
-            token_budget: Some(1000),
+            tool_call_budget: Some(1000),
         };
         let lc = LoopConfig::from_freedom(
             &cfg,
@@ -649,7 +678,7 @@ mod tests {
             PathBuf::from("/tmp/neoth"),
         );
         assert_eq!(lc.max_rounds, 5);
-        assert_eq!(lc.token_budget, Some(1000));
+        assert_eq!(lc.tool_call_budget, Some(1000));
         assert!(lc.refine_enabled);
         assert_eq!(lc.until, vec!["done".to_string()]);
     }
@@ -679,7 +708,7 @@ mod tests {
         let cfg = LoopConfig {
             max_rounds: 3,
             until: vec![],
-            token_budget: None,
+            tool_call_budget: None,
             autonomy: AutonomyLevel::Full,
             refine_enabled: false,
             neoth_home: PathBuf::from("/tmp"),
@@ -699,7 +728,7 @@ mod tests {
         let cfg = LoopConfig {
             max_rounds: 3,
             until: vec!["build green".into()],
-            token_budget: None,
+            tool_call_budget: None,
             autonomy: AutonomyLevel::Full,
             refine_enabled: false,
             neoth_home: PathBuf::from("/tmp"),
