@@ -262,6 +262,19 @@ impl CompanionInvite {
             self.topic_hex, self.psk_hex, ttl_secs
         )
     }
+
+    /// Serialise to the on-disk pending-invite JSON consumed by the serve-side
+    /// P2P coordinator (`spawn_companion_p2p_listener_task` polls
+    /// `~/.neoth/companion_pending_invite.json`). Symmetric with [`from_hex`] —
+    /// the coordinator reads exactly these three keys. Keeps `psk_hex` private
+    /// (no broad getter) while enabling the CLI→daemon pairing handoff.
+    pub fn to_pending_invite_json(&self, ttl_secs: u64) -> serde_json::Value {
+        serde_json::json!({
+            "topic_hex": self.topic_hex,
+            "psk_hex": self.psk_hex,
+            "ttl_secs": ttl_secs,
+        })
+    }
 }
 
 impl std::fmt::Debug for CompanionInvite {
@@ -485,14 +498,12 @@ pub async fn run_companion_server(
 pub fn spawn_companion_server_loop(
     config: CompanionConfig,
     _home: PathBuf,
-    writer: WalWriterHandle,
+    state: Arc<CompanionState>,
     shutdown: Arc<Notify>,
 ) -> Option<JoinHandle<()>> {
     if !config.enabled {
         return None;
     }
-
-    let state = Arc::new(CompanionState::new(writer, config.port));
 
     Some(tokio::spawn(async move {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), config.port);
@@ -1337,5 +1348,24 @@ mod tests {
         assert!(url.contains(&format!("topic={topic}")));
         assert!(url.contains(&format!("psk={psk}")));
         assert!(url.ends_with("ttl=300"));
+    }
+
+    /// `to_pending_invite_json` emits exactly the three keys the serve-side P2P
+    /// coordinator reads back (`topic_hex` / `psk_hex` / `ttl_secs`) and
+    /// round-trips through `from_hex` — proves the `--write-invite-for-serve`
+    /// CLI→daemon handoff file is consumable by the poller in serve_tasks.rs.
+    #[test]
+    fn pending_invite_json_round_trips_to_from_hex() {
+        let inv = CompanionInvite::generate().unwrap();
+        let json = inv.to_pending_invite_json(300);
+        let topic_hex = json["topic_hex"].as_str().expect("topic_hex present");
+        let psk_hex = json["psk_hex"].as_str().expect("psk_hex present");
+        assert_eq!(json["ttl_secs"].as_u64(), Some(300));
+        assert_eq!(topic_hex.len(), 64, "32-byte topic as hex");
+        assert_eq!(psk_hex.len(), 32, "16-byte psk as hex");
+        // The poller reconstructs via from_hex(topic_hex, psk_hex); identical
+        // pairing URL ⇒ the daemon drives the very invite the CLI minted.
+        let rebuilt = CompanionInvite::from_hex(topic_hex.to_string(), psk_hex.to_string());
+        assert_eq!(inv.pairing_url(300), rebuilt.pairing_url(300));
     }
 }

@@ -41,16 +41,29 @@ pub enum CompanionCommand {
     /// Mint a one-time phone-pairing invite, show a QR code, and wait for the
     /// companion app to connect over the Hyperswarm P2P mesh. The invite is
     /// single-use and expires after a short TTL. Requires the `cluster` feature.
-    PairPhone,
+    PairPhone {
+        /// Hand the invite to a RUNNING `neoth serve` daemon instead of driving
+        /// the pairing in this short-lived CLI process. Writes the invite
+        /// atomically to `~/.neoth/companion_pending_invite.json`, which the
+        /// daemon's serve-side P2P coordinator (`companion.p2p_enabled: true`)
+        /// polls every ~2s, consumes single-use, and completes the handshake —
+        /// minting the token into the daemon's LONG-LIVED store so it is also
+        /// valid on the loopback HTTP path. Without this flag the CLI drives a
+        /// transient in-process listener whose token dies when the command exits.
+        #[arg(long)]
+        write_invite_for_serve: bool,
+    },
 }
 
 pub async fn run_companion(args: CompanionArgs) -> Result<()> {
     match args.command {
-        CompanionCommand::PairPhone => run_pair_phone().await,
+        CompanionCommand::PairPhone {
+            write_invite_for_serve,
+        } => run_pair_phone(write_invite_for_serve).await,
     }
 }
 
-async fn run_pair_phone() -> Result<()> {
+async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
     let invite = CompanionInvite::generate()?;
     let url = invite.pairing_url(PAIR_INVITE_TTL_SECS);
 
@@ -67,6 +80,32 @@ async fn run_pair_phone() -> Result<()> {
     println!();
     println!("This invite is single-use and expires in {PAIR_INVITE_TTL_SECS}s.");
     println!();
+
+    // `--write-invite-for-serve`: hand the invite to a RUNNING daemon rather
+    // than driving the pairing here. Write it to the well-known path the
+    // serve-side P2P coordinator polls, then exit — the daemon owns the listener
+    // and mints the token into its long-lived store (so it is valid on the
+    // loopback HTTP path too). This is the daemon-backed flow; the transient
+    // in-process path below only fits a no-daemon one-shot.
+    if write_invite_for_serve {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let invite_path = home.join("companion_pending_invite.json");
+        let json = serde_json::to_vec(&invite.to_pending_invite_json(PAIR_INVITE_TTL_SECS))
+            .map_err(|e| anyhow::anyhow!("serialise pending invite: {e}"))?;
+        crate::util::atomic_write::atomic_write(&invite_path, &json).map_err(|e| {
+            anyhow::anyhow!(
+                "write pending invite {} (is `neoth serve` initialised?): {e}",
+                invite_path.display()
+            )
+        })?;
+        println!(
+            "Invite handed to the running daemon at {}.\n\
+             The serve-side coordinator (companion.p2p_enabled: true) picks it up \
+             within ~2s and completes the pairing into the daemon's token store.",
+            invite_path.display()
+        );
+        return Ok(());
+    }
 
     // Spawn a transient CompanionState (token store) and a transient WAL writer
     // for this standalone CLI invocation. The CLI runs outside of `neoth serve`,

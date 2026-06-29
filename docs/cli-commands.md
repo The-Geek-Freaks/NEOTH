@@ -358,6 +358,8 @@ GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time phone-pairin
 
 Mint a one-time phone-pairing invite, show a QR code, and wait for the companion app to connect over the Hyperswarm P2P mesh. The invite is single-use and expires after a short TTL. Requires the `cluster` feature
 
+- `--write-invite-for-serve <WRITE_INVITE_FOR_SERVE>` — Hand the invite to a RUNNING `neoth serve` daemon instead of driving the pairing in this short-lived CLI process. Writes the invite atomically to `~/.neoth/companion_pending_invite.json`, which the daemon's serve-side P2P coordinator (`companion.p2p_enabled: true`) polls every ~2s, consumes single-use, and completes the handshake — minting the token into the daemon's LONG-LIVED store so it is also valid on the loopback HTTP path. Without this flag the CLI drives a transient in-process listener whose token dies when the command exits
+
 ## `neoth completions`
 
 Emit a shell-completion script. `neoth completions zsh > _neoth`, `neoth completions bash > /etc/bash_completion.d/neoth`, etc

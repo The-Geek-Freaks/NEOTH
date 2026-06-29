@@ -529,9 +529,18 @@ async fn deliver_to_endpoint(
 
 // ── WAL audit emit helpers ────────────────────────────────────────────────────
 
+/// xxh3-64 hex of the endpoint URL. Webhook audit frames record this hash,
+/// NEVER the raw URL — the destination can carry a secret token in its
+/// path/query, and the WAL is a long-lived audit trail. Matches the
+/// `endpoint_url_hash` contract documented in `wal/events.rs` for the
+/// `WEBHOOK_DELIVERED` / `WEBHOOK_SSRF_BLOCKED` / `WEBHOOK_FAILED` events.
+fn endpoint_url_hash(url: &str) -> String {
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(url.as_bytes()))
+}
+
 async fn emit_delivered(writer: &WalWriterHandle, url: &str, status: u16, latency_ms: u64) {
     let payload = serde_json::json!({
-        "url": url,
+        "endpoint_url_hash": endpoint_url_hash(url),
         "status": status,
         "latency_ms": latency_ms,
     });
@@ -539,12 +548,14 @@ async fn emit_delivered(writer: &WalWriterHandle, url: &str, status: u16, latenc
 }
 
 async fn emit_ssrf_blocked(writer: &WalWriterHandle, url: &str, reason: &str) {
-    let payload = serde_json::json!({ "url": url, "reason": reason });
+    let payload =
+        serde_json::json!({ "endpoint_url_hash": endpoint_url_hash(url), "reason": reason });
     emit_audit(writer, EVENT_TYPE_WEBHOOK_SSRF_BLOCKED, &payload).await;
 }
 
 async fn emit_failed(writer: &WalWriterHandle, url: &str, error: &str) {
-    let payload = serde_json::json!({ "url": url, "error": error });
+    let payload =
+        serde_json::json!({ "endpoint_url_hash": endpoint_url_hash(url), "error": error });
     emit_audit(writer, EVENT_TYPE_WEBHOOK_FAILED, &payload).await;
 }
 
@@ -655,6 +666,23 @@ pub fn spawn_webhook_manager_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Webhook audit frames must record `endpoint_url_hash` (xxh3-64 hex), never
+    /// the raw URL — the destination can carry a secret token in its path/query
+    /// and the WAL is a long-lived audit trail. Proves the C5 privacy fix.
+    #[test]
+    fn endpoint_url_hash_is_deterministic_xxh3_hex_not_raw_url() {
+        let url = "https://example.com/hook?token=secret123";
+        let h = endpoint_url_hash(url);
+        assert_eq!(h.len(), 16, "64-bit xxh3 → 16 hex chars");
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(h, endpoint_url_hash(url), "hash must be deterministic");
+        assert_ne!(h, url, "audit stores the hash, never the raw URL");
+        assert_eq!(
+            h,
+            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(url.as_bytes()))
+        );
+    }
 
     // ── SSRF IP guard ────────────────────────────────────────────────────────
 

@@ -583,13 +583,13 @@ pub(crate) fn spawn_webhook_manager_cron(
 pub(crate) fn spawn_companion_server(
     config: &FreedomConfig,
     home_dir: &std::path::Path,
-    writer: WalWriterHandle,
+    companion_state: std::sync::Arc<crate::daemon::companion::CompanionState>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let handle = crate::daemon::companion::spawn_companion_server_loop(
         config.companion.clone(),
         home_dir.to_path_buf(),
-        writer,
+        companion_state,
         shutdown,
     );
     if handle.is_some() {

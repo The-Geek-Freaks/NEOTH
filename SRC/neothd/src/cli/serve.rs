@@ -1004,36 +1004,35 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // via `companion.enabled: true`. Mints chat-scoped bearer tokens for phones
     // that scan the QR code shown at `neoth init` step 6k. Loopback-only
     // (127.0.0.1:9745). Emits `0x0B COMPANION_PAIRED` WAL audit frames.
+    // ONE shared CompanionState (token store) wired into BOTH the loopback HTTP
+    // server AND the P2P/Noise coordinator below. A bearer token minted over
+    // either path is therefore valid on the other — the phone pairs over P2P
+    // and then talks to the daemon over loopback HTTP with the SAME token.
+    // (Previously the two paths each built their own CompanionState, so a
+    // P2P-minted token was unknown to the HTTP auth check and vice-versa.)
+    let companion_state = std::sync::Arc::new(
+        crate::daemon::companion::CompanionState::new(writer.clone(), config.companion.port),
+    );
     let companion_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
     let companion_task = crate::cli::serve_tasks::spawn_companion_server(
         &config,
         &crate::config::FreedomConfig::default_neoth_home(),
-        writer.clone(),
+        std::sync::Arc::clone(&companion_state),
         std::sync::Arc::clone(&companion_shutdown),
     );
 
     // GOLD-COMPANION-P2P-01 — Companion P2P Noise pairing coordinator.
     // Default OFF — opt-in via `companion.p2p_enabled: true`. When enabled,
     // runs a long-lived poll loop that picks up pending invites written by
-    // `neoth companion pair-phone` and drives the Hyperswarm/Noise-XX accept
-    // loop for each one. Emits `0x0D COMPANION_P2P_PAIRED` / `0x0E
-    // COMPANION_P2P_REJECTED` WAL audit frames. Requires the `cluster` feature.
-    //
-    // Hoist a shared CompanionState so the P2P listener mints tokens into the
-    // SAME store as the HTTP server — tokens minted over Noise are also valid
-    // over HTTP (the phone can switch to the loopback HTTP path after pairing).
+    // `neoth companion pair-phone --write-invite-for-serve` and drives the
+    // Hyperswarm/Noise-XX accept loop for each one. Shares `companion_state`
+    // above so P2P-minted tokens are valid on the loopback HTTP path. Emits
+    // `0x0D COMPANION_P2P_PAIRED` / `0x0E COMPANION_P2P_REJECTED` WAL audit
+    // frames. Requires the `cluster` feature.
     let companion_p2p_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    // Build a shared Arc<CompanionState> for the P2P path. The HTTP server
-    // currently builds its own CompanionState inside spawn_companion_server_loop;
-    // for the P2P path we need the token store accessible here. We create an
-    // independent CompanionState for the P2P coordinator — it shares the same
-    // port value for consistency (though port is only used by the HTTP CSRF guard).
-    let companion_p2p_state = std::sync::Arc::new(
-        crate::daemon::companion::CompanionState::new(writer.clone(), config.companion.port),
-    );
     let companion_p2p_task = crate::cli::serve_tasks::spawn_companion_p2p_listener_task(
         &config,
-        companion_p2p_state,
+        std::sync::Arc::clone(&companion_state),
         writer.clone(),
         std::sync::Arc::clone(&companion_p2p_shutdown),
     );
