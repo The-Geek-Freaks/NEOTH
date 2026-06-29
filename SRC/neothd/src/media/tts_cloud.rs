@@ -210,6 +210,83 @@ impl TtsProvider for ElevenLabsClient {
     }
 }
 
+/// GOLD-ADAPT-SYS-02 — ViitorVoice voice-cloning sidecar client. POSTs a
+/// reference-audio sample (the request's `voice_id` is its file path) + the
+/// text as `multipart/form-data` to a self-hosted `{endpoint}/v1/voice-clone`
+/// (the viitor-voice-nar gateway) and returns the synthesised audio in the
+/// cloned voice. Goes through the allow-listed `http_client::build_client`, so
+/// the `src/media/` no-phone-home guard is not tripped (operator-configured
+/// upstream, never unsolicited).
+pub struct ViitorVoiceClient {
+    endpoint: String,
+}
+
+impl ViitorVoiceClient {
+    pub fn new(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+        }
+    }
+
+    fn clone_url(&self) -> String {
+        format!("{}/v1/voice-clone", self.endpoint.trim_end_matches('/'))
+    }
+}
+
+#[async_trait]
+impl TtsProvider for ViitorVoiceClient {
+    fn kind(&self) -> TtsProviderKind {
+        TtsProviderKind::ViitorVoice
+    }
+
+    async fn synth(&self, request: &TtsRequest) -> Result<TtsResponse, String> {
+        // The voice to clone is the request's voice_id (a reference-audio path).
+        let ref_path = request.voice_id.trim();
+        if ref_path.is_empty() {
+            return Err(
+                "viitor_voice requires a reference-audio path in voice_id (the voice to clone)"
+                    .to_string(),
+            );
+        }
+        let ref_bytes = tokio::fs::read(ref_path)
+            .await
+            .map_err(|e| format!("viitor_voice: read reference audio {ref_path}: {e}"))?;
+        let file_name = std::path::Path::new(ref_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("ref_audio.wav")
+            .to_string();
+
+        let client = http_client::build_client().map_err(|e| format!("http client: {e}"))?;
+        let form = reqwest::multipart::Form::new()
+            .text("text", request.text.clone())
+            .part(
+                "ref_audio",
+                reqwest::multipart::Part::bytes(ref_bytes).file_name(file_name),
+            );
+        let resp = client
+            .post(self.clone_url())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| format!("viitor_voice request: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("viitor_voice returned HTTP {}", resp.status()));
+        }
+        let audio_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("viitor_voice body: {e}"))?
+            .to_vec();
+        // The gateway echoes the requested container; report what we asked for.
+        Ok(TtsResponse {
+            audio_bytes,
+            format: request.format,
+            duration_ms: 0,
+        })
+    }
+}
+
 /// MM-03b bridge: build a live TTS provider for `kind` from operator creds.
 /// The first config → `Box<dyn TtsProvider>` factory; the dispatcher decides
 /// WHICH kind, this turns that decision into a synthesiser.
@@ -220,6 +297,7 @@ pub fn make_tts_provider(
     kind: TtsProviderKind,
     api_key: Option<SecretString>,
     azure_region: Option<String>,
+    viitor_endpoint: Option<String>,
     media_cfg: &crate::config::MediaConfig,
 ) -> Result<Box<dyn TtsProvider>, String> {
     // P0 ENFORCEMENT — a CLOUD TTS provider sends the text-to-speak to a third
@@ -247,6 +325,15 @@ pub fn make_tts_provider(
             let key = api_key.ok_or("azure tts requires an api key")?;
             let region = azure_region.ok_or("azure tts requires a region")?;
             Ok(Box::new(AzureTtsClient::new(region, key)))
+        }
+        // GOLD-ADAPT-SYS-02 — voice-cloning sidecar. Not local (is_local()==false),
+        // so the P0 cloud_tts_enabled gate above already applies. No API key —
+        // the self-hosted gateway is reached by URL; the reference voice sample
+        // is the request's voice_id path.
+        TtsProviderKind::ViitorVoice => {
+            let ep = viitor_endpoint
+                .ok_or("viitor_voice requires an endpoint (the viitor-voice-nar gateway URL)")?;
+            Ok(Box::new(ViitorVoiceClient::new(ep)))
         }
         TtsProviderKind::Piper | TtsProviderKind::Coqui => Err(format!(
             "{kind:?} local TTS is deferred — needs an ONNX/C++ engine dep \
@@ -378,14 +465,14 @@ mod tests {
     fn factory_returns_right_kind_or_deferral() {
         let on = cloud_on();
         assert_eq!(
-            make_tts_provider(TtsProviderKind::SystemNative, None, None, &on)
+            make_tts_provider(TtsProviderKind::SystemNative, None, None, None, &on)
                 .unwrap()
                 .kind(),
             TtsProviderKind::SystemNative
         );
         // EdgeTts is local — constructible without API key and with cloud flag off.
         assert_eq!(
-            make_tts_provider(TtsProviderKind::EdgeTts, None, None, &on)
+            make_tts_provider(TtsProviderKind::EdgeTts, None, None, None, &on)
                 .unwrap()
                 .kind(),
             TtsProviderKind::EdgeTts
@@ -394,6 +481,7 @@ mod tests {
             make_tts_provider(
                 TtsProviderKind::ElevenLabs,
                 Some(SecretString::from("k")),
+                None,
                 None,
                 &on
             )
@@ -406,6 +494,7 @@ mod tests {
                 TtsProviderKind::AzureTts,
                 Some(SecretString::from("k")),
                 Some("eastus".into()),
+                None,
                 &on,
             )
             .unwrap()
@@ -413,18 +502,19 @@ mod tests {
             TtsProviderKind::AzureTts
         );
         // Missing creds + deferred engines → clear errors.
-        assert!(make_tts_provider(TtsProviderKind::ElevenLabs, None, None, &on).is_err());
+        assert!(make_tts_provider(TtsProviderKind::ElevenLabs, None, None, None, &on).is_err());
         assert!(
             make_tts_provider(
                 TtsProviderKind::AzureTts,
                 Some(SecretString::from("k")),
                 None,
+                None,
                 &on
             )
             .is_err()
         );
-        assert!(make_tts_provider(TtsProviderKind::Piper, None, None, &on).is_err());
-        assert!(make_tts_provider(TtsProviderKind::Coqui, None, None, &on).is_err());
+        assert!(make_tts_provider(TtsProviderKind::Piper, None, None, None, &on).is_err());
+        assert!(make_tts_provider(TtsProviderKind::Coqui, None, None, None, &on).is_err());
     }
 
     #[test]
@@ -435,6 +525,7 @@ mod tests {
         let err = make_tts_provider(
             TtsProviderKind::ElevenLabs,
             Some(SecretString::from("k")),
+            None,
             None,
             &off,
         )
@@ -449,6 +540,7 @@ mod tests {
                 TtsProviderKind::AzureTts,
                 Some(SecretString::from("k")),
                 Some("eastus".into()),
+                None,
                 &off,
             )
             .err()
@@ -456,16 +548,16 @@ mod tests {
             .contains("cloud TTS")
         );
         // Local stays constructible regardless of the flag.
-        assert!(make_tts_provider(TtsProviderKind::SystemNative, None, None, &off).is_ok());
+        assert!(make_tts_provider(TtsProviderKind::SystemNative, None, None, None, &off).is_ok());
         // EdgeTts likewise local — unaffected by cloud_tts_enabled flag.
-        assert!(make_tts_provider(TtsProviderKind::EdgeTts, None, None, &off).is_ok());
+        assert!(make_tts_provider(TtsProviderKind::EdgeTts, None, None, None, &off).is_ok());
     }
 
     #[test]
     fn factory_edge_tts_requires_no_api_key() {
         // P0 guard: EdgeTts is local; cloud flag irrelevant; no key required.
         let off = crate::config::MediaConfig::default();
-        let provider = make_tts_provider(TtsProviderKind::EdgeTts, None, None, &off);
+        let provider = make_tts_provider(TtsProviderKind::EdgeTts, None, None, None, &off);
         assert!(provider.is_ok());
         assert_eq!(provider.unwrap().kind(), TtsProviderKind::EdgeTts);
     }
@@ -556,5 +648,74 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         assert!(found, "expected a 0xCD TTS_SYNTHESIZED frame");
+    }
+
+    // ── GOLD-ADAPT-SYS-02 — ViitorVoice voice-cloning sidecar ────────────────
+
+    #[test]
+    fn viitor_clone_url_appends_path_trimming_slash() {
+        assert_eq!(
+            ViitorVoiceClient::new("http://127.0.0.1:8200/").clone_url(),
+            "http://127.0.0.1:8200/v1/voice-clone"
+        );
+        assert_eq!(
+            ViitorVoiceClient::new("http://127.0.0.1:8200").clone_url(),
+            "http://127.0.0.1:8200/v1/voice-clone"
+        );
+    }
+
+    #[test]
+    fn viitor_factory_gated_and_requires_endpoint() {
+        // Not local → the P0 cloud_tts_enabled gate applies even with an endpoint.
+        let off = crate::config::MediaConfig::default();
+        assert!(
+            make_tts_provider(
+                TtsProviderKind::ViitorVoice,
+                None,
+                None,
+                Some("http://127.0.0.1:8200".into()),
+                &off,
+            )
+            .err()
+            .unwrap()
+            .contains("cloud TTS"),
+            "ViitorVoice must be blocked by the cloud_tts_enabled gate"
+        );
+        // Enabled but no endpoint → clear error.
+        let on = cloud_on();
+        assert!(
+            make_tts_provider(TtsProviderKind::ViitorVoice, None, None, None, &on)
+                .err()
+                .unwrap()
+                .contains("requires an endpoint"),
+            "ViitorVoice must demand an endpoint"
+        );
+        // Enabled + endpoint → constructs the right kind (no API key needed).
+        assert_eq!(
+            make_tts_provider(
+                TtsProviderKind::ViitorVoice,
+                None,
+                None,
+                Some("http://127.0.0.1:8200".into()),
+                &on,
+            )
+            .unwrap()
+            .kind(),
+            TtsProviderKind::ViitorVoice
+        );
+    }
+
+    #[tokio::test]
+    async fn viitor_synth_requires_ref_audio_path() {
+        // Empty voice_id (= the reference-audio path) → refuse before any network.
+        let c = ViitorVoiceClient::new("http://127.0.0.1:1");
+        let err = c
+            .synth(&req("hallo", "", TtsFormat::Wav))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("reference-audio path"),
+            "expected a ref-audio error, got: {err}"
+        );
     }
 }

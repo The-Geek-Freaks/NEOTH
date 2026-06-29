@@ -75,6 +75,13 @@ pub enum TtsProvider {
     /// machine. Higher quality than SAPI (`SystemNative`), lower latency
     /// than full cloud REST (no auth round-trip). Output: MP3 via stdout.
     EdgeTts,
+    /// GOLD-ADAPT-SYS-02 — ViitorVoice HTTP sidecar (viitor-voice-nar gateway).
+    /// Zero-shot voice CLONING: POSTs a reference-audio sample + the text to a
+    /// self-hosted `{endpoint}/v1/voice-clone` and gets back synthesised audio
+    /// in the cloned voice. Not local (text + ref audio leave the process to the
+    /// sidecar), so it sits behind the `media.cloud_tts_enabled` gate. The
+    /// `voice_id` field carries the reference-audio file path.
+    ViitorVoice,
 }
 
 impl TtsProvider {
@@ -86,6 +93,7 @@ impl TtsProvider {
             Self::ElevenLabs => "eleven_labs",
             Self::SystemNative => "system_native",
             Self::EdgeTts => "edge_tts",
+            Self::ViitorVoice => "viitor_voice",
         }
     }
 
@@ -114,6 +122,9 @@ impl TtsProvider {
             Self::SystemNative => "OS-native (say/espeak-ng/SAPI) — zero install, lowest quality",
             Self::EdgeTts => {
                 "edge-tts — local subprocess, Microsoft neural voices, free, needs pip install"
+            }
+            Self::ViitorVoice => {
+                "ViitorVoice — self-hosted voice-cloning sidecar (needs media.cloud_tts_enabled + endpoint)"
             }
         }
     }
