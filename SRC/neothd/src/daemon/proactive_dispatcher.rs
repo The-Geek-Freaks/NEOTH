@@ -488,6 +488,65 @@ pub async fn run_proactive_delivery_tick(
 ) -> Result<usize, String> {
     use crate::proactive::ProactiveQueue;
 
+    // GOLD-FEAT-11 — quiet_hours gate: suppress delivery when the current UTC
+    // hour falls inside the configured quiet window. Wrap-around supported:
+    // [22, 7] = suppress 22:00–06:59 UTC.
+    if let Some([start, end]) = config.proactive.quiet_hours_utc {
+        let utc_hour = ((now_unix % 86_400) / 3600) as u8;
+        let suppressed = if start <= end {
+            utc_hour >= start && utc_hour < end
+        } else {
+            utc_hour >= start || utc_hour < end
+        };
+        if suppressed {
+            tracing::debug!(
+                utc_hour,
+                quiet_start = start,
+                quiet_end = end,
+                "proactive_dispatcher: quiet_hours gate suppressing delivery"
+            );
+            return Ok(0);
+        }
+    }
+
+    // GOLD-FEAT-11 — idle_only gate: suppress delivery when the operator has
+    // been active within the last `idle_only_window_secs`.
+    if config.proactive.idle_only {
+        let views_db = home.join("views.db");
+        if views_db.exists() {
+            let window = config.proactive.idle_only_window_secs;
+            let cutoff_ns = (now_unix - window as i64) * 1_000_000_000;
+            let is_active = tokio::task::spawn_blocking(move || {
+                let conn = rusqlite::Connection::open_with_flags(
+                    &views_db,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                )
+                .ok()?;
+                let last_ns: Option<i64> = conn
+                    .query_row(
+                        "SELECT MAX(ts_ns) FROM idx_episode WHERE event_type = 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .ok()
+                    .flatten();
+                last_ns.map(|ts| ts > cutoff_ns)
+            })
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+
+            if is_active {
+                tracing::debug!(
+                    window_secs = window,
+                    "proactive_dispatcher: idle_only gate — operator recently active, suppressing"
+                );
+                return Ok(0);
+            }
+        }
+    }
+
     let queue_path = home.join("proactive_queue.json");
     if !queue_path.exists() {
         return Ok(0);

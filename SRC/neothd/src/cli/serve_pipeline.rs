@@ -1477,6 +1477,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     None
                 };
 
+            // GOLD-FEAT-11 — load cross-turn goal (best-effort; None on missing/corrupt).
+            let channel_goal_persist =
+                crate::daemon::goal_persist::GoalPersist::load(&channel_preset_home);
+            let channel_goal_layer = channel_goal_persist.as_ref().and_then(|g| g.as_system_layer());
+
             let channel_enriched =
                 crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
                     prompt: &sanitized_text,
@@ -1492,6 +1497,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     // GOLD-ADAPT-JV-MODE-01
                     identity_anchor: channel_identity_anchor,
                     identity_locked: serve_identity_locked,
+                    current_goal: channel_goal_layer.as_deref(),
                 });
             let channel_enriched_system = channel_enriched.system;
             let _channel_used_skill_id = channel_enriched.used_skill_id;

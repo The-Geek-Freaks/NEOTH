@@ -660,6 +660,95 @@ pub(crate) fn spawn_guidance_cron(
     }))
 }
 
+/// GOLD-FEAT-11 — LLM check-in body cron. Detects inactivity gaps and
+/// enqueues a provider-generated check-in nudge once per UTC day.
+/// Returns `None` when `checkin_cron.enabled = false` (the default).
+pub(crate) async fn spawn_checkin_cron(
+    config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
+) -> Option<JoinHandle<()>> {
+    if !config.checkin_cron.enabled {
+        return None;
+    }
+    // Provider needed — build from config. If wiring fails, log and skip.
+    let provider = match crate::providers::from_config(config).await {
+        Ok(p) => std::sync::Arc::from(p),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "checkin_cron: provider build failed — cron disabled for this session"
+            );
+            return None;
+        }
+    };
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let boot_cfg = config.checkin_cron;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        "checkin cron spawned (GOLD-FEAT-11)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().checkin_cron;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            }
+            if let Err(e) =
+                crate::daemon::checkin_cron::run_checkin_tick(&home, &live_cfg, &provider).await
+            {
+                tracing::warn!(error = %e, "checkin_cron: tick failed");
+            }
+        }
+    }))
+}
+
+/// GOLD-FEAT-11 — skill-curator cron. Promotes mature operator-accepted skill
+/// proposals to `~/.neoth/skills/`. Returns `None` when disabled (default).
+pub(crate) fn spawn_skill_curator_cron(
+    config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
+) -> Option<JoinHandle<()>> {
+    if !config.skill_curator.enabled {
+        return None;
+    }
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let boot_cfg = config.skill_curator;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        min_age_days = boot_cfg.min_age_days,
+        "skill-curator cron spawned (GOLD-FEAT-11)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().skill_curator;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            }
+            if let Err(e) =
+                crate::daemon::skill_curator_cron::run_skill_curator_tick(&home, &live_cfg).await
+            {
+                tracing::warn!(error = %e, "skill_curator: tick failed");
+            }
+        }
+    }))
+}
+
 /// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron.
 ///
 /// Produces a structured synthesis meta-note written as a `idx_groundtruth`
@@ -3778,6 +3867,12 @@ pub(crate) struct BackgroundHandles {
     /// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron handle.
     /// WAL-free; `None` when `guidance_cron.enabled = false` (default).
     pub guidance_cron_handle: Option<JoinHandle<()>>,
+    /// GOLD-FEAT-11 — LLM check-in body cron handle.
+    /// `None` when `checkin_cron.enabled = false` (default).
+    pub checkin_cron_handle: Option<JoinHandle<()>>,
+    /// GOLD-FEAT-11 — skill-curator cron handle.
+    /// `None` when `skill_curator.enabled = false` (default).
+    pub skill_curator_cron_handle: Option<JoinHandle<()>>,
     /// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron handle.
     /// WAL-free; `None` when `synthesis_cron.enabled = false` (default).
     pub synthesis_cron_handle: Option<JoinHandle<()>>,
@@ -3902,6 +3997,8 @@ pub(crate) async fn shutdown_background_tasks(
         bg_monitor_handle,
         contradiction_resolve_cron_handle,
         guidance_cron_handle,
+        checkin_cron_handle,
+        skill_curator_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
         self_improvement_collector_handle,
@@ -4132,6 +4229,12 @@ pub(crate) async fn shutdown_background_tasks(
     // GOLD-ADAPT-JV-MEM-16 — abort the guidance-block snapshot refresh cron.
     // WAL-free (writes only a JSON snapshot file); safe to abort at any point.
     crate::cli::serve_tasks::abort_optional(guidance_cron_handle).await;
+    // GOLD-FEAT-11 — abort the LLM check-in cron. No WAL writes; provider
+    // call is best-effort; mid-tick abort is safe.
+    crate::cli::serve_tasks::abort_optional(checkin_cron_handle).await;
+    // GOLD-FEAT-11 — abort the skill-curator cron. Writes only skill YAML via
+    // atomic_write; mid-tick abort is safe (partial writes become dead tmp files).
+    crate::cli::serve_tasks::abort_optional(skill_curator_cron_handle).await;
     // NN-MEM-02 — abort the synthesis pattern-recognition cron. WAL-free;
     // mid-tick abort is safe — the groundtruth insert is transactional, and
     // the vault write uses atomic tmp→rename so a partial write is never seen.

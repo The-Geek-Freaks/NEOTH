@@ -105,6 +105,11 @@ pub struct EnrichmentInputs<'a> {
     /// position 1 in the layer stack. Also triggers the KB-01 non-disclosure
     /// clause regardless of whether a skill or persona is active.
     pub identity_locked: bool,
+    /// GOLD-FEAT-11 — cross-turn goal from `daemon::goal_persist::GoalPersist`.
+    /// Injected at position 2 (after identity_anchor, before operator_context)
+    /// so the operator's active goal is always visible to the model. `None`
+    /// when no goal is persisted in `~/.neoth/current_goal.json`.
+    pub current_goal: Option<&'a str>,
 }
 
 /// Output of [`build_enriched_request`]. Owned strings — the caller
@@ -169,11 +174,16 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
         None
     };
 
-    let layers: [Option<&str>; 8] = [
+    let layers: [Option<&str>; 9] = [
         // GOLD-FEAT-07 — moral core is position 0: highest-priority directives.
         inputs.moral_core.map(str::trim).filter(|s| !s.is_empty()),
         // GOLD-ADAPT-JV-MODE-01 — identity anchor at position 1 when locked.
         identity_anchor_layer,
+        // GOLD-FEAT-11 — cross-turn goal at position 2 (after identity, before context).
+        inputs
+            .current_goal
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
         inputs
             .operator_context
             .map(str::trim)
@@ -265,6 +275,7 @@ mod tests {
             moral_core: None,
             identity_anchor: None,
             identity_locked: false,
+            current_goal: None,
         }
     }
 
@@ -479,6 +490,7 @@ mod tests {
             moral_core: None,
             identity_anchor: None,
             identity_locked: false,
+            current_goal: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -549,6 +561,7 @@ mod tests {
             moral_core: None,
             identity_anchor: None,
             identity_locked: false,
+            current_goal: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -589,6 +602,7 @@ mod tests {
             moral_core: None,
             identity_anchor: None,
             identity_locked: false,
+            current_goal: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(

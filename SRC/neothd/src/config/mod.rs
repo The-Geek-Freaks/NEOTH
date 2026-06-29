@@ -58,18 +58,20 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use automation::{
-    AutoSkillExtractConfig, BgMonitorConfig, CompanionConfig, ConsolidationSweepConfig,
+    AutoSkillExtractConfig, BgMonitorConfig, CheckinCronConfig, CompanionConfig,
+    ConsolidationSweepConfig, DEFAULT_CHECKIN_CRON_INTERVAL_SECS,
     DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS, DEFAULT_DRIFT_ALERT_INTERVAL_SECS,
     DEFAULT_GUIDANCE_CRON_INTERVAL_SECS, DEFAULT_INACTIVITY_GAP_SECS,
     DEFAULT_MONITOR_INTERVAL_SECS, DEFAULT_OAI_SERVE_PORT, DEFAULT_PATTERN_CRON_INTERVAL_SECS,
     DEFAULT_PROFILE_ADAPT_INTERVAL_SECS, DEFAULT_RECALL_LATENCY_INTERVAL_SECS,
     DEFAULT_REGRESSION_INTERVAL_SECS, DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
-    DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS,
-    DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS, DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig,
-    GuidanceCronConfig, KanbanSseConfig, MonitorConfig, N8nApiConfig, OaiServeConfig,
-    PatternCronConfig, ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig,
-    RegressionAnchorConfig, ResourceWatchConfig, SessionHealthConfig, SynthesisCronConfig,
-    TokenAnomalyConfig, WatchdogConfig,
+    DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_SKILL_CURATOR_INTERVAL_SECS,
+    DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
+    DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, GuidanceCronConfig, KanbanSseConfig,
+    MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig, ProactiveConfig,
+    ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig, ResourceWatchConfig,
+    SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
+    WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -623,6 +625,16 @@ pub struct FreedomConfig {
     /// `~/.neoth/synthesis/YYYY-WW.md`. Default OFF (WAL-free, opt-in).
     #[serde(default)]
     pub synthesis_cron: SynthesisCronConfig,
+    /// GOLD-FEAT-11 — LLM-generated check-in cron. When `enabled`, detects
+    /// inactivity gaps in `views.db` and enqueues an LLM-generated check-in
+    /// nudge once per UTC day. Default OFF (provider call per tick, opt-in).
+    #[serde(default)]
+    pub checkin_cron: CheckinCronConfig,
+    /// GOLD-FEAT-11 — skill-curator cron. When `enabled`, auto-promotes mature
+    /// (`>= min_age_days`) operator-accepted skill proposals from
+    /// `~/.neoth/proposals/` to `~/.neoth/skills/`. Default OFF.
+    #[serde(default)]
+    pub skill_curator: SkillCuratorConfig,
     /// JV-SELF-02 — AMEM4Rec consolidation sweep. When `enabled`, a
     /// background cron (default 6h) clusters hot-tier embeddings by cosine
     /// similarity ≥ `cosine_threshold`, boosts member importance (cap

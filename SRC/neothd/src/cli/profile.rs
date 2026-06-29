@@ -2406,6 +2406,7 @@ mod tests {
             moral_core: None,
             identity_anchor: None,
             identity_locked: false,
+            current_goal: None,
         });
 
         let system = out.system.expect("system layered");
@@ -2458,6 +2459,7 @@ mod tests {
             moral_core: None,
             identity_anchor: None,
             identity_locked: false,
+            current_goal: None,
         });
         // Exact "op\n\nuser" — no third blank line between them.
         assert_eq!(out.system.as_deref(), Some("op\n\nuser"));
@@ -3103,6 +3105,7 @@ mod tests {
             moral_core: None,
             identity_anchor: None,
             identity_locked: false,
+            current_goal: None,
         });
         if let Some(ref sys) = enriched.system {
             assert!(
@@ -3132,6 +3135,7 @@ mod tests {
             moral_core: None,
             identity_anchor: Some(anchor),
             identity_locked: true,
+            current_goal: None,
         });
         let sys = enriched.system.expect("system must be Some when layers present");
         let anchor_pos = sys.find(anchor).expect("anchor must be in system prompt");

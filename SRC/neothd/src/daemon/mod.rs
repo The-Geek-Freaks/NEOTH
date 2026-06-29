@@ -181,6 +181,26 @@ pub mod dreaming;
 /// without re-scanning the WAL on every chat turn. WAL-free (reads only).
 /// Off by default (`freedom.yaml::guidance_cron.enabled: true` to opt in).
 pub mod guidance_cron;
+/// GOLD-FEAT-11 — one-shot post-init healthcheck proactive item producer.
+/// Runs once at serve startup; if onboarding gaps are detected it enqueues a
+/// `ProactiveItem` (priority 80, dedup per binary version) into the proactive
+/// queue so the existing drain loop surfaces the checklist to the operator.
+pub mod post_init_cron;
+/// GOLD-FEAT-11 — cross-turn goal file-backed persistence.
+/// `GoalPersist::load` / `save` / `clear` manage `~/.neoth/current_goal.json`.
+/// `as_system_layer()` renders the `[CROSS-TURN GOAL]` injection block used
+/// by both `cli/chat.rs` and `cli/serve_pipeline.rs`.
+pub mod goal_persist;
+/// GOLD-FEAT-11 — LLM-generated check-in body cron. Detects inactivity gaps
+/// via `pattern_cron::detect_inactivity_gap`, classifies one of three body
+/// templates (casual / resume / unfinished-thread), calls the provider, and
+/// enqueues one `ProactiveItem` per UTC day. Gated by `checkin_cron.enabled`
+/// (default `false`).
+pub mod checkin_cron;
+/// GOLD-FEAT-11 — skill-curator cron (gated off, `enabled: false`). Scans
+/// `~/.neoth/proposals/*.json` for mature accepted `Skill` proposals and
+/// atomically promotes them to `~/.neoth/skills/<slug>.yaml`.
+pub mod skill_curator_cron;
 pub mod healthz;
 pub mod isolation;
 pub mod observability;

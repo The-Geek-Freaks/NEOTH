@@ -1180,6 +1180,27 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let guidance_cron_handle =
         crate::cli::serve_tasks::spawn_guidance_cron(&config, &reload_controller, &wal_dir);
 
+    // ── GOLD-FEAT-11 post-init healthcheck (one-shot) ─────────────────────
+    // Checks onboarding gaps and enqueues a ProactiveItem when incomplete.
+    // Detached — no handle; errors are logged best-effort.
+    {
+        let home_for_init = crate::config::FreedomConfig::default_neoth_home();
+        // run_post_init_check is async fn(home: &PathBuf) — it borrows home.
+        // Since we move it into a spawned future, clone into an owned PathBuf and
+        // call via a wrapping async block so the borrow doesn't escape.
+        tokio::spawn(async move {
+            crate::daemon::post_init_cron::run_post_init_check(&home_for_init).await;
+        });
+    }
+
+    // ── GOLD-FEAT-11 LLM check-in cron (default OFF) ─────────────────────
+    let checkin_cron_handle =
+        crate::cli::serve_tasks::spawn_checkin_cron(&config, &reload_controller).await;
+
+    // ── GOLD-FEAT-11 skill-curator cron (default OFF) ────────────────────
+    let skill_curator_cron_handle =
+        crate::cli::serve_tasks::spawn_skill_curator_cron(&config, &reload_controller);
+
     // ── NN-MEM-02 5-dimensional synthesis pattern-recognition cron ─────────
     // Weekly synthesis pass over idx_episode/idx_groundtruth/idx_contradictions.
     // WAL-free; off by default (synthesis_cron.enabled = false).
@@ -1826,6 +1847,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         bg_monitor_handle,
         contradiction_resolve_cron_handle,
         guidance_cron_handle,
+        checkin_cron_handle,
+        skill_curator_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
         self_improvement_collector_handle,

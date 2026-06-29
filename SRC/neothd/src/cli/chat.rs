@@ -864,6 +864,10 @@ async fn build_prompt_bundle(
         None => (None, false),
     };
 
+    // GOLD-FEAT-11 — load cross-turn goal (best-effort; None on missing/corrupt file).
+    let goal_persist = crate::daemon::goal_persist::GoalPersist::load(&preset_home);
+    let goal_layer_text = goal_persist.as_ref().and_then(|g| g.as_system_layer());
+
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt: &prompt,
         operator_context: operator_context.as_deref(),
@@ -877,6 +881,7 @@ async fn build_prompt_bundle(
         moral_core: moral_core.as_deref(),
         identity_anchor: identity_anchor_text,
         identity_locked,
+        current_goal: goal_layer_text.as_deref(),
     });
     // Fold the layers in authority order: enriched.system (operator / skills /
     // MCP / moral) > guidance (MEM-12 session-wide context) > recall (Block::D
@@ -1162,6 +1167,9 @@ async fn enforce_preflight(
             // the anchor is not omit-flag-gated (identity cannot be stripped by a skill).
             identity_anchor: agent_raw_layers.identity_anchor,
             identity_locked: agent_raw_layers.identity_locked,
+            // Cross-turn goal not re-injected into sub-agents (operator goal is
+            // already visible via the parent turn's system prompt context).
+            current_goal: None,
         });
         // Fold guidance + recall on top (same authority order as main path),
         // respecting the omit flags.

@@ -38,6 +38,7 @@ const DOMAIN_CHECKS: &[&[CheckFn]] = &[
     checks::providers::CHECKS,
     checks::cluster::CHECKS,
     checks::capabilities::CHECKS,
+    checks::onboarding::CHECKS,
 ];
 
 const DOMAIN_DOCS: &[&[CheckDoc]] = &[
@@ -48,6 +49,7 @@ const DOMAIN_DOCS: &[&[CheckDoc]] = &[
     checks::providers::DOCS,
     checks::cluster::DOCS,
     checks::capabilities::DOCS,
+    checks::onboarding::DOCS,
 ];
 
 /// Every check's runbook doc, across all domains (the `--explain` /
@@ -406,8 +408,9 @@ mod tests {
         // iroh transport, mcp servers, wal audit) — the integration proof;
         // 37 for self-improvement (SkillOpt); +2 since (parallel-lane checks);
         // +1 self-heal proposals (HERMES-07b) + 1 wal encryption (CRYPTO-04e) = 41;
-        // +1 PTY terminal session check (HERMES-11) = 42.
-        assert_eq!(all_check_docs().count(), 42);
+        // +1 PTY terminal session check (HERMES-11) = 42;
+        // +1 post-init readiness (GOLD-FEAT-11) = 43.
+        assert_eq!(all_check_docs().count(), 43);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1156,8 +1159,9 @@ mod tests {
         // GOLD-WIRE-07) + the 6 capability-readiness checks (computer-use,
         // okf export, iroh transport, mcp servers, wal audit, self-improvement)
         // + 2 parallel-lane + self-heal proposals (HERMES-07b) + wal encryption
-        // (CRYPTO-04e) = 41; + PTY terminal check (HERMES-11) = 42.
-        assert_eq!(outs.len(), 42);
+        // (CRYPTO-04e) = 41; + PTY terminal check (HERMES-11) = 42;
+        // + post-init readiness (GOLD-FEAT-11) = 43.
+        assert_eq!(outs.len(), 43);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

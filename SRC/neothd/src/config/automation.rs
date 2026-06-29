@@ -67,13 +67,127 @@ impl Default for KanbanSseConfig {
 /// C-16 (Session 21) — proactive messaging opt-in. Pure config
 /// shape; the runtime gate consults `proactive.enabled` before
 /// firing any unsolicited outbound. Default OFF.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ProactiveConfig {
     /// Master switch. `false` = daemon never posts unsolicited
     /// messages (briefings stay opt-in-per-call via the cron yaml).
     /// `true` = cron + `send_proactive()` MAY post on their own.
     pub enabled: bool,
+    /// GOLD-FEAT-11 — optional UTC quiet-hours gate: `[start_hour, end_hour]`
+    /// (0-23). When set, the proactive dispatcher suppresses delivery if the
+    /// current UTC hour falls inside the window. Wrap-around is supported:
+    /// `[22, 7]` silences 22:00–06:59 UTC. `None` = always deliver.
+    pub quiet_hours_utc: Option<[u8; 2]>,
+    /// GOLD-FEAT-11 — when `true`, proactive delivery is gated on operator
+    /// inactivity: items are only dispatched when no user turn has been
+    /// recorded within `idle_only_window_secs`. Default `false`.
+    pub idle_only: bool,
+    /// GOLD-FEAT-11 — inactivity window for `idle_only` gating, seconds.
+    /// Default 300 (5 min). Ignored when `idle_only = false`.
+    pub idle_only_window_secs: u64,
+}
+
+impl Default for ProactiveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            quiet_hours_utc: None,
+            idle_only: false,
+            idle_only_window_secs: 300,
+        }
+    }
+}
+
+/// GOLD-FEAT-11 — LLM-generated check-in body cron config.
+///
+/// When `enabled`, the daemon runs `checkin_cron` every `interval_secs`,
+/// detects inactivity gaps in `views.db`, classifies the template
+/// (casual / resume / unfinished), calls the provider to generate a body,
+/// and enqueues one `ProactiveItem` per UTC day (dedup_key carries the day
+/// bucket so it never fires twice in a calendar day).
+///
+/// Default OFF — the check-in is explicitly opt-in because it makes a live
+/// provider call each tick.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CheckinCronConfig {
+    /// Master switch. Default `false` (opt-in).
+    pub enabled: bool,
+    /// Tick interval, seconds. Default 4h; clamped to 60s floor.
+    pub interval_secs: u64,
+    /// Minimum inactivity gap (seconds) before ANY check-in fires.
+    /// Default 3 days (same as pattern-cron default).
+    pub idle_threshold_secs: u64,
+    /// Gap (seconds) at or above which the "resume" template fires instead
+    /// of the casual one. Default 7 days.
+    pub resume_gap_secs: u64,
+    /// Gap (seconds) at or above which the "unfinished thread" template fires.
+    /// Default 14 days. The proxy heuristic: very long silence after an
+    /// abruptly ended session → assume context exhaustion.
+    pub unfinished_gap_secs: u64,
+}
+
+/// 4 hours — default check-in cron tick cadence.
+pub const DEFAULT_CHECKIN_CRON_INTERVAL_SECS: u64 = 4 * 3600;
+
+impl Default for CheckinCronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_CHECKIN_CRON_INTERVAL_SECS,
+            idle_threshold_secs: 3 * 24 * 3600,  // 3 days
+            resume_gap_secs: 7 * 24 * 3600,       // 7 days
+            unfinished_gap_secs: 14 * 24 * 3600,  // 14 days
+        }
+    }
+}
+
+impl CheckinCronConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// GOLD-FEAT-11 — skill-curator cron config (GATED OFF by default).
+///
+/// When `enabled`, the cron weekly scans `~/.neoth/proposals/*.json` for
+/// mature (`>= min_age_days`) operator-accepted `kind == "Skill"` proposals
+/// and auto-promotes them to `~/.neoth/skills/<slug>.yaml` via atomic write.
+///
+/// Default OFF (`enabled: false`). Requires HERMES-06 / self_improvement_
+/// collector to have staged proposals first — safe to enable on a fresh
+/// install (the proposals dir will be empty and each tick is a no-op).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SkillCuratorConfig {
+    /// Master switch. Default `false` — stays off until the operator opts in.
+    pub enabled: bool,
+    /// Cron tick interval, seconds. Default 7 days; clamped to 60s floor.
+    pub interval_secs: u64,
+    /// Minimum proposal age in days before auto-promotion. Default 7.
+    pub min_age_days: u64,
+}
+
+/// 7 days — default skill-curator cron cadence.
+pub const DEFAULT_SKILL_CURATOR_INTERVAL_SECS: u64 = 7 * 24 * 3600;
+
+impl Default for SkillCuratorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_SKILL_CURATOR_INTERVAL_SECS,
+            min_age_days: 7,
+        }
+    }
+}
+
+impl SkillCuratorConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
 }
 
 /// HO-09 / V1x-03 — profile baseline drift alerting. `neoth profile drift
