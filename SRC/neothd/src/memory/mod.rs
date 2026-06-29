@@ -20,6 +20,7 @@ pub mod archive;
 /// `neoth recall --assoc <event_id>` queries the 1-hop neighbourhood.
 pub mod assoc_graph;
 pub mod bulk_text;
+pub mod change_bus;
 pub mod channel_weights;
 /// GOLD-ADAPT-MEM-05 — Pre-compaction backup + persisted counter.
 /// Snapshots session state + bumps a counter before any compaction so a

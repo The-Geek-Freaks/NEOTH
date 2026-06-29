@@ -2293,6 +2293,10 @@ pub(crate) fn spawn_indexer(
     // MEMGRAPH-01: threaded into the tail loop so the continuous ingest
     // auto-embeds new episodes when an embed provider is configured.
     embed_provider: Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>>,
+    // GOLD-ADAPT-TRAIL-02: when `Some`, the indexer fires this sender
+    // after every pass that indexes ≥1 new frame, so in-process consumers
+    // (kanban_sse relay) can push updates without polling.
+    change_tx: Option<tokio::sync::watch::Sender<()>>,
 ) -> Option<JoinHandle<()>> {
     let conn_path = crate::memory::store::default_path();
     let seg = segment_path.to_path_buf();
@@ -2304,6 +2308,7 @@ pub(crate) fn spawn_indexer(
                 std::time::Duration::from_millis(500),
                 writer,
                 embed_provider,
+                change_tx,
             )
             .await
             {

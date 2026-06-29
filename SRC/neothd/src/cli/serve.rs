@@ -345,10 +345,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // MEMGRAPH-01 — build the embed provider once (when configured) so the
     // indexer tail auto-embeds newly-ingested episodes into the vector lane.
     let indexer_embed_provider = crate::providers::embed_provider_from_config(&config).await;
+    // GOLD-ADAPT-TRAIL-02: create the views.db change-bus before spawning the
+    // indexer so in-process consumers can subscribe before the first change fires.
+    let (views_change_tx, views_change_rx) = crate::memory::change_bus::channel();
     let indexer_task = crate::cli::serve_tasks::spawn_indexer(
         &segment_path,
         Some(writer.clone()),
         indexer_embed_provider,
+        Some(views_change_tx), // TRAIL-02: fires on every indexer pass with n>0
     );
 
     // ── 5a-kanban. Stale-kanban reapers — HO-02 + GOLD-TASK-04. Best-effort
@@ -819,8 +823,41 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // clients via `text/event-stream`. Bearer-token auth (same token
     // file as n8n_api). Default OFF — operator opts in.
     let kanban_sse_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    let (kanban_sse_task, _kanban_sse_tx) =
+    let (kanban_sse_task, kanban_sse_tx) =
         crate::cli::serve_tasks::spawn_kanban_sse(&config, &writer, &kanban_sse_shutdown);
+
+    // GOLD-ADAPT-TRAIL-02: relay task — wakes on views_change_rx (watch
+    // coalesces bursts → 1 wakeup per indexer pass), reads the latest
+    // FeedEntry from views.db via the shared ViewsExecutor reader pool, and
+    // fans out to kanban_sse broadcast subscribers.
+    // Spawned BEFORE spawn_indexer above already ran — the channel is created
+    // before the indexer, so no early deltas are lost.
+    if let Some(sse_tx) = kanban_sse_tx.clone() {
+        let mut change_rx = views_change_rx.clone();
+        let exec_for_relay = views_executor.clone();
+        tokio::spawn(async move {
+            loop {
+                // Block until the indexer signals a new commit to views.db.
+                if change_rx.changed().await.is_err() {
+                    // Sender dropped (daemon shutting down) — exit cleanly.
+                    break;
+                }
+                let Some(exec) = exec_for_relay.as_ref() else {
+                    continue;
+                };
+                // Read the most-recent kanban event row and broadcast it.
+                // `let _ =` — Err when no active SSE subscriber; never panic.
+                let entry = exec
+                    .with_reader(|conn| {
+                        crate::coding::feed::latest_feed_entry_from_db(conn)
+                    })
+                    .await;
+                if let Some(e) = entry {
+                    let _ = sse_tx.send(e);
+                }
+            }
+        });
+    }
 
     // ── 5c-ter-bis. Spawn OpenRouter-compat /v1/models serve adapter — GOLD-ADAPT-AWE-PROV-01
     //

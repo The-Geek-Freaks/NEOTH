@@ -35,19 +35,22 @@
 //! Response: `{"id": <u64>, "ok": true,  "board": { ... }}`        (board)
 //!           `{"id": <u64>, "ok": true,  "pong": true}`            (ping)
 //!           `{"id": <u64>, "ok": false, "error": "<reason>"}`     (error)
+//! Push    : `{"push": true, "board": { ... }}`   (spontaneous, no id —
+//!             emitted when views.db mtime changes; GOLD-ADAPT-TRAIL-02)
 //!
 //! READ-ONLY by design: the channel serves board queries only. Every
 //! state mutation (kanban move/review/comment/assign, preset apply,
 //! chat) stays on its existing gated subprocess path, so this surface
 //! never bypasses the `CommandSource` privilege ceiling (ADV-09/ADV-15).
 
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use clap::Args;
 use rusqlite::Connection;
 use serde::Deserialize;
+use tokio::io::AsyncBufReadExt as _;
 
 use crate::config::FreedomConfig;
 use crate::memory::store as memstore;
@@ -88,32 +91,74 @@ pub async fn run_gui_stream(args: GuiStreamArgs) -> Result<()> {
         "gui-stream: warm channel open, awaiting NDJSON requests on stdin"
     );
 
-    let stdin = std::io::stdin();
-    let mut reader = stdin.lock();
+    // GOLD-ADAPT-TRAIL-02: track views.db mtime for spontaneous push.
+    // When the mtime changes (indexer committed new frames), emit a push
+    // frame WITHOUT waiting for the GUI to request a board update.
+    let mut db_mtime = std::fs::metadata(&db_path)
+        .and_then(|m| m.modified())
+        .ok();
+
+    let stdin = tokio::io::stdin();
+    let mut reader = tokio::io::BufReader::new(stdin);
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
     let mut line = String::new();
+    // TRAIL-02: 200ms tick for mtime-polling. Cheap: one stat(2) call per tick.
+    let mut push_tick = tokio::time::interval(std::time::Duration::from_millis(200));
+    // The first tick fires immediately — consume it so the first poll happens
+    // after the initial warm-up, not before the GUI sends its first request.
+    push_tick.tick().await;
+
     loop {
         line.clear();
-        let n = reader
-            .read_line(&mut line)
-            .context("gui-stream: read request line from stdin")?;
-        if n == 0 {
-            // EOF — the GUI closed the pipe. Clean shutdown.
-            tracing::info!("gui-stream: stdin EOF, exiting");
-            break;
+        tokio::select! {
+            // biased: prefer processing a pending stdin line over the mtime-poll
+            // arm so a burst of requests doesn't starve behind ticker wakeups.
+            biased;
+
+            result = reader.read_line(&mut line) => {
+                let n = result.context("gui-stream: read request line from stdin")?;
+                if n == 0 {
+                    // EOF — the GUI closed the pipe. Clean shutdown.
+                    tracing::info!("gui-stream: stdin EOF, exiting");
+                    break;
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let response = handle_request_line(trimmed, &conn, &wal_dir, &cfg);
+                // One response line per request. Flush so the GUI's blocking
+                // `read_line` unblocks immediately rather than waiting on the
+                // OS pipe buffer.
+                writeln!(out, "{response}").context("gui-stream: write response")?;
+                out.flush().context("gui-stream: flush response")?;
+            }
+
+            // GOLD-ADAPT-TRAIL-02: mtime-poll arm — spontaneous push when
+            // views.db is updated by the indexer (no GUI request needed).
+            _ = push_tick.tick() => {
+                let new_mtime = std::fs::metadata(&db_path)
+                    .and_then(|m| m.modified())
+                    .ok();
+                if new_mtime.is_some() && new_mtime != db_mtime {
+                    db_mtime = new_mtime;
+                    match crate::cli::kanban::assemble_gui_board(&conn, &wal_dir, &cfg) {
+                        Ok(board) => {
+                            let push = serde_json::json!({"push": true, "board": board});
+                            writeln!(out, "{push}").context("gui-stream: write push frame")?;
+                            out.flush().context("gui-stream: flush push frame")?;
+                        }
+                        Err(e) => {
+                            // Non-fatal: log and continue. The GUI's next
+                            // explicit `board` request will get the fresh data.
+                            tracing::warn!(error = %e, "gui-stream: push board assembly failed");
+                        }
+                    }
+                }
+            }
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let response = handle_request_line(trimmed, &conn, &wal_dir, &cfg);
-        // One response line per request. Flush so the GUI's blocking
-        // `read_line` unblocks immediately rather than waiting on the
-        // OS pipe buffer.
-        writeln!(out, "{response}").context("gui-stream: write response")?;
-        out.flush().context("gui-stream: flush response")?;
     }
     Ok(())
 }

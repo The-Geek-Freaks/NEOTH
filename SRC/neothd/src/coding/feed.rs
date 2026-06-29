@@ -67,6 +67,32 @@ impl FeedEntry {
     }
 }
 
+/// GOLD-ADAPT-TRAIL-02: query the most-recent row from
+/// `idx_kanban_task_event` and parse it as a [`FeedEntry`].
+///
+/// Called from the kanban-SSE relay task in `cli/serve.rs` after the
+/// views.db change-bus fires. Returns `None` when the table is empty
+/// or the most-recent row cannot be parsed (corrupt / unknown event
+/// type) — the relay task discards silently in that case and waits for
+/// the next change signal.
+pub fn latest_feed_entry_from_db(conn: &rusqlite::Connection) -> Option<FeedEntry> {
+    conn.query_row(
+        "SELECT event_type, created_ns, payload \
+         FROM idx_kanban_task_event \
+         ORDER BY event_id DESC LIMIT 1",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)? as u8,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, String>(2)?,
+            ))
+        },
+    )
+    .ok()
+    .and_then(|(et, ts, payload)| parse_kanban_payload(et, ts, payload.as_bytes()))
+}
+
 /// Returns `true` when the event-type byte belongs to the coding
 /// band (0x70..=0x7F). Pick #5's tail loop uses this to skip every
 /// frame that isn't kanban-related without parsing the payload.

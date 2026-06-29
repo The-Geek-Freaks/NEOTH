@@ -144,11 +144,22 @@ pub async fn tail(
     // MEMGRAPH-01: when `Some`, episodes indexed this pass are auto-embedded into
     // the vector recall lane (incremental — no manual `--embed-backfill`).
     embed_provider: Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>>,
+    // GOLD-ADAPT-TRAIL-02: when `Some`, fires `()` on every pass that indexes
+    // at least one new frame so in-process consumers (kanban_sse relay) can
+    // push updates without polling. Silently discarded when no receiver exists.
+    change_tx: Option<tokio::sync::watch::Sender<()>>,
 ) -> Result<()> {
     loop {
         match replay_all_segments_audited(&mut conn, &segment_path, writer.as_ref()).await {
             Ok(n) if n > 0 => {
                 debug!(frames = n, "indexer caught up");
+                // GOLD-ADAPT-TRAIL-02 — notify in-process consumers that views.db
+                // has new data. watch::Sender coalesces multiple sends into one
+                // wakeup for the receiver — correct for "push current state" use.
+                // `let _ =` silences the Err when no receiver is connected.
+                if let Some(tx) = &change_tx {
+                    let _ = tx.send(());
+                }
                 // MEMGRAPH-01 — auto-embed the new episode(s) this pass added, so
                 // the continuous (channel/daemon) ingest joins the vector lane
                 // without an operator backfill. Bounded per pass; best-effort.
@@ -529,6 +540,53 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_episode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count2, 2);
+    }
+
+    /// GOLD-ADAPT-TRAIL-02 — integration test: tail() must fire change_tx
+    /// after indexing at least one new WAL frame so in-process consumers
+    /// (kanban_sse relay) wake without polling views.db themselves.
+    #[tokio::test]
+    async fn trail02_change_bus_fires_after_indexer_replay() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let db = dir.path().join("views.db");
+
+        // Build a minimal WAL segment with one RAW_TEXT frame so the indexer
+        // has something to replay (n > 0) on the first pass.
+        let mut bytes = Vec::new();
+        let sh =
+            crate::wal::segment_header::SegmentHeader::new(0, 1, 0, 1_700_000_000_000_000_000, [0u8; 16]);
+        bytes.extend_from_slice(&sh.to_le_bytes());
+        let p = b"trail02".to_vec();
+        let h = header_for(EVENT_TYPE_RAW_TEXT, p.len() as u32, 42, 1_700_000_042_000_000_000);
+        bytes.extend_from_slice(&encode_frame(&h, &p));
+        write(&seg, &bytes).await.unwrap();
+
+        let conn = crate::memory::store::open(&db).unwrap();
+        let (tx, mut rx) = crate::memory::change_bus::channel();
+
+        // Spawn tail() with a very short interval so the first pass fires quickly.
+        let seg_clone = seg.clone();
+        let handle = tokio::spawn(async move {
+            let _ = crate::memory::indexer::tail(
+                conn,
+                seg_clone,
+                std::time::Duration::from_millis(50),
+                None,  // no writer
+                None,  // no embed provider
+                Some(tx),
+            )
+            .await;
+        });
+
+        // The change-bus receiver must see at least one notification within 2s.
+        let changed =
+            tokio::time::timeout(std::time::Duration::from_secs(2), rx.changed()).await;
+        assert!(
+            changed.is_ok(),
+            "TRAIL-02: change_tx must fire after the indexer replays a WAL frame"
+        );
+        handle.abort();
     }
 
     #[tokio::test]
