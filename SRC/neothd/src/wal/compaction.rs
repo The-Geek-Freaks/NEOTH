@@ -120,6 +120,10 @@ impl CompactionState {
             to_offset,
             frame_count: self.frames_since_marker,
             hmac_hex,
+            // compaction_epoch is not tracked in CompactionState — it lives in
+            // WriterState.compaction_epoch and is injected by the caller into the
+            // JSON payload directly (see writer.rs marker emission). Default 0 here.
+            compaction_epoch: 0,
         };
         self.from_offset = to_offset;
         self.bytes_since_marker = 0;
@@ -130,12 +134,23 @@ impl CompactionState {
 
 /// Payload of an `EVENT_TYPE_COMPACTION_MARKER` event. Serialised to
 /// JSON and written as the marker's payload bytes.
+///
+/// GOLD-PROG-12: `compaction_epoch` is informational — the canonical source
+/// of the epoch is the segment header (SegmentHeaderV3). It is included here
+/// so forensic tooling (`neoth verify`) can correlate marker events with the
+/// segment epoch without re-reading the header. `#[serde(default)]` gives
+/// backward compat with existing on-disk JSON markers that lack the field.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MarkerPayload {
     pub from_offset: u64,
     pub to_offset: u64,
     pub frame_count: u32,
     pub hmac_hex: String,
+    /// The compaction_epoch from the segment header at the time this marker
+    /// was emitted. Informational only — dedup/idempotency uses the header
+    /// field, not this JSON field. Defaults to 0 for pre-GOLD-PROG-12 markers.
+    #[serde(default)]
+    pub compaction_epoch: u32,
 }
 
 /// Read the operator's HMAC key from `path`. Generates a fresh 32-byte
@@ -810,6 +825,7 @@ mod tests {
             to_offset: 0,
             frame_count: 0,
             hmac_hex: "deadbeef".into(),
+            compaction_epoch: 0,
         };
         let r = verify_marker(&seg_path, b"k", &marker);
         assert!(r.is_err());

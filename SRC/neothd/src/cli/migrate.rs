@@ -36,7 +36,7 @@ use crate::wal::compress::compress_frames;
 use crate::wal::frame::decode_frame;
 use crate::wal::segment_header::{
     ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_FORMAT_VERSION_V1, SEGMENT_HEADER_LEN,
-    SegmentHeaderV2, parse_segment_header,
+    SegmentHeaderV3, parse_segment_header,
 };
 
 #[derive(Args, Debug, Clone)]
@@ -135,17 +135,19 @@ fn default_wal_dir() -> PathBuf {
     crate::config::FreedomConfig::default_neoth_home().join("wal")
 }
 
-/// Write a v2-header + compressed body to `tmp_path`. Called by
+/// Write a v3-header + compressed body to `tmp_path`. Called by
 /// `migrate_wal_to_v2` before the atomic rename. Handles mode 0600 on unix.
+/// GOLD-PROG-12: migrated segments always use V3 headers (with epoch=0, since
+/// they have never been finalized with epoch tracking).
 fn write_v2_tmp(
     tmp_path: &std::path::Path,
-    v2_hdr: &SegmentHeaderV2,
+    v2_hdr: &SegmentHeaderV3,
     compressed: &[u8],
 ) -> Result<()> {
     use std::io::Write;
     let mut f = open_tmp_file(tmp_path)?;
     f.write_all(&v2_hdr.to_le_bytes())
-        .with_context(|| format!("write v2 header to {}", tmp_path.display()))?;
+        .with_context(|| format!("write v3 header to {}", tmp_path.display()))?;
     f.write_all(compressed)
         .with_context(|| format!("write compressed body to {}", tmp_path.display()))?;
     f.sync_all()
@@ -225,7 +227,11 @@ fn migrate_wal_to_v2(wal_dir: &std::path::Path, dry_run: bool, output: OutputFor
         };
 
         if parsed.segment_format_version() != SEGMENT_FORMAT_VERSION_V1 {
-            // Already v2 (or future version) — skip.
+            // Already v2 or v3 (or future version) — skip.
+            // GOLD-PROG-12: V3 segments are already at the current format.
+            // V2 segments on disk are left as-is (their epoch=0 is correctly
+            // returned by ParsedSegmentHeader::compaction_epoch() via the
+            // accessor — they have never been finalized with epoch tracking).
             skipped += 1;
             match output {
                 OutputFormat::Json | OutputFormat::Jsonl => {}
@@ -276,17 +282,22 @@ fn migrate_wal_to_v2(wal_dir: &std::path::Path, dry_run: bool, output: OutputFor
         let compressed =
             compress_frames(frames_raw).with_context(|| format!("compress {}", path.display()))?;
 
-        // Build v2 header preserving original metadata.
+        // Build V3 header preserving original metadata. compaction_epoch=0
+        // because this segment has never been finalized with epoch tracking
+        // (GOLD-PROG-12). The reader returns epoch=0 for un-tracked segments.
         let v2_hdr = match parsed {
-            ParsedSegmentHeader::V1(h) => SegmentHeaderV2::new(
+            ParsedSegmentHeader::V1(h) => SegmentHeaderV3::new(
                 h.generation,
                 h.segment_seq,
                 h.first_event_id,
                 h.segment_start_ts_ns,
                 h.node_id,
                 SEGMENT_FLAG_COMPRESSED,
+                0, // compaction_epoch: first-ever migration, no prior finalize
             ),
-            ParsedSegmentHeader::V2(_) => unreachable!("already filtered above"),
+            ParsedSegmentHeader::V2(_) | ParsedSegmentHeader::V3(_) => {
+                unreachable!("already filtered above")
+            }
         };
 
         // Write to .tmp sibling then atomic rename onto original.
@@ -622,7 +633,7 @@ mod tests {
         use crate::wal::compress::decompress_frames;
         use crate::wal::frame::decode_frame;
         use crate::wal::segment_header::{
-            ParsedSegmentHeader, SEGMENT_HEADER_V2_LEN, parse_segment_header,
+            ParsedSegmentHeader, SEGMENT_HEADER_V3_LEN, parse_segment_header,
         };
 
         let dir = tempdir().unwrap();
@@ -639,20 +650,25 @@ mod tests {
         // Run migration.
         migrate_wal_to_v2(&wal_dir, false, OutputFormat::Table).unwrap();
 
-        // After: must be v2 + compressed.
+        // After: must be v3 + compressed (GOLD-PROG-12: migration emits V3).
         let after = std::fs::read(&seg).unwrap();
         let p_after = parse_segment_header(&after).unwrap();
         assert!(
-            matches!(p_after, ParsedSegmentHeader::V2(_)),
-            "segment must be v2 after migration; got {p_after:?}"
+            matches!(p_after, ParsedSegmentHeader::V3(_)),
+            "segment must be v3 after migration (GOLD-PROG-12); got {p_after:?}"
         );
         assert!(
             p_after.is_compressed(),
             "segment must have COMPRESSED flag set"
         );
+        assert_eq!(
+            p_after.compaction_epoch(),
+            0,
+            "migrated segment epoch must be 0 (no prior finalize)"
+        );
 
         // Frames must decompress to the original payload.
-        let raw = decompress_frames(&after[SEGMENT_HEADER_V2_LEN..]).unwrap();
+        let raw = decompress_frames(&after[SEGMENT_HEADER_V3_LEN..]).unwrap();
         let decoded = decode_frame(&raw).unwrap();
         assert_eq!(decoded.payload, b"migration-payload");
     }
@@ -730,6 +746,8 @@ mod tests {
             ParsedSegmentHeader, SegmentHeaderV2, parse_segment_header,
         };
         use std::io::Write;
+        // Note: V2 segments are still on disk in mixed dirs — the skip logic handles
+        // both V2 and V3 (GOLD-PROG-12). V1 segments get migrated to V3.
 
         let dir = tempdir().unwrap();
         let wal_dir = dir.path().join("wal");
@@ -767,9 +785,10 @@ mod tests {
 
         // seg1 must now be v2.
         let b1 = std::fs::read(&seg1).unwrap();
+        // GOLD-PROG-12: V1 → V3 migration (V3 header, epoch=0).
         assert!(matches!(
             parse_segment_header(&b1).unwrap(),
-            ParsedSegmentHeader::V2(_)
+            ParsedSegmentHeader::V3(_)
         ));
 
         // seg2 must be unchanged.

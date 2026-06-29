@@ -15,10 +15,20 @@
 //   header are a single zstd frame containing all WAL frames for this segment.
 //   Reader decompresses before parsing individual WAL frames.
 //
+// **v3 (65 bytes):** same layout as v2 + 4-byte `compaction_epoch: u32` LE
+//   appended AFTER `flags` (bytes [61..65]). The epoch is NOT covered by the
+//   CRC (same as flags). Writers increment the epoch on every successful
+//   finalize_compressed_segment — the field is the persistence mechanism for
+//   idempotency keys in the crash-mid-rename scenario (GOLD-PROG-12 /
+//   ADVERSARIAL §SF-06). On restart the writer reads the on-disk epoch and
+//   the next finalize uses epoch+1, avoiding collision with any interrupted
+//   prior attempt. V1 and V2 segments return epoch=0 via the accessor.
+//
 // S8 conformance: NO `#[repr(C, packed)]`. Explicit `from_le_bytes` and
 // `to_le_bytes` per SPEC_wire_header_v2_slim.md §11 pattern.
 //
 // Workstream F (CT-10/E-20/V1x-06) — v1.2 milestone ships v2 + zstd-3.
+// GOLD-PROG-12 — bumps active format version to v3 (adds compaction_epoch).
 
 use crate::wal::error::{HeaderParseError, WalError};
 
@@ -27,10 +37,14 @@ pub const SEGMENT_MAGIC: [u8; 8] = *b"NEOT-SEG";
 pub const SEGMENT_HEADER_LEN: usize = 60;
 /// v2 header size — 60 bytes + 1 flags byte.
 pub const SEGMENT_HEADER_V2_LEN: usize = 61;
+/// v3 header size — 61 bytes + 4-byte compaction_epoch (u32 LE).
+pub const SEGMENT_HEADER_V3_LEN: usize = 65;
 /// Current format version written by the writer.
-/// Bumped from 1 → 2 in Workstream F (CT-10/E-20/V1x-06).
-pub const SEGMENT_FORMAT_VERSION: u32 = 2;
-/// Legacy v1 constant — reader accepts both 1 and 2.
+/// Bumped from 2 → 3 in GOLD-PROG-12 (adds compaction_epoch field).
+pub const SEGMENT_FORMAT_VERSION: u32 = 3;
+/// Legacy v2 constant — reader still accepts version 2.
+pub const SEGMENT_FORMAT_VERSION_V2: u32 = 2;
+/// Legacy v1 constant — reader accepts 1, 2, and 3.
 pub const SEGMENT_FORMAT_VERSION_V1: u32 = 1;
 pub const SEGMENT_HEADER_CRC_COVERED: usize = 56;
 
@@ -75,12 +89,42 @@ pub struct SegmentHeaderV2 {
     pub flags: u8,
 }
 
+/// v3 segment header — 65 bytes. Adds a `compaction_epoch: u32` slot after
+/// `flags` (bytes [61..65] LE). The epoch is NOT covered by the CRC.
+///
+/// The epoch is incremented on every successful finalize_compressed_segment.
+/// On restart the writer reads the on-disk epoch so the next finalize uses
+/// epoch+1, preventing idempotency-key collision after a crash-mid-rename.
+/// (GOLD-PROG-12 / ADVERSARIAL §SF-06)
+///
+/// Written by GOLD-PROG-12 and later writers. Reader accepts v1, v2, and v3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SegmentHeaderV3 {
+    pub magic: [u8; 8],
+    pub segment_format_version: u32,
+    pub generation: u32,
+    pub segment_seq: u64,
+    pub first_event_id: u64,
+    pub segment_start_ts_ns: u64,
+    pub node_id: [u8; 16],
+    pub header_crc32c: u32,
+    /// Bit flags for this segment. See `SEGMENT_FLAG_*` constants.
+    /// NOT covered by CRC.
+    pub flags: u8,
+    /// Incremented on every successful finalize_compressed_segment.
+    /// NOT covered by CRC (allows in-place update without CRC recompute).
+    /// NOTA BENE: a tampered epoch is not CRC-detectable; the HMAC
+    /// compaction marker is the integrity mechanism for frame content.
+    pub compaction_epoch: u32,
+}
+
 /// Unified result from `parse_segment_header` — caller uses pattern-match
 /// to determine header length and whether decompression is needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParsedSegmentHeader {
     V1(SegmentHeader),
     V2(SegmentHeaderV2),
+    V3(SegmentHeaderV3),
 }
 
 impl ParsedSegmentHeader {
@@ -88,6 +132,7 @@ impl ParsedSegmentHeader {
         match self {
             Self::V1(h) => h.segment_seq,
             Self::V2(h) => h.segment_seq,
+            Self::V3(h) => h.segment_seq,
         }
     }
 
@@ -95,6 +140,7 @@ impl ParsedSegmentHeader {
         match self {
             Self::V1(h) => h.segment_format_version,
             Self::V2(h) => h.segment_format_version,
+            Self::V3(h) => h.segment_format_version,
         }
     }
 
@@ -103,14 +149,25 @@ impl ParsedSegmentHeader {
         match self {
             Self::V1(_) => false,
             Self::V2(h) => (h.flags & SEGMENT_FLAG_COMPRESSED) != 0,
+            Self::V3(h) => (h.flags & SEGMENT_FLAG_COMPRESSED) != 0,
         }
     }
 
-    /// Wire length of this header in bytes (60 for v1, 61 for v2).
+    /// Wire length of this header in bytes (60 for v1, 61 for v2, 65 for v3).
     pub fn header_len(&self) -> usize {
         match self {
             Self::V1(_) => SEGMENT_HEADER_LEN,
             Self::V2(_) => SEGMENT_HEADER_V2_LEN,
+            Self::V3(_) => SEGMENT_HEADER_V3_LEN,
+        }
+    }
+
+    /// The compaction epoch stored in this header.
+    /// V1 and V2 segments always return 0 (the field did not exist).
+    pub fn compaction_epoch(&self) -> u32 {
+        match self {
+            Self::V1(_) | Self::V2(_) => 0,
+            Self::V3(h) => h.compaction_epoch,
         }
     }
 }
@@ -227,7 +284,7 @@ impl SegmentHeaderV2 {
     ) -> Self {
         let mut hdr = SegmentHeaderV2 {
             magic: SEGMENT_MAGIC,
-            segment_format_version: SEGMENT_FORMAT_VERSION,
+            segment_format_version: SEGMENT_FORMAT_VERSION_V2,
             generation,
             segment_seq,
             first_event_id,
@@ -262,7 +319,7 @@ impl SegmentHeaderV2 {
             }));
         }
         let segment_format_version = u32::from_le_bytes(b[8..12].try_into().unwrap());
-        if segment_format_version != SEGMENT_FORMAT_VERSION {
+        if segment_format_version != SEGMENT_FORMAT_VERSION_V2 {
             return Err(WalError::UnknownFormat {
                 version: segment_format_version as u8,
             });
@@ -313,10 +370,120 @@ impl SegmentHeaderV2 {
     }
 }
 
+impl SegmentHeaderV3 {
+    /// Construct a new v3 header. CRC is computed over bytes [0..56) —
+    /// same window as v1/v2. Neither `flags` nor `compaction_epoch` are
+    /// covered by the CRC (intentional — allows writers to increment the
+    /// epoch without recomputing the CRC). Pass `flags = 0` for an
+    /// uncompressed segment; `flags = SEGMENT_FLAG_COMPRESSED` for zstd.
+    /// `compaction_epoch = 0` on a fresh segment; incremented by
+    /// `finalize_compressed_segment` on each successful finalize.
+    pub fn new(
+        generation: u32,
+        segment_seq: u64,
+        first_event_id: u64,
+        segment_start_ts_ns: u64,
+        node_id: [u8; 16],
+        flags: u8,
+        compaction_epoch: u32,
+    ) -> Self {
+        let mut hdr = SegmentHeaderV3 {
+            magic: SEGMENT_MAGIC,
+            segment_format_version: SEGMENT_FORMAT_VERSION,
+            generation,
+            segment_seq,
+            first_event_id,
+            segment_start_ts_ns,
+            node_id,
+            header_crc32c: 0,
+            flags,
+            compaction_epoch,
+        };
+        hdr.header_crc32c = hdr.compute_crc();
+        hdr
+    }
+
+    fn compute_crc(&self) -> u32 {
+        let mut buf = [0u8; SEGMENT_HEADER_CRC_COVERED];
+        buf[0..8].copy_from_slice(&self.magic);
+        buf[8..12].copy_from_slice(&self.segment_format_version.to_le_bytes());
+        buf[12..16].copy_from_slice(&self.generation.to_le_bytes());
+        buf[16..24].copy_from_slice(&self.segment_seq.to_le_bytes());
+        buf[24..32].copy_from_slice(&self.first_event_id.to_le_bytes());
+        buf[32..40].copy_from_slice(&self.segment_start_ts_ns.to_le_bytes());
+        buf[40..56].copy_from_slice(&self.node_id);
+        crc32c::crc32c(&buf)
+    }
+
+    /// Parse exactly 65 bytes as a v3 header.
+    pub fn from_le_bytes(b: &[u8; SEGMENT_HEADER_V3_LEN]) -> Result<Self, WalError> {
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&b[0..8]);
+        if magic != SEGMENT_MAGIC {
+            return Err(WalError::Header(HeaderParseError::InvalidMagic {
+                got: [magic[0], magic[1], magic[2], magic[3]],
+            }));
+        }
+        let segment_format_version = u32::from_le_bytes(b[8..12].try_into().unwrap());
+        if segment_format_version != SEGMENT_FORMAT_VERSION {
+            return Err(WalError::UnknownFormat {
+                version: segment_format_version as u8,
+            });
+        }
+        let generation = u32::from_le_bytes(b[12..16].try_into().unwrap());
+        let segment_seq = u64::from_le_bytes(b[16..24].try_into().unwrap());
+        let first_event_id = u64::from_le_bytes(b[24..32].try_into().unwrap());
+        let segment_start_ts_ns = u64::from_le_bytes(b[32..40].try_into().unwrap());
+        let mut node_id = [0u8; 16];
+        node_id.copy_from_slice(&b[40..56]);
+        let header_crc32c = u32::from_le_bytes(b[56..60].try_into().unwrap());
+        let flags = b[60];
+        let compaction_epoch = u32::from_le_bytes(b[61..65].try_into().unwrap());
+
+        let computed = crc32c::crc32c(&b[0..SEGMENT_HEADER_CRC_COVERED]);
+        if computed != header_crc32c {
+            return Err(WalError::SegmentHeaderCorrupt {
+                seq: segment_seq,
+                expected_crc: header_crc32c,
+                got_crc: computed,
+            });
+        }
+
+        Ok(SegmentHeaderV3 {
+            magic,
+            segment_format_version,
+            generation,
+            segment_seq,
+            first_event_id,
+            segment_start_ts_ns,
+            node_id,
+            header_crc32c,
+            flags,
+            compaction_epoch,
+        })
+    }
+
+    pub fn to_le_bytes(&self) -> [u8; SEGMENT_HEADER_V3_LEN] {
+        let mut b = [0u8; SEGMENT_HEADER_V3_LEN];
+        b[0..8].copy_from_slice(&self.magic);
+        b[8..12].copy_from_slice(&self.segment_format_version.to_le_bytes());
+        b[12..16].copy_from_slice(&self.generation.to_le_bytes());
+        b[16..24].copy_from_slice(&self.segment_seq.to_le_bytes());
+        b[24..32].copy_from_slice(&self.first_event_id.to_le_bytes());
+        b[32..40].copy_from_slice(&self.segment_start_ts_ns.to_le_bytes());
+        b[40..56].copy_from_slice(&self.node_id);
+        b[56..60].copy_from_slice(&self.header_crc32c.to_le_bytes());
+        b[60] = self.flags;
+        b[61..65].copy_from_slice(&self.compaction_epoch.to_le_bytes());
+        b
+    }
+}
+
 /// Auto-detect the segment header format from raw segment bytes.
 /// Reads the version field from bytes [8..12] and dispatches:
 /// - version 1 → parse first 60 bytes as `SegmentHeader` (v1)
 /// - version 2 → parse first 61 bytes as `SegmentHeaderV2`
+/// - version 3 → parse first 65 bytes as `SegmentHeaderV3`
 /// - anything else → `WalError::UnknownFormat`
 ///
 /// This is the single entry point used by the reader and migrate tool.
@@ -338,13 +505,23 @@ pub fn parse_segment_header(raw: &[u8]) -> Result<ParsedSegmentHeader, WalError>
             let arr: &[u8; SEGMENT_HEADER_LEN] = raw[..SEGMENT_HEADER_LEN].try_into().unwrap();
             Ok(ParsedSegmentHeader::V1(SegmentHeader::from_le_bytes(arr)?))
         }
-        SEGMENT_FORMAT_VERSION => {
+        SEGMENT_FORMAT_VERSION_V2 => {
             if raw.len() < SEGMENT_HEADER_V2_LEN {
                 return Err(WalError::UnknownFormat { version: 2 });
             }
             let arr: &[u8; SEGMENT_HEADER_V2_LEN] =
                 raw[..SEGMENT_HEADER_V2_LEN].try_into().unwrap();
             Ok(ParsedSegmentHeader::V2(SegmentHeaderV2::from_le_bytes(
+                arr,
+            )?))
+        }
+        SEGMENT_FORMAT_VERSION => {
+            if raw.len() < SEGMENT_HEADER_V3_LEN {
+                return Err(WalError::UnknownFormat { version: 3 });
+            }
+            let arr: &[u8; SEGMENT_HEADER_V3_LEN] =
+                raw[..SEGMENT_HEADER_V3_LEN].try_into().unwrap();
+            Ok(ParsedSegmentHeader::V3(SegmentHeaderV3::from_le_bytes(
                 arr,
             )?))
         }
@@ -417,6 +594,72 @@ mod tests {
         let b = SegmentHeader::new(7, 5, 42, 1_700_000_000_000_000_000, [9u8; 16]);
         assert_eq!(a.header_crc32c, b.header_crc32c);
         assert_ne!(a.header_crc32c, 0);
+    }
+
+    // ── GOLD-PROG-12 v3 header ─────────────────────────────────
+
+    fn fixture_v3(seq: u64, epoch: u32) -> SegmentHeaderV3 {
+        SegmentHeaderV3::new(7, seq, 42, 1_700_000_000_000_000_000, [9u8; 16], SEGMENT_FLAG_COMPRESSED, epoch)
+    }
+
+    #[test]
+    fn v3_roundtrip_preserves_all_fields() {
+        let h = fixture_v3(5, 3);
+        let b = h.to_le_bytes();
+        assert_eq!(b.len(), SEGMENT_HEADER_V3_LEN); // 65
+        let parsed = SegmentHeaderV3::from_le_bytes(&b).expect("parse v3");
+        assert_eq!(parsed, h);
+        assert_eq!(parsed.compaction_epoch, 3);
+        assert_eq!(parsed.flags, SEGMENT_FLAG_COMPRESSED);
+    }
+
+    #[test]
+    fn v3_header_byte_offsets_pinned() {
+        let h = fixture_v3(5, 3);
+        let b = h.to_le_bytes();
+        assert_eq!(b.len(), SEGMENT_HEADER_V3_LEN); // 65
+        // compaction_epoch at bytes [61..65] LE
+        let epoch = u32::from_le_bytes(b[61..65].try_into().unwrap());
+        assert_eq!(epoch, 3);
+        // flags still at byte [60]
+        assert_eq!(b[60], SEGMENT_FLAG_COMPRESSED);
+        // CRC still covers bytes [0..56]
+        let computed = crc32c::crc32c(&b[0..SEGMENT_HEADER_CRC_COVERED]);
+        assert_eq!(computed, h.header_crc32c);
+    }
+
+    #[test]
+    fn v3_parsed_compaction_epoch_accessor() {
+        let h = fixture_v3(5, 7);
+        let b = h.to_le_bytes();
+        // via parse_segment_header
+        let parsed = parse_segment_header(&b).unwrap();
+        assert!(matches!(parsed, ParsedSegmentHeader::V3(_)));
+        assert_eq!(parsed.compaction_epoch(), 7);
+        // v1 and v2 return 0
+        let v1_bytes = fixture(1).to_le_bytes();
+        let p1 = parse_segment_header(&v1_bytes).unwrap();
+        assert_eq!(p1.compaction_epoch(), 0);
+    }
+
+    #[test]
+    fn v3_header_crc_does_not_cover_epoch_or_flags() {
+        // Flipping the epoch bytes must NOT corrupt the CRC.
+        let h = fixture_v3(5, 0);
+        let mut b = h.to_le_bytes();
+        b[61] ^= 0xFF; // corrupt epoch byte
+        // CRC check passes (not covered)
+        let parsed = SegmentHeaderV3::from_le_bytes(&b).unwrap();
+        assert_eq!(parsed.compaction_epoch, 0xFF); // the flipped byte read back
+    }
+
+    #[test]
+    fn v3_rejects_bad_crc() {
+        let h = fixture_v3(5, 1);
+        let mut b = h.to_le_bytes();
+        b[12] ^= 0x01; // corrupt generation (inside CRC-covered window)
+        let err = SegmentHeaderV3::from_le_bytes(&b).unwrap_err();
+        assert!(matches!(err, WalError::SegmentHeaderCorrupt { .. }));
     }
 
     // ── CT-10 v1.2 flag-bit reservations ───────────────────────

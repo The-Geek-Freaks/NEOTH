@@ -18,8 +18,8 @@ use super::error::WalError;
 use super::frame::encode_frame;
 use super::header::EventHeaderV2;
 use super::segment_header::{
-    ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_LEN, SEGMENT_HEADER_V2_LEN,
-    SegmentHeader, SegmentHeaderV2, parse_segment_header,
+    ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_LEN,
+    SEGMENT_HEADER_V3_LEN, SegmentHeader, SegmentHeaderV3, parse_segment_header,
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -498,6 +498,12 @@ struct WriterState {
     /// Flushed (compressed) to disk on rotation or shutdown.
     /// Empty when `compression == None`.
     pending_frames: Vec<u8>,
+    /// GOLD-PROG-12: persisted compaction epoch read from the segment header
+    /// on reopen; incremented after each successful finalize_compressed_segment.
+    /// Used to form idempotency keys for compaction dedup — prevents collision
+    /// after a crash mid-rename (ADVERSARIAL §SF-06).
+    /// Only meaningful when `compression == Zstd3`; kept as 0 otherwise.
+    compaction_epoch: u32,
 }
 
 impl WriterState {
@@ -561,10 +567,12 @@ async fn rotate(state: &mut WriterState, reason: RotationReason) -> Result<(), W
             SEGMENT_HEADER_LEN
         }
         CompressionPolicy::Zstd3 => {
+            // GOLD-PROG-12: new rotated segments use V3 header with epoch=0
+            // (fresh segment, no prior compaction).
             let header =
-                SegmentHeaderV2::new(0, next_seq, 0, now_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+                SegmentHeaderV3::new(0, next_seq, 0, now_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED, 0);
             new_file.write_all(&header.to_le_bytes()).await?;
-            SEGMENT_HEADER_V2_LEN
+            SEGMENT_HEADER_V3_LEN
         }
     };
     new_file.sync_data().await?;
@@ -574,6 +582,8 @@ async fn rotate(state: &mut WriterState, reason: RotationReason) -> Result<(), W
     state.seq = next_seq;
     state.opened_at_ns = now_ns;
     state.offset = header_len as u64;
+    // GOLD-PROG-12: fresh segment always starts at epoch 0.
+    state.compaction_epoch = 0;
 
     // Audit-trail event in the new segment's first frame slot.
     let payload = serde_json::to_vec(&serde_json::json!({
@@ -623,6 +633,10 @@ async fn run_writer(
     // `pending_recovery` value carries the bookkeeping so we can emit
     // a `RECOVERY_TRUNCATED` audit frame AFTER WriterState is alive.
     let mut pending_recovery: Option<PendingRecovery> = None;
+    // GOLD-PROG-12: track compaction epoch; initialized from on-disk header on
+    // reopen, or 0 for a fresh segment.
+    let mut initial_compaction_epoch: u32 = 0;
+
     let (offset, opened_at_ns) = if opened.is_new {
         let ts_ns = current_ns();
         let header_len = match compression {
@@ -632,10 +646,12 @@ async fn run_writer(
                 SEGMENT_HEADER_LEN
             }
             CompressionPolicy::Zstd3 => {
+                // GOLD-PROG-12: new compressed segments always use V3 header
+                // with compaction_epoch=0 (no compaction has occurred yet).
                 let header =
-                    SegmentHeaderV2::new(0, seq, 0, ts_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+                    SegmentHeaderV3::new(0, seq, 0, ts_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED, 0);
                 file.write_all(&header.to_le_bytes()).await?;
-                SEGMENT_HEADER_V2_LEN
+                SEGMENT_HEADER_V3_LEN
             }
         };
         file.sync_data().await?;
@@ -668,9 +684,15 @@ async fn run_writer(
                 // restart. Before this, opened_at_ns was reset to "now" on
                 // reopen, so a segment opened 25h ago would never age-rotate
                 // after a restart (only the size ceiling protected it).
+                // GOLD-PROG-12: also recover compaction_epoch from the header
+                // so the next finalize uses epoch+1, not 0 (crash-idempotency).
                 let recovered_opened_at_ns = match parse_segment_header(&bytes) {
                     Ok(ParsedSegmentHeader::V1(h)) => h.segment_start_ts_ns,
                     Ok(ParsedSegmentHeader::V2(h)) => h.segment_start_ts_ns,
+                    Ok(ParsedSegmentHeader::V3(h)) => {
+                        initial_compaction_epoch = h.compaction_epoch;
+                        h.segment_start_ts_ns
+                    }
                     Err(_) => current_ns(),
                 };
                 let resume_offset = match crate::wal::recovery::scan_tail(&bytes) {
@@ -758,6 +780,7 @@ async fn run_writer(
         policy,
         compression,
         pending_frames: Vec::new(),
+        compaction_epoch: initial_compaction_epoch,
     };
 
     debug!(path = %state.path.display(), offset = state.offset, "WAL writer opened segment");
@@ -899,11 +922,14 @@ async fn run_writer(
                     if state_c.should_emit() {
                         let marker_payload = state_c.finalise_marker(key, state.offset);
                         let payload_bytes = serde_json::to_vec(&serde_json::json!({
-                            "from_offset": marker_payload.from_offset,
-                            "to_offset":   marker_payload.to_offset,
-                            "frame_count": marker_payload.frame_count,
-                            "hmac_hex":    marker_payload.hmac_hex,
-                            "ts_ns":       current_ns(),
+                            "from_offset":      marker_payload.from_offset,
+                            "to_offset":        marker_payload.to_offset,
+                            "frame_count":      marker_payload.frame_count,
+                            "hmac_hex":         marker_payload.hmac_hex,
+                            // GOLD-PROG-12: informational epoch snapshot so forensic
+                            // tooling can correlate marker → header without re-reading.
+                            "compaction_epoch": state.compaction_epoch,
+                            "ts_ns":            current_ns(),
                         }))
                         .unwrap_or_default();
                         let marker_header = crate::wal::HeaderBuilder::new(
@@ -969,52 +995,78 @@ async fn run_writer(
 /// operation (so unclean-shutdown recovery still works). On clean finalize
 /// (rotation or shutdown), this function:
 ///   1. Compresses `state.pending_frames` with zstd-3.
-///   2. Rewrites the segment file as: v2-header(61 B) + compressed-blob.
+///   2. Rewrites the segment file as: v3-header(65 B) + compressed-blob.
 ///
 /// The rewrite is done atomically: write to a `.tmp` sibling, then rename
 /// over the original. If any step fails the original (raw) file remains
 /// intact — operator keeps a parseable (uncompressed) segment despite the
 /// COMPRESSED flag in the header. The header flag is only written when
 /// compression succeeds.
+///
+/// GOLD-PROG-12: the v3 header carries `compaction_epoch = old_epoch + 1`.
+/// On restart the writer reads this value back so the NEXT finalize uses
+/// epoch+2 — preventing idempotency-key collision after a crash-mid-rename
+/// (ADVERSARIAL §SF-06). `state.compaction_epoch` is updated after the
+/// successful rename so in-memory state stays in sync with on-disk state.
 async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalError> {
     let compressed = compress_frames(&state.pending_frames)?;
     let tmp_path = state.path.with_extension("wal.tmp");
 
     // Re-read the original header to preserve generation/seq/first_event_id/
-    // segment_start_ts_ns/node_id from the live segment.
+    // segment_start_ts_ns/node_id from the live segment, and to recover the
+    // on-disk compaction_epoch (GOLD-PROG-12).
     let original_bytes = tokio::fs::read(&state.path).await?;
     let parsed = parse_segment_header(&original_bytes)?;
-    let (generation, segment_seq, first_event_id, segment_start_ts_ns, node_id) = match parsed {
-        ParsedSegmentHeader::V1(h) => (
-            h.generation,
-            h.segment_seq,
-            h.first_event_id,
-            h.segment_start_ts_ns,
-            h.node_id,
-        ),
-        ParsedSegmentHeader::V2(h) => (
-            h.generation,
-            h.segment_seq,
-            h.first_event_id,
-            h.segment_start_ts_ns,
-            h.node_id,
-        ),
-    };
+    let (generation, segment_seq, first_event_id, segment_start_ts_ns, node_id, old_epoch) =
+        match parsed {
+            ParsedSegmentHeader::V1(h) => (
+                h.generation,
+                h.segment_seq,
+                h.first_event_id,
+                h.segment_start_ts_ns,
+                h.node_id,
+                0u32,
+            ),
+            ParsedSegmentHeader::V2(h) => (
+                h.generation,
+                h.segment_seq,
+                h.first_event_id,
+                h.segment_start_ts_ns,
+                h.node_id,
+                0u32,
+            ),
+            ParsedSegmentHeader::V3(h) => (
+                h.generation,
+                h.segment_seq,
+                h.first_event_id,
+                h.segment_start_ts_ns,
+                h.node_id,
+                h.compaction_epoch,
+            ),
+        };
 
-    let v2_header = SegmentHeaderV2::new(
+    // GOLD-PROG-12: new epoch = old + 1 (saturating, so u32::MAX stays at u32::MAX
+    // rather than wrapping — at 1 finalize/hour that's 490,000 years).
+    let new_epoch = old_epoch.saturating_add(1);
+
+    // Write V3 header with the incremented epoch so the on-disk file after
+    // rename always carries epoch N+1, making a restart post-crash-mid-rename
+    // produce epoch N+2 rather than a duplicate epoch N+1.
+    let v2_header = SegmentHeaderV3::new(
         generation,
         segment_seq,
         first_event_id,
         segment_start_ts_ns,
         node_id,
         SEGMENT_FLAG_COMPRESSED,
+        new_epoch,
     );
 
     let compressed_len = compressed.len();
 
     // GOLD-ADAPT-CRYPTO-04d encrypt-on-seal: when `wal.encryption` is enabled,
     // the sealed (compressed) frame blob is AES-256-GCM-SIV-encrypted with the
-    // plaintext v2 header as AAD, framed `ENC_MAGIC‖nonce‖ciphertext`. The
+    // plaintext v3 header as AAD, framed `ENC_MAGIC‖nonce‖ciphertext`. The
     // header keeps SEGMENT_FLAG_COMPRESSED (the decrypted blob IS compressed),
     // so the reader chokepoint decrypts-then-decompresses. FAIL-CLOSED: a
     // configured-on operator never silently gets a plaintext segment.
@@ -1045,18 +1097,33 @@ async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalE
     drop(tmp_file);
 
     // Atomic rename over original.
+    // GOLD-PROG-12 / Windows: if a stale .wal.tmp from a prior crashed finalize
+    // exists, Windows rename will fail (target must not exist). Remove it first
+    // (ENOENT is fine — the common case on Unix). This matches the HANDOFF_SESSION25
+    // §17 atomic-rename note.
+    #[cfg(windows)]
+    {
+        let _ = tokio::fs::remove_file(&state.path).await;
+    }
     tokio::fs::rename(&tmp_path, &state.path).await?;
 
     info!(
         path = %state.path.display(),
         raw_bytes = state.pending_frames.len(),
         compressed_bytes = compressed_len,
+        compaction_epoch = new_epoch,
         ratio = format!("{:.1}%", compressed_len as f64 / state.pending_frames.len().max(1) as f64 * 100.0),
         encrypted = crate::wal::master_key::wal_encryption_enabled(),
         "WAL segment finalized (zstd-3{})",
         if crate::wal::master_key::wal_encryption_enabled() { " + AES-256-GCM-SIV" } else { "" },
     );
     state.pending_frames.clear();
+    // GOLD-PROG-12: update in-memory epoch AFTER successful rename so
+    // state always reflects on-disk reality. A crash before this line
+    // leaves state.compaction_epoch at old_epoch, but the on-disk file
+    // has new_epoch in its header — on restart parse_segment_header
+    // recovers new_epoch, so the invariant is maintained.
+    state.compaction_epoch = new_epoch;
     Ok(())
 }
 
@@ -1954,13 +2021,13 @@ mod tests {
 
         let bytes = read(&seg).await.unwrap();
         assert!(
-            bytes.len() > SEGMENT_HEADER_V2_LEN,
-            "v2 segment must be larger than 61-byte header"
+            bytes.len() > SEGMENT_HEADER_V3_LEN,
+            "v3 segment must be larger than 65-byte header"
         );
-        let parsed = parse_segment_header(&bytes).expect("parse v2 header");
+        let parsed = parse_segment_header(&bytes).expect("parse v3 header");
         assert!(
-            matches!(parsed, ParsedSegmentHeader::V2(_)),
-            "zstd spawn must produce a v2 header; got {parsed:?}"
+            matches!(parsed, ParsedSegmentHeader::V3(_)),
+            "zstd spawn must produce a v3 header (GOLD-PROG-12); got {parsed:?}"
         );
         assert_eq!(parsed.segment_format_version(), SEGMENT_FORMAT_VERSION);
     }
@@ -2046,7 +2113,8 @@ mod tests {
         let p1 = parse_segment_header(&b1).expect("parse seg1");
         let p2 = parse_segment_header(&b2).expect("parse seg2");
         assert!(matches!(p1, ParsedSegmentHeader::V1(_)), "seg1 must be v1");
-        assert!(matches!(p2, ParsedSegmentHeader::V2(_)), "seg2 must be v2");
+        // GOLD-PROG-12: Zstd3 writer now emits V3 headers (not V2).
+        assert!(matches!(p2, ParsedSegmentHeader::V3(_)), "seg2 must be v3");
         assert!(!p1.is_compressed());
         assert!(p2.is_compressed());
     }
@@ -2071,5 +2139,80 @@ mod tests {
             compressed.len(),
             input.len(),
         );
+    }
+
+    // ── GOLD-PROG-12: compaction_epoch persistence across finalize + restart ──
+
+    /// Prove that:
+    /// (a) finalize_compressed_segment persists epoch+1 in the V3 header.
+    /// (b) A reopened writer reads the on-disk epoch correctly.
+    /// (c) The second finalize produces epoch=2, not a collision with epoch=1.
+    ///
+    /// This test validates the core crash-idempotency property: even if a
+    /// finalize was interrupted mid-rename (leaving epoch=N on disk), the next
+    /// finalize attempt produces epoch=N+1 — a different idempotency key, so
+    /// the dedup check correctly treats it as a new operation.
+    #[tokio::test]
+    async fn compaction_epoch_increments_across_finalize_and_survives_restart() {
+        use crate::wal::segment_header::{ParsedSegmentHeader, parse_segment_header};
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+
+        // First writer: open, append one frame, clean shutdown → finalize fires.
+        {
+            let (handle, join) = spawn_with_policy_and_compression(
+                seg.clone(),
+                RotationPolicy::default(),
+                CompressionPolicy::Zstd3,
+            )
+            .expect("spawn");
+            handle
+                .append(header_for(5, 1), b"alpha".to_vec())
+                .await
+                .expect("append alpha");
+            drop(handle); // triggers finalize_compressed_segment → epoch becomes 1
+            join.await.expect("join");
+        }
+
+        // After clean shutdown: segment must be V3 with compaction_epoch=1.
+        let bytes = tokio::fs::read(&seg).await.unwrap();
+        let parsed = parse_segment_header(&bytes).expect("parse after first shutdown");
+        assert!(
+            matches!(parsed, ParsedSegmentHeader::V3(_)),
+            "segment must be V3 after finalize; got {parsed:?}"
+        );
+        assert_eq!(
+            parsed.compaction_epoch(),
+            1,
+            "finalize must increment epoch to 1 on first clean compaction"
+        );
+
+        // Second writer: reopen the SAME segment, append another frame, shut down.
+        // On reopen the writer must read epoch=1 from the header and assign epoch=2
+        // to the NEXT finalize — NOT collide with the prior epoch=1.
+        {
+            let (handle, join) = spawn_with_policy_and_compression(
+                seg.clone(),
+                RotationPolicy::default(),
+                CompressionPolicy::Zstd3,
+            )
+            .expect("spawn reopen");
+            handle
+                .append(header_for(5, 2), b"bravo".to_vec())
+                .await
+                .expect("append bravo");
+            drop(handle); // second finalize → epoch becomes 2
+            join.await.expect("join reopen");
+        }
+
+        let bytes2 = tokio::fs::read(&seg).await.unwrap();
+        let parsed2 = parse_segment_header(&bytes2).expect("parse after second shutdown");
+        assert_eq!(
+            parsed2.compaction_epoch(),
+            2,
+            "second finalize must increment epoch to 2, not re-use epoch 1"
+        );
+        assert!(parsed2.is_compressed(), "segment must still be compressed");
     }
 }

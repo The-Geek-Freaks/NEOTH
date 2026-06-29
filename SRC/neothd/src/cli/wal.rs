@@ -1069,6 +1069,7 @@ mod tests {
             to_offset: 64,
             frame_count: raw as u32,
             hmac_hex: "deadbeef".into(),
+            compaction_epoch: 0,
         };
         let mpayload = serde_json::to_vec(&marker).unwrap();
         let mheader: EventHeaderV2 =
