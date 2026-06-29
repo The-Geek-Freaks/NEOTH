@@ -430,9 +430,12 @@ pub(crate) fn catalog_key_for_provider(
         // Local + no-catalog providers fall through to bundled defaults.
         // GitHubCopilot uses whatever model the operator configures (gpt-4o
         // default) — no NEOTH-side catalog discovery for Copilot's endpoint.
-        I::LocalQwen | I::LocalOuro | I::AzureOpenAi | I::Cohere | I::GitHubCopilot => {
-            return None
-        }
+        I::LocalQwen
+        | I::LocalOuro
+        | I::LocalOllama
+        | I::AzureOpenAi
+        | I::Cohere
+        | I::GitHubCopilot => return None,
     })
 }
 

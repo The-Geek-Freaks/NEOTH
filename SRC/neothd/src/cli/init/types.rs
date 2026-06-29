@@ -68,6 +68,12 @@ pub enum ProviderKind {
     #[serde(rename = "copilot_api", alias = "github_copilot")]
     #[value(name = "copilot_api", alias = "github_copilot")]
     GitHubCopilot,
+    /// GOLD-ADAPT-AWE-NANO-01 — native Ollama /api/chat adapter. Uses NDJSON
+    /// streaming (Ollama's own protocol, not OpenAI-compat SSE). No API key
+    /// needed. Defaults to http://localhost:11434; override via
+    /// `provider_endpoint`. Runs entirely on operator hardware — treated as a
+    /// local provider for quota / privacy / WAL audit gating.
+    LocalOllama,
     /// No provider yet; configure later via `neoth provider add`.
     Skip,
 }
@@ -90,6 +96,7 @@ impl ProviderKind {
             ProviderKind::AwsBedrock => "aws_bedrock",
             ProviderKind::AzureOpenAi => "azure_openai",
             ProviderKind::GitHubCopilot => "copilot_api",
+            ProviderKind::LocalOllama => "local_ollama",
             ProviderKind::Skip => "skip",
         }
     }
@@ -127,6 +134,7 @@ impl ProviderKind {
             ProviderKind::AwsBedrock => "aws_bedrock",
             ProviderKind::LocalQwen
             | ProviderKind::LocalOuro
+            | ProviderKind::LocalOllama
             | ProviderKind::AzureOpenAi
             | ProviderKind::Cohere
             | ProviderKind::GitHubCopilot
@@ -152,6 +160,7 @@ impl ProviderKind {
             ProviderKind::AwsBedrock => I::AwsBedrock,
             ProviderKind::AzureOpenAi => I::AzureOpenAi,
             ProviderKind::GitHubCopilot => I::GitHubCopilot,
+            ProviderKind::LocalOllama => I::LocalOllama,
             ProviderKind::Skip => I::ClaudeCli, // unreachable in practice
         }
     }

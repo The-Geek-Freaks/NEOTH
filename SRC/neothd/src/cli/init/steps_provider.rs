@@ -377,6 +377,23 @@ pub(crate) async fn step5_provider(
                 println!("  Skipped. Configure later: `neoth provider add`");
             }
         }
+        ProviderKind::LocalOllama => {
+            // Native Ollama /api/chat (NDJSON) — no API key; the operator points
+            // at a running `ollama serve` and names a pulled model. Endpoint +
+            // model come from config; the adapter defaults (localhost:11434 +
+            // a baked default model) apply when left unset.
+            state.provider_endpoint = args.provider_endpoint.clone();
+            state.provider_model = args.provider_model.clone();
+            if interactive {
+                println!(
+                    "  local_ollama talks to a running Ollama daemon over its native \
+                     /api/chat NDJSON streaming API (not the OpenAI-compat shim). No \
+                     API key. Default endpoint http://localhost:11434 — override with \
+                     `--provider-endpoint`; set `--provider-model` (e.g. llama3.2) to \
+                     a model you have `ollama pull`-ed."
+                );
+            }
+        }
     }
 
     state.steps_completed.push(WizardStep::Provider as u8);

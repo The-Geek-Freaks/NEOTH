@@ -42,7 +42,10 @@ pub fn is_cloud(kind: ProviderKind) -> bool {
         | ProviderKind::AwsBedrock
         | ProviderKind::AzureOpenAi
         | ProviderKind::GitHubCopilot => true,
-        ProviderKind::LocalQwen | ProviderKind::LocalOuro | ProviderKind::Skip => false,
+        ProviderKind::LocalQwen
+        | ProviderKind::LocalOuro
+        | ProviderKind::LocalOllama
+        | ProviderKind::Skip => false,
     }
 }
 
@@ -58,6 +61,7 @@ pub fn slug(kind: ProviderKind) -> &'static str {
         ProviderKind::OpenaiCompat => "openai_compat",
         ProviderKind::LocalQwen => "local_qwen",
         ProviderKind::LocalOuro => "local_ouro",
+        ProviderKind::LocalOllama => "local_ollama",
         ProviderKind::AwsBedrock => "aws_bedrock",
         ProviderKind::AzureOpenAi => "azure_openai",
         ProviderKind::GitHubCopilot => "copilot_api",
@@ -75,6 +79,7 @@ pub fn kind_from_slug(s: &str) -> Option<ProviderKind> {
         "openai_compat" => Some(ProviderKind::OpenaiCompat),
         "local_qwen" => Some(ProviderKind::LocalQwen),
         "local_ouro" => Some(ProviderKind::LocalOuro),
+        "local_ollama" => Some(ProviderKind::LocalOllama),
         "aws_bedrock" => Some(ProviderKind::AwsBedrock),
         "azure_openai" => Some(ProviderKind::AzureOpenAi),
         "copilot_api" => Some(ProviderKind::GitHubCopilot),
@@ -96,6 +101,7 @@ fn cloud_label(kind: ProviderKind) -> &'static str {
         ProviderKind::GitHubCopilot => "GitHub Copilot (api.githubcopilot.com)",
         ProviderKind::LocalQwen => "local Qwen (no remote network)",
         ProviderKind::LocalOuro => "local Ouro thinking-models (no remote network)",
+        ProviderKind::LocalOllama => "local Ollama (no remote network)",
         ProviderKind::Skip => "no provider",
     }
 }

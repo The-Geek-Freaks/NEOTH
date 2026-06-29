@@ -30,7 +30,7 @@ use crate::providers::local_qwen::{
     build_chatml_prompt, default_cache_dir, device_for, preflight_disk_space, resolve_eos_id,
     sample_token,
 };
-use crate::providers::{ChunkStream, Completion, Provider, Request};
+use crate::providers::{ChunkStream, Completion, CompletionChunk, Provider, Request};
 
 use super::forward::OuroModel;
 use super::model::{OuroConfig, OuroQuantMode};
@@ -700,6 +700,181 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
     })
 }
 
+/// Streaming variant of `run_ouro_forward` — drives the sampling loop and
+/// pushes decoded `CompletionChunk` values into the supplied mpsc sender.
+///
+/// Token-delta computation mirrors `local_qwen::run_stream`: we decode the
+/// full running `&all_tokens[prompt_len..]` after each step and emit the
+/// suffix diff, so multi-byte tokens are never split mid-character.
+///
+/// The final chunk carries `done = true` and token counts so consumers
+/// (cli/chat.rs `--stream`) can emit a clean PROVIDER_RESPONSE WAL frame.
+fn run_ouro_stream(
+    adapter: &LocalOuroAdapter,
+    req: &Request,
+    tx: &tokio::sync::mpsc::Sender<Result<CompletionChunk>>,
+) -> Result<()> {
+    use candle_core::Tensor;
+
+    ensure_ouro_loaded(adapter)?;
+    let mut slot = adapter
+        .loaded
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let loaded = slot.as_mut().expect("ensure_ouro_loaded populated slot");
+
+    let prompt = build_chatml_prompt(req.system.as_deref(), &req.prompt);
+    let encoding = loaded
+        .tokenizer
+        .encode(prompt, true)
+        .map_err(|e| anyhow::anyhow!("Ouro stream: tokenize prompt: {e}"))?;
+    let prompt_ids: Vec<u32> = encoding.get_ids().to_vec();
+    if prompt_ids.is_empty() {
+        anyhow::bail!("Ouro stream: tokenizer produced zero tokens for non-empty prompt");
+    }
+    let input_token_count = prompt_ids.len();
+    let prompt_len = prompt_ids.len();
+
+    let device = loaded.model_device();
+    let sampling = adapter.sampling.merged_with_request(req);
+    let max_new = adapter.max_new_tokens as usize;
+
+    // Full-prefill at offset 0 (default path — same as run_ouro_forward).
+    loaded.model.clear_kv_cache();
+    let input = Tensor::new(prompt_ids.as_slice(), &device)
+        .context("Ouro stream: build prompt tensor")?
+        .unsqueeze(0)
+        .context("Ouro stream: add batch dim")?;
+    let logits = loaded
+        .model
+        .forward(&input, 0)
+        .context("Ouro stream: prompt forward")?
+        .squeeze(0)
+        .context("Ouro stream: drop batch from prompt logits")?;
+
+    let mut new_tokens: Vec<u32> = Vec::with_capacity(max_new);
+    let mut all_tokens: Vec<u32> = {
+        // Re-build from prompt ids so we can extend in-place.
+        let enc = loaded
+            .tokenizer
+            .encode(build_chatml_prompt(req.system.as_deref(), &req.prompt), true)
+            .map_err(|e| anyhow::anyhow!("Ouro stream: re-tokenize: {e}"))?;
+        enc.get_ids().to_vec()
+    };
+
+    let mut next = sample_token(&logits, sampling).context("Ouro stream: sample prompt logits")?;
+    new_tokens.push(next);
+    all_tokens.push(next);
+
+    let per_loop = std::env::var("NEOTH_OURO_KV_CACHE_MODE")
+        .map(|v| v.eq_ignore_ascii_case("per_loop"))
+        .unwrap_or(false);
+    let mut next_offset = prompt_len; // for per_loop incremental decode
+
+    let mut last_decoded = String::new();
+
+    // Emit the first token immediately so the terminal shows something.
+    {
+        let body = loaded
+            .tokenizer
+            .decode(&all_tokens[prompt_len..], true)
+            .map_err(|e| anyhow::anyhow!("Ouro stream: decode step 0: {e}"))?;
+        if body.len() > last_decoded.len() {
+            let delta = body[last_decoded.len()..].to_string();
+            last_decoded = body;
+            if !delta.is_empty()
+                && tx
+                    .blocking_send(Ok(CompletionChunk {
+                        delta,
+                        done: false,
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
+                    }))
+                    .is_err()
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    while new_tokens.len() < max_new {
+        if tx.is_closed() {
+            tracing::debug!("ouro stream: receiver closed, stopping early");
+            return Ok(());
+        }
+        if let Some(eos) = loaded.eos_id {
+            if next == eos {
+                break;
+            }
+        }
+        let logits = if per_loop {
+            let input = Tensor::new(&[next], &device)
+                .context("Ouro stream: single-token tensor")?
+                .unsqueeze(0)
+                .context("Ouro stream: single-token batch dim")?;
+            let l = loaded
+                .model
+                .forward(&input, next_offset)
+                .context("Ouro stream: incremental decode forward")?
+                .squeeze(0)
+                .context("Ouro stream: drop batch from decode logits")?;
+            next_offset += 1;
+            l
+        } else {
+            let context_ids = decode_context_ids(&all_tokens[..prompt_len], &new_tokens);
+            let full_input = Tensor::new(context_ids.as_slice(), &device)
+                .context("Ouro stream: build full-context tensor")?
+                .unsqueeze(0)
+                .context("Ouro stream: full-context batch dim")?;
+            loaded
+                .model
+                .forward(&full_input, 0)
+                .context("Ouro stream: decode forward")?
+                .squeeze(0)
+                .context("Ouro stream: drop batch from decode logits")?
+        };
+        next = sample_token(&logits, sampling).context("Ouro stream: sample step")?;
+        new_tokens.push(next);
+        all_tokens.push(next);
+
+        let body = loaded
+            .tokenizer
+            .decode(&all_tokens[prompt_len..], true)
+            .map_err(|e| anyhow::anyhow!("Ouro stream: decode tokens: {e}"))?;
+        if body.len() > last_decoded.len() {
+            let delta = body[last_decoded.len()..].to_string();
+            last_decoded = body;
+            if !delta.is_empty()
+                && tx
+                    .blocking_send(Ok(CompletionChunk {
+                        delta,
+                        done: false,
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
+                    }))
+                    .is_err()
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    // Final done-chunk carries token counts.
+    let _ = tx.blocking_send(Ok(CompletionChunk {
+        delta: String::new(),
+        done: true,
+        input_tokens: Some(input_token_count as u32),
+        output_tokens: Some(new_tokens.len() as u32),
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+    }));
+    Ok(())
+}
+
 /// Small helper so `run_ouro_forward` can copy the Device without
 /// re-deriving from `accelerator` (cheap clone).
 impl LoadedOuro {
@@ -758,30 +933,52 @@ impl Provider for LocalOuroAdapter {
     }
 
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
-        // GR-04 stream-wrap: same circuit-breaker semantics as
-        // `complete`. NOTE: Ouro's `complete()` is itself wrapped by
-        // the breaker; the stream wrap adds a second permit acquisition
-        // for the stream-iter that follows. That is INTENTIONAL — each
-        // public surface ({complete, stream}) takes its own permit so
-        // an Open breaker fast-fails either entry point. The complete()
-        // permit settles before the stream-iter starts, so we never
-        // hold two permits in parallel.
+        // GR-04 stream-wrap: same circuit-breaker semantics as `complete`.
+        // Each public surface ({complete, stream}) takes its own permit so
+        // an Open breaker fast-fails either entry point.
+        //
+        // GOLD-ADAPT-AWE-NANO-01: real per-token streaming via run_ouro_stream —
+        // mirrors local_qwen::stream(). spawn_blocking drives the sampling loop
+        // on a blocking thread; an mpsc channel bridges to the async consumer.
         crate::providers::circuit_breaker_stream::run_stream_with_breaker("local_ouro", async {
-            // Ouro doesn't yet expose per-token streaming the way the
-            // claude_cli SSE path does. Fall through to the trait default:
-            // single one-shot chunk at the end.
-            let completion = self.complete(req).await?;
-            use crate::providers::CompletionChunk;
-            use futures_util::stream;
-            let chunk = CompletionChunk {
-                delta: completion.text,
-                done: true,
-                input_tokens: completion.input_tokens,
-                output_tokens: completion.output_tokens,
-                cache_creation_tokens: None,
-                cache_read_tokens: None,
+            let adapter_handle = AdapterHandle {
+                repo: self.repo.clone(),
+                sampling: self.sampling,
+                max_new_tokens: self.max_new_tokens,
+                accelerator: self.accelerator,
+                quant_mode: self.quant_mode,
+                loaded: Arc::clone(&self.loaded),
+                tokenizer_path: self.tokenizer_path.clone(),
+                config_path: self.config_path.clone(),
+                weights_path: self.weights_path.clone(),
+                cache_dir: self.cache_dir.clone(),
             };
-            Ok(Box::pin(stream::iter(vec![Ok(chunk)])) as ChunkStream)
+            let req_clone = req.clone();
+
+            // Bounded channel — 64 chunks of buffering without unbounded growth.
+            let (tx, rx) = tokio::sync::mpsc::channel::<Result<CompletionChunk>>(64);
+
+            tokio::task::spawn_blocking(move || {
+                let adapter = LocalOuroAdapter {
+                    repo: adapter_handle.repo,
+                    cache_dir: adapter_handle.cache_dir,
+                    tokenizer_path: adapter_handle.tokenizer_path,
+                    config_path: adapter_handle.config_path,
+                    weights_path: adapter_handle.weights_path,
+                    accelerator: adapter_handle.accelerator,
+                    sampling: adapter_handle.sampling,
+                    max_new_tokens: adapter_handle.max_new_tokens,
+                    quant_mode: adapter_handle.quant_mode,
+                    loaded: adapter_handle.loaded,
+                };
+                if let Err(e) = run_ouro_stream(&adapter, &req_clone, &tx) {
+                    let _ = tx.blocking_send(Err(e));
+                }
+            });
+
+            use tokio_stream::wrappers::ReceiverStream;
+            let stream = ReceiverStream::new(rx);
+            Ok(Box::pin(stream) as ChunkStream)
         })
         .await
     }

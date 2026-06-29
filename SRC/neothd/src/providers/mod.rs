@@ -46,6 +46,7 @@ pub mod local_probe;
 pub mod local_qwen;
 pub mod meter;
 pub mod model_roles;
+pub mod ollama_api;
 pub mod openai_api;
 pub mod ouro;
 pub mod pty_session;
@@ -167,7 +168,10 @@ pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send
 /// cache) intentionally stay keyed to their one provider and must NOT route
 /// through this helper.
 pub fn is_local_provider(name: &str) -> bool {
-    matches!(name, "local_qwen" | "local_ouro" | "local_abliterated")
+    matches!(
+        name,
+        "local_qwen" | "local_ouro" | "local_abliterated" | "local_ollama"
+    )
 }
 
 /// Every LLM backend implements this. Trait is object-safe by design so the
@@ -846,6 +850,21 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 default_model("copilot_api", model_roles::ModelRole::Flagship, "gpt-4o")
             });
             Ok(Box::new(copilot::CopilotAdapter::new(pat, model)?))
+        }
+        ProviderKind::LocalOllama => {
+            // GOLD-ADAPT-AWE-NANO-01 — native Ollama /api/chat NDJSON adapter.
+            // No API key needed. Default base URL is http://localhost:11434;
+            // override via `provider_endpoint` in freedom.yaml.
+            // Default model is "llama3.2"; override via `provider_model`.
+            let base_url = config
+                .provider_endpoint
+                .clone()
+                .unwrap_or_else(|| ollama_api::DEFAULT_BASE_URL.to_string());
+            let model = config
+                .provider_model
+                .clone()
+                .unwrap_or_else(|| ollama_api::DEFAULT_MODEL.to_string());
+            Ok(Box::new(ollama_api::OllamaAdapter::new(base_url, model)?))
         }
         ProviderKind::Skip => {
             anyhow::bail!("provider was set to `skip` during init. Run `neoth provider add`.")

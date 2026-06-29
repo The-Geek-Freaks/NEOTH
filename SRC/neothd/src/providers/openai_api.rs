@@ -2,20 +2,24 @@
 //!
 //! POST {endpoint}/chat/completions with a Bearer token. Supports both the
 //! upstream OpenAI service and any OpenAI-compatible endpoint
-//! (LM Studio, vLLM, Anthropic via OAI-shim, etc.) by overriding `endpoint`.
+//! (LM Studio, vLLM, Ollama /v1, Anthropic via OAI-shim, etc.) by overriding
+//! `endpoint`.
 //!
-//! Streaming arrives in Phase 5C. Day-5b is non-streaming (one POST, full
-//! response back).
+//! Streaming: `stream()` sends `stream: true` and reads the response body as
+//! Server-Sent Events (SSE), parsing each `data: {...}` line as an OpenAI
+//! streaming chunk and mapping it to `CompletionChunk`. Works with any
+//! OpenAI-compat endpoint including Ollama's `/v1/chat/completions` path.
 
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
-use super::{Completion, Provider, Request};
+use super::{ChunkStream, Completion, CompletionChunk, Provider, Request};
 use crate::secret::SecretString;
 
 /// Adapter for OpenAI REST + compatibles.
@@ -205,6 +209,174 @@ impl Provider for OpenAiAdapter {
         })
         .await
     }
+
+    /// SSE streaming completion. Sends `stream: true` and parses the response
+    /// body as Server-Sent Events. Each `data: {...}` line is decoded as an
+    /// `OpenAI streaming chunk`; `data: [DONE]` terminates the stream.
+    ///
+    /// Works with any OpenAI-compat endpoint that honours `stream: true`,
+    /// including Ollama's `/v1/chat/completions` path and LM Studio.
+    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+        crate::providers::circuit_breaker_stream::run_stream_with_breaker(self.name, async {
+            let model = req
+                .model
+                .clone()
+                .unwrap_or_else(|| self.default_model.clone());
+
+            let mut messages = Vec::new();
+            if let Some(sys) = &req.system {
+                messages.push(ChatMessage {
+                    role: "system",
+                    content: sys.clone(),
+                });
+            }
+            messages.push(ChatMessage {
+                role: "user",
+                content: req.prompt.clone(),
+            });
+
+            let body = ChatRequest {
+                model: model.clone(),
+                messages,
+                stream: true,
+            };
+
+            let url = format!("{}/chat/completions", self.endpoint);
+            let response = self
+                .http
+                .post(&url)
+                .bearer_auth(self.api_key.expose())
+                .json(&body)
+                .send()
+                .await
+                .with_context(|| format!("POST {url} (stream)"))?;
+
+            let status = response.status();
+            if !status.is_success() {
+                if status.as_u16() == 429 {
+                    let retry_after = parse_retry_after(response.headers());
+                    let body_text = response
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .replace(self.api_key.expose(), "[REDACTED]");
+                    return Err(anyhow::Error::new(QuotaError {
+                        provider: self.name,
+                        retry_after,
+                        body: body_text.trim().to_string(),
+                    }));
+                }
+                let body_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<unreadable body>".into())
+                    .replace(self.api_key.expose(), "[REDACTED]");
+                anyhow::bail!(
+                    "{} stream returned HTTP {}: {}",
+                    self.name,
+                    status.as_u16(),
+                    body_text.trim()
+                );
+            }
+
+            let name = self.name;
+            let byte_stream = response.bytes_stream();
+            // Buffer partial lines across byte chunks (SSE lines may be split
+            // across reqwest byte chunks on slow connections).
+            let inner: ChunkStream = Box::pin(async_stream::try_stream! {
+                let mut buf = String::new();
+                let mut input_tokens: Option<u32> = None;
+                let mut output_tokens: Option<u32> = None;
+
+                tokio::pin!(byte_stream);
+                while let Some(chunk_result) = byte_stream.next().await {
+                    let bytes = chunk_result
+                        .with_context(|| format!("{name}: SSE byte read error"))?;
+                    let text = std::str::from_utf8(&bytes)
+                        .with_context(|| format!("{name}: SSE chunk not valid UTF-8"))?;
+                    buf.push_str(text);
+
+                    // Process all complete lines (\n-terminated SSE lines).
+                    while let Some(newline_pos) = buf.find('\n') {
+                        let line = buf[..newline_pos].trim_end_matches('\r').to_string();
+                        buf.drain(..=newline_pos);
+
+                        if line.is_empty() || line.starts_with(':') {
+                            // SSE comment or blank separator — skip.
+                            continue;
+                        }
+                        let data = if let Some(d) = line.strip_prefix("data: ") {
+                            d
+                        } else {
+                            continue;
+                        };
+                        if data == "[DONE]" {
+                            // Emit the final done-chunk with token counts.
+                            yield CompletionChunk {
+                                delta: String::new(),
+                                done: true,
+                                input_tokens,
+                                output_tokens,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
+                            };
+                            return;
+                        }
+                        // Parse the streaming JSON chunk.
+                        let parsed: SseChunk = match serde_json::from_str(data) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                tracing::warn!(
+                                    adapter = name,
+                                    error = %e,
+                                    raw = data,
+                                    "SSE chunk parse error; skipping"
+                                );
+                                continue;
+                            }
+                        };
+                        // Capture token counts from any usage block the endpoint
+                        // injects (Ollama compat includes them on the last data
+                        // line, OpenAI includes them only with stream_options).
+                        if let Some(u) = &parsed.usage {
+                            input_tokens = Some(u.prompt_tokens);
+                            output_tokens = Some(u.completion_tokens);
+                        }
+                        let delta = parsed
+                            .choices
+                            .into_iter()
+                            .next()
+                            .and_then(|c| c.delta.content)
+                            .unwrap_or_default();
+                        if !delta.is_empty() {
+                            yield CompletionChunk {
+                                delta,
+                                done: false,
+                                input_tokens: None,
+                                output_tokens: None,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
+                            };
+                        }
+                    }
+                }
+                // Stream ended without [DONE] — emit a done-chunk so consumers
+                // see a clean terminator even from misbehaving endpoints.
+                yield CompletionChunk {
+                    delta: String::new(),
+                    done: true,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                };
+            });
+
+            debug!(adapter = name, model = %model, "openai SSE stream started");
+            Ok(inner)
+        })
+        .await
+    }
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────────
@@ -244,6 +416,37 @@ struct ChatChoiceMessage {
 
 #[derive(Deserialize)]
 struct ChatUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+
+// ── SSE streaming wire types ────────────────────────────────────────────────
+//
+// OpenAI streaming format: each `data:` line is a JSON object with a
+// `choices[].delta.content` field.  The final line is `data: [DONE]`.
+// Usage is only present when the endpoint opts in (stream_options or
+// Ollama's own done-chunk injection); it is always optional here.
+
+#[derive(Deserialize)]
+struct SseChunk {
+    #[serde(default)]
+    choices: Vec<SseChoice>,
+    #[serde(default)]
+    usage: Option<SseUsage>,
+}
+
+#[derive(Deserialize)]
+struct SseChoice {
+    delta: SseDelta,
+}
+
+#[derive(Deserialize)]
+struct SseDelta {
+    content: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SseUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
 }
@@ -530,5 +733,99 @@ mod tests {
             .expect("body-shape mock must match");
         assert_eq!(completion.text, "pong");
         assert_eq!(completion.model, "gpt-5.5-override");
+    }
+
+    // ── SSE streaming tests ────────────────────────────────────────────
+
+    /// Proves the SSE stream() override: mock server returns three SSE
+    /// lines + [DONE]; we must receive ≥2 non-done chunks and a done
+    /// chunk with the accumulated text matching "Hello world".
+    #[tokio::test]
+    async fn mock_sse_stream_delivers_progressive_chunks() {
+        use futures_util::StreamExt;
+
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(header("authorization", "Bearer sk-test-mock-key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sse_body, "text/event-stream"),
+            )
+            .mount(&mock)
+            .await;
+
+        let adapter = build_adapter_against(&mock.uri());
+        let req = Request {
+            prompt: "say hi".into(),
+            ..Default::default()
+        };
+
+        let mut stream = adapter.stream(req).await.expect("stream must start");
+        let mut chunks = Vec::new();
+        while let Some(item) = stream.next().await {
+            chunks.push(item.expect("chunk must be Ok"));
+        }
+
+        // Must have received at least 2 content chunks + 1 done chunk.
+        assert!(
+            chunks.len() >= 3,
+            "expected ≥3 chunks (2 content + 1 done), got {}",
+            chunks.len()
+        );
+
+        // Last chunk must be done.
+        let last = chunks.last().unwrap();
+        assert!(last.done, "last chunk must have done=true");
+
+        // Content chunks must NOT have done=true.
+        let content_chunks: Vec<_> = chunks.iter().filter(|c| !c.done).collect();
+        assert!(
+            !content_chunks.is_empty(),
+            "must have at least one non-done content chunk"
+        );
+
+        // Accumulated text must equal "Hello world".
+        let accumulated: String = content_chunks.iter().map(|c| c.delta.as_str()).collect();
+        assert_eq!(accumulated, "Hello world");
+    }
+
+    /// Proves that stream:true is sent in the request body (not false like complete()).
+    #[tokio::test]
+    async fn mock_sse_stream_sends_stream_true_in_body() {
+        use futures_util::StreamExt;
+
+        let sse_body = "data: [DONE]\n\n";
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "model": "gpt-4o-mock",
+                "messages": [{"role": "user", "content": "ping"}],
+                "stream": true,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sse_body, "text/event-stream"),
+            )
+            .mount(&mock)
+            .await;
+
+        let adapter = build_adapter_against(&mock.uri());
+        let req = Request {
+            prompt: "ping".into(),
+            ..Default::default()
+        };
+
+        let mut stream = adapter.stream(req).await.expect("stream must start");
+        // Drain — we only care that the mock matched (body_json assertion verifies stream:true).
+        while stream.next().await.is_some() {}
     }
 }

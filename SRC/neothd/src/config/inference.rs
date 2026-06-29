@@ -81,6 +81,11 @@ pub enum InferenceProvider {
     /// OpenAI-compatible `api.githubcopilot.com` endpoint; session token is
     /// refreshed from `api.github.com/copilot_internal/v2/token` as needed.
     GitHubCopilot,
+    /// GOLD-ADAPT-AWE-NANO-01 — native Ollama /api/chat NDJSON adapter.
+    /// No API key needed. Defaults to http://localhost:11434. Treated as a
+    /// local provider (quota / privacy / WAL audit gating identical to
+    /// LocalQwen / LocalOuro).
+    LocalOllama,
 }
 
 impl InferenceProvider {
@@ -97,6 +102,7 @@ impl InferenceProvider {
             InferenceProvider::LocalOuro => "local_ouro",
             InferenceProvider::Cohere => "cohere_api",
             InferenceProvider::GitHubCopilot => "copilot_api",
+            InferenceProvider::LocalOllama => "local_ollama",
         }
     }
 
@@ -124,6 +130,9 @@ impl InferenceProvider {
             InferenceProvider::GitHubCopilot => {
                 "GitHub Copilot (OAuth PAT, zero per-token cost for GH Copilot subscribers)"
             }
+            InferenceProvider::LocalOllama => {
+                "Local Ollama via its native /api/chat NDJSON endpoint (no API key; point at a running `ollama serve`)"
+            }
         }
     }
 
@@ -140,6 +149,7 @@ impl InferenceProvider {
             "azure_openai" | "azure" => Some(Self::AzureOpenAi),
             "local_ouro" | "ouro" => Some(Self::LocalOuro),
             "copilot_api" | "copilot" | "github_copilot" => Some(Self::GitHubCopilot),
+            "local_ollama" | "ollama" => Some(Self::LocalOllama),
             _ => None,
         }
     }
@@ -186,6 +196,7 @@ impl InferenceProvider {
             InferenceProvider::LocalOuro => ProviderKind::LocalOuro,
             InferenceProvider::Cohere => ProviderKind::Cohere,
             InferenceProvider::GitHubCopilot => ProviderKind::GitHubCopilot,
+            InferenceProvider::LocalOllama => ProviderKind::LocalOllama,
         }
     }
 }
