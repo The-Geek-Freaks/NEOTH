@@ -75,8 +75,8 @@ pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
     DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS, DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS,
     DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE, DreamingConfig, EcologyConfig, EmailConfig, FallbackConfig,
-    GoalConfig, HintsConfig, HookChainConfig, LiveDeliveryConfig, MediaConfig, OmiConfig,
-    TransferConfig,
+    GoalConfig, HintsConfig, HookChainConfig, LiveDeliveryConfig, LoopConfig, MediaConfig,
+    OmiConfig, TransferConfig,
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
@@ -460,6 +460,13 @@ pub struct FreedomConfig {
     /// hard ceiling on MCP dispatch-loop iterations (was a hardcoded 5).
     #[serde(default)]
     pub goal: GoalConfig,
+
+    /// GOLD-LOOP-01 — multi-round autonomous loop engine. Disabled by default;
+    /// opt in via `loop_config.enabled: true` in freedom.yaml. When enabled
+    /// the loop engine wraps `run_mcp_dispatch_loop` with outer rounds,
+    /// stop-condition verification, and optional self-reflect refine passes.
+    #[serde(default)]
+    pub loop_config: LoopConfig,
 
     /// GOLD-ADOPT-18 — subdirectory-hint auto-injection toggle (default ON).
     #[serde(default)]

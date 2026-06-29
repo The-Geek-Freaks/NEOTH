@@ -122,6 +122,26 @@ pub struct ChatArgs {
     /// storing any prompt content.
     #[arg(long)]
     pub incognito: bool,
+
+    /// GOLD-LOOP-01 — engage the multi-round loop engine instead of a single
+    /// `run_mcp_dispatch_loop` call. Each round is one full dispatch; the
+    /// engine evaluates `--until` criteria after each round and stops when
+    /// all are satisfied or `--iterations` is hit. Requires MCP autoroute to
+    /// be on (same gate as the existing dispatch path).
+    #[arg(long)]
+    pub loop_mode: bool,
+
+    /// GOLD-LOOP-01 — maximum outer loop rounds (overrides
+    /// `freedom.yaml::loop_config.max_rounds`). Default: 3.
+    #[arg(long, value_name = "N")]
+    pub iterations: Option<u32>,
+
+    /// GOLD-LOOP-01 — structural stop criteria (space-separated phrases).
+    /// The loop exits early when a round's output satisfies ALL listed
+    /// criteria via `council::stop_verifier`. May be repeated.
+    /// Example: `--until "build green" --until "tests pass"`.
+    #[arg(long, value_name = "CRITERION")]
+    pub until: Vec<String>,
 }
 
 pub async fn run_chat(args: ChatArgs) -> Result<()> {
@@ -2121,7 +2141,73 @@ async fn dispatch_provider(
                     }
                 }
             }
-            let outcome = match run_mcp_dispatch_loop(
+            // GOLD-LOOP-01: when `--loop` is set (or loop_config.enabled with
+            // max_rounds > 1 on CLI), route through the loop engine instead of
+            // a bare single dispatch. The loop engine internally calls
+            // `run_mcp_dispatch_loop` per round and handles WAL + record write.
+            let loop_engage = args.loop_mode
+                || (config.loop_config.enabled && config.loop_config.max_rounds > 1);
+            let outcome = if loop_engage {
+                let loop_cfg = crate::loop_engine::engine::LoopConfig {
+                    max_rounds: args.iterations.unwrap_or(config.loop_config.max_rounds),
+                    until: if !args.until.is_empty() {
+                        args.until.clone()
+                    } else {
+                        vec![]
+                    },
+                    token_budget: config.loop_config.token_budget,
+                    autonomy: config.autonomy,
+                    refine_enabled: config.loop_config.refine_enabled,
+                    neoth_home: FreedomConfig::default_neoth_home(),
+                };
+                info!(
+                    max_rounds = loop_cfg.max_rounds,
+                    has_until = !loop_cfg.until.is_empty(),
+                    "GOLD-LOOP-01: loop mode active — routing to loop engine"
+                );
+                match crate::loop_engine::engine::run_loop(
+                    &loop_cfg,
+                    provider,
+                    req.clone(),
+                    &mcp_servers_for_loop,
+                    &writer,
+                    config,
+                )
+                .await
+                {
+                    Ok(record) => {
+                        // Convert LoopRunRecord into a LoopOutcome-compatible
+                        // surface so the code below (println, mcp_tool_calls)
+                        // works unchanged.
+                        crate::mcp::dispatch_loop::LoopOutcome {
+                            final_text: record.final_text,
+                            iterations: record.rounds_run,
+                            hit_cap: matches!(
+                                record.stop_reason,
+                                crate::loop_engine::engine::StopReason::CapHit
+                                    | crate::loop_engine::engine::StopReason::BudgetExceeded
+                            ),
+                            successful_calls: record
+                                .per_round
+                                .iter()
+                                .map(|r| r.successful_calls)
+                                .sum(),
+                            failed_calls: record.per_round.iter().map(|r| r.failed_calls).sum(),
+                            tool_call_records: vec![],
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
+                            record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
+                        }
+                        warn!(error = %e, "GOLD-LOOP-01: loop engine failed");
+                        drop(writer);
+                        let _ = writer_join.await;
+                        return Err(e);
+                    }
+                }
+            } else {
+            match run_mcp_dispatch_loop(
                 provider,
                 req.clone(),
                 &mcp_servers_for_loop,
@@ -2173,7 +2259,8 @@ async fn dispatch_provider(
                     let _ = writer_join.await;
                     return Err(e);
                 }
-            };
+            }
+            }; // end loop_engage else branch
             info!(
                 iterations = outcome.iterations,
                 successful_calls = outcome.successful_calls,
@@ -4691,6 +4778,19 @@ async fn build_hemisphere(
     })
 }
 
+/// GOLD-LOOP-01 — thin `pub(crate)` shim around `build_hemisphere` that
+/// returns a trait object (`Box<dyn HemisphereProvider>`) so the loop engine
+/// can call it without seeing the private `ProviderHemisphere` concrete type.
+/// The loop engine's self-reflect refine pass is the only call-site.
+pub(crate) async fn build_hemisphere_for_loop(
+    config: &FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+    req: &crate::providers::Request,
+) -> Result<Box<dyn crate::council::orchestrator::HemisphereProvider>> {
+    let h = build_hemisphere(config, role, req).await?;
+    Ok(Box::new(h))
+}
+
 /// E-2 Phase 2 (Session 13) — recursion-aware build entry. Carries a
 /// config Arc so `ask_with_depth` can spawn an inner council at lower
 /// depth when `topology.hemisphere_council_depth > 1`. Used by
@@ -6085,6 +6185,72 @@ pub(crate) async fn dispatch_council_with_recovery(
         if let Err(e) = rw_write.save() {
             tracing::warn!(error = %e, "could not persist routing_weights.json (channel)");
         }
+        // GOLD-LOOP-01 — dissent-spike auto-invoke. When the council debate
+        // produced strong dissent (score >= 0.6) AND the operator has opted in
+        // via `loop_config.auto_invoke_on_dissent = true`, run one extra loop
+        // round to try to produce a more-converged answer. The loop result
+        // REPLACES `final_text` — we return EARLY so the normal render path
+        // below never fires (avoiding a double-render of a stale answer).
+        //
+        // Note: this fires AFTER the self-reflect refine + self-score gate
+        // above, so the loop starts from the already-refined text in `req`.
+        if outcome.dissent.is_strong_dissent() && config.loop_config.auto_invoke_on_dissent {
+            let loop_cfg = crate::loop_engine::engine::LoopConfig::for_dissent_invoke(
+                config.autonomy,
+                FreedomConfig::default_neoth_home(),
+            );
+            tracing::info!(
+                dissent = outcome.dissent.0,
+                "GOLD-LOOP-01: strong dissent detected — auto-invoking loop engine (1 round)"
+            );
+            match crate::loop_engine::engine::run_loop(
+                &loop_cfg,
+                // Build a provider for the winning hemisphere to re-query.
+                // We use a simple approach: re-use the same provider path
+                // as the council winner. The loop engine will call
+                // run_mcp_dispatch_loop internally.
+                &*{
+                    match crate::providers::from_config_for_role(config, winner.role).await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "GOLD-LOOP-01: dissent-invoke: could not build winner provider"
+                            );
+                            // Fall through to original final_text.
+                            let response_text = match partial_refusal_prefix(&outcome) {
+                                Some(prefix) => format!("{prefix}\n{final_text}"),
+                                None => final_text,
+                            };
+                            return Ok(response_text);
+                        }
+                    }
+                },
+                req.clone(),
+                &crate::mcp::McpServers::default(),
+                writer,
+                config,
+            )
+            .await
+            {
+                Ok(record) => {
+                    tracing::info!(
+                        loop_id = %record.loop_id,
+                        rounds_run = record.rounds_run,
+                        "GOLD-LOOP-01: dissent-invoke loop completed — using loop output"
+                    );
+                    return Ok(record.final_text);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "GOLD-LOOP-01: dissent-invoke loop failed — using original council output"
+                    );
+                    // Fall through to original path.
+                }
+            }
+        }
+
         let response_text = match partial_refusal_prefix(&outcome) {
             Some(prefix) => format!("{prefix}\n{final_text}"),
             None => final_text,
@@ -6890,6 +7056,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
 
         run_chat_with(args, config, &provider)
@@ -7000,6 +7169,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
 
         run_chat_with(args, config, &provider)
@@ -7173,6 +7345,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
 
         run_chat_with(args, config, &provider)
@@ -7287,6 +7462,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
         run_chat_with(args, config, &LocalQwenMock)
             .await
@@ -7429,6 +7607,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
 
         run_chat_with(args, config, &MockStreamProvider)
@@ -7599,6 +7780,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
 
         let result = run_chat_with(args, config, &FailingProvider).await;
@@ -8972,6 +9156,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
 
         let config = FreedomConfig::default();
@@ -9134,6 +9321,9 @@ mod tests {
             sampling_seed: None,
             resume_from: None,
             incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
 
         let config = FreedomConfig::default();

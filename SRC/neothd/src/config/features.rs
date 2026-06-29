@@ -262,6 +262,53 @@ impl Default for GoalConfig {
     }
 }
 
+/// GOLD-LOOP-01 — multi-round autonomous loop engine knobs.
+///
+/// The loop engine wraps the existing MCP dispatch loop, running up to
+/// `max_rounds` outer iterations and evaluating structural stop criteria via
+/// `council::stop_verifier::StopConditionVerifier` after each round. All
+/// fields default to the safe/off state so the engine is opt-in at the
+/// operator level via `freedom.yaml::loop_config`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct LoopConfig {
+    /// Master switch. `false` (default) = engine disabled, every path falls
+    /// through to the existing single `run_mcp_dispatch_loop` call.
+    pub enabled: bool,
+    /// Hard ceiling on outer loop rounds. Each round is one full
+    /// `run_mcp_dispatch_loop` call (which itself may iterate up to
+    /// `goal.max_turns` inner iterations). Default 3.
+    pub max_rounds: u32,
+    /// When `true` AND a council debate returns a dissent score above the
+    /// strong-dissent threshold (0.6), the loop engine is auto-invoked with
+    /// `max_rounds = 1` to try to produce a more-converged answer. Default
+    /// `false` — the council path is already expensive and this adds an extra
+    /// dispatch round; opt in explicitly.
+    pub auto_invoke_on_dissent: bool,
+    /// When `true` and the loop is at `L2+` autonomy, each round where the
+    /// self-reflect quality score is below threshold gets a refine pass via
+    /// `council::self_reflect::refine`. Default `false` (opt-in: adds an
+    /// extra provider call per round).
+    pub refine_enabled: bool,
+    /// Optional total-token cap across all rounds. When `Some(n)` and the
+    /// accumulated (estimated) tokens exceed `n`, the loop exits with
+    /// `StopReason::BudgetExceeded` instead of starting another round.
+    /// `None` (default) = no budget gate.
+    pub token_budget: Option<u64>,
+}
+
+impl Default for LoopConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_rounds: 3,
+            auto_invoke_on_dissent: false,
+            refine_enabled: false,
+            token_budget: None,
+        }
+    }
+}
+
 /// GOLD-ADOPT-18 — subdirectory-hint injection knobs.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]

@@ -120,6 +120,11 @@ pub mod hooks;
 /// estimate + VRAM fit + ranking), surfaced via `neoth models fit`.
 pub mod hwfit;
 pub mod installers;
+/// GOLD-LOOP-01 — multi-round autonomous loop engine. Wraps
+/// `run_mcp_dispatch_loop` with outer rounds, stop-condition verification,
+/// optional self-reflect refine passes, WAL events (0x7C–0x7F), and
+/// `LoopRunRecord` disk persistence (`~/.neoth/loops/`).
+pub mod loop_engine;
 pub mod mcp;
 pub mod media;
 pub mod memory;

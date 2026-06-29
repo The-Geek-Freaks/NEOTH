@@ -25,7 +25,7 @@
 //! | `0x40..=0x4F`  | Cron / scheduled jobs                                  |
 //! | `0x50..=0x5F`  | Safety / recovery — panic, risk-gate, hints, web-extract|
 //! | `0x60..=0x6F`  | Council debate + callosum (CH-08)                      |
-//! | `0x70..=0x7F`  | (reserved)                                             |
+//! | `0x70..=0x7F`  | Coding workflow (0x70–0x7B) + Loop engine (0x7C–0x7F)  |
 //! | `0x80..=0x8F`  | (reserved Phase 29) Hooks lifecycle                    |
 //! | `0x90..=0x9F`  | Memory tiers (R-22..R-24) — consolidation, decay, GT   |
 //! | `0xA0..=0xAF`  | Permissions / autonomy (R-23)                          |
@@ -1139,6 +1139,37 @@ pub const EVENT_TYPE_AUTO_SKILL_EXTRACTED: u8 = 0x7B;
 /// edge between two tasks was removed. Payload:
 /// `{task_id, depends_on_task_id, ts}`.
 pub const EVENT_TYPE_KANBAN_TASK_DEP_REMOVED: u8 = 0x79;
+
+// ---- 0x7C..=0x7F  Loop engine (GOLD-LOOP-01) -------------------------------
+
+/// `0x7C LOOP_STARTED` — GOLD-LOOP-01. A multi-round loop run opened.
+/// Emitted once at `run_loop()` entry before any round fires.
+///
+/// Payload (JSON): `{loop_id: str, prompt_hash: str, max_rounds: u32,
+/// has_until: bool, ts_unix: i64}`.
+pub const EVENT_TYPE_LOOP_STARTED: u8 = 0x7C;
+
+/// `0x7D LOOP_ROUND` — GOLD-LOOP-01. One dispatch-loop round completed.
+/// Emitted once per round after `run_mcp_dispatch_loop` returns.
+///
+/// Payload (JSON): `{loop_id: str, round: u32, iterations: u32,
+/// hit_cap: bool, successful_calls: u32, failed_calls: u32,
+/// stop_approved: bool, ts_unix: i64}`.
+pub const EVENT_TYPE_LOOP_ROUND: u8 = 0x7D;
+
+/// `0x7E LOOP_REFINED` — GOLD-LOOP-01. A self-reflect refine pass fired
+/// inside the loop (L2+ autonomy only). Emitted when
+/// `council::self_reflect::refine` is called during a round.
+///
+/// Payload (JSON): `{loop_id: str, round: u32, ts_unix: i64}`.
+pub const EVENT_TYPE_LOOP_REFINED: u8 = 0x7E;
+
+/// `0x7F LOOP_COMPLETED` — GOLD-LOOP-01. The loop run terminated normally
+/// (Converged, CapHit, or BudgetExceeded). Emitted after the final round.
+///
+/// Payload (JSON): `{loop_id: str, rounds_run: u32,
+/// stop_reason: str, ts_unix: i64}`.
+pub const EVENT_TYPE_LOOP_COMPLETED: u8 = 0x7F;
 
 // ---- 0x80..=0x8F  Hook lifecycle (Phase 29 R-15) --------------------------
 
@@ -3073,6 +3104,15 @@ const _: () = {
     // GOLD-ADAPT-ODY-20: 0x7B AUTO_SKILL_EXTRACTED in coding-workflow band.
     let _ = [(); 1][(EVENT_TYPE_AUTO_SKILL_EXTRACTED < 0x70
         || EVENT_TYPE_AUTO_SKILL_EXTRACTED > 0x7F) as usize];
+    // GOLD-LOOP-01: 0x7C..=0x7F loop-engine events in coding-workflow band.
+    let _ = [(); 1]
+        [(EVENT_TYPE_LOOP_STARTED < 0x70 || EVENT_TYPE_LOOP_STARTED > 0x7F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_LOOP_ROUND < 0x70 || EVENT_TYPE_LOOP_ROUND > 0x7F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_LOOP_REFINED < 0x70 || EVENT_TYPE_LOOP_REFINED > 0x7F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_LOOP_COMPLETED < 0x70 || EVENT_TYPE_LOOP_COMPLETED > 0x7F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0

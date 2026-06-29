@@ -2007,6 +2007,58 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     reason = %autoroute_decision.reason(),
                     "channel MCP autoroute enabled — running dispatch loop",
                 );
+                // GOLD-LOOP-01: when loop_config is enabled with max_rounds > 1,
+                // route the channel path through the multi-round loop engine.
+                // Falls back to a single dispatch when the gate is not set.
+                if config_for_handler.loop_config.enabled
+                    && config_for_handler.loop_config.max_rounds > 1
+                {
+                    let loop_cfg = crate::loop_engine::engine::LoopConfig::from_freedom(
+                        &config_for_handler.loop_config,
+                        autonomy,
+                        vec![], // no --until on the channel path; criteria from freedom.yaml not yet surfaced here
+                        crate::config::FreedomConfig::default_neoth_home(),
+                    );
+                    info!(
+                        max_rounds = loop_cfg.max_rounds,
+                        "GOLD-LOOP-01: channel loop mode active — routing to loop engine"
+                    );
+                    match crate::loop_engine::engine::run_loop(
+                        &loop_cfg,
+                        &*provider,
+                        req.clone(),
+                        &mcp_servers_for_loop,
+                        &writer,
+                        &config_for_handler,
+                    )
+                    .await
+                    {
+                        Ok(record) => {
+                            info!(
+                                loop_id = %record.loop_id,
+                                rounds_run = record.rounds_run,
+                                stop_reason = ?record.stop_reason,
+                                "GOLD-LOOP-01: channel loop completed"
+                            );
+                            crate::providers::Completion {
+                                text: record.final_text,
+                                model: String::new(),
+                                latency: started.elapsed(),
+                                input_tokens: None,
+                                output_tokens: None,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "GOLD-LOOP-01: channel loop engine failed — falling back to direct provider call"
+                            );
+                            provider.complete(req).await?
+                        }
+                    }
+                } else {
                 let loop_req = req.clone();
                 match crate::cli::chat::run_mcp_dispatch_loop(
                     &*provider,
@@ -2090,6 +2142,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         provider.complete(req).await?
                     }
                 }
+                } // end GOLD-LOOP-01 else (single-dispatch path)
             } else {
                 provider.complete(req).await?
             };

@@ -259,6 +259,11 @@ async fn run_one(
         resume_from: None,
         // Recipes are operator-authored automation — never incognito.
         incognito: false,
+        // GOLD-LOOP-01 — recipes don't engage the loop engine by default;
+        // loop mode is a CLI-interactive opt-in only.
+        loop_mode: false,
+        iterations: None,
+        until: vec![],
     };
 
     // GOLD-ADOPT-16 — per-recipe retry with a shell success-check. SECURITY: the
