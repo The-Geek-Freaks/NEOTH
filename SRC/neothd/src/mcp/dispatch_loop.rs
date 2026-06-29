@@ -55,6 +55,24 @@ pub struct ToolCallRecord {
     pub success: bool,
 }
 
+/// GOLD-TASK-05 — outcome of the goal-judge / budget tracking for one loop run.
+///
+/// Emitted as a `0x89 GOAL_JUDGED` WAL frame with a `kind` field at the
+/// call site (`serve_pipeline.rs` / `chat.rs`) after `run_mcp_dispatch_loop`
+/// returns so the operator can tell *why* the loop stopped when a goal was active.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GoalOutcome {
+    /// No goal was active — no goal-specific WAL frame is needed.
+    None,
+    /// An independent judge LLM confirmed the goal was fully met before the
+    /// iteration cap was hit. Maps to `kind = "met"` in the WAL frame.
+    Met,
+    /// The loop hit the iteration cap while a goal was still active (judge
+    /// returned false / was absent). Maps to `kind = "budget_exhausted"` in
+    /// the WAL frame.
+    BudgetExhausted,
+}
+
 /// Outcome of one dispatcher run.
 #[derive(Debug, Clone)]
 pub struct LoopOutcome {
@@ -71,6 +89,11 @@ pub struct LoopOutcome {
     /// Per-call records for structured skill-digest extraction.
     /// Empty on the stream / single-provider paths.
     pub tool_call_records: Vec<ToolCallRecord>,
+    /// GOLD-TASK-05 — goal lifecycle outcome for this loop run. `None` when no
+    /// goal was configured. Consumed by the call site to emit `0x89 GOAL_JUDGED`
+    /// with the appropriate `kind` field, without embedding WAL logic inside the
+    /// loop itself.
+    pub goal_outcome: GoalOutcome,
 }
 
 /// Caller-supplied completion driver. Takes the (already-assembled)
@@ -172,6 +195,11 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     let mut failed_calls = 0u32;
     let mut tool_call_records: Vec<ToolCallRecord> = Vec::new();
     let mut current_text;
+    // GOLD-TASK-05 — track the goal-specific loop exit reason so the caller can
+    // emit a `0x89 GOAL_JUDGED` WAL frame with the correct `kind` field. The
+    // variable is updated at the two break sites (judge-confirmed-met and
+    // hit_cap-with-active-goal) and passed out via `LoopOutcome::goal_outcome`.
+    let mut goal_outcome = GoalOutcome::None;
     // GOLD-ADAPT-GOOSE-02 — pluggable pre-dispatch safety chain: the stuck-loop
     // guard (GOLD-ADOPT-20) + the dangerous-command/egress risk policy
     // (GOLD-ADOPT-23) run as an ordered inspector chain, accumulated across all
@@ -300,6 +328,9 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         );
                         // Consume the goal so the nudge path doesn't fire.
                         goal_tracker.mark_goal_met();
+                        // GOLD-TASK-05 — record that the loop exited because the goal
+                        // was confirmed met; the caller emits the WAL frame.
+                        goal_outcome = GoalOutcome::Met;
                         break;
                     }
                 }
@@ -323,10 +354,20 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
             // `iterations < max_iterations`), so `hit_cap` must be set on this
             // clean-exit path too — otherwise the cap-truncation is invisible.
             hit_cap = iterations >= max_iterations;
+            // GOLD-TASK-05 — if cap was hit while a goal was still active,
+            // record BudgetExhausted so the caller can emit the WAL audit frame.
+            if hit_cap && goal_tracker.active_goal().is_some() {
+                goal_outcome = GoalOutcome::BudgetExhausted;
+            }
             break;
         }
         if iterations >= max_iterations {
             hit_cap = true;
+            // GOLD-TASK-05 — cap hit on the tool-call path; mark BudgetExhausted
+            // if a goal was active so the caller emits the WAL audit frame.
+            if goal_tracker.active_goal().is_some() {
+                goal_outcome = GoalOutcome::BudgetExhausted;
+            }
             warn!(
                 iterations,
                 "MCP dispatch loop hit iteration cap, returning last response"
@@ -659,6 +700,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         successful_calls,
         failed_calls,
         tool_call_records,
+        goal_outcome,
     })
 }
 
@@ -2134,5 +2176,107 @@ mod tests {
         // Failed on server-not-found, not denylist — same outcome shape.
         assert_eq!(outcome.failed_calls, 1);
         assert_eq!(outcome.successful_calls, 0);
+    }
+
+    // ── GOLD-TASK-05 GoalOutcome integration tests ──────────────────────────
+
+    /// Mock Provider for judge tests — always returns a fixed reply.
+    struct FixedJudgeProvider(String);
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for FixedJudgeProvider {
+        fn name(&self) -> &'static str {
+            "mock_judge"
+        }
+        async fn complete(
+            &self,
+            _req: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            Ok(crate::providers::Completion {
+                text: self.0.clone(),
+                model: "mock".into(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
+    /// When the judge says YES on a clean exit, `goal_outcome` is `Met`.
+    #[tokio::test]
+    async fn goal_met_sets_goal_outcome_met() {
+        // Driver: one plain reply (no tool calls) → clean exit → judge fires.
+        let mut driver = ScriptedDriver::new(vec!["Task complete."]);
+        let servers = McpServers::default();
+        // Judge always replies YES.
+        let judge = FixedJudgeProvider("YES".into());
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "finish the work".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            None,
+            crate::mcp::goal_tracker::GoalContext {
+                goal: Some("finish the work".into()),
+                grind: None,
+            },
+            false, // hints off — no FS access in tests
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            Some(&judge),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome.goal_outcome,
+            GoalOutcome::Met,
+            "judge YES must produce GoalOutcome::Met"
+        );
+        assert!(!outcome.hit_cap, "loop must have exited early, not capped");
+    }
+
+    /// When the iteration cap is hit while a goal is active, `goal_outcome` is
+    /// `BudgetExhausted`.
+    #[tokio::test]
+    async fn goal_budget_exhausted_sets_goal_outcome() {
+        // Driver: two plain replies, both with no tool calls.
+        // max_iterations = 1 → the grind nudge tries to continue but cap fires.
+        let mut driver = ScriptedDriver::new(vec!["partial work", "partial work 2"]);
+        let servers = McpServers::default();
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "build it".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            1, // cap at 1 iteration so BudgetExhausted fires immediately
+            &crate::config::SecurityPolicy::default(),
+            None,
+            crate::mcp::goal_tracker::GoalContext {
+                goal: Some("build it".into()),
+                grind: None,
+            },
+            false, // hints off
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None, // judge disabled — BudgetExhausted from cap, not from judge
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome.goal_outcome,
+            GoalOutcome::BudgetExhausted,
+            "cap hit with active goal must produce GoalOutcome::BudgetExhausted"
+        );
+        assert!(outcome.hit_cap, "hit_cap must be true when cap fires");
     }
 }

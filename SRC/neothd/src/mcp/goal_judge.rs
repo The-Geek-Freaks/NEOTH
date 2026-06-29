@@ -77,27 +77,31 @@ pub async fn judge_goal_met(
         }
     };
 
-    // Emit the WAL audit frame.
+    // Emit the WAL audit frame (GOLD-TASK-05: kind field replaces verdict field).
     let goal_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(goal.as_bytes()));
-    let verdict_str = if verdict { "met" } else { "not_met" };
-    emit_goal_judged_wal(writer, &goal_hash, verdict_str).await;
+    let kind = if verdict { "met" } else { "not_met" };
+    emit_goal_judged_wal(writer, &goal_hash, kind).await;
 
     verdict
 }
 
 /// Append a `0x89 GOAL_JUDGED` WAL frame. Best-effort: a WAL failure must
-/// never abort the loop. Records goal hash + verdict + timestamp only —
+/// never abort the loop. Records goal hash + kind + timestamp only —
 /// never the raw goal text or conversation content.
-async fn emit_goal_judged_wal(
+///
+/// `kind` is one of: `"met"`, `"not_met"`, `"budget_exhausted"`.
+/// Using a single event byte with a discriminating `kind` field avoids
+/// claiming new WAL bytes (0x7A/0x7B are already taken by skill-effort events).
+pub async fn emit_goal_judged_wal(
     writer: Option<&crate::wal::writer::WalWriterHandle>,
     goal_hash: &str,
-    verdict: &str,
+    kind: &str,
 ) {
     let Some(w) = writer else { return };
     let ts = crate::time::now_unix_i64();
     let payload = match serde_json::to_vec(&serde_json::json!({
         "goal_hash": goal_hash,
-        "verdict": verdict,
+        "kind": kind,
         "ts_unix": ts,
     })) {
         Ok(b) => b,

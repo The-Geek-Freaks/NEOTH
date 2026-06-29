@@ -2124,6 +2124,30 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             hit_cap = outcome.hit_cap,
                             "channel MCP dispatch loop complete",
                         );
+                        // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for
+                        // goal lifecycle outcomes that were NOT already covered by
+                        // the inline judge call (budget_exhausted path only; the
+                        // "met" frame is emitted inside judge_goal_met itself).
+                        {
+                            use crate::mcp::dispatch_loop::GoalOutcome;
+                            let goal_hash = config_for_handler
+                                .goal
+                                .goal
+                                .as_deref()
+                                .map(|g| format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes())))
+                                .unwrap_or_default();
+                            match &outcome.goal_outcome {
+                                GoalOutcome::BudgetExhausted => {
+                                    crate::mcp::goal_judge::emit_goal_judged_wal(
+                                        Some(&writer),
+                                        &goal_hash,
+                                        "budget_exhausted",
+                                    )
+                                    .await;
+                                }
+                                GoalOutcome::None | GoalOutcome::Met => {}
+                            }
+                        }
                         crate::providers::Completion {
                             text: outcome.final_text,
                             model: String::new(),

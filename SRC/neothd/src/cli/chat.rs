@@ -2208,6 +2208,9 @@ async fn dispatch_provider(
                                 .sum(),
                             failed_calls: record.per_round.iter().map(|r| r.failed_calls).sum(),
                             tool_call_records: vec![],
+                            // GOLD-TASK-05 — loop_engine path has no goal judge;
+                            // goal_outcome is always None here.
+                            goal_outcome: crate::mcp::dispatch_loop::GoalOutcome::None,
                         }
                     }
                     Err(e) => {
@@ -2282,6 +2285,25 @@ async fn dispatch_provider(
                 hit_cap = outcome.hit_cap,
                 "MCP dispatch loop complete"
             );
+            // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for budget_exhausted
+            // outcomes (the "met" frame is already emitted inside judge_goal_met).
+            {
+                use crate::mcp::dispatch_loop::GoalOutcome;
+                if matches!(outcome.goal_outcome, GoalOutcome::BudgetExhausted) {
+                    let goal_hash = config
+                        .goal
+                        .goal
+                        .as_deref()
+                        .map(|g| format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes())))
+                        .unwrap_or_default();
+                    crate::mcp::goal_judge::emit_goal_judged_wal(
+                        Some(&writer),
+                        &goal_hash,
+                        "budget_exhausted",
+                    )
+                    .await;
+                }
+            }
             // GOLD-ADAPT-ODY-20 — capture for auto-skill extraction gate.
             mcp_tool_calls = outcome.successful_calls;
             // REVFIX-EXCERPTS-01 — capture structured call records for digest.
