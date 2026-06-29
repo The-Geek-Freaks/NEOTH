@@ -181,8 +181,10 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 crc32c             = "0.6"
 xxhash-rust        = { version = "0.8", features = ["xxh3", "xxh64"] }
-# GOLD-ADAPT-KV-03 — LRU cold tier for Ouro prefix-KV offload
-lru                = "0.12"
+# GOLD-ADAPT-KV-03 — LRU cold tier for Ouro prefix-KV offload.
+# 0.16 clears RUSTSEC-2026-0002 (unsound IterMut in <0.16.3); NEOTH only uses
+# new/get/put/pop, so the bump is API-compatible.
+lru                = "0.16"
 uuid               = { version = "1", features = ["v4", "v7", "serde"] }
 # SX-01: SSRF guard for tools/web_fetch.rs — strict URL parsing + scheme
 # filtering instead of string-prefix checks.

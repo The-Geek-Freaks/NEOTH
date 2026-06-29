@@ -128,6 +128,20 @@ ignore = [
     # No direct NEOTH use; migrate once irc exposes a rustls-pki-types path or
     # the IRC adapter moves off this dependency chain.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained — transitive via irc; no vuln, no safe direct upgrade. Re-evaluate when replacing/bumping IRC transport." },
+    # lopdf — stack-overflow DoS on deeply-nested PDF (fixed in 0.42.0), but it
+    # is transitive via pdf-extract 0.9, which pins `lopdf = "^0.36"`, so the
+    # patched 0.42 cannot be selected until pdf-extract bumps upstream. NEOTH's
+    # only PDF path is `neoth ingest` over OPERATOR-CHOSEN local files (no daemon
+    # auto-parses untrusted network PDFs), so the impact is self-DoS, not remote.
+    # Plan: bump pdf-extract once it adopts lopdf >=0.42 (tracked upstream).
+    { id = "RUSTSEC-2026-0187", reason = "lopdf <0.42 stack-overflow DoS — transitive via pdf-extract 0.9 (pins ^0.36); only reachable via `neoth ingest` of operator-chosen local PDFs (self-DoS, not remote). Bump when pdf-extract adopts lopdf >=0.42." },
+    # rsa — Marvin timing side-channel (RUSTSEC-2023-0071). No patched release
+    # exists (RustCrypto migration to constant-time is in progress). Transitive
+    # via russh/ssh-key (the TERMIX SSH client). The attack needs an adversary
+    # who can observe RSA-op timing over the network; NEOTH uses rsa only as a
+    # LOCAL outbound SSH client on the operator's own machine — the advisory's
+    # own workaround ("local use on a non-compromised computer is fine") applies.
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing side-channel — NO upstream patch yet; transitive via russh/ssh-key (TERMIX local SSH client). Local-only operator use = advisory's documented safe case. Re-evaluate when rsa ships a constant-time release." },
 ]
 
 [sources]
