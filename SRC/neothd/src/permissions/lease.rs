@@ -198,25 +198,36 @@ pub struct LeaseStore {
     pub leases: Vec<CapabilityLease>,
 }
 
-/// Retry a transient filesystem op a few times. On Windows, the AV / Search
-/// indexer can hold a brief handle on a just-written file, so the next open or
-/// rename fails with a sharing/access violation that clears within a few ms.
-/// Unix never hits this — the first attempt succeeds. Wraps I/O errors ONLY;
-/// callers keep parse/validation failures OUTSIDE this (those are permanent and
-/// must not be retried). Fail-closed is preserved: if every attempt fails, the
-/// last error is returned so the caller still denies.
+/// Retry a transient filesystem op. On Windows, the AV / Search indexer can
+/// hold a handle on a just-written file for up to a few hundred milliseconds,
+/// so the next open or rename fails with a sharing/access violation until that
+/// handle is released. A short (~50ms) budget was NOT enough — the lease-store
+/// rename still failed ~1/12 under the parallel test suite, which fails the
+/// risk-confirm single-use consume CLOSED (a real operator-facing bug: a valid
+/// lease gets blocked on an AV hiccup). Retry up to ~2s (linear backoff capped
+/// at 150ms) so the handle is virtually always released first. Unix never hits
+/// this — the first attempt succeeds, no sleep. Wraps I/O errors ONLY; callers
+/// keep parse/validation failures OUTSIDE this (those are permanent and must
+/// not be retried). Fail-closed is preserved: if every attempt fails, the last
+/// error is returned so the caller still denies.
+//
+// ponytail: ~2s wall-clock ceiling via fixed attempts; switch to an
+// Instant-based deadline only if a slower scanner is ever observed.
 fn retry_transient_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    const MAX_ATTEMPTS: u32 = 20;
     let mut attempt = 0u32;
     loop {
         match op() {
             Ok(v) => return Ok(v),
             Err(e) => {
                 attempt += 1;
-                if attempt >= 5 {
+                if attempt >= MAX_ATTEMPTS {
                     return Err(e);
                 }
-                // 5,10,15,20ms backoff — clears a transient Windows handle.
-                std::thread::sleep(std::time::Duration::from_millis(u64::from(attempt) * 5));
+                // Linear backoff capped at 150ms; ~2s total over 19 retries —
+                // outlasts a Windows AV / Search-indexer handle on the file.
+                let backoff_ms = (u64::from(attempt) * 15).min(150);
+                std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
             }
         }
     }
