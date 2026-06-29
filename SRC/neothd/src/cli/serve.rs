@@ -827,11 +827,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         crate::cli::serve_tasks::spawn_kanban_sse(&config, &writer, &kanban_sse_shutdown);
 
     // GOLD-ADAPT-TRAIL-02: relay task — wakes on views_change_rx (watch
-    // coalesces bursts → 1 wakeup per indexer pass), reads the latest
-    // FeedEntry from views.db via the shared ViewsExecutor reader pool, and
-    // fans out to kanban_sse broadcast subscribers.
-    // Spawned BEFORE spawn_indexer above already ran — the channel is created
-    // before the indexer, so no early deltas are lost.
+    // coalesces bursts → 1 wakeup per indexer pass), reads the latest FeedEntry
+    // from views.db via the shared ViewsExecutor reader pool, and fans out to
+    // kanban_sse broadcast subscribers (one step = `relay_latest_feed_to_sse`).
+    //
+    // No early-delta loss: `views_change_rx` is created at boot (above) and is
+    // NEVER consumed before this clone, so the clone inherits last-seen = the
+    // initial version. Any indexer `send` since boot — even one that fired before
+    // this task spawned — leaves the current version ahead of the clone's
+    // baseline, so the first `changed().await` returns immediately for it. watch
+    // coalescing then collapses a burst into a single wakeup.
     if let Some(sse_tx) = kanban_sse_tx.clone() {
         let mut change_rx = views_change_rx.clone();
         let exec_for_relay = views_executor.clone();
@@ -845,16 +850,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 let Some(exec) = exec_for_relay.as_ref() else {
                     continue;
                 };
-                // Read the most-recent kanban event row and broadcast it.
-                // `let _ =` — Err when no active SSE subscriber; never panic.
-                let entry = exec
-                    .with_reader(|conn| {
-                        crate::coding::feed::latest_feed_entry_from_db(conn)
-                    })
-                    .await;
-                if let Some(e) = entry {
-                    let _ = sse_tx.send(e);
-                }
+                crate::cli::serve_tasks::relay_latest_feed_to_sse(exec, &sse_tx).await;
             }
         });
     }

@@ -2079,6 +2079,30 @@ pub(crate) fn spawn_kanban_sse(
     }
 }
 
+/// GOLD-ADAPT-TRAIL-02: one kanban-SSE relay step — read the most-recent kanban
+/// feed entry from views.db via the executor's reader pool and broadcast it to
+/// the SSE subscribers. Returns `true` when an entry was found and sent.
+///
+/// Extracted from the inline relay loop in `cli/serve.rs` so the
+/// read → parse → broadcast → deliver path is unit-testable (a spawned closure
+/// is not). A `broadcast::send` error means there are currently no SSE
+/// subscribers connected — that is the idle case, not a failure.
+pub(crate) async fn relay_latest_feed_to_sse(
+    exec: &crate::memory::store::ViewsExecutor,
+    sse_tx: &tokio::sync::broadcast::Sender<crate::coding::feed::FeedEntry>,
+) -> bool {
+    let entry = exec
+        .with_reader(crate::coding::feed::latest_feed_entry_from_db)
+        .await;
+    match entry {
+        Some(e) => {
+            let _ = sse_tx.send(e);
+            true
+        }
+        None => false,
+    }
+}
+
 /// GOLD-ADAPT-AWE-PROV-01 — OpenRouter-compat oai_serve adapter.
 ///
 /// Binds `127.0.0.1:<config.oai_serve.port>` (default 9746) when
@@ -4858,6 +4882,72 @@ mod tests {
         assert!(
             check_onboarding_complete(&cfg).is_ok(),
             "secondary probe must pass when telegram_token + telegram_user_id present"
+        );
+    }
+
+    /// TRAIL-02 gap fix: prove the kanban-SSE relay's full
+    /// read → parse → broadcast → DELIVER path (the prior test only checked the
+    /// change-bus fired). Seed a session-opened row, subscribe, run one relay
+    /// step, assert the subscriber receives the parsed `FeedEntry`.
+    #[tokio::test]
+    async fn trail02_relay_reads_feed_and_delivers_to_sse_subscriber() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let exec = crate::memory::store::ViewsExecutor::open(&path, 2).expect("open executor");
+
+        // Create the columns latest_feed_entry_from_db reads + a 0x70
+        // (KANBAN_SESSION_OPENED = 112) row with a valid SessionOpenedPayload.
+        exec.with_writer(|c| {
+            c.execute_batch(
+                "CREATE TABLE IF NOT EXISTS idx_kanban_task_event (\
+                   event_id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                   task_id INTEGER, event_type INTEGER, created_ns INTEGER, payload TEXT);",
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO idx_kanban_task_event (task_id, event_type, created_ns, payload) \
+                 VALUES (1, 112, 123456789, ?1)",
+                rusqlite::params![r#"{"session_id":1,"source_channel":"telegram"}"#],
+            )
+            .unwrap();
+        })
+        .await;
+
+        let (sse_tx, mut sse_rx) =
+            tokio::sync::broadcast::channel::<crate::coding::feed::FeedEntry>(8);
+        let sent = super::relay_latest_feed_to_sse(&exec, &sse_tx).await;
+        assert!(sent, "relay must find + broadcast the seeded feed entry");
+
+        let got = sse_rx
+            .try_recv()
+            .expect("SSE subscriber must receive the relayed entry");
+        assert_eq!(got.event_type, 112, "0x70 KANBAN_SESSION_OPENED");
+        assert!(
+            got.message.contains("Session opened via telegram"),
+            "relayed entry must carry the parsed message, got: {}",
+            got.message
+        );
+    }
+
+    /// Empty kanban table → relay broadcasts nothing (no spurious client events).
+    #[tokio::test]
+    async fn trail02_relay_no_entry_does_not_broadcast() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let exec = crate::memory::store::ViewsExecutor::open(&path, 1).expect("open executor");
+        exec.with_writer(|c| {
+            c.execute_batch(
+                "CREATE TABLE IF NOT EXISTS idx_kanban_task_event (\
+                   event_id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                   task_id INTEGER, event_type INTEGER, created_ns INTEGER, payload TEXT);",
+            )
+            .unwrap();
+        })
+        .await;
+        let (sse_tx, _rx) = tokio::sync::broadcast::channel::<crate::coding::feed::FeedEntry>(8);
+        assert!(
+            !super::relay_latest_feed_to_sse(&exec, &sse_tx).await,
+            "empty kanban table → relay sends nothing"
         );
     }
 }

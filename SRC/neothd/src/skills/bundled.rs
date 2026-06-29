@@ -1396,8 +1396,15 @@ mod tests {
             .join("skills")
             .join("drawio_diagram");
 
-        // Bail gracefully on packaging-stripped builds that omit assets.
+        // Packaging-stripped builds may omit assets — skip locally. But CI always
+        // builds from a full source checkout, so a missing asset dir there is a
+        // real regression: FAIL hard rather than silently passing the file checks.
         if !skill_dir.exists() {
+            assert!(
+                std::env::var("CI").is_err(),
+                "GOLD-ADAPT-DRAW-03: drawio_diagram asset dir missing under CI at {skill_dir:?} \
+                 — assets must ship; a self-skip here would hide a packaging regression"
+            );
             return;
         }
 
