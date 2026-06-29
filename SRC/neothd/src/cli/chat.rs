@@ -3377,6 +3377,32 @@ pub async fn run_chat_with(
         println!("{banner}");
     }
 
+    // GOLD-ADAPT-SKILL-10 — session-start skill-catalog banner (stdout only,
+    // no provider tokens). Gated on `config.skills.session_catalog` (default
+    // false — operator opt-in). Prefer the daemon's hot registry (`global()`)
+    // so the daemon path pays zero FS I/O; fall back to a best-effort
+    // `load_all` for one-shot CLI invocations where no daemon was started.
+    // The catalog is printed right here in the session-start banner chain,
+    // AFTER UX-05 and BEFORE the WAL writer opens, matching the research plan.
+    if config.skills.session_catalog {
+        let catalog_block = if let Some(reg) = crate::skills::registry::global() {
+            // Daemon path — zero FS I/O: read the hot atomic-swap registry.
+            maybe_skill_catalog_block(&reg.snapshot_owned())
+        } else {
+            // One-shot CLI path — best-effort async load (same FS walk
+            // `build_prompt_bundle` will repeat ~30 ms later anyway).
+            // `run_chat_with` is already async so `.await` is safe here.
+            let skills_dir = first_tour_home.join("skills");
+            let loaded = crate::skills::load_all(&skills_dir)
+                .await
+                .unwrap_or_default();
+            maybe_skill_catalog_block(&loaded)
+        };
+        if let Some(block) = catalog_block {
+            println!("{block}");
+        }
+    }
+
     let wal_dir = FreedomConfig::default_wal_dir();
     let segment_path = args
         .wal_segment
@@ -6475,6 +6501,48 @@ fn session_memory_signal() -> Option<String> {
     memory_signal_line(total)
 }
 
+/// GOLD-ADAPT-SKILL-10 — session-start skill-catalog banner.
+///
+/// Renders a compact markdown table of all enabled skills and their
+/// trigger keywords for operator discoverability. This is a pure
+/// stdout emission — it is NEVER injected into the system prompt or
+/// any provider context layer; it costs zero provider tokens.
+///
+/// Returns `None` when the filtered skill list is empty (silent
+/// on fresh install with no skills, or when all loaded skills are
+/// disabled). The caller gates on `config.skills.session_catalog`
+/// before calling `println!` so this function is purely the formatter.
+///
+/// Visibility rule: shows ALL enabled skills (including `NameOnly` and
+/// `UserInvocableOnly`) because this IS operator-facing discoverability
+/// — the operator should see `/skill-name` exists even for non-auto-
+/// routed skills. Only `disabled` (`is_enabled() == false`) skills are
+/// suppressed, matching the pre-filter semantics of `build_prompt_bundle`.
+fn maybe_skill_catalog_block(skills: &[crate::skills::schema::Skill]) -> Option<String> {
+    let enabled: Vec<&crate::skills::schema::Skill> =
+        skills.iter().filter(|s| s.is_enabled()).collect();
+    if enabled.is_empty() {
+        return None;
+    }
+    let mut out = String::from("| Skill | Trigger phrases |\n|---|---|\n");
+    for skill in &enabled {
+        // Clip trigger keywords to a readable width. Replicate the
+        // 40-char clip inline — `cli::skills::truncate` is private.
+        let triggers: Vec<String> = skill
+            .trigger_keywords()
+            .iter()
+            .map(|kw| kw.chars().take(40).collect::<String>())
+            .collect();
+        let triggers_cell = if triggers.is_empty() {
+            "—".to_string()
+        } else {
+            triggers.join(", ")
+        };
+        out.push_str(&format!("| {} | {} |\n", skill.id(), triggers_cell));
+    }
+    Some(out)
+}
+
 /// Round-3 v0.4 QU-11 / ARS-6 — load a `MODE_CHECKPOINT` snapshot by
 /// hash prefix and render a (operator-banner, system-prompt-block)
 /// pair. The system-prompt block carries a typed RESUME-CONTEXT
@@ -9354,6 +9422,132 @@ mod tests {
         assert!(
             !session_fired_once.contains("audit-log"),
             "once=false hook must not populate session_fired_once"
+        );
+    }
+
+    // ── GOLD-ADAPT-SKILL-10: skill-catalog banner unit tests ─────────────
+
+    fn make_test_skill(id: &str, keywords: &[&str], enabled: bool)
+        -> crate::skills::schema::Skill
+    {
+        use crate::skills::schema::{Skill, SkillManifest};
+        Skill {
+            manifest: SkillManifest {
+                id: id.to_string(),
+                description: format!("test skill {id}"),
+                version: "1.0.0".to_string(),
+                trigger_keywords: keywords.iter().map(|s| s.to_string()).collect(),
+                system_prompt: String::new(),
+                tool_allowlist: Vec::new(),
+                author: None,
+                tags: Vec::new(),
+                homepage: None,
+                source: None,
+                modes: Vec::new(),
+                enabled,
+                delegate_to: None,
+                model: None,
+                paths: Vec::new(),
+                effort: None,
+                visibility: crate::config::SkillVisibility::On,
+            },
+            path: std::path::PathBuf::from(format!("/skills/{id}")),
+            content_hash: String::new(),
+        }
+    }
+
+    /// Catalog renders a table when at least one enabled skill is present,
+    /// includes both enabled skills, excludes the disabled one, and lists
+    /// trigger keywords in the row.
+    #[test]
+    fn skill_catalog_prints_when_enabled() {
+        let skills = vec![
+            make_test_skill("code-review", &["review", "check code"], true),
+            make_test_skill("security-scan", &["scan", "audit"], true),
+            make_test_skill("disabled-skill", &["nope"], false),
+        ];
+
+        let result = maybe_skill_catalog_block(&skills);
+        assert!(result.is_some(), "should return Some when enabled skills exist");
+
+        let table = result.unwrap();
+        assert!(
+            table.contains("code-review"),
+            "table must contain enabled skill id 'code-review'"
+        );
+        assert!(
+            table.contains("security-scan"),
+            "table must contain enabled skill id 'security-scan'"
+        );
+        assert!(
+            !table.contains("disabled-skill"),
+            "table must NOT contain disabled skill"
+        );
+        assert!(
+            table.contains("review"),
+            "table must contain trigger keyword 'review'"
+        );
+        assert!(
+            table.contains("scan"),
+            "table must contain trigger keyword 'scan'"
+        );
+        // Check the markdown table header is present.
+        assert!(
+            table.contains("| Skill | Trigger phrases |"),
+            "table must contain markdown header"
+        );
+    }
+
+    /// Catalog returns None when all skills are disabled (silent on fresh
+    /// installs or when every skill is turned off).
+    #[test]
+    fn skill_catalog_silent_when_all_disabled() {
+        let skills = vec![
+            make_test_skill("disabled-a", &["foo"], false),
+            make_test_skill("disabled-b", &["bar"], false),
+        ];
+        let result = maybe_skill_catalog_block(&skills);
+        assert!(
+            result.is_none(),
+            "should return None when every skill is disabled"
+        );
+    }
+
+    /// Catalog returns None on an empty skill list (fresh install).
+    #[test]
+    fn skill_catalog_silent_on_empty_list() {
+        let result = maybe_skill_catalog_block(&[]);
+        assert!(result.is_none(), "should return None for empty skill list");
+    }
+
+    /// Skills with no trigger keywords render a dash placeholder instead
+    /// of leaving the cell blank.
+    #[test]
+    fn skill_catalog_no_keywords_renders_dash() {
+        let skills = vec![make_test_skill("no-kw-skill", &[], true)];
+        let result = maybe_skill_catalog_block(&skills);
+        assert!(result.is_some());
+        let table = result.unwrap();
+        assert!(
+            table.contains("no-kw-skill"),
+            "skill id must appear in table"
+        );
+        assert!(
+            table.contains('—'),
+            "empty trigger_keywords must render em-dash placeholder"
+        );
+    }
+
+    /// config.skills.session_catalog=false means the catalog block is
+    /// never passed to println! — verify by calling the function and
+    /// checking the gate condition directly (pure logic, no stdout capture
+    /// needed for the gating check).
+    #[test]
+    fn skill_catalog_gate_off_by_default() {
+        let config = FreedomConfig::default();
+        assert!(
+            !config.skills.session_catalog,
+            "session_catalog must default to false (operator opt-in)"
         );
     }
 }

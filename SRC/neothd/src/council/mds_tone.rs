@@ -50,7 +50,7 @@ impl InputIntensity {
 
 impl PartialOrd for InputIntensity {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.level().cmp(&other.level()))
+        Some(self.cmp(other))
     }
 }
 
@@ -339,7 +339,7 @@ mod tests {
         // Medium is >= Medium → should be applied
         assert!(InputIntensity::Medium >= InputIntensity::Medium);
         // Low is NOT >= Medium → should be skipped
-        assert!(!(InputIntensity::Low >= InputIntensity::Medium));
+        assert!(InputIntensity::Low < InputIntensity::Medium);
     }
 
     // ── Integration sanity: classify → modifier round-trip ─────────────────

@@ -174,6 +174,23 @@ pub struct SkillsConfig {
     /// ```
     #[serde(default)]
     pub visibility_overrides: std::collections::HashMap<String, SkillVisibility>,
+
+    /// GOLD-ADAPT-SKILL-10 — emit a compact skill-catalog table at the
+    /// session-start banner (stdout only, NOT injected into the system
+    /// prompt). When `true`, `run_chat_with` prints a markdown table of
+    /// every enabled skill and its trigger keywords immediately after the
+    /// UX-05 unlock-moment block, giving the operator at-a-glance
+    /// discoverability of `/skill-id` commands without any provider tokens.
+    ///
+    /// Default `false` — opt-in. Operators running many skills or using
+    /// NEOTH non-interactively leave this off so the banner stays quiet.
+    ///
+    /// ```yaml
+    /// skills:
+    ///   session_catalog: true
+    /// ```
+    #[serde(default)]
+    pub session_catalog: bool,
 }
 
 /// GOLD-ADAPT-SPEAKR-01 — config mirror of the 5 summarize prompt layers.
@@ -241,6 +258,7 @@ impl Default for SkillsConfig {
             enable_all_bundled: false,
             meeting_summary: MeetingSummaryConfig::default(),
             visibility_overrides: std::collections::HashMap::new(),
+            session_catalog: false,
         }
     }
 }
