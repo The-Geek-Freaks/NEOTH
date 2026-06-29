@@ -128,7 +128,7 @@ async fn run_feedback_consumer(
 /// operator's live choice from the single canonical active-preset marker
 /// (`neoth profile preset set` / GUI selector), or [`ProfilePreset::Lowkey`]
 /// (the recommended baseline) when none has been chosen.
-fn current_basis(home: &std::path::Path) -> ProfilePreset {
+pub(crate) fn current_basis(home: &std::path::Path) -> ProfilePreset {
     crate::cli::profile::load_active_preset(home).unwrap_or(ProfilePreset::Lowkey)
 }
 

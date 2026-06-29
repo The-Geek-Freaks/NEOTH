@@ -684,7 +684,7 @@ pub async fn run_pipeline_scorecard_tick(
 /// and `warn!` any that are actively misconfigured (e.g. one of a required
 /// token pair). Best-effort: a missing config/creds file → no warning. The full
 /// per-channel table lives in `neoth status`.
-fn warn_misconfigured_channels(home: &Path) {
+pub(crate) fn warn_misconfigured_channels(home: &Path) {
     let cfg = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok();
     let creds =
         crate::config::credentials::Credentials::load_or_default(&home.join("credentials.yaml"))

@@ -888,7 +888,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // future channel-push subscribers can subscribe similarly without
     // re-running the diagnostic suite.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let doctor_cron_task = crate::cli::serve_tasks::spawn_doctor_cron(&config, writer.clone());
+    let doctor_cron_task = crate::cli::serve_tasks::spawn_doctor_cron(&config, &reload_controller, writer.clone());
 
     // ── 5d-bis. Reflection cron — G-01 (Round-3 v0.4 cron wiring) ────
     //
@@ -940,7 +940,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // default — `spawn_*` returns None when `drift_alert.enabled = false`
     // so opt-out operators carry no idle tokio task.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let drift_alert_cron_handle = crate::cli::serve_tasks::spawn_drift_alert_cron(&config, &writer);
+    let drift_alert_cron_handle = crate::cli::serve_tasks::spawn_drift_alert_cron(&config, &reload_controller, &writer);
 
     // ── 5d-sextus. Regression-anchor cron — ADV-14. Weekly re-asks the
     // anchor queries, re-embeds the fresh answers, and emits `0x3F
@@ -957,7 +957,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // `recall_latency.p95_threshold_ms`. Off by default → no idle task.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let recall_latency_cron_handle =
-        crate::cli::serve_tasks::spawn_recall_latency_cron(&config, writer.clone());
+        crate::cli::serve_tasks::spawn_recall_latency_cron(&config, &reload_controller, writer.clone());
 
     // ── SL-03 ResourcePressureWatcher cron ────────────────────────────────
     // Polls live GPU VRAM; emits `0x47 RESOURCE_PRESSURE_ALERT` on a breach
@@ -965,7 +965,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // no-op on non-GPU / non-NVIDIA hosts even when enabled.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let resource_watch_handle =
-        crate::cli::serve_tasks::spawn_resource_watch(&config, writer.clone());
+        crate::cli::serve_tasks::spawn_resource_watch(&config, &reload_controller, writer.clone());
 
     // ── HO-07 monitor alerting cron ──────────────────────────────────────────
     // Polls WAL integrity + crash.log + channel activity; emits
@@ -973,20 +973,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Default OFF → no idle task; opt-in via `monitor.enabled = true`.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let monitor_cron_handle =
-        crate::cli::serve_tasks::spawn_monitor_cron(&config, &wal_dir, writer.clone());
+        crate::cli::serve_tasks::spawn_monitor_cron(&config, &reload_controller, &wal_dir, writer.clone());
 
     // ── GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire cron ─────────────────────
     // Buckets WAL `0x21` token usage over a rolling baseline + emits
     // `0x6E TOKEN_ANOMALY_DETECTED` on a σ-spike / >1M jump / new model.
     // Default OFF → no idle task; opt-in via `token_anomaly.enabled = true`.
     let token_anomaly_cron_handle =
-        crate::cli::serve_tasks::spawn_token_anomaly_cron(&config, &wal_dir, writer.clone());
+        crate::cli::serve_tasks::spawn_token_anomaly_cron(&config, &reload_controller, &wal_dir, writer.clone());
 
     // GOLD-ADAPT-VIEW-05 — session-health / outcome cron: grades the recent day
     // A–F from the WAL + emits 0x6F SESSION_HEALTH_DEGRADED on degradation.
     // Default OFF → no idle task; opt-in via `session_health.enabled = true`.
     let session_health_cron_handle =
-        crate::cli::serve_tasks::spawn_session_health_cron(&config, &wal_dir, writer.clone());
+        crate::cli::serve_tasks::spawn_session_health_cron(&config, &reload_controller, &wal_dir, writer.clone());
 
     // GOLD-ADAPT-ODY-21 — outbound webhook manager cron. Tail-reads new WAL
     // frames and fans them out as HMAC-signed HTTPS POSTs to registered
@@ -995,6 +995,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // `webhook_manager.enabled = true`.
     let webhook_manager_handle = crate::cli::serve_tasks::spawn_webhook_manager_cron(
         &config,
+        &reload_controller,
         &wal_dir,
         &crate::config::FreedomConfig::default_neoth_home(),
         writer.clone(),
@@ -1041,7 +1042,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // idle task; opt-in via `watchdog.enabled = true`. The restart action is
     // gated to Elevated/Full autonomy inside the spawn helper.
     let watchdog_cron_handle =
-        crate::cli::serve_tasks::spawn_watchdog_cron(&config, writer.clone());
+        crate::cli::serve_tasks::spawn_watchdog_cron(&config, &reload_controller, writer.clone());
 
     // ── GOLD-WIRE-07b — daemon HNSW snapshot auto-freshness ────────────────────
     // WIRE-07 made `neoth recall` cold-load the on-disk HNSW snapshot, but it
@@ -1073,7 +1074,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // false` so opt-out operators carry no idle tokio task.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let profile_adapt_cron_handle =
-        crate::cli::serve_tasks::spawn_profile_adapt_cron(&config, &wal_dir, writer.clone());
+        crate::cli::serve_tasks::spawn_profile_adapt_cron(&config, &reload_controller, &wal_dir, writer.clone());
 
     // ── Ecology auto-scheduler (F4-01 Phase 1) ────────────────────────────
     // Decides WHEN to adapt: on a low-dissent council regime (winner streak ≥
@@ -1082,7 +1083,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // DESIGN_CH13 P2 review-gate. Off by default → `spawn_*` returns None.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let ecology_cron_handle =
-        crate::cli::serve_tasks::spawn_ecology_cron(&config, &wal_dir, writer.clone());
+        crate::cli::serve_tasks::spawn_ecology_cron(&config, &reload_controller, &wal_dir, writer.clone());
 
     // ── Behaviour-pattern cron (G-01 full detector suite) ─────────────────
     // Each tick runs the inactivity / query-repeat / topic-burst /
@@ -1092,7 +1093,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // proactive ping is intrusive — so `spawn_*` returns None when
     // `pattern_cron.enabled = false`.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let pattern_cron_handle = crate::cli::serve_tasks::spawn_pattern_cron(&config);
+    let pattern_cron_handle = crate::cli::serve_tasks::spawn_pattern_cron(&config, &reload_controller);
 
     // ── GOLD-ADAPT-ODY-07 background-job monitor ──────────────────────────
     // Scans ~/.neoth/bgjobs/ every bg_monitor.interval_secs for completed
@@ -1101,7 +1102,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // job via `crate::daemon::bg_jobs::global_registry()`. Default ON
     // (interval_secs=5); operators set interval_secs=0 to disable.
     // GOLD-ARCH-01: construction in serve_tasks (same handle, same site).
-    let bg_monitor_handle = crate::cli::serve_tasks::spawn_bg_monitor_task(&config);
+    let bg_monitor_handle = crate::cli::serve_tasks::spawn_bg_monitor_task(&config, &reload_controller);
 
     // ── NN-MEM-06 contradiction auto-resolution cron ──────────────────────
     // Daily sweep of idx_contradictions backlog. WAL-free; off by default.
@@ -1111,19 +1112,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ── GOLD-ADAPT-JV-MEM-16 guidance-block snapshot refresh cron ─────────
     // Writes ~/.neoth/guidance_snapshot.json every 3h (default OFF).
     let guidance_cron_handle =
-        crate::cli::serve_tasks::spawn_guidance_cron(&config, &wal_dir);
+        crate::cli::serve_tasks::spawn_guidance_cron(&config, &reload_controller, &wal_dir);
 
     // ── NN-MEM-02 5-dimensional synthesis pattern-recognition cron ─────────
     // Weekly synthesis pass over idx_episode/idx_groundtruth/idx_contradictions.
     // WAL-free; off by default (synthesis_cron.enabled = false).
     let synthesis_cron_handle =
-        crate::cli::serve_tasks::spawn_synthesis_cron(&config);
+        crate::cli::serve_tasks::spawn_synthesis_cron(&config, &reload_controller);
 
     // ── JV-SELF-02 AMEM4Rec consolidation-sweep cron ─────────────────────
     // 6h sweep: cosine-cluster hot-tier embeddings, boost importance, merge
     // mature clusters into idx_groundtruth. Emits 0x9D/0x9E. Default OFF.
     let consolidation_sweep_handle =
-        crate::cli::serve_tasks::spawn_consolidation_sweep_cron(&config, writer.clone());
+        crate::cli::serve_tasks::spawn_consolidation_sweep_cron(&config, &reload_controller, writer.clone());
 
     // ── GOLD-ADAPT-JV-SELF-03 self-improvement collector cron ────────────
     // Daily scan of episode topics + groundtruth lessons + SkillOpt ledger;

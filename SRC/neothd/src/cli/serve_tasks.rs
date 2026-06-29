@@ -24,6 +24,7 @@ use tracing::{info, warn};
 use crate::channels::{Channel, PipelineHandler};
 use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
 use crate::config::FreedomConfig;
+use crate::config::reload::ReloadController;
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
 
@@ -396,63 +397,204 @@ pub(crate) fn spawn_detect_complete_ingester(writer: WalWriterHandle) -> JoinHan
 // copy out of the borrow, the rest `.clone()`. ────────────────────────────────
 
 /// MONITOR-03 / RECALL-METER-01 — recall-latency p95 alert cron (`0x4B`).
+///
+/// GOLD-ADAPT-TRAIL-03: accepts `Arc<ReloadController>` so the tick loop reads
+/// `reload_controller.latest().recall_latency` on every tick, picking up
+/// in-flight changes to `interval_secs` / `p95_threshold_ms` after a
+/// `neoth reload` without a daemon restart.
 pub(crate) fn spawn_recall_latency_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::recall_latency_cron::spawn_recall_latency_cron_loop(
-        config.recall_latency,
-        FreedomConfig::default_neoth_home(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.recall_latency.interval_secs,
-            p95_threshold_ms = config.recall_latency.p95_threshold_ms,
-            "recall-latency cron loop spawned (MONITOR-03)"
-        );
+    if !config.recall_latency.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let boot_cfg = config.recall_latency;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        p95_threshold_ms = boot_cfg.p95_threshold_ms,
+        "recall-latency cron loop spawned (MONITOR-03)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            p95_threshold_ms = boot_cfg.p95_threshold_ms,
+            "recall-latency cron loop online (MONITOR-03 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            // TRAIL-03: read live config each tick so operator `neoth reload`
+            // changes to interval_secs / p95_threshold_ms take effect.
+            let live_cfg = ctrl.latest().recall_latency;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "recall-latency cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            match crate::daemon::recall_latency_cron::run_recall_latency_tick(
+                &home, &live_cfg, &writer,
+            )
+            .await
+            {
+                Ok(Some(p95_ms)) => tracing::warn!(p95_ms, "recall-latency cron: 0x4B emitted"),
+                Ok(None) => tracing::debug!("recall-latency cron: no alert this tick"),
+                Err(e) => tracing::error!(error = %e, "recall-latency tick failed"),
+            }
+        }
+    }))
 }
 
 /// SL-03 — ResourcePressureWatcher cron; emits `0x47 RESOURCE_PRESSURE_ALERT`.
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().resource_watch` each
+/// tick so `vram_threshold_pct` and `interval_secs` changes take effect after
+/// a `neoth reload` without restarting the daemon.
 pub(crate) fn spawn_resource_watch(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::resource_watch::spawn_resource_watch_loop(
-        config.resource_watch.clone(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.resource_watch.interval_secs,
-            vram_threshold_pct = config.resource_watch.vram_threshold_pct,
-            "resource-watch cron loop spawned (SL-03)"
-        );
+    if !config.resource_watch.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let boot_cfg = config.resource_watch.clone();
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        vram_threshold_pct = boot_cfg.vram_threshold_pct,
+        "resource-watch cron loop spawned (SL-03)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            vram_threshold_pct = boot_cfg.vram_threshold_pct,
+            "resource-watch cron loop online (SL-03 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().resource_watch.clone();
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "resource-watch cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            let reading = crate::daemon::resource_watch::read_gpu_vram();
+            match crate::daemon::resource_watch::run_resource_watch_tick(
+                &live_cfg, &writer, reading,
+            )
+            .await
+            {
+                Ok(Some(a)) => tracing::info!(pct = a.pct, "resource-watch: 0x47 emitted"),
+                Ok(None) => tracing::debug!("resource-watch: no pressure this tick"),
+                Err(e) => tracing::error!(error = %e, "resource-watch tick failed"),
+            }
+        }
+    }))
 }
 
 /// HO-07 — monitor alerting cron (`0x48`/`0x49`/`0x4A`).
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().monitor` each tick
+/// so `interval_secs` and threshold fields take effect after a `neoth reload`.
+/// Per-loop mutable state (`crash_log_offset`, `emit_state`, scorecard/pipeline
+/// history ring buffers) is preserved across ticks — a reload does NOT reset
+/// them; only interval and the config thresholds change.
 pub(crate) fn spawn_monitor_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     wal_dir: &std::path::Path,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::monitor_cron::spawn_monitor_cron_loop(
-        config.monitor.clone(),
-        FreedomConfig::default_neoth_home(),
-        wal_dir.to_path_buf(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.monitor.interval_secs,
-            "monitor cron loop spawned (HO-07)"
-        );
+    if !config.monitor.enabled {
+        tracing::info!("monitor cron disabled (monitor.enabled = false)");
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = wal_dir.to_path_buf();
+    let boot_cfg = config.monitor.clone();
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        "monitor cron loop spawned (HO-07)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut crash_log_offset = 0u64;
+        let mut emit_state = crate::daemon::monitor_cron::MonitorEmitState::default();
+        let mut scorecard_history = crate::memory::scorecard::ScorecardHistory::default();
+        let mut pipeline_history = crate::memory::scorecard::PipelineHistory::default();
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            "monitor cron loop online (HO-07 / TRAIL-03)",
+        );
+        crate::daemon::monitor_cron::warn_misconfigured_channels(&home);
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().monitor.clone();
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "monitor cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            match crate::daemon::monitor_cron::run_monitor_tick_live(
+                &live_cfg,
+                &writer,
+                &home,
+                &wal_dir,
+                &mut crash_log_offset,
+                &mut emit_state,
+            )
+            .await
+            {
+                Ok((wal, crash, silence)) => {
+                    if wal || crash || silence {
+                        tracing::info!(wal, crash, silence, "monitor tick: alerts emitted");
+                    } else {
+                        tracing::debug!("monitor tick: clean");
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, "monitor tick failed"),
+            }
+            crate::daemon::monitor_cron::run_scorecard_tick(
+                &home,
+                crate::time::now_unix_i64(),
+                &mut scorecard_history,
+            );
+            crate::daemon::monitor_cron::run_pipeline_scorecard_tick(
+                &home,
+                crate::time::now_unix_i64(),
+                &writer,
+                &mut pipeline_history,
+            )
+            .await;
+        }
+    }))
 }
 
 /// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron (WAL-free).
@@ -461,22 +603,61 @@ pub(crate) fn spawn_monitor_cron(
 /// `~/.neoth/guidance_snapshot.json` every `interval_secs` (default 3h)
 /// so `build_prompt_bundle` / `maybe_guidance_block_at` read richer context.
 /// Returns `None` (no task) when disabled (the default).
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().guidance_cron` each
+/// tick so `interval_secs` and `signal_window_secs` take effect after
+/// a `neoth reload` without restarting the daemon.
 pub(crate) fn spawn_guidance_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     wal_dir: &std::path::Path,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::guidance_cron::spawn_guidance_cron_loop(
-        config.guidance_cron,
-        FreedomConfig::default_neoth_home(),
-        wal_dir.to_path_buf(),
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.guidance_cron.interval_secs,
-            "guidance-block snapshot cron spawned (JV-MEM-16)"
-        );
+    if !config.guidance_cron.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = wal_dir.to_path_buf();
+    let boot_cfg = config.guidance_cron;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        "guidance-block snapshot cron spawned (JV-MEM-16)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            "guidance-block snapshot cron online (JV-MEM-16 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().guidance_cron;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "guidance cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            let home2 = home.clone();
+            let wal2 = wal_dir.clone();
+            let sw = live_cfg.signal_window_secs;
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::daemon::guidance_cron::run_guidance_snapshot_tick(
+                    &home2,
+                    &wal2,
+                    crate::time::now_unix_i64(),
+                    sw,
+                )
+            })
+            .await;
+        }
+    }))
 }
 
 /// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron.
@@ -485,65 +666,187 @@ pub(crate) fn spawn_guidance_cron(
 /// row (`source = "synthesis-cron"`, `scope = "meta"`) and optionally to
 /// `~/.neoth/synthesis/YYYY-WW.md`. WAL-free. Returns `None` when disabled
 /// (the default).
-pub(crate) fn spawn_synthesis_cron(config: &FreedomConfig) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::synthesis_cron::spawn_synthesis_cron_loop(
-        config.synthesis_cron,
-        crate::memory::store::default_path(),
-        FreedomConfig::default_neoth_home(),
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.synthesis_cron.interval_secs,
-            window_days = config.synthesis_cron.window_days,
-            "synthesis pattern-recognition cron spawned (NN-MEM-02)"
-        );
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().synthesis_cron` each
+/// tick so `interval_secs` and `window_days` changes propagate after
+/// a `neoth reload`.
+pub(crate) fn spawn_synthesis_cron(
+    config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
+) -> Option<JoinHandle<()>> {
+    if !config.synthesis_cron.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let db_path = crate::memory::store::default_path();
+    let home = FreedomConfig::default_neoth_home();
+    let boot_cfg = config.synthesis_cron;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        window_days = boot_cfg.window_days,
+        "synthesis pattern-recognition cron spawned (NN-MEM-02)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            window_days = boot_cfg.window_days,
+            "synthesis pattern-recognition cron online (NN-MEM-02 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().synthesis_cron;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "synthesis cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            let db2 = db_path.clone();
+            let home2 = home.clone();
+            let cfg2 = live_cfg;
+            let _ = tokio::task::spawn_blocking(move || {
+                match crate::daemon::synthesis_cron::run_synthesis_tick_once(&db2, &home2, &cfg2) {
+                    Ok(report) => tracing::info!(
+                        topics_analyzed = report.topics_analyzed,
+                        correlations_found = report.correlations_found,
+                        contradictions_flagged = report.contradictions_flagged,
+                        note_written = report.note_written,
+                        skill_suggestions_written = report.skill_suggestions_written,
+                        skill_proposals_staged = report.skill_proposals_staged,
+                        "NN-MEM-02/NN-MEM-05/HERMES-06: synthesis cron tick complete",
+                    ),
+                    Err(e) => tracing::error!(
+                        error = %e,
+                        "synthesis cron tick failed (NN-MEM-02)",
+                    ),
+                }
+            })
+            .await;
+        }
+    }))
 }
 
 /// GOLD-ADAPT-JV-PRO-02 — token-anomaly tripwire cron (`0x6E`). Buckets the WAL
 /// `0x21 PROVIDER_RESPONSE` token usage over a rolling baseline + alerts on a
 /// σ-spike / >1M jump / new model. `None` when `token_anomaly.enabled = false`.
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().token_anomaly` each
+/// tick so threshold and interval changes propagate after a `neoth reload`.
 pub(crate) fn spawn_token_anomaly_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     wal_dir: &std::path::Path,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::token_anomaly_cron::spawn_token_anomaly_cron_loop(
-        config.token_anomaly,
-        wal_dir.to_path_buf(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.token_anomaly.interval_secs,
-            "token-anomaly cron loop spawned (GOLD-ADAPT-JV-PRO-02)"
-        );
+    if !config.token_anomaly.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let wal_dir = wal_dir.to_path_buf();
+    let boot_cfg = config.token_anomaly;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        "token-anomaly cron loop spawned (GOLD-ADAPT-JV-PRO-02)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            "token-anomaly cron loop online (GOLD-ADAPT-JV-PRO-02 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().token_anomaly;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "token-anomaly cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            match crate::daemon::token_anomaly_cron::run_token_anomaly_tick(
+                &wal_dir, &live_cfg, &writer,
+            )
+            .await
+            {
+                Ok(Some(_)) => tracing::warn!("token-anomaly cron: 0x6E emitted"),
+                Ok(None) => tracing::debug!("token-anomaly cron: no anomaly this tick"),
+                Err(e) => tracing::error!(error = %e, "token-anomaly tick failed"),
+            }
+        }
+    }))
 }
 
 /// GOLD-ADAPT-VIEW-05 — spawn the session-health / outcome cron: grades the
 /// most-recent active UTC day A–F from the WAL audit trail + emits
 /// `0x6F SESSION_HEALTH_DEGRADED` on a degraded grade. `None` when
 /// `session_health.enabled = false`.
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().session_health` each
+/// tick so threshold and interval changes propagate after a `neoth reload`.
 pub(crate) fn spawn_session_health_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     wal_dir: &std::path::Path,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::session_health_cron::spawn_session_health_cron_loop(
-        config.session_health.clone(),
-        wal_dir.to_path_buf(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.session_health.interval_secs,
-            "session-health cron loop spawned (GOLD-ADAPT-VIEW-05)"
-        );
+    if !config.session_health.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let wal_dir = wal_dir.to_path_buf();
+    let boot_cfg = config.session_health.clone();
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        "session-health cron loop spawned (GOLD-ADAPT-VIEW-05)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            "session-health cron loop online (GOLD-ADAPT-VIEW-05 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().session_health.clone();
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "session-health cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            match crate::daemon::session_health_cron::run_session_health_tick(
+                &wal_dir, &live_cfg, &writer,
+            )
+            .await
+            {
+                Ok(Some(alert)) => tracing::warn!(
+                    grade = alert.grade.as_str(),
+                    "session-health cron: 0x6F emitted"
+                ),
+                Ok(None) => tracing::debug!("session-health cron: no alert this tick"),
+                Err(e) => tracing::error!(error = %e, "session-health tick failed"),
+            }
+        }
+    }))
 }
 
 /// GOLD-ADAPT-ODY-21 — spawn the outbound webhook manager cron. Tail-reads new
@@ -551,26 +854,83 @@ pub(crate) fn spawn_session_health_cron(
 /// HTTPS POSTs. SSRF guard blocks RFC-1918/CGNAT/loopback. Emits
 /// `0x08`/`0x09`/`0x0A` audit frames. `None` when
 /// `webhook_manager.enabled = false` (the default — opt-in).
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().webhook_manager` each
+/// tick so endpoint list and interval changes propagate after a `neoth reload`.
+/// The reqwest client is built once at spawn (HTTP client construction is
+/// expensive and the SSRF/HTTPS-only policy is immutable post-spawn).
 pub(crate) fn spawn_webhook_manager_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     wal_dir: &std::path::Path,
     home_dir: &std::path::Path,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::webhook_manager::spawn_webhook_manager_loop(
-        config.webhook_manager.clone(),
-        wal_dir.to_path_buf(),
-        home_dir.to_path_buf(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.webhook_manager.interval_secs,
-            endpoints = config.webhook_manager.endpoints.len(),
-            "webhook-manager cron loop spawned (GOLD-ADAPT-ODY-21)"
-        );
+    if !config.webhook_manager.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let wal_dir = wal_dir.to_path_buf();
+    let home_dir = home_dir.to_path_buf();
+    let boot_cfg = config.webhook_manager.clone();
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        endpoints = boot_cfg.endpoints.len(),
+        "webhook-manager cron loop spawned (GOLD-ADAPT-ODY-21)"
+    );
+    Some(tokio::spawn(async move {
+        // Build the reqwest client ONCE: HTTPS-only + no-redirect is immutable
+        // policy (SSRF guard). A reload can change endpoint URLs or the signing
+        // secret but NEVER the transport policy.
+        let client = match reqwest::Client::builder()
+            .https_only(true)
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "webhook_manager: failed to build reqwest client — cron aborted"
+                );
+                return;
+            }
+        };
+        let mut ssrf_cache: crate::daemon::webhook_manager::SsrfCache =
+            std::collections::HashMap::new();
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            endpoints = boot_cfg.endpoints.len(),
+            "webhook_manager cron loop online (GOLD-ADAPT-ODY-21 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().webhook_manager.clone();
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "webhook-manager cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            crate::daemon::webhook_manager::run_webhook_manager_tick(
+                &live_cfg,
+                &wal_dir,
+                &home_dir,
+                &client,
+                &mut ssrf_cache,
+                &writer,
+            )
+            .await;
+        }
+    }))
 }
 
 /// GOLD-ADAPT-ODY-24 — spawn the companion LAN pairing server.
@@ -759,8 +1119,16 @@ pub(crate) fn spawn_companion_p2p_listener_task(
 /// to `Elevated`/`Full` autonomy, resolved once here and passed as a plain
 /// `bool` so the watchdog module stays decoupled from the autonomy enum; below
 /// that the loop is observe-only (alerts, no spawn).
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().watchdog` each tick
+/// so `interval_secs` and watchdog thresholds propagate after a `neoth reload`.
+/// Per-service rolling failure state (`states` map) is preserved — a reload
+/// does NOT reset the failure counters; only the config thresholds change.
+/// Note: `autonomy` is immutable post-init (provider-bound), so `restart_allowed`
+/// is resolved once at spawn time and is NOT re-evaluated on reload.
 pub(crate) fn spawn_watchdog_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
     use crate::permissions::AutonomyLevel;
@@ -768,18 +1136,55 @@ pub(crate) fn spawn_watchdog_cron(
         config.autonomy,
         AutonomyLevel::Elevated | AutonomyLevel::Full
     );
-    let handle = crate::daemon::watchdog_cron::spawn_watchdog_cron_loop(
-        config.watchdog,
-        restart_allowed,
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.watchdog.interval_secs,
-            restart_allowed, "watchdog cron loop spawned (GOLD-FEAT-09)"
-        );
+    if !config.watchdog.enabled {
+        tracing::info!("watchdog cron disabled (watchdog.enabled = false)");
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let boot_cfg = config.watchdog;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        restart_allowed,
+        "watchdog cron loop spawned (GOLD-FEAT-09)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut states: std::collections::HashMap<
+            crate::daemon::watchdog_cron::WatchedService,
+            crate::daemon::watchdog_cron::WatchState,
+        > = std::collections::HashMap::new();
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            restart_allowed,
+            "watchdog cron loop online (GOLD-FEAT-09 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().watchdog;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "watchdog cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            if let Err(e) = crate::daemon::watchdog_cron::run_watchdog_tick(
+                &live_cfg,
+                restart_allowed,
+                &writer,
+                &mut states,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "watchdog tick failed");
+            }
+        }
+    }))
 }
 
 /// OM-01 — local OMI transcript ingest. `None` when `omi.enabled = false`.
@@ -800,46 +1205,134 @@ pub(crate) fn spawn_omi_ingest(
 }
 
 /// SPEC-05 — passive user-adaptation cron (queues self-dev PROPOSALS, never auto-applies).
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().profile_adapt` each
+/// tick so `interval_secs` changes propagate after a `neoth reload`.
 pub(crate) fn spawn_profile_adapt_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     wal_dir: &std::path::Path,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::profile_adapt_cron::spawn_profile_adapt_cron_loop(
-        config.profile_adapt,
-        FreedomConfig::default_neoth_home(),
-        wal_dir.to_path_buf(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.profile_adapt.interval_secs,
-            "passive user-adaptation cron loop spawned (SPEC-05)"
-        );
+    if !config.profile_adapt.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = wal_dir.to_path_buf();
+    let boot_cfg = config.profile_adapt;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        "passive user-adaptation cron loop spawned (SPEC-05)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            "profile-adapt cron loop online (SPEC-05 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().profile_adapt;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "profile-adapt cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            match crate::daemon::profile_adapt_cron::run_profile_adapt_tick(
+                &home,
+                &wal_dir,
+                &writer,
+                crate::daemon::profile_adapt_cron::current_basis(&home),
+            )
+            .await
+            {
+                Ok(0) => tracing::debug!("profile-adapt cron: no new proposals this tick"),
+                Ok(n) => tracing::info!(
+                    new_proposals = n,
+                    "profile-adapt cron: queued new self-dev proposal(s) — review via \
+                     `neoth self-dev review`",
+                ),
+                Err(e) => tracing::error!(error = %e, "profile-adapt tick failed"),
+            }
+        }
+    }))
 }
 
 /// F4-01 — ecology auto-scheduler (STAGES review-gated self-dev proposals, emits `0x4C`).
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().ecology` each tick
+/// so `scheduler_interval_secs` and `correlation_min_streak` changes propagate
+/// after a `neoth reload` without restarting the daemon.
 pub(crate) fn spawn_ecology_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     wal_dir: &std::path::Path,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::ecology::scheduler::spawn_ecology_cron_loop(
-        FreedomConfig::default_neoth_home(),
-        wal_dir.to_path_buf(),
-        config.ecology.clone(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.ecology.scheduler_interval_secs,
-            min_streak = config.ecology.correlation_min_streak,
-            "ecology auto-scheduler cron loop spawned (F4-01 — proposals review-gated)"
-        );
+    if !config.ecology.enabled {
+        tracing::info!("ecology scheduler disabled in config (ecology.enabled = false)");
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = wal_dir.to_path_buf();
+    let boot_cfg = config.ecology.clone();
+    info!(
+        interval_secs = boot_cfg.scheduler_interval_secs,
+        min_streak = boot_cfg.correlation_min_streak,
+        "ecology auto-scheduler cron loop spawned (F4-01 — proposals review-gated)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.scheduler_interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            min_streak = boot_cfg.correlation_min_streak,
+            "ecology scheduler cron loop online (F4-01 / TRAIL-03 — proposals are review-gated)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().ecology.clone();
+            let live_interval = live_cfg.scheduler_interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "ecology cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            let now_unix = crate::time::now_unix_i64();
+            match crate::ecology::scheduler::run_ecology_tick_once(
+                &home,
+                &wal_dir,
+                &writer,
+                live_cfg.correlation_min_streak,
+                now_unix,
+            )
+            .await
+            {
+                Ok(true) => tracing::info!(
+                    "ecology scheduler: low-dissent regime → queued new self-dev proposal(s) — \
+                     review via `neoth self-dev review`",
+                ),
+                Ok(false) => tracing::debug!(
+                    "ecology scheduler: no fire (no streak signal / no new proposals)"
+                ),
+                Err(e) => tracing::error!(error = %e, "ecology scheduler tick failed"),
+            }
+        }
+    }))
 }
 
 /// GOLD-ADAPT-ODY-07 — background-job monitor task. Creates the process-global
@@ -850,7 +1343,16 @@ pub(crate) fn spawn_ecology_cron(
 /// The `load_existing` async call is driven on a detached `tokio::spawn` so
 /// it does not block the serve-init path — it races with the first monitor
 /// tick but both paths are idempotent (register is idempotent by design).
-pub(crate) fn spawn_bg_monitor_task(config: &FreedomConfig) -> Option<JoinHandle<()>> {
+///
+/// GOLD-ADAPT-TRAIL-03: `reload_controller` is accepted for API consistency.
+/// `bg_monitor` is infrastructure (file-scan cadence); its interval is fixed at
+/// spawn time — changing `bg_monitor.interval_secs` after reload has no effect
+/// on the live scan rate (requires a daemon restart). This is documented
+/// behaviour per TRAIL-03 pitfall #2.
+pub(crate) fn spawn_bg_monitor_task(
+    config: &FreedomConfig,
+    _reload_controller: &Arc<ReloadController>,
+) -> Option<JoinHandle<()>> {
     let interval = config.bg_monitor.interval_secs;
     if interval == 0 {
         return None;
@@ -1037,69 +1539,197 @@ pub(crate) fn spawn_g02_surfacing_cron() -> JoinHandle<()> {
 
 /// EL-01 — periodic `neoth doctor` cron (`0x46 DOCTOR_TICK`) + a sidecar
 /// notification sink under `~/.neoth/notifications/`. `None` when disabled.
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().doctor` each tick so
+/// `interval_secs` changes propagate after a `neoth reload`. The sink is built
+/// once at spawn (the notifications dir path is the NEOTH home — immutable).
 pub(crate) fn spawn_doctor_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
     let home = FreedomConfig::default_neoth_home();
+    if !config.doctor.enabled {
+        info!("doctor cron disabled via freedom.yaml::doctor.enabled = false");
+        return None;
+    }
+    let ctrl = Arc::clone(reload_controller);
+    let boot_interval_secs = config.doctor.interval_secs;
     let sink: Arc<dyn crate::daemon::doctor_cron::DoctorNotificationSink> = Arc::new(
         crate::daemon::doctor_cron::SidecarNotificationSink::new(home.join("notifications")),
     );
-    let cfg = crate::daemon::doctor_cron::DoctorCronConfig {
-        enabled: config.doctor.enabled,
-        interval_secs: config.doctor.interval_secs,
-        notify_channel: "cli".to_string(),
-    };
-    let interval_secs = cfg.interval_secs;
-    let enabled = cfg.enabled;
-    let handle = crate::daemon::doctor_cron::spawn_doctor_cron_loop(cfg, home, writer, sink);
-    if handle.is_some() {
-        info!(interval_secs, "doctor cron loop spawned (EL-01)");
-    } else if !enabled {
-        info!("doctor cron disabled via freedom.yaml::doctor.enabled = false");
-    }
-    handle
+    info!(interval_secs = boot_interval_secs, "doctor cron loop spawned (EL-01)");
+    Some(tokio::spawn(async move {
+        let boot_cfg = crate::daemon::doctor_cron::DoctorCronConfig {
+            enabled: true,
+            interval_secs: boot_interval_secs,
+            notify_channel: "cli".to_string(),
+        };
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            "doctor cron loop online (EL-01 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_doctor = ctrl.latest().doctor.clone();
+            let live_cfg = crate::daemon::doctor_cron::DoctorCronConfig {
+                enabled: live_doctor.enabled,
+                interval_secs: live_doctor.interval_secs,
+                notify_channel: "cli".to_string(),
+            };
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "doctor cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            // Pitfall #2: `enabled = false` reload leaves the loop running but no-ops
+            // — cheap at 1h default cadence; true abort would require a separate abort
+            // handle threaded from handle_reload_sentinel (TRAIL-04 scope).
+            if !live_cfg.enabled {
+                tracing::debug!("doctor cron: disabled via reload, skipping tick");
+                continue;
+            }
+            match crate::daemon::doctor_cron::run_doctor_tick(&home, &writer, sink.as_ref()).await
+            {
+                Ok(report) => {
+                    tracing::debug!(
+                        pass = report.pass_count,
+                        warn = report.warn_count,
+                        fail = report.fail_count,
+                        "doctor tick complete",
+                    );
+                }
+                Err(e) => tracing::error!(error = %e, "doctor tick failed"),
+            }
+        }
+    }))
 }
 
 /// G-01 detector suite — behaviour-pattern cron (inactivity / query-repeat /
 /// topic-burst / time-of-day-shift detectors → proactive nudges). WAL-free,
 /// `config.pattern_cron` + home only. `None` when disabled.
-pub(crate) fn spawn_pattern_cron(config: &FreedomConfig) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::pattern_cron::spawn_pattern_cron_loop(
-        config.pattern_cron,
-        FreedomConfig::default_neoth_home(),
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.pattern_cron.interval_secs,
-            inactivity_gap_secs = config.pattern_cron.inactivity_gap_secs,
-            "pattern-detection cron loop spawned (G-01 detector suite)"
-        );
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().pattern_cron` each
+/// tick so `interval_secs`, `inactivity_gap_secs`, and per-detector toggles
+/// propagate after a `neoth reload`.
+pub(crate) fn spawn_pattern_cron(
+    config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
+) -> Option<JoinHandle<()>> {
+    if !config.pattern_cron.enabled {
+        tracing::info!("pattern cron disabled in config (pattern_cron.enabled = false)");
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let boot_cfg = config.pattern_cron;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        inactivity_gap_secs = boot_cfg.inactivity_gap_secs,
+        "pattern-detection cron loop spawned (G-01 detector suite)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            inactivity_gap_secs = boot_cfg.inactivity_gap_secs,
+            query_repeat = boot_cfg.query_repeat_enabled,
+            topic_burst = boot_cfg.topic_burst_enabled,
+            tod_shift = boot_cfg.tod_shift_enabled,
+            "pattern cron loop online (G-01 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().pattern_cron;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "pattern cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            let now_unix = chrono::Utc::now().timestamp();
+            match crate::daemon::pattern_cron::run_pattern_tick_once(&home, now_unix, &live_cfg) {
+                Ok(0) => tracing::debug!("pattern cron: no nudge this tick"),
+                Ok(n) => tracing::info!(nudges = n, "pattern cron: proactive nudges enqueued"),
+                Err(e) => {
+                    tracing::warn!(error = %e, "pattern cron tick failed; retrying next interval")
+                }
+            }
+        }
+    }))
 }
 
 /// JV-SELF-02 — AMEM4Rec consolidation sweep cron. Clusters hot-tier
 /// episode embeddings by cosine ≥ threshold, boosts importance, and merges
 /// mature clusters into `idx_groundtruth`. Emits `0x9D`/`0x9E`. `None`
 /// when `consolidation_sweep.enabled = false` (the default).
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().consolidation_sweep`
+/// each tick so `cosine_threshold` and `interval_secs` changes propagate after
+/// a `neoth reload`.
 pub(crate) fn spawn_consolidation_sweep_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::consolidation_sweep_cron::spawn_consolidation_sweep_cron_loop(
-        config.consolidation_sweep,
-        crate::memory::store::default_path(),
-        writer,
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.consolidation_sweep.interval_secs,
-            cosine_threshold = config.consolidation_sweep.cosine_threshold,
-            "consolidation-sweep cron spawned (JV-SELF-02)"
-        );
+    if !config.consolidation_sweep.enabled {
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let db_path = crate::memory::store::default_path();
+    let boot_cfg = config.consolidation_sweep;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        cosine_threshold = boot_cfg.cosine_threshold,
+        "consolidation-sweep cron spawned (JV-SELF-02)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            cosine_threshold = boot_cfg.cosine_threshold,
+            "consolidation-sweep cron online (JV-SELF-02 / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().consolidation_sweep;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "consolidation-sweep cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            let report = crate::daemon::consolidation_sweep_cron::run_consolidation_sweep_tick(
+                &db_path, live_cfg, &writer,
+            )
+            .await;
+            tracing::info!(
+                clusters_found = report.clusters_found,
+                merged_to_groundtruth = report.merged_to_groundtruth,
+                "consolidation-sweep tick complete",
+            );
+        }
+    }))
 }
 
 /// JV-SELF-03 — auto-builder signal collector cron. Scans episode topics,
@@ -1734,23 +2364,63 @@ pub(crate) fn spawn_proactive_dispatcher(writer: &WalWriterHandle) -> JoinHandle
 /// HO-09b profile drift-alert cron. Emits `0xBA PROFILE_DRIFT_ALERT` on a 6h
 /// schedule when the profile drifts past `drift_alert.threshold`. Off by default
 /// (`None` when `drift_alert.enabled = false`). WAL-emitting via the writer clone.
+///
+/// GOLD-ADAPT-TRAIL-03: reads `reload_controller.latest().drift_alert` each tick
+/// so `threshold` and `interval_secs` changes propagate after a `neoth reload`.
 pub(crate) fn spawn_drift_alert_cron(
     config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
     writer: &WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::drift_alert_cron::spawn_drift_alert_cron_loop(
-        config.drift_alert,
-        FreedomConfig::default_neoth_home(),
-        writer.clone(),
-    );
-    if handle.is_some() {
-        info!(
-            interval_secs = config.drift_alert.interval_secs,
-            threshold = config.drift_alert.threshold,
-            "profile drift-alert cron loop spawned (HO-09b)"
-        );
+    if !config.drift_alert.enabled {
+        tracing::info!("drift-alert cron disabled in config (drift_alert.enabled = false)");
+        return None;
     }
-    handle
+    let ctrl = Arc::clone(reload_controller);
+    let home = FreedomConfig::default_neoth_home();
+    let writer = writer.clone();
+    let boot_cfg = config.drift_alert;
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        threshold = boot_cfg.threshold,
+        "profile drift-alert cron loop spawned (HO-09b)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = current_interval.as_secs(),
+            threshold = boot_cfg.threshold,
+            "drift-alert cron loop online (HO-09b / TRAIL-03)",
+        );
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().drift_alert;
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "drift-alert cron: interval updated via config reload (TRAIL-03)",
+                );
+            }
+            match crate::daemon::drift_alert_cron::run_drift_alert_tick(
+                &home, &live_cfg, &writer,
+            )
+            .await
+            {
+                Ok(Some(report)) => tracing::info!(
+                    drift_ratio = report.drift_ratio(),
+                    "drift-alert cron: 0xBA emitted",
+                ),
+                Ok(None) => tracing::debug!("drift-alert cron: no alert this tick"),
+                Err(e) => tracing::error!(error = %e, "drift-alert tick failed"),
+            }
+        }
+    }))
 }
 
 /// ADV-14 regression-anchor cron. Weekly re-asks the anchor queries, re-embeds,

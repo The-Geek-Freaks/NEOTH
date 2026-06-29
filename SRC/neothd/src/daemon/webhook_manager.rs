@@ -366,7 +366,7 @@ fn scan_wal_for_pending(
 /// uses them verbatim instead of calling the OS resolver again — so a low-TTL
 /// rebind to a private address after the SSRF check is silently rejected
 /// (the connection attempt simply fails to reach the rebinding IP).
-type SsrfCache = HashMap<String, Result<Vec<IpAddr>, String>>;
+pub(crate) type SsrfCache = HashMap<String, Result<Vec<IpAddr>, String>>;
 
 async fn deliver_to_endpoint(
     // ponytail: retained for caller-signature stability; the fail-closed delivery

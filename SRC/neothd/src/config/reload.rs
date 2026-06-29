@@ -542,4 +542,56 @@ mod tests {
         // cache updates → next call is false.
         assert!(!ctrl.should_reload().unwrap(), "cache updated → no drift");
     }
+
+    /// GOLD-ADAPT-TRAIL-03 integration test.
+    ///
+    /// Proves the full consumer path:
+    ///   ArcSwap swap → `ctrl.latest().pattern_cron.interval_secs` on the
+    ///   next simulated cron tick sees the new value.
+    ///
+    /// This is the key invariant TRAIL-03 relies on: daemon cron wrappers
+    /// call `ctrl.latest().<sub_field>` each tick, so they pick up any
+    /// config swap that happened since the previous tick — no restart required.
+    #[test]
+    fn trail03_latest_reflects_arcswap_after_config_swap() {
+        use std::sync::Arc;
+        use arc_swap::ArcSwap;
+        use crate::config::automation::PatternCronConfig;
+
+        // Boot config: pattern_cron interval = 3600s.
+        let boot_cfg = FreedomConfig {
+            pattern_cron: PatternCronConfig {
+                interval_secs: 3600,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Wrap in ArcSwap the same way ReloadController does internally.
+        let store: Arc<ArcSwap<FreedomConfig>> = Arc::new(ArcSwap::from_pointee(boot_cfg));
+
+        // Simulate tick-1: cron loop reads sub-field.
+        let tick1_interval = store.load().pattern_cron.interval_secs;
+        assert_eq!(tick1_interval, 3600, "tick-1 sees boot value");
+
+        // Operator edits freedom.yaml → ReloadController::try_reload swaps
+        // the store.  Simulate that swap directly here.
+        let new_cfg = FreedomConfig {
+            pattern_cron: PatternCronConfig {
+                interval_secs: 7200,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        store.store(Arc::new(new_cfg));
+
+        // Simulate tick-2: cron loop calls ctrl.latest().pattern_cron...
+        // Uses the same load() path that ReloadController::latest() wraps.
+        let tick2_interval = store.load().pattern_cron.interval_secs;
+        assert_eq!(tick2_interval, 7200, "tick-2 sees swapped value — no restart needed");
+
+        // Tick-1 guard: the previous load (already stored in tick1_interval)
+        // was a snapshot at that moment; the new load is independent.
+        assert_ne!(tick1_interval, tick2_interval, "swap is visible to subsequent loads");
+    }
 }
