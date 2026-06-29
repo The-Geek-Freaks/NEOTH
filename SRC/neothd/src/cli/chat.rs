@@ -966,6 +966,11 @@ enum PreflightOutcome {
         /// `Dispatch.disallowed_tools` before `d` is moved. Empty vec when
         /// no sub-agent fired or agent has no denylist.
         agent_disallowed_tools: Vec<String>,
+        /// GOLD-ADAPT-SKILL-09 — FilteredBlocks produced by `block_filter`
+        /// hooks at `PreProviderCall`. Empty when no BlockFilter hooks fired.
+        /// Threaded to `run_post_reply_pipelines` where `restore_blocks`
+        /// re-injects original content before WAL write + recall.
+        pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
     },
 }
 
@@ -1433,7 +1438,9 @@ async fn enforce_preflight(
     )
     .await?
     {
-        HookOutcome::Continue(body) => body,
+        // BlockFilter does not produce meaningful output at PrePipeline
+        // (prompt text, not file content) — ignore any blocks here.
+        HookOutcome::Continue(body, _blocks) => body,
         HookOutcome::Blocked { name, reason } => {
             drop(writer);
             let _ = writer_join.await;
@@ -1466,7 +1473,13 @@ async fn enforce_preflight(
         let _ = writer.append(hdr, payload).await;
     }
 
-    let final_prompt = match run_hook_stage(
+    // GOLD-ADAPT-SKILL-09: capture filtered_blocks from the PreProviderCall
+    // stage. These blocks are produced by BlockFilter hooks (e.g.
+    // `simplify-ignore`) that redacted `neoth-ignore` regions from the
+    // prompt before the LLM sees it. They must be restored in
+    // run_post_reply_pipelines at PostProviderCall so the WAL and recall
+    // never see placeholders.
+    let (final_prompt, pending_block_restorations) = match run_hook_stage(
         crate::hooks::HookStage::PreProviderCall,
         &final_prompt,
         &hooks,
@@ -1475,7 +1488,7 @@ async fn enforce_preflight(
     )
     .await?
     {
-        HookOutcome::Continue(body) => body,
+        HookOutcome::Continue(body, blocks) => (body, blocks),
         HookOutcome::Blocked { name, reason } => {
             drop(writer);
             let _ = writer_join.await;
@@ -1496,6 +1509,7 @@ async fn enforce_preflight(
         resolved_model: preflight_resolved_model,
         agent_allowed_tools,
         agent_disallowed_tools,
+        pending_block_restorations,
     })
 }
 
@@ -2502,6 +2516,11 @@ async fn run_post_reply_pipelines(
     // Empty on non-MCP turns; the distiller falls back to the blind response
     // prefix when this slice is empty (backward compat with unit-test paths).
     mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord>,
+    // GOLD-ADAPT-SKILL-09 — FilteredBlocks from BlockFilter hooks at
+    // PreProviderCall. Restored into response_text after the PostProviderCall
+    // hook stage so WAL/recall never see placeholder text.
+    // Empty vec when no BlockFilter hooks fired this turn (no-op).
+    pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
 ) -> Result<()> {
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
@@ -2519,6 +2538,12 @@ async fn run_post_reply_pipelines(
     // the WAL + reaches the operator. Already-printed streaming output
     // can't be unprinted; the hook can still rewrite the WAL-recorded
     // body (downstream recall + archive see the rewritten text).
+    // GOLD-ADAPT-SKILL-09: PostProviderCall does not produce new filtered
+    // blocks — ignore any (there should be none since BlockFilter hooks
+    // are meant for PreProviderCall only). After the stage runs, restore
+    // any blocks that were redacted at PreProviderCall so the response the
+    // LLM produced with placeholder content has originals re-injected before
+    // anything lands in WAL or recall.
     let mut response_text = match run_hook_stage(
         crate::hooks::HookStage::PostProviderCall,
         &response_text,
@@ -2528,13 +2553,21 @@ async fn run_post_reply_pipelines(
     )
     .await?
     {
-        HookOutcome::Continue(body) => body,
+        HookOutcome::Continue(body, _blocks) => body,
         HookOutcome::Blocked { name, reason } => {
             drop(writer);
             let _ = writer_join.await;
             anyhow::bail!("hook `{name}` blocked the reply at post_provider_call: {reason}");
         }
     };
+    // Restore any redacted ignore-regions. `restore_blocks` is a no-op when
+    // `pending_block_restorations` is empty (no BlockFilter hook fired this turn).
+    if !pending_block_restorations.is_empty() {
+        response_text = crate::hooks::block_filter::restore_blocks(
+            &response_text,
+            &pending_block_restorations,
+        );
+    }
 
     // ── PROVIDER_RESPONSE ─────────────────────────────────────────────────
     // ODY-09: incognito turns skip PROVIDER_RESPONSE — no response hash/metadata in WAL.
@@ -3815,6 +3848,7 @@ pub async fn run_chat_with(
         agent_model,
         agent_allowed_tools,
         agent_disallowed_tools,
+        pending_block_restorations,
     ) = match enforce_preflight(
         combined_system,
         prompt,
@@ -3844,6 +3878,7 @@ pub async fn run_chat_with(
             resolved_model,
             agent_allowed_tools,
             agent_disallowed_tools,
+            pending_block_restorations,
         } => (
             writer,
             writer_join,
@@ -3857,6 +3892,7 @@ pub async fn run_chat_with(
             resolved_model,
             agent_allowed_tools,
             agent_disallowed_tools,
+            pending_block_restorations,
         ),
     };
     // GOLD-CCPARITY-MODEL-02 — merge the model priority chain:
@@ -3930,6 +3966,10 @@ pub async fn run_chat_with(
         mcp_tool_calls,
         // REVFIX-EXCERPTS-01 — structured call records for digest-based extraction.
         mcp_tool_records,
+        // GOLD-ADAPT-SKILL-09 — blocks redacted at PreProviderCall by BlockFilter
+        // hooks; restored inside run_post_reply_pipelines after PostProviderCall
+        // hook stage so WAL/recall never see placeholders.
+        pending_block_restorations,
     )
     .await
 }
@@ -4056,7 +4096,14 @@ fn rand_u64_for_trace() -> u64 {
 /// Folded outcome from a single hook-stage dispatch.
 enum HookOutcome {
     /// Stage finished with the (possibly rewritten) body.
-    Continue(String),
+    ///
+    /// GOLD-ADAPT-SKILL-09: the second field carries any
+    /// [`FilteredBlock`]s accumulated by `BlockFilter` actions at this
+    /// stage. Non-empty only when at least one `block_filter` hook fired.
+    /// Callers that do not need the blocks (PrePipeline, PostProviderCall)
+    /// simply ignore the `Vec` with `let _ = blocks;` — zero allocation
+    /// cost when no BlockFilter hooks are configured (the Vec is empty).
+    Continue(String, Vec<crate::hooks::block_filter::FilteredBlock>),
     /// A hook returned `Block` — caller should bail.
     Blocked { name: String, reason: String },
 }
@@ -4123,7 +4170,13 @@ async fn run_hook_stage(
     }
 
     let before = body.to_string();
-    let outcome = crate::hooks::run_stage(stage, body, &active_hooks)?;
+    // GOLD-ADAPT-SKILL-09: use the blocks-returning variant so any
+    // BlockFilter actions at this stage return their FilteredBlocks.
+    // The blocks are passed back to the caller via HookOutcome::Continue.
+    let (outcome, filtered_blocks) =
+        crate::hooks::dispatcher::run_stage_with_config_returning_blocks(
+            stage, body, &active_hooks, crate::hooks::dispatcher::current_global_invoker().map(|a| a.as_ref()), false,
+        )?;
     match outcome {
         crate::hooks::StageOutcome::Continue { body: after, hits } => {
             for name in &hits {
@@ -4159,7 +4212,7 @@ async fn run_hook_stage(
                 )
                 .await;
             }
-            Ok(HookOutcome::Continue(after))
+            Ok(HookOutcome::Continue(after, filtered_blocks))
         }
         crate::hooks::StageOutcome::Block { name, reason } => {
             emit_hook_frame(
@@ -9478,7 +9531,7 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            matches!(outcome, HookOutcome::Continue(ref b) if b == "hello"),
+            matches!(outcome, HookOutcome::Continue(ref b, _) if b == "hello"),
             "first firing must Continue with unchanged body"
         );
         assert!(
@@ -9497,7 +9550,7 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            matches!(outcome2, HookOutcome::Continue(ref b) if b == "world"),
+            matches!(outcome2, HookOutcome::Continue(ref b, _) if b == "world"),
             "suppressed once-hook must still Continue (not Block)"
         );
 
@@ -9513,7 +9566,7 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            matches!(outcome3, HookOutcome::Continue(ref b) if b == "fresh"),
+            matches!(outcome3, HookOutcome::Continue(ref b, _) if b == "fresh"),
             "new session must fire once-hook again"
         );
         assert!(

@@ -212,6 +212,8 @@ fn action_label(a: &HookAction) -> &'static str {
         HookAction::Replace { .. } => "replace",
         HookAction::Block { .. } => "block",
         HookAction::Plugin { .. } => "plugin",
+        // GOLD-ADAPT-SKILL-09
+        HookAction::BlockFilter { .. } => "block_filter",
     }
 }
 

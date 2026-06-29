@@ -11,6 +11,7 @@
 //! re-export plumbing is the smallest sliver that unblocks both downstream
 //! phases.
 
+pub mod block_filter;
 pub mod dispatcher;
 pub mod loader;
 pub mod schema;

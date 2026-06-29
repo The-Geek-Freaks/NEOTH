@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::Result;
 use regex::Regex;
 
+use super::block_filter::{FilteredBlock, apply_block_filter};
 use super::schema::{HookAction, HookDef};
 use super::stages::HookStage;
 
@@ -171,8 +172,32 @@ pub fn run_stage_with_config(
     invoker: Option<&dyn PluginInvoker>,
     fail_fast: bool,
 ) -> Result<StageOutcome> {
+    let (outcome, _blocks) = run_stage_with_config_returning_blocks(stage, body, hooks, invoker, fail_fast)?;
+    Ok(outcome)
+}
+
+/// GOLD-ADAPT-SKILL-09 — variant of [`run_stage_with_config`] that also
+/// returns any [`FilteredBlock`]s accumulated by `BlockFilter` actions.
+///
+/// The `Vec<FilteredBlock>` is non-empty only when at least one
+/// `HookAction::BlockFilter` fired at this stage. Callers that need the
+/// restore data (i.e. the `PreProviderCall` stage in `run_hook_stage` in
+/// `cli/chat.rs`) use this form; all other callers use [`run_stage_with_config`]
+/// and discard the blocks (backward-compatible, zero-cost when no BlockFilter
+/// hooks are configured).
+pub fn run_stage_with_config_returning_blocks(
+    stage: HookStage,
+    body: &str,
+    hooks: &[HookDef],
+    invoker: Option<&dyn PluginInvoker>,
+    fail_fast: bool,
+) -> Result<(StageOutcome, Vec<FilteredBlock>)> {
     let mut current = body.to_string();
     let mut hits = Vec::new();
+    // GOLD-ADAPT-SKILL-09: accumulated across all BlockFilter actions in
+    // this stage run. Kept in insertion order so restore_blocks replaces
+    // placeholders left-to-right (matching the order they appear in body).
+    let mut accumulated_blocks: Vec<FilteredBlock> = Vec::new();
 
     for hook in hooks.iter().filter(|h| h.stage == stage && h.is_enabled()) {
         let fires = match &hook.matcher {
@@ -191,13 +216,13 @@ pub fn run_stage_with_config(
                             error = %e,
                             "fail_fast: bad regex in hook matcher — blocking stage",
                         );
-                        return Ok(StageOutcome::Block {
+                        return Ok((StageOutcome::Block {
                             name: hook.name.clone(),
                             reason: format!(
                                 "fail_fast: regex compile failed for hook `{name}`: {e}",
                                 name = hook.name,
                             ),
-                        });
+                        }, Vec::new()));
                     }
                     tracing::warn!(
                         hook = %hook.name,
@@ -228,10 +253,10 @@ pub fn run_stage_with_config(
                 current = template.clone();
             }
             HookAction::Block { reason } => {
-                return Ok(StageOutcome::Block {
+                return Ok((StageOutcome::Block {
                     name: hook.name.clone(),
                     reason: reason.clone(),
-                });
+                }, Vec::new()));
             }
             HookAction::Plugin {
                 plugin_id,
@@ -252,10 +277,10 @@ pub fn run_stage_with_config(
                                     error = %e,
                                     "required plugin invocation failed — blocking stage"
                                 );
-                                return Ok(StageOutcome::Block {
+                                return Ok((StageOutcome::Block {
                                     name: hook.name.clone(),
                                     reason: format!("required plugin `{plugin_id}` failed: {e}"),
-                                });
+                                }, Vec::new()));
                             }
                             tracing::warn!(
                                 hook = %hook.name,
@@ -277,12 +302,12 @@ pub fn run_stage_with_config(
                                 "required plugin hook has no PluginInvoker — \
                                  blocking stage (safety contract violation)"
                             );
-                            return Ok(StageOutcome::Block {
+                            return Ok((StageOutcome::Block {
                                 name: hook.name.clone(),
                                 reason: format!(
                                     "required plugin `{plugin_id}` unavailable — no invoker registered"
                                 ),
-                            });
+                            }, Vec::new()));
                         }
                         tracing::warn!(
                             hook = %hook.name,
@@ -292,13 +317,33 @@ pub fn run_stage_with_config(
                     }
                 }
             }
+            // GOLD-ADAPT-SKILL-09 — block-filter: redact annotated regions
+            // from the body before the LLM sees it. The FilteredBlocks are
+            // threaded out so the PostProviderCall stage can restore them.
+            HookAction::BlockFilter {
+                start_marker,
+                end_marker,
+                placeholder,
+            } => {
+                hits.push(hook.name.clone());
+                let (filtered, blocks) =
+                    apply_block_filter(&current, start_marker, end_marker, placeholder);
+                tracing::debug!(
+                    hook = %hook.name,
+                    redacted_regions = blocks.len(),
+                    "block_filter: redacted {} ignore region(s)",
+                    blocks.len(),
+                );
+                current = filtered;
+                accumulated_blocks.extend(blocks);
+            }
         }
     }
 
-    Ok(StageOutcome::Continue {
+    Ok((StageOutcome::Continue {
         body: current,
         hits,
-    })
+    }, accumulated_blocks))
 }
 
 #[cfg(test)]

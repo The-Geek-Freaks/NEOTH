@@ -130,6 +130,34 @@ pub enum HookAction {
     Replace { template: String },
     /// Stop the pipeline. The operator-visible reason is logged.
     Block { reason: String },
+    /// GOLD-ADAPT-SKILL-09 — redact `start_marker` … `end_marker` regions
+    /// from the body before the LLM sees it, recording each region as a
+    /// [`FilteredBlock`] that the PostProviderCall stage restores.
+    ///
+    /// Used by the `code_simplification` skill so intentionally-kept
+    /// complexity regions (annotated `// neoth-ignore-start` … `// neoth-ignore-end`)
+    /// are invisible to the LLM and never modified by simplification passes.
+    ///
+    /// TOML example:
+    /// ```toml
+    /// name  = "simplify-ignore"
+    /// stage = "pre_provider_call"
+    /// [action]
+    /// kind         = "block_filter"
+    /// start_marker = "neoth-ignore-start"
+    /// end_marker   = "neoth-ignore-end"
+    /// placeholder  = "/* neoth-ignore: {lines} lines — intentionally kept (offset {offset}) */"
+    /// ```
+    ///
+    /// `placeholder` may contain `{lines}` (line count of the removed block)
+    /// and `{offset}` (byte offset of the block start, guarantees uniqueness).
+    /// When omitted, [`super::block_filter::default_placeholder`] is used.
+    BlockFilter {
+        start_marker: String,
+        end_marker: String,
+        #[serde(default = "super::block_filter::default_placeholder")]
+        placeholder: String,
+    },
     /// Pick #34 follow-up (2026-05-20): invoke a discovered WASM
     /// plugin by id. The hook dispatcher delegates to the operator-
     /// provided `PluginInvoker`; no wasmtime dep leaks into the
