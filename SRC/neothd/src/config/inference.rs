@@ -521,6 +521,42 @@ pub enum SelectionMode {
     BestAlways,
 }
 
+/// GOLD-ADAPT-G-01 — council dispatch mode.
+///
+/// `council` (default) = 3-hemisphere debate when the smart-trigger fires.
+/// `single` = debate is permanently bypassed; the Left-role provider answers
+///   every turn. Opt-in. NOT the default. Mirrors `council.disabled=true`
+///   semantics but is a named, semantically-clear alternative that survives
+///   across `neoth council suppress --off` (which only clears `disabled`).
+///
+/// Orthogonal to `TopologyMode`: an operator can have
+/// `inference.mode=triplet` (three distinct providers configured) but
+/// `council.mode=single` (no debate, the Left provider answers alone).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CouncilMode {
+    /// 3-hemisphere debate fires when the smart-trigger fires (default).
+    #[default]
+    Council,
+    /// Bypass the orchestrator entirely; the Left-role provider always answers.
+    Single,
+}
+
+impl CouncilMode {
+    /// Returns `true` when the dispatch mode is `single` (orchestrator bypassed).
+    pub fn is_single(self) -> bool {
+        matches!(self, CouncilMode::Single)
+    }
+
+    /// Human-readable label for WAL / ModeCheckpoint audit frames.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CouncilMode::Council => "council",
+            CouncilMode::Single => "single",
+        }
+    }
+}
+
 /// Pick #8 SP-2 (Session 14) — council-specific operator config.
 ///
 /// Lives at `freedom.yaml::council` (top-level under `FreedomConfig`,
@@ -684,6 +720,20 @@ pub struct CouncilConfig {
     /// both are present.
     #[serde(default)]
     pub disabled: Option<bool>,
+
+    /// GOLD-ADAPT-G-01 — dispatch mode.
+    /// `council` (default) = 3-hemisphere debate when trigger fires.
+    /// `single` = bypass orchestrator; Left-role provider always answers.
+    ///
+    /// Distinct from `disabled`: `disabled` is a runtime suppress-switch
+    /// toggled by `neoth council suppress`; `mode` is a named topology
+    /// choice that persists independently. Both are OR-ed at the gate —
+    /// either one forces the single-hemisphere path.
+    ///
+    /// Existing configs without this field deserialize to `CouncilMode::Council`
+    /// (zero behaviour change) via `#[serde(default)]`.
+    #[serde(default)]
+    pub mode: CouncilMode,
 
     /// KF-01 full — persist each hemisphere's VERBATIM response text as a
     /// `0x66 COUNCIL_TRANSCRIPT` WAL frame at debate time, so

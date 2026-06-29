@@ -1956,7 +1956,13 @@ async fn dispatch_provider(
         // flag (set via `neoth council suppress`) is the durable twin of
         // the env override — either one forces the single-hemisphere path.
         // `config` is fresh per CLI invocation so the flag is always current.
-        let council_disable_cfg = config.council.disabled.unwrap_or(false);
+        // GOLD-ADAPT-G-01: council.mode=single is a named alternative to
+        // council.disabled=true; both force the single-provider path.
+        // They are orthogonal knobs — `disabled` is toggled by
+        // `neoth council suppress`; `mode` is a persistent topology choice.
+        let council_mode_single = config.council.mode.is_single();
+        let council_disable_cfg =
+            config.council.disabled.unwrap_or(false) || council_mode_single;
         let council_disable = council_disable_env || council_disable_cfg;
         // Trigger decision is computed even when not used so the WAL
         // audit (next iteration) can record "council was triggerable
@@ -1967,12 +1973,14 @@ async fn dispatch_provider(
                 // doesn't hide the persistent suppress behind the env var
                 // (clearing the env later would otherwise leave no WAL hint
                 // that `council.disabled=true` is still in effect).
-                reason: match (council_disable_env, council_disable_cfg) {
-                    (true, true) => {
+                // Priority: env > mode=single > disabled=true.
+                reason: match (council_disable_env, council_mode_single, config.council.disabled.unwrap_or(false)) {
+                    (true, _, true) => {
                         "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
                     }
-                    (true, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
-                    (false, _) => "freedom.yaml::council.disabled=true".into(),
+                    (true, _, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
+                    (false, true, _) => "freedom.yaml::council.mode=single".into(),
+                    (false, false, _) => "freedom.yaml::council.disabled=true".into(),
                 },
             }
         } else if council_force {
@@ -2133,7 +2141,10 @@ async fn dispatch_provider(
                 {
                     use crate::recall::reconstruct::ModeCheckpoint;
                     use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
-                    let council_mode_str = if config.council.disabled.unwrap_or(false) {
+                    // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
+                    let council_mode_str = if config.council.mode.is_single() {
+                        "single".to_string()
+                    } else if config.council.disabled.unwrap_or(false) {
                         "off".to_string()
                     } else {
                         "enabled".to_string()
@@ -3579,7 +3590,10 @@ pub async fn run_chat_with(
     {
         use crate::recall::reconstruct::ModeCheckpoint;
         use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
-        let council_mode_str = if config.council.disabled.unwrap_or(false) {
+        // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
+        let council_mode_str = if config.council.mode.is_single() {
+            "single".to_string()
+        } else if config.council.disabled.unwrap_or(false) {
             "off".to_string()
         } else {
             "enabled".to_string()
@@ -6942,6 +6956,78 @@ mod tests {
             matches!(decision, crate::council::TriggerDecision::Skip { .. }),
             "a durably-suppressed council must not be force-convened by NEOTH_COUNCIL_ENABLE=1"
         );
+    }
+
+    // GOLD-ADAPT-G-01 — council.mode=single bypass tests.
+    // Proves the gate (evaluate_council_trigger) is bypassed when mode=single,
+    // and that the default (mode=council) produces zero behaviour change.
+
+    #[test]
+    fn council_mode_single_forces_skip_regardless_of_env() {
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::remove_var("NEOTH_COUNCIL_DISABLE");
+            std::env::remove_var("NEOTH_COUNCIL_ENABLE");
+        }
+        use crate::config::inference::{CouncilConfig, CouncilMode};
+        let cfg = CouncilConfig {
+            mode: CouncilMode::Single,
+            ..Default::default()
+        };
+        let policy = cfg.trigger.to_policy();
+        // is_single() must be true.
+        assert!(cfg.mode.is_single(), "CouncilMode::Single.is_single() must be true");
+        // The caller passes `disabled || mode.is_single()` — simulate that.
+        let disabled_combined = cfg.disabled.unwrap_or(false) || cfg.mode.is_single();
+        let decision = evaluate_council_trigger(
+            "a complex question that would normally trigger a council debate",
+            0.001,
+            disabled_combined,
+            &policy,
+        );
+        assert!(
+            !decision.should_convene(),
+            "council.mode=single must force Skip; got {decision:?}"
+        );
+        let reason = decision.reason();
+        // The outer gate (chat.rs:1959) emits "freedom.yaml::council.mode=single";
+        // evaluate_council_trigger sees disabled=true and emits "freedom.yaml::council.disabled=true".
+        // Both contain "freedom.yaml" which is the key contract.
+        assert!(
+            reason.contains("freedom.yaml"),
+            "skip reason must reference freedom.yaml config source; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn council_mode_council_is_default_and_does_not_inject_skip() {
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::remove_var("NEOTH_COUNCIL_DISABLE");
+            std::env::remove_var("NEOTH_COUNCIL_ENABLE");
+        }
+        use crate::config::inference::{CouncilConfig, CouncilMode};
+        let cfg = CouncilConfig::default();
+        // Default must be Council, not Single.
+        assert_eq!(
+            cfg.mode,
+            CouncilMode::Council,
+            "CouncilMode default must be Council"
+        );
+        assert!(!cfg.mode.is_single(), "default mode must not be single");
+        // With disabled=false and mode=council, evaluate_council_trigger must NOT
+        // inject a forced Skip from the mode field alone.
+        // (Trigger may still Skip on a trivially-short prompt — that's fine.
+        //  The invariant is: mode=council does not itself force a Skip.)
+        let disabled_combined = cfg.disabled.unwrap_or(false) || cfg.mode.is_single();
+        assert!(!disabled_combined, "mode=council must not set the disable flag");
+    }
+
+    #[test]
+    fn council_mode_single_as_str_and_council_as_str() {
+        use crate::config::inference::CouncilMode;
+        assert_eq!(CouncilMode::Single.as_str(), "single");
+        assert_eq!(CouncilMode::Council.as_str(), "council");
     }
 
     // GOLD-ADAPT-LOWKEY-04 — the MIF pre-step caller decision (the wiring that

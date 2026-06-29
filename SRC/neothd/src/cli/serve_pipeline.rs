@@ -689,7 +689,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         format!("{sender_hash}-{ts_unix}").as_bytes()
                     )
                 );
-                let council_mode_str = if config_for_handler.council.disabled.unwrap_or(false) {
+                // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
+                let council_mode_str = if config_for_handler.council.mode.is_single() {
+                    "single".to_string()
+                } else if config_for_handler.council.disabled.unwrap_or(false) {
                     "off".to_string()
                 } else {
                     "enabled".to_string()
@@ -1885,9 +1888,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let council_cfg = crate::config::FreedomConfig::load_from_default_path()
                 .map(|c| c.council)
                 .ok();
+            // GOLD-ADAPT-G-01: OR-in mode=single alongside disabled=true.
+            // Both force the single-hemisphere path; they are orthogonal knobs.
+            // `mode` hot-reloads per message (load_from_default_path above) —
+            // no daemon restart needed after editing freedom.yaml.
             let council_disabled = council_cfg
                 .as_ref()
-                .and_then(|c| c.disabled)
+                .map(|c| c.disabled.unwrap_or(false) || c.mode.is_single())
                 .unwrap_or(false);
             let council_policy = council_cfg
                 .as_ref()
