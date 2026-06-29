@@ -1,6 +1,6 @@
 id: drawio_diagram
-description: Author draw.io (diagrams.net) XML diagrams across six preset types — flowchart, architecture, sequence, ER, mindmap, network — with semantic palette and validation; fires on explicit draw.io / drawio / diagrams.net requests.
-version: "1.0.0"
+description: Author draw.io (diagrams.net) XML diagrams across six preset types — flowchart, architecture, sequence, ER, mindmap, network — with semantic palette, shape-index lookup, AI-logo lookup, structural validation, and browser-URL encoding.
+version: "1.1.0"
 author: NEOTH bundled
 tags:
   - documents
@@ -18,6 +18,28 @@ trigger_keywords:
   - "export as drawio"
   - "drawio architecture diagram"
   - "drawio flowchart"
+  # GOLD-ADAPT-DRAW-03 — broader DRAW-01 auto-use trigger list
+  - "draw a diagram"
+  - "draw a flowchart"
+  - "draw a flowchart"
+  - "create a flowchart"
+  - "architecture diagram"
+  - "drawio sequence diagram"
+  - "drawio ER diagram"
+  - "drawio network diagram"
+  - "draw an ER diagram"
+  - "draw a sequence diagram"
+  - "draw a network diagram"
+  - "draw an architecture diagram"
+  - "visualize the architecture"
+  - "visual overview"
+  - "show the structure"
+  - "show the flow"
+  - "diagramm erstellen"
+  - "übersicht zeichnen"
+  - "architekturdiagramm"
+  - "ablaufdiagramm"
+  - "visualisier"
 
 system_prompt: |
   draw.io XML diagram authoring (auto-installed). Produce valid draw.io / diagrams.net
@@ -27,6 +49,72 @@ system_prompt: |
   This skill fires ONLY for explicit draw.io / drawio XML / diagrams.net requests.
   For Mermaid text diagrams use the `diagram_mermaid` skill. For inline HTML/SVG
   diagrams use the `html_diagram` skill. Do not overlap with those triggers.
+
+  ## Runtime scripts
+
+  Four Python helper scripts live alongside this skill.yaml at `<skill-dir>/scripts/`
+  where `<skill-dir>` is the directory containing this file (i.e. the directory this
+  skill was loaded from — resolved at runtime as the parent of `skill.yaml`). When
+  no explicit path is available use `scripts/` relative to the active working
+  directory that the LLM session was started with.
+
+  ### shapesearch.py — canonical shape-style lookup (10 000+ official shapes)
+
+  ```
+  python3 <skill-dir>/scripts/shapesearch.py "<keywords>"
+  ```
+
+  WHEN: Before hand-authoring any shape style for AWS, Azure, GCP, Cisco, Kubernetes,
+  UML, BPMN, network equipment, or any named vendor shape. The script reads
+  `<skill-dir>/data/shape-index.json.gz` (Apache-2.0, jgraph/drawio-mcp) and
+  returns exact `style=` strings. Never guess vendor shape IDs — always query first.
+
+  Example:
+  ```
+  python3 scripts/shapesearch.py "aws lambda"
+  → shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;...
+  ```
+
+  ### aiicons.py — AI/LLM brand logo lookup (lobe-icons CDN)
+
+  ```
+  python3 <skill-dir>/scripts/aiicons.py "<brand>"
+  ```
+
+  WHEN: The diagram includes AI product logos (OpenAI, Claude, Gemini, Llama, Mistral,
+  Hugging Face, etc.). Returns a draw.io `image;` style string pointing to the lobe-icons
+  CDN. Requires network at render time for the CDN image itself (local file stores only
+  metadata). Use `--embed` flag to inline the SVG if offline operation is needed.
+
+  Example:
+  ```
+  python3 scripts/aiicons.py "claude"
+  → image;image=https://unpkg.com/@lobehub/icons-static-svg@latest/icons/claude-color.svg;...
+  ```
+
+  ### validate.py — structural correctness gate
+
+  ```
+  python3 <skill-dir>/scripts/validate.py <name>.drawio
+  ```
+
+  WHEN: ALWAYS — run as a mandatory pre-export gate after generating any draw.io XML.
+  Exit 0 = the diagram is structurally valid and ready to return. Non-zero = structural
+  errors are printed to stdout; fix every error before returning. Never skip this gate.
+
+  Checks performed: duplicate ids, dangling parent/source/target references, edges
+  missing source or target, malformed mxGraphModel wrapper.
+
+  ### encode_drawio_url.py — browser-openable diagrams.net URL
+
+  ```
+  python3 <skill-dir>/scripts/encode_drawio_url.py [--edit] <name>.drawio
+  ```
+
+  WHEN: The draw.io desktop CLI is unavailable (not installed) AND the operator wants
+  to open the diagram directly in a browser. `--edit` opens in editor mode; without
+  the flag it opens in viewer mode. Output is a `https://app.diagrams.net/?...` URL
+  the operator can paste into any browser.
 
   ## Step 1 — Select a preset type
 
@@ -39,7 +127,8 @@ system_prompt: |
   **B. Architecture / system design**: plain rectangles for services, cylinders
   for databases (`shape=mxgraph.cisco.storage.asa;` or `shape=cylinder3`),
   clouds for external systems. Group with swim-lane containers. Use directional
-  arrows labelled with protocol (HTTP, gRPC, AMQP).
+  arrows labelled with protocol (HTTP, gRPC, AMQP). For AWS/Azure/GCP/K8s icons
+  run `shapesearch.py` to get exact style strings before authoring.
 
   **C. Sequence diagram**: vertical lifelines as thin rectangles, activation boxes
   as filled rectangles on the lifeline, horizontal messages as arrows with labels.
@@ -58,7 +147,18 @@ system_prompt: |
   switch, server, firewall, cloud). Group physical segments in container cells.
   Label links with bandwidth / protocol.
 
-  ## Step 2 — Construct the XML
+  ## Step 2 — Look up vendor / brand shapes BEFORE authoring
+
+  For any shape from a named vendor library (AWS, Azure, GCP, Cisco, Kubernetes,
+  UML, BPMN, network equipment):
+
+  1. Run `python3 scripts/shapesearch.py "<keyword>"` — copy the exact `style=`
+     string from the output into the `<mxCell style="...">` attribute.
+  2. For AI/LLM product logos run `python3 scripts/aiicons.py "<brand>"` instead.
+
+  Only fall back to generic rectangles if `shapesearch.py` returns no results.
+
+  ## Step 3 — Construct the XML
 
   draw.io XML skeleton:
   ```xml
@@ -82,7 +182,7 @@ system_prompt: |
   - Labels: HTML is allowed in `value` — e.g. `value="&lt;b&gt;Users&lt;/b&gt;"`.
     Escape `<` → `&lt;` `>` → `&gt;` `&` → `&amp;` in XML attribute context.
 
-  ## Step 3 — Semantic palette
+  ## Step 4 — Semantic palette
 
   Apply consistent colour roles via the `style` attribute:
 
@@ -98,7 +198,7 @@ system_prompt: |
   Add `fontStyle=1` (bold) for primary labels. Use `fontSize=11` body, `fontSize=13`
   for container headers.
 
-  ## Step 4 — Layout
+  ## Step 5 — Layout
 
   - Grid: 10px base. Place nodes on 10px increments.
   - Minimum 20px gap between any two shapes.
@@ -108,8 +208,18 @@ system_prompt: |
     at `y=120, 180, 240, ...` (60px step).
   - Containers: encompass children with 20px padding on all sides.
 
-  ## Step 5 — Validation (run before returning)
+  ## Step 6 — Validate (mandatory — run before returning)
 
+  Save the generated XML to a file (e.g. `diagram.drawio`), then run:
+
+  ```
+  python3 scripts/validate.py diagram.drawio
+  ```
+
+  Exit 0: return the diagram. Non-zero: read the error output, fix every issue,
+  re-validate. Repeat until exit 0. Never skip this gate.
+
+  Manual fallback (if Python unavailable): check all five conditions manually:
   1. Every id referenced as `parent`, `source`, or `target` exists in the XML.
   2. No duplicate ids.
   3. Every entity the operator named has a corresponding `<mxCell>` with that name
@@ -117,8 +227,26 @@ system_prompt: |
   4. All edges have both `source` and `target` set.
   5. XML is well-formed (tags closed, attributes quoted, entities escaped).
 
-  If any check fails, fix before returning. Return the XML in one ```xml fenced
-  block. After it, one line: preset used + validation result (all 5 checks pass /
-  what was fixed). No preamble.
+  ## Step 7 — Deliver
+
+  Return the XML in one ```xml fenced block. After it, one line:
+  `preset used + validate.py: exit 0 (or manual: all 5 checks pass) / what was fixed`.
+
+  If the operator wants to open the diagram in a browser (no desktop draw.io):
+  ```
+  python3 scripts/encode_drawio_url.py --edit diagram.drawio
+  ```
+  Append the resulting URL after the validation line.
+
+  No preamble.
+
+  ## Notes
+
+  - `aiicons.py` sources icons from the lobe-icons CDN (`https://unpkg.com/`).
+    Network is required at diagram render time; the local `data/lobe-icons.json`
+    contains only brand metadata. Use `--embed` for fully-offline SVG inlining.
+  - `shapesearch.py` and `aiicons.py` resolve their data files relative to their
+    own `__file__` path — they work correctly from any CWD as long as the
+    `data/` directory sits alongside `scripts/` inside the skill directory.
 
 enabled: true

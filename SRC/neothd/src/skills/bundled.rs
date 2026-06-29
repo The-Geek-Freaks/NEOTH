@@ -1351,6 +1351,121 @@ mod tests {
         let _installed: bool = crate::config::installer::is_graphify_installed();
     }
 
+    /// GOLD-ADAPT-DRAW-03 (2026-06-29) — draw.io helper scripts + data files
+    /// are present on disk, and the skill.yaml system_prompt references them.
+    ///
+    /// Asserts five things in one pass:
+    ///  1. `drawio_diagram` is in BUNDLED_SKILLS, parses cleanly, ships enabled.
+    ///  2. The 4 new script files exist at `assets/skills/drawio_diagram/scripts/`.
+    ///  3. The 3 data files exist at `assets/skills/drawio_diagram/data/`.
+    ///  4. The skill.yaml system_prompt names `validate.py` and `shapesearch.py`
+    ///     — proving the LLM wiring was applied, not just the file copy.
+    ///  5. The router resolves the broader DRAW-01 trigger phrases (flowchart,
+    ///     architecture diagram, sequence diagram) to `drawio_diagram` — proving
+    ///     the extended trigger_keywords are live, not just declared.
+    #[test]
+    fn gold_adapt_draw_03_drawio_scripts_and_data_present() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+        use std::path::{Path, PathBuf};
+
+        // 1. Bundled presence + parse + enabled.
+        let (_, body) = BUNDLED_SKILLS
+            .iter()
+            .find(|(id, _)| *id == "drawio_diagram")
+            .expect("GOLD-ADAPT-DRAW-03: drawio_diagram must be in BUNDLED_SKILLS");
+        let manifest: SkillManifest = serde_yaml::from_str(body)
+            .expect("drawio_diagram skill.yaml must parse cleanly");
+        assert_eq!(manifest.id, "drawio_diagram");
+        assert!(
+            manifest.enabled,
+            "drawio_diagram must ship enabled"
+        );
+        assert!(
+            !manifest.trigger_keywords.is_empty(),
+            "drawio_diagram must have trigger_keywords"
+        );
+        assert!(
+            !manifest.system_prompt.trim().is_empty(),
+            "drawio_diagram must have a non-empty system_prompt"
+        );
+
+        // 2+3. Script and data files on disk.
+        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join("skills")
+            .join("drawio_diagram");
+
+        // Bail gracefully on packaging-stripped builds that omit assets.
+        if !skill_dir.exists() {
+            return;
+        }
+
+        let scripts_dir = skill_dir.join("scripts");
+        for script in ["shapesearch.py", "aiicons.py", "encode_drawio_url.py", "validate.py"] {
+            let p = scripts_dir.join(script);
+            assert!(
+                Path::new(&p).exists(),
+                "GOLD-ADAPT-DRAW-03: missing script {script} at {p:?}"
+            );
+        }
+
+        let data_dir = skill_dir.join("data");
+        for data_file in ["shape-index.json.gz", "lobe-icons.json", "SHAPE-INDEX-NOTICE.md"] {
+            let p = data_dir.join(data_file);
+            assert!(
+                Path::new(&p).exists(),
+                "GOLD-ADAPT-DRAW-03: missing data file {data_file} at {p:?}"
+            );
+        }
+
+        // 4. system_prompt references the key scripts (LLM wiring applied).
+        assert!(
+            manifest.system_prompt.contains("validate.py"),
+            "drawio_diagram system_prompt must reference validate.py"
+        );
+        assert!(
+            manifest.system_prompt.contains("shapesearch.py"),
+            "drawio_diagram system_prompt must reference shapesearch.py"
+        );
+        assert!(
+            manifest.system_prompt.contains("aiicons.py"),
+            "drawio_diagram system_prompt must reference aiicons.py"
+        );
+        assert!(
+            manifest.system_prompt.contains("encode_drawio_url.py"),
+            "drawio_diagram system_prompt must reference encode_drawio_url.py"
+        );
+
+        // 5. Live routing: isolated skill set so only drawio_diagram can win.
+        let skill = Skill {
+            manifest: manifest.clone(),
+            path: PathBuf::from("/bundled/drawio_diagram/skill.yaml"),
+            content_hash: String::new(),
+        };
+        let skills = vec![skill];
+        for prompt in [
+            "draw a flowchart for the login process",
+            "drawio flowchart",
+            "draw an architecture diagram for the new service",
+            "architecture diagram",
+            "drawio sequence diagram",
+            "drawio ER diagram",
+            "create a drawio file",
+            "generate drawio",
+        ] {
+            let m = route(prompt, &skills).unwrap_or_else(|| {
+                panic!("drawio_diagram: prompt `{prompt}` routed to nothing")
+            });
+            assert_eq!(
+                m.skill.id(),
+                "drawio_diagram",
+                "prompt `{prompt}` should route to drawio_diagram, got `{}`",
+                m.skill.id()
+            );
+        }
+    }
+
     /// GOLD-ADAPT-HERMES-10 (2026-06-29) — the 3 ported Jarvis active-skills
     /// (arxiv_scanner, browser_use, evolver) must be bundled, parse, ship
     /// enabled, and each route from its own distinctive trigger phrases with no
