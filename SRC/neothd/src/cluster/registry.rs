@@ -40,12 +40,17 @@ fn lock_registry() -> std::sync::MutexGuard<'static, ()> {
 
 /// GR-020 — bounded-blocking exclusive OS lock on
 /// `<home>/cluster.yaml.lock`. Dropping the returned handle releases it.
-/// Every cross-process write path takes this BEFORE the intra-process
-/// Mutex so a CLI write can't land between a daemon task's load and
-/// save (silent lost-update). Built on the same MSRV-1.86-safe
-/// primitives as `daemon/pidfile.rs` (`std::fs::File::lock` needs
-/// 1.89): non-blocking acquire retried every 50ms, failing loudly
-/// after 5s instead of deadlocking on a stuck holder.
+/// Every cross-process write path takes this AFTER the intra-process
+/// `REGISTRY_LOCK` (mutex-first): same-process writers then serialise by
+/// PARKING on the mutex, so only the single mutex-holder ever contends for
+/// this file lock. The old file-first order made concurrent same-process
+/// writers all SPIN here and trip the 5s give-up under CPU load (it flaked
+/// the concurrent registry tests). A cross-process CLI write still blocks on
+/// this lock for the whole load→save, so it can't land mid-cycle (silent
+/// lost-update). Built on the same MSRV-1.86-safe primitives as
+/// `daemon/pidfile.rs` (`std::fs::File::lock` needs 1.89): non-blocking
+/// acquire retried every 50ms, failing loudly after 5s instead of
+/// deadlocking on a stuck holder.
 fn lock_registry_file(home: &Path) -> Result<std::fs::File> {
     let lock_path = home.join("cluster.yaml.lock");
     if let Some(parent) = lock_path.parent() {
@@ -251,8 +256,8 @@ pub fn save(home: &Path, reg: &ClusterRegistry) -> Result<()> {
 /// exists, the new entry replaces the old (preserves `paired_at_unix`
 /// from the original — re-confirm doesn't reset the timestamp).
 pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
-    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
+    let _file_guard = lock_registry_file(home)?;
     let mut reg = load(home)?;
     if let Some(existing) = reg.peers.iter().find(|p| p.pub_key_hex == peer.pub_key_hex) {
         peer.paired_at_unix = existing.paired_at_unix;
@@ -270,8 +275,8 @@ pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
 /// matches any peer whose `pub_key_hex` starts with it. Errors on
 /// ambiguous match (multiple peers with that prefix).
 pub fn remove(home: &Path, key_or_prefix: &str) -> Result<bool> {
-    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
+    let _file_guard = lock_registry_file(home)?;
     let mut reg = load(home)?;
     let matches: Vec<usize> = reg
         .peers
@@ -329,8 +334,8 @@ pub fn find_by_hostname(home: &Path, hostname: &str) -> Option<PairedPeer> {
 /// isn't paired yet — Phase 2 discovery passes every authenticated
 /// announce through this; only the paired ones update.
 pub fn refresh_last_seen(home: &Path, pub_key_hex: &str, ts_unix: i64) -> Result<bool> {
-    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
+    let _file_guard = lock_registry_file(home)?;
     let mut reg = load(home)?;
     let mut changed = false;
     for p in reg.peers.iter_mut() {
@@ -350,8 +355,8 @@ pub fn refresh_last_seen(home: &Path, pub_key_hex: &str, ts_unix: i64) -> Result
 /// when the peer isn't paired. Same load→mutate→save shape as
 /// [`refresh_last_seen`].
 pub fn refresh_rtt(home: &Path, pub_key_hex: &str, rtt_ms: u64) -> Result<bool> {
-    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
+    let _file_guard = lock_registry_file(home)?;
     let mut reg = load(home)?;
     let mut changed = false;
     for p in reg.peers.iter_mut() {
@@ -370,8 +375,8 @@ pub fn refresh_rtt(home: &Path, pub_key_hex: &str, rtt_ms: u64) -> Result<bool> 
 /// SL-02b: fold a heartbeat hit/miss into a paired peer's EWMA stability score
 /// via [`compute_stability`]. No-op + `false` when the peer isn't paired.
 pub fn refresh_stability(home: &Path, pub_key_hex: &str, success: bool) -> Result<bool> {
-    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
+    let _file_guard = lock_registry_file(home)?;
     let mut reg = load(home)?;
     let mut changed = false;
     for p in reg.peers.iter_mut() {
