@@ -163,6 +163,14 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
         roll.total_p50_latency_ms,
         roll.total_p90_latency_ms,
     );
+    // VIEW-06 — session-type split (shown only when post-VIEW-06 data present).
+    if roll.total_automated_count + roll.total_human_count > 0 {
+        println!(
+            "  session type: human={} automated={}",
+            roll.total_human_count,
+            roll.total_automated_count,
+        );
+    }
     // VIEW-03 — cache token economics (shown only when cache was used).
     if roll.total_cache_creation_tokens > 0 || roll.total_cache_read_tokens > 0 {
         let savings_in_target = convert_from_usd(roll.total_cache_savings_usd, currency);

@@ -63,6 +63,12 @@ pub struct UsageEvent {
     /// Zero for non-Anthropic providers.
     #[serde(default)]
     pub cache_savings_usd: f64,
+    /// VIEW-06 — true when this call was model-driven (council hemisphere,
+    /// MCP agentic-loop hop) rather than a direct operator CLI turn.
+    /// `#[serde(default)]` ensures pre-VIEW-06 JSONL lines deserialize as
+    /// `false` (conservative: assume human).
+    #[serde(default)]
+    pub automated: bool,
 }
 
 /// Daily-keyed rollup for a single provider/model pair.
@@ -84,6 +90,11 @@ pub struct PerProviderTotals {
     pub cache_creation_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_savings_usd: f64,
+    /// VIEW-06 — per-provider session-type split.
+    #[serde(default)]
+    pub automated_count: u64,
+    #[serde(default)]
+    pub human_count: u64,
 }
 
 /// Aggregate across the requested time range.
@@ -109,6 +120,11 @@ pub struct UsageRollup {
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
     pub total_cache_savings_usd: f64,
+    /// VIEW-06 — rollup-level session-type split.
+    #[serde(default)]
+    pub total_automated_count: u64,
+    #[serde(default)]
+    pub total_human_count: u64,
     /// Per-provider breakdown, sorted by `provider` alphabetically.
     pub per_provider: Vec<PerProviderTotals>,
 }
@@ -155,6 +171,7 @@ pub fn record_now(
     cache_creation_tokens: u32,
     cache_read_tokens: u32,
     cache_savings_usd: f64,
+    automated: bool,
 ) -> std::io::Result<UsageEvent> {
     let now = crate::time::now_unix_i64();
     let ev = UsageEvent {
@@ -169,6 +186,7 @@ pub fn record_now(
         cache_creation_tokens,
         cache_read_tokens,
         cache_savings_usd,
+        automated,
     };
     append(home, &ev)?;
     Ok(ev)
@@ -202,6 +220,7 @@ pub fn record_provider_call(
     ok: bool,
     cache_creation_tokens: Option<u32>,
     cache_read_tokens: Option<u32>,
+    automated: bool,
 ) -> std::io::Result<UsageEvent> {
     let (input, output, cost, cc_tok, cr_tok, savings) = if ok {
         let i = input_tokens.unwrap_or(0);
@@ -224,7 +243,7 @@ pub fn record_provider_call(
     };
     record_now(
         home, provider, model, input, output, cost, latency_ms, ok,
-        cc_tok, cr_tok, savings,
+        cc_tok, cr_tok, savings, automated,
     )
 }
 
@@ -233,6 +252,14 @@ pub fn record_provider_call(
 /// I/O error. This is what the hot chat / council / MCP-loop paths
 /// call: a stuck disk must never break the operator's reply, but the
 /// dropped usage row is surfaced as a `warn!` (no silent swallow).
+///
+/// `automated` — VIEW-06 dimension: `true` for council hemisphere calls
+/// and MCP agentic-loop hops; `false` for direct operator CLI turns.
+///
+/// TODO GOLD-ADAPT-VIEW-06b: channel path (serve_pipeline.rs lines
+/// 1974/2062/2066) still has no usage logging — those `provider.complete()`
+/// calls are entirely unmetered; adding VIEW-06 there is blocked until
+/// the channel path grows a usage-log wire of its own.
 #[allow(clippy::too_many_arguments)]
 pub fn record_provider_call_best_effort(
     provider: &str,
@@ -243,6 +270,7 @@ pub fn record_provider_call_best_effort(
     ok: bool,
     cache_creation_tokens: Option<u32>,
     cache_read_tokens: Option<u32>,
+    automated: bool,
 ) {
     let home = crate::config::FreedomConfig::default_neoth_home();
     if let Err(e) = record_provider_call(
@@ -255,6 +283,7 @@ pub fn record_provider_call_best_effort(
         ok,
         cache_creation_tokens,
         cache_read_tokens,
+        automated,
     ) {
         tracing::warn!(error = %e, ok, "usage_log append failed (non-fatal)");
     }
@@ -310,6 +339,12 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
             } else {
                 roll.total_err_count += 1;
             }
+            // VIEW-06 — accumulate session-type split at rollup level.
+            if ev.automated {
+                roll.total_automated_count += 1;
+            } else {
+                roll.total_human_count += 1;
+            }
             let totals = per
                 .entry(ev.provider.clone())
                 .or_insert_with(|| PerProviderTotals {
@@ -327,6 +362,12 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 totals.ok_count += 1;
             } else {
                 totals.err_count += 1;
+            }
+            // VIEW-06 — accumulate session-type split at per-provider level.
+            if ev.automated {
+                totals.automated_count += 1;
+            } else {
+                totals.human_count += 1;
             }
             all_latency.push(ev.latency_ms);
             latency_samples
@@ -693,6 +734,7 @@ mod tests {
             0,
             0,
             0.0,
+            false,
         )
         .unwrap();
         let file = jsonl_file_for_ts(dir.path(), ev.ts_unix);
@@ -717,6 +759,7 @@ mod tests {
             true,
             None,
             None,
+            false,
         )
         .unwrap();
         assert!(ev.ok);
@@ -746,6 +789,7 @@ mod tests {
             false,
             None,
             None,
+            false,
         )
         .unwrap();
         assert!(!ev.ok);
@@ -758,7 +802,7 @@ mod tests {
     fn record_provider_call_none_tokens_treated_as_zero() {
         let dir = tempdir().unwrap();
         let ev =
-            record_provider_call(dir.path(), "local_qwen", "qwen2.5-7b", None, None, 10, true, None, None)
+            record_provider_call(dir.path(), "local_qwen", "qwen2.5-7b", None, None, 10, true, None, None, false)
                 .unwrap();
         assert_eq!(ev.input_tokens, 0);
         assert_eq!(ev.output_tokens, 0);
@@ -780,6 +824,7 @@ mod tests {
             true,
             None,
             None,
+            false,
         )
         .unwrap();
         let roll = aggregate(dir.path(), 0, i64::MAX);
@@ -807,6 +852,7 @@ mod tests {
             true,
             Some(100), // cache creation
             None,
+            false,
         )
         .unwrap();
         record_provider_call(
@@ -819,6 +865,7 @@ mod tests {
             true,
             None,
             Some(300), // cache read
+            false,
         )
         .unwrap();
         let roll = aggregate(dir.path(), 0, i64::MAX);
@@ -855,5 +902,67 @@ mod tests {
         assert_eq!(roll.total_call_count, 1);
         assert_eq!(roll.total_cache_creation_tokens, 0);
         assert_eq!(roll.total_cache_savings_usd, 0.0);
+    }
+
+    // ── VIEW-06: automated-vs-human session flag ──────────────────────────
+
+    #[test]
+    fn automated_vs_human_flag_round_trips_through_aggregate() {
+        let dir = tempdir().unwrap();
+        // Human call (direct CLI chat turn).
+        record_provider_call(
+            dir.path(),
+            "claude_api",
+            "claude-opus-4-5",
+            Some(100),
+            Some(50),
+            200,
+            true,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        // Automated call (council hemisphere).
+        record_provider_call(
+            dir.path(),
+            "claude_api",
+            "claude-opus-4-5",
+            Some(80),
+            Some(30),
+            150,
+            true,
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+        let roll = aggregate(dir.path(), 0, i64::MAX);
+        assert_eq!(roll.total_human_count, 1, "expected 1 human call");
+        assert_eq!(roll.total_automated_count, 1, "expected 1 automated call");
+        assert_eq!(roll.per_provider.len(), 1);
+        let pp = &roll.per_provider[0];
+        assert_eq!(pp.human_count, 1, "per-provider human_count");
+        assert_eq!(pp.automated_count, 1, "per-provider automated_count");
+    }
+
+    #[test]
+    fn pre_view06_backward_compat_defaults_automated_to_false() {
+        // A raw JSONL line WITHOUT the `automated` field (pre-VIEW-06 format)
+        // must deserialize without error and be counted as human (automated=false).
+        let line = r#"{"ts_unix":1779494400,"provider":"openai_api","model":"gpt-4.1","input_tokens":10,"output_tokens":5,"cost_usd":0.001,"latency_ms":200,"ok":true,"cache_creation_tokens":0,"cache_read_tokens":0,"cache_savings_usd":0.0}"#;
+        // Verify serde default kicks in.
+        let ev: UsageEvent = serde_json::from_str(line).unwrap();
+        assert!(!ev.automated, "pre-VIEW-06 event must default automated=false");
+        // Write it directly to the JSONL file (mimics pre-VIEW-06 on-disk data).
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(usage_dir(dir.path())).unwrap();
+        let path = jsonl_file_for_ts(dir.path(), 1_779_494_400);
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+        // aggregate must classify it as human (human_count=1, automated_count=0).
+        let roll = aggregate(dir.path(), 0, i64::MAX);
+        assert_eq!(roll.total_call_count, 1);
+        assert_eq!(roll.total_human_count, 1, "pre-VIEW-06 record counts as human");
+        assert_eq!(roll.total_automated_count, 0);
     }
 }

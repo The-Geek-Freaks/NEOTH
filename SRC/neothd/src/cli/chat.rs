@@ -1843,6 +1843,7 @@ async fn dispatch_provider(
                 true,
                 cache_creation_tokens,
                 cache_read_tokens,
+                false, // VIEW-06: direct operator CLI turn → human
             );
             publish_provider_responded(
                 provider_name,
@@ -2201,6 +2202,7 @@ async fn dispatch_provider(
                         true,
                         completion.cache_creation_tokens,
                         completion.cache_read_tokens,
+                        false, // VIEW-06: direct operator CLI turn → human
                     );
                     publish_provider_responded(
                         provider_name,
@@ -2255,6 +2257,7 @@ async fn dispatch_provider(
                         false,
                         None,
                         None,
+                        false, // VIEW-06: direct operator CLI turn → human
                     );
                     if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
                         record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
@@ -4283,6 +4286,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     true,
                     c.cache_creation_tokens,
                     c.cache_read_tokens,
+                    true, // VIEW-06: council hemisphere call → automated
                 );
                 // GOLD-WIRE-10: the council's per-hemisphere provider response
                 // is the first real producer on the domain-event bus. Each
@@ -4323,6 +4327,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     false,
                     None,
                     None,
+                    true, // VIEW-06: council hemisphere call → automated
                 );
                 Err(e.to_string())
             }
@@ -6352,6 +6357,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
                             true,
                             c.cache_creation_tokens,
                             c.cache_read_tokens,
+                            true, // VIEW-06: MCP agentic-loop hop → automated
                         );
                         publish_provider_responded(
                             provider_name,
@@ -6375,6 +6381,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
                             false,
                             None,
                             None,
+                            true, // VIEW-06: MCP agentic-loop hop → automated
                         );
                         Err(e)
                     }
