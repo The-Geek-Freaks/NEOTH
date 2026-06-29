@@ -768,6 +768,17 @@ pub struct FreedomConfig {
     /// tone changes. Following `mif_enabled` / `self_score_enabled` precedent.
     #[serde(default)]
     pub tone_modifier: ToneModifierConfig,
+
+    /// GOLD-ADOPT-17 — mid-turn schema-driven elicitation gate.
+    /// When `enabled` (default `true`), the MCP dispatch loop intercepts
+    /// tool results that carry an `elicitation_request` key and presents
+    /// the operator with a structured CLI form before continuing. Operators
+    /// who want fully non-interactive operation (CI pipelines, scripted
+    /// chat) flip `enabled: false`. Only active on the TTY path (`neoth
+    /// chat`); the channel / serve-pipeline path always behaves as disabled
+    /// regardless of this field.
+    #[serde(default)]
+    pub elicitation: ElicitationConfig,
 }
 
 /// GOLD-ADAPT-OH-11 — serde default returning `true` so that existing
@@ -775,6 +786,28 @@ pub struct FreedomConfig {
 /// introduced (no retroactive hint spam for long-running operators).
 fn default_true() -> bool {
     true
+}
+
+/// GOLD-ADOPT-17 — runtime gate for schema-driven mid-turn elicitation.
+///
+/// Lives in `freedom.yaml::elicitation`. Example operator opt-out:
+/// ```yaml
+/// elicitation:
+///   enabled: false
+/// ```
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ElicitationConfig {
+    /// Master kill-switch. Default `true` — opt-out for non-interactive
+    /// environments (CI, scripted pipelines).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for ElicitationConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// GOLD-ADAPT-LOWKEY-08 — kill-switch + threshold for the MDS tone modifier.

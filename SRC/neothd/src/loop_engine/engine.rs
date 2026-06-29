@@ -363,6 +363,8 @@ pub async fn run_loop(
             compaction,
             compression.clone(),
             judge_provider,
+            // GOLD-ADOPT-17 — loop-engine runs headless (no TTY); always Disabled.
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await?;
 

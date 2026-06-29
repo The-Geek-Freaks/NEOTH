@@ -2263,6 +2263,13 @@ async fn dispatch_provider(
                 } else {
                     None
                 },
+                // GOLD-ADOPT-17 — enable CLI elicitation on the TTY path when
+                // the operator has not disabled it in freedom.yaml.
+                if config.elicitation.enabled {
+                    &crate::cli::elicitation::ElicitationHandler::Cli
+                } else {
+                    &crate::cli::elicitation::ElicitationHandler::Disabled
+                },
             )
             .await
             {
@@ -6602,6 +6609,10 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // goal is set, an extra LLM call verifies the goal before a clean exit.
     // `None` = judge disabled (existing nudge path fires unchanged).
     judge_provider: Option<&dyn crate::providers::Provider>,
+    // GOLD-ADOPT-17 — mid-turn elicitation handler. `Cli` on the TTY path
+    // (checked by the caller before this call); `Disabled` on the channel /
+    // serve-pipeline path and in tests.
+    elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -6705,6 +6716,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
         compaction,
         compression,
         judge_provider,
+        // GOLD-ADOPT-17 — thread the elicitation handler into the loop.
+        elicitation_handler,
     )
     .await
 }

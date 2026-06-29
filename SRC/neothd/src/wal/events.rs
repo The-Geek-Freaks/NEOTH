@@ -17,7 +17,7 @@
 //!
 //! | Range          | Purpose                                                |
 //! |----------------|--------------------------------------------------------|
-//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21); 0x0B..=0x0C = companion pairing audit (GOLD-ADAPT-ODY-24); 0x0D..=0x0E = companion P2P Noise audit (GOLD-COMPANION-P2P-01) |
+//! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x03..=0x04 = elicitation audit (GOLD-ADOPT-17); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21); 0x0B..=0x0C = companion pairing audit (GOLD-ADAPT-ODY-24); 0x0D..=0x0E = companion P2P Noise audit (GOLD-COMPANION-P2P-01) |
 //! | `0x10..=0x1F`  | Daemon lifecycle (BOOT, SHUTDOWN, UPDATE_RAN, …)        |
 //! | `0x20..=0x2F`  | LLM provider lifecycle (REQUEST/RESPONSE/ERROR/STREAM) |
 //! | `0x2A..=0x2B`  | (reserved Phase 10 D14b) local Qwen3 inference trace   |
@@ -43,6 +43,29 @@ pub const EVENT_TYPE_RAW_TEXT: u8 = 0x01;
 /// lifecycle band and collided with the R-22 0x9X memory-tier allocation
 /// downstream of this fix.
 pub const EVENT_TYPE_REINFORCE: u8 = 0x02;
+
+/// `0x03 ELICITATION_REQUESTED` — GOLD-ADOPT-17. Emitted in the MCP dispatch
+/// loop when a tool result carries an `elicitation_request` key and the
+/// operator is about to be shown a structured CLI form.  Payload stores
+/// field *names* only — values are NEVER written to WAL (could be passwords,
+/// tokens, or PII).
+///
+/// Payload (JSON): `{ "server": str, "tool": str, "field_count": usize,
+/// "fields": [str], "ts_unix": i64 }`.
+///
+/// Batchable (advisory, re-askable on crash) — NOT in `needs_immediate_sync`.
+pub const EVENT_TYPE_ELICITATION_REQUESTED: u8 = 0x03;
+
+/// `0x04 ELICITATION_RESPONSE` — GOLD-ADOPT-17. Emitted after the operator
+/// completes the elicitation form.  Payload stores field names + answered
+/// field names, never values.
+///
+/// Payload (JSON): `{ "server": str, "tool": str, "field_count": usize,
+/// "fields": [str], "answered_fields": [str], "answered_count": usize,
+/// "ts_unix": i64 }`.
+///
+/// Batchable — NOT in `needs_immediate_sync`.
+pub const EVENT_TYPE_ELICITATION_RESPONSE: u8 = 0x04;
 
 /// R-01 (Session 24) — operator opened a Turn-Journal for one
 /// `neoth chat` invocation. The companion JSONL file at
@@ -2273,6 +2296,9 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
 pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("raw_text", EVENT_TYPE_RAW_TEXT),
     ("reinforce", EVENT_TYPE_REINFORCE),
+    // GOLD-ADOPT-17 elicitation audit (0x03..=0x04, memory+recall band).
+    ("elicitation_requested", EVENT_TYPE_ELICITATION_REQUESTED),
+    ("elicitation_response", EVENT_TYPE_ELICITATION_RESPONSE),
     // GOLD-ADAPT-ODY-21 webhook audit (0x08..=0x0A, memory+recall band).
     ("webhook_delivered", EVENT_TYPE_WEBHOOK_DELIVERED),
     ("webhook_ssrf_blocked", EVENT_TYPE_WEBHOOK_SSRF_BLOCKED),
@@ -2731,6 +2757,15 @@ pub const EVENT_TYPE_PERSONA_LOCK_ENFORCED: u8 = 0xFF;
 const _: () = {
     let _ = [(); 1][(EVENT_TYPE_RAW_TEXT < 0x01 || EVENT_TYPE_RAW_TEXT > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_REINFORCE < 0x01 || EVENT_TYPE_REINFORCE > 0x0F) as usize];
+    // GOLD-ADOPT-17: 0x03 and 0x04 must sit in the 0x01..=0x0F memory+recall
+    // band and must be strictly ordered after REINFORCE (0x02).
+    let _ = [(); 1][(EVENT_TYPE_ELICITATION_REQUESTED < 0x01
+        || EVENT_TYPE_ELICITATION_REQUESTED > 0x0F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_ELICITATION_RESPONSE < 0x01
+        || EVENT_TYPE_ELICITATION_RESPONSE > 0x0F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_ELICITATION_REQUESTED <= EVENT_TYPE_REINFORCE) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_ELICITATION_RESPONSE <= EVENT_TYPE_ELICITATION_REQUESTED) as usize];
     // 0x05..=0x07 are recovery anchors (turn-journal lifecycle), not recall
     // ops, even though they sit in the 0x01..=0x0F memory+recall band.
     let _ =

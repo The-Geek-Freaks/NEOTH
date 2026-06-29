@@ -145,6 +145,9 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         None,
         // HERMES-04 — judge disabled in bare wrapper (test/convenience callers).
         None,
+        // GOLD-ADOPT-17 — elicitation disabled in the bare wrapper; the chat
+        // path passes the appropriate handler after checking TTY + config.
+        &crate::cli::elicitation::ElicitationHandler::Disabled,
     )
     .await
 }
@@ -187,6 +190,10 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // call verifies the goal is met before the loop exits on a clean exit with
     // an active goal. `None` = judge disabled (existing nudge path fires unchanged).
     judge_provider: Option<&dyn crate::providers::Provider>,
+    // GOLD-ADOPT-17 — mid-turn schema-driven elicitation handler. `Cli` on the
+    // TTY path (`neoth chat`); `Disabled` on channel / serve-pipeline paths and
+    // in tests. Must be last so existing call-sites need only a one-line append.
+    elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -598,6 +605,24 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                             &rendered,
                             crate::mcp::harness::SKELETONIZE_THRESHOLD_LINES,
                         );
+                    // GOLD-ADOPT-17 — mid-turn elicitation intercept. When a tool
+                    // result embeds an `elicitation_request` key, prompt the
+                    // operator for structured input and inject their answers as
+                    // an additional tool-result block BEFORE the untrusted-wrap
+                    // so the next LLM turn sees both output and the filled form.
+                    // Fast-path (Disabled / no keyword / non-JSON) returns None
+                    // with zero allocation.
+                    if let Ok(Some(answer_block)) = crate::cli::elicitation::maybe_elicit(
+                        &rendered,
+                        &call.server,
+                        &call.tool,
+                        elicitation_handler,
+                        writer,
+                    )
+                    .await
+                    {
+                        tool_result_blocks.push(answer_block);
+                    }
                     // GOLD-ADAPT-ODY-18 — tool output is UNTRUSTED external data
                     // (web fetch / search / RAG / third-party MCP results can be
                     // attacker-controlled). Fence it in the untrusted-source
@@ -1359,6 +1384,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // HERMES-04: judge disabled in tests
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -1485,6 +1512,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // HERMES-04: judge disabled in tests
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -1540,6 +1569,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // HERMES-04: judge disabled in tests
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -1655,6 +1686,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // HERMES-04: judge disabled in tests
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -1718,6 +1751,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // HERMES-04: judge disabled in tests
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -1754,6 +1789,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // HERMES-04: judge disabled in tests
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -1846,6 +1883,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // HERMES-04: judge disabled in tests
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -2089,6 +2128,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None,
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -2132,6 +2173,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None,
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -2169,6 +2212,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None,
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -2231,6 +2276,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             Some(&judge),
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();
@@ -2269,6 +2316,8 @@ mod tests {
             crate::context::compaction::CompactionPolicy::disabled(),
             None,
             None, // judge disabled — BudgetExhausted from cap, not from judge
+            // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
         )
         .await
         .unwrap();

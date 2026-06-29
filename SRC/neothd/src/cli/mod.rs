@@ -57,6 +57,7 @@ pub mod dreaming_task;
 pub mod ecology;
 pub mod edit;
 pub mod editor;
+pub(crate) mod elicitation;
 pub mod email;
 pub mod events;
 pub mod export;

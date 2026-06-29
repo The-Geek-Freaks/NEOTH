@@ -2113,6 +2113,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     } else {
                         None
                     },
+                    // GOLD-ADOPT-17 — no TTY available on the channel path;
+                    // elicitation is unconditionally disabled here.
+                    &crate::cli::elicitation::ElicitationHandler::Disabled,
                 )
                 .await
                 {
