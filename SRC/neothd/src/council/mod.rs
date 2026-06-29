@@ -33,6 +33,12 @@ pub mod day_counter;
 pub mod dissent;
 pub mod diversity;
 pub mod eval;
+/// GOLD-ADAPT-LOWKEY-08 — Dynamic-persona MDS tone modifier.
+/// Classifies per-turn input intensity (Low/Medium/High/Urgent) from the
+/// raw prompt string and maps it to a tone-hint string appended to the
+/// active `persona_override`. Pure-fn over `&str`; no I/O; no WAL event
+/// (STDERR-only observability following LOWKEY-05/07 precedent).
+pub mod mds_tone;
 /// GOLD-ADAPT-LOWKEY-04 — MIF motive-identification pre-step.
 /// Classifies operator intent as Stated / Inferred / Conflicted before
 /// the hemisphere debate runs.  `Conflicted` gates the debate and

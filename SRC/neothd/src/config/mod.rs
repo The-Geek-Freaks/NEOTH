@@ -751,6 +751,16 @@ pub struct FreedomConfig {
     /// prefix cache on every message, so per-turn time content adds no cache cost.
     #[serde(default)]
     pub user_tz: Option<String>,
+
+    /// GOLD-ADAPT-LOWKEY-08 — Dynamic-persona MDS tone modifier.
+    /// When `enabled`, classifies input intensity per-turn and augments the
+    /// active `persona_override` with a matching tone directive (e.g.
+    /// "keep answer short, skip preamble" for a High-intensity turn).
+    /// Default OFF (`enabled: false`) — an explicit opt-in so operators who
+    /// didn't configure a `tweaks.toml::persona_override` don't get surprise
+    /// tone changes. Following `mif_enabled` / `self_score_enabled` precedent.
+    #[serde(default)]
+    pub tone_modifier: ToneModifierConfig,
 }
 
 /// GOLD-ADAPT-OH-11 — serde default returning `true` so that existing
@@ -758,6 +768,37 @@ pub struct FreedomConfig {
 /// introduced (no retroactive hint spam for long-running operators).
 fn default_true() -> bool {
     true
+}
+
+/// GOLD-ADAPT-LOWKEY-08 — kill-switch + threshold for the MDS tone modifier.
+///
+/// Lives in `freedom.yaml::tone_modifier`. Example operator opt-in:
+/// ```yaml
+/// tone_modifier:
+///   enabled: true
+///   min_intensity: medium   # or high / urgent
+/// ```
+///
+/// `min_intensity` is the lowest `InputIntensity` band that triggers
+/// augmentation. Default `Medium` means Low prompts are always a no-op
+/// and every working prompt gets the direct-tone hint. Operators who
+/// want the modifier only on urgent prompts set `min_intensity: urgent`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ToneModifierConfig {
+    /// Master kill-switch. Default `false` — operator must opt in.
+    pub enabled: bool,
+    /// Minimum intensity that triggers tone augmentation. Default `Medium`.
+    pub min_intensity: crate::council::mds_tone::InputIntensity,
+}
+
+impl Default for ToneModifierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_intensity: crate::council::mds_tone::InputIntensity::Medium,
+        }
+    }
 }
 
 /// AUDIT-RPC-01 — audit-RPC listener config. Default: disabled (the daemon

@@ -757,6 +757,33 @@ async fn build_prompt_bundle(
         .ok()
         .and_then(|t| t.persona_override.clone());
 
+    // ── GOLD-ADAPT-LOWKEY-08 — MDS dynamic tone modifier ─────────────────
+    // Augments the static tweaks.toml persona_override with a per-turn
+    // tone directive derived from prompt intensity. Kill-switch default OFF.
+    let persona_override = if config.tone_modifier.enabled {
+        let intensity =
+            crate::council::mds_tone::classify_intensity(&prompt);
+        if intensity >= config.tone_modifier.min_intensity {
+            let augmented = crate::council::mds_tone::modifier_for_intensity(
+                intensity,
+                persona_override.as_deref(),
+            );
+            if let Some(aug) = augmented {
+                eprintln!(
+                    "[neoth:mds-tone] intensity={:?} modifier={:?}",
+                    intensity, aug
+                );
+                Some(aug)
+            } else {
+                persona_override
+            }
+        } else {
+            persona_override
+        }
+    } else {
+        persona_override
+    };
+
     // ── AR-01 (Session 24) — active profile preset → system_addendum ────
     // Read `~/.neoth/profile/active_preset.txt` on EVERY turn so that
     // `neoth profile preset apply <name>` takes effect immediately
