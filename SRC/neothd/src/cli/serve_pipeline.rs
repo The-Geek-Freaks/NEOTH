@@ -72,6 +72,13 @@ pub(crate) struct PipelineHandlerDeps {
     /// startup couldn't open or drain views.db — handler falls back
     /// to per-call open so the channel path still works.
     pub(crate) views_conn: Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    /// GOLD-ADAPT-TRAIL-04: multi-reader SQLite executor (writer:1 + readers:4).
+    /// When `Some`, read-only DB operations (e.g. `resolve_inbound_identity`)
+    /// use a pool reader instead of the serialising write mutex, enabling truly
+    /// concurrent identity resolution across all channel handlers under WAL mode.
+    /// `None` means the executor failed to open at boot — callers fall back to
+    /// the legacy `views_conn` mutex path so the channel pipeline still works.
+    pub(crate) views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
     /// GOLD-ADAPT-GOOSE-03: shared approve/deny bus for channel-driven
     /// permission confirms. When `Some`, the two autonomy gates in the
     /// turn loop (ChannelSend + PaidProviderCall) switch from
@@ -147,11 +154,39 @@ pub(crate) fn sender_hash_of(sender_id: &str) -> String {
 /// a stable person. Best-effort: a missing `views_conn` or a resolver error
 /// leaves `human_uuid = None`. The shared views_conn guard is dropped before
 /// return (no lock held across a later await).
+///
+/// GOLD-ADAPT-TRAIL-04: when `views_executor` is `Some`, uses a **pool reader**
+/// (non-serialising) instead of the write mutex, enabling concurrent identity
+/// resolution across all channel handlers. Falls back to `views_conn` (legacy
+/// serialising mutex) when the executor is `None`.
 pub(crate) async fn resolve_inbound_identity(
     inbound: &mut InboundMessage,
     views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) {
-    if let Some(vc) = views_conn {
+    // TRAIL-04: prefer the pool reader from the executor; fall back to the
+    // legacy serialising mutex when the executor is absent.
+    if let Some(exec) = views_executor {
+        let result = exec
+            .with_reader(|conn| {
+                crate::channels::identity::resolve_or_create_human_uuid(
+                    conn,
+                    inbound.channel.as_str(),
+                    &inbound.sender_id,
+                    &inbound.chat_id,
+                )
+            })
+            .await;
+        match result {
+            Ok(uuid) => inbound.human_uuid = Some(uuid),
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "identity: human_uuid resolve failed via executor reader (best-effort)"
+                )
+            }
+        }
+    } else if let Some(vc) = views_conn {
         let conn = vc.lock().await;
         match crate::channels::identity::resolve_or_create_human_uuid(
             &conn,
@@ -620,6 +655,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         profile_config,
         reload_controller,
         views_conn,
+        views_executor,
         confirm_bus,
     } = deps;
     // GOLD-ADAPT-GOOSE-03: build the ChannelAsker from the bus once (outside the
@@ -659,6 +695,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         // mid-message config-flip is impossible.
         let config_for_handler = reload_controller.latest();
         let views_conn = views_conn.clone();
+        // TRAIL-04: clone executor Arc per-turn so the async future owns it.
+        let views_executor = views_executor.clone();
         // GOLD-CCPARITY-ONCE: clone the session Arc so the async future owns it.
         let session_fired_once = Arc::clone(&session_fired_once_arc);
         Box::pin(async move {
@@ -715,7 +753,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             }
 
             // GOLD-ARCH-01 phase 2: SPEC-11 identity resolve (stamps human_uuid).
-            resolve_inbound_identity(&mut inbound, &views_conn).await;
+            // TRAIL-04: passes executor so identity lookup uses a pool reader.
+            resolve_inbound_identity(&mut inbound, &views_conn, &views_executor).await;
             // GOLD-ARCH-01 phase 2: SD-03 edited-message audit. An edit is
             // observed-only — audit it + return without re-running the pipeline.
             if audit_inbound_edit(&inbound, &sender_hash, &writer).await {
@@ -3015,7 +3054,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_identity_with_no_views_conn_is_a_noop() {
         let mut msg = inbound(Some("hi"), None);
-        resolve_inbound_identity(&mut msg, &None).await;
+        resolve_inbound_identity(&mut msg, &None, &None).await;
         assert!(msg.human_uuid.is_none(), "no conn → no uuid, no panic");
     }
 

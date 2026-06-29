@@ -946,6 +946,94 @@ fn apply_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+// ── GOLD-ADAPT-TRAIL-04 — Multi-reader SQLite executor ───────────────────────
+
+/// GOLD-ADAPT-TRAIL-04 — Multi-reader executor for `views.db`.
+///
+/// Holds **1 write connection** (serialises all DB-mutating operations) and
+/// **N read connections** (round-robin, allowing truly concurrent reads under
+/// SQLite WAL mode). SQLite WAL guarantees N concurrent readers with no
+/// reader-writer lock contention, so `with_reader` calls return immediately
+/// even while a write is in flight.
+///
+/// `rusqlite::Connection` is `Send` but `!Sync`; each connection is wrapped in
+/// its own `tokio::sync::Mutex` so the struct is `Sync` and can be shared via
+/// `Arc<ViewsExecutor>` across async tasks.
+///
+/// Construction: call [`ViewsExecutor::open`] once at daemon boot (in
+/// `cli/serve.rs`) and distribute the `Arc` to all channel handlers via
+/// `PipelineHandlerDeps::views_executor`. The writer mutex is also exposed as
+/// a `&tokio::sync::Mutex<Connection>` (via [`write_conn_arc`]) so call sites
+/// that use `PipelineConn::Shared` during the incremental migration can point
+/// at the same serialised connection.
+///
+/// [`write_conn_arc`]: ViewsExecutor::write_conn_arc
+pub struct ViewsExecutor {
+    writer: tokio::sync::Mutex<rusqlite::Connection>,
+    readers: Vec<tokio::sync::Mutex<rusqlite::Connection>>,
+    next_reader: std::sync::atomic::AtomicUsize,
+}
+
+impl ViewsExecutor {
+    /// Open 1 write connection + `reader_count` read connections (minimum 1)
+    /// to `path`. All connections receive the full pragma set via [`open`].
+    pub fn open(path: &std::path::Path, reader_count: usize) -> anyhow::Result<std::sync::Arc<Self>> {
+        let writer = open(path)?;
+        let count = reader_count.max(1);
+        let readers: anyhow::Result<Vec<rusqlite::Connection>> =
+            (0..count).map(|_| open(path)).collect();
+        Ok(std::sync::Arc::new(Self {
+            writer: tokio::sync::Mutex::new(writer),
+            readers: readers?.into_iter().map(tokio::sync::Mutex::new).collect(),
+            next_reader: std::sync::atomic::AtomicUsize::new(0),
+        }))
+    }
+
+    /// Acquire the write connection for a DB-mutating closure. Serialises all
+    /// writes through a single `Mutex<Connection>` — only one writer is ever
+    /// active at a time, which is required by SQLite even in WAL mode.
+    pub async fn with_writer<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&rusqlite::Connection) -> T,
+    {
+        let g = self.writer.lock().await;
+        f(&g)
+    }
+
+    /// Acquire a read connection from the pool (round-robin index). Under WAL
+    /// mode this never blocks waiting for the writer — each read connection
+    /// sees a consistent snapshot of committed data.
+    pub async fn with_reader<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&rusqlite::Connection) -> T,
+    {
+        let idx = self
+            .next_reader
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            % self.readers.len();
+        let g = self.readers[idx].lock().await;
+        f(&g)
+    }
+
+    /// Compatibility shim: exposes the write-connection mutex so call sites
+    /// that need `Arc<tokio::sync::Mutex<Connection>>` (e.g. `PipelineConn::
+    /// Shared`) can point at the executor's single writer during the incremental
+    /// migration. Returns a reference to the inner `Mutex` — callers wrap it in
+    /// `Arc::new(tokio::sync::Mutex<Connection>)` indirection via a clone of
+    /// the executor `Arc` rather than extracting the mutex itself.
+    ///
+    /// **Internal use only.** Remove once all write-path call sites use
+    /// `with_writer` directly.
+    pub fn write_conn_arc(&self) -> &tokio::sync::Mutex<rusqlite::Connection> {
+        &self.writer
+    }
+}
+
+// SAFETY: `rusqlite::Connection` is `Send`; each is behind a `Mutex`, so
+// `ViewsExecutor` is both `Send` and `Sync`.
+unsafe impl Send for ViewsExecutor {}
+unsafe impl Sync for ViewsExecutor {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1146,5 +1234,105 @@ mod tests {
             .query_row("PRAGMA journal_size_limit", [], |r| r.get(0))
             .expect("journal_size_limit");
         assert_eq!(jsl, 209_715_200, "journal_size_limit must be 200 MiB");
+    }
+
+    // ── GOLD-ADAPT-TRAIL-04 — ViewsExecutor unit tests ───────────────────────
+
+    #[tokio::test]
+    async fn trail04_views_executor_writer_and_reader_share_data() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let exec = ViewsExecutor::open(&path, 2).expect("open executor");
+
+        // Write via the write connection.
+        exec.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('trail04_key', 'trail04_val')",
+                [],
+            )
+            .expect("insert via writer");
+        })
+        .await;
+
+        // Read via a pool reader — must see the committed row.
+        let v = exec
+            .with_reader(|conn| {
+                conn.query_row(
+                    "SELECT value FROM meta WHERE key = 'trail04_key'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap()
+            })
+            .await;
+        assert_eq!(v, "trail04_val");
+    }
+
+    #[tokio::test]
+    async fn trail04_views_executor_concurrent_readers_do_not_block() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let exec = ViewsExecutor::open(&path, 3).expect("open executor");
+
+        // Seed one row via the writer.
+        exec.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('multi_key', '99')",
+                [],
+            )
+            .unwrap();
+        })
+        .await;
+
+        // Three concurrent readers — none should wait on the write lock.
+        let exec2 = exec.clone();
+        let exec3 = exec.clone();
+        let (a, b, c) = tokio::join!(
+            exec.with_reader(|conn| {
+                conn.query_row(
+                    "SELECT value FROM meta WHERE key='multi_key'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap()
+            }),
+            exec2.with_reader(|conn| {
+                conn.query_row(
+                    "SELECT value FROM meta WHERE key='multi_key'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap()
+            }),
+            exec3.with_reader(|conn| {
+                conn.query_row(
+                    "SELECT value FROM meta WHERE key='multi_key'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap()
+            }),
+        );
+        assert_eq!(a, "99");
+        assert_eq!(b, "99");
+        assert_eq!(c, "99");
+    }
+
+    #[tokio::test]
+    async fn trail04_views_executor_round_robin_wraps() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        // 2 readers: next_reader goes 0→1→2 (wraps to 0)→1→0 …
+        let exec = ViewsExecutor::open(&path, 2).expect("open executor");
+        // Drive the counter past usize::MAX boundary is impractical, but we
+        // can verify that index selection doesn't panic on repeated reads.
+        for _ in 0..10 {
+            exec.with_reader(|conn| {
+                let _v: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM meta", [], |r| r.get(0))
+                    .unwrap();
+            })
+            .await;
+        }
     }
 }

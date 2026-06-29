@@ -2665,6 +2665,9 @@ pub(crate) fn spawn_channel_adapters(
     // When `Some`, channel permission gates switch to Channel confirm strategy
     // (suspend/resume via UUID elicitation). `None` = fail-closed (pre-GOOSE-03).
     confirm_bus: &Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
+    // GOLD-ADAPT-TRAIL-04: multi-reader executor. When `Some`, read-only DB
+    // calls in channel handlers use a pool reader (non-serialising).
+    views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) {
     if let (Some(telegram_token), Some(provider)) =
         (config.telegram_token.clone(), shared_provider.as_ref())
@@ -2679,6 +2682,7 @@ pub(crate) fn spawn_channel_adapters(
             shared_views_conn,
             reload_controller,
             confirm_bus.clone(),
+            views_executor.clone(),
         );
         // SF-03: hand the adapter the daemon's WAL writer so allowlist-rejected
         // senders are audited via `0x3B CHANNEL_GATE_REJECTED`.
@@ -2722,6 +2726,7 @@ pub(crate) fn spawn_channel_adapters(
                 shared_views_conn,
                 reload_controller,
                 confirm_bus.clone(),
+                views_executor.clone(),
             );
             let channel = crate::channels::slack::SlackChannel::new(bot, app);
             spawn_channel_run(channel, handler, "Slack", channel_tasks);
@@ -2766,6 +2771,7 @@ pub(crate) fn spawn_channel_adapters(
                         shared_views_conn,
                         reload_controller,
                         confirm_bus.clone(),
+                        views_executor.clone(),
                     );
                     spawn_channel_run(channel, handler, "Discord", channel_tasks);
                     info!(
@@ -2810,6 +2816,7 @@ pub(crate) fn spawn_channel_adapters(
                         shared_views_conn,
                         reload_controller,
                         confirm_bus.clone(),
+                        views_executor.clone(),
                     );
                     spawn_channel_run(channel, handler, "Signal", channel_tasks);
                     info!(
@@ -2860,6 +2867,7 @@ pub(crate) fn spawn_channel_adapters(
                 shared_views_conn,
                 reload_controller,
                 confirm_bus.clone(),
+                views_executor.clone(),
             );
             spawn_channel_run(channel, handler, "Mattermost", channel_tasks);
             info!(
@@ -2915,6 +2923,7 @@ pub(crate) fn spawn_channel_adapters(
                     shared_views_conn,
                     reload_controller,
                     confirm_bus.clone(),
+                    views_executor.clone(),
                 );
                 spawn_channel_run(channel, handler, "Matrix", channel_tasks);
                 info!(
@@ -2967,6 +2976,7 @@ pub(crate) fn spawn_channel_adapters(
                     shared_views_conn,
                     reload_controller,
                     confirm_bus.clone(),
+                    views_executor.clone(),
                 );
                 spawn_channel_run(channel, handler, "IRC", channel_tasks);
                 info!(
@@ -3015,6 +3025,7 @@ pub(crate) fn spawn_channel_adapters(
                     shared_views_conn,
                     reload_controller,
                     confirm_bus.clone(),
+                    views_executor.clone(),
                 );
                 spawn_channel_run(channel, handler, "Twitch", channel_tasks);
                 info!(
@@ -3060,6 +3071,7 @@ pub(crate) fn spawn_channel_adapters(
                     shared_views_conn,
                     reload_controller,
                     confirm_bus.clone(),
+                    views_executor.clone(),
                 );
                 spawn_channel_run(channel, handler, "Nostr", channel_tasks);
                 info!(
@@ -3103,6 +3115,7 @@ pub(crate) fn spawn_channel_adapters(
                 shared_views_conn,
                 reload_controller,
                 confirm_bus.clone(),
+                views_executor.clone(),
             );
             let port = config.whatsapp_webhook_port.unwrap_or(8443);
             let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
@@ -3207,6 +3220,7 @@ pub(crate) fn spawn_channel_adapters(
                 shared_views_conn,
                 reload_controller,
                 confirm_bus.clone(),
+                views_executor.clone(),
             );
             let port = creds.line_webhook_port.unwrap_or(8444);
             let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
@@ -3303,6 +3317,9 @@ pub(crate) fn build_channel_handler(
     // GOLD-ADAPT-GOOSE-03: shared approval bus. When `Some`, channel gates
     // switch from FailClosed to Channel strategy (suspend/resume via UUID).
     confirm_bus: Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
+    // GOLD-ADAPT-TRAIL-04: multi-reader executor. When `Some`, read-only DB
+    // ops (identity resolve) use a pool reader instead of the write mutex.
+    views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) -> PipelineHandler {
     build_pipeline_handler(PipelineHandlerDeps {
         provider,
@@ -3316,6 +3333,7 @@ pub(crate) fn build_channel_handler(
         profile_config: config.profile.clone(),
         reload_controller: Arc::clone(reload_controller),
         views_conn: shared_views_conn.clone(),
+        views_executor,
         confirm_bus,
     })
 }

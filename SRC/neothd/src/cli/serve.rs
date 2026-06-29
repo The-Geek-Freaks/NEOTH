@@ -264,6 +264,38 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     };
 
+    // ── GOLD-ADAPT-TRAIL-04: multi-reader SQLite executor ─────────────────
+    //
+    // Opens 1 write + 4 read connections to views.db so concurrent inbound
+    // channel messages can resolve identities via pool readers without
+    // serialising behind the single write mutex. Under SQLite WAL mode,
+    // N readers run concurrently with no lock contention against the writer.
+    //
+    // The executor is `None` when views.db cannot be opened (same non-fatal
+    // fallback as `shared_views_conn`). The outbox drain above already
+    // opened and drained via `shared_views_conn`; the executor adds
+    // additional reader connections on top of the existing write path.
+    let views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>> = {
+        let views_path = store::default_path();
+        match crate::memory::store::ViewsExecutor::open(&views_path, 4) {
+            Ok(exec) => {
+                info!(
+                    readers = 4,
+                    "TRAIL-04: ViewsExecutor ready (writer:1 + readers:4)"
+                );
+                Some(exec)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    path = %views_path.display(),
+                    "TRAIL-04: ViewsExecutor open failed (non-fatal); channel handlers will use legacy single-conn path",
+                );
+                None
+            }
+        }
+    };
+
     // ── 5a. Spawn memory indexer (tail-the-WAL into SQLite views) ─────────
     //
     // Runs alongside the writer. Each iteration: replay_once(...) reads
@@ -606,6 +638,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &creds,
         &mut channel_tasks,
         &Some(confirm_bus),
+        &views_executor, // GOLD-ADAPT-TRAIL-04: multi-reader executor
     );
 
     // ── 5b-tris. Obsidian vault auto-sync (R-5 follow-up) ──────────────────
