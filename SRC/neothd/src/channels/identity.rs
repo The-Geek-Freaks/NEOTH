@@ -37,6 +37,27 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// Read-only lookup of an existing `human_uuid` for a `(channel, sender_id,
+/// chat_id)` triple. Returns `None` on first sight (no alias row yet). This is a
+/// PURE SELECT — safe to run on the `ViewsExecutor` reader pool (TRAIL-04). The
+/// create path lives in [`resolve_or_create_human_uuid`], which INSERTs and so
+/// MUST run on the single writer connection, never a reader.
+pub fn lookup_human_uuid(
+    conn: &Connection,
+    channel: &str,
+    sender_id: &str,
+    chat_id: &str,
+) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT uuid FROM idx_human_identity_aliases \
+         WHERE channel = ?1 AND sender_id = ?2 AND chat_id = ?3",
+        rusqlite::params![channel, sender_id, chat_id],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()
+    .context("lookup identity alias")
+}
+
 /// Resolve the `human_uuid` for a channel-native `(channel, sender_id,
 /// chat_id)` triple, minting a fresh UUID v7 + identity row on first sight.
 /// Idempotent: the same triple always returns the same uuid (the alias table's
@@ -48,16 +69,7 @@ pub fn resolve_or_create_human_uuid(
     sender_id: &str,
     chat_id: &str,
 ) -> Result<String> {
-    if let Some(uuid) = conn
-        .query_row(
-            "SELECT uuid FROM idx_human_identity_aliases \
-             WHERE channel = ?1 AND sender_id = ?2 AND chat_id = ?3",
-            rusqlite::params![channel, sender_id, chat_id],
-            |r| r.get::<_, String>(0),
-        )
-        .optional()
-        .context("lookup identity alias")?
-    {
+    if let Some(uuid) = lookup_human_uuid(conn, channel, sender_id, chat_id)? {
         return Ok(uuid);
     }
     let uuid = uuid::Uuid::now_v7().to_string();

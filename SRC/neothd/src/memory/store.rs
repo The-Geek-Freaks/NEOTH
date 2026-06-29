@@ -1318,6 +1318,72 @@ mod tests {
         assert_eq!(c, "99");
     }
 
+    /// TRAIL-04 P1 regression: parallel FIRST-SIGHT identity resolves through the
+    /// executor must converge on ONE uuid with no duplicate aliases, no orphan
+    /// identities, and no busy/locked errors — proving the fast-read(reader) /
+    /// slow-create(WRITER) split keeps every INSERT on the single writer (the
+    /// old code ran the writing `resolve_or_create` on the reader pool).
+    #[tokio::test]
+    async fn trail04_parallel_first_sight_identity_single_writer_no_dup() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let exec = ViewsExecutor::open(&path, 4).expect("open executor");
+
+        // 12 concurrent first-sight resolves for the SAME triple, each using the
+        // production path: read-only lookup on the pool, then create under the
+        // single writer when absent.
+        let mut handles = Vec::new();
+        for _ in 0..12 {
+            let e = exec.clone();
+            handles.push(tokio::spawn(async move {
+                if let Some(uuid) = e
+                    .with_reader(|c| {
+                        crate::channels::identity::lookup_human_uuid(
+                            c, "telegram", "user-1", "chat-1",
+                        )
+                    })
+                    .await
+                    .expect("reader lookup must not error (busy/locked)")
+                {
+                    return uuid;
+                }
+                e.with_writer(|c| {
+                    crate::channels::identity::resolve_or_create_human_uuid(
+                        c, "telegram", "user-1", "chat-1",
+                    )
+                })
+                .await
+                .expect("writer create must not error (busy/locked)")
+            }));
+        }
+        let mut uuids = std::collections::HashSet::new();
+        for h in handles {
+            uuids.insert(h.await.unwrap());
+        }
+        assert_eq!(
+            uuids.len(),
+            1,
+            "concurrent first-sight must converge on ONE uuid, got: {uuids:?}"
+        );
+
+        let alias_count: i64 = exec
+            .with_reader(|c| {
+                c.query_row("SELECT count(*) FROM idx_human_identity_aliases", [], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+            })
+            .await;
+        let identity_count: i64 = exec
+            .with_reader(|c| {
+                c.query_row("SELECT count(*) FROM idx_human_identity", [], |r| r.get(0))
+                    .unwrap()
+            })
+            .await;
+        assert_eq!(alias_count, 1, "exactly one alias row (no duplicates)");
+        assert_eq!(identity_count, 1, "exactly one identity row (no orphans)");
+    }
+
     #[tokio::test]
     async fn trail04_views_executor_round_robin_wraps() {
         let dir = tempdir().unwrap();

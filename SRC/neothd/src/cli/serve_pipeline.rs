@@ -167,9 +167,15 @@ pub(crate) async fn resolve_inbound_identity(
     // TRAIL-04: prefer the pool reader from the executor; fall back to the
     // legacy serialising mutex when the executor is absent.
     if let Some(exec) = views_executor {
-        let result = exec
+        // TRAIL-04 P1 fix — split fast-read / slow-create. `resolve_or_create`
+        // INSERTs on first sight, so it must NOT run on a reader connection (that
+        // would put writes on the reader pool and break the single-writer
+        // invariant → first-sight write-contention / identity races). The common
+        // case (alias already exists) is a pure read on the pool; only the rare
+        // first-sight creation takes the single writer.
+        let fast = exec
             .with_reader(|conn| {
-                crate::channels::identity::resolve_or_create_human_uuid(
+                crate::channels::identity::lookup_human_uuid(
                     conn,
                     inbound.channel.as_str(),
                     &inbound.sender_id,
@@ -177,14 +183,32 @@ pub(crate) async fn resolve_inbound_identity(
                 )
             })
             .await;
-        match result {
-            Ok(uuid) => inbound.human_uuid = Some(uuid),
-            Err(e) => {
-                tracing::debug!(
-                    error = %e,
-                    "identity: human_uuid resolve failed via executor reader (best-effort)"
-                )
+        match fast {
+            Ok(Some(uuid)) => inbound.human_uuid = Some(uuid),
+            Ok(None) => {
+                // First sight — create under the SINGLE writer.
+                match exec
+                    .with_writer(|conn| {
+                        crate::channels::identity::resolve_or_create_human_uuid(
+                            conn,
+                            inbound.channel.as_str(),
+                            &inbound.sender_id,
+                            &inbound.chat_id,
+                        )
+                    })
+                    .await
+                {
+                    Ok(uuid) => inbound.human_uuid = Some(uuid),
+                    Err(e) => tracing::debug!(
+                        error = %e,
+                        "identity: human_uuid create failed via executor writer (best-effort)"
+                    ),
+                }
             }
+            Err(e) => tracing::debug!(
+                error = %e,
+                "identity: human_uuid reader lookup failed (best-effort)"
+            ),
         }
     } else if let Some(vc) = views_conn {
         let conn = vc.lock().await;
