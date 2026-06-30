@@ -193,6 +193,10 @@ impl Drop for LspSession {
         if let Some(handle) = self.reader.take() {
             let _ = handle.join();
         }
+        // Reap the child after kill so it cannot linger as a zombie: on Unix
+        // `kill()` only signals and std `Child` does not wait-on-drop. The
+        // `kill()` above guarantees termination, so this returns promptly.
+        let _ = self.child.wait();
     }
 }
 
