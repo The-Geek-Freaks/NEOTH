@@ -152,6 +152,18 @@ pub struct RecallArgs {
     #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard", "hubs"])]
     pub communities: bool,
 
+    /// GOLD-ADAPT-ODY-26 — FTS search over raw transcript turns (persisted by
+    /// `neoth chat` and `neoth serve`) with N before/after context rows. Returns
+    /// matching turns ranked by BM25, each with up to `--context-rows` turns of
+    /// conversation context from the same session. Bypasses episode recall entirely.
+    #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard", "hubs", "communities"])]
+    pub transcript: Option<String>,
+
+    /// GOLD-ADAPT-ODY-26 — number of turns to show before and after each
+    /// transcript match (default 2). Only honoured when `--transcript` is set.
+    #[arg(long, default_value = "2")]
+    pub context_rows: usize,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -173,6 +185,13 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // HindsightCards (no DB, no WAL, no network) and ranks them by query.
     if let Some(q) = args.sessions.clone() {
         return run_session_search(&q, args.limit, args.output);
+    }
+
+    // GOLD-ADAPT-ODY-26 raw-transcript FTS short-circuit. Opens views.db and
+    // searches raw_turns_fts for the query, returning BM25-ranked results with
+    // before/after context rows. No WAL scan, no episode recall.
+    if let Some(q) = args.transcript.clone() {
+        return run_transcript_search(&q, args.context_rows, args.limit, args.output);
     }
 
     // GOLD-ADAPT-MEM-09 recall-gate classification short-circuit (pure; no DB).
@@ -1371,6 +1390,74 @@ fn hot_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeHit> {
 // Required for the conn alias used above.
 use rusqlite::Connection;
 
+/// GOLD-ADAPT-ODY-26 — render raw-transcript FTS results.
+///
+/// Opens `views.db`, calls `memory::transcript_store::search_turns`, and
+/// renders the results. Table format: for each hit, a header line is printed,
+/// then before-context rows (prefixed `  ^`), the matched row (prefixed `  *`),
+/// and after-context rows (prefixed `  v`). JSON: structured array.
+fn run_transcript_search(
+    query: &str,
+    context_rows: usize,
+    limit: usize,
+    output: crate::cli::OutputFormat,
+) -> Result<()> {
+    use crate::cli::OutputFormat;
+    let db_path = store::default_path();
+    let conn = store::open(&db_path).context("open views.db for transcript search")?;
+    let effective_limit = if limit == 0 { 20 } else { limit };
+    let results =
+        crate::memory::transcript_store::search_turns(&conn, query, context_rows, effective_limit)
+            .context("transcript FTS search")?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = results
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "session_id": r.matched.session_id,
+                        "matched": {
+                            "id": r.matched.id,
+                            "role": r.matched.role,
+                            "ts_unix": r.matched.ts_unix,
+                            "text": r.matched.text,
+                        },
+                        "before": r.before.iter().map(|t| serde_json::json!({
+                            "id": t.id, "role": t.role, "ts_unix": t.ts_unix, "text": t.text,
+                        })).collect::<Vec<_>>(),
+                        "after": r.after.iter().map(|t| serde_json::json!({
+                            "id": t.id, "role": t.role, "ts_unix": t.ts_unix, "text": t.text,
+                        })).collect::<Vec<_>>(),
+                        "bm25_rank": r.bm25_rank,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        }
+        OutputFormat::Table => {
+            if results.is_empty() {
+                println!("no transcript turns matched '{query}'");
+                return Ok(());
+            }
+            for r in &results {
+                println!(
+                    "── [{}] session {} (bm25 {:.4}) ──",
+                    r.matched.role, r.matched.session_id, r.bm25_rank
+                );
+                for b in &r.before {
+                    println!("  ^ [{}] {}: {}", b.role, b.ts_unix, b.text);
+                }
+                println!("  * [{}] {}: {}", r.matched.role, r.matched.ts_unix, r.matched.text);
+                for a in &r.after {
+                    println!("  v [{}] {}: {}", a.role, a.ts_unix, a.text);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Image → embedding store similarity recall.
 /// GOLD-ADAPT-ODY-25 — render the session-card keyword search.
 fn run_session_search(query: &str, limit: usize, output: crate::cli::OutputFormat) -> Result<()> {
@@ -1828,6 +1915,8 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            transcript: None,
+            context_rows: 2,
             classify: None,
             downvote: None,
             graph: None,
@@ -2111,6 +2200,8 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            transcript: None,
+            context_rows: 2,
             classify: None,
             downvote: None,
             graph: None,
@@ -2149,6 +2240,8 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            transcript: None,
+            context_rows: 2,
             classify: None,
             downvote: None,
             graph: None,
@@ -2187,6 +2280,8 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            transcript: None,
+            context_rows: 2,
             classify: None,
             downvote: None,
             graph: None,
@@ -2402,6 +2497,8 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            transcript: None,
+            context_rows: 2,
             classify: None,
             downvote: None,
             graph: None,

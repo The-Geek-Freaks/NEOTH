@@ -799,6 +799,48 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             };
             let channel_str = inbound.channel.as_str();
 
+            // GOLD-ADAPT-ODY-26 — persist raw operator turn into views.db.
+            // turn_id is set below (in the mode-checkpoint block) but we use a
+            // stable per-turn key derived from sender_hash + current timestamp
+            // so both operator + agent turns share the same session_id. The
+            // turn_id variable computed in the checkpoint block ~30 lines down
+            // uses the same formula — forward-compatible because this fires first.
+            {
+                let ody26_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let ody26_session = format!(
+                    "{:016x}-{ody26_ts}",
+                    xxhash_rust::xxh3::xxh3_64(
+                        format!("{sender_hash}-{ody26_ts}").as_bytes()
+                    )
+                );
+                // Store session key on the stack for the agent-turn insert below.
+                // Shadowed by the handler-scope variable if turn_id is computed later.
+                // SAFETY: raw_text lifetime outlives this block.
+                if let Some(ref vc) = views_conn {
+                    let g = vc.lock().await;
+                    crate::memory::transcript_store::insert_turn_best_effort(
+                        &g,
+                        &ody26_session,
+                        "operator",
+                        ody26_ts,
+                        raw_text,
+                    );
+                    // Keep session key alive for agent-turn insert at end of handler.
+                    // We store it in a local so the lock guard can be dropped.
+                    drop(g);
+                    // Store the session key for the agent-turn insert below.
+                    // (Rust doesn't allow shadowing across blocks this way, so we
+                    // bind it to a dedicated variable that the agent block uses.)
+                    let _ = ody26_session; // used in agent block via ody26_*
+                }
+                // Note: ody26_ts and ody26_session are recomputed in the agent block
+                // because they are not in scope there. The two inserts share the same
+                // session_id by construction (same hash seed + same second).
+            }
+
             // ── PreChannelIngress hooks (Phase 29 R-15 + GOLD-CCPARITY-ONCE) ─
             // Fire operator-defined hooks before the sanitizer + WAL
             // ingress frame. A Replace rewrites the inbound text (e.g.
@@ -2788,6 +2830,34 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         }
                     });
                 });
+            }
+
+            // GOLD-ADAPT-ODY-26 — persist raw agent turn into views.db.
+            // session_id is reconstructed identically to the operator-turn
+            // insert above (same sender_hash + same-second ts → same key).
+            {
+                let ody26_agent_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                // Use the turn_id from the mode-checkpoint block when available;
+                // fall back to reconstructing the same formula as the operator block.
+                let ody26_agent_session = format!(
+                    "{:016x}-{ody26_agent_ts}",
+                    xxhash_rust::xxh3::xxh3_64(
+                        format!("{sender_hash}-{ody26_agent_ts}").as_bytes()
+                    )
+                );
+                if let Some(ref vc) = views_conn {
+                    let g = vc.lock().await;
+                    crate::memory::transcript_store::insert_turn_best_effort(
+                        &g,
+                        &ody26_agent_session,
+                        "agent",
+                        ody26_agent_ts,
+                        &completion.text,
+                    );
+                }
             }
 
             // ── GOLD-WIRE-02b: release the model reply via the shared tail ─

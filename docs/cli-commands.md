@@ -2074,6 +2074,8 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--scorecard <N>` — GOLD-ADAPT-MEM-15 — print the recall-quality scorecard over the most recent N recall outcomes (hit-rate / result-count / reinforcement-rate / tier mix / latency percentiles) instead of searching. `--scorecard 0` uses the default window (500)
 - `--hubs <HUBS>` — GOLD-ADAPT-GRAPH-01 — print the top N most-connected nodes in the association graph (highest link degree), one row per node: `event_id` and the number of distinct links touching it. Useful for finding "hub" memories that were co-recalled with many other memories. Bypasses search. Defaults to `--limit` for the result count
 - `--communities <COMMUNITIES>` — GOLD-ADAPT-GRAPH-03 — detect communities in the association graph using one level of Louvain modularity optimisation and print each community (index, size, member node ids). Isolated nodes (no links) are omitted. Bypasses search
+- `--transcript <TEXT>` — GOLD-ADAPT-ODY-26 — FTS search over raw transcript turns (persisted by `neoth chat` and `neoth serve`) with N before/after context rows. Returns matching turns ranked by BM25, each with up to `--context-rows` turns of conversation context from the same session. Bypasses episode recall entirely
+- `--context-rows <CONTEXT_ROWS>` — GOLD-ADAPT-ODY-26 — number of turns to show before and after each transcript match (default 2). Only honoured when `--transcript` is set
 
 ## `neoth recall-score`
 

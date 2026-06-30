@@ -97,6 +97,9 @@ pub mod snapshot_refresh;
 pub mod source_weight;
 pub mod store;
 pub mod tiers;
+/// GOLD-ADAPT-ODY-26 — raw-turn persistence + FTS5 search with before/after
+/// context rows. `neoth recall --transcript <query>` surface.
+pub mod transcript_store;
 pub mod transfer_bundle;
 pub mod views;
 /// GOLD-ADAPT-SPEAKR-01 — 5-layer prompt composition for summarization

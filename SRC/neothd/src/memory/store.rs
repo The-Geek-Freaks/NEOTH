@@ -36,7 +36,10 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 20;
+/// v21: GOLD-ADAPT-ODY-26 — raw_turns table + raw_turns_fts FTS5 virtual table
+///      (porter-stemmed, content-linked to raw_turns) for raw-transcript FTS
+///      with before/after context rows. `neoth recall --transcript <query>`.
+pub const SCHEMA_VERSION: i64 = 21;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -925,6 +928,46 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_profile_pending_created
             ON idx_profile_pending (created_at_unix ASC);
+
+        -- ── Schema v21: GOLD-ADAPT-ODY-26 — raw transcript FTS ───────────
+        --
+        -- `raw_turns` is an append-only table: one row per operator/agent
+        -- turn. `raw_turns_fts` is a content-linked FTS5 virtual table
+        -- (porter unicode61 tokeniser, same as `chunks`) kept in sync by
+        -- the three triggers below (same pattern as idx_episode_fts v2).
+        -- `session_id` is an opaque string (the turn-id from serve_pipeline
+        -- or session_id_for from hindsight); `role` is 'operator'|'agent'.
+        -- Indexed by (session_id, id) for context-row window queries.
+        CREATE TABLE IF NOT EXISTS raw_turns (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT    NOT NULL,
+            role       TEXT    NOT NULL CHECK (role IN ('operator', 'agent')),
+            ts_unix    INTEGER NOT NULL,
+            text       TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS raw_turns_session ON raw_turns (session_id, id);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS raw_turns_fts USING fts5(
+            text,
+            content='raw_turns',
+            content_rowid='id',
+            tokenize='porter unicode61'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS raw_turns_ai AFTER INSERT ON raw_turns BEGIN
+            INSERT INTO raw_turns_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS raw_turns_ad AFTER DELETE ON raw_turns BEGIN
+            INSERT INTO raw_turns_fts(raw_turns_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS raw_turns_au AFTER UPDATE ON raw_turns BEGIN
+            INSERT INTO raw_turns_fts(raw_turns_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+            INSERT INTO raw_turns_fts(rowid, text) VALUES (new.id, new.text);
+        END;
         "#,
     )
     .context("apply views schema")?;

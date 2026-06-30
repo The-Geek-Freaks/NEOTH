@@ -3294,6 +3294,29 @@ async fn run_post_reply_pipelines(
         &response_text,
     );
 
+    // GOLD-ADAPT-ODY-26 — persist raw turns into views.db for FTS recall.
+    // Best-effort: open is cheap (db already exists from the indexer pass
+    // earlier in this session); a failure here must NEVER abort chat exit.
+    {
+        let db_path = crate::memory::store::default_path();
+        if let Ok(conn) = crate::memory::store::open(&db_path) {
+            crate::memory::transcript_store::insert_turn_best_effort(
+                &conn,
+                &current_session_id,
+                "operator",
+                chat_ts_unix,
+                &prompt,
+            );
+            crate::memory::transcript_store::insert_turn_best_effort(
+                &conn,
+                &current_session_id,
+                "agent",
+                chat_ts_unix + 1,
+                &response_text,
+            );
+        }
+    }
+
     // GOLD-ADOPT-21 — optional LLM session title (opt-in: `memory.name_sessions`).
     // AWAITED, not spawned: `neoth chat` is one-shot, so a spawned task would die
     // on process exit. Uses the cheap utility provider + a 12s timeout cap; any

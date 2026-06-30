@@ -164,7 +164,60 @@ pub const MIGRATIONS: &[Migration] = &[
                       (JV-MEM-08 Hebbian feedback)",
         run: migration_v19_to_v20,
     },
+    Migration {
+        from: 20,
+        to: 21,
+        description: "GOLD-ADAPT-ODY-26: add raw_turns + raw_turns_fts (raw-transcript FTS \
+                      with before/after context rows via `neoth recall --transcript`)",
+        run: migration_v20_to_v21,
+    },
 ];
+
+/// v20 → v21: GOLD-ADAPT-ODY-26 — add `raw_turns` + `raw_turns_fts` for
+/// raw-transcript FTS with before/after context rows.
+///
+/// The `raw_turns` table starts empty on migration, so no FTS rebuild is
+/// needed — the content-linked triggers keep the index current as rows land.
+/// All DDL uses `IF NOT EXISTS` so re-running against a partially-migrated
+/// database is idempotent.
+fn migration_v20_to_v21(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS raw_turns (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT    NOT NULL,
+            role       TEXT    NOT NULL CHECK (role IN ('operator', 'agent')),
+            ts_unix    INTEGER NOT NULL,
+            text       TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS raw_turns_session ON raw_turns (session_id, id);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS raw_turns_fts USING fts5(
+            text,
+            content='raw_turns',
+            content_rowid='id',
+            tokenize='porter unicode61'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS raw_turns_ai AFTER INSERT ON raw_turns BEGIN
+            INSERT INTO raw_turns_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS raw_turns_ad AFTER DELETE ON raw_turns BEGIN
+            INSERT INTO raw_turns_fts(raw_turns_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS raw_turns_au AFTER UPDATE ON raw_turns BEGIN
+            INSERT INTO raw_turns_fts(raw_turns_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+            INSERT INTO raw_turns_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+        "#,
+    )
+    .context("v20→v21: create raw_turns + raw_turns_fts (ODY-26 raw-transcript FTS)")?;
+    Ok(())
+}
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
 /// Mirrors the canonical column in `store::apply_schema`. Idempotent —
