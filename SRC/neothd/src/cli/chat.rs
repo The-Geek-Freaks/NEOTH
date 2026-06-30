@@ -3330,7 +3330,9 @@ async fn run_post_reply_pipelines(
     // AWAITED, not spawned: `neoth chat` is one-shot, so a spawned task would die
     // on process exit. Uses the cheap utility provider + a 12s timeout cap; any
     // failure leaves the deterministic `one_line_summary` in place.
-    if config.memory.name_sessions {
+    // ODY-09: incognito turns get no LLM-derived session title — it is a
+    // memory surface (derived from the prompt, persisted to the hindsight card).
+    if !args.incognito && config.memory.name_sessions {
         name_session_best_effort(
             &config,
             &writer,
@@ -3369,7 +3371,10 @@ async fn run_post_reply_pipelines(
         // Best-effort: never fails the turn. Fires only when enabled + the MCP
         // dispatch loop ran ≥ min_tool_calls calls. Proposal written to
         // `~/.neoth/proposals/` for operator review via `neoth proactive list`.
-        if mcp_tool_calls >= config.auto_skill_extract.min_tool_calls
+        // ODY-09: incognito turns extract no skill proposal — it would persist a
+        // turn-derived artifact to ~/.neoth/proposals/ (a memory surface).
+        if !args.incognito
+            && mcp_tool_calls >= config.auto_skill_extract.min_tool_calls
             && config.auto_skill_extract.enabled
         {
             let home = crate::config::FreedomConfig::default_neoth_home();
