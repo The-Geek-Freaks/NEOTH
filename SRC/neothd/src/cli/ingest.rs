@@ -22,7 +22,7 @@ use clap::Args;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::media::{Asset, AssetKind, MediaExtractor, route_to_first_match};
-use crate::memory::{embeddings, store};
+use crate::memory::{ctx::{IndexRequest, IndexReport, index_document}, embeddings, store};
 use crate::providers::clip_engine;
 use crate::wal::events::{EVENT_TYPE_EMBED_PERSISTED, EVENT_TYPE_INGEST_EXTRACTED};
 use crate::wal::{make_header, spawn as wal_spawn};
@@ -57,6 +57,12 @@ pub struct IngestArgs {
     /// already known.
     #[arg(long)]
     pub no_audit: bool,
+
+    /// Skip writing extracted text chunks into the ctx/recall memory store
+    /// (`views.db`). Useful when the operator just wants the extraction
+    /// report or embedding persistence without indexing the text for recall.
+    #[arg(long)]
+    pub no_index: bool,
 
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
@@ -103,6 +109,47 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
             });
     }
 
+    // ── Gap A: write extracted text into the ctx/recall memory store ─────────
+    // This is the PRIMARY step that makes `neoth ingest` produce chunked memory
+    // entries queryable by `neoth recall` / `neoth ctx`. Best-effort: errors
+    // are logged and logged but never abort the ingest (operator still gets the
+    // extraction report). Mirrors the pattern in omi_ingest_task + arxiv_ingest_task.
+    let chunk_count: Option<usize> = if !args.no_index && !extraction.text.is_empty() {
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        match store::open(&db_path) {
+            Ok(mut conn) => {
+                let req = IndexRequest {
+                    label: canonical_source_ref(&path),
+                    content: extraction.text.clone(),
+                    file_path: Some(path.display().to_string()),
+                    content_type: "prose".to_string(),
+                    source_category: Some("ingest".to_string()),
+                    event_id: None,
+                };
+                match index_document(&mut conn, &req) {
+                    Ok(IndexReport { chunk_count, .. }) => {
+                        tracing::debug!(
+                            chunks = chunk_count,
+                            path = %path.display(),
+                            "ingest: indexed into ctx memory store"
+                        );
+                        Some(chunk_count)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "ingest ctx index failed (non-fatal)");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "ingest: could not open views.db for ctx index (non-fatal)");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let report = IngestReport {
         path: path.display().to_string(),
         kind: format!("{kind:?}").to_lowercase(),
@@ -113,6 +160,7 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
             .unwrap_or("n/a")
             .to_string(),
         embed_persisted: persisted,
+        chunk_count,
         metadata: extraction.metadata.clone(),
     };
 
@@ -133,6 +181,9 @@ struct IngestReport {
     text_preview: String,
     embed_status: String,
     embed_persisted: bool,
+    /// Number of ctx/recall memory chunks written for this document.
+    /// `None` when `--no-index` is set or when the extracted text is empty.
+    chunk_count: Option<usize>,
     metadata: serde_json::Value,
 }
 
@@ -145,6 +196,10 @@ fn print_table(r: &IngestReport) {
     }
     println!("embed status: {}", r.embed_status);
     println!("persisted   : {}", r.embed_persisted);
+    match r.chunk_count {
+        Some(n) => println!("chunks      : {n}"),
+        None => println!("chunks      : (not indexed)"),
+    }
 }
 
 fn preview(s: &str, max: usize) -> String {
@@ -388,7 +443,15 @@ fn mime_hint(kind: AssetKind, p: &std::path::Path) -> String {
 }
 
 fn default_backends() -> Vec<Arc<dyn MediaExtractor>> {
+    // GOLD-ADAPT-AWE-DOC-01: DoclingExtractor is prepended before the pure-Rust
+    // PDF/Document backends. It returns Unsupported (not Backend) when:
+    //   - MediaConfig::docling_enabled is false (default), OR
+    //   - the `docling` binary is not on PATH.
+    // In both cases route_to_first_match falls through to PdfExtractor /
+    // DocumentExtractor, so the pipeline is identical to pre-Docling when the
+    // flag is off or the binary is absent.
     vec![
+        Arc::new(crate::media::docling::DoclingExtractor),
         Arc::new(crate::media::pdf::PdfExtractor),
         Arc::new(crate::media::document::DocumentExtractor),
         Arc::new(crate::media::vision::VisionExtractor),
@@ -488,9 +551,123 @@ mod tests {
     fn default_backends_includes_all_modalities() {
         let bs = default_backends();
         let names: Vec<&'static str> = bs.iter().map(|b| b.name()).collect();
+        assert!(names.contains(&"docling"), "docling must be in backend list");
         assert!(names.contains(&"pdf"));
         assert!(names.contains(&"vision"));
         assert!(names.contains(&"audio"));
         assert!(names.contains(&"video"));
+    }
+
+    #[test]
+    fn default_backends_has_docling_before_pdf_and_document() {
+        let bs = default_backends();
+        let names: Vec<&'static str> = bs.iter().map(|b| b.name()).collect();
+        let docling_pos = names.iter().position(|&n| n == "docling").unwrap();
+        let pdf_pos = names.iter().position(|&n| n == "pdf").unwrap();
+        let doc_pos = names.iter().position(|&n| n == "document").unwrap();
+        assert!(docling_pos < pdf_pos, "docling must come before pdf");
+        assert!(docling_pos < doc_pos, "docling must come before document");
+    }
+
+    // ── Gap A integration test ────────────────────────────────────────────────
+    // Proves that run_ingest writes extracted text into the ctx memory store
+    // (views.db) such that it is queryable by memory::ctx::search.
+
+    /// Minimal DOCX zip fixture: a `word/document.xml` with two paragraphs.
+    fn make_docx_fixture() -> Vec<u8> {
+        use std::io::Write as _;
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:p><w:r><w:t>paragraph alpha content here</w:t></w:r></w:p>
+<w:p><w:r><w:t>paragraph beta content here</w:t></w:r></w:p>
+</w:body>
+</w:document>"#;
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        w.start_file::<_, ()>("word/document.xml", opts).unwrap();
+        w.write_all(xml.as_bytes()).unwrap();
+        w.finish().unwrap().into_inner()
+    }
+
+    #[tokio::test]
+    async fn ingest_ctx_indexes_document_chunks() {
+        use tempfile::tempdir;
+        use crate::memory::ctx::search;
+
+        let dir = tempdir().unwrap();
+        let doc_path = dir.path().join("test_doc.docx");
+        let db_path = dir.path().join("views.db");
+        let wal_path = dir.path().join("test.wal");
+
+        std::fs::write(&doc_path, make_docx_fixture()).unwrap();
+
+        let args = IngestArgs {
+            path: doc_path.clone(),
+            db: Some(db_path.clone()),
+            wal_segment: Some(wal_path),
+            no_persist: true,
+            no_audit: true,
+            no_index: false,
+            output: OutputFormat::Json,
+        };
+
+        // run_ingest must complete without error.
+        run_ingest(args).await.expect("run_ingest failed");
+
+        // Open the db and search for content from the fixture.
+        let conn = crate::memory::store::open(&db_path).expect("open views.db");
+        let hits = search(&conn, "alpha", 10).expect("search failed");
+        assert!(
+            !hits.is_empty(),
+            "expected at least 1 ctx hit for 'alpha' after ingest, got 0"
+        );
+        assert_eq!(
+            hits[0].source_category.as_deref(),
+            Some("ingest"),
+            "chunk source_category must be 'ingest'"
+        );
+        // The label must contain the canonical path of the fixture.
+        assert!(
+            hits[0].label.contains("test_doc.docx"),
+            "chunk label must reference the fixture file, got: {}",
+            hits[0].label
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_no_index_skips_ctx_write() {
+        use tempfile::tempdir;
+        use crate::memory::ctx::search;
+
+        let dir = tempdir().unwrap();
+        let doc_path = dir.path().join("skip_doc.docx");
+        let db_path = dir.path().join("views_skip.db");
+        let wal_path = dir.path().join("skip.wal");
+
+        std::fs::write(&doc_path, make_docx_fixture()).unwrap();
+
+        let args = IngestArgs {
+            path: doc_path.clone(),
+            db: Some(db_path.clone()),
+            wal_segment: Some(wal_path),
+            no_persist: true,
+            no_audit: true,
+            no_index: true, // <── skip indexing
+            output: OutputFormat::Json,
+        };
+
+        run_ingest(args).await.expect("run_ingest failed");
+
+        // views.db should either not exist or be empty (no sources written).
+        if db_path.exists() {
+            let conn = crate::memory::store::open(&db_path).expect("open views.db");
+            let hits = search(&conn, "alpha", 10).expect("search failed");
+            assert!(
+                hits.is_empty(),
+                "--no-index must not write any ctx chunks; got {} hits",
+                hits.len()
+            );
+        }
     }
 }

@@ -26,6 +26,12 @@
 //! every backend is its own typed `Asset` consumer + producer.
 
 pub mod audio;
+/// GOLD-ADAPT-AWE-DOC-01 — Docling subprocess extractor for PDF/Document/Image.
+/// Invokes `docling --output-format json <file>` in a headless subprocess when
+/// `MediaConfig::docling_enabled` is true AND the binary is on PATH; otherwise
+/// returns `Unsupported` so `route_to_first_match` falls through to the
+/// pure-Rust backends.
+pub mod docling;
 pub mod document;
 /// GOLD-ADAPT-HANDY-07 — GPU/accelerator detection + FMA3 guard for the
 /// media pipeline (STT backend selection). Probes CPU capability flags

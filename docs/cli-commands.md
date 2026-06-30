@@ -1128,6 +1128,7 @@ Multimodal asset ingest pipeline
 - `--wal-segment <PATH>` — Override the WAL segment path the audit events land in. Defaults to `~/.neoth/wal/000001.wal` — the same surface `neothd serve` writes to
 - `--no-persist <NO_PERSIST>` — Skip the embedding persistence pass — useful when running the pipeline against fixtures in tests or when the operator is just inspecting the metadata
 - `--no-audit <NO_AUDIT>` — Skip emitting `INGEST_EXTRACTED` / `EMBED_PERSISTED` WAL audit events. Useful for batch reprocessing where the audit trail is already known
+- `--no-index <NO_INDEX>` — Skip writing extracted text chunks into the ctx/recall memory store (`views.db`). Useful when the operator just wants the extraction report or embedding persistence without indexing the text for recall
 
 ## `neoth init`
 

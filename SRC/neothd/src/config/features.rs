@@ -410,6 +410,17 @@ pub struct MediaConfig {
     /// audio-ingest path and the `WhisperRsLocal` STT-provider path.
     #[serde(default = "default_whisper_idle_unload_secs")]
     pub whisper_idle_unload_secs: Option<u64>,
+    /// GOLD-ADAPT-AWE-DOC-01 — enable the Docling subprocess extractor in
+    /// `neoth ingest`. When `true`, `DoclingExtractor` is tried first for
+    /// PDF, Document, and Image assets (before the pure-Rust extractors),
+    /// invoking `docling --output-format json <file>` in a headless subprocess.
+    /// Default `false` — the pure-Rust path (PdfExtractor / DocumentExtractor)
+    /// is used unless the operator has installed Docling AND opted in here.
+    /// If Docling is opted-in but the binary is not on PATH, the extractor
+    /// returns `Unsupported` and the pipeline falls through to the Rust backends
+    /// (graceful degradation).
+    #[serde(default)]
+    pub docling_enabled: bool,
 }
 
 fn default_whisper_idle_unload_secs() -> Option<u64> {
@@ -427,6 +438,7 @@ impl Default for MediaConfig {
             auto_speaker_labels: false,
             // HANDY-05 — default 2-minute idle unload; matches serde default.
             whisper_idle_unload_secs: default_whisper_idle_unload_secs(),
+            docling_enabled: false,
         }
     }
 }
