@@ -43,6 +43,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::council::factual_check::DEFAULT_NEGATION_MARKERS;
+use crate::memory::entities;
 use crate::memory::groundtruth::{self, FactState, GroundTruth};
 use crate::providers::embed::{EmbedProvider, EmbedRequest, cosine};
 
@@ -450,6 +451,19 @@ fn record_pair(
                 confidence = sig.confidence,
                 "MEM-02: polarity contradiction — loser flagged Contradicted",
             );
+            // refines-MEM-06: best-effort KG invalidation — close any active
+            // relation triple that corresponds to the losing ground-truth fact.
+            let loser_stmt = if loser == a.id {
+                &a.statement
+            } else {
+                &b.statement
+            };
+            if let Err(e) = try_invalidate_for_statement(conn, loser_stmt, now_ns) {
+                tracing::debug!(
+                    error = %e,
+                    "MEM-06: invalidate_relation best-effort (non-fatal, record_pair)"
+                );
+            }
         }
     } else if inserted > 0 {
         tracing::info!(
@@ -770,7 +784,19 @@ pub async fn auto_resolve_batch(
 
         if entity_same && a.asserted_at != b.asserted_at {
             let older = if a.asserted_at < b.asserted_at { a.id } else { b.id };
+            let older_stmt = if older == a.id {
+                a.statement.clone()
+            } else {
+                b.statement.clone()
+            };
             suppress_fact(conn, older)?;
+            // refines-MEM-06: best-effort KG invalidation for the superseded fact.
+            if let Err(e) = try_invalidate_for_statement(conn, &older_stmt, now_ns) {
+                tracing::debug!(
+                    error = %e,
+                    "MEM-06: invalidate_relation best-effort (non-fatal, temporal-supersede)"
+                );
+            }
             close_ledger_row(conn, row.ledger_id, DECISION_SUPERSEDED, now_ns)?;
             summary.superseded += 1;
             tracing::info!(
@@ -940,6 +966,80 @@ pub fn forget_for_ids(conn: &Connection, revoked_ids: &[i64]) -> Result<i64> {
         .collect();
     let n = conn.execute(&sql, rusqlite::params_from_iter(doubled))?;
     Ok(n as i64)
+}
+
+/// refines-MEM-06: best-effort heuristic to extract entity names from a
+/// ground-truth statement string and call
+/// [`entities::invalidate_relation_by_names`] to close the corresponding KG edge.
+///
+/// Extraction strategy (reuses the existing [`subject_tokens`] / [`value_tokens`]
+/// module functions that already handle copulas, stopwords, and normalisation):
+///
+/// 1. Subject phrase = joined content tokens before the first copula
+///    (from [`subject_tokens`], already stopword-filtered).
+/// 2. Object phrase = joined content tokens after the first copula
+///    (from [`value_tokens`], already stopword-filtered), FURTHER filtered to
+///    drop negation markers (e.g. "not") so "alice is not at mozilla" yields
+///    object = "mozilla", not "not mozilla".
+/// 3. Predicate = `"*"` (wildcard — close every edge between subject and
+///    object). Using a wildcard avoids coupling to specific relation labels
+///    that vary by how the KG extraction phrased them ("at", "works_at",
+///    "works at", etc.). The wildcard correctly closes all edges between the
+///    two entity names.
+///
+/// This is intentionally lossy — a parse failure (empty subject or object
+/// after normalisation) is a silent no-op (`Ok(())`), matching the non-fatal
+/// pattern used throughout MEM-02.
+fn try_invalidate_for_statement(
+    conn: &Connection,
+    statement: &str,
+    now_ns: i64,
+) -> Result<()> {
+    // Subject phrase — using the module's canonical subject extractor.
+    let subj_tokens: Vec<String> = subject_tokens(statement).into_iter().collect();
+    let subject_phrase = subj_tokens.join(" ");
+
+    // Object phrase — value_tokens gives tokens after the first copula,
+    // stopwords already dropped. Additionally strip negation markers so
+    // "alice is NOT at mozilla" → object = "mozilla", not "not mozilla".
+    let negation_set: std::collections::HashSet<&str> = DEFAULT_NEGATION_MARKERS
+        .iter()
+        .copied()
+        .collect();
+    let obj_tokens: Vec<String> = value_tokens(statement)
+        .into_iter()
+        .filter(|t| !negation_set.contains(t.as_str()))
+        .collect();
+    let object_phrase = obj_tokens.join(" ");
+
+    // Nothing useful to close when either phrase is empty.
+    if subject_phrase.is_empty() || object_phrase.is_empty() {
+        return Ok(());
+    }
+
+    // Wildcard predicate: close every active edge between the two entity names
+    // regardless of how the extraction phrased the relation label.
+    // best-effort: errors (unknown entity, no active row) are surfaced to the
+    // caller which logs them at debug level — never propagated as a hard failure.
+    let _ = entities::invalidate_relation_by_names(
+        conn,
+        &subject_phrase,
+        "*",
+        &object_phrase,
+        now_ns,
+    )?;
+
+    // Also try the reverse direction in case the KG stored the edge as
+    // object→subject (some extractions flip direction).
+    let _ = entities::invalidate_relation_by_names(
+        conn,
+        &object_phrase,
+        "*",
+        &subject_phrase,
+        now_ns,
+    )?;
+
+    Ok(())
 }
 
 fn row_to_gt(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroundTruth> {
@@ -1177,6 +1277,84 @@ mod tests {
             )
             .unwrap();
         assert_eq!(restored, "verified", "dismiss re-promotes the flagged fact");
+    }
+
+    // ── refines-MEM-06: contradiction detector → invalidate_relation wire ────
+
+    #[test]
+    fn negation_contradiction_invalidates_kg_relation_for_loser() {
+        // End-to-end proof: record_pair (negation path) → try_invalidate_for_statement
+        // → invalidate_relation closes the KG edge for the losing ground-truth fact.
+        use crate::memory::entities::{
+            get_neighbors, insert_relation, resolve_or_create_entity,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        let now = 1_000i64;
+
+        // Build KG: Alice -[works_at]-> Mozilla.
+        let alice = resolve_or_create_entity(&conn, "alice", "person", now).unwrap();
+        let moz = resolve_or_create_entity(&conn, "mozilla", "org", now).unwrap();
+        insert_relation(&conn, alice, moz, "at", 1.0).unwrap();
+
+        // Both KG entities connected before any contradiction.
+        assert_eq!(
+            get_neighbors(&conn, "alice", 1).unwrap().len(),
+            1,
+            "edge active before contradiction"
+        );
+
+        // Insert the winning fact first (2 sources → higher credibility).
+        groundtruth::insert(&conn, "alice is at mozilla", &Source::OperatorRuntime, "global", 1)
+            .unwrap();
+        groundtruth::insert(&conn, "alice is at mozilla", &Source::Onboarding, "global", 2)
+            .unwrap();
+
+        // Insert the losing fact (opposite polarity, 1 source).
+        groundtruth::insert(
+            &conn,
+            "alice is not at mozilla",
+            &Source::OperatorRuntime,
+            "global",
+            3,
+        )
+        .unwrap();
+
+        // Contradiction recorded + loser flagged.
+        let pending = list_contradictions(&conn, false).unwrap();
+        assert_eq!(pending.len(), 1, "negation contradiction recorded in ledger");
+
+        // The loser ("not at", 1-source) is flagged Contradicted.
+        let loser_state: String = conn
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth \
+                 WHERE statement = 'alice is not at mozilla'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(loser_state, "contradicted", "loser auto-flagged");
+
+        // refines-MEM-06: the KG edge must now be closed (valid_to IS NOT NULL).
+        let vt: Option<String> = conn
+            .query_row(
+                "SELECT valid_to FROM idx_relations \
+                 WHERE src_id = ?1 AND dst_id = ?2 AND relation = 'at'",
+                rusqlite::params![alice, moz],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            vt.is_some(),
+            "KG edge closed (valid_to stamped) after negation contradiction"
+        );
+
+        // BFS can no longer reach Mozilla from Alice via that edge.
+        assert!(
+            get_neighbors(&conn, "alice", 1).unwrap().is_empty(),
+            "BFS sees no neighbours after edge invalidation"
+        );
     }
 
     #[test]

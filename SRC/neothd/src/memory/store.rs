@@ -42,7 +42,14 @@ use rusqlite::Connection;
 /// v22: refines-JV-MEM-08 — add `idx_memory_links.stability REAL DEFAULT 1.0`
 ///      for Ebbinghaus exponential edge decay (`weight *= exp(-days/stability)`)
 ///      and Cepeda spacing (`stability += 0.1` when access gap > spaced interval).
-pub const SCHEMA_VERSION: i64 = 22;
+/// v23: refines-MEM-06 — add `idx_relations.valid_to TEXT` (NULL = active,
+///      non-NULL = ISO-8601/Unix-ns string = relation closed at that timestamp).
+///      Superseded KG edges are stamped via `invalidate_relation`; the BFS
+///      `one_hop` filters to `valid_to IS NULL` so closed edges are invisible
+///      to recall. The contradiction detector calls `invalidate_relation`
+///      best-effort whenever a negation-contradiction or temporal-supersede
+///      auto-resolution closes a ground-truth fact.
+pub const SCHEMA_VERSION: i64 = 23;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -857,6 +864,7 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             dst_id    INTEGER NOT NULL,
             relation  TEXT NOT NULL,
             weight    REAL NOT NULL DEFAULT 1.0,
+            valid_to  TEXT,
             UNIQUE(src_id, dst_id, relation)
         );
         CREATE INDEX IF NOT EXISTS idx_relations_src ON idx_relations (src_id);

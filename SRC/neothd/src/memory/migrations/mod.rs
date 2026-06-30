@@ -179,7 +179,35 @@ pub const MIGRATIONS: &[Migration] = &[
                       spacing parameter (stability += 0.1 on spaced accesses)",
         run: migration_v21_to_v22,
     },
+    Migration {
+        from: 22,
+        to: 23,
+        description: "refines-MEM-06: add idx_relations.valid_to TEXT — KG temporal \
+                      invalidation column (NULL = active, non-NULL = closed timestamp). \
+                      Superseded KG edges are stamped by invalidate_relation(); BFS \
+                      one_hop filters to valid_to IS NULL so closed edges are invisible \
+                      to recall. Wired into MEM-02 contradiction detector.",
+        run: migration_v22_to_v23,
+    },
 ];
+
+/// v22 → v23: refines-MEM-06 — add `valid_to TEXT` to `idx_relations`.
+///
+/// NULL = the relation is currently active.
+/// Non-NULL = an ISO-8601 or Unix-nanosecond string recording when the
+/// relation was closed by `invalidate_relation`. Superseded KG edges are
+/// invisible to recall BFS (`one_hop` filters `AND valid_to IS NULL`).
+///
+/// The `let _` idiom swallows the "duplicate column" error so re-running
+/// this migration against a partially-migrated database is idempotent,
+/// matching the pattern used by every prior migration.
+fn migration_v22_to_v23(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_relations ADD COLUMN valid_to TEXT",
+        [],
+    );
+    Ok(())
+}
 
 /// v21 → v22: refines-JV-MEM-08 — add `stability REAL NOT NULL DEFAULT 1.0`
 /// to `idx_memory_links`. Existing edges default to stability=1.0 (same

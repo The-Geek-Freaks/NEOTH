@@ -172,8 +172,21 @@ pub fn list_all(conn: &Connection) -> Result<Vec<Entity>> {
     Ok(rows)
 }
 
-/// Insert (or reinforce) a directed relation `src --relation--> dst`. A repeat
-/// of the same triple bumps its `weight` (co-occurrence reinforcement).
+/// Insert (or reinforce) a directed relation `src --relation--> dst`.
+///
+/// On conflict the behaviour depends on `valid_to`:
+/// - If the existing row is **active** (`valid_to IS NULL`): bump `weight`
+///   (co-occurrence reinforcement).
+/// - If the existing row is **closed** (`valid_to IS NOT NULL`): re-open it
+///   (reset `valid_to = NULL`) and set `weight = ?4` fresh — a superseded
+///   relation corroborated anew by a subsequent extraction becomes active
+///   again rather than silently accumulating weight on a closed edge.
+///
+/// The `WHERE idx_relations.valid_to IS NULL` clause on the DO UPDATE is
+/// SQLite-supported (partial ON CONFLICT target). When the row is closed
+/// the DO UPDATE guard fails and the conflict falls through to a plain
+/// INSERT — but UNIQUE prevents a second row. We therefore handle the
+/// re-open case in a separate follow-up UPDATE after the initial upsert.
 pub fn insert_relation(
     conn: &Connection,
     src_id: i64,
@@ -181,22 +194,103 @@ pub fn insert_relation(
     relation: &str,
     weight: f64,
 ) -> Result<()> {
+    // Attempt to INSERT. If the triple exists and is ACTIVE, bump weight.
+    // If the triple exists and is CLOSED, the DO UPDATE guard (valid_to IS NULL)
+    // fails, so the INSERT is silently ignored — we then re-open it below.
     conn.execute(
         "INSERT INTO idx_relations (src_id, dst_id, relation, weight) VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT(src_id, dst_id, relation) DO UPDATE SET weight = weight + ?4",
+         ON CONFLICT(src_id, dst_id, relation) DO UPDATE \
+         SET weight = weight + ?4 WHERE idx_relations.valid_to IS NULL",
         params![src_id, dst_id, relation, weight],
     )
     .context("insert relation")?;
+    // Re-open a closed relation that a new extraction re-asserts.
+    conn.execute(
+        "UPDATE idx_relations SET valid_to = NULL, weight = ?4 \
+         WHERE src_id = ?1 AND dst_id = ?2 AND relation = ?3 AND valid_to IS NOT NULL",
+        params![src_id, dst_id, relation, weight],
+    )
+    .context("reopen closed relation")?;
     Ok(())
 }
 
+/// Close an active relation triple by stamping `valid_to`.
+///
+/// Sets `valid_to = ended_ts.to_string()` (Unix nanoseconds as a decimal
+/// string) on the row `(src_id, dst_id, relation)` **only when it is
+/// currently active** (`valid_to IS NULL`). Returns `Ok(true)` when a row
+/// was actually closed, `Ok(false)` when the relation did not exist or was
+/// already closed (idempotent — safe to call multiple times).
+///
+/// Called by `invalidate_relation_by_names` (the public name-based API)
+/// and directly from tests.
+pub fn invalidate_relation(
+    conn: &Connection,
+    src_id: i64,
+    dst_id: i64,
+    relation: &str,
+    ended_ts: i64,
+) -> Result<bool> {
+    let n = conn
+        .execute(
+            "UPDATE idx_relations SET valid_to = ?1 \
+             WHERE src_id = ?2 AND dst_id = ?3 AND relation = ?4 AND valid_to IS NULL",
+            params![ended_ts.to_string(), src_id, dst_id, relation],
+        )
+        .context("invalidate relation")?;
+    Ok(n > 0)
+}
+
+/// Name-based wrapper for [`invalidate_relation`].
+///
+/// Resolves `subject` and `object` to entity ids via case-insensitive lookup.
+/// Returns `Ok(false)` if either name is unknown (the entities may not yet
+/// exist in the graph). When `relation` is `"*"` the function closes **every**
+/// active edge between the two entities regardless of the relation label
+/// (wildcard close — used when the contradiction detector cannot parse a
+/// specific predicate from the statement).
+///
+/// Best-effort: callers treat errors as non-fatal (log-and-ignore). This
+/// mirrors the non-fatal pattern already used for contradiction scan
+/// failures in `groundtruth::insert`.
+pub fn invalidate_relation_by_names(
+    conn: &Connection,
+    subject: &str,
+    predicate: &str,
+    object: &str,
+    ended_ts: i64,
+) -> Result<bool> {
+    let Some(src_id) = resolve_entity_id(conn, subject)? else {
+        return Ok(false);
+    };
+    let Some(dst_id) = resolve_entity_id(conn, object)? else {
+        return Ok(false);
+    };
+    if predicate == "*" {
+        // Wildcard: close every active edge between the two entities.
+        let n = conn
+            .execute(
+                "UPDATE idx_relations SET valid_to = ?1 \
+                 WHERE src_id = ?2 AND dst_id = ?3 AND valid_to IS NULL",
+                params![ended_ts.to_string(), src_id, dst_id],
+            )
+            .context("invalidate all relations between entities")?;
+        Ok(n > 0)
+    } else {
+        invalidate_relation(conn, src_id, dst_id, predicate, ended_ts)
+    }
+}
+
 /// Direct (1-hop) neighbours of `id`, both out- and in-edges, as
-/// `(other_id, relation)`.
+/// `(other_id, relation)`. Only **active** edges (`valid_to IS NULL`) are
+/// returned — superseded/invalidated edges are invisible to BFS.
 fn one_hop(conn: &Connection, id: i64) -> Result<Vec<(i64, String)>> {
     let mut stmt = conn.prepare(
-        "SELECT dst_id, relation FROM idx_relations WHERE src_id = ?1 \
+        "SELECT dst_id, relation FROM idx_relations \
+         WHERE src_id = ?1 AND valid_to IS NULL \
          UNION \
-         SELECT src_id, relation FROM idx_relations WHERE dst_id = ?1",
+         SELECT src_id, relation FROM idx_relations \
+         WHERE dst_id = ?1 AND valid_to IS NULL",
     )?;
     let rows = stmt.query_map(params![id], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
@@ -710,6 +804,107 @@ mod tests {
     #[test]
     fn parse_extraction_no_json_errors() {
         assert!(parse_extraction("no json here").is_err());
+    }
+
+    // ── refines-MEM-06: invalidate_relation + BFS visibility ─────────────────
+
+    #[test]
+    fn invalidate_relation_stamps_valid_to_and_hides_from_bfs() {
+        let (_d, c) = conn();
+        let now = 1_000_000i64;
+        let alice = resolve_or_create_entity(&c, "Alice", "person", now).unwrap();
+        let moz = resolve_or_create_entity(&c, "Mozilla", "org", now).unwrap();
+        insert_relation(&c, alice, moz, "works_at", 1.0).unwrap();
+
+        // Confirm the relation is active (valid_to IS NULL).
+        let vt: Option<String> = c
+            .query_row(
+                "SELECT valid_to FROM idx_relations \
+                 WHERE src_id=?1 AND dst_id=?2 AND relation=?3",
+                params![alice, moz, "works_at"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(vt.is_none(), "relation starts active (valid_to IS NULL)");
+
+        // Act: close the relation directly.
+        let closed = invalidate_relation(&c, alice, moz, "works_at", now + 1).unwrap();
+        assert!(closed, "invalidate_relation returns true when row was open");
+
+        // valid_to is now set.
+        let vt2: Option<String> = c
+            .query_row(
+                "SELECT valid_to FROM idx_relations \
+                 WHERE src_id=?1 AND dst_id=?2 AND relation=?3",
+                params![alice, moz, "works_at"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(vt2.is_some(), "valid_to stamped after invalidation");
+
+        // BFS get_neighbors no longer surfaces Mozilla via the closed edge.
+        let neighbours = get_neighbors(&c, "Alice", 1).unwrap();
+        assert!(neighbours.is_empty(), "closed relation invisible to BFS");
+
+        // A second invalidate is a no-op (already closed).
+        let noop = invalidate_relation(&c, alice, moz, "works_at", now + 2).unwrap();
+        assert!(!noop, "idempotent: already-closed row returns false");
+    }
+
+    #[test]
+    fn invalidate_relation_by_names_resolves_and_closes() {
+        let (_d, c) = conn();
+        let now = 2_000_000i64;
+        let alice = resolve_or_create_entity(&c, "Alice", "person", now).unwrap();
+        let moz = resolve_or_create_entity(&c, "Mozilla", "org", now).unwrap();
+        insert_relation(&c, alice, moz, "works_at", 1.0).unwrap();
+
+        let closed =
+            invalidate_relation_by_names(&c, "Alice", "works_at", "Mozilla", now + 1).unwrap();
+        assert!(closed, "name-based close succeeds");
+        assert!(get_neighbors(&c, "Alice", 1).unwrap().is_empty(), "BFS sees nothing");
+
+        // Unknown entity returns false without error.
+        let miss =
+            invalidate_relation_by_names(&c, "Nobody", "works_at", "Mozilla", now + 2).unwrap();
+        assert!(!miss, "unknown subject returns false (not an error)");
+    }
+
+    #[test]
+    fn invalidate_relation_wildcard_closes_all_edges() {
+        let (_d, c) = conn();
+        let now = 3_000_000i64;
+        let alice = resolve_or_create_entity(&c, "Alice", "person", now).unwrap();
+        let moz = resolve_or_create_entity(&c, "Mozilla", "org", now).unwrap();
+        insert_relation(&c, alice, moz, "works_at", 1.0).unwrap();
+        insert_relation(&c, alice, moz, "contributes_to", 1.0).unwrap();
+
+        // Both edges active before wildcard close.
+        assert_eq!(get_neighbors(&c, "Alice", 1).unwrap().len(), 1);
+
+        let closed =
+            invalidate_relation_by_names(&c, "Alice", "*", "Mozilla", now + 1).unwrap();
+        assert!(closed, "wildcard close stamped at least one row");
+        assert!(get_neighbors(&c, "Alice", 1).unwrap().is_empty(), "all edges closed");
+    }
+
+    #[test]
+    fn insert_relation_reopens_closed_edge_on_reassertion() {
+        let (_d, c) = conn();
+        let now = 4_000_000i64;
+        let alice = resolve_or_create_entity(&c, "Alice", "person", now).unwrap();
+        let moz = resolve_or_create_entity(&c, "Mozilla", "org", now).unwrap();
+        insert_relation(&c, alice, moz, "works_at", 1.0).unwrap();
+
+        // Close it.
+        invalidate_relation(&c, alice, moz, "works_at", now + 1).unwrap();
+        assert!(get_neighbors(&c, "Alice", 1).unwrap().is_empty(), "closed");
+
+        // Re-asserting the same triple re-opens the edge.
+        insert_relation(&c, alice, moz, "works_at", 1.0).unwrap();
+        let neighbours = get_neighbors(&c, "Alice", 1).unwrap();
+        assert_eq!(neighbours.len(), 1, "re-opened edge visible to BFS");
+        assert_eq!(neighbours[0].name, "Mozilla");
     }
 
     struct MockProvider(String);
