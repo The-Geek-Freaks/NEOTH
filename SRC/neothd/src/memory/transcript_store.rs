@@ -228,6 +228,28 @@ pub fn insert_turn_best_effort(
     }
 }
 
+// ── Forget cascade (GDPR right-to-erasure) ─────────────────────────────────
+
+/// Delete every raw turn whose `text` matches the `LIKE` pattern
+/// (case-insensitive, `ESCAPE '\'`). The `raw_turns_ad` AFTER DELETE trigger
+/// fires per row, keeping `raw_turns_fts` in sync — so `neoth recall
+/// --transcript <topic>` stops surfacing the turn immediately. Returns the
+/// number of turn rows deleted.
+///
+/// `like_pattern` is the already-built `%escaped_topic%` pattern produced by
+/// `forget_by_topic` (the topic is escaped via `crate::memory::escape_like`
+/// so a topic of `%`/`_` matches literally). Wired into the forget cascade in
+/// `memory/forget.rs`; without it a forgotten topic stayed fully searchable in
+/// the raw transcript (the ODY-26 table was added after forget.rs and never
+/// cascaded — a right-to-erasure hole).
+pub fn forget_turns_like(conn: &Connection, like_pattern: &str) -> rusqlite::Result<i64> {
+    let n = conn.execute(
+        "DELETE FROM raw_turns WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        params![like_pattern],
+    )?;
+    Ok(n as i64)
+}
+
 // ── Unit tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]

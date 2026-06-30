@@ -45,6 +45,14 @@ pub struct ForgetReport {
     pub episode_rows: i64,
     pub consolidated_rows: i64,
     pub longterm_rows: i64,
+    /// GOLD-ADAPT-ODY-26 — raw transcript turns deleted (`raw_turns`). The
+    /// ODY-26 raw-transcript table is FTS-searchable via `neoth recall
+    /// --transcript`; it was added after this cascade was written and was never
+    /// wiped, so a forgotten topic stayed fully recoverable in the transcript —
+    /// a GDPR right-to-erasure hole. The `raw_turns_ad` AFTER DELETE trigger
+    /// keeps `raw_turns_fts` in sync.
+    #[serde(default)]
+    pub raw_turn_rows: i64,
     pub groundtruth_revoked: i64,
     pub embedding_rows: i64,
     /// Structured-profile claims deleted (GDPR cascade, GOLD-SEC-28 /
@@ -94,6 +102,7 @@ impl ForgetReport {
         self.episode_rows
             + self.consolidated_rows
             + self.longterm_rows
+            + self.raw_turn_rows
             + self.groundtruth_revoked
             + self.embedding_rows
             + self.profile_rows
@@ -199,6 +208,14 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
             rusqlite::params![pattern],
         )
         .context("delete from idx_longterm")? as i64;
+
+    // GOLD-ADAPT-ODY-26 — raw-transcript cascade. The raw_turns table is
+    // FTS-searchable via `neoth recall --transcript`; without this leg a
+    // forgotten topic stayed fully recoverable in the transcript (GDPR
+    // right-to-erasure hole). The `raw_turns_ad` AFTER DELETE trigger keeps
+    // `raw_turns_fts` in sync, so the topic stops surfacing immediately.
+    let raw_turn_rows = crate::memory::transcript_store::forget_turns_like(&tx, &pattern)
+        .context("delete from raw_turns")?;
 
     // Structured-profile claims: hard delete any claim whose field name OR
     // value mentions the topic. GDPR right-to-erasure cascade (GOLD-SEC-28
@@ -314,6 +331,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         episode_rows,
         consolidated_rows,
         longterm_rows,
+        raw_turn_rows,
         groundtruth_revoked,
         embedding_rows,
         profile_rows,
@@ -608,6 +626,7 @@ mod tests {
             "episode_rows",
             "consolidated_rows",
             "longterm_rows",
+            "raw_turn_rows",
             "groundtruth_revoked",
             "embedding_rows",
             "profile_rows",
@@ -698,6 +717,39 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM idx_embedding", [], |r| r.get(0))
             .unwrap();
         assert_eq!(left, 2, "vacation.png + telegram embedding survive");
+    }
+
+    #[test]
+    fn forget_cascades_into_raw_transcript_turns() {
+        // GOLD-ADAPT-ODY-26 (review fix): the raw_turns transcript table is
+        // FTS-searchable via `neoth recall --transcript`. A forget must wipe
+        // matching turns (else the full prompt/response text stays recoverable
+        // — a GDPR right-to-erasure hole). The raw_turns_ad DELETE trigger keeps
+        // raw_turns_fts in sync, so the FTS search stops surfacing it too.
+        use crate::memory::transcript_store::{insert_turn, search_turns};
+        let conn = seed_db();
+        insert_turn(&conn, "sess-1", "operator", 1, "tell me about AcmeCorp earnings").unwrap();
+        insert_turn(&conn, "sess-1", "agent", 2, "AcmeCorp posted a loss last quarter").unwrap();
+        insert_turn(&conn, "sess-1", "operator", 3, "what's for lunch today").unwrap();
+
+        let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
+        assert_eq!(report.raw_turn_rows, 2, "both AcmeCorp turns wiped");
+
+        // FTS no longer surfaces the topic (DELETE trigger synced raw_turns_fts).
+        assert!(
+            search_turns(&conn, "AcmeCorp", 0, 10).unwrap().is_empty(),
+            "forgotten topic must not survive in raw_turns_fts"
+        );
+        // Unrelated turn untouched + still searchable.
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM raw_turns", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 1, "the unrelated lunch turn survives");
+        assert_eq!(
+            search_turns(&conn, "lunch", 0, 10).unwrap().len(),
+            1,
+            "unrelated turn still searchable"
+        );
     }
 
     #[test]
