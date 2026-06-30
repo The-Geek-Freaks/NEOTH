@@ -1185,9 +1185,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Detached — no handle; errors are logged best-effort.
     {
         let home_for_init = crate::config::FreedomConfig::default_neoth_home();
-        // run_post_init_check is async fn(home: &PathBuf) — it borrows home.
-        // Since we move it into a spawned future, clone into an owned PathBuf and
-        // call via a wrapping async block so the borrow doesn't escape.
+        // run_post_init_check borrows home as &Path — passing &PathBuf coerces fine.
+        // The PathBuf is moved into the spawned async block which owns it.
         tokio::spawn(async move {
             crate::daemon::post_init_cron::run_post_init_check(&home_for_init).await;
         });

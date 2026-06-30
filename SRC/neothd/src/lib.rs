@@ -125,6 +125,7 @@ pub mod installers;
 /// optional self-reflect refine passes, WAL events (0x7C–0x7F), and
 /// `LoopRunRecord` disk persistence (`~/.neoth/loops/`).
 pub mod loop_engine;
+pub mod lsp;
 pub mod mcp;
 pub mod media;
 pub mod memory;

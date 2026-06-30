@@ -133,16 +133,60 @@ pub fn apply_hashline_diff(base: &str, diff: &str) -> Result<String> {
     Ok(result.join("\n"))
 }
 
-/// `neoth edit` dispatch. `hashline_default` is `freedom.yaml::tokens.
-/// hashline_edits` (the dispatcher reads it from the loaded config).
-pub fn run(args: EditArgs, hashline_default: bool) -> Result<()> {
+/// `neoth edit` dispatch.
+///
+/// - `hashline_default`: `freedom.yaml::tokens.hashline_edits` (read at the
+///   dispatch site; falls back to `false` when config is absent).
+/// - `lsp_enabled`: `freedom.yaml::tokens.lsp_diagnostics_enabled` — when
+///   true, the `--apply` path also runs the reconstructed file through the
+///   LSP server and prints diagnostics to stderr (GOLD-PROG-10 / OP-03).
+/// - `lsp_server_cmd`: override for the LSP binary; defaults to
+///   `"rust-analyzer"` for `.rs` files when `None`.
+pub fn run(
+    args: EditArgs,
+    hashline_default: bool,
+    lsp_enabled: bool,
+    lsp_server_cmd: Option<String>,
+) -> Result<()> {
     let base = std::fs::read_to_string(&args.base)
         .with_context(|| format!("read base {}", args.base.display()))?;
 
     if let Some(diff_path) = &args.apply {
         let diff = std::fs::read_to_string(diff_path)
             .with_context(|| format!("read diff {}", diff_path.display()))?;
-        print!("{}", apply_hashline_diff(&base, &diff)?);
+        let reconstructed = apply_hashline_diff(&base, &diff)?;
+        print!("{reconstructed}");
+
+        // GOLD-PROG-10 (OP-03): run the file through the LSP server after the
+        // write and surface diagnostics to stderr. Best-effort: any failure
+        // here is a warning, never a hard error — the edit already succeeded.
+        if lsp_enabled {
+            let server_cmd = lsp_server_cmd
+                .as_deref()
+                .unwrap_or("rust-analyzer");
+            let workspace = args
+                .base
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            // Re-read the file as it now exists on disk (the `print!` above
+            // wrote to stdout; the caller is expected to redirect that back to
+            // the file, but we read the base content since we have it in memory
+            // — the reconstructed text is what was just emitted).
+            match crate::lsp::client::LspSession::open(server_cmd, workspace)
+                .and_then(|mut sess| {
+                    sess.notify_did_open(&args.base, &reconstructed)?;
+                    sess.collect_diagnostics(std::time::Duration::from_millis(500))
+                }) {
+                Ok(diags) if !diags.is_empty() => {
+                    for d in &diags {
+                        eprintln!("[lsp] {d}");
+                    }
+                }
+                Ok(_) => {}  // no diagnostics — clean
+                Err(e) => eprintln!("[lsp] warning: {e}"),
+            }
+        }
+
         return Ok(());
     }
 
@@ -254,5 +298,55 @@ mod tests {
         // No @@ change lines, just the header.
         assert_eq!(diff.lines().filter(|l| l.starts_with("@@ ")).count(), 0);
         assert_eq!(apply_hashline_diff(s, &diff).unwrap(), s);
+    }
+
+    // ── GOLD-PROG-10 (OP-03) integration tests ──────────────────────────────
+
+    /// With an absent / bogus LSP server binary, `run()` on the `--apply`
+    /// path MUST still succeed — LSP failure is best-effort (warn to stderr).
+    #[test]
+    fn apply_with_lsp_enabled_and_missing_server_does_not_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("test.rs");
+        std::fs::write(&base_path, "fn main() {}\n").unwrap();
+        let new_content = "fn main() { let _x = 1; }\n";
+        let diff_str = hashline_diff("fn main() {}\n", new_content);
+        let diff_path = dir.path().join("patch.hl");
+        std::fs::write(&diff_path, &diff_str).unwrap();
+        let args = EditArgs {
+            base: base_path,
+            new: None,
+            apply: Some(diff_path),
+            hashline: false,
+        };
+        // lsp_enabled=true but the server binary does not exist — must succeed.
+        let result = run(
+            args,
+            false,
+            true,
+            Some("__nonexistent_lsp_server_binary__".to_string()),
+        );
+        assert!(result.is_ok(), "apply must succeed even if LSP server is missing: {result:?}");
+    }
+
+    /// When `lsp_enabled=false`, no subprocess is spawned and the function
+    /// succeeds normally (sanity check that the disabled path is clean).
+    #[test]
+    fn apply_with_lsp_disabled_skips_lsp_entirely() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("test.rs");
+        std::fs::write(&base_path, "fn a() {}\n").unwrap();
+        let new_content = "fn b() {}\n";
+        let diff_str = hashline_diff("fn a() {}\n", new_content);
+        let diff_path = dir.path().join("p.hl");
+        std::fs::write(&diff_path, &diff_str).unwrap();
+        let args = EditArgs {
+            base: base_path,
+            new: None,
+            apply: Some(diff_path),
+            hashline: false,
+        };
+        // lsp_enabled=false — no subprocess spawned, no side-effects.
+        assert!(run(args, false, false, None).is_ok());
     }
 }

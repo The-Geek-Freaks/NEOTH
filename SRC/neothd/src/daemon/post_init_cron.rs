@@ -24,7 +24,7 @@ use crate::proactive::ProactiveItem;
 ///
 /// Called from `cli/serve.rs` via a detached `tokio::spawn` after
 /// `spawn_proactive_dispatcher` is alive.
-pub async fn run_post_init_check(home: &std::path::PathBuf) {
+pub async fn run_post_init_check(home: &Path) {
     if let Err(e) = run_post_init_check_inner(home).await {
         warn!(error = %e, "post_init_cron: check failed (best-effort, ignoring)");
     }
@@ -155,7 +155,7 @@ mod tests {
     async fn skips_when_no_initialized_marker() {
         let dir = tempdir().unwrap();
         // Should succeed (no-op) without creating a queue file.
-        run_post_init_check(&dir.path().to_path_buf()).await;
+        run_post_init_check(dir.path()).await;
         assert!(!dir.path().join("proactive_queue.json").exists());
     }
 
@@ -164,7 +164,7 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join(".initialized"), b"{}").unwrap();
         // No freedom.yaml → gaps detected
-        run_post_init_check(&dir.path().to_path_buf()).await;
+        run_post_init_check(dir.path()).await;
         let queue_path = dir.path().join("proactive_queue.json");
         assert!(
             queue_path.exists(),
@@ -185,8 +185,8 @@ mod tests {
     async fn idempotent_on_second_call() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join(".initialized"), b"{}").unwrap();
-        run_post_init_check(&dir.path().to_path_buf()).await;
-        run_post_init_check(&dir.path().to_path_buf()).await;
+        run_post_init_check(dir.path()).await;
+        run_post_init_check(dir.path()).await;
         let queue_path = dir.path().join("proactive_queue.json");
         let queue = crate::proactive::ProactiveQueue::load_from(&queue_path).unwrap();
         // dedup_key prevents double-enqueue
@@ -207,7 +207,7 @@ mod tests {
             "telegram_token: \"123:abc\"\n",
         )
         .unwrap();
-        run_post_init_check(&dir.path().to_path_buf()).await;
+        run_post_init_check(dir.path()).await;
         // No gaps → no queue file created
         assert!(
             !dir.path().join("proactive_queue.json").exists(),

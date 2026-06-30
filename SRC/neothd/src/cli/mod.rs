@@ -1118,15 +1118,23 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             capabilities::run_capabilities(args)?;
         }
         Commands::Edit(args) => {
-            // The freedom.yaml::tokens.hashline_edits default applies when
-            // `--hashline` is not passed explicitly; a missing config falls back
-            // to off so `neoth edit` works on a fresh checkout.
+            // The freedom.yaml::tokens fields apply when not overridden on the
+            // command line; a missing config falls back to off so `neoth edit`
+            // works on a fresh checkout.
             let home = crate::config::FreedomConfig::default_neoth_home();
-            let hashline_default =
+            let (hashline_default, lsp_enabled, lsp_server_cmd) =
                 crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml"))
-                    .map(|c| c.tokens.hashline_edits)
-                    .unwrap_or(false);
-            edit::run(args, hashline_default)?;
+                    .map(|c| {
+                        (
+                            c.tokens.hashline_edits,
+                            c.tokens.lsp_diagnostics_enabled,
+                            c.tokens.lsp_server_cmd,
+                        )
+                    })
+                    .unwrap_or((false, false, None));
+            // GOLD-PROG-10 (OP-03): pass LSP config into edit::run so diagnostics
+            // are surfaced after --apply writes.
+            edit::run(args, hashline_default, lsp_enabled, lsp_server_cmd)?;
         }
         Commands::Recall(mut args) => {
             args.output = global_output;

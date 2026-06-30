@@ -396,6 +396,17 @@ pub struct TokensConfig {
     /// `--hashline` flag). Off by default.
     #[serde(default)]
     pub hashline_edits: bool,
+    /// GOLD-PROG-10 (OP-03) — when true, `neoth edit --apply` runs the
+    /// just-written file through the configured LSP server and prints
+    /// diagnostics to stderr inline. Off by default (best-effort: a
+    /// missing or slow server never fails the edit itself).
+    #[serde(default)]
+    pub lsp_diagnostics_enabled: bool,
+    /// LSP server command to launch when `lsp_diagnostics_enabled` is true.
+    /// Defaults to `"rust-analyzer"` for `.rs` files when absent or `None`.
+    /// Examples: `"rust-analyzer"`, `"pylsp"`, `"typescript-language-server --stdio"`.
+    #[serde(default)]
+    pub lsp_server_cmd: Option<String>,
     /// GOLD-ADAPT-HARNESS-03 — enable message-history compaction middleware.
     /// When true, `CompactingProvider` wraps the fallback chain and
     /// squashes old prompt history when `history_compaction_threshold`
@@ -418,6 +429,8 @@ impl Default for TokensConfig {
         Self {
             max_per_request: Self::default_max_per_request(),
             hashline_edits: false,
+            lsp_diagnostics_enabled: false,
+            lsp_server_cmd: None,
             history_compaction_enabled: false,
             history_compaction_threshold: Self::default_history_compaction_threshold(),
             history_keep_recent_chars: Self::default_history_keep_recent_chars(),
