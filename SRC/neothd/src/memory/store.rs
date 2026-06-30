@@ -39,7 +39,10 @@ use rusqlite::Connection;
 /// v21: GOLD-ADAPT-ODY-26 — raw_turns table + raw_turns_fts FTS5 virtual table
 ///      (porter-stemmed, content-linked to raw_turns) for raw-transcript FTS
 ///      with before/after context rows. `neoth recall --transcript <query>`.
-pub const SCHEMA_VERSION: i64 = 21;
+/// v22: refines-JV-MEM-08 — add `idx_memory_links.stability REAL DEFAULT 1.0`
+///      for Ebbinghaus exponential edge decay (`weight *= exp(-days/stability)`)
+///      and Cepeda spacing (`stability += 0.1` when access gap > spaced interval).
+pub const SCHEMA_VERSION: i64 = 22;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -875,6 +878,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             -- v20: GOLD-ADAPT-JV-MEM-08 Hebbian feedback counters per edge.
             feedback_success INTEGER NOT NULL DEFAULT 0,
             feedback_failure INTEGER NOT NULL DEFAULT 0,
+            -- v22: refines-JV-MEM-08 — Ebbinghaus decay stability parameter.
+            -- Conceptually in days. Default 1.0 → 1-day half-life at zero
+            -- reinforcement. Grows via Cepeda spacing: +0.1 whenever the
+            -- inter-access gap exceeds the current stability window, rewarding
+            -- spaced practice with slower forgetting.
+            stability REAL NOT NULL DEFAULT 1.0,
             UNIQUE(lo_id, hi_id),
             CHECK(lo_id < hi_id)
         );

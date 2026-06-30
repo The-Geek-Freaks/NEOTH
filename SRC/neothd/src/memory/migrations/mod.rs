@@ -171,7 +171,28 @@ pub const MIGRATIONS: &[Migration] = &[
                       with before/after context rows via `neoth recall --transcript`)",
         run: migration_v20_to_v21,
     },
+    Migration {
+        from: 21,
+        to: 22,
+        description: "refines-JV-MEM-08: add idx_memory_links.stability — Ebbinghaus \
+                      exponential edge decay (weight *= exp(-days/stability)) + Cepeda \
+                      spacing parameter (stability += 0.1 on spaced accesses)",
+        run: migration_v21_to_v22,
+    },
 ];
+
+/// v21 → v22: refines-JV-MEM-08 — add `stability REAL NOT NULL DEFAULT 1.0`
+/// to `idx_memory_links`. Existing edges default to stability=1.0 (same
+/// 1-day half-life as the new formula default). The `let _` idiom swallows
+/// the "duplicate column" error so re-running this migration against a
+/// partially-migrated database is idempotent.
+fn migration_v21_to_v22(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_memory_links ADD COLUMN stability REAL NOT NULL DEFAULT 1.0",
+        [],
+    );
+    Ok(())
+}
 
 /// v20 → v21: GOLD-ADAPT-ODY-26 — add `raw_turns` + `raw_turns_fts` for
 /// raw-transcript FTS with before/after context rows.

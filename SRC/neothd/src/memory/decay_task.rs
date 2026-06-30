@@ -195,12 +195,15 @@ pub async fn run_once(
             }
         };
         let pass_report = consolidate::run_consolidation_pass(&mut conn, now_ns, vault.as_deref())?;
-        // GOLD-ADAPT-MEM-07 — decay + prune co-access association links on the
-        // same 2 h cadence as importance decay (best-effort; never fails the
-        // pass). factor 0.98 ≈ 3-day half-life; links below 0.05 are pruned.
-        match crate::memory::assoc_graph::decay_links(&conn, 0.98, 0.05) {
+        // refines-JV-MEM-08 — Ebbinghaus exponential edge decay + Cepeda spacing.
+        // Per-row: weight *= exp(-days_since / stability); stability=1.0 default
+        // → 1-day half-life; Cepeda spacing in reinforce_co_access grows stability
+        // on spaced accesses so well-spaced links decay slower. Links below 0.05
+        // floor are pruned. Best-effort; never fails the consolidation pass.
+        let assoc_now_unix = crate::time::now_unix_i64();
+        match crate::memory::assoc_graph::decay_links(&conn, 0.05, assoc_now_unix) {
             Ok(pruned) => {
-                tracing::debug!(links_pruned = pruned, "assoc_graph: link decay pass")
+                tracing::debug!(links_pruned = pruned, "assoc_graph: Ebbinghaus link decay pass")
             }
             Err(e) => {
                 tracing::debug!(error = %e, "assoc_graph: link decay failed (non-fatal)")

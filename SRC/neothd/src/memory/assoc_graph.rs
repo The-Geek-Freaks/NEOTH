@@ -63,6 +63,13 @@ const MAX_BOOTSTRAP_PAIRS: usize = 50_000;
 /// weight 1.0; a repeat bumps the weight by 1.0. All upserts run in one
 /// transaction. Returns the number of pair-upserts performed.
 ///
+/// **Cepeda spacing (refines-JV-MEM-08):** on each co-access, if the elapsed
+/// time since `last_co_access` exceeds the current `stability` window
+/// (`gap_seconds > stability * 86400`), `stability` is bumped by `+0.1`.
+/// This rewards spaced-out recalls with a slower forgetting curve — the link
+/// decays less aggressively the more the operator accesses it with appropriate
+/// spacing.
+///
 /// Caller (normal recall) treats this best-effort — a failure must never fail or
 /// re-rank the recall. Endpoints must be real positive episode `event_id`s
 /// (warm-summary synthetic negatives + groundtruth ids are filtered out before
@@ -89,10 +96,20 @@ pub fn reinforce_co_access(conn: &Connection, event_ids: &[i64], now_unix: i64) 
                 continue; // self-link guard (defensive; dedup already removes dups)
             }
             let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+            // Cepeda spacing: bump stability when the inter-access gap exceeds the
+            // current stability window (?3 - last_co_access > stability * 86400).
+            // All timestamps in Unix seconds; stability conceptually in days.
             tx.execute(
-                "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access) \
-                 VALUES (?1, ?2, 1.0, ?3) \
-                 ON CONFLICT(lo_id, hi_id) DO UPDATE SET weight = weight + 1.0, last_co_access = ?3",
+                "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access, stability) \
+                 VALUES (?1, ?2, 1.0, ?3, 1.0) \
+                 ON CONFLICT(lo_id, hi_id) DO UPDATE SET \
+                     weight = weight + 1.0, \
+                     last_co_access = ?3, \
+                     stability = CASE \
+                         WHEN ?3 - last_co_access > stability * 86400 \
+                         THEN stability + 0.1 \
+                         ELSE stability \
+                     END",
                 params![lo, hi, now_unix],
             )
             .context("upsert co-access link")?;
@@ -149,22 +166,62 @@ pub fn associated(conn: &Connection, event_id: i64, limit: usize) -> Result<Vec<
     Ok(rows)
 }
 
-/// Decay every link weight by `factor` (multiplicative) then prune links that
-/// fell below `floor`. Runs on the `decay_task` cadence (2 h). Returns the
-/// number of links pruned. With factor 0.98 at 2 h cadence a link halves in
-/// ~3 days of no reinforcement and drops below a 0.05 floor in ~10 days.
-pub fn decay_links(conn: &Connection, factor: f64, floor: f64) -> Result<usize> {
-    conn.execute(
-        "UPDATE idx_memory_links SET weight = weight * ?1 WHERE weight > 0.0",
-        params![factor],
-    )
-    .context("decay link weights")?;
-    let pruned = conn
-        .execute(
-            "DELETE FROM idx_memory_links WHERE weight < ?1",
-            params![floor],
+/// Decay every link weight using per-edge Ebbinghaus exponential decay
+/// (`weight *= exp(-days_since / stability)`) then prune links that fell
+/// below `floor`. Runs on the `decay_task` cadence (2 h). Returns the
+/// number of links pruned.
+///
+/// ## Formula
+///
+/// `days_since = MAX(0, now_unix − last_co_access) / 86400`
+/// `weight *= exp(-days_since / stability)`
+///
+/// With default `stability = 1.0` a link halves in ~0.7 days of no
+/// reinforcement (1-day half-life). Cepeda spacing in
+/// [`reinforce_co_access`] grows `stability` on spaced recalls, so
+/// frequently-but-spaced links decay much more slowly over time.
+///
+/// The math is computed in Rust (not SQLite) to avoid depending on
+/// SQLite's optional `exp()` function (added in 3.35.0, 2021-03-12,
+/// but not available when SQLite is compiled without math functions).
+/// This is ~10× slower than a single UPDATE for large graphs, but
+/// correct everywhere. The `decay_task` cadence is 2 h so the extra
+/// cost is immaterial.
+///
+/// `now_unix` is the current time as Unix seconds (i64), obtained from
+/// `crate::time::now_unix_i64()` at the call site.
+pub fn decay_links(conn: &Connection, floor: f64, now_unix: i64) -> Result<usize> {
+    // Load all rows that still have positive weight.
+    let mut stmt = conn
+        .prepare(
+            "SELECT rowid, weight, last_co_access, stability \
+             FROM idx_memory_links WHERE weight > 0.0",
         )
-        .context("prune decayed links")?;
+        .context("prepare decay cursor")?;
+    let rows: Vec<(i64, f64, i64, f64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .context("read decay rows")?
+        .collect::<rusqlite::Result<_>>()
+        .context("collect decay rows")?;
+
+    let tx = conn.unchecked_transaction().context("begin decay tx")?;
+    let mut pruned = 0usize;
+    for (rowid, weight, last_co_access, stability) in rows {
+        let days_since = (now_unix - last_co_access).max(0) as f64 / 86400.0;
+        let new_weight = weight * (-days_since / stability.max(f64::EPSILON)).exp();
+        if new_weight < floor {
+            tx.execute("DELETE FROM idx_memory_links WHERE rowid = ?1", params![rowid])
+                .context("prune decayed link")?;
+            pruned += 1;
+        } else {
+            tx.execute(
+                "UPDATE idx_memory_links SET weight = ?1 WHERE rowid = ?2",
+                params![new_weight, rowid],
+            )
+            .context("write decayed weight")?;
+        }
+    }
+    tx.commit().context("commit decay tx")?;
     Ok(pruned)
 }
 
@@ -664,17 +721,73 @@ mod tests {
     #[test]
     fn decay_reduces_weights_and_prunes_below_floor() {
         let (_d, c) = conn();
-        reinforce_co_access(&c, &[1, 2, 3], 1).unwrap(); // each pair weight 1.0
-        // Decay by 0.5 → 0.5 (above a 0.1 floor): nothing pruned.
-        assert_eq!(decay_links(&c, 0.5, 0.1).unwrap(), 0);
-        assert!((weight(&c, 1, 2) - 0.5).abs() < 1e-9);
-        // Decay again → 0.25, then a 0.3 floor prunes all three.
-        let pruned = decay_links(&c, 0.5, 0.3).unwrap();
-        assert_eq!(pruned, 3, "all three links pruned below floor");
+        // Seed links with last_co_access set far in the past so the
+        // Ebbinghaus formula produces a large decay. 100 days ago with
+        // stability=1.0 → weight *= exp(-100) ≈ 3.7e-44, well below any floor.
+        let far_past = crate::time::now_unix_i64() - 100 * 86400;
+        c.execute(
+            "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access, stability) \
+             VALUES (1, 2, 1.0, ?1, 1.0), (1, 3, 1.0, ?1, 1.0), (2, 3, 1.0, ?1, 1.0)",
+            params![far_past],
+        )
+        .unwrap();
+
+        let now = crate::time::now_unix_i64();
+        // All three should be driven near-zero and pruned below a 0.05 floor.
+        let pruned = decay_links(&c, 0.05, now).unwrap();
+        assert_eq!(pruned, 3, "all three links must be pruned below floor after 100d");
         let remaining: i64 = c
             .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
             .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn ebbinghaus_decay_uses_stability_and_last_co_access() {
+        // Prove that decay_links reads last_co_access + stability to compute
+        // per-edge exponential decay rather than applying a flat factor.
+        let (_d, c) = conn();
+        let ten_days_ago = crate::time::now_unix_i64() - 10 * 86400;
+        let one_day_ago = crate::time::now_unix_i64() - 86400;
+        // (1,2): 10 days stale, stability 1.0 → exp(-10/1) ≈ 4.5e-5, below 0.05.
+        // (3,4): 1 day stale,  stability 1.0 → exp(-1/1)  ≈ 0.368, above 0.05.
+        c.execute(
+            "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access, stability) \
+             VALUES (1, 2, 1.0, ?1, 1.0), (3, 4, 1.0, ?2, 1.0)",
+            params![ten_days_ago, one_day_ago],
+        )
+        .unwrap();
+        let now = crate::time::now_unix_i64();
+        let pruned = decay_links(&c, 0.05, now).unwrap();
+        assert_eq!(pruned, 1, "(1,2) should decay to near-zero and be pruned");
+        let remaining: i64 = c
+            .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 1, "(3,4) must survive");
+    }
+
+    #[test]
+    fn cepeda_spacing_bumps_stability_when_gap_exceeds_interval() {
+        // Prove that reinforce_co_access bumps stability when the inter-access
+        // gap exceeds the current stability window.
+        let (_d, c) = conn();
+        // First access: 5 days ago (stability=1.0 → threshold=1 day; gap=5d > threshold → bump).
+        let five_days_ago = crate::time::now_unix_i64() - 5 * 86400;
+        reinforce_co_access(&c, &[1, 2], five_days_ago).unwrap();
+        // Second access now: gap from 5 days ago is 5 days > stability(1.0) × 86400 → bump.
+        let now = crate::time::now_unix_i64();
+        reinforce_co_access(&c, &[1, 2], now).unwrap();
+        let stability: f64 = c
+            .query_row(
+                "SELECT stability FROM idx_memory_links WHERE lo_id = 1 AND hi_id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            stability > 1.0,
+            "stability must have been bumped by Cepeda spacing: {stability}"
+        );
     }
 
     #[test]
