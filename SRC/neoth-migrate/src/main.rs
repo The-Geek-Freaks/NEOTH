@@ -46,6 +46,7 @@ use tracing_subscriber::EnvFilter;
 mod import_config;
 mod import_crons;
 mod readers;
+mod wal_emit;
 
 /// Phase-3 store-migration tool. See module-doc for usage examples.
 #[derive(Parser, Debug)]
@@ -221,6 +222,16 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
     check_groundtruth_schema(&conn)
         .with_context(|| format!("schema check on {}", db_path.display()))?;
 
+    // ── OperatorWalEmitter — lifecycle-phase JSONL sidecar ────────────────────
+    //
+    // neoth-migrate is a standalone binary; it cannot hold the daemon's
+    // WalWriterHandle (single-writer invariant). All audit writes go to
+    // ~/.neoth/neoth-migrate-audit.jsonl via OperatorWalEmitter.
+    // The emitter is constructed here — after dry-run exit and after schema
+    // check — so no events are written for dry-run paths or schema failures.
+    let emitter = wal_emit::OperatorWalEmitter::new(&home, /* dry_run= */ false);
+    emitter.emit_migration_started(manifest.sources.len());
+
     // ── Single transaction for speed + atomicity ──────────────────────────────
     conn.execute_batch("BEGIN")?;
 
@@ -260,6 +271,7 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
                     }
                 }
                 total_inserted += src_inserted;
+                emitter.emit_migration_batch(&src.name, claims.len(), src_inserted);
                 per_source.push(serde_json::json!({
                     "name": src.name,
                     "claims_seen": claims.len(),
@@ -286,33 +298,10 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
 
     conn.execute_batch("COMMIT")?;
 
-    // ── WAL audit (IMPORT_COMPLETE 0x99) ──────────────────────────────────────
-    //
-    // neoth-migrate is a standalone binary with no access to neothd's
-    // WalWriterHandle. Per the design note at wal/events.rs: "CLI one-shots
-    // stay silent." We therefore emit a JSONL audit line to
-    // ~/.neoth/neoth-migrate-audit.jsonl which the daemon reconciles on
-    // next start. Event type 0x99 = 153 decimal (GROUNDTRUTH_IMPORTED).
-    let audit_path = home.join(".neoth").join("neoth-migrate-audit.jsonl");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&audit_path)
-    {
-        use std::io::Write;
-        let _ = writeln!(
-            f,
-            "{}",
-            serde_json::json!({
-                "event": "GROUNDTRUTH_IMPORTED",
-                "event_type": 0x99u8,  // = 153
-                "sources_total": manifest.sources.len(),
-                "sources_skipped": total_skipped_sources,
-                "inserted": total_inserted,
-                "ts_ns": now_ns,
-            })
-        );
-    }
+    // Emit MIGRATION_COMPLETE after COMMIT. Includes legacy event/event_type
+    // fields (GROUNDTRUTH_IMPORTED / 0x99) for backward-compat with tooling
+    // that previously parsed the single-line summary.
+    emitter.emit_migration_complete(total_inserted, total_skipped_sources);
 
     println!(
         "{}",
@@ -595,6 +584,88 @@ mod tests {
             audit.contains("153"),
             "audit must contain event_type 153 (0x99); got: {audit}"
         );
+    }
+
+    // ── OperatorWalEmitter: STARTED + BATCH + COMPLETE lifecycle events ──────
+
+    #[test]
+    fn apply_emits_migration_jsonl_with_started_batch_complete_events() {
+        let dir = tempdir().unwrap();
+        let db_path = make_views_db(dir.path());
+
+        let src = dir.path().join("claims2.json");
+        std::fs::write(
+            &src,
+            r#"[{"statement":"lifecycle claim one here"},{"statement":"lifecycle claim two here"}]"#,
+        )
+        .unwrap();
+        let manifest_path = write_manifest(
+            dir.path(),
+            &format!(
+                "sources:\n  - name: lc-source\n    path: {}\n    kind: json_file\n",
+                src.display()
+            ),
+        );
+
+        // ── dry_run=true must write zero JSONL lines ──────────────────────────
+        run_apply(ApplyArgs {
+            manifest: manifest_path.clone(),
+            root: Some(dir.path().to_path_buf()),
+            confirm: false,
+            dry_run: true,
+            db: Some(db_path.clone()),
+        })
+        .unwrap();
+        let audit_path = dir.path().join(".neoth").join("neoth-migrate-audit.jsonl");
+        assert!(
+            !audit_path.exists(),
+            "dry_run must not create the audit file"
+        );
+
+        // ── real apply ────────────────────────────────────────────────────────
+        run_apply(ApplyArgs {
+            manifest: manifest_path,
+            root: Some(dir.path().to_path_buf()),
+            confirm: true,
+            dry_run: false,
+            db: Some(db_path.clone()),
+        })
+        .unwrap();
+
+        // Both rows in db
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_groundtruth", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "both lifecycle claims must be in views.db");
+
+        // Parse JSONL
+        let raw = std::fs::read_to_string(&audit_path).unwrap();
+        let lines: Vec<serde_json::Value> = raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("valid JSON line"))
+            .collect();
+
+        // Must have exactly 3 lines: STARTED, BATCH, COMPLETE
+        assert_eq!(lines.len(), 3, "expected STARTED + BATCH + COMPLETE; got {raw}");
+
+        // MIGRATION_STARTED
+        assert_eq!(lines[0]["kind"], "MIGRATION_STARTED", "first line must be MIGRATION_STARTED");
+        assert_eq!(lines[0]["sources_total"], 1, "sources_total must be 1");
+
+        // MIGRATION_BATCH for lc-source
+        assert_eq!(lines[1]["kind"], "MIGRATION_BATCH", "second line must be MIGRATION_BATCH");
+        assert_eq!(lines[1]["source_name"], "lc-source");
+        assert_eq!(lines[1]["inserted"], 2, "inserted must be 2");
+
+        // MIGRATION_COMPLETE
+        assert_eq!(lines[2]["kind"], "MIGRATION_COMPLETE", "third line must be MIGRATION_COMPLETE");
+        assert_eq!(lines[2]["inserted"], 2, "COMPLETE.inserted must be 2");
+        assert_eq!(lines[2]["skipped_sources"], 0);
+        // Legacy compat fields
+        assert_eq!(lines[2]["event"], "GROUNDTRUTH_IMPORTED");
+        assert_eq!(lines[2]["event_type"], 153);
     }
 
     // ── idempotency: re-run does not double-insert ────────────────────────────
