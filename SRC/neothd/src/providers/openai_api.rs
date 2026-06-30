@@ -360,6 +360,42 @@ impl Provider for OpenAiAdapter {
                         }
                     }
                 }
+                // EOF residual: parse a final `data:` line the endpoint ended
+                // WITHOUT a trailing newline (the line-loop never consumed it), so
+                // a newline-less last delta or usage block isn't dropped before the
+                // terminator. `[DONE]`/empty just falls through to the terminator.
+                let tail = buf.trim();
+                if let Some(data) = tail
+                    .strip_prefix("data: ")
+                    .or_else(|| tail.strip_prefix("data:"))
+                {
+                    let data = data.trim();
+                    if !data.is_empty() && data != "[DONE]" {
+                        if let Ok(parsed) = serde_json::from_str::<SseChunk>(data) {
+                            if let Some(u) = &parsed.usage {
+                                input_tokens = Some(u.prompt_tokens);
+                                output_tokens = Some(u.completion_tokens);
+                            }
+                            if let Some(delta) = parsed
+                                .choices
+                                .into_iter()
+                                .next()
+                                .and_then(|c| c.delta.content)
+                            {
+                                if !delta.is_empty() {
+                                    yield CompletionChunk {
+                                        delta,
+                                        done: false,
+                                        input_tokens: None,
+                                        output_tokens: None,
+                                        cache_creation_tokens: None,
+                                        cache_read_tokens: None,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
                 // Stream ended without [DONE] — emit a done-chunk so consumers
                 // see a clean terminator even from misbehaving endpoints.
                 yield CompletionChunk {

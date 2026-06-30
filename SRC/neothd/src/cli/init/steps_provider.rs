@@ -116,6 +116,10 @@ pub(crate) async fn step5_provider(
                     "local_qwen — Qwen2/Qwen3 dense on your hardware (~3 GB cached, CPU + GPU). No GPU? Pick openai_compat + OpenRouter instead.",
                 ),
                 (
+                    ProviderKind::LocalOllama,
+                    "local_ollama — native Ollama /api/chat NDJSON (point at a running `ollama serve`, no API key). More direct than openai_compat for Ollama.",
+                ),
+                (
                     ProviderKind::GitHubCopilot,
                     "copilot_api (GitHub Copilot — OAuth PAT, zero per-token cost for GH subscribers)",
                 ),

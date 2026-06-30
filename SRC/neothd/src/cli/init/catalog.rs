@@ -108,6 +108,7 @@ pub(crate) fn prompt_inference_provider(
         InferenceProvider::OpenAiCompat,
         InferenceProvider::Gemini,
         InferenceProvider::LocalQwen,
+        InferenceProvider::LocalOllama,
         InferenceProvider::AwsBedrock,
         InferenceProvider::AzureOpenAi,
     ];

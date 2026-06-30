@@ -228,7 +228,38 @@ impl Provider for OllamaAdapter {
                         }
                     }
 
-                    // Stream ended without a done=true line; emit a clean terminator.
+                    // EOF residual: a server may end the FINAL JSON line without a
+                    // trailing newline, so the line-loop above never consumed it.
+                    // Parse whatever is left before synthesising the terminator so a
+                    // newline-less done line (token counts) or content delta is not
+                    // dropped.
+                    let tail = buf.trim();
+                    if !tail.is_empty() {
+                        if let Ok(chunk) = serde_json::from_str::<OllamaChatChunk>(tail) {
+                            if chunk.done {
+                                input_tokens = chunk.prompt_eval_count;
+                                output_tokens = chunk.eval_count;
+                            } else if !chunk.message.content.is_empty() {
+                                yield CompletionChunk {
+                                    delta: chunk.message.content,
+                                    done: false,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_creation_tokens: None,
+                                    cache_read_tokens: None,
+                                };
+                            }
+                        } else {
+                            tracing::warn!(
+                                adapter = "local_ollama",
+                                raw = %tail,
+                                "NDJSON EOF-residual parse error; dropping tail"
+                            );
+                        }
+                    }
+
+                    // Stream ended; emit a clean terminator carrying any token
+                    // counts captured from a done line (incl. a newline-less tail).
                     yield CompletionChunk {
                         delta: String::new(),
                         done: true,
@@ -474,6 +505,52 @@ mod tests {
         let done = done_chunks[0];
         assert_eq!(done.input_tokens, Some(5));
         assert_eq!(done.output_tokens, Some(3));
+    }
+
+    /// EOF residual (review P2): a server may end the FINAL NDJSON line without a
+    /// trailing newline. The done line (with token counts) must still be parsed,
+    /// not dropped — so the terminator carries the real counts + the last content
+    /// is delivered.
+    #[tokio::test]
+    async fn mock_ndjson_stream_parses_newline_less_final_done_line() {
+        let ndjson_body = concat!(
+            "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n",
+            // final done line — deliberately NO trailing newline:
+            "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":7,\"eval_count\":4}",
+        );
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(ndjson_body, "application/x-ndjson"),
+            )
+            .mount(&mock)
+            .await;
+        let adapter = build_adapter_against(&mock.uri());
+        let mut stream = adapter
+            .stream(Request {
+                prompt: "hi".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("stream must start");
+        let mut chunks = Vec::new();
+        while let Some(item) = stream.next().await {
+            chunks.push(item.expect("chunk must be Ok"));
+        }
+        let content: String = chunks
+            .iter()
+            .filter(|c| !c.done)
+            .map(|c| c.delta.as_str())
+            .collect();
+        assert_eq!(content, "Hi");
+        let done = chunks.iter().find(|c| c.done).expect("must have a done chunk");
+        assert_eq!(
+            done.input_tokens,
+            Some(7),
+            "newline-less final done line tokens must be captured"
+        );
+        assert_eq!(done.output_tokens, Some(4));
     }
 
     /// stream:true must be in the request body (not false like complete()).
