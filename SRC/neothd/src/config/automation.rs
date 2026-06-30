@@ -894,9 +894,10 @@ impl SynthesisCronConfig {
 pub const DEFAULT_CONSOLIDATION_SWEEP_INTERVAL_SECS: u64 = 6 * 3600;
 
 /// Default cosine-similarity threshold for clustering hot-tier embeddings.
-/// L2-normalised vectors → cosine = dot product; 0.75 requires high semantic
-/// overlap (empirically ~top-5% similarity on typical episode corpora).
-pub const DEFAULT_SWEEP_COSINE_THRESHOLD: f64 = 0.75;
+/// L2-normalised vectors → cosine = dot product; 0.65 captures strong same-domain
+/// semantic similarity while excluding noisy cross-topic neighbours
+/// (empirically ~top-15% similarity on typical episode corpora).
+pub const DEFAULT_SWEEP_COSINE_THRESHOLD: f64 = 0.65;
 
 /// Maximum importance value the sweep may assign to a cluster member.
 /// Caps the boost so the Hebbian decay path retains control of long-term
@@ -931,7 +932,7 @@ pub struct ConsolidationSweepConfig {
     /// Run interval in seconds. Default 21 600 (6 h). Floor 60 s.
     pub interval_secs: u64,
     /// Cosine-similarity threshold for Union-Find clustering (0.0..=1.0).
-    /// Default 0.75.
+    /// Default 0.65.
     pub cosine_threshold: f64,
     /// Importance-boost cap after clustering. Default 0.85.
     pub importance_boost_cap: f64,

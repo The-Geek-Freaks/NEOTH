@@ -111,6 +111,11 @@ struct EmbRow {
     event_id_str: String,
     /// L2-normalised f32 embedding. May be None if the blob is corrupt.
     vec: Vec<f32>,
+    /// Channel (domain) this episode belongs to, from `idx_episode.channel`.
+    /// `None` means the episode has no channel tag (e.g. RAW_TEXT events).
+    /// Two episodes with `None` channels are treated as the **same** domain
+    /// (conservative: unclassified episodes cluster together).
+    channel: Option<String>,
 }
 
 /// Dot product of two L2-normalised vectors (= cosine similarity).
@@ -148,26 +153,29 @@ pub fn run_sweep(
     now_ns: i64,
     cfg: &ConsolidationSweepConfig,
 ) -> Result<SweepReport> {
-    // ── 1. Load embeddings ──────────────────────────────────────────────────
+    // ── 1. Load embeddings (with channel for same-domain guard) ────────────
     let rows: Vec<EmbRow> = {
         let mut stmt = conn.prepare(
-            "SELECT source_ref, embedding \
-             FROM idx_embedding \
-             WHERE source_kind = 'episode'",
+            "SELECT ie.source_ref, ie.embedding, ep.channel \
+             FROM idx_embedding ie \
+             LEFT JOIN idx_episode ep \
+                 ON ep.event_id = CAST(ie.source_ref AS INTEGER) \
+             WHERE ie.source_kind = 'episode'",
         )?;
         stmt.query_map([], |r| {
             let source_ref: String = r.get(0)?;
             let blob: Vec<u8> = r.get(1)?;
-            Ok((source_ref, blob))
+            let channel: Option<String> = r.get(2)?;
+            Ok((source_ref, blob, channel))
         })?
         .filter_map(|res| {
-            res.ok().and_then(|(source_ref, blob)| {
+            res.ok().and_then(|(source_ref, blob, channel)| {
                 let vec = blob_to_floats(&blob);
                 if vec.is_empty() {
                     warn!(source_ref, "consolidation_sweep: skipping embedding with bad blob");
                     return None;
                 }
-                Some(EmbRow { event_id_str: source_ref, vec })
+                Some(EmbRow { event_id_str: source_ref, vec, channel })
             })
         })
         .collect()
@@ -194,6 +202,15 @@ pub fn run_sweep(
 
     for i in 0..n {
         for j in (i + 1)..n {
+            // Same-domain guard: only cluster episodes on the same channel.
+            // `None == None` → both unclassified → treated as same domain
+            // (conservative: preserves existing behaviour for RAW_TEXT events
+            // which have no channel tag).
+            // `Some(a) == Some(b)` only when the channel strings match.
+            // `Some(_) vs None` → different domains → skip.
+            if rows[i].channel != rows[j].channel {
+                continue;
+            }
             if dot(&rows[i].vec, &rows[j].vec) >= threshold {
                 uf.union(i, j);
             }
@@ -351,15 +368,27 @@ mod tests {
         .unwrap();
     }
 
-    /// Insert a minimal idx_episode row.
+    /// Insert a minimal idx_episode row (no channel tag — e.g. RAW_TEXT).
     fn insert_episode(conn: &Connection, event_id: i64, text: &str, importance: f64, ts_ns: i64) {
+        insert_episode_with_channel(conn, event_id, text, importance, ts_ns, None);
+    }
+
+    /// Insert a minimal idx_episode row with an optional channel tag.
+    fn insert_episode_with_channel(
+        conn: &Connection,
+        event_id: i64,
+        text: &str,
+        importance: f64,
+        ts_ns: i64,
+        channel: Option<&str>,
+    ) {
         // event_type=1 (RAW_TEXT), text_hash derived from event_id for uniqueness.
         let text_hash = format!("hash-{event_id}");
         conn.execute(
             "INSERT OR REPLACE INTO idx_episode \
-             (event_id, event_type, text, text_hash, importance, trust, ts_ns, pinned) \
-             VALUES (?1, 1, ?2, ?3, ?4, 1, ?5, 0)",
-            params![event_id, text, text_hash, importance, ts_ns],
+             (event_id, event_type, text, text_hash, importance, trust, ts_ns, pinned, channel) \
+             VALUES (?1, 1, ?2, ?3, ?4, 1, ?5, 0, ?6)",
+            params![event_id, text, text_hash, importance, ts_ns, channel],
         )
         .unwrap();
     }
@@ -493,5 +522,116 @@ mod tests {
 
         let report = run_sweep(&conn, ts + 1_000_000, &default_cfg()).unwrap();
         assert_eq!(report.merged_to_groundtruth, 0);
+    }
+
+    // ── DELTA 2: same-domain guard tests ─────────────────────────────────────
+
+    /// Two identical vectors on DIFFERENT channels must NOT cluster.
+    /// This proves the same-domain guard is enforced in the union step.
+    #[test]
+    fn cross_channel_episodes_do_not_cluster() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+
+        // Cosine = 1.0 (identical unit vectors) — would cluster without the
+        // same-domain guard; channel mismatch must prevent it.
+        insert_episode_with_channel(&conn, 1, "rust is fast", 0.5, 1_000_000_000, Some("telegram"));
+        insert_episode_with_channel(
+            &conn,
+            2,
+            "rust is fast too",
+            0.5,
+            2_000_000_000,
+            Some("discord"),
+        );
+        insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
+        insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
+
+        let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(
+            report.clusters_found, 0,
+            "cross-channel episodes must not form a cluster even with cosine=1.0"
+        );
+        assert_eq!(report.members_boosted, 0);
+    }
+
+    /// Two identical vectors on the SAME named channel must still cluster.
+    #[test]
+    fn same_channel_episodes_do_cluster() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+
+        insert_episode_with_channel(
+            &conn,
+            1,
+            "neoth rocks",
+            0.4,
+            1_000_000_000,
+            Some("telegram"),
+        );
+        insert_episode_with_channel(
+            &conn,
+            2,
+            "neoth rocks indeed",
+            0.4,
+            2_000_000_000,
+            Some("telegram"),
+        );
+        insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
+        insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
+
+        let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(
+            report.clusters_found, 1,
+            "same-channel episodes with cosine=1.0 must cluster"
+        );
+        assert_eq!(report.members_boosted, 2);
+    }
+
+    /// Two identical vectors with NULL channel (unclassified / RAW_TEXT)
+    /// must cluster together — None==None same-domain conservative rule.
+    #[test]
+    fn null_channel_episodes_cluster_as_same_domain() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+
+        // No channel — both None → treated as same domain.
+        insert_episode(&conn, 1, "anon a", 0.4, 1_000_000_000);
+        insert_episode(&conn, 2, "anon b", 0.4, 2_000_000_000);
+        insert_embedding(&conn, 1, &[0.0f32, 1.0, 0.0]);
+        insert_embedding(&conn, 2, &[0.0f32, 1.0, 0.0]);
+
+        let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(
+            report.clusters_found, 1,
+            "NULL-channel episodes must cluster (None==None same-domain)"
+        );
+        assert_eq!(report.members_boosted, 2);
+    }
+
+    /// An episode with a named channel must NOT cluster with a NULL-channel
+    /// episode (None != Some("telegram")).
+    #[test]
+    fn named_channel_vs_null_channel_does_not_cluster() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+
+        insert_episode_with_channel(
+            &conn,
+            1,
+            "tagged",
+            0.5,
+            1_000_000_000,
+            Some("telegram"),
+        );
+        insert_episode(&conn, 2, "untagged", 0.5, 2_000_000_000); // channel=None
+        insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
+        insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
+
+        let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(
+            report.clusters_found, 0,
+            "named-channel vs NULL-channel must not cluster"
+        );
     }
 }
