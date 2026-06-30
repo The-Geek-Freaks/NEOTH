@@ -10,13 +10,16 @@
 //! skipped silently.
 //!
 //! The subprocess I/O is fully synchronous (matching `cli::edit::run`'s sync
-//! context). The read timeout is implemented with a scoped thread +
-//! `std::sync::mpsc` so `ChildStdout`, which does not support
-//! `set_read_timeout`, can be given a deadline without blocking forever.
+//! context). A single reader thread owns the `ChildStdout` and streams complete
+//! frames over an `std::sync::mpsc` channel; the caller applies a deadline with
+//! `recv_timeout`. `ChildStdout` has no `set_read_timeout`, and this
+//! owned-reader design gives a timeout without ever aliasing the reader (a read
+//! that outlives its deadline simply keeps the thread blocked; `Drop` kills the
+//! child to close stdout, then joins the thread).
 
 use std::io::Write as _;
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -39,7 +42,13 @@ use crate::mcp::transport::frame;
 pub struct LspSession {
     child: Child,
     stdin: ChildStdin,
-    stdout: ChildStdout,
+    /// Complete frames produced by the owned reader thread (which exclusively
+    /// owns the `ChildStdout`). `Ok` = one frame body; `Err` = a read error.
+    /// A closed channel (sender dropped) signals EOF.
+    frame_rx: mpsc::Receiver<std::result::Result<Vec<u8>, String>>,
+    /// Join handle for the reader thread — joined in `Drop` after `child.kill()`
+    /// closes stdout, so the thread never outlives the session (no detach/leak).
+    reader: Option<std::thread::JoinHandle<()>>,
     next_id: u64,
 }
 
@@ -65,12 +74,38 @@ impl LspSession {
             .with_context(|| format!("spawn LSP server {bin:?}"))?;
 
         let stdin = child.stdin.take().context("child has no stdin")?;
-        let stdout = child.stdout.take().context("child has no stdout")?;
+        let mut stdout = child.stdout.take().context("child has no stdout")?;
+
+        // Spawn a reader thread that OWNS `stdout` and streams complete frames
+        // over a channel. This removes the aliasing hazard of borrowing
+        // `&mut self.stdout` into a per-read thread: a read timeout simply yields
+        // no frame (the thread keeps owning stdout, blocked in `read`), and
+        // `Drop` kills the child — closing stdout so the read returns EOF — then
+        // joins the thread. No unsafe, no raw pointer, no detached thread.
+        let (tx, frame_rx) = mpsc::channel::<std::result::Result<Vec<u8>, String>>();
+        let reader = std::thread::spawn(move || {
+            loop {
+                match read_one_complete_frame(&mut stdout) {
+                    Ok(Some(body)) => {
+                        if tx.send(Ok(body)).is_err() {
+                            break; // receiver gone — session dropped
+                        }
+                    }
+                    Ok(None) => break, // clean EOF
+                    Err(e) => {
+                        let _ = tx.send(Err(e.to_string()));
+                        break;
+                    }
+                }
+            }
+            // `tx` dropped here → channel closes → `recv` sees Disconnected (EOF).
+        });
 
         let mut sess = LspSession {
             child,
             stdin,
-            stdout,
+            frame_rx,
+            reader: Some(reader),
             next_id: 1,
         };
 
@@ -150,9 +185,14 @@ impl LspSession {
 
 impl Drop for LspSession {
     fn drop(&mut self) {
-        // Best-effort shutdown: close stdin so the server exits cleanly.
-        // The child is waited lazily; we do not block here.
+        // Kill the child FIRST: this closes its stdout, which unblocks the
+        // reader thread's pending `read()` (it sees EOF) so the join below
+        // always returns. `Child::kill()` is SIGKILL / TerminateProcess, so the
+        // pipe is guaranteed to close even if the server ignores soft signals.
         let _ = self.child.kill();
+        if let Some(handle) = self.reader.take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -192,67 +232,22 @@ impl LspSession {
         Ok(())
     }
 
-    /// Read exactly one complete LSP frame from stdout, blocking at most
-    /// `timeout`. Returns `Ok(Some(body))`, `Ok(None)` on EOF, or `Err` on
-    /// timeout (the frame did not arrive in time).
+    /// Pull the next complete frame from the reader thread, waiting at most
+    /// `timeout`. `Ok(Some(body))` = a frame; `Ok(None)` = EOF (reader exited);
+    /// `Err` = a timeout or a read error surfaced by the reader thread.
+    ///
+    /// No thread is spawned here and `ChildStdout` is never aliased: the reader
+    /// thread spawned in `open()` owns it exclusively; we only read the channel.
     fn read_one_frame_timeout(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>> {
-        // We need a timeout on `ChildStdout` which does not implement
-        // `set_read_timeout`. Strategy: spawn a scoped reader thread that
-        // sends accumulated bytes over a channel; the main thread uses
-        // `recv_timeout` to honor the deadline.
-        //
-        // SAFETY: we move `stdout` into the thread temporarily via a raw
-        // pointer — this is safe because:
-        //   - The thread is always joined (via channel drop + recv_timeout)
-        //   before `self.stdout` is accessed again.
-        //   - We own `self.stdout` exclusively for the duration.
-        //
-        // A non-blocking `set_read_timeout` is not available on `ChildStdout`.
-        // The thread-based approach in `read_frame_with_deadline` is portable.
-        read_frame_with_deadline(&mut self.stdout, timeout)
-    }
-}
-
-/// Read a single Content-Length-framed JSON body from `reader` within `timeout`.
-/// Returns `Ok(Some(body))`, `Ok(None)` on EOF, `Err` on timeout.
-///
-/// Timeout is implemented via a background thread + `mpsc::recv_timeout`
-/// because `ChildStdout` does not support `set_read_timeout`. The thread is
-/// joined on success and leaked (detached) on timeout — it will exit when the
-/// child process is killed by `Drop`.
-fn read_frame_with_deadline<R: std::io::Read>(reader: &mut R, timeout: Duration) -> Result<Option<Vec<u8>>> {
-    let (tx, rx) = mpsc::channel::<Result<Option<Vec<u8>>, String>>();
-
-    // Safety: we need to move `reader` into the thread, but it's behind &mut.
-    // We use a thread-local approach: read ALL bytes in the thread using a
-    // scoped read, transmitting the complete frame result.
-    //
-    // Since we can't move &mut R across a thread, we use the following trick:
-    // cast to a raw pointer and assert the thread finishes before this fn returns.
-    let ptr = reader as *mut R as usize;
-    let tx2 = tx;
-
-    let handle = std::thread::spawn(move || {
-        // SAFETY: the raw pointer points to `reader` which is valid for the
-        // entire duration of this thread because we join the thread below
-        // before this function returns (and thus before `reader` could be
-        // invalidated). No other thread accesses `reader` concurrently.
-        let r = unsafe { &mut *(ptr as *mut R) };
-        let result = read_one_complete_frame(r);
-        let _ = tx2.send(result.map_err(|e| e.to_string()));
-    });
-
-    match rx.recv_timeout(timeout) {
-        Ok(result) => {
-            // Thread finished within timeout. Join cleanly.
-            let _ = handle.join();
-            result.map_err(|s| anyhow::anyhow!("LSP read error: {s}"))
-        }
-        Err(_) => {
-            // Timeout: the thread is still blocking in read(). We accept leaving
-            // it detached — it will terminate when Drop kills the child process.
-            std::mem::forget(handle);
-            Err(anyhow::anyhow!("LSP read timed out after {:?}", timeout))
+        match self.frame_rx.recv_timeout(timeout) {
+            Ok(Ok(body)) => Ok(Some(body)),
+            Ok(Err(e)) => Err(anyhow::anyhow!("LSP read error: {e}")),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(anyhow::anyhow!("LSP read timed out after {timeout:?}"))
+            }
+            // Sender dropped = the reader thread reached EOF or a fatal error
+            // and exited. Treat as EOF; the error (if any) was delivered above.
+            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(None),
         }
     }
 }
