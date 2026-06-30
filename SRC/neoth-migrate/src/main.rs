@@ -243,6 +243,9 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
     let mut total_inserted: usize = 0;
     let mut total_skipped_sources: usize = 0;
     let mut per_source: Vec<serde_json::Value> = Vec::new();
+    // Deferred MIGRATION_BATCH events: emitted only AFTER COMMIT so the audit
+    // trail never records inserts that a failed commit would have rolled back.
+    let mut batch_events: Vec<(String, usize, usize)> = Vec::new();
 
     for src in &manifest.sources {
         match readers::emit_claims(src, &home) {
@@ -271,7 +274,8 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
                     }
                 }
                 total_inserted += src_inserted;
-                emitter.emit_migration_batch(&src.name, claims.len(), src_inserted);
+                // Defer the WAL emit until after COMMIT (see batch_events decl).
+                batch_events.push((src.name.clone(), claims.len(), src_inserted));
                 per_source.push(serde_json::json!({
                     "name": src.name,
                     "claims_seen": claims.len(),
@@ -297,6 +301,13 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
     }
 
     conn.execute_batch("COMMIT")?;
+
+    // The inserts are now durable — emit the deferred per-source MIGRATION_BATCH
+    // events. If COMMIT failed above, the `?` returned before this point so no
+    // batch event was emitted: the WAL never claims an uncommitted insert.
+    for (name, claims_seen, inserted) in &batch_events {
+        emitter.emit_migration_batch(name, *claims_seen, *inserted);
+    }
 
     // Emit MIGRATION_COMPLETE after COMMIT. Includes legacy event/event_type
     // fields (GROUNDTRUTH_IMPORTED / 0x99) for backward-compat with tooling
