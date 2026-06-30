@@ -2297,6 +2297,9 @@ async fn dispatch_provider(
                 } else {
                     &crate::cli::elicitation::ElicitationHandler::Disabled
                 },
+                // GOLD-ADAPT-AWE-CODE-01 — interactive CLI path: no inbound
+                // sender identity available, so no lease upgrade possible.
+                None,
             )
             .await
             {
@@ -6672,6 +6675,11 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // (checked by the caller before this call); `Disabled` on the channel /
     // serve-pipeline path and in tests.
     elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
+    // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for the
+    // McpTool lease consent gate. `None` on the interactive CLI path (no
+    // inbound sender identity). `Some(sender_id)` on the channel path
+    // (HMAC/platform-verified sender_id from the inbound message).
+    subject: Option<String>,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -6770,6 +6778,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
         security_policy,
         // GOLD-CCPARITY-SA-DENY-01 — thread the denylist through.
         agent_disallowed_tools,
+        // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity for lease gate.
+        subject,
         goal_context,
         hints_enabled,
         compaction,

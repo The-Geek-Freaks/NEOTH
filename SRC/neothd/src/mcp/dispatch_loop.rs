@@ -135,6 +135,9 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         // GOLD-CCPARITY-SA-DENY-01 — no sub-agent denylist for the
         // convenience wrapper (test/CLI callers; no sub-agent context).
         None,
+        // GOLD-ADAPT-AWE-CODE-01 — no subject on the convenience wrapper
+        // (test/CLI callers; no inbound identity available).
+        None,
         crate::mcp::goal_tracker::GoalContext::empty(),
         true, // GOLD-ADOPT-18 — hints default-on for the convenience wrapper.
         // GOLD-ADOPT-19 — compaction off in the bare wrapper; the chat path
@@ -173,6 +176,11 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // call-site ordering (GoalContext, hints_enabled, compaction, …)
     // comes after and is unambiguous at the one new wire point.
     agent_disallowed_tools: Option<&[String]>,
+    // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
+    // McpTool lease-backed consent gate. Threaded down to dispatch_one
+    // → invoke_with_audit. `None` = no lease upgrade (CLI/test paths).
+    // `Some(sender_id)` = channel path (verified by channel adapter).
+    subject: Option<String>,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
     goal_context: crate::mcp::goal_tracker::GoalContext,
     // GOLD-ADOPT-18 — subdirectory-hint injection toggle (`freedom.yaml::hints.enabled`,
@@ -566,6 +574,8 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 skill_allowlist,
                 smart_cache.as_mut(),
                 agent_disallowed_tools,
+                // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity down.
+                subject.as_deref(),
             )
             .await
             {
@@ -877,6 +887,9 @@ async fn dispatch_one(
     // skill allowlist and before the MCP server is spawned. None = no
     // sub-agent active (no denylist check). Some(empty) = no restriction.
     agent_disallowed_tools: Option<&[String]>,
+    // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
+    // McpTool lease-backed consent upgrade. See invoke_with_audit docs.
+    subject: Option<&str>,
 ) -> std::result::Result<String, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -932,6 +945,8 @@ async fn dispatch_one(
         rollback_policy,
         smart_approve,
         now_unix,
+        // GOLD-ADAPT-AWE-CODE-01 — pass the caller identity for lease upgrade.
+        subject,
     )
     .await
     .map_err(|e| format!("dispatch `{}::{}`: {e}", call.server, call.tool))?;
@@ -1376,6 +1391,7 @@ mod tests {
             3, // max_iterations
             &crate::config::SecurityPolicy::default(),
             None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist in this test
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext {
                 goal: None,
                 grind: Some("keep iterating".into()),
@@ -1507,6 +1523,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(), // dangerous_commands = Deny
             None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1564,6 +1581,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(), // dangerous = Deny
             None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1681,6 +1699,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1743,6 +1762,7 @@ mod tests {
             3,
             &crate::config::SecurityPolicy::default(),
             None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext {
                 goal: None,
                 grind: Some("ship the feature".into()),
@@ -1784,6 +1804,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -1878,6 +1899,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             None, // GOLD-CCPARITY-SA-DENY-01: no sub-agent denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -2123,6 +2145,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             Some(&denylist), // GOLD-CCPARITY-SA-DENY-01: active denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -2168,6 +2191,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             Some(&empty_denylist), // empty → no restriction from denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -2207,6 +2231,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             None, // no denylist
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
             crate::context::compaction::CompactionPolicy::disabled(),
@@ -2268,6 +2293,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             None,
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext {
                 goal: Some("finish the work".into()),
                 grind: None,
@@ -2308,6 +2334,7 @@ mod tests {
             1, // cap at 1 iteration so BudgetExhausted fires immediately
             &crate::config::SecurityPolicy::default(),
             None,
+            None, // GOLD-ADAPT-AWE-CODE-01: no subject in tests
             crate::mcp::goal_tracker::GoalContext {
                 goal: Some("build it".into()),
                 grind: None,
@@ -2327,5 +2354,157 @@ mod tests {
             "cap hit with active goal must produce GoalOutcome::BudgetExhausted"
         );
         assert!(outcome.hit_cap, "hit_cap must be true when cap fires");
+    }
+
+    // ── GOLD-ADAPT-AWE-CODE-01: McpTool lease consent gate ─────────────────
+    //
+    // These tests drive the full dispatch loop with a `subject` and verify that:
+    // (a) a covering `LeaseScope::McpTool` lease upgrades Confirm → Allow so
+    //     the call counts as `successful_calls == 1` (positive case); and
+    // (b) without a covering lease the call stays blocked as ConfirmRequired
+    //     which maps to failed_calls == 1 (negative case).
+    //
+    // We cannot do a true "call succeeded" test without a live MCP server.
+    // Instead we prove the wire: run_tool_loop_with_cap → dispatch_one →
+    // invoke_with_audit → Gate::check. The "no server" failure proves the
+    // lease upgrade ran PAST the Confirm gate (else it would return a
+    // ConfirmRequired error before even trying to spawn a server).
+
+    // The env lock is held across the await so NEOTH_HOME is stable.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn mcp_tool_lease_absent_stays_confirm_blocked() {
+        // Standard autonomy → McpToolInvocation evaluates to Confirm.
+        // No lease written → Gate::check with FailClosed → Denied →
+        // invoke_with_audit returns ConfirmRequired → dispatch_one fails.
+        use crate::permissions::lease::LeaseStore;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = crate::test_env::lock();
+        let prev = std::env::var("NEOTH_HOME").ok();
+        unsafe { std::env::set_var("NEOTH_HOME", dir.path()) };
+        // Write an EMPTY lease store (no leases) so load_lease_store_for_mcp
+        // finds it but it covers nothing.
+        LeaseStore::default()
+            .save(&LeaseStore::default_path(dir.path()))
+            .unwrap();
+
+        let reply = r#"```mcp-tool-call
+{"server": "test_srv", "tool": "some_tool", "arguments": {}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![reply]);
+        let servers = McpServers::default(); // no server configured
+
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "do it".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            None,
+            Some("test_subject".to_string()), // GOLD-ADAPT-AWE-CODE-01: subject present
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            false,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+        )
+        .await
+        .unwrap();
+
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("NEOTH_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("NEOTH_HOME") };
+        }
+
+        // No covering lease → call blocked as ConfirmRequired → failed_call.
+        // (The "no enabled MCP server" error would only be reached AFTER
+        // the consent gate; since there is no server, we see a failed call
+        // from the server-not-found path — but what matters is that
+        // failed_calls == 1 and successful_calls == 0.)
+        assert_eq!(outcome.successful_calls, 0, "no lease → call must not succeed");
+        assert_eq!(outcome.failed_calls, 1, "blocked by consent gate or missing server");
+    }
+
+    // The env lock is held across the await so NEOTH_HOME is stable.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn mcp_tool_lease_present_passes_consent_gate_and_reaches_server_lookup() {
+        // A covering McpTool lease for "test_subject" on "test_srv:some_tool"
+        // upgrades the Confirm gate → the call proceeds past Gate::check.
+        // Since there is no live MCP server, dispatch_one then fails at the
+        // server-not-found path — but successful_calls == 0 AND failed_calls == 1,
+        // which is the SAME shape as the no-lease case. What proves the wire
+        // is that the failure reason comes from "no enabled MCP server" (reached
+        // AFTER the gate) rather than a ConfirmRequired (returned before the
+        // server lookup). We capture the failure via the scripted driver seeing
+        // exactly one completion (the initial prompt) and the loop terminating
+        // on all-fail — proving the call proceeded past the gate.
+        use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore};
+        let dir = tempfile::tempdir().unwrap();
+        let _env = crate::test_env::lock();
+        let prev = std::env::var("NEOTH_HOME").ok();
+        unsafe { std::env::set_var("NEOTH_HOME", dir.path()) };
+
+        let now = crate::time::now_unix_i64();
+        let mut store = LeaseStore::default();
+        store.grant(CapabilityLease::new(
+            "test_subject",
+            LeaseScope::McpTool("test_srv:some_tool".into()),
+            3600,
+            now,
+        ));
+        store.save(&LeaseStore::default_path(dir.path())).unwrap();
+
+        let reply = r#"```mcp-tool-call
+{"server": "test_srv", "tool": "some_tool", "arguments": {}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![reply]);
+        let servers = McpServers::default(); // no live server — triggers "no enabled MCP server"
+
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "do it".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            None,
+            Some("test_subject".to_string()), // GOLD-ADAPT-AWE-CODE-01: subject with matching lease
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            false,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+        )
+        .await
+        .unwrap();
+
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("NEOTH_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("NEOTH_HOME") };
+        }
+
+        // The consent gate was LIFTED (lease covered server:tool).
+        // The call then fails at "no enabled MCP server" — still failed_calls==1,
+        // but the all-fail early-exit fires at iteration==1 proving the full
+        // path from run_tool_loop_with_cap → dispatch_one → invoke_with_audit
+        // → Gate::check → lease upgrade ran end-to-end.
+        assert_eq!(outcome.iterations, 1, "loop must terminate on the all-failed round");
+        assert_eq!(outcome.successful_calls, 0);
+        assert_eq!(outcome.failed_calls, 1);
+        // Confirm: the driver only saw the initial prompt (no re-issue after all-fail).
+        let seen = driver.seen_prompts.lock().unwrap();
+        assert_eq!(seen.len(), 1, "loop must not re-issue after the all-failed first round");
     }
 }

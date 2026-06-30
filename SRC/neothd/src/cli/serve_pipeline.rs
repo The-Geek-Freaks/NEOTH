@@ -2236,6 +2236,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     // GOLD-ADOPT-17 — no TTY available on the channel path;
                     // elicitation is unconditionally disabled here.
                     &crate::cli::elicitation::ElicitationHandler::Disabled,
+                    // GOLD-ADAPT-AWE-CODE-01 — channel path: pass the
+                    // platform-verified sender_id as the lease subject so a
+                    // covering McpTool lease upgrades Confirm → Allow for this
+                    // caller. The sender_id is already HMAC/platform-verified
+                    // by the channel adapter before this closure runs (L620
+                    // ChannelSend gate also uses it as the lease subject).
+                    Some(inbound.sender_id.clone()),
                 )
                 .await
                 {

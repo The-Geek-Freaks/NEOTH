@@ -177,6 +177,8 @@ async fn run_call(
         None,
         None,
         now_unix,
+        // GOLD-ADAPT-AWE-CODE-01 — CLI one-shot: no inbound identity.
+        None,
     )
     .await
     {

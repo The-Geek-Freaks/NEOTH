@@ -34,6 +34,8 @@ use crate::mcp::config::McpServerConfig;
 use crate::mcp::sanitizer::{
     SanitizerVerdict, sanitize_description, sanitize_schema_descriptions, sanitize_tool_name,
 };
+use crate::permissions::gate::{ConfirmStrategy, Gate};
+use crate::permissions::lease::LeaseStore;
 use crate::permissions::{Action, AutonomyLevel, Decision, evaluate};
 use crate::wal::HeaderBuilder;
 use crate::wal::events::{
@@ -213,6 +215,13 @@ pub async fn list_tools_sanitized(client: &mut McpClient) -> Result<Vec<Sanitize
 /// are warned-logged but don't block the tool call — the gate's
 /// security layers (allowlist + permission + audit) already ran
 /// successfully and the operator's choice was to invoke.
+/// GOLD-ADAPT-AWE-CODE-01 — load the LeaseStore for an MCP-tool lease check.
+/// Best-effort, fail-closed on error (a missing/corrupt store = no lease upgrade).
+fn load_lease_store_for_mcp(home: &std::path::Path) -> Option<LeaseStore> {
+    let path = LeaseStore::default_path(home);
+    LeaseStore::load(&path).ok()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn invoke_with_audit(
     client: &mut McpClient,
@@ -224,6 +233,12 @@ pub async fn invoke_with_audit(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     smart_approve: Option<&mut crate::mcp::smart_approve::ReadOnlyCache>,
     now_unix: i64,
+    // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
+    // `LeaseScope::McpTool` consent-gate upgrade. MUST be the
+    // channel-verified `sender_id` (or HMAC-verified peer id); NEVER a
+    // value lifted from an LLM response or untrusted tool argument.
+    // `None` = no lease upgrade possible (interactive CLI path).
+    subject: Option<&str>,
 ) -> Result<ToolCallResult, GateError> {
     // Layer 1 — allowlist. Reviewer-1 P1-A secure-by-default (2026-05-20):
     //   Some(list) → tool must appear in list.
@@ -344,16 +359,80 @@ pub async fn invoke_with_audit(
                 );
                 // Fall through to dispatch — Confirm upgraded to Allow.
             } else {
-                if let Some(w) = writer {
-                    emit_reject(w, &cfg.id, tool, &format!("confirm: {reason}"), now_unix)
-                        .await
-                        .map_err(GateError::Wal)?;
+                // GOLD-ADAPT-AWE-CODE-01 — lease-backed consent gate.
+                // When a pre-authenticated `subject` is present, check for a
+                // covering `LeaseScope::McpTool(server_id:tool)` lease that
+                // upgrades this `Confirm → Allow`. The `Gate` handles the
+                // 0xA0/0xA1 PERMISSION_GRANTED/DENIED WAL audit frames and
+                // the two-clock expiry check (snapshot at load, authoritative
+                // check at decision time). `None` subject or missing/unparseable
+                // lease store = fail-closed to the normal ConfirmRequired path.
+                // Pitfall note: LeaseStore::load is synchronous I/O on the async
+                // path — acceptable here because it is on a block path only
+                // (Confirm decisions are rare); matching the precedent of the
+                // risk-gate lease check in dispatch_loop.rs (check_risk_leases).
+                if let Some(sub) = subject {
+                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    if let Some(store) = load_lease_store_for_mcp(&home) {
+                        let gate = Gate::for_level(autonomy)
+                            .with_confirm(ConfirmStrategy::FailClosed)
+                            .with_lease_snapshot(&store, sub, now_unix);
+                        match gate.check(&action, writer).await {
+                            Ok(()) => {
+                                tracing::info!(
+                                    server = %cfg.id, tool = %tool, subject = %sub,
+                                    "GOLD-ADAPT-AWE-CODE-01: McpTool lease upgraded Confirm → Allow"
+                                );
+                                // Lease lifted the Confirm — fall through to dispatch.
+                            }
+                            Err(crate::permissions::gate::GateError::Denied(_)) => {
+                                // Lease absent or expired → FailClosed denied.
+                                return Err(GateError::ConfirmRequired {
+                                    server: cfg.id.clone(),
+                                    tool: tool.to_string(),
+                                    reason,
+                                });
+                            }
+                            Err(crate::permissions::gate::GateError::Aborted(_)) => {
+                                return Err(GateError::ConfirmRequired {
+                                    server: cfg.id.clone(),
+                                    tool: tool.to_string(),
+                                    reason,
+                                });
+                            }
+                            Err(crate::permissions::gate::GateError::Unavailable(_)) => {
+                                return Err(GateError::ConfirmRequired {
+                                    server: cfg.id.clone(),
+                                    tool: tool.to_string(),
+                                    reason,
+                                });
+                            }
+                        }
+                    } else {
+                        // Lease store unreadable — fail closed.
+                        if let Some(w) = writer {
+                            emit_reject(w, &cfg.id, tool, &format!("confirm: {reason}"), now_unix)
+                                .await
+                                .map_err(GateError::Wal)?;
+                        }
+                        return Err(GateError::ConfirmRequired {
+                            server: cfg.id.clone(),
+                            tool: tool.to_string(),
+                            reason,
+                        });
+                    }
+                } else {
+                    if let Some(w) = writer {
+                        emit_reject(w, &cfg.id, tool, &format!("confirm: {reason}"), now_unix)
+                            .await
+                            .map_err(GateError::Wal)?;
+                    }
+                    return Err(GateError::ConfirmRequired {
+                        server: cfg.id.clone(),
+                        tool: tool.to_string(),
+                        reason,
+                    });
                 }
-                return Err(GateError::ConfirmRequired {
-                    server: cfg.id.clone(),
-                    tool: tool.to_string(),
-                    reason,
-                });
             }
         }
     }

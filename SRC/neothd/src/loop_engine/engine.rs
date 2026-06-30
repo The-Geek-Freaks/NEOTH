@@ -379,6 +379,8 @@ pub async fn run_loop(
             // elicitation works in loop mode too), `Disabled` on the headless
             // serve/channel path. No longer hard-wired off.
             elicitation,
+            // GOLD-ADAPT-AWE-CODE-01 — no inbound subject at loop level.
+            None,
         )
         .await?;
 
