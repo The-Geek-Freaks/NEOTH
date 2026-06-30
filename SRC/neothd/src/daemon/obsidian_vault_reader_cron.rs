@@ -148,12 +148,39 @@ fn collect_changed_managed_notes(
     state: &HashMap<PathBuf, [u8; 32]>,
 ) -> Result<Vec<ManagedNote>> {
     let mut out = Vec::new();
-    walk_vault_for_managed(vault, vault, state, &mut out)?;
+    // Resolve the vault root once so the walk can confirm every subdirectory it
+    // descends into stays INSIDE the vault (symlink / Windows-junction escape
+    // guard). Falls back to the raw path if canonicalize fails (e.g. vault not
+    // yet created) — the per-entry symlink skip still applies.
+    let canonical_root = std::fs::canonicalize(vault).unwrap_or_else(|_| vault.to_path_buf());
+    walk_vault_for_managed(vault, &canonical_root, vault, state, &mut out)?;
     Ok(out)
+}
+
+/// Extract the trimmed `source:` value from a note's YAML frontmatter, if any.
+/// Mirrors the delimiter handling in
+/// [`crate::memory::foreign_import::is_managed_obsidian_note`].
+fn frontmatter_source(body: &str) -> Option<&str> {
+    let rest = body.strip_prefix("---")?;
+    let end = rest.find("\n---")?;
+    rest[..end]
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("source:").map(str::trim))
+}
+
+/// True iff the note is NEOTH's OWN writer- or synthesis-pass output
+/// (`source: neoth-groundtruth` / `neoth-synthesis`). Both are written BY this
+/// cron into the same vault and both match the `neoth-*` managed-note filter,
+/// so the reader must skip them or it re-imports its own output as fresh
+/// `import:obsidian` groundtruth — an artificial provenance echo loop (P3).
+fn is_neoth_authored_source(body: &str) -> bool {
+    frontmatter_source(body)
+        .is_some_and(|s| s == "neoth-groundtruth" || s == "neoth-synthesis")
 }
 
 fn walk_vault_for_managed(
     vault_root: &Path,
+    canonical_root: &Path,
     current: &Path,
     state: &HashMap<PathBuf, [u8; 32]>,
     out: &mut Vec<ManagedNote>,
@@ -169,10 +196,40 @@ fn walk_vault_for_managed(
             }
         };
         let path = entry.path();
-        if path.is_dir() {
+        // Never follow symlinks: a symlinked directory could escape the vault
+        // or form a cycle, and a symlinked .md could pull a foreign file in as
+        // a "managed" note. `file_type()` reflects the entry itself — it does
+        // NOT traverse the link (unlike `path.is_dir()`, which the previous
+        // code used and which silently followed symlinks out of the vault).
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                warn!(error = %e, path = %path.display(), "obsidian reader: file_type failed; skipping");
+                continue;
+            }
+        };
+        if file_type.is_symlink() {
+            debug!(path = %path.display(), "obsidian reader: skipping symlink entry (vault-escape guard)");
+            continue;
+        }
+        if file_type.is_dir() {
             let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !dir_name.starts_with('.') {
-                walk_vault_for_managed(vault_root, &path, state, out)?;
+            if dir_name.starts_with('.') {
+                continue;
+            }
+            // Defense-in-depth for Windows junctions / reparse points that
+            // `is_symlink()` may not flag: resolve the real path and confirm it
+            // is still inside the vault before descending.
+            match std::fs::canonicalize(&path) {
+                Ok(real) if real.starts_with(canonical_root) => {
+                    walk_vault_for_managed(vault_root, canonical_root, &path, state, out)?;
+                }
+                Ok(real) => {
+                    warn!(path = %path.display(), real = %real.display(), "obsidian reader: subdir resolves outside vault; skipping");
+                }
+                Err(e) => {
+                    warn!(error = %e, path = %path.display(), "obsidian reader: canonicalize failed; skipping subdir");
+                }
             }
             continue;
         }
@@ -189,6 +246,16 @@ fn walk_vault_for_managed(
         let body_str = String::from_utf8_lossy(&body);
         // Only pick up managed notes (source: openclaw-* or neoth-*).
         if !is_managed_obsidian_note(&body_str) {
+            continue;
+        }
+        // P3 echo-loop guard: the writer pass emits `source: neoth-groundtruth`
+        // and synthesis `source: neoth-synthesis` INTO this same vault. Both
+        // match the `neoth-*` filter above, so without this skip the reader
+        // re-imports NEOTH's OWN output as fresh `import:obsidian` groundtruth —
+        // an artificial provenance loop that duplicates every operator-attested
+        // fact on the next tick.
+        if is_neoth_authored_source(&body_str) {
+            debug!(path = %path.display(), "obsidian reader: skipping NEOTH-authored note (writer/synthesis echo guard)");
             continue;
         }
         let digest = sha256(&body);
@@ -584,9 +651,20 @@ async fn run_tick(vault: &Path, home: &Path) {
         Err(e) => warn!(error = %e, "obsidian vault reader: reader pass failed (will retry next tick)"),
     }
 
-    // Writer pass (sync; blocking DB read + coalesced vault writes).
+    // Writer pass — `run_one_writer_pass` does a sync rusqlite open + SELECT
+    // plus coalesced `fs::write`s; running it inline would block the async
+    // runtime thread. Off-load to `spawn_blocking` like the reader + synthesis
+    // passes already do (`rusqlite::Connection` is `!Send`, so the connection
+    // is opened INSIDE the closure and never crosses an `.await`).
     let db_path = home.join("views.db");
-    match run_one_writer_pass(vault, &db_path) {
+    let writer_vault = vault.to_path_buf();
+    let writer_result = tokio::task::spawn_blocking(move || run_one_writer_pass(&writer_vault, &db_path))
+        .await
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "obsidian vault writer: spawn_blocking join failed");
+            Ok((0, 0))
+        });
+    match writer_result {
         Ok((written, skipped)) if written > 0 || skipped > 0 => {
             info!(
                 written,
@@ -670,10 +748,12 @@ mod tests {
         let home_dir = tempdir().unwrap();
         let _conn = store::open(&home_dir.path().join("views.db")).unwrap();
 
+        // `neoth-note`, NOT `neoth-groundtruth`: the latter is now echo-guarded
+        // (it is the writer pass's own output source) so the reader skips it.
         write_managed_note(
             vault_dir.path(),
             "notes",
-            "neoth-groundtruth",
+            "neoth-note",
             "Operator prefers direct output.",
         );
 
@@ -730,5 +810,83 @@ mod tests {
             handle.is_none(),
             "default FreedomConfig must not spawn vault reader (no vault + disabled)"
         );
+    }
+
+    // TEST 5 (P3 echo guard): the reader must NOT re-import NEOTH's own writer /
+    // synthesis output, or every operator-attested fact duplicates each tick.
+    #[tokio::test]
+    async fn reader_skips_neoth_authored_writer_output() {
+        let vault_dir = tempdir().unwrap();
+        let home_dir = tempdir().unwrap();
+        let _conn = store::open(&home_dir.path().join("views.db")).unwrap();
+
+        // Simulate the writer pass + synthesis pass having dropped their own
+        // notes into the vault (exactly what `render_fact_note` emits).
+        write_managed_note(vault_dir.path(), "42", "neoth-groundtruth", "echoed fact");
+        write_managed_note(vault_dir.path(), "2026-W01", "neoth-synthesis", "weekly snapshot");
+        // A genuine external managed note alongside them — this one MUST import.
+        write_managed_note(vault_dir.path(), "real", "openclaw-session", "operator said X");
+
+        let (inserted, _) = run_one_reader_pass(vault_dir.path(), home_dir.path())
+            .await
+            .unwrap();
+        assert_eq!(inserted, 1, "only the external note imports; the 2 echoes are skipped");
+
+        let rows = count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
+        assert_eq!(rows, 1, "exactly one import:obsidian row (no echo duplicates)");
+    }
+
+    // Unit-level proof of the echo predicate against the writer's real output.
+    #[test]
+    fn writer_output_is_recognized_as_neoth_authored() {
+        let row = WriterRow {
+            id: 7,
+            statement: "x".into(),
+            scope: "identity".into(),
+            asserted_at: 0,
+        };
+        let body = String::from_utf8(render_fact_note(&row)).unwrap();
+        assert!(is_neoth_authored_source(&body), "writer note must be echo-guarded");
+        assert!(is_neoth_authored_source(
+            "---\nsource: neoth-synthesis\nweek: 2026-W01\n---\n\nbody\n"
+        ));
+        assert!(!is_neoth_authored_source(
+            "---\nsource: openclaw-export\ntitle: t\n---\n\nbody\n"
+        ));
+        assert!(!is_neoth_authored_source("---\nsource: neoth-note\n---\n\nb\n"));
+    }
+
+    #[cfg(unix)]
+    fn try_symlink_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(src, dst)
+    }
+    #[cfg(windows)]
+    fn try_symlink_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(src, dst)
+    }
+
+    // TEST 6 (P2 symlink escape): the walk must not follow a symlinked dir out
+    // of the vault. On unprivileged Windows symlink creation fails — the test
+    // then no-ops (the skip path still compiles + runs under the unix CI leg).
+    #[tokio::test]
+    async fn reader_does_not_follow_symlink_out_of_vault() {
+        let vault_dir = tempdir().unwrap();
+        let outside_dir = tempdir().unwrap();
+        let home_dir = tempdir().unwrap();
+        let _conn = store::open(&home_dir.path().join("views.db")).unwrap();
+
+        // A managed note OUTSIDE the vault, reachable only via a symlink.
+        write_managed_note(outside_dir.path(), "secret", "openclaw-export", "SECRET outside vault");
+        let link = vault_dir.path().join("escape-link");
+        if try_symlink_dir(outside_dir.path(), &link).is_err() {
+            return; // no symlink privilege (Windows) — skip
+        }
+
+        let (inserted, _) = run_one_reader_pass(vault_dir.path(), home_dir.path())
+            .await
+            .unwrap();
+        assert_eq!(inserted, 0, "the symlinked-out note must not be imported");
+        let rows = count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
+        assert_eq!(rows, 0, "no foreign note imported across the vault boundary");
     }
 }
