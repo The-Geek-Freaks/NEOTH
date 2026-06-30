@@ -43,6 +43,11 @@ const MAX_STDOUT_BYTES: u64 = 50 * 1024 * 1024;
 /// page; 5 minutes covers even a very large document on a slow CPU.
 const SUBPROCESS_TIMEOUT_SECS: u64 = 300;
 
+/// Subprocess stderr cap — 16 KiB of diagnostics is plenty for an error
+/// message. We keep reading stderr past this cap (to EOF) so the OS pipe never
+/// fills and deadlocks the child mid-write; only storage is bounded.
+const MAX_STDERR_BYTES: usize = 16 * 1024;
+
 pub struct DoclingExtractor;
 
 #[async_trait::async_trait]
@@ -104,17 +109,19 @@ impl MediaExtractor for DoclingExtractor {
         };
 
         // ── Spawn docling ────────────────────────────────────────────────────
+        // `kill_on_drop` is the backstop: any early return / panic below reaps
+        // the child instead of leaking a zombie that keeps an ML model resident.
         let mut child = Command::new("docling")
             .args(["--output-format", "json", file_path.to_str().unwrap_or("")])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| ExtractionError::Backend {
                 backend: "docling",
                 reason: format!("spawn failed: {e}"),
             })?;
 
-        // ── Read stdout with a byte cap and wall-clock timeout ───────────────
         let mut stdout_handle = child
             .stdout
             .take()
@@ -122,9 +129,24 @@ impl MediaExtractor for DoclingExtractor {
                 backend: "docling",
                 reason: "no stdout handle".into(),
             })?;
-        let mut stdout_bytes = Vec::with_capacity(64 * 1024);
-        let timeout = Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
+        let stderr_handle = child
+            .stderr
+            .take()
+            .ok_or_else(|| ExtractionError::Backend {
+                backend: "docling",
+                reason: "no stderr handle".into(),
+            })?;
 
+        // Drain stderr in a background task so its OS pipe can NEVER fill and
+        // deadlock the child mid-write (Docling streams progress + model
+        // warnings to stderr). We keep only a small head for diagnostics but
+        // read all the way to EOF so the pipe always drains.
+        let stderr_task = tokio::spawn(drain_to_eof_capped(stderr_handle, MAX_STDERR_BYTES));
+
+        let timeout = Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
+        let mut stdout_bytes = Vec::with_capacity(64 * 1024);
+
+        // ── Read stdout with a byte cap and wall-clock timeout ───────────────
         let read_result = tokio::time::timeout(timeout, async {
             let mut buf = [0u8; 65536];
             loop {
@@ -132,10 +154,19 @@ impl MediaExtractor for DoclingExtractor {
                     Ok(0) => break,
                     Ok(n) => {
                         if stdout_bytes.len() as u64 + n as u64 > MAX_STDOUT_BYTES {
+                            // Keep only up to the cap (room < n here, since we
+                            // just crossed it); `.min(n)` is belt-and-braces.
+                            let room = (MAX_STDOUT_BYTES as usize)
+                                .saturating_sub(stdout_bytes.len())
+                                .min(n);
+                            stdout_bytes.extend_from_slice(&buf[..room]);
                             tracing::warn!(
-                                "docling stdout exceeded {MAX_STDOUT_BYTES} bytes — truncating"
+                                "docling stdout exceeded {MAX_STDOUT_BYTES} bytes — truncating + killing child"
                             );
-                            stdout_bytes.extend_from_slice(&buf[..n]);
+                            // We've stopped draining stdout: the child would
+                            // block on its next write and hang `wait()`. Kill it
+                            // now so the wait below returns promptly.
+                            let _ = child.kill().await;
                             break;
                         }
                         stdout_bytes.extend_from_slice(&buf[..n]);
@@ -152,28 +183,59 @@ impl MediaExtractor for DoclingExtractor {
         match read_result {
             Err(_elapsed) => {
                 let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = stderr_task.await;
                 return Err(ExtractionError::Backend {
                     backend: "docling",
-                    reason: format!(
-                        "subprocess timed out after {SUBPROCESS_TIMEOUT_SECS}s"
-                    ),
+                    reason: format!("subprocess timed out after {SUBPROCESS_TIMEOUT_SECS}s"),
                 });
             }
-            Ok(Err(e)) => return Err(e),
+            Ok(Err(e)) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = stderr_task.await;
+                return Err(e);
+            }
             Ok(Ok(())) => {}
         }
 
-        // ── Wait for exit code ───────────────────────────────────────────────
-        let status = child.wait().await.map_err(|e| ExtractionError::Backend {
-            backend: "docling",
-            reason: format!("wait failed: {e}"),
-        })?;
+        // ── Wait for exit code (bounded) ─────────────────────────────────────
+        // After a clean stdout EOF the child is exiting; after a cap-kill it is
+        // already dead. Bound the wait anyway so a wedged child can never pin
+        // the caller — `kill_on_drop` reaps it when `child` finally drops.
+        let status = match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                let _ = stderr_task.await;
+                return Err(ExtractionError::Backend {
+                    backend: "docling",
+                    reason: format!("wait failed: {e}"),
+                });
+            }
+            Err(_elapsed) => {
+                let _ = child.kill().await;
+                let _ = stderr_task.await;
+                return Err(ExtractionError::Backend {
+                    backend: "docling",
+                    reason: "subprocess did not exit after stdout close".into(),
+                });
+            }
+        };
+
+        let stderr_bytes = stderr_task.await.unwrap_or_default();
 
         if !status.success() {
             let code = status.code().unwrap_or(-1);
+            let stderr_snip = String::from_utf8_lossy(&stderr_bytes);
+            let stderr_snip = stderr_snip.trim();
+            let reason = if stderr_snip.is_empty() {
+                format!("exit code {code}")
+            } else {
+                format!("exit code {code}: {stderr_snip}")
+            };
             return Err(ExtractionError::Backend {
                 backend: "docling",
-                reason: format!("exit code {code}"),
+                reason,
             });
         }
 
@@ -213,6 +275,31 @@ async fn docling_binary_available() -> bool {
     )
     .await;
     matches!(probe, Ok(Ok(s)) if s.success() || s.code().is_some())
+}
+
+/// Drain an async reader to EOF, retaining at most `cap` bytes. Reading
+/// continues past the cap so the underlying OS pipe never fills (which would
+/// deadlock the child writing to it); the overflow is simply discarded. Used
+/// for the child's stderr, which we keep only for diagnostics on failure.
+async fn drain_to_eof_capped<R>(mut reader: R, cap: usize) -> Vec<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => {
+                if out.len() < cap {
+                    let room = cap - out.len();
+                    out.extend_from_slice(&chunk[..n.min(room)]);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    out
 }
 
 /// Parse Docling's JSON output.
