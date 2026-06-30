@@ -124,6 +124,30 @@ pub(crate) fn spawn_self_map(
     ))
 }
 
+/// GOLD-ADAPT-JV-IMP-05 — Obsidian vault bidirectional reader+writer cron.
+///
+/// Returns `Some(handle)` only when BOTH `obsidian_vault` is set AND
+/// `obsidian_vault_reader_enabled = true`.  A default `FreedomConfig` has
+/// neither, so the function returns `None` without touching the Tokio runtime
+/// (the no-runtime unit test in `daemon::obsidian_vault_reader_cron` depends
+/// on this gate order).  WAL-free; abort is safe at any tick boundary.
+pub(crate) fn spawn_obsidian_vault_reader(
+    config: &FreedomConfig,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    // Both gates must pass: vault configured AND feature enabled.
+    if !config.obsidian_vault_reader_enabled {
+        return None;
+    }
+    let vault_str = config.obsidian_vault.as_deref()?;
+    let vault = std::path::PathBuf::from(vault_str);
+    let home = FreedomConfig::default_neoth_home();
+    let interval = config
+        .obsidian_vault_reader_secs
+        .map(std::time::Duration::from_secs);
+    info!("obsidian vault reader cron enabled");
+    Some(crate::daemon::obsidian_vault_reader_cron::spawn(vault, home, interval))
+}
+
 /// R-8 — cloud archive auto-mirror. Spawned only when `freedom.yaml::cloud_archive_dest`
 /// is set; periodically mirrors the session archive into a subdir of that folder
 /// so the operator's cloud-vendor desktop client picks up the delta. `None`
@@ -3916,6 +3940,10 @@ pub(crate) struct BackgroundHandles {
     /// feature not compiled in.
     pub companion_p2p_task: Option<JoinHandle<()>>,
     pub obsidian_task: Option<JoinHandle<anyhow::Result<()>>>,
+    /// GOLD-ADAPT-JV-IMP-05 — Obsidian vault bidirectional reader+writer cron handle.
+    /// WAL-free; `None` when `obsidian_vault` is not set or
+    /// `obsidian_vault_reader_enabled = false` (default).
+    pub obsidian_vault_reader_task: Option<JoinHandle<anyhow::Result<()>>>,
     /// OH-14 — periodic self-wiki rebuild cron handle.
     /// WAL-emitting (0xFA); `None` when `obsidian_vault` or source dir
     /// is not configured. Must be aborted BEFORE `drop(writer)`.
@@ -4018,6 +4046,7 @@ pub(crate) async fn shutdown_background_tasks(
         companion_p2p_shutdown,
         companion_p2p_task,
         obsidian_task,
+        obsidian_vault_reader_task,
         obsidian_wiki_rebuild_task,
         self_map_task,
         cloud_task,
@@ -4322,6 +4351,11 @@ pub(crate) async fn shutdown_background_tasks(
     // Abort the Obsidian auto-sync task. Pure file IO — aborting mid-copy
     // is safe; the next start runs a fresh full sync from `wal_cursor=0`.
     crate::cli::serve_tasks::abort_optional(obsidian_task).await;
+
+    // GOLD-ADAPT-JV-IMP-05: abort the vault reader+writer cron. WAL-free;
+    // mid-tick abort at worst leaves the SHA-256 state map un-persisted for
+    // one pass — the next boot re-reads any changed files and re-imports them.
+    crate::cli::serve_tasks::abort_optional(obsidian_vault_reader_task).await;
 
     // OH-14: abort the wiki-rebuild cron BEFORE drop(writer) — it emits
     // 0xFA WAL frames; mid-tick abort at worst drops one rebuild-complete

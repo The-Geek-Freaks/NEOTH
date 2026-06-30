@@ -271,6 +271,18 @@ pub struct FreedomConfig {
     /// process working directory (repo root under normal daemon invocation).
     #[serde(default)]
     pub obsidian_wiki_source_dir: Option<String>,
+    /// GOLD-ADAPT-JV-IMP-05 — enable the Obsidian vault bidirectional reader+writer
+    /// cron. Gate: `obsidian_vault` must also be set. Default `false` (opt-in).
+    /// When enabled, the cron reads managed notes (source: openclaw-* / neoth-*)
+    /// into `idx_groundtruth` and writes operator-attested facts back to the vault
+    /// as `NEOTH-Facts/<scope>/<id>.md` notes.
+    #[serde(default)]
+    pub obsidian_vault_reader_enabled: bool,
+    /// GOLD-ADAPT-JV-IMP-05 — cron interval override in seconds.
+    /// `None` = use the module default (6 hours).
+    /// Field unused when `obsidian_vault_reader_enabled = false`.
+    #[serde(default)]
+    pub obsidian_vault_reader_secs: Option<u64>,
     /// GOLD-ADAPT-GRAPH-05 — source directory for the self-map cron.
     /// `graphify update` is run against this directory to produce the
     /// structural graph of the daemon source tree.

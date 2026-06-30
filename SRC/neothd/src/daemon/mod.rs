@@ -154,6 +154,25 @@ pub mod synthesis_cron;
 /// `scope = "arxiv-learning"`, `FactState::Candidate`). WAL-free; off by
 /// default (`arxiv_skill_scan.enabled = false`). Requires a wired provider.
 pub mod arxiv_skill_scan_cron;
+/// GOLD-ADAPT-JV-IMP-05 — Obsidian vault bidirectional sync cron.
+///
+/// **Reader**: walks the vault on a 6h cadence, finds files with managed
+/// `source: openclaw-*` / `source: neoth-*` YAML frontmatter, tracks each
+/// via SHA-256 (`~/.neoth/obsidian_vault_reader_state.json`), and inserts
+/// changed notes into `idx_groundtruth` as `Source::ImportObsidian`.
+///
+/// **Writer**: fetches operator-attested (`onboarding` / `operator-runtime`)
+/// rows from `idx_groundtruth` and writes/updates `<vault>/NEOTH-Facts/` notes
+/// with `source: neoth-groundtruth` frontmatter.  Uses `WriteCoalescer` to
+/// skip identical-content rewrites and break the reader-writer echo loop.
+///
+/// **Weekly synthesis** (Phase-1): on the first tick of each new ISO week,
+/// writes a `<vault>/NEOTH-Synthesis/<YYYY-WW>.md` summary note and inserts
+/// it into `idx_groundtruth` as `Source::Synthesis`.
+///
+/// WAL-free (groundtruth insert is the durable record).  Off by default
+/// (`obsidian_vault_reader_enabled = false`).
+pub mod obsidian_vault_reader_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

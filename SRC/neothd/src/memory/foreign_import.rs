@@ -529,7 +529,8 @@ pub fn read_openclaw_memory_db(path: &Path) -> Result<Vec<ImportedClaim>> {
 
 /// Map an Obsidian folder prefix to a scope tag.
 /// Mirrors the folder→scope table from GOLD-ADAPT-JV-IMP-06.
-fn obsidian_folder_scope(folder: &str) -> &'static str {
+/// Promoted to `pub(crate)` for `daemon::obsidian_vault_reader_cron` (JV-IMP-05).
+pub(crate) fn obsidian_folder_scope(folder: &str) -> &'static str {
     match folder {
         "05-Personen" => "people",
         "06-Regeln" => "rules",
@@ -632,7 +633,8 @@ fn visit_obsidian_dir(
 
 /// Return `true` when the note's YAML frontmatter contains a `source:` line
 /// whose value starts with `openclaw-` or `neoth-`.
-fn is_managed_obsidian_note(body: &str) -> bool {
+/// Promoted to `pub(crate)` for `daemon::obsidian_vault_reader_cron` (JV-IMP-05).
+pub(crate) fn is_managed_obsidian_note(body: &str) -> bool {
     // Frontmatter is delimited by a leading `---` line.
     let inner = if let Some(rest) = body.strip_prefix("---") {
         // Find the closing `---`.
@@ -658,7 +660,8 @@ fn is_managed_obsidian_note(body: &str) -> bool {
 }
 
 /// Strip the leading YAML frontmatter block (`---…---`) and return the body.
-fn strip_yaml_frontmatter(body: &str) -> &str {
+/// Promoted to `pub(crate)` for `daemon::obsidian_vault_reader_cron` (JV-IMP-05).
+pub(crate) fn strip_yaml_frontmatter(body: &str) -> &str {
     if !body.starts_with("---") {
         return body;
     }

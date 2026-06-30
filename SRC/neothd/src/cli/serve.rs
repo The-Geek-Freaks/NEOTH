@@ -652,6 +652,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let obsidian_task = crate::cli::serve_tasks::spawn_obsidian_sync(&config);
 
+    // ── 5b-tris-a2. GOLD-ADAPT-JV-IMP-05 Obsidian vault reader+writer cron ─
+    //
+    // Spawned only when `obsidian_vault` is set AND
+    // `obsidian_vault_reader_enabled = true`.  Reads managed notes
+    // (source: openclaw-* / neoth-*) into idx_groundtruth via SHA-256
+    // change tracking, and writes operator-attested groundtruth rows back
+    // to the vault as NEOTH-Facts/<scope>/<id>.md notes.  WAL-free;
+    // aborted cleanly in shutdown (mid-tick abort is safe).
+    let obsidian_vault_reader_task =
+        crate::cli::serve_tasks::spawn_obsidian_vault_reader(&config);
+
     // ── 5b-tris-b. OH-14 Obsidian self-wiki rebuild cron ──────────────────
     //
     // Spawned only when `obsidian_vault` AND a source directory are both
@@ -1867,6 +1878,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         companion_p2p_shutdown,
         companion_p2p_task,
         obsidian_task,
+        obsidian_vault_reader_task,
         obsidian_wiki_rebuild_task,
         self_map_task,
         cloud_task,
