@@ -3006,7 +3006,8 @@ async fn run_post_reply_pipelines(
     // Failure here MUST NOT swallow the chat outcome — log and continue.
     // The session id is the chat invocation id; the daemon path will swap
     // this for the persistent session-uuid from the channel handler.
-    {
+    // ODY-09: incognito turns leave no session-archive trace.
+    if !args.incognito {
         let archive = crate::memory::archive::SessionArchive::new(
             crate::memory::archive::default_archive_root(),
             format!("cli-{}", uuid::Uuid::new_v4()),
@@ -3051,7 +3052,8 @@ async fn run_post_reply_pipelines(
     let env_force = std::env::var("NEOTH_PROFILE_LEARN_FORCE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let learn_on = !env_disable && (env_force || config.profile.learn_enabled);
+    // ODY-09: incognito turns never feed the profile learner — no memory surface.
+    let learn_on = !env_disable && (env_force || config.profile.learn_enabled) && !args.incognito;
     if learn_on {
         let timeout = std::time::Duration::from_secs(config.profile.timeout_secs.max(1));
         let views_path = crate::memory::store::default_path();
@@ -3290,17 +3292,21 @@ async fn run_post_reply_pipelines(
     // path. `chat_ts_unix` + `current_session_id` were both
     // computed at startup so the same id used in the banner-suppress
     // check round-trips through the saved card.
-    crate::memory::hindsight::save_session_card_best_effort(
-        &first_tour_home,
-        chat_ts_unix,
-        &prompt,
-        &response_text,
-    );
+    // ODY-09: incognito turns write no hindsight card (no seed-banner surface).
+    if !args.incognito {
+        crate::memory::hindsight::save_session_card_best_effort(
+            &first_tour_home,
+            chat_ts_unix,
+            &prompt,
+            &response_text,
+        );
+    }
 
     // GOLD-ADAPT-ODY-26 — persist raw turns into views.db for FTS recall.
     // Best-effort: open is cheap (db already exists from the indexer pass
     // earlier in this session); a failure here must NEVER abort chat exit.
-    {
+    // ODY-09: incognito turns persist no raw transcript (no FTS recall surface).
+    if !args.incognito {
         let db_path = crate::memory::store::default_path();
         if let Ok(conn) = crate::memory::store::open(&db_path) {
             crate::memory::transcript_store::insert_turn_best_effort(
