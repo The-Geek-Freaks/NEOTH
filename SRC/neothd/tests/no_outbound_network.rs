@@ -235,6 +235,16 @@ const ALLOWED_PREFIXES: &[&str] = &[
     // { continue; }`), then use reqwest::Client::new() to consume that local
     // port.  Never dials any external address.  #[cfg(test)] block at line 259.
     "src/daemon/kanban_sse.rs",
+    // Test-loopback: oai_serve unit tests start the OpenAI-compat HTTP server on
+    // 127.0.0.1:0, then use reqwest::Client::new() to hit `/v1/models` and
+    // `/v1/unknown` on that local port.  Never dials any external address —
+    // #[cfg(test)] blocks only.
+    "src/oai_serve/server.rs",
+    // Operator-configured egress (NOT phone-home): the GOLD-ADAPT-ODY-21 webhook
+    // manager POSTs to endpoints the operator sets in freedom.yaml.  Its client
+    // is built `https_only(true)` + `redirect::Policy::none()` (SSRF guard) — the
+    // single vetted outbound dialer in this file.
+    "src/cli/serve_tasks.rs",
 ];
 
 const FORBIDDEN_PATTERNS: &[&str] = &[
