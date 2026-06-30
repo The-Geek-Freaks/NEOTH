@@ -61,6 +61,16 @@ pub mod consolidation_sweep_cron;
 /// atomically for HERMES-06. Emits `0xBE`/`0xBF`. Off by default
 /// (`self_improvement_collector.enabled = false`).
 pub mod self_improvement_collector;
+/// HERMES-06 GAP-B — capability evolver: reads a [`CollectorReport`] from the
+/// self-improvement collector, applies an auto-safe gate (only `PromptEdit`
+/// signals qualify — `PatchSkill`, `ConfigChange`, and `Escalate` require
+/// operator review), forges candidate skill proposals via
+/// [`skill_forge::build_proposal_from_collector_signal`], checks whether the
+/// corresponding skill artifact is already deployed (idempotent guard), and
+/// stages new proposals into the G-01a proactive queue. Called inline after
+/// each collector tick inside `spawn_self_improvement_collector_loop`. Emits
+/// `0x0F CAPABILITY_EVOLVER_RAN`. Companion CLI surface: `neoth self-dev scan`.
+pub mod capability_evolver;
 pub mod contradiction_resolve_cron;
 pub mod doctor_cron;
 /// HO-09b — profile drift-alert cron. Runs the same drift evaluation

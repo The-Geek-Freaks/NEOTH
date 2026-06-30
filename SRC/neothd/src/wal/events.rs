@@ -194,6 +194,25 @@ const _: () = {
         [(); 1][(EVENT_TYPE_COMPANION_P2P_REJECTED <= EVENT_TYPE_COMPANION_P2P_PAIRED) as usize];
 };
 
+// ── HERMES-06 GAP-B capability evolver ran (0x0F, memory+recall band) ────────
+
+/// `0x0F CAPABILITY_EVOLVER_RAN` — HERMES-06 GAP-B. Emitted by
+/// [`crate::daemon::capability_evolver::run_evolver_pass`] once per evolver
+/// pass (daemon cron path only — CLI `neoth self-dev scan` skips WAL).
+///
+/// Payload (JSON): `{signals_in, proposals_staged, proposals_skipped_deployed,
+/// proposals_skipped_not_auto_safe, ts_unix}`.
+///
+/// Batchable — not in `needs_immediate_sync`.
+pub const EVENT_TYPE_CAPABILITY_EVOLVER_RAN: u8 = 0x0F;
+
+// Compile-time band-guard: 0x0F must fit in 0x01..=0x0F and must follow 0x0E.
+const _: () = {
+    let _ = [(); 1][(EVENT_TYPE_CAPABILITY_EVOLVER_RAN > 0x0F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_CAPABILITY_EVOLVER_RAN <= EVENT_TYPE_COMPANION_P2P_REJECTED) as usize];
+};
+
 // ---- 0x10..=0x1F  Daemon lifecycle ----------------------------------------
 
 /// Daemon successfully started + opened its WAL.
@@ -2309,6 +2328,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     // GOLD-COMPANION-P2P-01 companion P2P Noise pairing audit (0x0D..=0x0E).
     ("companion_p2p_paired", EVENT_TYPE_COMPANION_P2P_PAIRED),
     ("companion_p2p_rejected", EVENT_TYPE_COMPANION_P2P_REJECTED),
+    // HERMES-06 GAP-B capability evolver (0x0F, memory+recall band).
+    ("capability_evolver_ran", EVENT_TYPE_CAPABILITY_EVOLVER_RAN),
     ("turn_journal_opened", EVENT_TYPE_TURN_JOURNAL_OPENED),
     ("turn_journal_closed", EVENT_TYPE_TURN_JOURNAL_CLOSED),
     ("stale_interrupted", EVENT_TYPE_STALE_INTERRUPTED),

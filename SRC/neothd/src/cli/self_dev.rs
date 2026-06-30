@@ -17,6 +17,10 @@
 //! Atomic-rename + per-proposal status (`pending` / `accepted` /
 //! `declined`) so a crash mid-mutation never leaves the file
 //! half-rewritten.
+//!
+//!   - `neoth self-dev scan`              → one-shot: collector tick + evolver
+//!                                          pass; prints signal + proposal counts.
+//!                                          Bridge until HERMES-01 cron ships.
 
 use std::path::{Path, PathBuf};
 
@@ -74,6 +78,12 @@ pub enum SelfDevAction {
         #[arg(long, default_value = "lowkey")]
         current_preset: String,
     },
+    /// One-shot self-development scan: runs a collector tick then the
+    /// HERMES-06 GAP-B capability evolver pass, and prints the
+    /// `CollectorReport` + `EvolverReport`. Bridging command until
+    /// HERMES-01 cron scheduling ships. WAL frames are emitted via a
+    /// temporary segment that is cleaned up on exit.
+    Scan,
 }
 
 /// Per-proposal status in the local store.
@@ -142,6 +152,7 @@ pub async fn run(home: &Path, args: SelfDevArgs, writer: Option<&WalWriterHandle
             from_profile,
             current_preset,
         } => run_propose(home, &from_profile, &current_preset, writer).await,
+        SelfDevAction::Scan => run_scan(home).await,
     }
 }
 
@@ -401,6 +412,60 @@ async fn emit_declined(
     .unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_DECLINED, &payload).build();
     writer.append(header, payload).await?;
+    Ok(())
+}
+
+/// `neoth self-dev scan` — one-shot collector tick + capability evolver pass.
+///
+/// Runs the self-improvement collector synchronously (same logic as the daemon
+/// cron), then passes the resulting [`CollectorReport`] through the capability
+/// evolver, and prints a human-readable summary. A temporary WAL segment is
+/// created in `home` for the collector tick's WAL frames and cleaned up on
+/// exit — the CLI scan is not a running daemon so no live writer is present.
+///
+/// Use this to exercise the HERMES-06 pipeline end-to-end without waiting for
+/// the 24h daemon cron tick.
+async fn run_scan(home: &Path) -> Result<()> {
+    use crate::config::FreedomConfig;
+    use crate::daemon::capability_evolver::run_evolver_pass;
+    use crate::daemon::self_improvement_collector::run_self_improvement_collector_tick;
+
+    // Load config; fall back to defaults when freedom.yaml is absent (fresh install).
+    let cfg = FreedomConfig::load_from_default_path()
+        .map(|c| c.self_improvement_collector)
+        .unwrap_or_default();
+
+    let db_path = crate::memory::store::default_path();
+    let ts = crate::time::now_unix_i64();
+
+    // Spawn a temporary WAL segment so the collector tick can emit its frames.
+    // The segment lives in home and is deleted on exit — it's not merged into
+    // the live daemon's segment chain (no live daemon on the CLI path).
+    let tmp_seg = home.join("self_dev_scan.wal.tmp");
+    let (tmp_writer, tmp_join) = crate::wal::writer::spawn(tmp_seg.clone())
+        .context("spawn temporary WAL writer for self-dev scan")?;
+
+    let report =
+        run_self_improvement_collector_tick(&db_path, home, cfg, &tmp_writer).await;
+
+    let evolver = run_evolver_pass(home, &report, ts, Some(&tmp_writer)).await;
+
+    // Shutdown the temporary writer and clean up the segment.
+    drop(tmp_writer);
+    tmp_join.await.ok();
+    let _ = std::fs::remove_file(&tmp_seg);
+
+    println!(
+        "scan complete: {} signal(s), {} proposal(s) staged, \
+         {} skipped (already deployed), {} skipped (not auto-safe)",
+        report.signals.len(),
+        evolver.proposals_staged,
+        evolver.proposals_skipped_deployed,
+        evolver.proposals_skipped_not_auto_safe,
+    );
+    for s in &report.signals {
+        println!("  {s:?}");
+    }
     Ok(())
 }
 

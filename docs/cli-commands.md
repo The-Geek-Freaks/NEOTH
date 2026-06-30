@@ -2420,6 +2420,10 @@ List every pending proposal. `--min-confidence` filters by the engine's confiden
 
 - `--min-confidence <MIN_CONFIDENCE>`
 
+### `neoth self-dev scan`
+
+One-shot self-development scan: runs a collector tick then the HERMES-06 GAP-B capability evolver pass, and prints the `CollectorReport` + `EvolverReport`. Bridging command until HERMES-01 cron scheduling ships. WAL frames are emitted via a temporary segment that is cleaned up on exit
+
 ## `neoth self-improve`
 
 Self-improvement — evolve NEOTH's skills with SkillOpt (ask-first switch; status / enable / disable / run / log)

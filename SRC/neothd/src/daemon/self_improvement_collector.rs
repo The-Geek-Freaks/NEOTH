@@ -564,6 +564,17 @@ pub fn spawn_self_improvement_collector_loop(
                 lessons_read = report.lessons_read,
                 "self-improvement collector cron tick complete",
             );
+            // HERMES-06 GAP-B — run the capability evolver inline, best-effort.
+            // The evolver gates signals by auto-safe allowlist, forges proposals,
+            // checks artifact deployment idempotency, and stages into the proactive
+            // queue. Errors are logged inside run_evolver_pass; result is dropped.
+            let _evolver = crate::daemon::capability_evolver::run_evolver_pass(
+                &home,
+                &report,
+                crate::time::now_unix_i64(),
+                Some(&writer),
+            )
+            .await;
         }
     }))
 }
