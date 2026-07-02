@@ -1280,6 +1280,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             monitor_cron_handle
                 .as_ref()
                 .map(|h| WatchedWorker::new("monitor_cron", h.abort_handle())),
+            // GOLD-DELTA-04 follow-up (operator review 2026-07-02): the Babel
+            // observer is default-ON background logic — a panic/exit must hit
+            // the same WORKER_DIED path as every other cron.
+            babel_cron_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("babel_cron", h.abort_handle())),
             omi_handle
                 .as_ref()
                 .map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),
