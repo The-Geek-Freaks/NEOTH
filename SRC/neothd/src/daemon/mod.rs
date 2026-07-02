@@ -96,6 +96,10 @@ pub mod model_download_audit;
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
+/// GOLD-DELTA-04 — Babel-Index observer cron: scans the WAL for derived
+/// metrics, closes rolling windows, persists B_d scores to `views.db`
+/// (SQLite only — the WAL byte space is exhausted).
+pub mod babel_cron;
 /// GOLD-ADAPT-HERMES-07b — log-analysis → patch-proposal → operator-reviewed
 /// fix. Categorises panics from crash.log into staged, advisory PatchProposals
 /// (never auto-applied). Consumed by the monitor crash path + `neoth self-heal`.

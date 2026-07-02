@@ -1052,6 +1052,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let monitor_cron_handle =
         crate::cli::serve_tasks::spawn_monitor_cron(&config, &reload_controller, &wal_dir, writer.clone());
 
+    // ── GOLD-DELTA-04 Babel-Index observer cron ──────────────────────────────
+    // Local-only agent-collapse observer (analytics/babel): scans the WAL for
+    // derived metrics, closes 300/900/1800/3600s windows, persists B_d scores
+    // to views.db. Default ON; `babel.enabled = false` disables.
+    let babel_cron_handle =
+        crate::cli::serve_tasks::spawn_babel_cron(&config, &wal_dir, &views_executor);
+
     // ── GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire cron ─────────────────────
     // Buckets WAL `0x21` token usage over a rolling baseline + emits
     // `0x6E TOKEN_ANOMALY_DETECTED` on a σ-spike / >1M jump / new model.
@@ -1817,6 +1824,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         doctor_cron_task,
         resource_watch_handle,
         monitor_cron_handle,
+        babel_cron_handle,
         watchdog_cron_handle,
         snapshot_refresh_handle,
         omi_handle,

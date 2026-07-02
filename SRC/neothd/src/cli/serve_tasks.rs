@@ -621,6 +621,29 @@ pub(crate) fn spawn_monitor_cron(
     }))
 }
 
+/// GOLD-DELTA-04 — Babel-Index observer cron (`analytics/babel`).
+///
+/// Default ON (local-only observer, never blocks inference, SQLite-only
+/// sink). Returns `None` when `babel.enabled = false` OR the views
+/// executor failed to open — without views.db there is nowhere to
+/// persist windows.
+pub(crate) fn spawn_babel_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+    views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
+) -> Option<JoinHandle<()>> {
+    let Some(views) = views_executor else {
+        tracing::info!("babel observer not started (views executor unavailable)");
+        return None;
+    };
+    crate::daemon::babel_cron::spawn_babel_cron_loop(
+        config.babel.clone(),
+        config.autonomy,
+        wal_dir.to_path_buf(),
+        std::sync::Arc::clone(views),
+    )
+}
+
 /// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron (WAL-free).
 ///
 /// Spawns when `freedom.yaml::guidance_cron.enabled: true`; writes
@@ -3845,6 +3868,7 @@ pub(crate) struct BackgroundHandles {
     pub doctor_cron_task: Option<JoinHandle<()>>,
     pub resource_watch_handle: Option<JoinHandle<()>>,
     pub monitor_cron_handle: Option<JoinHandle<()>>,
+    pub babel_cron_handle: Option<JoinHandle<()>>,
     pub watchdog_cron_handle: Option<JoinHandle<()>>,
     pub snapshot_refresh_handle: Option<JoinHandle<()>>,
     pub omi_handle: Option<JoinHandle<()>>,
@@ -3985,6 +4009,7 @@ pub(crate) async fn shutdown_background_tasks(
         doctor_cron_task,
         resource_watch_handle,
         monitor_cron_handle,
+        babel_cron_handle,
         watchdog_cron_handle,
         snapshot_refresh_handle,
         omi_handle,
@@ -4107,6 +4132,8 @@ pub(crate) async fn shutdown_background_tasks(
 
     // Abort the HO-07 monitor alerting cron loop (drain before writer close).
     crate::cli::serve_tasks::abort_optional(monitor_cron_handle).await;
+    // Abort the GOLD-DELTA-04 Babel observer cron (SQLite-only, no WAL drain).
+    crate::cli::serve_tasks::abort_optional(babel_cron_handle).await;
     // Abort the GOLD-FEAT-09 watchdog/auto-recovery cron loop.
     crate::cli::serve_tasks::abort_optional(watchdog_cron_handle).await;
     // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
