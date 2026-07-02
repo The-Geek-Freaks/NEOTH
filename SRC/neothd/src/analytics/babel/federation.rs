@@ -61,7 +61,7 @@
 //! equalling or exceeding collapse-window count (1:1 minimum ratio).
 //! This is enforced by the `SamplingDecision` type below.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
 use super::anonymize::{SubmissionMetadata, MIN_WINDOW_SECS};
@@ -271,6 +271,237 @@ fn build_scores_json(scores: &super::score::BabelScores) -> serde_json::Value {
     serde_json::Value::Object(m)
 }
 
+// ── GOLD-DELTA-10 — submission pipeline (pending-first) ─────────────────────
+//
+// The submit path is deliberately two-phase:
+//   Phase 1 (sync, under the views.db writer lock): consent gate → load
+//     unsubmitted stamped windows → sampling rule → anonymise → sign →
+//     write the batch as a durable PENDING file → mark rows submitted.
+//     The pending file IS the submission record; a crash after it lands
+//     never double-submits.
+//   Phase 2 (async, off the lock): `drain_pending` uploads pending files
+//     through a [`FederationUploader`] and deletes each on a receipt.
+//     No uploader configured → files stay pending for manual upload.
+
+use std::path::{Path, PathBuf};
+
+/// Max windows per batch — keeps single submissions under the receiver's
+/// rate limit and bounds pending-file size.
+pub const MAX_BATCH_WINDOWS: usize = 500;
+
+/// Transport abstraction for phase 2. The iroh implementation lives behind
+/// `cluster-iroh`; tests use a mock.
+#[async_trait::async_trait]
+pub trait FederationUploader: Send + Sync {
+    /// Deliver one gzip batch; return the aggregation node's receipt.
+    async fn upload(&self, batch_gz: &[u8]) -> Result<SubmissionReceipt>;
+}
+
+/// What one submit pass produced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitOutcome {
+    pub batch_id: String,
+    pub windows: usize,
+    pub pending_path: PathBuf,
+}
+
+/// Phase 1 — build and durably queue one batch. `Ok(None)` when the gate is
+/// closed or nothing qualifies (both are normal states, not errors).
+#[allow(clippy::too_many_arguments)]
+pub fn submit_pending_batch(
+    conn: &rusqlite::Connection,
+    gate: &ConsentGate,
+    meta: &SubmissionMetadata,
+    signing_key: &ed25519_dalek::SigningKey,
+    local_salt: &[u8],
+    pending_dir: &Path,
+    epsilon: Option<f64>,
+    now_unix: i64,
+) -> Result<Option<SubmitOutcome>> {
+    if let Err(reason) = gate.check() {
+        tracing::debug!(reason, "babel federation: consent gate closed");
+        return Ok(None);
+    }
+    let counts = super::store::submission_counts(conn)?;
+    let mut sampling = SamplingDecision {
+        total_windows: counts.total_windows,
+        submitted_windows: counts.submitted_windows,
+        submitted_collapse: counts.submitted_collapse,
+        submitted_non_collapse: counts.submitted_non_collapse,
+    };
+    let candidates = super::store::load_unsubmitted_windows(conn, MAX_BATCH_WINDOWS, epsilon)?;
+    let mut records = Vec::new();
+    let mut ids = Vec::new();
+    for (window, is_collapse) in &candidates {
+        if validate_window_for_submission(window).is_err() {
+            continue;
+        }
+        if !sampling.should_submit(*is_collapse) {
+            continue;
+        }
+        sampling.record_submitted(*is_collapse);
+        records.push(anonymise_for_batch(window, meta, local_salt));
+        ids.push(window.id.clone());
+    }
+    if records.is_empty() {
+        return Ok(None);
+    }
+
+    // Sign over SHA-256 of the gzip JSONL payload (one window per line).
+    let jsonl: String =
+        records.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+    let payload_gz = gzip_bytes(jsonl.as_bytes())?;
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(&payload_gz);
+        h.finalize()
+    };
+    use ed25519_dalek::Signer as _;
+    let signature_hex = hex::encode(signing_key.sign(&digest).to_bytes());
+    let signer_fingerprint = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(signing_key.verifying_key().as_bytes());
+        hex::encode(h.finalize())[..16].to_string()
+    };
+
+    let window_count = records.len();
+    let batch = FederationBatch {
+        batch_id: uuid::Uuid::now_v7().to_string(),
+        submitted_at: now_unix,
+        windows: records,
+        window_count,
+        schema_version: BabelWindow::SCHEMA_VERSION.to_string(),
+        runtime_version: env!("CARGO_PKG_VERSION").to_string(),
+        contributor_id: meta.contributor_id.clone(),
+        signature_hex,
+        signer_fingerprint,
+    };
+
+    std::fs::create_dir_all(pending_dir)
+        .with_context(|| format!("create pending dir {}", pending_dir.display()))?;
+    // Payload file (what the uploader/operator ships) + envelope sidecar.
+    let jsonl_path = pending_dir.join(format!("{}.pending.jsonl.gz", batch.batch_id));
+    let meta_path = pending_dir.join(format!("{}.pending.meta.json", batch.batch_id));
+    let tmp = jsonl_path.with_extension("tmp");
+    std::fs::write(&tmp, &payload_gz)
+        .with_context(|| format!("write pending payload {}", tmp.display()))?;
+    std::fs::rename(&tmp, &jsonl_path).context("rename pending payload into place")?;
+    std::fs::write(&meta_path, serde_json::to_vec_pretty(&batch_envelope(&batch))?)
+        .with_context(|| format!("write pending envelope {}", meta_path.display()))?;
+
+    // Only after the batch is durable on disk do the rows flip.
+    super::store::mark_submitted(conn, &ids)?;
+    tracing::info!(
+        batch_id = %batch.batch_id,
+        windows = window_count,
+        pending = %jsonl_path.display(),
+        "babel federation: batch queued (pending-first)"
+    );
+    Ok(Some(SubmitOutcome { batch_id: batch.batch_id, windows: window_count, pending_path: jsonl_path }))
+}
+
+/// The envelope written next to the payload: the full batch minus the
+/// (large) window array — enough for the uploader to reconstruct headers
+/// and for an operator to inspect what a pending file contains.
+fn batch_envelope(batch: &FederationBatch) -> serde_json::Value {
+    serde_json::json!({
+        "batch_id": batch.batch_id,
+        "submitted_at": batch.submitted_at,
+        "window_count": batch.window_count,
+        "schema_version": batch.schema_version,
+        "runtime_version": batch.runtime_version,
+        "contributor_id": batch.contributor_id,
+        "signature_hex": batch.signature_hex,
+        "signer_fingerprint": batch.signer_fingerprint,
+        "alpn": String::from_utf8_lossy(FEDERATION_ALPN),
+    })
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
+    use std::io::Write as _;
+    let mut enc =
+        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(bytes).context("gzip write")?;
+    enc.finish().context("gzip finish")
+}
+
+/// Phase 2 — try to deliver every pending payload. Each file is deleted
+/// (with its envelope) only on a received receipt; failures leave it for
+/// the next drain or manual upload. Returns (delivered, remaining).
+pub async fn drain_pending(
+    pending_dir: &Path,
+    uploader: &dyn FederationUploader,
+) -> Result<(usize, usize)> {
+    let mut delivered = 0usize;
+    let mut remaining = 0usize;
+    let Ok(rd) = std::fs::read_dir(pending_dir) else {
+        return Ok((0, 0)); // no dir = nothing queued yet
+    };
+    let mut payloads: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".pending.jsonl.gz")))
+        .collect();
+    payloads.sort();
+    for path in payloads {
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(file = %path.display(), error = %e, "pending batch unreadable");
+                remaining += 1;
+                continue;
+            }
+        };
+        match uploader.upload(&bytes).await {
+            Ok(receipt) => {
+                tracing::info!(
+                    batch = %path.display(),
+                    accepted = receipt.accepted_count,
+                    rejected = receipt.rejected_count,
+                    suspicious = receipt.suspicious_count,
+                    "babel federation: batch delivered"
+                );
+                let _ = std::fs::remove_file(&path);
+                let meta = path.to_string_lossy().replace(".jsonl.gz", ".meta.json");
+                let _ = std::fs::remove_file(meta);
+                delivered += 1;
+            }
+            Err(e) => {
+                tracing::warn!(batch = %path.display(), error = %e,
+                    "babel federation: delivery failed, batch stays pending");
+                remaining += 1;
+            }
+        }
+    }
+    Ok((delivered, remaining))
+}
+
+/// iroh uploader: dials the configured aggregation endpoint with
+/// [`FEDERATION_ALPN`] over the existing cluster QUIC transport.
+#[cfg(feature = "cluster-iroh")]
+pub struct IrohUploader {
+    /// The aggregation node's endpoint address string (config
+    /// `babel.federation_endpoint`).
+    pub endpoint: String,
+}
+
+#[cfg(feature = "cluster-iroh")]
+#[async_trait::async_trait]
+impl FederationUploader for IrohUploader {
+    async fn upload(&self, batch_gz: &[u8]) -> Result<SubmissionReceipt> {
+        let reply = crate::cluster::iroh_transport::IrohTransport::dial_once_with_alpn(
+            &self.endpoint,
+            FEDERATION_ALPN,
+            batch_gz,
+        )
+        .await?;
+        serde_json::from_slice(&reply).context("parse federation receipt")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +545,193 @@ mod tests {
     fn federation_alpn_is_versioned() {
         assert!(FEDERATION_ALPN.ends_with(b"/0.1"));
         assert!(FEDERATION_ALPN.starts_with(b"delta-kosmologie/"));
+    }
+
+    // ── GOLD-DELTA-10 — submit pipeline ──────────────────────────────────────
+
+    const T: i64 = 1_800_300_000;
+
+    fn seeded_db(n: usize) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("mem db");
+        super::super::store::ensure_schema(&conn).expect("schema");
+        for i in 0..n as i64 {
+            let vars = serde_json::json!({
+                "C": 0.5, "K": 0.4, "M": 0.3, "A": 0.5, "V": 0.2, "D": 1.0, "H": 1.0,
+                "algo": {"c": "C_d_v0", "k": "K_d_v0", "m": "M_d_v0", "a": "A_d_v0",
+                          "v": "V_d_v0", "d": "D_d_v0", "h": "H_d_v0"},
+                "schema": "neoth-babel-window/0.2.0",
+            });
+            // Every 10th window is a collapse; all horizons stamped.
+            conn.execute(
+                "INSERT INTO idx_babel_windows
+                 (id, session_id, window_secs, ts_start, ts_end, b_log, b_bottleneck,
+                  variables, collapse_5m, collapse_30m)
+                 VALUES (?1, 'a1b2c3d4e5f60718', 900, ?2, ?3, -1.0, 0.4, ?4, ?5, ?5)",
+                rusqlite::params![
+                    format!("w{i}"),
+                    T + i * 900 - 900,
+                    T + i * 900,
+                    vars.to_string(),
+                    i64::from(i % 10 == 0),
+                ],
+            )
+            .expect("seed");
+        }
+        conn
+    }
+
+    fn test_meta() -> SubmissionMetadata {
+        SubmissionMetadata {
+            contributor_id: "c".repeat(64),
+            deployment_context: super::super::anonymize::DeploymentContext::SingleUser,
+            hardware_tier: super::super::anonymize::HardwareTier::Workstation,
+            primary_model_family: "unknown".to_string(),
+            avg_tasks_per_day_bucket: 0,
+            protocol_version: SubmissionMetadata::PROTOCOL_VERSION,
+            runtime_class: SubmissionMetadata::RUNTIME_CLASS,
+        }
+    }
+
+    fn open_gate(windows: usize) -> ConsentGate {
+        ConsentGate {
+            federate_enabled: true,
+            autonomy_level: 3,
+            calibration_window_count: windows,
+        }
+    }
+
+    #[test]
+    fn submit_returns_none_when_gate_closed() {
+        let conn = seeded_db(60);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let gate = ConsentGate {
+            federate_enabled: false,
+            autonomy_level: 4,
+            calibration_window_count: 60,
+        };
+        let out = submit_pending_batch(
+            &conn, &gate, &test_meta(), &key, b"salt", dir.path(), Some(0.01), T,
+        )
+        .expect("no error");
+        assert!(out.is_none(), "closed gate is a no-op, not an error");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).map(|d| d.count()).unwrap_or(0),
+            0,
+            "nothing written"
+        );
+    }
+
+    #[test]
+    fn submit_writes_signed_pending_batch_and_marks_rows() {
+        let conn = seeded_db(60);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let out = submit_pending_batch(
+            &conn, &gate_and_salt(&conn), &test_meta(), &key, b"salt", dir.path(),
+            Some(0.01), T,
+        )
+        .expect("submit pass")
+        .expect("batch produced");
+        assert!(out.windows >= 1 && out.windows <= 60);
+        assert!(out.pending_path.exists(), "payload file on disk");
+
+        // Payload decodes to JSONL with exactly `windows` anonymised records,
+        // none carrying a raw window id or session id.
+        let gz = std::fs::read(&out.pending_path).expect("read payload");
+        let mut dec = flate2::read::GzDecoder::new(gz.as_slice());
+        let mut jsonl = String::new();
+        std::io::Read::read_to_string(&mut dec, &mut jsonl).expect("gunzip");
+        let lines: Vec<&str> = jsonl.lines().collect();
+        assert_eq!(lines.len(), out.windows);
+        for line in &lines {
+            let v: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
+            let wid = v["window"]["id"].as_str().expect("window id present");
+            assert!(!wid.starts_with('w'), "window id pseudonymised: {wid}");
+            assert_eq!(v["submission_metadata"]["protocol_version"], "neoth-federation/0.1.0");
+        }
+
+        // Envelope sidecar carries a verifiable signature block.
+        let meta_path = dir.path().join(format!("{}.pending.meta.json", out.batch_id));
+        let env: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(meta_path).expect("meta")).expect("json");
+        assert_eq!(env["window_count"], out.windows);
+        assert_eq!(env["signature_hex"].as_str().map(str::len), Some(128));
+        assert_eq!(env["signer_fingerprint"].as_str().map(str::len), Some(16));
+
+        // Rows flipped; a second pass finds the pool at its sampling cap.
+        let submitted: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_babel_windows WHERE submitted = 1", [], |r| {
+                r.get(0)
+            })
+            .expect("count");
+        assert_eq!(submitted as usize, out.windows);
+        let again = submit_pending_batch(
+            &conn, &gate_and_salt(&conn), &test_meta(), &key, b"salt", dir.path(),
+            Some(0.01), T,
+        )
+        .expect("second pass");
+        assert!(again.is_none(), "sampling cap reached — no second batch from the same pool");
+    }
+
+    fn gate_and_salt(conn: &rusqlite::Connection) -> ConsentGate {
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_babel_windows", [], |r| r.get(0))
+            .expect("count");
+        open_gate(total as usize)
+    }
+
+    struct MockUploader {
+        fail_on: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl FederationUploader for MockUploader {
+        async fn upload(&self, _batch_gz: &[u8]) -> Result<SubmissionReceipt> {
+            let mut n = self.fail_on.lock().expect("lock");
+            *n += 1;
+            if *n == 1 {
+                Ok(SubmissionReceipt {
+                    batch_id: "b1".into(),
+                    accepted_count: 3,
+                    rejected_count: 0,
+                    rejection_reasons: vec![],
+                    suspicious_count: 0,
+                })
+            } else {
+                anyhow::bail!("aggregation node unreachable")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn drain_pending_deletes_delivered_and_keeps_failed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["a.pending.jsonl.gz", "b.pending.jsonl.gz"] {
+            std::fs::write(dir.path().join(name), b"gz-bytes").expect("write");
+            std::fs::write(
+                dir.path().join(name.replace(".jsonl.gz", ".meta.json")),
+                b"{}",
+            )
+            .expect("write meta");
+        }
+        let uploader = MockUploader { fail_on: std::sync::Mutex::new(0) };
+        let (delivered, remaining) =
+            drain_pending(dir.path(), &uploader).await.expect("drain");
+        assert_eq!((delivered, remaining), (1, 1));
+        let left: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("dir")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(left.contains(&"b.pending.jsonl.gz".to_string()), "failed batch stays");
+        assert!(
+            !left.contains(&"a.pending.jsonl.gz".to_string()),
+            "delivered batch removed"
+        );
+        assert!(
+            !left.contains(&"a.pending.meta.json".to_string()),
+            "delivered envelope removed too"
+        );
     }
 }

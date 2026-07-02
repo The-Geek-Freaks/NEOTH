@@ -51,6 +51,19 @@ pub enum BabelAction {
     Enable,
     /// Disable the observer (`babel.enabled = false` in freedom.yaml).
     Disable,
+    /// Federation opt-in/out (`babel.federate`). Sharing anonymized window
+    /// records is OFF by default; enabling additionally requires
+    /// AutonomyLevel >= Elevated and calibration maturity at runtime.
+    /// Without flags, prints the current federation state.
+    Federate {
+        /// Opt IN to the shared research pool.
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        /// Opt OUT (stops future submissions immediately; already-submitted
+        /// pseudonymous windows cannot be recalled).
+        #[arg(long)]
+        disable: bool,
+    },
     /// Export windows + labels as JSONL for the theorem-test tooling.
     /// Runs the post-hoc horizon pass first so every ripe window carries
     /// its collapse_30m stamp.
@@ -108,6 +121,10 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 Some(e) => println!("epsilon: {e} (frozen)"),
                 None => println!("epsilon: not yet calibrated (b_mult inactive)"),
             }
+            println!(
+                "federation: {}",
+                if cfg.federate { "ENABLED (consent-gated at runtime)" } else { "disabled" }
+            );
             if total == 0 {
                 println!("no windows recorded yet");
                 return Ok(());
@@ -205,6 +222,44 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
         }
         BabelAction::Enable => set_enabled(true)?,
         BabelAction::Disable => set_enabled(false)?,
+        BabelAction::Federate { enable, disable } => {
+            let path = crate::config::FreedomConfig::default_path();
+            let mut fc = crate::config::FreedomConfig::load_from_path(&path)
+                .with_context(|| format!("load {}", path.display()))?;
+            if !enable && !disable {
+                println!(
+                    "federation: {}",
+                    if fc.babel.federate { "ENABLED (consent-gated at runtime)" } else { "disabled" }
+                );
+                println!(
+                    "transport endpoint: {}",
+                    fc.babel.federation_endpoint.as_deref().unwrap_or("none (batches queue as pending files)")
+                );
+                return Ok(());
+            }
+            let target = enable;
+            if fc.babel.federate == target {
+                println!(
+                    "federation already {}",
+                    if target { "enabled" } else { "disabled" }
+                );
+                return Ok(());
+            }
+            fc.babel.federate = target;
+            fc.save_public_to_default_path()?;
+            if target {
+                println!(
+                    "federation ENABLED. Submissions additionally require AutonomyLevel >= \
+                     Elevated and >= 50 calibrated windows; only anonymized, signed window \
+                     records leave this machine (10% sample, 1:1 collapse ratio)."
+                );
+            } else {
+                println!(
+                    "federation disabled — submissions stop immediately \
+                     (already-submitted pseudonymous windows cannot be recalled)."
+                );
+            }
+        }
         BabelAction::Export { out, since } => {
             let conn = open_views()?;
             let stamped = post_hoc_label_pass(&conn, 1800, crate::time::now_unix_i64())?;

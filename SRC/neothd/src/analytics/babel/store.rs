@@ -110,6 +110,190 @@ pub fn insert_window(conn: &Connection, w: &BabelWindow) -> Result<()> {
     Ok(())
 }
 
+// ── GOLD-DELTA-10 — federation read/mark path ────────────────────────────────
+
+/// Pool-level submission counters for the mandatory sampling rule.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SubmissionCounts {
+    pub total_windows: u64,
+    pub submitted_windows: u64,
+    pub submitted_collapse: u64,
+    pub submitted_non_collapse: u64,
+}
+
+/// Read the counters `federation::SamplingDecision` needs (primary 15-min
+/// windows only — the falsification ladder's canonical granularity).
+pub fn submission_counts(conn: &Connection) -> Result<SubmissionCounts> {
+    conn.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(submitted), 0),
+                COALESCE(SUM(CASE WHEN submitted = 1
+                    AND (collapse_5m = 1 OR collapse_30m = 1) THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN submitted = 1
+                    AND NOT (collapse_5m = 1 OR collapse_30m = 1) THEN 1 ELSE 0 END), 0)
+         FROM idx_babel_windows WHERE window_secs = 900",
+        [],
+        |r| {
+            Ok(SubmissionCounts {
+                total_windows: r.get::<_, i64>(0)? as u64,
+                submitted_windows: r.get::<_, i64>(1)? as u64,
+                submitted_collapse: r.get::<_, i64>(2)? as u64,
+                submitted_non_collapse: r.get::<_, i64>(3)? as u64,
+            })
+        },
+    )
+    .map_err(Into::into)
+}
+
+/// Reconstruct unsubmitted primary windows from their rows for the
+/// federation batch. Returns `(window, is_collapse)` pairs oldest-first.
+/// Only fully-stamped rows qualify (`collapse_30m IS NOT NULL`) — the pool
+/// needs the 30-min label, and unripe rows would federate as unlabeled
+/// noise. `b_mult_epsilon` is not stored per-row; the caller passes the
+/// frozen config value so reconstructed scores carry it.
+pub fn load_unsubmitted_windows(
+    conn: &Connection,
+    limit: usize,
+    epsilon: Option<f64>,
+) -> Result<Vec<(BabelWindow, bool)>> {
+    use super::collapse::CollapseDetection;
+    use super::feature::{BabelFeatures, FeatureAlgorithmVersions};
+    use super::score::BabelScores;
+    use super::window::WindowGranularity;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, window_secs, ts_start, ts_end,
+                b_log, b_mult, b_bottleneck, variables,
+                collapse_5m, collapse_30m, collapse_kind, negative_ctrl
+         FROM idx_babel_windows
+         WHERE window_secs = 900 AND submitted = 0 AND collapse_30m IS NOT NULL
+         ORDER BY ts_end ASC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![limit as i64], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?,
+            r.get::<_, Option<f64>>(5)?,
+            r.get::<_, Option<f64>>(6)?,
+            r.get::<_, f64>(7)?,
+            r.get::<_, String>(8)?,
+            r.get::<_, Option<i64>>(9)?,
+            r.get::<_, Option<i64>>(10)?,
+            r.get::<_, Option<String>>(11)?,
+            r.get::<_, i64>(12)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (
+            id,
+            session_id,
+            window_secs,
+            ts_start,
+            ts_end,
+            b_log,
+            b_mult,
+            b_bottleneck,
+            variables,
+            collapse_5m,
+            collapse_30m,
+            collapse_kind,
+            negative_ctrl,
+        ) = row?;
+        let Some(granularity) = WindowGranularity::from_secs(window_secs as u64) else {
+            continue; // unknown granularity row — never ours, skip
+        };
+        let vars: serde_json::Value = match serde_json::from_str(&variables) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(window_id = %id, error = %e,
+                    "babel federation: corrupt variables blob, window skipped");
+                continue;
+            }
+        };
+        let get = |k: &str| vars.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let algo = |k: &str| {
+            vars.get("algo")
+                .and_then(|a| a.get(k))
+                .and_then(|s| s.as_str())
+                .unwrap_or("unknown")
+                .to_string()
+        };
+        let features = BabelFeatures {
+            c: get("C"),
+            k: get("K"),
+            m: get("M"),
+            a: get("A"),
+            v: get("V"),
+            d: get("D").max(1e-9),
+            h: get("H").max(1e-9),
+            algorithm_versions: FeatureAlgorithmVersions {
+                c: algo("c"),
+                k: algo("k"),
+                m: algo("m"),
+                a: algo("a"),
+                v: algo("v"),
+                d: algo("d"),
+                h: algo("h"),
+            },
+        };
+        let is_collapse = collapse_5m == Some(1) || collapse_30m == Some(1);
+        let window = BabelWindow {
+            id,
+            session_id_pseudo: session_id,
+            granularity,
+            ts_start,
+            ts_end,
+            scores: BabelScores {
+                b_log,
+                b_mult,
+                b_mult_epsilon: b_mult.and(epsilon),
+                b_mult_epsilon_rule: "0.01_median_buffer_ratio_calibration".to_string(),
+                b_bottleneck,
+            },
+            collapse: CollapseDetection {
+                collapse_within_5m: collapse_5m == Some(1),
+                collapse_within_30m: collapse_30m.map(|v| v == 1),
+                collapse_at_next_task: None,
+                collapse_kind: collapse_kind.and_then(|s| s.parse().ok()),
+                negative_control: negative_ctrl == 1,
+                negative_control_type: None,
+            },
+            schema_version: vars
+                .get("schema")
+                .and_then(|s| s.as_str())
+                .unwrap_or(BabelWindow::SCHEMA_VERSION)
+                .to_string(),
+            algorithm_version_c: features.algorithm_versions.c.clone(),
+            algorithm_version_k: features.algorithm_versions.k.clone(),
+            algorithm_version_m: features.algorithm_versions.m.clone(),
+            algorithm_version_a: features.algorithm_versions.a.clone(),
+            algorithm_version_v: features.algorithm_versions.v.clone(),
+            algorithm_version_d: features.algorithm_versions.d.clone(),
+            algorithm_version_h: features.algorithm_versions.h.clone(),
+            features,
+        };
+        out.push((window, is_collapse));
+    }
+    Ok(out)
+}
+
+/// Mark a set of windows as submitted (after their batch is durably on
+/// disk as a pending file — the pending file IS the submission record).
+pub fn mark_submitted(conn: &Connection, ids: &[String]) -> Result<usize> {
+    let mut n = 0usize;
+    for id in ids {
+        n += conn.execute(
+            "UPDATE idx_babel_windows SET submitted = 1 WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+    }
+    Ok(n)
+}
+
 // ── GOLD-DELTA-13 — fitness read path ────────────────────────────────────────
 
 /// Advisory verdict on a change, derived from the B_d trend around it.

@@ -65,6 +65,18 @@ impl WindowGranularity {
         }
     }
 
+    /// Inverse of [`Self::secs`] — used when reconstructing windows from
+    /// their SQLite rows (GOLD-DELTA-10 federation path).
+    pub fn from_secs(secs: u64) -> Option<Self> {
+        match secs {
+            300 => Some(Self::FiveMin),
+            900 => Some(Self::FifteenMin),
+            1800 => Some(Self::ThirtyMin),
+            3600 => Some(Self::SixtyMin),
+            _ => None,
+        }
+    }
+
     pub fn all() -> &'static [WindowGranularity] {
         &[
             WindowGranularity::FiveMin,

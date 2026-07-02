@@ -43,6 +43,18 @@ pub struct BabelConfig {
     /// with other NEOTH instances only happens when the operator explicitly
     /// enables this AND the runtime consent gate passes.
     pub federate: bool,
+    /// iroh endpoint id (hex) of the delta-kosmologie aggregation node.
+    /// `None` = no live transport — queued batches stay in
+    /// `~/.neoth/babel/pending/` for a later drain or manual upload.
+    pub federation_endpoint: Option<String>,
+    /// GOLD-DELTA panel decision Q1 (2026-07-02, unanimous): optional named
+    /// sentence-embedding checkpoint for K_d. The NAME lives here in config
+    /// (model-version-agnostic rule — never in code). `None` = the shipped
+    /// K_d_v0 token-frequency histogram (khist feed). NOTE: the embedding
+    /// implementation is a post-GOLD item; v1.0 reads but does not yet act
+    /// on this field, and `algorithm_versions.k` stratifies the two methods
+    /// per-row so mixed-method pools stay analyzable.
+    pub k_d_embedding_model: Option<String>,
     /// Export serialization for `neoth babel export`. Currently `jsonl`.
     pub export_format: String,
 }
@@ -58,6 +70,8 @@ impl Default for BabelConfig {
             memory_signals: true,
             skill_signals: true,
             federate: false,
+            federation_endpoint: None,
+            k_d_embedding_model: None,
             export_format: "jsonl".to_string(),
         }
     }

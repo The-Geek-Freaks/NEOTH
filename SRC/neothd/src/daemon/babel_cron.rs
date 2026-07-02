@@ -423,6 +423,36 @@ pub fn spawn_babel_cron_loop(
                 return;
             }
         };
+        // GOLD-DELTA-10 — federation prerequisites, prepared once. The
+        // signing key doubles as the batch-signature identity; a load
+        // failure disables federation for this run (warned once below).
+        let federation_signing_key = crate::wal::signing::load_or_init_signing_key(
+            &crate::wal::signing::default_signing_key_path(),
+        )
+        .ok();
+        let federation_meta = crate::analytics::babel::anonymize::SubmissionMetadata {
+            contributor_id: crate::analytics::babel::anonymize::derive_contributor_id(
+                &salt,
+                "The-Geek-Freaks/NEOTH",
+            ),
+            deployment_context:
+                crate::analytics::babel::anonymize::DeploymentContext::SingleUser,
+            hardware_tier: crate::analytics::babel::anonymize::HardwareTier::Workstation,
+            primary_model_family: "unknown".to_string(),
+            avg_tasks_per_day_bucket: 0,
+            protocol_version:
+                crate::analytics::babel::anonymize::SubmissionMetadata::PROTOCOL_VERSION,
+            runtime_class:
+                crate::analytics::babel::anonymize::SubmissionMetadata::RUNTIME_CLASS,
+        };
+        let pending_dir = crate::config::FreedomConfig::default_neoth_home()
+            .join("babel")
+            .join("pending");
+        // Panel decision Q3 (2026-07-02): the consent prompt fires ONCE per
+        // boot, the first time the gate preconditions all hold while
+        // federate is still off — informed consent at calibration maturity.
+        let mut federation_prompted = false;
+
         // GOLD-DELTA-16 — live K_d histogram feed from the inference paths.
         // Without it every WAL-scanned window has k = 0 and b_log stays NULL.
         let mut khist_rx = crate::analytics::babel::khist::register(1024);
@@ -667,6 +697,117 @@ pub fn spawn_babel_cron_loop(
                         error = %e,
                         "babel: normaliser reload failed; keeping previous calibration"
                     ),
+                }
+                // GOLD-DELTA-10 — federation: one-time consent prompt at
+                // calibration maturity (panel Q3), then the pending-first
+                // submit pipeline when the operator has opted in.
+                let autonomy_u8 = autonomy_scalar(autonomy);
+                let counts = views
+                    .with_writer(crate::analytics::babel::store::submission_counts)
+                    .await;
+                match counts {
+                    Ok(c) => {
+                        let calibrated = cfg.epsilon_calibrated.is_some();
+                        if !cfg.federate {
+                            if !federation_prompted
+                                && calibrated
+                                && autonomy_u8 >= 3
+                                && c.total_windows as usize
+                                    >= crate::analytics::babel::federation::MIN_CALIBRATION_WINDOWS
+                            {
+                                federation_prompted = true;
+                                let msg = "babel calibration complete — federation is now \
+                                     possible. Contribute anonymized window records to the \
+                                     shared research pool with `neoth babel federate --enable` \
+                                     (sharing stays OFF until you do).";
+                                tracing::info!("{msg}");
+                                if let Some(sse) = &sse {
+                                    let _ = sse.send(FeedEntry {
+                                        ts_ns: crate::time::now_unix_ns(),
+                                        event_type: 0x00,
+                                        actor: "babel".to_string(),
+                                        message: msg.to_string(),
+                                    });
+                                }
+                            }
+                        } else if let Some(key) = &federation_signing_key {
+                            let gate = crate::analytics::babel::federation::ConsentGate {
+                                federate_enabled: cfg.federate,
+                                autonomy_level: autonomy_u8,
+                                calibration_window_count: c.total_windows as usize,
+                            };
+                            let eps = cfg.epsilon_calibrated;
+                            let queued = views
+                                .with_writer(|conn| {
+                                    crate::analytics::babel::federation::submit_pending_batch(
+                                        conn,
+                                        &gate,
+                                        &federation_meta,
+                                        key,
+                                        &salt,
+                                        &pending_dir,
+                                        eps,
+                                        now,
+                                    )
+                                })
+                                .await;
+                            match queued {
+                                Ok(Some(o)) => tracing::info!(
+                                    batch_id = %o.batch_id,
+                                    windows = o.windows,
+                                    "babel federation: batch queued"
+                                ),
+                                Ok(None) => {}
+                                Err(e) => tracing::warn!(
+                                    error = %e,
+                                    "babel federation: submit pass failed"
+                                ),
+                            }
+                            // Phase 2 — deliver pending batches when a live
+                            // transport is available.
+                            #[cfg(feature = "cluster-iroh")]
+                            if let Some(endpoint) = &cfg.federation_endpoint {
+                                let uploader =
+                                    crate::analytics::babel::federation::IrohUploader {
+                                        endpoint: endpoint.clone(),
+                                    };
+                                match crate::analytics::babel::federation::drain_pending(
+                                    &pending_dir,
+                                    &uploader,
+                                )
+                                .await
+                                {
+                                    Ok((delivered, remaining)) if delivered + remaining > 0 => {
+                                        tracing::info!(
+                                            delivered,
+                                            remaining,
+                                            "babel federation: pending drain"
+                                        );
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => tracing::warn!(
+                                        error = %e,
+                                        "babel federation: pending drain failed"
+                                    ),
+                                }
+                            }
+                            #[cfg(not(feature = "cluster-iroh"))]
+                            if cfg.federation_endpoint.is_some() {
+                                tracing::debug!(
+                                    "babel federation: endpoint configured but built without \
+                                     cluster-iroh — batches stay pending for manual upload"
+                                );
+                            }
+                        } else {
+                            tracing::warn!(
+                                "babel federation: enabled but signing key unavailable — \
+                                 batches cannot be signed, nothing submitted"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "babel federation: submission counts failed");
+                    }
                 }
             }
         }

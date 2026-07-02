@@ -99,6 +99,13 @@ Export windows + labels as JSONL for the theorem-test tooling. Runs the post-hoc
 - `--out <OUT>` — Output file path
 - `--since <SINCE>` — Only windows with ts_end >= this unix timestamp (default: all)
 
+### `neoth babel federate`
+
+Federation opt-in/out (`babel.federate`). Sharing anonymized window records is OFF by default; enabling additionally requires AutonomyLevel >= Elevated and calibration maturity at runtime. Without flags, prints the current federation state
+
+- `--enable <ENABLE>` — Opt IN to the shared research pool
+- `--disable <DISABLE>` — Opt OUT (stops future submissions immediately; already-submitted pseudonymous windows cannot be recalled)
+
 ### `neoth babel label`
 
 Attach an operator-confirmed collapse label to a window

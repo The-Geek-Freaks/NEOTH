@@ -342,6 +342,45 @@ impl IrohTransport {
         Ok(reply)
     }
 
+    /// GOLD-DELTA-10 — one-shot dial with a caller-supplied ALPN (the Babel
+    /// federation submission path). Binds a throwaway endpoint, sends
+    /// `frame`, returns the peer's reply. No cluster-key proof: federation
+    /// auth is the Ed25519 batch signature, verified receiver-side — the
+    /// aggregation node is deliberately NOT a cluster member.
+    pub async fn dial_once_with_alpn(
+        endpoint_id: &str,
+        alpn: &'static [u8],
+        frame: &[u8],
+    ) -> Result<Vec<u8>> {
+        let eid: EndpointId = endpoint_id
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid federation endpoint id"))?;
+        let ep = Endpoint::bind(presets::N0)
+            .await
+            .context("iroh: bind federation endpoint")?;
+        let conn = ep
+            .connect(eid, alpn)
+            .await
+            .context("iroh: connect federation node")?;
+        let (mut send, mut recv) = conn
+            .open_bi()
+            .await
+            .map_err(|e| anyhow::anyhow!("iroh: open_bi: {e}"))?;
+        send.write_all(frame)
+            .await
+            .map_err(|e| anyhow::anyhow!("iroh: write batch: {e}"))?;
+        send.finish()
+            .map_err(|e| anyhow::anyhow!("iroh: finish: {e}"))?;
+        let reply = recv
+            .read_to_end(MAX_FRAME_BYTES)
+            .await
+            .map_err(|e| anyhow::anyhow!("iroh: read receipt: {e}"))?;
+        conn.close(0u32.into(), b"done");
+        ep.close().await;
+        Ok(reply)
+    }
+
     /// Gracefully shut down the router + endpoint (flushes queued closes).
     pub async fn shutdown(self) -> Result<()> {
         self.router
