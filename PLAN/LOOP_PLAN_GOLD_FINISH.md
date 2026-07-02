@@ -299,7 +299,8 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ```yaml
 updated: 2026-07-02 (evening)
 base: 24d2f96b
-current_batch: B-DELTA   # 01+02 DONE; next 03 cron → 04 spawn → 05-09,11,12; 10 waits on operator Q4; upstream delta repo fixed+pushed a4bd367
+current_batch: B-DELTA   # 01+02 DONE + B_mult ratio-form fix (afe2eb13); next 03 cron → 04 spawn → 05-09,11,12; 10 waits operator Q3; then 13/14/15 self-improve loop
+handoff: PLAN/HANDOFF_OPUS_2026-07-02.md   # full Opus-4.8 handoff — read FIRST on a fresh session; upstream delta repo fixed+pushed a4bd367
 next: B2
 completed: [B0 (0d4024b1 — ubuntu+windows+features+smoke green; macos was still running at last check), B1 (24d2f96b — 0 partials, dedupes, claudeclaw restored)]
 notes: >
