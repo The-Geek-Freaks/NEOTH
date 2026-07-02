@@ -220,8 +220,10 @@ impl BabelCronState {
         }
         let tps = old.token_sum as f64 / g.secs() as f64;
         let Some(features) = old.features.finish(tps) else {
-            // A dropped window is data loss, not a debug curiosity.
-            tracing::warn!(
+            // A dropped window is data loss — error, not warn: a latent
+            // extractor bug on a specific event pattern would otherwise
+            // zero out detection silently.
+            tracing::error!(
                 window_secs = g.secs(),
                 ts_start = old.meta.ts_start,
                 event_count = old.meta.event_count,

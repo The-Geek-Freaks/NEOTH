@@ -108,6 +108,9 @@ async fn babel_cron_emits_window_row_in_sqlite() {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     let mut count = 0i64;
     while std::time::Instant::now() < deadline {
+        // unwrap_or(0) is deliberate: the observer creates the babel tables
+        // at spawn, so the first polls can race "no such table" — that is a
+        // not-yet state, not a failure.
         count = conn
             .query_row("SELECT COUNT(*) FROM idx_babel_windows", [], |r| r.get(0))
             .unwrap_or(0);

@@ -92,11 +92,13 @@ fn set_enabled(enabled: bool) -> Result<()> {
 pub async fn run_babel(args: BabelArgs) -> Result<()> {
     match args.action {
         BabelAction::Status => {
+            // A diagnostic that silently shows defaults on a config load
+            // failure lies to the operator — fail loudly instead.
             let cfg = crate::config::FreedomConfig::load_from_path(
                 &crate::config::FreedomConfig::default_path(),
             )
-            .map(|fc| fc.babel)
-            .unwrap_or_default();
+            .context("load freedom.yaml for babel status")?
+            .babel;
             let conn = open_views()?;
             let total: i64 = conn
                 .query_row("SELECT COUNT(*) FROM idx_babel_windows", [], |r| r.get(0))?;

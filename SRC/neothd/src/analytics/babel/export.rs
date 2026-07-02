@@ -7,6 +7,14 @@
 //! `pseudonymised_session_id`. No WAL output — the event byte space is
 //! exhausted. Callers run [`super::collapse::post_hoc_label_pass`] first so
 //! every ripe horizon is stamped before rows leave the machine.
+//!
+//! Windows whose 30-minute horizon has NOT yet ripened are included with
+//! `collapse_30m = null` — the honest value. Theorem-test tooling must
+//! filter `collapse_30m IS NOT NULL` before training any h=30m model;
+//! the rows remain valid for feature analysis and the h=5m label.
+//!
+//! The file is written `.tmp`-then-rename: a failed export never leaves a
+//! partial file at the target path for a polling consumer to ingest.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -89,8 +97,9 @@ pub fn export_batch(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create export dir {}", parent.display()))?;
     }
-    let file = std::fs::File::create(out_path)
-        .with_context(|| format!("create export file {}", out_path.display()))?;
+    let tmp_path = out_path.with_extension("jsonl.tmp");
+    let file = std::fs::File::create(&tmp_path)
+        .with_context(|| format!("create export temp file {}", tmp_path.display()))?;
     let mut w = std::io::BufWriter::new(file);
 
     let mut stats = ExportStats { windows: 0, labels: 0 };
@@ -107,9 +116,11 @@ pub fn export_batch(
         stats.labels += labels.len();
         // The stored variables blob carries the 7 features + `algo` version
         // map + `schema` (see store::insert_window) — split it back apart so
-        // the export schema has them as explicit top-level fields.
-        let vars: serde_json::Value =
-            serde_json::from_str(&row.variables).unwrap_or(serde_json::Value::Null);
+        // the export schema has them as explicit top-level fields. A corrupt
+        // blob is a hard error: silently exporting an all-null record would
+        // poison the theorem-test dataset undetectably.
+        let vars: serde_json::Value = serde_json::from_str(&row.variables)
+            .with_context(|| format!("decode variables blob for window {}", row.id))?;
         let algorithm_versions = vars.get("algo").cloned().unwrap_or(serde_json::Value::Null);
         let schema_version = vars
             .get("schema")
@@ -144,6 +155,10 @@ pub fn export_batch(
         stats.windows += 1;
     }
     w.flush().context("flush export file")?;
+    drop(w);
+    std::fs::rename(&tmp_path, out_path).with_context(|| {
+        format!("rename {} -> {}", tmp_path.display(), out_path.display())
+    })?;
     Ok(stats)
 }
 

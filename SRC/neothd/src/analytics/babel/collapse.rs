@@ -370,13 +370,17 @@ pub fn post_hoc_label_pass(
             .optional()?;
         match hit {
             Some(kind) => {
+                // Label BEFORE stamp: if the label upsert fails, the window
+                // stays collapse_30m = NULL and the next pass retries both
+                // (the upsert is idempotent) — stamp-first would strand a
+                // collapse_30m = 1 row with no label forever.
+                if let Some(kind) = kind {
+                    upsert_label_row(conn, &id, &kind, false, now_unix)?;
+                }
                 conn.execute(
                     "UPDATE idx_babel_windows SET collapse_30m = 1 WHERE id = ?1",
                     rusqlite::params![id],
                 )?;
-                if let Some(kind) = kind {
-                    upsert_label_row(conn, &id, &kind, false, now_unix)?;
-                }
             }
             None => {
                 conn.execute(

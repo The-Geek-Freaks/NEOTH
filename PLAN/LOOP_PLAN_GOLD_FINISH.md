@@ -298,8 +298,8 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 
 ```yaml
 updated: 2026-07-02 (Fable 5 session)
-base: c3b21240
-current_batch: B-DELTA   # 01-06 DONE (03=da9a306d tick, 04=c312f9b0 daemon+wiring, 05+06=c3b21240 norm sweep+epsilon freeze); ERROR-HUNT WAVE running over eaa69d95..c3b21240 (3 agents: silent-failure/logic-skeptic/unwired); next 07 labels → 08 export → 09 CLI → 11 SSE → 12 integration tests → 16 (NEW: in-process K_d histogram feed — WAL carries no content, k=0/b_log NULL until it ships); 10 waits operator Q3; then 13/14/15 self-improve loop
+base: 5ae8f214
+current_batch: B-DELTA   # 01-09,11,12 DONE (03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1-fixes=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214); WAVE #2 running over c3b21240..5ae8f214 (silent-failure/security/logic-skeptic); remaining: 16 (K_d in-process histogram feed) → 13 (self-improve local feedback) → 15 (depends 13); 10+14 operator-blocked (Q3 wizard opt-in). New local tool SRC/_test_int.bat (integration-test wrapper). CI runs queued in runner backlog all day — Security workflow green on every push.
 handoff: PLAN/HANDOFF_OPUS_2026-07-02.md   # full Opus-4.8 handoff — read FIRST on a fresh session; upstream delta repo fixed+pushed a4bd367
 next: B2
 completed: [B0 (0d4024b1 — ubuntu+windows+features+smoke green; macos was still running at last check), B1 (24d2f96b — 0 partials, dedupes, claudeclaw restored)]

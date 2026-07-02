@@ -301,6 +301,11 @@ impl ScanState {
         for p in seg_paths {
             let Ok(bytes) = std::fs::read(&p) else {
                 tracing::warn!(segment = %p.display(), "babel scan: segment unreadable, skipped");
+                // Drop the cursor: if the segment gets rewritten while
+                // unreadable, a stale physical_len would hide the shrink and
+                // frames below the old offset would be lost forever. A
+                // one-time re-emit after recovery is the cheaper failure.
+                self.offsets.remove(&p);
                 continue;
             };
             let saved = self.offsets.get(&p).copied().unwrap_or_default();
@@ -453,6 +458,10 @@ pub fn spawn_babel_cron_loop(
                         let n = publish_sse(sse, &out, crate::time::now_unix_ns());
                         if n > 0 {
                             tracing::debug!(lines = n, "babel events published to SSE feed");
+                        } else if !out.is_empty() {
+                            // Feed-worthy events existed but nothing landed —
+                            // usually just "no subscriber connected".
+                            tracing::debug!("babel SSE publish: no subscribers");
                         }
                     }
                     for ev in &out {
@@ -554,16 +563,25 @@ pub fn spawn_babel_cron_loop(
                 let eps = cfg.epsilon_calibrated;
                 let refreshed = views
                     .with_writer(|conn| {
+                        let mut primary_sweep_ok = true;
                         for g in crate::analytics::babel::window::WindowGranularity::all() {
                             if let Err(e) =
                                 crate::analytics::babel::norm::sweep_norm(conn, g.secs(), now, eps)
                             {
+                                if g.secs() == 900 {
+                                    primary_sweep_ok = false;
+                                }
                                 tracing::warn!(
                                     error = %e,
                                     window_secs = g.secs(),
                                     "babel norm sweep failed"
                                 );
                             }
+                        }
+                        if !primary_sweep_ok {
+                            // Don't load a possibly-stale b_raw row over the
+                            // known-valid in-memory normaliser.
+                            return Ok(None);
                         }
                         crate::analytics::babel::norm::load_normaliser(conn, 900)
                     })
