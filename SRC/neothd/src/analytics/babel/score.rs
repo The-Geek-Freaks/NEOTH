@@ -9,8 +9,9 @@
 //! Multiplicative form (simplified ratio form, upstream fix `a4bd367`):
 //! `B_mult = norm((C*K*M) / ((D/A)*(H/V) + epsilon))` — A and V enter as
 //! load/capacity ratios, never as bare numerator terms. Epsilon =
-//! `0.01 * median((D/A)*(H/V))` over the first 10% of the instance's data
-//! (frozen as `epsilon_calibrated` in `BabelConfig` after calibration).
+//! `0.01 * median((D/A)*(H/V))`, frozen once ≥ MIN_SAMPLES (50) 15-minute
+//! windows exist, computed over all rows at freeze time (stored as
+//! `epsilon_calibrated` in `BabelConfig`).
 //! The epsilon value AND the rule string
 //! ("0.01_median_buffer_ratio_calibration") are included in every
 //! federated record.

@@ -127,8 +127,10 @@ pub fn sweep_norm(
     const VARS: [&str; 7] = ["C", "K", "M", "A", "V", "D", "H"];
     let mut series: [Vec<f64>; 7] = Default::default();
     let mut b_raw: Vec<f64> = Vec::new();
+    let mut parse_failures = 0usize;
     for raw in &rows {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+            parse_failures += 1;
             continue;
         };
         let mut vals = [0.0f64; 7];
@@ -146,15 +148,31 @@ pub fn sweep_norm(
             // vals order mirrors VARS: C K M A V D H.
             let (c, k, m, a, vv, d, h) =
                 (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6]);
-            if a > 0.0 && vv > 0.0 {
+            // Same preconditions as score.rs::compute — including eps > 0,
+            // or a hand-edited epsilon of 0.0 pushes +Inf into the series.
+            if a > 0.0 && vv > 0.0 && eps > 0.0 {
                 b_raw.push((c * k * m) / ((d / a) * (h / vv) + eps));
             }
         }
+    }
+    if parse_failures > 0 {
+        tracing::warn!(
+            skipped = parse_failures,
+            window_secs,
+            "babel sweep: rows skipped due to variables-JSON parse failure"
+        );
     }
 
     let mut upserts = 0usize;
     let mut upsert = |variable: &str, values: &[f64]| -> Result<()> {
         let (Some(p1), Some(p99)) = (percentile(values, 0.01), percentile(values, 0.99)) else {
+            // Empty 7-day series: a stale row from an earlier sweep would keep
+            // passing is_calibrated() forever — delete it so readers fall back
+            // to cold-start semantics.
+            conn.execute(
+                "DELETE FROM idx_babel_norm WHERE variable = ?1 AND window_secs = ?2",
+                rusqlite::params![variable, window_secs as i64],
+            )?;
             return Ok(());
         };
         conn.execute(
@@ -210,9 +228,11 @@ pub fn calibration_epsilon_from_db(
 }
 
 /// Load the [`B_RAW_VARIABLE`] snapshot for a granularity as a
-/// [`Normaliser`]. `None` when the sweep hasn't produced one yet.
-pub fn load_normaliser(conn: &Connection, window_secs: u64) -> Option<Normaliser> {
-    conn.query_row(
+/// [`Normaliser`]. `Ok(None)` when the sweep hasn't produced one yet;
+/// a real read failure is an `Err` — conflating it with "not yet
+/// calibrated" would freeze the caller's normaliser silently.
+pub fn load_normaliser(conn: &Connection, window_secs: u64) -> Result<Option<Normaliser>> {
+    match conn.query_row(
         "SELECT p1, p99, sample_count FROM idx_babel_norm
          WHERE variable = ?1 AND window_secs = ?2",
         rusqlite::params![B_RAW_VARIABLE, window_secs as i64],
@@ -223,8 +243,11 @@ pub fn load_normaliser(conn: &Connection, window_secs: u64) -> Option<Normaliser
                 sample_count: r.get::<_, i64>(2)? as u32,
             })
         },
-    )
-    .ok()
+    ) {
+        Ok(n) => Ok(Some(n)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[cfg(test)]
@@ -311,7 +334,7 @@ mod tests {
         let conn = seeded_db(60);
         let n = sweep_norm(&conn, 900, NOW, Some(0.01)).expect("sweep");
         assert_eq!(n, 8, "7 variables + b_raw");
-        let norm = load_normaliser(&conn, 900).expect("b_raw row present");
+        let norm = load_normaliser(&conn, 900).expect("query ok").expect("b_raw row present");
         assert_eq!(norm.sample_count, 60);
         assert!(norm.is_calibrated());
         assert!(norm.p99 > norm.p1);
@@ -352,7 +375,7 @@ mod tests {
     fn load_normaliser_none_before_any_sweep() {
         let conn = Connection::open_in_memory().expect("mem db");
         super::super::store::ensure_schema(&conn).expect("schema");
-        assert!(load_normaliser(&conn, 900).is_none());
+        assert!(load_normaliser(&conn, 900).expect("query ok").is_none());
     }
 
     #[test]

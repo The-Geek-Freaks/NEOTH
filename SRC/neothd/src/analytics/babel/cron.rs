@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use rusqlite::Connection;
 
 use super::collapse::{detect_collapse, CollapseEventRecord, CollapseEventType};
@@ -221,7 +221,12 @@ impl BabelCronState {
         let tps = old.token_sum as f64 / g.secs() as f64;
         let Some(features) = old.features.finish(tps) else {
             // A dropped window is data loss, not a debug curiosity.
-            tracing::warn!(window_secs = g.secs(), "babel window features failed validation, dropped");
+            tracing::warn!(
+                window_secs = g.secs(),
+                ts_start = old.meta.ts_start,
+                event_count = old.meta.event_count,
+                "babel window features failed validation, dropped"
+            );
             return Ok(());
         };
         let scores = BabelScores::compute(&features, &self.normaliser, self.epsilon);
@@ -254,7 +259,12 @@ impl BabelCronState {
             algorithm_version_d: av.d,
             algorithm_version_h: av.h,
         };
-        store::insert_window(conn, &window)?;
+        // The accumulator is already rolled at this point — a failed insert
+        // loses this window (next tick starts fresh). The context makes the
+        // loss identifiable in the daemon's error log.
+        store::insert_window(conn, &window).with_context(|| {
+            format!("persist babel window (window_secs={}, ts_end={})", g.secs(), close_ts)
+        })?;
         if g == WindowGranularity::FifteenMin {
             if let Some(b_mult) = window.scores.b_mult {
                 if b_mult >= self.threshold {

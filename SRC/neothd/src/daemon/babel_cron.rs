@@ -335,14 +335,19 @@ pub fn spawn_babel_cron_loop(
         // Total tools available (C_d denominator): pinned allowlist entries
         // across configured MCP servers. Servers without a pin contribute 0 —
         // the accumulator clamps the denominator to >= 1.
-        let mcp_tool_count: usize = crate::mcp::config::McpServers::load()
-            .map(|f| {
-                f.servers
-                    .iter()
-                    .map(|s| s.allow_tools.as_ref().map_or(0, Vec::len))
-                    .sum()
-            })
-            .unwrap_or(0);
+        let mcp_tool_count: usize = match crate::mcp::config::McpServers::load() {
+            Ok(f) => f
+                .servers
+                .iter()
+                .map(|s| s.allow_tools.as_ref().map_or(0, Vec::len))
+                .sum(),
+            Err(e) => {
+                // total=0 clamps the C_d denominator to 1 and inflates
+                // coupling — make the degraded metric traceable.
+                tracing::warn!(error = %e, "babel: MCP config unreadable; C_d denominator degraded to 1");
+                0
+            }
+        };
         let mut state = BabelCronState::new(
             &cfg,
             session_pseudo,
@@ -495,14 +500,21 @@ pub fn spawn_babel_cron_loop(
                         crate::analytics::babel::norm::load_normaliser(conn, 900)
                     })
                     .await;
-                if let Some(n) = refreshed {
-                    tracing::debug!(
-                        p1 = n.p1,
-                        p99 = n.p99,
-                        samples = n.sample_count,
-                        "babel normaliser refreshed from b_raw sweep"
-                    );
-                    state.set_normaliser(n);
+                match refreshed {
+                    Ok(Some(n)) => {
+                        tracing::debug!(
+                            p1 = n.p1,
+                            p99 = n.p99,
+                            samples = n.sample_count,
+                            "babel normaliser refreshed from b_raw sweep"
+                        );
+                        state.set_normaliser(n);
+                    }
+                    Ok(None) => {} // not calibrated yet — cold start persists
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        "babel: normaliser reload failed; keeping previous calibration"
+                    ),
                 }
             }
         }

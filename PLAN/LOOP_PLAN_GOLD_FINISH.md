@@ -298,8 +298,8 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 
 ```yaml
 updated: 2026-07-02 (Fable 5 session)
-base: da9a306d
-current_batch: B-DELTA   # 01+02+03 DONE (03 = da9a306d cron tick); 04 daemon spawn IN PROGRESS (daemon/babel_cron.rs + serve wiring written, gates running); next 05-09,11,12; NEW GOLD-DELTA-16 needed (in-process K_d feed — WAL carries no content, so WAL-scanned windows have k=0 → b_log NULL until the live histogram feed ships); 10 waits operator Q3; then 13/14/15 self-improve loop
+base: c3b21240
+current_batch: B-DELTA   # 01-06 DONE (03=da9a306d tick, 04=c312f9b0 daemon+wiring, 05+06=c3b21240 norm sweep+epsilon freeze); ERROR-HUNT WAVE running over eaa69d95..c3b21240 (3 agents: silent-failure/logic-skeptic/unwired); next 07 labels → 08 export → 09 CLI → 11 SSE → 12 integration tests → 16 (NEW: in-process K_d histogram feed — WAL carries no content, k=0/b_log NULL until it ships); 10 waits operator Q3; then 13/14/15 self-improve loop
 handoff: PLAN/HANDOFF_OPUS_2026-07-02.md   # full Opus-4.8 handoff — read FIRST on a fresh session; upstream delta repo fixed+pushed a4bd367
 next: B2
 completed: [B0 (0d4024b1 — ubuntu+windows+features+smoke green; macos was still running at last check), B1 (24d2f96b — 0 partials, dedupes, claudeclaw restored)]
