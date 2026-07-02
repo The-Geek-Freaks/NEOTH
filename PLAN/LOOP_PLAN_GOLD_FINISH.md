@@ -186,9 +186,11 @@ Implement the verified-missing adapters (expect: **Signal** (signal-cli JSON-RPC
 `GOLD-FEAT-03` finish (self-wiki Obsidian pipeline rest) · `GOLD-ADAPT-OH-01` (migration-first onboarding — pairs with shipped GOLD-FEAT-04 migrate-apply; wizard first question new-vs-migrate; sources: openclaw/hermes/openhuman readers already in neoth-migrate) · `GOLD-FEAT-05` (self-reprogramming with the 5-layer safety stack — kill-switch, allowlist, permission gate, worktree isolation, review gate; evidence `research/self_reprogramming.md`; security-reviewer mandatory) · `GOLD-FEAT-06` (exo-style swarm dashboard: NodeResourceSnapshot gossip + `neoth cluster swarm --watch`).
 
 ### B15 — WS-G eval-repo queue (research batch; parallelizable — interleave whenever a build batch is blocked)
-Queue (tracker ~L966): `anthropics/knowledge-work-plugins` · `rohitg00/ai-engineering-from-scratch` · `EveryInc/compound-engineering-plugin` · `affaan-m/ECC` · `mukul975/Anthropic-Cybersecurity-Skills` · `D4Vinci/Scrapling` · `hardikpandya/stop-slop` · `UditAkhourii/adhd`. Protocol per repo = §6.2 gremium deep-read. Output per repo: verdict (adopt-native / ground-truth / skip) + concrete steal-list items appended to WS-I with evidence file — then IMPLEMENT the adopts (they join the matching subsystem batch), record skips in `DO_NOT_ADOPT.md`. Release gate requires: evaluations complete + verdicts implemented.
+Queue (tracker, grep "Eval-repos queue"): `anthropics/knowledge-work-plugins` · `rohitg00/ai-engineering-from-scratch` · `EveryInc/compound-engineering-plugin` · `affaan-m/ECC` · `mukul975/Anthropic-Cybersecurity-Skills` · `D4Vinci/Scrapling` · `hardikpandya/stop-slop` · `UditAkhourii/adhd` (operator: "wichtig") · `moazbuilds/claudeclaw` (TODO:19 — restored by the B1 TODO.txt sweep). Protocol per repo = §6.2 gremium deep-read. Output per repo: verdict (adopt-native / ground-truth / skip) + concrete steal-list items appended to WS-I with evidence file — then IMPLEMENT the adopts (they join the matching subsystem batch), record skips in `DO_NOT_ADOPT.md`. Release gate requires: evaluations complete + verdicts implemented.
 
-### B16 — Jarvis live re-sync (research batch; needs LAN access to 192.168.178.117)
+### B16 — Jarvis + Veronica live re-sync (research batch; needs LAN/Tailscale access)
+
+> Veronica (Claw2, `tgf@100.86.138.18`, same key-auth) gets the same delta treatment — TODO:51-55 names BOTH brains; `QUELLEN/VERONICA_FILES/` + the Deep-Audit VERONICA DELTA section are the baselines.
 1. Inventory delta since 2026-06-12: `ssh tgf@192.168.178.117 "find ~/.openclaw/skills ~/.openclaw/cron ~/.openclaw/workspace/knowledge ~/scripts -newermt 2026-06-12 -type f | head -100"` + compare skill/cron lists vs `QUELLEN/JARVIS_LIVE/skill_plugin_inventory.txt`.
 2. Pull new/changed sources: `ssh tgf@192.168.178.117 "tar czf - -C ~ <paths>" | tar xzf - -C QUELLEN/JARVIS_LIVE_2026-07/` (redact credentials — NEVER commit secrets; follow the redaction pattern in `QUELLEN/SOURCES_INVENTORY.md`).
 3. Deep-read the delta (§6.2 panel): what did Jarvis gain that NEOTH lacks? New crons, new memory mechanisms, prompt evolutions in CLAUDE.md/MEMORY_MATRIX.md lineage, watchdog changes.
@@ -200,7 +202,8 @@ Queue (tracker ~L966): `anthropics/knowledge-work-plugins` · `rohitg00/ai-engin
 3. FINAL ERROR-HUNT WAVE ×2 (§7) — second wave must come back empty (loop-until-dry).
 4. Docs honesty re-pass: README + `docs/` claims vs shipped reality (HON discipline: surface must not over-promise).
 5. Signed release artifacts (minisign per GOLD-PROG-13 decision, sha256 companions), `packaging/` flow, CHANGELOG, tag `v1.0-gold`, GitHub release.
-6. Post-tag: update this plan's LOOP STATE to COMPLETE; write session memory.
+6. Write `PLAN/ROAD_TO_1_1.md` seeded from every v1.1-deferred item (TODO:56 — "erst wenn 1.0 complete"): FEAT-05..12 v1.1 halves, FEAT-10b stretch channels, RMAS follow-ons, CCPARITY deferred pair, HR-06 if skipped.
+7. Post-tag: update this plan's LOOP STATE to COMPLETE; write session memory.
 
 ---
 
