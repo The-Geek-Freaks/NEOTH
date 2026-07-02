@@ -429,6 +429,20 @@ pub fn spawn_babel_cron_loop(
             // primary (15-min) window into the scoring state.
             if now - last_norm_sweep >= NORM_SWEEP_SECS {
                 last_norm_sweep = now;
+                // GOLD-DELTA-07 — stamp collapse_30m on every window whose
+                // 30-min horizon has fully ripened since the last sweep.
+                let stamped = views
+                    .with_writer(|conn| {
+                        crate::analytics::babel::collapse::post_hoc_label_pass(conn, 1800, now)
+                    })
+                    .await;
+                match stamped {
+                    Ok(n) if n > 0 => {
+                        tracing::debug!(windows = n, "babel post-hoc label pass stamped horizons");
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "babel post-hoc label pass failed"),
+                }
                 // GOLD-DELTA-06 — one-time epsilon calibration freeze:
                 // `0.01 * median((D/A)*(H/V))` once MIN_SAMPLES 15-min
                 // windows exist, persisted to freedom.yaml via the same

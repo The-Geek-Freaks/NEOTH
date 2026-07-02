@@ -20,6 +20,8 @@
 //! `tool_selection_failure` from the integration doc is subsumed by
 //! `tool_timeout_cascade` (see docs/neoth-integration.md note).
 
+use anyhow::Result;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 /// The 8 canonical collapse labels, matching the enum in the JSON schema
@@ -271,6 +273,101 @@ fn detect_objective_failure(events: &[CollapseEventRecord]) -> Option<i64> {
         .map(|e| e.ts_unix)
 }
 
+// ── GOLD-DELTA-07 — label persistence ────────────────────────────────────────
+
+/// Upsert one label row. `human_confirmed` only ever ratchets UP — an
+/// automated re-pass must never demote an operator confirmation.
+fn upsert_label_row(
+    conn: &Connection,
+    window_id: &str,
+    label: &str,
+    human_confirmed: bool,
+    now_unix: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO idx_babel_labels (window_id, label, human_confirmed, labeled_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (window_id, label) DO UPDATE SET
+           human_confirmed = MAX(idx_babel_labels.human_confirmed, excluded.human_confirmed),
+           labeled_at = excluded.labeled_at",
+        rusqlite::params![window_id, label, i64::from(human_confirmed), now_unix],
+    )?;
+    Ok(())
+}
+
+/// Persist a collapse label for a window (operator CLI `neoth babel label`
+/// passes `human_confirmed = true`; automated detectors pass `false`).
+/// Labels live in `idx_babel_labels` only — the window row itself is not
+/// mutated (the export pipeline LEFT JOINs).
+pub fn persist_label(
+    conn: &Connection,
+    window_id: &str,
+    label: CollapseLabel,
+    human_confirmed: bool,
+    now_unix: i64,
+) -> Result<()> {
+    upsert_label_row(conn, window_id, label.as_str(), human_confirmed, now_unix)
+}
+
+/// Post-hoc horizon pass: stamp `collapse_30m` on every window whose
+/// look-ahead horizon is now fully observable.
+///
+/// The WAL events are gone by the time a horizon ripens, so the pass is
+/// DB-only: a window W collapsed-within-horizon iff some 5-minute window
+/// with `collapse_5m = 1` STARTED inside `[W.ts_end, W.ts_end + look_ahead)`
+/// (the 5-min windows are the in-window detectors; their flags are the
+/// ground signal). A hit also writes the collapse kind into
+/// `idx_babel_labels` (machine label, `human_confirmed = 0`); a fully
+/// observed horizon with no hit stamps `collapse_30m = 0`. Returns the
+/// number of windows stamped.
+pub fn post_hoc_label_pass(
+    conn: &Connection,
+    look_ahead_secs: i64,
+    now_unix: i64,
+) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT id, ts_end FROM idx_babel_windows
+         WHERE collapse_30m IS NULL AND ts_end + ?1 <= ?2",
+    )?;
+    let ripe: Vec<(String, i64)> = stmt
+        .query_map(rusqlite::params![look_ahead_secs, now_unix], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut stamped = 0usize;
+    for (id, ts_end) in ripe {
+        let hit: Option<Option<String>> = conn
+            .query_row(
+                "SELECT collapse_kind FROM idx_babel_windows
+                 WHERE window_secs = 300 AND collapse_5m = 1
+                   AND ts_start >= ?1 AND ts_start < ?1 + ?2
+                 ORDER BY ts_start ASC LIMIT 1",
+                rusqlite::params![ts_end, look_ahead_secs],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        match hit {
+            Some(kind) => {
+                conn.execute(
+                    "UPDATE idx_babel_windows SET collapse_30m = 1 WHERE id = ?1",
+                    rusqlite::params![id],
+                )?;
+                if let Some(kind) = kind {
+                    upsert_label_row(conn, &id, &kind, false, now_unix)?;
+                }
+            }
+            None => {
+                conn.execute(
+                    "UPDATE idx_babel_windows SET collapse_30m = 0 WHERE id = ?1",
+                    rusqlite::params![id],
+                )?;
+            }
+        }
+        stamped += 1;
+    }
+    Ok(stamped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +423,106 @@ mod tests {
     fn collapse_label_as_str_round_trips() {
         assert_eq!(CollapseLabel::AgentLoop.as_str(), "agent_loop");
         assert_eq!(CollapseLabel::SemanticDegradation.as_str(), "semantic_degradation");
+    }
+
+    const T: i64 = 1_800_000_000;
+
+    fn labels_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("mem db");
+        super::super::store::ensure_schema(&conn).expect("schema");
+        conn
+    }
+
+    fn seed_window(
+        conn: &Connection,
+        id: &str,
+        window_secs: i64,
+        ts_end: i64,
+        collapse_5m: Option<i64>,
+        kind: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO idx_babel_windows
+             (id, session_id, window_secs, ts_start, ts_end, b_bottleneck, variables,
+              collapse_5m, collapse_kind)
+             VALUES (?1, 'a1b2c3d4e5f60718', ?2, ?3, ?4, 0.5, '{}', ?5, ?6)",
+            rusqlite::params![id, window_secs, ts_end - window_secs, ts_end, collapse_5m, kind],
+        )
+        .expect("seed window");
+    }
+
+    #[test]
+    fn persist_label_upsert_never_demotes_human_confirmation() {
+        let conn = labels_db();
+        persist_label(&conn, "w1", CollapseLabel::AgentLoop, true, 100).expect("human label");
+        persist_label(&conn, "w1", CollapseLabel::AgentLoop, false, 200).expect("machine re-pass");
+        let (confirmed, at, count): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT human_confirmed, labeled_at,
+                        (SELECT COUNT(*) FROM idx_babel_labels)
+                 FROM idx_babel_labels WHERE window_id = 'w1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("row");
+        assert_eq!(count, 1, "upsert, not duplicate");
+        assert_eq!(confirmed, 1, "operator confirmation survives a machine re-pass");
+        assert_eq!(at, 200, "labeled_at refreshed");
+    }
+
+    #[test]
+    fn post_hoc_stamps_collapse_and_label_within_horizon() {
+        let conn = labels_db();
+        seed_window(&conn, "w15", 900, T, None, None);
+        // 5-min collapse window starting 60s after w15 closes.
+        seed_window(&conn, "v5", 300, T + 360, Some(1), Some("agent_loop"));
+        let stamped = post_hoc_label_pass(&conn, 1800, T + 1801).expect("pass");
+        assert_eq!(stamped, 1, "only w15 is ripe (v5's horizon is not)");
+        let c30: i64 = conn
+            .query_row("SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'", [], |r| {
+                r.get(0)
+            })
+            .expect("row");
+        assert_eq!(c30, 1);
+        let label: String = conn
+            .query_row(
+                "SELECT label FROM idx_babel_labels WHERE window_id='w15'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("label row");
+        assert_eq!(label, "agent_loop");
+    }
+
+    #[test]
+    fn post_hoc_stamps_zero_when_horizon_observed_clean() {
+        let conn = labels_db();
+        seed_window(&conn, "w15", 900, T, None, None);
+        let stamped = post_hoc_label_pass(&conn, 1800, T + 1801).expect("pass");
+        assert_eq!(stamped, 1);
+        let c30: i64 = conn
+            .query_row("SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'", [], |r| {
+                r.get(0)
+            })
+            .expect("row");
+        assert_eq!(c30, 0);
+        let labels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_babel_labels", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(labels, 0, "clean horizon writes no label row");
+    }
+
+    #[test]
+    fn post_hoc_leaves_unripe_windows_null() {
+        let conn = labels_db();
+        seed_window(&conn, "w15", 900, T, None, None);
+        let stamped = post_hoc_label_pass(&conn, 1800, T + 900).expect("pass");
+        assert_eq!(stamped, 0, "horizon not yet observable");
+        let c30: Option<i64> = conn
+            .query_row("SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'", [], |r| {
+                r.get(0)
+            })
+            .expect("row");
+        assert!(c30.is_none());
     }
 }
