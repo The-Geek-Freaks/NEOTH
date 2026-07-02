@@ -298,7 +298,7 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 
 ```yaml
 updated: 2026-07-02 (Fable 5 session)
-base: <post-DELTA-16 commit>
+base: 9a0f39ec
 current_batch: B-DELTA   # 01-09,11,12,16 DONE (03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443 — security CLEAN + horizon semantics CONFIRMED, 16=next commit: khist.rs OnceLock feed + serve_pipeline/chat taps (incognito-gated) + daemon drain — b_log stops being NULL); remaining in B-DELTA: 13 (self-improve local fitness signal — deps 03/04 met) → 15 (deps 07+13); 10+14 OPERATOR-BLOCKED (report §6 Q3/Q4: wizard opt-in scope + K_d/D_d source — ask Alex). New local tool SRC/_test_int.bat (integration-test wrapper, cargo test --test %*). CI runs queued in runner backlog all day — Security workflow green on EVERY push; check `gh run list` next session for the backlog flush.
 handoff: PLAN/HANDOFF_OPUS_2026-07-02.md   # full Opus-4.8 handoff — read FIRST on a fresh session; upstream delta repo fixed+pushed a4bd367
 next: B2
