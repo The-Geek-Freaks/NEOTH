@@ -95,12 +95,35 @@ pub enum CollectorSignal {
     Escalate { reason: String },
 }
 
+/// GOLD-DELTA-13 — one advisory Babel-fitness assessment of an accepted
+/// self-improvement change. Snapshot semantics: the report is rewritten
+/// every tick, so a change is re-assessed each tick until it ages out of
+/// the look-back — idempotent, not accumulating.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BabelFitnessNote {
+    /// The skill/persona the accepted ledger record changed.
+    pub skill: String,
+    /// When the change landed (ledger `at_unix`).
+    pub change_ts: i64,
+    /// `reinforce` / `flag` / `neutral` (see `analytics::babel::store`).
+    pub verdict: String,
+    pub before_median: f64,
+    pub after_median: f64,
+    pub collapses_after: u32,
+}
+
 /// Summary returned by one self-improvement collector tick. Written to
 /// `~/.neoth/self_improvement_signals.json` after each pass.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectorReport {
     /// Classified signals produced this tick.
     pub signals: Vec<CollectorSignal>,
+    /// GOLD-DELTA-13 — Babel B_d fitness assessments of recent accepted
+    /// changes. ADVISORY ONLY: the collector reports; the operator's
+    /// autonomy level governs what auto-applies downstream (same gate as
+    /// every other self-improvement action).
+    #[serde(default)]
+    pub babel_fitness: Vec<BabelFitnessNote>,
     /// Number of distinct topics above `min_freq_threshold` in the episode window.
     pub topics_scanned: usize,
     /// Number of ground-truth lessons read from `idx_groundtruth`.
@@ -316,6 +339,9 @@ fn tick_inner(
     let ledger = crate::self_improve::load_ledger(home);
     let ledger_records_checked = ledger.len();
 
+    // ── 5b. GOLD-DELTA-13 — Babel fitness of recent accepted changes ─────────
+    let (babel_fitness, mut babel_signals) = babel_fitness_notes(&conn, &ledger, ts_unix);
+
     // ── 6. Classify signals ──────────────────────────────────────────────────
     let mut signals = Vec::new();
     let mut deployed_artifacts_checked: usize = 0;
@@ -431,14 +457,78 @@ fn tick_inner(
         }
     }
 
+    signals.append(&mut babel_signals);
+
     CollectorReport {
         signals,
+        babel_fitness,
         topics_scanned,
         lessons_read,
         ledger_records_checked,
         deployed_artifacts_checked,
         ts_unix,
     }
+}
+
+// ── GOLD-DELTA-13 — Babel fitness assessment ─────────────────────────────────
+
+/// Horizon per side of a change (2 h = 8 primary 15-min windows).
+const BABEL_FITNESS_HORIZON_SECS: i64 = 7200;
+/// Changes older than this age out of the per-tick re-assessment.
+const BABEL_FITNESS_LOOKBACK_SECS: i64 = 7 * 86_400;
+
+/// Assess every accepted ledger change whose after-horizon is fully
+/// observable: the Babel B_d trend around the change becomes an ADVISORY
+/// note, and a `Flag` verdict additionally becomes an `Escalate` signal
+/// (operator attention — never an automatic revert). Best-effort: a query
+/// failure skips that record with a warn.
+fn babel_fitness_notes(
+    conn: &rusqlite::Connection,
+    ledger: &[crate::self_improve::ImproveRecord],
+    now: i64,
+) -> (Vec<BabelFitnessNote>, Vec<CollectorSignal>) {
+    use crate::analytics::babel::store::{babel_fitness, FitnessVerdict};
+    let mut notes = Vec::new();
+    let mut signals = Vec::new();
+    for rec in ledger {
+        if !rec.accepted
+            || rec.at_unix < now - BABEL_FITNESS_LOOKBACK_SECS
+            || rec.at_unix + BABEL_FITNESS_HORIZON_SECS > now
+        {
+            continue;
+        }
+        let fitness = match babel_fitness(conn, rec.at_unix, BABEL_FITNESS_HORIZON_SECS) {
+            Ok(Some(f)) => f,
+            Ok(None) => continue, // too few windows on a side — unobservable
+            Err(e) => {
+                warn!(error = %e, skill = %rec.skill, "babel fitness query failed");
+                continue;
+            }
+        };
+        let verdict = fitness.verdict();
+        if verdict == FitnessVerdict::Flag {
+            signals.push(CollectorSignal::Escalate {
+                reason: format!(
+                    "babel fitness FLAG on '{}' (changed at {}): median b_bottleneck \
+                     {:.4} -> {:.4}, {} collapse(s) in the 2h horizon — review the change",
+                    rec.skill,
+                    rec.at_unix,
+                    fitness.before_median,
+                    fitness.after_median,
+                    fitness.collapses_after
+                ),
+            });
+        }
+        notes.push(BabelFitnessNote {
+            skill: rec.skill.clone(),
+            change_ts: rec.at_unix,
+            verdict: verdict.as_str().to_string(),
+            before_median: fitness.before_median,
+            after_median: fitness.after_median,
+            collapses_after: fitness.collapses_after,
+        });
+    }
+    (notes, signals)
 }
 
 // ── Public async tick ────────────────────────────────────────────────────────
@@ -586,6 +676,81 @@ mod tests {
     use super::*;
     use crate::config::automation::SelfImprovementCollectorConfig;
     use crate::memory::store;
+
+    // ── GOLD-DELTA-13 — babel fitness notes ──────────────────────────────────
+
+    fn improve_record(skill: &str, at_unix: i64, accepted: bool) -> crate::self_improve::ImproveRecord {
+        crate::self_improve::ImproveRecord {
+            skill: skill.to_string(),
+            accepted,
+            score_before: 0.5,
+            score_after: 0.6,
+            summary: "test change".to_string(),
+            at_unix,
+        }
+    }
+
+    /// Seed 15-min windows around `change_ts`: 4 before at `before_b`,
+    /// 4 after at `after_b`.
+    fn babel_fitness_db(change_ts: i64, before_b: f64, after_b: f64) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("mem db");
+        crate::analytics::babel::store::ensure_schema(&conn).expect("schema");
+        for i in 0..4i64 {
+            for (tag, ts_end, b) in [
+                ("b", change_ts - i * 900, before_b),
+                ("a", change_ts + 900 + i * 900, after_b),
+            ] {
+                conn.execute(
+                    "INSERT INTO idx_babel_windows
+                     (id, session_id, window_secs, ts_start, ts_end, b_bottleneck, variables)
+                     VALUES (?1, 'a1b2c3d4e5f60718', 900, ?2, ?3, ?4, '{}')",
+                    rusqlite::params![format!("{tag}{i}"), ts_end - 900, ts_end, b],
+                )
+                .expect("seed");
+            }
+        }
+        conn
+    }
+
+    #[test]
+    fn babel_fitness_notes_reinforce_and_flag_with_escalation() {
+        let now = 1_800_100_000i64;
+        let change = now - BABEL_FITNESS_HORIZON_SECS - 100; // horizon fully observable
+        // Sustained LOWER B_d after the change → reinforce, no signal.
+        let conn = babel_fitness_db(change, 1.0, 0.5);
+        let ledger = vec![improve_record("skill-good", change, true)];
+        let (notes, signals) = babel_fitness_notes(&conn, &ledger, now);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].verdict, "reinforce");
+        assert!(signals.is_empty(), "reinforce never escalates");
+
+        // HIGHER B_d after the change → flag + Escalate signal.
+        let conn = babel_fitness_db(change, 0.5, 1.0);
+        let ledger = vec![improve_record("skill-bad", change, true)];
+        let (notes, signals) = babel_fitness_notes(&conn, &ledger, now);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].verdict, "flag");
+        assert_eq!(signals.len(), 1);
+        assert!(matches!(
+            &signals[0],
+            CollectorSignal::Escalate { reason } if reason.contains("skill-bad")
+        ));
+    }
+
+    #[test]
+    fn babel_fitness_notes_skip_unaccepted_unripe_and_unobservable() {
+        let now = 1_800_100_000i64;
+        let ripe = now - BABEL_FITNESS_HORIZON_SECS - 100;
+        let conn = babel_fitness_db(ripe, 1.0, 0.5);
+        let ledger = vec![
+            improve_record("rejected", ripe, false),          // not accepted
+            improve_record("too-fresh", now - 60, true),      // horizon not observable
+            improve_record("ancient", now - 30 * 86_400, true), // aged out
+        ];
+        let (notes, signals) = babel_fitness_notes(&conn, &ledger, now);
+        assert!(notes.is_empty(), "nothing assessable in this ledger");
+        assert!(signals.is_empty());
+    }
 
     // ── config defaults ──────────────────────────────────────────────────────
 

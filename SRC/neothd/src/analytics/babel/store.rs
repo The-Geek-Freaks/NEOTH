@@ -110,6 +110,105 @@ pub fn insert_window(conn: &Connection, w: &BabelWindow) -> Result<()> {
     Ok(())
 }
 
+// ── GOLD-DELTA-13 — fitness read path ────────────────────────────────────────
+
+/// Advisory verdict on a change, derived from the B_d trend around it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FitnessVerdict {
+    /// Sustained lower B_d after the change, no collapse in the horizon.
+    Reinforce,
+    /// Higher B_d after the change OR a collapse inside the horizon.
+    Flag,
+    /// No decisive movement either way.
+    Neutral,
+}
+
+impl FitnessVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reinforce => "reinforce",
+            Self::Flag => "flag",
+            Self::Neutral => "neutral",
+        }
+    }
+}
+
+/// B_d comparison around one change timestamp.
+#[derive(Clone, Copy, Debug)]
+pub struct BabelFitness {
+    pub before_median: f64,
+    pub after_median: f64,
+    pub collapses_after: u32,
+    pub windows_before: usize,
+    pub windows_after: usize,
+}
+
+impl BabelFitness {
+    /// ±10% median movement is the decisive band; any collapse in the
+    /// horizon flags regardless of the median (a collapse is never noise).
+    pub fn verdict(&self) -> FitnessVerdict {
+        if self.collapses_after > 0 || self.after_median > self.before_median * 1.1 {
+            FitnessVerdict::Flag
+        } else if self.after_median < self.before_median * 0.9 {
+            FitnessVerdict::Reinforce
+        } else {
+            FitnessVerdict::Neutral
+        }
+    }
+}
+
+fn median(values: &mut [f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = values.len() / 2;
+    Some(if values.len() % 2 == 0 { (values[mid - 1] + values[mid]) / 2.0 } else { values[mid] })
+}
+
+/// Compare the PRIMARY (15-min) windows around `change_ts`: median
+/// `b_bottleneck` of `[change_ts - horizon, change_ts]` (by ts_end) vs
+/// `[change_ts, change_ts + horizon]` (fully inside), plus the collapse
+/// count after. `b_bottleneck` is the v0 fitness score — it always exists
+/// (`b_log` is NULL until the K_d feed warms up, `b_mult` until epsilon
+/// freezes). `Ok(None)` below 2 windows on either side — an unobservable
+/// change must not produce a verdict.
+pub fn babel_fitness(
+    conn: &Connection,
+    change_ts: i64,
+    horizon_secs: i64,
+) -> Result<Option<BabelFitness>> {
+    let fetch = |lo: i64, hi: i64| -> Result<Vec<f64>> {
+        let mut stmt = conn.prepare(
+            "SELECT b_bottleneck FROM idx_babel_windows
+             WHERE window_secs = 900 AND ts_end > ?1 AND ts_end <= ?2",
+        )?;
+        Ok(stmt
+            .query_map(rusqlite::params![lo, hi], |r| r.get(0))?
+            .collect::<std::result::Result<Vec<f64>, _>>()?)
+    };
+    let mut before = fetch(change_ts - horizon_secs, change_ts)?;
+    let mut after = fetch(change_ts, change_ts + horizon_secs)?;
+    if before.len() < 2 || after.len() < 2 {
+        return Ok(None);
+    }
+    let collapses_after: u32 = conn.query_row(
+        "SELECT COUNT(*) FROM idx_babel_windows
+         WHERE window_secs = 900 AND ts_end > ?1 AND ts_end <= ?2
+           AND (collapse_5m = 1 OR collapse_30m = 1)",
+        rusqlite::params![change_ts, change_ts + horizon_secs],
+        |r| r.get(0),
+    )?;
+    let (windows_before, windows_after) = (before.len(), after.len());
+    Ok(Some(BabelFitness {
+        before_median: median(&mut before).expect("len >= 2"),
+        after_median: median(&mut after).expect("len >= 2"),
+        collapses_after,
+        windows_before,
+        windows_after,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +257,70 @@ mod tests {
             .query_row("SELECT submitted FROM idx_babel_windows", [], |r| r.get(0))
             .expect("select");
         assert_eq!(submitted, 0, "federation flag defaults to not-submitted");
+    }
+
+    const CT: i64 = 1_800_100_000;
+
+    fn seed_fitness_window(conn: &Connection, id: &str, ts_end: i64, b: f64, collapse: bool) {
+        conn.execute(
+            "INSERT INTO idx_babel_windows
+             (id, session_id, window_secs, ts_start, ts_end, b_bottleneck, variables, collapse_5m)
+             VALUES (?1, 'a1b2c3d4e5f60718', 900, ?2, ?3, ?4, '{}', ?5)",
+            rusqlite::params![id, ts_end - 900, ts_end, b, i64::from(collapse)],
+        )
+        .expect("seed");
+    }
+
+    fn fitness_db(before_b: f64, after_b: f64, after_collapse: bool) -> Connection {
+        let conn = Connection::open_in_memory().expect("mem db");
+        ensure_schema(&conn).expect("schema");
+        for i in 0..4i64 {
+            seed_fitness_window(&conn, &format!("b{i}"), CT - i * 900, before_b, false);
+            seed_fitness_window(
+                &conn,
+                &format!("a{i}"),
+                CT + 900 + i * 900,
+                after_b,
+                after_collapse && i == 0,
+            );
+        }
+        conn
+    }
+
+    #[test]
+    fn fitness_reinforce_on_sustained_lower_b() {
+        let conn = fitness_db(1.0, 0.5, false);
+        let f = babel_fitness(&conn, CT, 7200).expect("query").expect("both sides observable");
+        assert_eq!(f.verdict(), FitnessVerdict::Reinforce);
+        assert!(f.after_median < f.before_median);
+        assert_eq!(f.collapses_after, 0);
+    }
+
+    #[test]
+    fn fitness_flag_on_higher_b_or_collapse() {
+        let higher = fitness_db(0.5, 1.0, false);
+        let f = babel_fitness(&higher, CT, 7200).expect("query").expect("observable");
+        assert_eq!(f.verdict(), FitnessVerdict::Flag, "higher B_d flags");
+
+        let collapsed = fitness_db(1.0, 0.5, true);
+        let f = babel_fitness(&collapsed, CT, 7200).expect("query").expect("observable");
+        assert_eq!(f.verdict(), FitnessVerdict::Flag, "a collapse flags even with lower B_d");
+        assert_eq!(f.collapses_after, 1);
+    }
+
+    #[test]
+    fn fitness_neutral_inside_the_band_and_none_when_unobservable() {
+        let flat = fitness_db(1.0, 1.0, false);
+        let f = babel_fitness(&flat, CT, 7200).expect("query").expect("observable");
+        assert_eq!(f.verdict(), FitnessVerdict::Neutral);
+
+        let thin = Connection::open_in_memory().expect("mem db");
+        ensure_schema(&thin).expect("schema");
+        seed_fitness_window(&thin, "only", CT - 900, 1.0, false);
+        assert!(
+            babel_fitness(&thin, CT, 7200).expect("query").is_none(),
+            "fewer than 2 windows per side → no verdict"
+        );
     }
 
     #[test]

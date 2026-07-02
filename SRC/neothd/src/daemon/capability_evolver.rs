@@ -244,6 +244,7 @@ mod tests {
     fn make_report(signals: Vec<CollectorSignal>) -> CollectorReport {
         CollectorReport {
             signals,
+            babel_fitness: Vec::new(),
             topics_scanned: 0,
             lessons_read: 0,
             ledger_records_checked: 0,
