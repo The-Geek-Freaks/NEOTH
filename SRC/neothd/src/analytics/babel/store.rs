@@ -17,6 +17,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+use super::window::BabelWindow;
+
 /// Create the three Babel tables + query-path indexes. Idempotent.
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -60,6 +62,50 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (window_id, label)
         );
         "#,
+    )?;
+    Ok(())
+}
+
+/// Persist one closed window. `collapse_30m` stays NULL until the post-hoc
+/// label pass (GOLD-DELTA-07) fills it; `submitted` defaults to 0.
+///
+/// The `variables` JSON carries the seven raw features PLUS the per-feature
+/// algorithm versions and the record schema version — the export pipeline
+/// (GOLD-DELTA-08) and cross-contributor sensitivity analysis need them
+/// per-row, and the table has no dedicated columns for them.
+pub fn insert_window(conn: &Connection, w: &BabelWindow) -> Result<()> {
+    let variables = serde_json::json!({
+        "C": w.features.c, "K": w.features.k, "M": w.features.m,
+        "A": w.features.a, "V": w.features.v, "D": w.features.d, "H": w.features.h,
+        "algo": {
+            "c": w.algorithm_version_c, "k": w.algorithm_version_k,
+            "m": w.algorithm_version_m, "a": w.algorithm_version_a,
+            "v": w.algorithm_version_v, "d": w.algorithm_version_d,
+            "h": w.algorithm_version_h,
+        },
+        "schema": w.schema_version,
+    });
+    conn.execute(
+        "INSERT INTO idx_babel_windows
+         (id, session_id, window_secs, ts_start, ts_end,
+          b_log, b_mult, b_bottleneck, variables,
+          collapse_5m, collapse_30m, collapse_kind, negative_ctrl)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        rusqlite::params![
+            w.id,
+            w.session_id_pseudo,
+            w.granularity.secs() as i64,
+            w.ts_start,
+            w.ts_end,
+            w.scores.b_log,
+            w.scores.b_mult,
+            w.scores.b_bottleneck,
+            variables.to_string(),
+            i64::from(w.collapse.collapse_within_5m),
+            w.collapse.collapse_within_30m.map(i64::from),
+            w.collapse.collapse_kind.map(super::collapse::CollapseLabel::as_str),
+            i64::from(w.collapse.negative_control),
+        ],
     )?;
     Ok(())
 }

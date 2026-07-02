@@ -30,6 +30,7 @@ pub mod anonymize;
 pub mod collapse;
 pub mod config;
 pub mod coupling;
+pub mod cron;
 pub mod feature;
 pub mod federation;
 pub mod norm;

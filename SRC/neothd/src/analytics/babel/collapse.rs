@@ -203,7 +203,9 @@ fn detect_tool_timeout_cascade(events: &[CollapseEventRecord]) -> Option<i64> {
         .filter_map(|e| e.tool.as_deref())
         .collect();
     if timeout_tools.len() > 3 {
-        // Return timestamp of the 4th distinct timeout
+        // Timestamp of the earliest timeout/error evidence in the window
+        // (not the 4th distinct tool — earliest onset is what the horizon
+        // analysis wants).
         events.iter()
             .filter(|e| {
                 e.event_type == CollapseEventType::ToolTimeout
