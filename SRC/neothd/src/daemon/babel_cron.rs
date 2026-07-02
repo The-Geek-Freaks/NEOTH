@@ -56,6 +56,9 @@ use crate::wal::events::{
 /// events (seconds).
 const SYNTH_HORIZON_SECS: i64 = 120;
 
+/// GOLD-DELTA-05 — cadence of the p1/p99 norm-table refresh.
+const NORM_SWEEP_SECS: i64 = 300;
+
 /// AutonomyLevel → A_d normalisation scalar (`feature.rs` A_d_v0:
 /// Strict=1, Standard=2, Elevated=3, Full=4). Custom has no fixed agent
 /// density expectation — treated as Standard.
@@ -303,7 +306,7 @@ impl ScanState {
 /// false` — no idle tokio task. Mirrors
 /// [`super::monitor_cron::spawn_monitor_cron_loop`].
 pub fn spawn_babel_cron_loop(
-    cfg: BabelConfig,
+    mut cfg: BabelConfig,
     autonomy: AutonomyLevel,
     wal_dir: PathBuf,
     views: Arc<ViewsExecutor>,
@@ -370,6 +373,7 @@ pub fn spawn_babel_cron_loop(
         );
         let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last_norm_sweep: i64 = 0;
         loop {
             ticker.tick().await;
             let wd = wal_dir.clone();
@@ -414,6 +418,92 @@ pub fn spawn_babel_cron_loop(
                     }
                 }
                 Err(e) => tracing::error!(error = %e, "babel tick failed"),
+            }
+            // GOLD-DELTA-05 — 5-min norm refresh: 7-day p1/p99 per variable
+            // per granularity, then reload the b_raw normaliser for the
+            // primary (15-min) window into the scoring state.
+            if now - last_norm_sweep >= NORM_SWEEP_SECS {
+                last_norm_sweep = now;
+                // GOLD-DELTA-06 — one-time epsilon calibration freeze:
+                // `0.01 * median((D/A)*(H/V))` once MIN_SAMPLES 15-min
+                // windows exist, persisted to freedom.yaml via the same
+                // atomic secret-stripped writer `neoth hemispheres set`
+                // uses. A failed persist keeps the in-memory value for this
+                // run; the next boot recalibrates with the same rule.
+                if cfg.epsilon_calibrated.is_none() {
+                    let computed = views
+                        .with_writer(|conn| {
+                            crate::analytics::babel::norm::calibration_epsilon_from_db(
+                                conn,
+                                900,
+                                crate::analytics::babel::norm::MIN_SAMPLES,
+                            )
+                        })
+                        .await;
+                    match computed {
+                        Ok(Some(eps)) => {
+                            state.set_epsilon(eps);
+                            cfg.epsilon_calibrated = Some(eps);
+                            tracing::info!(
+                                epsilon = eps,
+                                rule = "0.01_median_buffer_ratio_calibration",
+                                "babel epsilon calibrated and frozen (GOLD-DELTA-06)"
+                            );
+                            let persist = tokio::task::spawn_blocking(move || {
+                                let path = crate::config::FreedomConfig::default_path();
+                                let mut fc =
+                                    crate::config::FreedomConfig::load_from_path(&path)?;
+                                if fc.babel.epsilon_calibrated.is_none() {
+                                    fc.babel.epsilon_calibrated = Some(eps);
+                                    fc.save_public_to_default_path()?;
+                                }
+                                anyhow::Ok(())
+                            })
+                            .await;
+                            match persist {
+                                Ok(Ok(())) => {}
+                                Ok(Err(e)) => tracing::warn!(
+                                    error = %e,
+                                    "babel: epsilon persist to freedom.yaml failed (in-memory value active)"
+                                ),
+                                Err(e) => tracing::warn!(
+                                    error = %e,
+                                    "babel: epsilon persist task failed (in-memory value active)"
+                                ),
+                            }
+                        }
+                        Ok(None) => {} // not enough windows yet
+                        Err(e) => {
+                            tracing::warn!(error = %e, "babel: epsilon calibration query failed");
+                        }
+                    }
+                }
+                let eps = cfg.epsilon_calibrated;
+                let refreshed = views
+                    .with_writer(|conn| {
+                        for g in crate::analytics::babel::window::WindowGranularity::all() {
+                            if let Err(e) =
+                                crate::analytics::babel::norm::sweep_norm(conn, g.secs(), now, eps)
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    window_secs = g.secs(),
+                                    "babel norm sweep failed"
+                                );
+                            }
+                        }
+                        crate::analytics::babel::norm::load_normaliser(conn, 900)
+                    })
+                    .await;
+                if let Some(n) = refreshed {
+                    tracing::debug!(
+                        p1 = n.p1,
+                        p99 = n.p99,
+                        samples = n.sample_count,
+                        "babel normaliser refreshed from b_raw sweep"
+                    );
+                    state.set_normaliser(n);
+                }
             }
         }
     }))
