@@ -22,7 +22,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The 7 canonical collapse labels, matching the enum in the JSON schema.
+/// The 8 canonical collapse labels, matching the enum in the JSON schema
+/// (event schema v0.1.1 / window schema v0.2.1 — `tool_selection_failure`
+/// added upstream in delta-kosmologie `a4bd367`, FINDING-09).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CollapseLabel {
@@ -33,6 +35,9 @@ pub enum CollapseLabel {
     SemanticDegradation,
     FallbackFailure,
     ObjectiveFailure,
+    /// Operator/CLI-labelled only in v0 (no automatic detector), like
+    /// `objective_failure`.
+    ToolSelectionFailure,
 }
 
 impl CollapseLabel {
@@ -45,6 +50,7 @@ impl CollapseLabel {
             Self::SemanticDegradation => "semantic_degradation",
             Self::FallbackFailure => "fallback_failure",
             Self::ObjectiveFailure => "objective_failure",
+            Self::ToolSelectionFailure => "tool_selection_failure",
         }
     }
 }

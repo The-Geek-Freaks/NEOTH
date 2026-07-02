@@ -34,6 +34,7 @@ pub mod feature;
 pub mod federation;
 pub mod norm;
 pub mod score;
+pub mod store;
 pub mod window;
 
 pub use config::BabelConfig;
