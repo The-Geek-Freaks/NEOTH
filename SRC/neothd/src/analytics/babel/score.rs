@@ -6,10 +6,14 @@
 //! B_mult up to a constant when D,H > 0.  Used for all cross-instance
 //! pooled analysis.
 //!
-//! Multiplicative form: epsilon = 0.01 * median(D*H) over the first 10%
-//! of the instance's data (frozen as `epsilon_value` in `FreedomConfig`
-//! after calibration).  The epsilon value AND the rule string ("0.01_median_DH")
-//! are included in every federated record.
+//! Multiplicative form (simplified ratio form, upstream fix `a4bd367`):
+//! `B_mult = norm((C*K*M) / ((D/A)*(H/V) + epsilon))` — A and V enter as
+//! load/capacity ratios, never as bare numerator terms. Epsilon =
+//! `0.01 * median((D/A)*(H/V))` over the first 10% of the instance's data
+//! (frozen as `epsilon_calibrated` in `BabelConfig` after calibration).
+//! The epsilon value AND the rule string
+//! ("0.01_median_buffer_ratio_calibration") are included in every
+//! federated record.
 //!
 //! B_bottleneck: min(C,K,M,A,V) / max(D,H) — captures the weakest amplifier
 //! over the strongest buffer.  No epsilon needed.
@@ -48,10 +52,13 @@ impl BabelScores {
     pub fn compute(f: &BabelFeatures, normaliser: &Normaliser, epsilon: Option<f64>) -> Self {
         let b_log = compute_log_form(f);
         let b_bottleneck = compute_bottleneck(f);
+        // Simplified ratio form: (C*K*M) / ((D/A)*(H/V) + eps). A or V at
+        // zero would make the buffer ratios undefined (0/0 when D or H is
+        // also zero) — treat like the log form and emit no score.
         let (b_mult, b_mult_epsilon) = match epsilon {
-            Some(eps) if eps > 0.0 => {
-                let raw = (f.c * f.k * f.m * f.a * f.v)
-                    / (f.d * f.h + eps);
+            Some(eps) if eps > 0.0 && f.a > 0.0 && f.v > 0.0 => {
+                let raw = (f.c * f.k * f.m)
+                    / ((f.d / f.a) * (f.h / f.v) + eps);
                 let normed = normaliser.normalise(raw);
                 (Some(normed), Some(eps))
             }
@@ -61,13 +68,14 @@ impl BabelScores {
             b_log,
             b_mult,
             b_mult_epsilon,
-            b_mult_epsilon_rule: "0.01_median_DH_calibration".into(),
+            b_mult_epsilon_rule: "0.01_median_buffer_ratio_calibration".into(),
             b_bottleneck,
         }
     }
 }
 
-/// log(C) + log(K) + log(M) + log(A) + log(V) - log(D) - log(H).
+/// log(C) + log(K) + log(M) + log(A/D) + log(V/H) — expanded below as
+/// individual ln() terms (algebraically identical for positive inputs).
 /// Returns None if any numerator variable is <= 0 (log undefined).
 fn compute_log_form(f: &BabelFeatures) -> Option<f64> {
     if f.c <= 0.0 || f.k <= 0.0 || f.m <= 0.0 || f.a <= 0.0 || f.v <= 0.0 {
@@ -141,6 +149,21 @@ mod tests {
         let s = BabelScores::compute(&f, &norm, Some(0.01));
         assert!(s.b_mult.is_some());
         assert_eq!(s.b_mult_epsilon, Some(0.01));
-        assert_eq!(s.b_mult_epsilon_rule.as_str(), "0.01_median_DH_calibration");
+        assert_eq!(
+            s.b_mult_epsilon_rule.as_str(),
+            "0.01_median_buffer_ratio_calibration"
+        );
+    }
+
+    #[test]
+    fn scores_emit_no_b_mult_when_agent_density_is_zero() {
+        // a = 0 makes the D/A buffer ratio undefined — the ratio form must
+        // decline to score, exactly like the log form does.
+        let mut f = sample_features();
+        f.a = 0.0;
+        let norm = Normaliser::cold_start();
+        let s = BabelScores::compute(&f, &norm, Some(0.01));
+        assert!(s.b_mult.is_none());
+        assert!(s.b_mult_epsilon.is_none());
     }
 }

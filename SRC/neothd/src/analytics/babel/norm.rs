@@ -59,12 +59,14 @@ impl Normaliser {
     }
 }
 
-/// Compute the epsilon value for the multiplicative form from a slice of D*H
-/// products (the calibration batch).  Pinned rule: `0.01 * median(D*H)`.
-/// Returns None when the slice is empty.
-pub fn compute_calibration_epsilon(dh_products: &[f64]) -> Option<f64> {
-    if dh_products.is_empty() { return None; }
-    let mut sorted = dh_products.to_vec();
+/// Compute the epsilon value for the multiplicative form from a slice of
+/// buffer-ratio products `(D/A) * (H/V)` (the calibration batch — the
+/// simplified ratio form's actual denominator; upstream fix `a4bd367`).
+/// Pinned rule: `0.01 * median((D/A)*(H/V))`, tag
+/// `0.01_median_buffer_ratio_calibration`. Returns None when empty.
+pub fn compute_calibration_epsilon(buffer_ratio_products: &[f64]) -> Option<f64> {
+    if buffer_ratio_products.is_empty() { return None; }
+    let mut sorted = buffer_ratio_products.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
     let median = if sorted.len() % 2 == 0 {
