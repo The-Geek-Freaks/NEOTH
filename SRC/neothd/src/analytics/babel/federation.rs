@@ -293,8 +293,31 @@ pub const MAX_BATCH_WINDOWS: usize = 500;
 /// `cluster-iroh`; tests use a mock.
 #[async_trait::async_trait]
 pub trait FederationUploader: Send + Sync {
-    /// Deliver one gzip batch; return the aggregation node's receipt.
-    async fn upload(&self, batch_gz: &[u8]) -> Result<SubmissionReceipt>;
+    /// Deliver ONE transport frame (see [`build_transport_frame`]) — the
+    /// envelope (signature, batch headers) AND the gzip payload together;
+    /// the aggregation node verifies the signature against the payload
+    /// before accepting anything. Returns the node's receipt.
+    async fn upload(&self, frame: &[u8]) -> Result<SubmissionReceipt>;
+}
+
+/// Version tag of the single-frame wire format.
+pub const TRANSPORT_FRAME_VERSION: &str = "babel-transport/0.1";
+
+/// Combine a pending payload + its envelope sidecar into the one frame the
+/// live transport ships: `{frame_version, envelope, payload_gzip_b64}`.
+/// The receiver base64-decodes the payload, hashes it, and verifies
+/// `envelope.signature_hex` — an envelope-less payload is unauthenticatable
+/// by design (external review 2026-07-02: shipping the payload alone made
+/// the live path unacceptable to a signature-checking aggregator).
+pub fn build_transport_frame(envelope_json: &serde_json::Value, payload_gz: &[u8]) -> Vec<u8> {
+    use base64::Engine as _;
+    serde_json::json!({
+        "frame_version": TRANSPORT_FRAME_VERSION,
+        "envelope": envelope_json,
+        "payload_gzip_b64": base64::engine::general_purpose::STANDARD.encode(payload_gz),
+    })
+    .to_string()
+    .into_bytes()
 }
 
 /// What one submit pass produced.
@@ -455,7 +478,26 @@ pub async fn drain_pending(
                 continue;
             }
         };
-        match uploader.upload(&bytes).await {
+        // The envelope sidecar carries the signature the receiver checks —
+        // without it the payload is unauthenticatable; leave it pending.
+        let meta_path =
+            PathBuf::from(path.to_string_lossy().replace(".jsonl.gz", ".meta.json"));
+        let envelope_json: serde_json::Value = match std::fs::read(&meta_path)
+            .map_err(anyhow::Error::from)
+            .and_then(|b| serde_json::from_slice(&b).map_err(Into::into))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    file = %meta_path.display(), error = %e,
+                    "pending batch has no readable envelope — cannot authenticate, stays pending"
+                );
+                remaining += 1;
+                continue;
+            }
+        };
+        let frame = build_transport_frame(&envelope_json, &bytes);
+        match uploader.upload(&frame).await {
             Ok(receipt) => {
                 tracing::info!(
                     batch = %path.display(),
@@ -641,11 +683,11 @@ pub struct IrohUploader {
 #[cfg(feature = "cluster-iroh")]
 #[async_trait::async_trait]
 impl FederationUploader for IrohUploader {
-    async fn upload(&self, batch_gz: &[u8]) -> Result<SubmissionReceipt> {
+    async fn upload(&self, frame: &[u8]) -> Result<SubmissionReceipt> {
         let reply = crate::cluster::iroh_transport::IrohTransport::dial_once_with_alpn(
             &self.endpoint,
             FEDERATION_ALPN,
-            batch_gz,
+            frame,
         )
         .await?;
         serde_json::from_slice(&reply).context("parse federation receipt")
@@ -849,11 +891,13 @@ mod tests {
 
     struct MockUploader {
         fail_on: std::sync::Mutex<usize>,
+        frames: std::sync::Mutex<Vec<Vec<u8>>>,
     }
 
     #[async_trait::async_trait]
     impl FederationUploader for MockUploader {
-        async fn upload(&self, _batch_gz: &[u8]) -> Result<SubmissionReceipt> {
+        async fn upload(&self, frame: &[u8]) -> Result<SubmissionReceipt> {
+            self.frames.lock().expect("lock").push(frame.to_vec());
             let mut n = self.fail_on.lock().expect("lock");
             *n += 1;
             if *n == 1 {
@@ -962,26 +1006,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drain_pending_deletes_delivered_and_keeps_failed() {
+    async fn drain_pending_ships_envelope_plus_payload_and_skips_orphans() {
+        use base64::Engine as _;
         let dir = tempfile::tempdir().expect("tempdir");
         for name in ["a.pending.jsonl.gz", "b.pending.jsonl.gz"] {
             std::fs::write(dir.path().join(name), b"gz-bytes").expect("write");
             std::fs::write(
                 dir.path().join(name.replace(".jsonl.gz", ".meta.json")),
-                b"{}",
+                br#"{"batch_id":"x","signature_hex":"aa"}"#,
             )
             .expect("write meta");
         }
-        let uploader = MockUploader { fail_on: std::sync::Mutex::new(0) };
+        // A payload with NO envelope sidecar is unauthenticatable — it must
+        // never reach the uploader (external review fix 2026-07-02).
+        std::fs::write(dir.path().join("c.pending.jsonl.gz"), b"orphan").expect("write");
+
+        let uploader = MockUploader {
+            fail_on: std::sync::Mutex::new(0),
+            frames: std::sync::Mutex::new(Vec::new()),
+        };
         let (delivered, remaining) =
             drain_pending(dir.path(), &uploader).await.expect("drain");
-        assert_eq!((delivered, remaining), (1, 1));
+        assert_eq!((delivered, remaining), (1, 2), "a delivered; b failed; c orphaned");
+
+        // The live transport receives envelope AND payload in one frame.
+        let frames = uploader.frames.lock().expect("lock");
+        assert_eq!(frames.len(), 2, "orphan never reached the uploader");
+        let first: serde_json::Value = serde_json::from_slice(&frames[0]).expect("frame JSON");
+        assert_eq!(first["frame_version"], TRANSPORT_FRAME_VERSION);
+        assert_eq!(
+            first["envelope"]["signature_hex"], "aa",
+            "signature travels with the batch"
+        );
+        let payload = base64::engine::general_purpose::STANDARD
+            .decode(first["payload_gzip_b64"].as_str().expect("b64 field"))
+            .expect("valid base64");
+        assert_eq!(payload, b"gz-bytes", "payload round-trips");
+
         let left: Vec<String> = std::fs::read_dir(dir.path())
             .expect("dir")
             .flatten()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert!(left.contains(&"b.pending.jsonl.gz".to_string()), "failed batch stays");
+        assert!(left.contains(&"c.pending.jsonl.gz".to_string()), "orphan stays pending");
         assert!(
             !left.contains(&"a.pending.jsonl.gz".to_string()),
             "delivered batch removed"
