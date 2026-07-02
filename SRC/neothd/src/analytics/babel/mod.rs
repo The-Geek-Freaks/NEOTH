@@ -31,6 +31,7 @@ pub mod collapse;
 pub mod config;
 pub mod coupling;
 pub mod cron;
+pub mod export;
 pub mod feature;
 pub mod federation;
 pub mod norm;

@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 pub mod adr;
 pub mod agents;
 pub mod arxiv;
+pub mod babel;
 pub mod arxiv_ingest_task;
 pub mod backup;
 /// HERMES-02 — `/background` + `/btw` parallel ephemeral sessions.
@@ -703,6 +704,13 @@ pub enum Commands {
     /// recall via `neoth ingest`.
     Arxiv(arxiv::ArxivArgs),
 
+    /// Babel-Index observer: status, windows, labelling, export (GOLD-DELTA).
+    ///
+    /// Local-only agent-collapse observer. `export` produces the JSONL the
+    /// delta-kosmologie theorem-test tooling ingests; `label` attaches an
+    /// operator-confirmed collapse label to a window.
+    Babel(babel::BabelArgs),
+
     /// Web search via Brave / Tavily (A-20).
     ///
     /// API key from `--api-key` flag, `NEOTH_WEB_SEARCH_KEY` env, or
@@ -1354,6 +1362,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Arxiv(mut args) => {
             args.output = global_output;
             arxiv::run_arxiv(args).await?;
+        }
+        Commands::Babel(mut args) => {
+            args.output = global_output;
+            babel::run_babel(args).await?;
         }
         Commands::Search(mut args) => {
             args.output = global_output;

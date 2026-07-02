@@ -80,6 +80,42 @@ Set the raw autonomy level in freedom.yaml (advanced / power-user path). Persist
 
 Print the current autonomy level + operating mode (read from freedom.yaml)
 
+## `neoth babel`
+
+Babel-Index observer: status, windows, labelling, export (GOLD-DELTA)
+
+### `neoth babel disable`
+
+Disable the observer (`babel.enabled = false` in freedom.yaml)
+
+### `neoth babel enable`
+
+Enable the observer (`babel.enabled = true` in freedom.yaml)
+
+### `neoth babel export`
+
+Export windows + labels as JSONL for the theorem-test tooling. Runs the post-hoc horizon pass first so every ripe window carries its collapse_30m stamp
+
+- `--out <OUT>` — Output file path
+- `--since <SINCE>` — Only windows with ts_end >= this unix timestamp (default: all)
+
+### `neoth babel label`
+
+Attach an operator-confirmed collapse label to a window
+
+- `<WINDOW_ID>` — The window id (`neoth babel windows` lists them)
+- `<LABEL>` — The collapse label to attach
+
+### `neoth babel status`
+
+Observer status: enabled flag, threshold, epsilon, window counts, latest scores per granularity
+
+### `neoth babel windows`
+
+Show the most recent closed windows
+
+- `--n <N>` — How many windows to show (newest first)
+
 ## `neoth backup`
 
 Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2

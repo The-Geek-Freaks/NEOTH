@@ -42,6 +42,28 @@ pub enum CollapseLabel {
     ToolSelectionFailure,
 }
 
+impl std::str::FromStr for CollapseLabel {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
+            "agent_loop" => Self::AgentLoop,
+            "retry_storm" => Self::RetryStorm,
+            "tool_timeout_cascade" => Self::ToolTimeoutCascade,
+            "context_limit_failure" => Self::ContextLimitFailure,
+            "semantic_degradation" => Self::SemanticDegradation,
+            "fallback_failure" => Self::FallbackFailure,
+            "objective_failure" => Self::ObjectiveFailure,
+            "tool_selection_failure" => Self::ToolSelectionFailure,
+            other => anyhow::bail!(
+                "unknown collapse label `{other}` (expected one of: agent_loop, retry_storm, \
+                 tool_timeout_cascade, context_limit_failure, semantic_degradation, \
+                 fallback_failure, objective_failure, tool_selection_failure)"
+            ),
+        })
+    }
+}
+
 impl CollapseLabel {
     pub fn as_str(self) -> &'static str {
         match self {
