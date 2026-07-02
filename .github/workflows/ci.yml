@@ -182,9 +182,13 @@ jobs:
       - name: cargo audit (workspace lockfile)
         if: matrix.os == 'ubuntu-24.04'
         working-directory: SRC
-        # Bumped teloxide → 0.17 (2026-05-16) pulled reqwest 0.13 +
-        # rustls-webpki 0.103, dropping the 0.101 vulnerabilities. No
-        # ignore flags needed; deny.toml [advisories].ignore matches.
+        # RUSTSEC ignores live in SRC/.cargo/audit.toml (read automatically
+        # from the working directory) — shared with security.yml's audit job.
+        # deny.toml [advisories].ignore is the hand-synced mirror with the
+        # full reasons. The prior bare invocation had NO ignores while
+        # security.yml carried 7 — that drift kept ubuntu CI red on every
+        # push once RUSTSEC-2026-0187 (lopdf) + RUSTSEC-2023-0071 (rsa)
+        # landed in the DB (root-caused 2026-07-02).
         run: cargo audit
 
       # Artifact upload: one binary per OS, restricted to non-PR pushes.

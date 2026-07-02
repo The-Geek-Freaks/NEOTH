@@ -293,10 +293,20 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ```yaml
 updated: 2026-07-02
 base: d9d6c9d0
-current_batch: B0        # CI GREEN — ubuntu stable+beta hang on run 28449569723
+current_batch: B0        # fix pushed — awaiting CI-green confirmation, then B1
 next: B1
 completed: []
 notes: >
   Plan created; counts 68 open + 9 partial verified at d9d6c9d0.
   Local main was 21 commits behind origin on 2026-07-02 — ALWAYS ff-pull at bootstrap.
+  B0 root cause (NO hang): ci.yml ran bare `cargo audit` (no ignores) while
+  security.yml carried 7 --ignores → lopdf RUSTSEC-2026-0187 + rsa RUSTSEC-2023-0071
+  failed ubuntu deterministically; plus quick-xml RUSTSEC-2026-0194/-0195 (2026-06-29)
+  broke Security too. Fix: SRC/.cargo/audit.toml = single ignore source (both
+  workflows bare `cargo audit`), deny.toml mirror +0194/+0195, neothd quick-xml
+  0.38→0.41 (CalDAV). Local proof: cargo audit EXIT=0, cargo deny --all-features
+  advisories ok, check+clippy+full tests green. The 5h run duration = runner queue.
+  Follow-up (warnings only, non-gating): yanked bitcoin-io 0.1.100 /
+  bitcoin_hashes 0.14.100 / crypto-bigint 0.7.4 + memmap2 0.9.10 unsound
+  (candle-0.8 chain) — clean up when parent bumps exist.
 ```

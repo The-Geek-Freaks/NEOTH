@@ -1,0 +1,25 @@
+# cargo-audit configuration — the SINGLE source for RUSTSEC ignores.
+#
+# cargo-audit reads this file automatically when invoked from SRC/ (both the
+# CI workflow's audit step and security.yml's audit job use
+# `working-directory: SRC`), so neither workflow passes --ignore flags.
+#
+# cargo-deny does NOT read this file — SRC/deny.toml [advisories].ignore is
+# the hand-synced mirror and carries the full reason + plan-to-resolve for
+# every entry. WHEN YOU ADD/REMOVE AN ID HERE, UPDATE deny.toml IN THE SAME
+# COMMIT (and vice versa). Re-evaluate every release.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0141", # bincode 1.x unmaintained — WAL format-stable; postcard migration planned
+    "RUSTSEC-2025-0119", # number_prefix unmaintained — transitive via indicatif
+    "RUSTSEC-2024-0436", # paste archived, no vuln — transitive macro dep
+    "RUSTSEC-2023-0037", # xsalsa20poly1305 renamed — transitive via peeroxide-dht
+    "RUSTSEC-2017-0008", # serial unmaintained — transitive via portable-pty (tmux adapter)
+    "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained — transitive via matrix-sdk/vodozemac
+    "RUSTSEC-2025-0134", # rustls-pemfile unmaintained — transitive via irc
+    "RUSTSEC-2026-0187", # lopdf <0.42 stack-overflow DoS — pdf-extract pins ^0.36; operator-chosen local PDFs only (self-DoS)
+    "RUSTSEC-2023-0071", # rsa Marvin timing — no upstream patch; local outbound SSH client = advisory's safe case
+    "RUSTSEC-2026-0194", # quick-xml <0.41 quadratic attr-check DoS — transitive via feed-rs 2.3/opendal 0.56/wayland-scanner; see deny.toml
+    "RUSTSEC-2026-0195", # quick-xml <0.41 NsReader memory DoS — same transitive chains; neothd's own quick-xml is bumped to 0.41
+]

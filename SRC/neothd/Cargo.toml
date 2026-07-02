@@ -375,8 +375,11 @@ blake2 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 
 # TD-02 CalDAV — WebDAV `multistatus` XML parsing (REPORT calendar-query for
-# VTODO). Already resolved transitively in Cargo.lock; pure-Rust, no C deps.
-quick-xml = "0.38"
+# VTODO). Pure-Rust, no C deps. Pinned >=0.41 for RUSTSEC-2026-0194/-0195
+# (quadratic attr-check + NsReader memory DoS, both fixed in 0.41); the
+# transitive <0.41 copies (feed-rs, opendal, wayland-scanner) are ignored in
+# .cargo/audit.toml + deny.toml until those upstreams bump.
+quick-xml = "0.41"
 
 # GOLD-ADOPT-26 — RSS / Atom / JSON-Feed parsing for the feed poller cron.
 # Pure-Rust (no C deps), handles RSS 0.9x/1.0/2.0 + Atom 0.3/1.0 + JSON Feed 1.x.

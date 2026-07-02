@@ -142,6 +142,17 @@ ignore = [
     # LOCAL outbound SSH client on the operator's own machine — the advisory's
     # own workaround ("local use on a non-compromised computer is fine") applies.
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing side-channel — NO upstream patch yet; transitive via russh/ssh-key (TERMIX local SSH client). Local-only operator use = advisory's documented safe case. Re-evaluate when rsa ships a constant-time release." },
+    # quick-xml <0.41 — two DoS advisories (2026-06-29): quadratic duplicate-
+    # attribute check (0194) + unbounded NsReader namespace allocation (0195).
+    # neothd's DIRECT quick-xml (CalDAV parser) is bumped to 0.41 (fixed).
+    # The remaining <0.41 copies are transitive: feed-rs 2.3.1 (RSS/Atom from
+    # operator-configured feeds), opendal-core 0.56 (XML replies from
+    # operator-configured storage endpoints), wayland-scanner (build-time
+    # proc-macro over static protocol XML — zero runtime exposure). All
+    # DoS-only, no memory unsafety. Plan: drop both ignores when feed-rs and
+    # opendal release against quick-xml >=0.41.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic attr-check DoS — transitive via feed-rs/opendal/wayland-scanner; neothd's own copy bumped to 0.41. Drop when upstreams bump." },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.41 NsReader memory-exhaustion DoS — same transitive chains, DoS-only. Drop when upstreams bump." },
 ]
 
 [sources]
