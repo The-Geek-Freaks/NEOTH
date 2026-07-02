@@ -360,7 +360,9 @@ pub fn spawn_babel_cron_loop(
         tracing::info!("babel observer disabled (babel.enabled = false)");
         return None;
     }
-    let interval_secs = cfg.tick_interval_secs.max(5);
+    // Floor of 1s: protects against a zero interval (busy loop) while
+    // keeping 1s ticks available for integration tests.
+    let interval_secs = cfg.tick_interval_secs.max(1);
     Some(tokio::spawn(async move {
         if let Err(e) = views.with_writer(store::ensure_schema).await {
             tracing::error!(error = %e, "babel: schema init failed; observer not started");
