@@ -631,6 +631,7 @@ pub(crate) fn spawn_babel_cron(
     config: &FreedomConfig,
     wal_dir: &std::path::Path,
     views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
+    sse_tx: Option<std::sync::Arc<tokio::sync::broadcast::Sender<crate::coding::feed::FeedEntry>>>,
 ) -> Option<JoinHandle<()>> {
     let Some(views) = views_executor else {
         tracing::info!("babel observer not started (views executor unavailable)");
@@ -641,6 +642,7 @@ pub(crate) fn spawn_babel_cron(
         config.autonomy,
         wal_dir.to_path_buf(),
         std::sync::Arc::clone(views),
+        sse_tx,
     )
 }
 

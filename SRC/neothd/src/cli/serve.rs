@@ -1055,9 +1055,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ── GOLD-DELTA-04 Babel-Index observer cron ──────────────────────────────
     // Local-only agent-collapse observer (analytics/babel): scans the WAL for
     // derived metrics, closes 300/900/1800/3600s windows, persists B_d scores
-    // to views.db. Default ON; `babel.enabled = false` disables.
-    let babel_cron_handle =
-        crate::cli::serve_tasks::spawn_babel_cron(&config, &wal_dir, &views_executor);
+    // to views.db. Default ON; `babel.enabled = false` disables. 15-min window
+    // closes + threshold breaches fan out over the kanban SSE feed (DELTA-11).
+    let babel_cron_handle = crate::cli::serve_tasks::spawn_babel_cron(
+        &config,
+        &wal_dir,
+        &views_executor,
+        kanban_sse_tx.clone(),
+    );
 
     // ── GOLD-ADAPT-JV-PRO-02 token-anomaly tripwire cron ─────────────────────
     // Buckets WAL `0x21` token usage over a rolling baseline + emits

@@ -43,6 +43,8 @@ use crate::analytics::babel::anonymize;
 use crate::analytics::babel::config::BabelConfig;
 use crate::analytics::babel::cron::{BabelCronState, CronEvent, WalEventKind, WalEventRecord};
 use crate::analytics::babel::store;
+use crate::analytics::babel::window::WindowGranularity;
+use crate::coding::feed::FeedEntry;
 use crate::memory::store::ViewsExecutor;
 use crate::permissions::AutonomyLevel;
 use crate::wal::events::{
@@ -58,6 +60,48 @@ const SYNTH_HORIZON_SECS: i64 = 120;
 
 /// GOLD-DELTA-05 — cadence of the p1/p99 norm-table refresh.
 const NORM_SWEEP_SECS: i64 = 300;
+
+/// GOLD-DELTA-11 — push operator-relevant Babel events onto the kanban SSE
+/// feed: every PRIMARY (15-min) window close plus every threshold breach.
+/// 5-min windows stay off the feed — four lines an hour is signal, twelve
+/// is noise. `event_type = 0x00` marks "no WAL correlate" (the Babel
+/// subsystem is SQLite-only; the byte space is exhausted). Returns the
+/// number of lines published. A send error just means no subscriber is
+/// connected — normal, not a failure.
+fn publish_sse(
+    sse: &tokio::sync::broadcast::Sender<FeedEntry>,
+    events: &[CronEvent],
+    now_ns: u64,
+) -> usize {
+    let mut published = 0usize;
+    for ev in events {
+        let message = match ev {
+            CronEvent::WindowComputed(w) if w.granularity == WindowGranularity::FifteenMin => {
+                let b_log = w
+                    .scores
+                    .b_log
+                    .map(|b| format!("{b:.4}"))
+                    .unwrap_or_else(|| "-".to_string());
+                format!(
+                    "babel window {}s closed: b_log={} b_bottleneck={:.4} collapse_5m={}",
+                    w.granularity.secs(),
+                    b_log,
+                    w.scores.b_bottleneck,
+                    if w.collapse.collapse_within_5m { 1 } else { 0 },
+                )
+            }
+            CronEvent::ThresholdBreached { window_id, score, threshold } => format!(
+                "babel THRESHOLD BREACH on 15-min window {window_id}: b_mult {score:.4} >= {threshold:.4}"
+            ),
+            CronEvent::WindowComputed(_) => continue,
+        };
+        let entry = FeedEntry { ts_ns: now_ns, event_type: 0x00, actor: "babel".to_string(), message };
+        if sse.send(entry).is_ok() {
+            published += 1;
+        }
+    }
+    published
+}
 
 /// AutonomyLevel → A_d normalisation scalar (`feature.rs` A_d_v0:
 /// Strict=1, Standard=2, Elevated=3, Full=4). Custom has no fixed agent
@@ -310,6 +354,7 @@ pub fn spawn_babel_cron_loop(
     autonomy: AutonomyLevel,
     wal_dir: PathBuf,
     views: Arc<ViewsExecutor>,
+    sse: Option<Arc<tokio::sync::broadcast::Sender<FeedEntry>>>,
 ) -> Option<JoinHandle<()>> {
     if !cfg.enabled {
         tracing::info!("babel observer disabled (babel.enabled = false)");
@@ -401,6 +446,13 @@ pub fn spawn_babel_cron_loop(
                 .await;
             match tick_result {
                 Ok(out) => {
+                    // GOLD-DELTA-11 — fan out to the kanban SSE feed.
+                    if let Some(sse) = &sse {
+                        let n = publish_sse(sse, &out, crate::time::now_unix_ns());
+                        if n > 0 {
+                            tracing::debug!(lines = n, "babel events published to SSE feed");
+                        }
+                    }
                     for ev in &out {
                         match ev {
                             CronEvent::ThresholdBreached { window_id, score, threshold } => {
@@ -572,6 +624,7 @@ mod tests {
             AutonomyLevel::Standard,
             dir.path().to_path_buf(),
             views,
+            None,
         );
         assert!(h.is_none(), "disabled observer must not spawn a task");
     }
@@ -654,6 +707,62 @@ mod tests {
             &events[0].kind,
             WalEventKind::AgentDispatched { agent_id } if agent_id == "a2"
         ));
+    }
+
+    #[test]
+    fn publish_sse_pushes_fifteen_min_windows_and_breaches_only() {
+        use crate::analytics::babel::collapse::CollapseDetection;
+        use crate::analytics::babel::feature::{BabelFeatures, FeatureAlgorithmVersions};
+        use crate::analytics::babel::score::BabelScores;
+        use crate::analytics::babel::window::BabelWindow;
+
+        let mk_window = |granularity: WindowGranularity| {
+            Box::new(BabelWindow {
+                id: "w-test".into(),
+                session_id_pseudo: "a1b2c3d4e5f60718".into(),
+                granularity,
+                ts_start: 0,
+                ts_end: granularity.secs() as i64,
+                features: BabelFeatures {
+                    c: 0.5, k: 0.5, m: 0.5, a: 0.5, v: 0.5, d: 1.0, h: 1.0,
+                    algorithm_versions: FeatureAlgorithmVersions::default(),
+                },
+                scores: BabelScores {
+                    b_log: Some(-1.0),
+                    b_mult: None,
+                    b_mult_epsilon: None,
+                    b_mult_epsilon_rule: "0.01_median_buffer_ratio_calibration".into(),
+                    b_bottleneck: 0.5,
+                },
+                collapse: CollapseDetection::default(),
+                schema_version: BabelWindow::SCHEMA_VERSION.into(),
+                algorithm_version_c: "C_d_v0".into(),
+                algorithm_version_k: "K_d_v0".into(),
+                algorithm_version_m: "M_d_v0".into(),
+                algorithm_version_a: "A_d_v0".into(),
+                algorithm_version_v: "V_d_v0".into(),
+                algorithm_version_d: "D_d_v0".into(),
+                algorithm_version_h: "H_d_v0".into(),
+            })
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<FeedEntry>(8);
+        let events = vec![
+            CronEvent::WindowComputed(mk_window(WindowGranularity::FiveMin)),
+            CronEvent::WindowComputed(mk_window(WindowGranularity::FifteenMin)),
+            CronEvent::ThresholdBreached {
+                window_id: "w-test".into(),
+                score: 0.91,
+                threshold: 0.8,
+            },
+        ];
+        let published = publish_sse(&tx, &events, 42);
+        assert_eq!(published, 2, "5-min window stays off the feed");
+        let first = rx.try_recv().expect("15-min line");
+        assert_eq!(first.actor, "babel");
+        assert!(first.message.contains("900s"), "carries window_secs: {}", first.message);
+        let second = rx.try_recv().expect("breach line");
+        assert!(second.message.contains("THRESHOLD BREACH"));
+        assert!(rx.try_recv().is_err(), "nothing else published");
     }
 
     #[test]

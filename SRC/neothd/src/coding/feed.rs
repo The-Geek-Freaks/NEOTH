@@ -41,6 +41,8 @@ pub struct FeedEntry {
     pub ts_ns: u64,
     /// Stable WAL event-type byte (0x70..=0x76). Operators reading
     /// the raw feed can correlate with `neoth events --grep kanban`.
+    /// Babel observer lines (GOLD-DELTA-11) use `0x00` = no WAL
+    /// correlate — that subsystem is SQLite-only (byte space exhausted).
     pub event_type: u8,
     /// Who is doing the thing. `left` / `right` / `cerebellum` for
     /// worker actions; `operator` for human input; `system` for
