@@ -590,6 +590,13 @@ pub(crate) async fn release_channel_reply(
         }
     };
 
+    // GOLD-DELTA-16 — content-free K_d histogram for the Babel observer
+    // (try_send, never blocks; the text is reduced to token counts in place).
+    crate::analytics::babel::khist::submit_response_text(
+        crate::time::now_unix_i64(),
+        &reply_text,
+    );
+
     // ── Permission gate: ChannelSend ──────────────────────────────────
     // Before the channel adapter ships the reply outbound, gate it through
     // the autonomy ladder. Strict: denies + emits a WAL audit frame. An

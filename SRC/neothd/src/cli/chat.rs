@@ -2628,6 +2628,17 @@ async fn run_post_reply_pipelines(
         );
     }
 
+    // GOLD-DELTA-16 — content-free K_d histogram for the Babel observer
+    // (try_send, never blocks). Skipped on incognito turns: the histogram is
+    // content-free but content-DERIVED, so it honours the same privacy
+    // contract as PROVIDER_RESPONSE below.
+    if !args.incognito {
+        crate::analytics::babel::khist::submit_response_text(
+            crate::time::now_unix_i64(),
+            &response_text,
+        );
+    }
+
     // ── PROVIDER_RESPONSE ─────────────────────────────────────────────────
     // ODY-09: incognito turns skip PROVIDER_RESPONSE — no response hash/metadata in WAL.
     if !args.incognito {

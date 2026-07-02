@@ -423,6 +423,14 @@ pub fn spawn_babel_cron_loop(
                 return;
             }
         };
+        // GOLD-DELTA-16 — live K_d histogram feed from the inference paths.
+        // Without it every WAL-scanned window has k = 0 and b_log stays NULL.
+        let mut khist_rx = crate::analytics::babel::khist::register(1024);
+        if khist_rx.is_none() {
+            tracing::warn!(
+                "babel: K_d feed already registered elsewhere; running without live histograms"
+            );
+        }
         tracing::info!(
             interval_secs,
             threshold = cfg.threshold,
@@ -434,7 +442,7 @@ pub fn spawn_babel_cron_loop(
         loop {
             ticker.tick().await;
             let wd = wal_dir.clone();
-            let (events, returned) = match tokio::task::spawn_blocking(move || {
+            let (mut events, returned) = match tokio::task::spawn_blocking(move || {
                 let ev = scan.scan(&wd, true);
                 (ev, scan)
             })
@@ -447,6 +455,21 @@ pub fn spawn_babel_cron_loop(
                 }
             };
             scan = returned;
+            // GOLD-DELTA-16 — merge live K_d histograms into this tick's
+            // event stream (token counts stay WAL-sourced: output_tokens 0
+            // here avoids double-counting V_d).
+            if let Some(rx) = khist_rx.as_mut() {
+                while let Ok(sample) = rx.try_recv() {
+                    events.push(WalEventRecord {
+                        ts_unix: sample.ts_unix,
+                        kind: WalEventKind::LlmResponse {
+                            output_tokens: 0,
+                            token_histogram: sample.histogram,
+                            context_used_ratio: None,
+                        },
+                    });
+                }
+            }
             let now = crate::time::now_unix_i64();
             let tick_result = views
                 .with_writer(|conn| state.tick(now, events, mcp_tool_count, conn))
