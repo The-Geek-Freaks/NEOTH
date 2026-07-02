@@ -297,11 +297,11 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-02 (Fable 5 session)
-base: dc011f9d (+ DELTA-15 commit on top)
-current_batch: B-DELTA COMPLETE (except operator-blocked)   # ALL buildable items DONE: 03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443, 16=9a0f39ec (khist K_d feed), 13=dc011f9d (fitness→collector), 15=next commit (calibrate.rs threshold self-calibration, in-memory firewall). FULL lib suite 9624/9624 green at batch tail. ONLY REMAINING: DELTA-10 (federation submit) + DELTA-14 (predictor download) — OPERATOR-BLOCKED on report §6 Q3 (wizard opt-in scope); ask Alex, then build 10 → 14.
-next: B2   # global verify-first sweep per §5 batch map
-completed_addendum: [B-DELTA core 2026-07-02 Fable-5 session — 12 items, 2 clean error-hunt waves (security CLEAN, horizon semantics CONFIRMED), new items DELTA-16 discovered+shipped; memory file neoth_babel_batch_2026_07_02.md]
+updated: 2026-07-02 (Fable 5 session, late)
+base: <DELTA-14 commit>
+current_batch: B-DELTA 100% COMPLETE — ALL 16 items shipped incl. the operator-delegated pair: 03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443, 16=9a0f39ec, 13=dc011f9d, 15=34466060, Q1/Q3 panel decisions=a2615f0b (3-lens gremium under operator delegation "spawne agenten, berate, baue fertig"), 10=580c1a16 (pending-first federation submit + CLI federate + consent prompt), 14=<this commit> (pooled predictor download, 4 firewalls enforced in code). FULL suite 9631/9631 + feature-matrix green at close. B2 sweep chunks A+B landed in a2615f0b (3 stale flips, HANDY-04 unwired-note).
+next: B3   # wiring & unwired-primitive audit (B2 chunks A+B done; a chunk-C re-check of any unswept items folds into B3's G-02 sweep)
+completed_addendum: [B-DELTA FULL 2026-07-02 Fable-5 — 16/16 items, 2 clean error-hunt waves, panel-ratified Q1/Q3; memory file neoth_babel_batch_2026_07_02.md]
 handoff: PLAN/HANDOFF_OPUS_2026-07-02.md   # full Opus-4.8 handoff — read FIRST on a fresh session; upstream delta repo fixed+pushed a4bd367
 next: B2
 completed: [B0 (0d4024b1 — ubuntu+windows+features+smoke green; macos was still running at last check), B1 (24d2f96b — 0 partials, dedupes, claudeclaw restored)]

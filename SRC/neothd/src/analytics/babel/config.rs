@@ -47,6 +47,10 @@ pub struct BabelConfig {
     /// `None` = no live transport — queued batches stay in
     /// `~/.neoth/babel/pending/` for a later drain or manual upload.
     pub federation_endpoint: Option<String>,
+    /// Pinned Ed25519 public key (hex, 32 bytes) of the aggregation node —
+    /// the poisoning firewall for the DELTA-14 pooled-predictor pull.
+    /// `None` = predictor pulls are refused outright (fail-closed).
+    pub federation_aggregator_pubkey: Option<String>,
     /// GOLD-DELTA panel decision Q1 (2026-07-02, unanimous): optional named
     /// sentence-embedding checkpoint for K_d. The NAME lives here in config
     /// (model-version-agnostic rule — never in code). `None` = the shipped
@@ -71,6 +75,7 @@ impl Default for BabelConfig {
             skill_signals: true,
             federate: false,
             federation_endpoint: None,
+            federation_aggregator_pubkey: None,
             k_d_embedding_model: None,
             export_format: "jsonl".to_string(),
         }

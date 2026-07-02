@@ -479,6 +479,156 @@ pub async fn drain_pending(
     Ok((delivered, remaining))
 }
 
+// ── GOLD-DELTA-14 — pooled predictor download (the return path) ─────────────
+//
+// Firewalls, ENFORCED in code, not documentation:
+//   1. ADVISORY-ONLY BY CONSTRUCTION: `apply_advisory` is a pure function
+//      returning a note — there is no code path from a pooled predictor to
+//      `BabelCronState::set_threshold`. The DELTA-15 self-calibration stays
+//      the only threshold mutator.
+//   2. CONSENT: pulling uses the SAME `ConsentGate` as submitting.
+//   3. CROSS-DOMAIN: `domain != "neoth"` is rejected outright — B_neoth is
+//      not comparable to B_oss/B_market/B_epoch.
+//   4. POISONING: the envelope must verify against the operator-PINNED
+//      aggregator public key (`babel.federation_aggregator_pubkey`); no pin
+//      → no pull (fail-closed). Signature covers the raw payload bytes, so
+//      there is no JSON-canonicalisation ambiguity.
+
+/// Request frame the aggregation node answers with a signed predictor.
+pub const PREDICTOR_REQUEST: &[u8] = b"GET-PREDICTOR/0.1";
+
+/// Wire envelope: `payload` is the exact JSON string the signature covers.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PredictorEnvelope {
+    pub payload: String,
+    /// Ed25519 signature over SHA-256(payload bytes), hex.
+    pub signature_hex: String,
+}
+
+/// The pooled M-ladder predictor snapshot (out-of-sample validated across
+/// contributing instances).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PooledPredictor {
+    pub predictor_version: String,
+    /// MUST be `"neoth"` — the cross-domain firewall.
+    pub domain: String,
+    pub trained_on_instances: u32,
+    pub trained_on_windows: u64,
+    /// Pool-suggested warning threshold for the 15-min b_mult.
+    pub threshold_suggestion: f64,
+    /// Feature coefficients of the pooled M2 fit (advisory display only).
+    pub coefficients: std::collections::HashMap<String, f64>,
+    /// Out-of-sample Brier score of the pooled fit.
+    pub brier_oos: f64,
+}
+
+/// Verify and decode a predictor envelope against the pinned aggregator
+/// key. Every rejection reason is a distinct error string (operator-
+/// debuggable); consent is checked FIRST — an instance that never opted in
+/// never even parses pool data.
+pub fn verify_pooled_predictor(
+    gate: &ConsentGate,
+    envelope: &PredictorEnvelope,
+    aggregator_pubkey_hex: Option<&str>,
+) -> Result<PooledPredictor> {
+    if let Err(reason) = gate.check() {
+        anyhow::bail!("predictor pull refused: {reason}");
+    }
+    let Some(pubkey_hex) = aggregator_pubkey_hex else {
+        anyhow::bail!(
+            "predictor pull refused: no pinned aggregator public key \
+             (babel.federation_aggregator_pubkey) — fail-closed"
+        );
+    };
+    let pubkey_bytes: [u8; 32] = hex::decode(pubkey_hex.trim())
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| anyhow::anyhow!("pinned aggregator pubkey is not 32-byte hex"))?;
+    let verifying =
+        ed25519_dalek::VerifyingKey::from_bytes(&pubkey_bytes).context("aggregator pubkey")?;
+    let sig_bytes: [u8; 64] = hex::decode(envelope.signature_hex.trim())
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| anyhow::anyhow!("predictor signature is not 64-byte hex"))?;
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(envelope.payload.as_bytes());
+        h.finalize()
+    };
+    use ed25519_dalek::Verifier as _;
+    verifying
+        .verify(&digest, &ed25519_dalek::Signature::from_bytes(&sig_bytes))
+        .map_err(|_| anyhow::anyhow!("predictor signature verification FAILED — rejected"))?;
+    let predictor: PooledPredictor =
+        serde_json::from_str(&envelope.payload).context("parse predictor payload")?;
+    if predictor.domain != "neoth" {
+        anyhow::bail!(
+            "predictor domain `{}` rejected — cross-domain comparison is forbidden \
+             (B_neoth is not comparable to other domains)",
+            predictor.domain
+        );
+    }
+    if !predictor.threshold_suggestion.is_finite()
+        || predictor.threshold_suggestion <= 0.0
+        || predictor.threshold_suggestion >= 1.0
+        || !predictor.brier_oos.is_finite()
+        || predictor.coefficients.values().any(|v| !v.is_finite())
+    {
+        anyhow::bail!("predictor payload failed sanity checks — rejected");
+    }
+    Ok(predictor)
+}
+
+/// The advisory note the daemon logs/feeds. PURE — takes references,
+/// returns data; the pooled predictor cannot mutate anything.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PredictorAdvisory {
+    pub pool_threshold: f64,
+    pub local_threshold: f64,
+    pub delta: f64,
+    pub trained_on_instances: u32,
+    pub brier_oos: f64,
+}
+
+pub fn apply_advisory(predictor: &PooledPredictor, local_threshold: f64) -> PredictorAdvisory {
+    PredictorAdvisory {
+        pool_threshold: predictor.threshold_suggestion,
+        local_threshold,
+        delta: predictor.threshold_suggestion - local_threshold,
+        trained_on_instances: predictor.trained_on_instances,
+        brier_oos: predictor.brier_oos,
+    }
+}
+
+/// Persist the verified predictor so a restart keeps the day-1 advisory
+/// without re-pulling. Stored verbatim (envelope) — re-verified on load.
+pub fn cache_predictor(dir: &Path, envelope: &PredictorEnvelope) -> Result<PathBuf> {
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    let path = dir.join("pooled_predictor.json");
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(envelope)?)
+        .with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).context("rename predictor cache into place")?;
+    Ok(path)
+}
+
+/// Load + re-verify the cached predictor. `Ok(None)` when no cache exists.
+pub fn load_cached_predictor(
+    dir: &Path,
+    gate: &ConsentGate,
+    aggregator_pubkey_hex: Option<&str>,
+) -> Result<Option<PooledPredictor>> {
+    let path = dir.join("pooled_predictor.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let envelope: PredictorEnvelope =
+        serde_json::from_slice(&std::fs::read(&path).context("read predictor cache")?)
+            .context("parse predictor cache")?;
+    verify_pooled_predictor(gate, &envelope, aggregator_pubkey_hex).map(Some)
+}
+
 /// iroh uploader: dials the configured aggregation endpoint with
 /// [`FEDERATION_ALPN`] over the existing cluster QUIC transport.
 #[cfg(feature = "cluster-iroh")]
@@ -499,6 +649,22 @@ impl FederationUploader for IrohUploader {
         )
         .await?;
         serde_json::from_slice(&reply).context("parse federation receipt")
+    }
+}
+
+#[cfg(feature = "cluster-iroh")]
+impl IrohUploader {
+    /// GOLD-DELTA-14 — pull the pooled predictor envelope from the
+    /// aggregation node (verification happens in the caller against the
+    /// pinned key — transport and trust are separate concerns).
+    pub async fn fetch_predictor(&self) -> Result<PredictorEnvelope> {
+        let reply = crate::cluster::iroh_transport::IrohTransport::dial_once_with_alpn(
+            &self.endpoint,
+            FEDERATION_ALPN,
+            PREDICTOR_REQUEST,
+        )
+        .await?;
+        serde_json::from_slice(&reply).context("parse predictor envelope")
     }
 }
 
@@ -702,6 +868,97 @@ mod tests {
                 anyhow::bail!("aggregation node unreachable")
             }
         }
+    }
+
+    // ── GOLD-DELTA-14 — pooled predictor firewalls ───────────────────────────
+
+    fn signed_predictor(domain: &str) -> (PredictorEnvelope, String) {
+        use ed25519_dalek::Signer as _;
+        use sha2::{Digest, Sha256};
+        let key = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let predictor = PooledPredictor {
+            predictor_version: "pool-m2/0.1".into(),
+            domain: domain.into(),
+            trained_on_instances: 7,
+            trained_on_windows: 12_000,
+            threshold_suggestion: 0.72,
+            coefficients: [("C".to_string(), 1.3), ("K".to_string(), -0.4)].into(),
+            brier_oos: 0.11,
+        };
+        let payload = serde_json::to_string(&predictor).expect("serialize");
+        let mut h = Sha256::new();
+        h.update(payload.as_bytes());
+        let sig = key.sign(&h.finalize());
+        let envelope =
+            PredictorEnvelope { payload, signature_hex: hex::encode(sig.to_bytes()) };
+        (envelope, hex::encode(key.verifying_key().as_bytes()))
+    }
+
+    #[test]
+    fn predictor_rejected_when_consent_gate_fails() {
+        let (envelope, pubkey) = signed_predictor("neoth");
+        let closed = ConsentGate {
+            federate_enabled: false,
+            autonomy_level: 4,
+            calibration_window_count: 100,
+        };
+        let err = verify_pooled_predictor(&closed, &envelope, Some(&pubkey))
+            .expect_err("consent-closed pull must fail");
+        assert!(err.to_string().contains("refused"), "{err}");
+    }
+
+    #[test]
+    fn predictor_rejected_without_pinned_key_and_on_wrong_domain() {
+        let (envelope, pubkey) = signed_predictor("neoth");
+        let gate = open_gate(100);
+        let err = verify_pooled_predictor(&gate, &envelope, None)
+            .expect_err("no pin = fail-closed");
+        assert!(err.to_string().contains("fail-closed"), "{err}");
+
+        let (oss, oss_key) = signed_predictor("oss");
+        let err = verify_pooled_predictor(&gate, &oss, Some(&oss_key))
+            .expect_err("cross-domain must be rejected");
+        assert!(err.to_string().contains("cross-domain"), "{err}");
+        // pubkey from the neoth envelope stays unused here on purpose
+        let _ = pubkey;
+    }
+
+    #[test]
+    fn predictor_rejected_on_signature_mismatch() {
+        let (mut envelope, pubkey) = signed_predictor("neoth");
+        envelope.payload = envelope.payload.replace("0.72", "0.99"); // tamper
+        let err = verify_pooled_predictor(&open_gate(100), &envelope, Some(&pubkey))
+            .expect_err("tampered payload must fail verification");
+        assert!(err.to_string().contains("FAILED"), "{err}");
+    }
+
+    #[test]
+    fn predictor_accepts_valid_envelope_and_advisory_is_pure() {
+        let (envelope, pubkey) = signed_predictor("neoth");
+        let gate = open_gate(100);
+        let predictor = verify_pooled_predictor(&gate, &envelope, Some(&pubkey))
+            .expect("valid envelope verifies");
+        assert_eq!(predictor.trained_on_instances, 7);
+
+        let local = 0.8;
+        let advisory = apply_advisory(&predictor, local);
+        assert!((advisory.delta - (0.72 - 0.8)).abs() < 1e-12);
+        assert_eq!(advisory.local_threshold, local, "advisory never mutates anything");
+
+        // Cache round-trip re-verifies on load.
+        let dir = tempfile::tempdir().expect("tempdir");
+        cache_predictor(dir.path(), &envelope).expect("cache");
+        let reloaded = load_cached_predictor(dir.path(), &gate, Some(&pubkey))
+            .expect("load ok")
+            .expect("cache present");
+        assert_eq!(reloaded.threshold_suggestion, 0.72);
+        // A gate that closed since caching blocks the reload too.
+        let closed = ConsentGate {
+            federate_enabled: false,
+            autonomy_level: 4,
+            calibration_window_count: 100,
+        };
+        assert!(load_cached_predictor(dir.path(), &closed, Some(&pubkey)).is_err());
     }
 
     #[tokio::test]

@@ -452,6 +452,13 @@ pub fn spawn_babel_cron_loop(
         // boot, the first time the gate preconditions all hold while
         // federate is still off — informed consent at calibration maturity.
         let mut federation_prompted = false;
+        // GOLD-DELTA-14 — pooled predictor state: pull at most once per day,
+        // log the advisory once per boot (cache gives day-1 coverage).
+        #[cfg(feature = "cluster-iroh")]
+        let mut last_predictor_pull: i64 = 0;
+        #[cfg(feature = "cluster-iroh")]
+        const PREDICTOR_PULL_SECS: i64 = 86_400;
+        let mut predictor_advisory_logged = false;
 
         // GOLD-DELTA-16 — live K_d histogram feed from the inference paths.
         // Without it every WAL-scanned window has k = 0 and b_log stays NULL.
@@ -797,6 +804,86 @@ pub fn spawn_babel_cron_loop(
                                     "babel federation: endpoint configured but built without \
                                      cluster-iroh — batches stay pending for manual upload"
                                 );
+                            }
+                            // GOLD-DELTA-14 — pooled predictor: pull (daily)
+                            // + advisory. Strictly advisory by construction:
+                            // apply_advisory is pure and nothing here touches
+                            // set_threshold — DELTA-15 stays the only mutator.
+                            let pubkey = cfg.federation_aggregator_pubkey.as_deref();
+                            #[cfg(feature = "cluster-iroh")]
+                            if let (Some(endpoint), Some(_)) =
+                                (&cfg.federation_endpoint, pubkey)
+                            {
+                                if now - last_predictor_pull >= PREDICTOR_PULL_SECS {
+                                    last_predictor_pull = now;
+                                    let uploader =
+                                        crate::analytics::babel::federation::IrohUploader {
+                                            endpoint: endpoint.clone(),
+                                        };
+                                    match uploader.fetch_predictor().await {
+                                        Ok(envelope) => {
+                                            match crate::analytics::babel::federation::verify_pooled_predictor(
+                                                &gate, &envelope, pubkey,
+                                            ) {
+                                                Ok(_) => {
+                                                    if let Err(e) =
+                                                        crate::analytics::babel::federation::cache_predictor(
+                                                            pending_dir.parent().unwrap_or(&pending_dir),
+                                                            &envelope,
+                                                        )
+                                                    {
+                                                        tracing::warn!(error = %e,
+                                                            "babel: predictor cache write failed");
+                                                    }
+                                                    predictor_advisory_logged = false;
+                                                }
+                                                Err(e) => tracing::warn!(error = %e,
+                                                    "babel: pooled predictor REJECTED"),
+                                            }
+                                        }
+                                        Err(e) => tracing::debug!(error = %e,
+                                            "babel: predictor pull failed (will retry tomorrow)"),
+                                    }
+                                }
+                            }
+                            if !predictor_advisory_logged {
+                                predictor_advisory_logged = true;
+                                let cache_dir =
+                                    pending_dir.parent().map(std::path::Path::to_path_buf)
+                                        .unwrap_or_else(|| pending_dir.clone());
+                                match crate::analytics::babel::federation::load_cached_predictor(
+                                    &cache_dir, &gate, pubkey,
+                                ) {
+                                    Ok(Some(p)) => {
+                                        let advisory =
+                                            crate::analytics::babel::federation::apply_advisory(
+                                                &p,
+                                                state.threshold(),
+                                            );
+                                        let msg = format!(
+                                            "babel pooled predictor (ADVISORY, never auto-applied): \
+                                             pool threshold {:.3} vs local {:.3} (delta {:+.3}), \
+                                             trained on {} instances, OOS Brier {:.3}",
+                                            advisory.pool_threshold,
+                                            advisory.local_threshold,
+                                            advisory.delta,
+                                            advisory.trained_on_instances,
+                                            advisory.brier_oos,
+                                        );
+                                        tracing::info!("{msg}");
+                                        if let Some(sse) = &sse {
+                                            let _ = sse.send(FeedEntry {
+                                                ts_ns: crate::time::now_unix_ns(),
+                                                event_type: 0x00,
+                                                actor: "babel".to_string(),
+                                                message: msg,
+                                            });
+                                        }
+                                    }
+                                    Ok(None) => {} // no pool data yet
+                                    Err(e) => tracing::warn!(error = %e,
+                                        "babel: cached predictor failed re-verification"),
+                                }
                             }
                         } else {
                             tracing::warn!(
