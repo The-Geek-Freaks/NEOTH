@@ -439,6 +439,10 @@ pub fn spawn_babel_cron_loop(
         let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_norm_sweep: i64 = 0;
+        // GOLD-DELTA-15 — only windows stamped after boot feed the online
+        // threshold calibration (the adjustment is path-dependent; replaying
+        // history after every restart would double-count it).
+        let mut calibration_cursor_ts: i64 = crate::time::now_unix_i64();
         loop {
             ticker.tick().await;
             let wd = wal_dir.clone();
@@ -528,6 +532,45 @@ pub fn spawn_babel_cron_loop(
                     }
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "babel post-hoc label pass failed"),
+                }
+                // GOLD-DELTA-15 — self-calibrate the WORKING threshold from
+                // the freshly stamped horizons. In-memory only; every
+                // adjustment is logged with its Brier score. freedom.yaml's
+                // babel.threshold stays the operator anchor.
+                let current_threshold = state.threshold();
+                let round = views
+                    .with_writer(|conn| {
+                        crate::analytics::babel::calibrate::calibrate_round(
+                            conn,
+                            current_threshold,
+                            calibration_cursor_ts,
+                        )
+                    })
+                    .await;
+                match round {
+                    Ok(Some(r)) => {
+                        calibration_cursor_ts = r.cursor_ts;
+                        if (r.new_threshold - current_threshold).abs() > f64::EPSILON {
+                            tracing::info!(
+                                evaluated = r.evaluated,
+                                false_positives = r.false_positives,
+                                false_negatives = r.false_negatives,
+                                brier = r.brier,
+                                old_threshold = current_threshold,
+                                new_threshold = r.new_threshold,
+                                "babel threshold self-calibrated (GOLD-DELTA-15; in-memory, anchor unchanged)"
+                            );
+                            state.set_threshold(r.new_threshold);
+                        } else {
+                            tracing::debug!(
+                                evaluated = r.evaluated,
+                                brier = r.brier,
+                                "babel calibration round: predictions on target, threshold unchanged"
+                            );
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(error = %e, "babel calibration round failed"),
                 }
                 // GOLD-DELTA-06 — one-time epsilon calibration freeze:
                 // `0.01 * median((D/A)*(H/V))` once MIN_SAMPLES 15-min

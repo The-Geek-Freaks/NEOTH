@@ -173,6 +173,18 @@ impl BabelCronState {
         self.epsilon = Some(epsilon);
     }
 
+    /// Adjust the WORKING threshold (GOLD-DELTA-15 self-calibration).
+    /// In-memory only — `babel.threshold` in freedom.yaml stays the
+    /// operator's anchor and is restored on the next boot.
+    pub fn set_threshold(&mut self, threshold: f64) {
+        self.threshold = threshold;
+    }
+
+    /// Current working threshold (boot anchor or self-calibrated).
+    pub fn threshold(&self) -> f64 {
+        self.threshold
+    }
+
     /// Ingest new WAL-derived events, close every expired window, persist
     /// closed windows and return what happened. Events may arrive unsorted;
     /// late events from before the current window start are attributed to

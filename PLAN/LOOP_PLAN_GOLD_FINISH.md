@@ -298,8 +298,10 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 
 ```yaml
 updated: 2026-07-02 (Fable 5 session)
-base: 9a0f39ec
-current_batch: B-DELTA   # 01-09,11,12,16 DONE (03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443 — security CLEAN + horizon semantics CONFIRMED, 16=next commit: khist.rs OnceLock feed + serve_pipeline/chat taps (incognito-gated) + daemon drain — b_log stops being NULL); remaining in B-DELTA: 13 (self-improve local fitness signal — deps 03/04 met) → 15 (deps 07+13); 10+14 OPERATOR-BLOCKED (report §6 Q3/Q4: wizard opt-in scope + K_d/D_d source — ask Alex). New local tool SRC/_test_int.bat (integration-test wrapper, cargo test --test %*). CI runs queued in runner backlog all day — Security workflow green on EVERY push; check `gh run list` next session for the backlog flush.
+base: dc011f9d (+ DELTA-15 commit on top)
+current_batch: B-DELTA COMPLETE (except operator-blocked)   # ALL buildable items DONE: 03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443, 16=9a0f39ec (khist K_d feed), 13=dc011f9d (fitness→collector), 15=next commit (calibrate.rs threshold self-calibration, in-memory firewall). FULL lib suite 9624/9624 green at batch tail. ONLY REMAINING: DELTA-10 (federation submit) + DELTA-14 (predictor download) — OPERATOR-BLOCKED on report §6 Q3 (wizard opt-in scope); ask Alex, then build 10 → 14.
+next: B2   # global verify-first sweep per §5 batch map
+completed_addendum: [B-DELTA core 2026-07-02 Fable-5 session — 12 items, 2 clean error-hunt waves (security CLEAN, horizon semantics CONFIRMED), new items DELTA-16 discovered+shipped; memory file neoth_babel_batch_2026_07_02.md]
 handoff: PLAN/HANDOFF_OPUS_2026-07-02.md   # full Opus-4.8 handoff — read FIRST on a fresh session; upstream delta repo fixed+pushed a4bd367
 next: B2
 completed: [B0 (0d4024b1 — ubuntu+windows+features+smoke green; macos was still running at last check), B1 (24d2f96b — 0 partials, dedupes, claudeclaw restored)]

@@ -27,6 +27,7 @@
 //!   over the canonical JSON bytes, keyed by the node's cluster identity key.
 
 pub mod anonymize;
+pub mod calibrate;
 pub mod collapse;
 pub mod config;
 pub mod coupling;
