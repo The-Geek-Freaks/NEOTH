@@ -214,10 +214,10 @@ fn detect_tool_timeout_cascade(events: &[CollapseEventRecord]) -> Option<i64> {
 fn detect_context_limit_failure(events: &[CollapseEventRecord]) -> Option<i64> {
     let mut near_limit_ts: Option<i64> = None;
     for ev in events {
-        if ev.event_type == CollapseEventType::ContextBoundary {
-            if ev.context_used_ratio.map(|r| r >= 0.95).unwrap_or(false) {
-                near_limit_ts = Some(ev.ts_unix);
-            }
+        if ev.event_type == CollapseEventType::ContextBoundary
+            && ev.context_used_ratio.map(|r| r >= 0.95).unwrap_or(false)
+        {
+            near_limit_ts = Some(ev.ts_unix);
         }
         if let Some(ts) = near_limit_ts {
             if (ev.event_type == CollapseEventType::ToolError

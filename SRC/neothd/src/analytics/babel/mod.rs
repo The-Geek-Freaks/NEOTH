@@ -20,12 +20,15 @@
 //! - **Consent-first**: federation is disabled by default; requires
 //!   `babel.federate = true` in `freedom.yaml` AND `AutonomyLevel >= Elevated`.
 //! - **Epsilon governance**: log form is the primary form; multiplicative
-//!   epsilon = `0.01 * median(D*H)` frozen on the first calibration batch.
+//!   epsilon = `0.01 * median((D/A)*(H/V))` (the simplified form's actual
+//!   buffer denominator — upstream ratio-form fix `a4bd367`, 2026-07-02)
+//!   frozen on the first calibration batch.
 //! - **Record signing**: every federated window carries an Ed25519 signature
 //!   over the canonical JSON bytes, keyed by the node's cluster identity key.
 
 pub mod anonymize;
 pub mod collapse;
+pub mod config;
 pub mod coupling;
 pub mod feature;
 pub mod federation;
@@ -33,6 +36,7 @@ pub mod norm;
 pub mod score;
 pub mod window;
 
+pub use config::BabelConfig;
 pub use feature::BabelFeatures;
 pub use score::BabelScores;
 pub use window::{BabelWindow, WindowGranularity};

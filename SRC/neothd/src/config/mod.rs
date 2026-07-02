@@ -80,6 +80,7 @@ pub use features::{
     GoalConfig, HintsConfig, HookChainConfig, LiveDeliveryConfig, LoopConfig, MediaConfig,
     OmiConfig, TransferConfig,
 };
+pub use crate::analytics::babel::BabelConfig;
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
     AutoUpdateConfig, CodeMapConfig, CodingConfig, DoctorConfig, PluginsConfig, ProfileConfig,
@@ -803,6 +804,14 @@ pub struct FreedomConfig {
     /// regardless of this field.
     #[serde(default)]
     pub elicitation: ElicitationConfig,
+
+    /// GOLD-DELTA-01 — Babel-Index observer configuration (`babel:` block).
+    /// The observer is default-ON and strictly local; `babel.federate`
+    /// (default OFF) is the only egress switch and is additionally
+    /// consent-gated at runtime (AutonomyLevel >= Elevated). See
+    /// `analytics/babel/config.rs`.
+    #[serde(default)]
+    pub babel: BabelConfig,
 }
 
 /// GOLD-ADAPT-OH-11 — serde default returning `true` so that existing
