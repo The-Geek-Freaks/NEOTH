@@ -90,6 +90,10 @@ use tracing_subscriber::EnvFilter;
 pub mod shutdown;
 
 pub mod adr;
+/// Babel-Index analytics: async observer subsystem for the delta-kosmologie
+/// federation protocol.  Never blocks inference; consent-gated federation
+/// requires `freedom.yaml :: babel.federate = true` AND AutonomyLevel >= Elevated.
+pub mod analytics;
 pub mod bosk;
 pub mod channels;
 pub mod claude_plugins;

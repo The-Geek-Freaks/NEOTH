@@ -1349,6 +1349,23 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 ---
 
 
+## WS-DELTA — Babel-Index / RDelta core integration (GOLD-DELTA-NN, 2026-07-02)
+
+> **Provenance:** operator directive 2026-07-02 — adopt `The-Geek-Freaks/delta-kosmologie` (RDelta/Babel-Index agent-collapse framework) as a NEOTH core feature + federated theorem-test. Full build spec, verified findings and theorem-test protocol: `REVIEWS/_gold_audit/research/delta_kosmologie_babel_2026-07-02.md` (5-phase / 43-agent deep-read, adversarially verified). **Scaffolding EXISTS:** `SRC/neothd/src/analytics/babel/{anonymize,collapse,coupling,feature,federation,mod,norm,score,window}.rs` (~1.8k LOC, in the green 2026-07-02 full-suite run) — items below wire it into config/daemon/CLI/GUI. **Hard constraint:** WAL event byte space is exhausted (255/256) → Babel persists to SQLite (`views.db`: idx_babel_windows/norm/labels), NO new WAL event types. Federation is opt-in ONLY (`babel.federate` default false, AutonomyLevel >= Elevated, consent-gated). Open operator decisions: report §6 (K_d embedding source, D_d v1 scope, wizard opt-in, upstream schema-bump order).
+
+- [ ] **GOLD-DELTA-01** BabelConfig in FreedomConfig — *files:* config/mod.rs (+`pub babel`), config/automation.rs, analytics/babel/config.rs (new; enabled=true, federate=false, tick_interval_secs, threshold, epsilon_calibrated: Option<f64>, all serde defaults) — *test:* default().federate==false && enabled==true — S
+- [ ] **GOLD-DELTA-02** SQLite store init — *files:* analytics/babel/store.rs (new; DDL idx_babel_windows/idx_babel_norm/idx_babel_labels; `ensure_schema(conn)` on views.db, memory::store::open pattern) — *test:* ensure_schema idempotent, 3 tables present — S
+- [ ] **GOLD-DELTA-03** Cron tick logic — *files:* analytics/babel/cron.rs (new; BabelCronState with 4 WindowAccumulators; tick() drains WAL events, closes windows, BabelScores::compute, persist, 15-min threshold check) — *test:* 300s synthetic WalEventRecords → WindowComputed with finite b_log — M
+- [ ] **GOLD-DELTA-04** Daemon spawn — *files:* daemon/babel_cron.rs (new; spawn_babel_cron_loop -> Option<JoinHandle>, None when disabled; WAL scan via wal::scan::for_each_frame) + main.rs wire beside spawn_monitor_cron_loop — *test:* spawn_returns_none_when_disabled + integration row-appears — M
+- [ ] **GOLD-DELTA-05** Norm refresh sweep — *files:* analytics/babel/norm.rs (+sweep_norm: 7d p1/p99 per variable → idx_babel_norm; 5-min gate in tick loop) — *test:* 60 synthetic rows, p99 within 2% — S
+- [ ] **GOLD-DELTA-06** Epsilon calibration freeze — *files:* analytics/babel/norm.rs (+compute_calibration_epsilon: median(d*h)*0.01 after MIN_SAMPLES; persist once to freedom.yaml) — *test:* Some(eps) in (0,0.1), idempotent — S
+- [ ] **GOLD-DELTA-07** Collapse label persistence — *files:* analytics/babel/collapse.rs (+persist_label, +post_hoc_label_pass over collapse_30m IS NULL windows) — *test:* AgentLoop trigger → collapse_30m=1 + label row — S
+- [ ] **GOLD-DELTA-08** Export pipeline — *files:* analytics/babel/export.rs (new; export_batch JSONL with algorithm_versions + pseudonymised_session_id via anonymize.rs; post_hoc_label_pass first) + cli/babel.rs `neoth babel export` — *test:* 3 rows → valid JSONL, no raw session_id — M — *note:* schema v0.1.0 now; upgrade with upstream bump (report §6 Q6)
+- [ ] **GOLD-DELTA-09** CLI surface — *files:* cli/babel.rs (+status/windows/label/enable/disable) + cli/mod.rs dispatch + CLI-doc regen gate — *test:* status on empty db exits 0 — S
+- [ ] **GOLD-DELTA-10** Federation submission — *files:* analytics/babel/federation.rs (+submit_pending: 3 consent checks, 10%-floor + 1:1 collapse:normal sampling, anonymise_for_batch, iroh FEDERATION_ALPN gzip JSONL, receipt, offline → ~/.neoth/babel/pending/) + daemon cron call when federate — *test:* noop_when_federate_false + pending-file on iroh-unavailable — L — *blocked-on:* report §6 Q4 (wizard opt-in scope)
+- [ ] **GOLD-DELTA-11** GUI SSE hook — *files:* daemon/kanban_sse.rs (+BabelWindowComputed variant + fan-out) + babel_cron sends after window close — *test:* subscriber receives event with correct window_secs — S
+- [ ] **GOLD-DELTA-12** Integration test suite — *files:* tests/babel_cron_integration.rs (3 tests: row-in-sqlite, threshold-tracing, spawn-none-when-disabled) — *gate:* cargo test -p neothd --test babel_cron_integration — S
+
 ## 5. Definition of GOLD (Release Gate)
 
 All of the following must be `[x]` before tagging `v1.0-gold`:

@@ -158,6 +158,9 @@ For each of the ~75 remaining items run the cheap existence check (grep module/f
 ### B5 — Loop engine (M-L; NEOTH's own autonomous-loop feature)
 Order: `GOLD-LOOP-02` (CLI `neoth loop` + `loop_engine/` core) → `GOLD-LOOP-04` (L1/L2/L3 autonomy mapping) → `GOLD-LOOP-05` (token-budget enforcement, reuse 0x2F + new 0x6D) → `GOLD-LOOP-06` (skill YAML `loop: true` + verifier/loop-triage stdlib skills) → `GOLD-LOOP-07` (run log + `--history/--show`). Evidence: loop-engineering repo refs in item text (`QUELLEN/` batch-2 sources). GUI panel LOOP-03 deferred to B8.
 
+### B-DELTA — Babel-Index / RDelta core (GOLD-DELTA-01..12; operator-prioritized 2026-07-02, runnable any time after B0)
+Wire the EXISTING `analytics/babel/` scaffolding (~1.8k LOC, uncommitted-then-committed 2026-07-02, green in the full suite) into the daemon: order 01→02→03→04 (config→store→cron→spawn), then 05/06/07 (norm/epsilon/labels), 08/09 (export+CLI, CLI-doc gate!), 11 (SSE), 12 (integration tests); 10 (federation) LAST and only after the §9 operator answers (wizard opt-in scope). Spec = `REVIEWS/_gold_audit/research/delta_kosmologie_babel_2026-07-02.md` §4; constraints: SQLite-only (WAL bytes exhausted 255/256), federate default-false consent-gated. Upstream delta-kosmologie repo fixes (report §2 FINDING-01..09) ship separately in that repo.
+
 ### B6 — Task pipeline & sovereign mode (M-L)
 `GOLD-TASK-01` (route ANY inbound → kanban decomposer, reuse QU-10b task_executor) · `GOLD-ADAPT-ODY-12` (LLM→UI control events; prereq for MODE-04) · `GOLD-ADAPT-JV-MODE-02` (sovereign/full-autonomy mode — operator-selectable, council-on-demand or single-provider, explicit consent ceremony; evidence `_jarvis_2026-06-12/proactivity_crons.md` + `_SYNTHESIS.md`) · `GOLD-ADAPT-JV-MODE-04` (self-activation: NEOTH toggles own skills/crons under sovereign mode) · `GOLD-ADAPT-JV-PRO-08` delta from B2 · `GOLD-ADAPT-ODY-14` (inline entity deep-links).
 
@@ -294,11 +297,11 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-02
-base: d9d6c9d0
-current_batch: B0        # fix pushed — awaiting CI-green confirmation, then B1
-next: B1
-completed: []
+updated: 2026-07-02 (evening)
+base: 24d2f96b
+current_batch: B-DELTA   # operator-prioritized; scaffolding committed, items 01-12 in tracker WS-DELTA
+next: B2
+completed: [B0 (0d4024b1 — ubuntu+windows+features+smoke green; macos was still running at last check), B1 (24d2f96b — 0 partials, dedupes, claudeclaw restored)]
 notes: >
   Plan created; counts 68 open + 9 partial verified at d9d6c9d0.
   Local main was 21 commits behind origin on 2026-07-02 — ALWAYS ff-pull at bootstrap.
