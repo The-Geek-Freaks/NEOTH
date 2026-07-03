@@ -138,6 +138,12 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
             let msg = e.to_string();
             if msg.contains("not cached") {
                 // Model absent — try auto-download if the operator permits it.
+                // Test builds must NEVER hit the network: the wave-4 test run
+                // pulled the real 1.6GB whisper model through this hook via the
+                // operator's live config. cfg!(test) is compile-time-free in prod.
+                if cfg!(test) {
+                    return (String::new(), "model not cached");
+                }
                 match maybe_auto_download_whisper() {
                     Ok(()) => {
                         // Artifacts now on disk; build the engine.
@@ -702,6 +708,11 @@ mod tests {
     #[test]
     fn model_present_does_not_trigger_download() {
         use crate::providers::whisper::{CONFIG_FILE, DEFAULT_WHISPER_REPO, SAFETENSORS_FILE, TOKENIZER_FILE};
+
+        // Env-var mutation MUST hold the process-wide test-env lock — without
+        // it the HOME override races parallel tests (the STT factory test saw
+        // our stub tree and flipped its is_err() expectation).
+        let _env = crate::test_env::lock();
 
         // Build a fake model directory under a temp HOME.
         let tmp = tempfile::tempdir().expect("tempdir");

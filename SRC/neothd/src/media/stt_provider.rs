@@ -1041,10 +1041,18 @@ mod tests {
             )
             .is_err()
         );
-        // HANDY-05: WhisperRsLocal is now wired but still returns Err in test/CI
-        // environments where the model artifacts are not cached (~/.neoth/models/).
-        // The error is "model not cached", not "deferred". is_err() remains correct.
-        assert!(make_stt_provider(SttProviderKind::WhisperRsLocal, None, None, &on).is_err());
+        // HANDY-05/HANDY-04: WhisperRsLocal is wired. On CI/fresh boxes the
+        // model isn't cached → Err("model not cached"); on a dev box with the
+        // artifacts present the factory legitimately returns Ok. Both are
+        // correct — assert the SHAPE, never the cache state of the machine.
+        match make_stt_provider(SttProviderKind::WhisperRsLocal, None, None, &on) {
+            Ok(p) => assert_eq!(p.kind(), SttProviderKind::WhisperRsLocal),
+            Err(e) => assert!(
+                e.to_string().to_lowercase().contains("cach")
+                    || e.to_string().to_lowercase().contains("model"),
+                "unexpected whisper factory error: {e}"
+            ),
+        }
         assert!(make_stt_provider(SttProviderKind::Vosk, None, None, &on).is_err());
     }
 
