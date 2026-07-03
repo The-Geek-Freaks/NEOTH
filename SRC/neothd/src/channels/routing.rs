@@ -48,6 +48,40 @@ pub struct ChannelDestinations {
     pub whatsapp_recipient: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keet_topic: Option<String>,
+    /// B9 channel parity — Signal recipient (E.164 number or `group.<id>`),
+    /// passed to `signal-cli` as the send target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_recipient: Option<String>,
+    /// B9 — LINE push target (`userId`/`groupId` from the Messaging API).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_recipient: Option<String>,
+    /// B9 — Mattermost channel id (26-char id, not the slug).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mattermost_channel_id: Option<String>,
+    /// B9 — iMessage/BlueBubbles chat GUID (`iMessage;-;+491701234567`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imessage_chat_guid: Option<String>,
+    /// B9 — Matrix room id (`!abc:server`). Stored for parity; the proactive
+    /// tick can't construct the matrix-sdk client on demand (connection-bound,
+    /// same as Keet) so delivery stays SidecarOnly until the daemon adapter
+    /// is shared with the tick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix_room_id: Option<String>,
+    /// B9 — IRC channel (`#chan`) or nick. Connection-bound (live socket in
+    /// the serve loop) — stored for parity, delivery SidecarOnly for now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub irc_channel: Option<String>,
+    /// B9 — Nostr recipient pubkey (hex/npub). Connection-bound (relay pool)
+    /// — stored for parity, delivery SidecarOnly for now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_recipient: Option<String>,
+    /// B9 — Twitch channel (`#chan`). Served by the IRC adapter; connection-
+    /// bound — stored for parity, delivery SidecarOnly for now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub twitch_channel: Option<String>,
+    /// B9 — Google Chat space (`spaces/AAAA…`) for the Pub/Sub adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gchat_space: Option<String>,
 }
 
 impl ChannelDestinations {
@@ -63,6 +97,15 @@ impl ChannelDestinations {
                 self.whatsapp_recipient.as_deref()
             }
             "keet" => self.keet_topic.as_deref(),
+            "signal" => self.signal_recipient.as_deref(),
+            "line" => self.line_recipient.as_deref(),
+            "mattermost" => self.mattermost_channel_id.as_deref(),
+            "imessage" | "imessage_bluebubbles" => self.imessage_chat_guid.as_deref(),
+            "matrix" => self.matrix_room_id.as_deref(),
+            "irc" => self.irc_channel.as_deref(),
+            "nostr" => self.nostr_recipient.as_deref(),
+            "twitch" => self.twitch_channel.as_deref(),
+            "gchat" | "google_chat" => self.gchat_space.as_deref(),
             _ => None,
         }
     }
@@ -79,6 +122,15 @@ impl ChannelDestinations {
                 self.whatsapp_recipient = Some(id)
             }
             "keet" => self.keet_topic = Some(id),
+            "signal" => self.signal_recipient = Some(id),
+            "line" => self.line_recipient = Some(id),
+            "mattermost" => self.mattermost_channel_id = Some(id),
+            "imessage" | "imessage_bluebubbles" => self.imessage_chat_guid = Some(id),
+            "matrix" => self.matrix_room_id = Some(id),
+            "irc" => self.irc_channel = Some(id),
+            "nostr" => self.nostr_recipient = Some(id),
+            "twitch" => self.twitch_channel = Some(id),
+            "gchat" | "google_chat" => self.gchat_space = Some(id),
             _ => return false,
         }
         true
@@ -99,6 +151,17 @@ pub fn is_known_channel(channel: &str) -> bool {
             | "whatsapp_business"
             | "whatsapp_baileys"
             | "keet"
+            | "signal"
+            | "line"
+            | "mattermost"
+            | "imessage"
+            | "imessage_bluebubbles"
+            | "matrix"
+            | "irc"
+            | "nostr"
+            | "twitch"
+            | "gchat"
+            | "google_chat"
     )
 }
 
@@ -309,10 +372,49 @@ mod tests {
             "whatsapp_business",
             "whatsapp_baileys",
             "keet",
+            "signal",
+            "line",
+            "mattermost",
+            "imessage",
+            "imessage_bluebubbles",
+            "matrix",
+            "irc",
+            "nostr",
+            "twitch",
+            "gchat",
+            "google_chat",
         ] {
             assert!(is_known_channel(ch), "{ch} must be known");
         }
         assert!(!is_known_channel("telegrm"), "typo rejected");
         assert!(!is_known_channel(""), "empty rejected");
+    }
+
+    #[test]
+    fn b9_destinations_set_and_resolve_roundtrip() {
+        // B9 channel parity — every canonical name set_for_channel accepts
+        // must resolve back through for_channel (aliases share a slot).
+        let pairs = [
+            ("signal", "+491701234567"),
+            ("line", "Uab12cd34"),
+            ("mattermost", "abcdefghijklmnopqrstuvwxyz"),
+            ("imessage", "iMessage;-;+491701234567"),
+            ("matrix", "!room:server"),
+            ("irc", "#neoth"),
+            ("nostr", "npub1xyz"),
+            ("twitch", "#geekfreaks"),
+            ("gchat", "spaces/AAAA1234"),
+        ];
+        for (ch, dest) in pairs {
+            let mut d = ChannelDestinations::default();
+            assert!(d.set_for_channel(ch, dest.into()), "{ch} settable");
+            assert_eq!(d.for_channel(ch), Some(dest), "{ch} resolves");
+        }
+        // alias pairs share the same slot
+        let mut d = ChannelDestinations::default();
+        assert!(d.set_for_channel("imessage_bluebubbles", "guid".into()));
+        assert_eq!(d.for_channel("imessage"), Some("guid"));
+        assert!(d.set_for_channel("google_chat", "spaces/B".into()));
+        assert_eq!(d.for_channel("gchat"), Some("spaces/B"));
     }
 }

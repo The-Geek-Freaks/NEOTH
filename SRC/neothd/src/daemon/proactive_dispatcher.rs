@@ -212,6 +212,18 @@ pub(crate) enum DeliveryRoute {
     /// GOLD-FEAT-13 — deliver to WhatsApp Cloud. `recipient` = operator's
     /// configured `whatsapp_recipient` (E.164), never item-influenced.
     WhatsApp { recipient: String },
+    /// B9 — deliver via signal-cli. `recipient` = operator's configured
+    /// `signal_recipient` routing destination, never item-influenced.
+    Signal { recipient: String },
+    /// B9 — deliver via LINE push API. `recipient` = operator's configured
+    /// `line_recipient` (userId/groupId), never item-influenced.
+    Line { recipient: String },
+    /// B9 — deliver via Mattermost REST. `channel_id` = operator's configured
+    /// `mattermost_channel_id`, never item-influenced.
+    Mattermost { channel_id: String },
+    /// B9 — deliver via BlueBubbles (iMessage). `chat_guid` = operator's
+    /// configured `imessage_chat_guid`, never item-influenced.
+    IMessage { chat_guid: String },
 }
 
 /// G-01 / GOLD-FEAT-13 — decide how (and whether) to deliver an item whose
@@ -225,9 +237,11 @@ pub(crate) enum DeliveryRoute {
 /// (`telegram_user_id` or a `ChannelRouting.destinations.*`), NEVER a value
 /// the proactive item could influence — the anti-spoof invariant holds for
 /// every channel. A channel with no token or no configured destination →
-/// `SidecarOnly` (the operator still sees it in the ledger). Slice 2 wires
-/// Telegram/Slack/Discord; WhatsApp/Keet (multi-arg / bridge constructors)
-/// land in slice 3 and currently fall to `SidecarOnly`.
+/// `SidecarOnly` (the operator still sees it in the ledger). Wired:
+/// Telegram/Slack/Discord/WhatsApp + B9 Signal/LINE/Mattermost/iMessage
+/// (stateless HTTP adapters). Connection-bound channels (Keet/Matrix/IRC/
+/// Twitch/Nostr) stay `SidecarOnly` until the daemon's live adapter is
+/// shared with the tick.
 pub(crate) fn plan_delivery(
     channel: &str,
     autonomy: AutonomyLevel,
@@ -276,12 +290,59 @@ pub(crate) fn plan_delivery(
             },
             _ => DeliveryRoute::SidecarOnly,
         },
+        // B9 — Signal via signal-cli REST: needs the daemon URL + own number
+        // + a configured destination. The adapter is a stateless HTTP client,
+        // constructible on demand at the send site.
+        "signal" => match (
+            credentials.signal_cli_url.as_ref(),
+            credentials.signal_phone_number.as_ref(),
+            dest,
+        ) {
+            (Some(_), Some(_), Some(recipient)) => DeliveryRoute::Signal {
+                recipient: recipient.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        // B9 — LINE push REST: token + configured destination.
+        "line" => match (credentials.line_channel_access_token.as_ref(), dest) {
+            (Some(_), Some(recipient)) => DeliveryRoute::Line {
+                recipient: recipient.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        // B9 — Mattermost REST: url + token + configured destination.
+        "mattermost" => match (
+            credentials.mattermost_url.as_ref(),
+            credentials.mattermost_token.as_ref(),
+            dest,
+        ) {
+            (Some(_), Some(_), Some(channel_id)) => DeliveryRoute::Mattermost {
+                channel_id: channel_id.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        // B9 — iMessage via BlueBubbles REST: url + password + chat GUID.
+        "imessage" | "imessage_bluebubbles" => match (
+            credentials.bluebubbles_url.as_ref(),
+            credentials.bluebubbles_password.as_ref(),
+            dest,
+        ) {
+            (Some(_), Some(_), Some(chat_guid)) => DeliveryRoute::IMessage {
+                chat_guid: chat_guid.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
         // GOLD-FEAT-13: Keet proactive send needs a live Pears bridge that the
         // delivery tick can't construct on-demand (the daemon's running Keet
         // adapter holds it). Until that bridge is shared with the tick, a Keet
         // route resolves to the ledger (SidecarOnly) rather than a
         // guaranteed-failed send — slice-3 follow-up.
         "keet" => DeliveryRoute::SidecarOnly,
+        // B9 — connection-bound adapters (live socket / relay pool / matrix
+        // client held by the serve loop): same constraint as Keet — the tick
+        // can't construct them on demand, so routing destinations are stored
+        // but delivery stays ledger-only until the daemon adapter is shared.
+        "matrix" | "irc" | "twitch" | "nostr" => DeliveryRoute::SidecarOnly,
         _ => DeliveryRoute::SidecarOnly,
     }
 }
@@ -633,6 +694,10 @@ pub async fn run_proactive_delivery_tick(
                 | DeliveryRoute::Slack { .. }
                 | DeliveryRoute::Discord { .. }
                 | DeliveryRoute::WhatsApp { .. }
+                | DeliveryRoute::Signal { .. }
+                | DeliveryRoute::Line { .. }
+                | DeliveryRoute::Mattermost { .. }
+                | DeliveryRoute::IMessage { .. }
         );
         if needs_claim {
             match write_inflight_claim(home, &item) {
@@ -771,6 +836,144 @@ pub async fn run_proactive_delivery_tick(
                             "proactive send failed; recorded as failed (not re-enqueued)"
                         );
                         (ProactiveStatus::Failed, recipient)
+                    }
+                }
+            }
+            DeliveryRoute::Signal { recipient } => {
+                // Safe: plan_delivery returned Signal only when url + number
+                // are present. recipient = operator-own configured value.
+                let url = credentials
+                    .signal_cli_url
+                    .clone()
+                    .expect("plan_delivery guarantees signal_cli_url is Some");
+                let number = credentials
+                    .signal_phone_number
+                    .clone()
+                    .expect("plan_delivery guarantees signal_phone_number is Some");
+                use crate::channels::Channel;
+                match crate::channels::signal::SignalChannel::new(url, number) {
+                    Ok(channel) => match channel.send_proactive(&recipient, &item.body).await {
+                        Ok(_) => {
+                            delivered += 1;
+                            (ProactiveStatus::Delivered, recipient)
+                        }
+                        Err(e) => {
+                            warn!(
+                                channel = "signal",
+                                dedup_key = %item.dedup_key,
+                                error = %e,
+                                "proactive send failed; recorded as failed (not re-enqueued)"
+                            );
+                            (ProactiveStatus::Failed, recipient)
+                        }
+                    },
+                    Err(e) => {
+                        warn!(
+                            channel = "signal",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "signal adapter construct failed; recorded as failed"
+                        );
+                        (ProactiveStatus::Failed, recipient)
+                    }
+                }
+            }
+            DeliveryRoute::Line { recipient } => {
+                let token = credentials
+                    .line_channel_access_token
+                    .clone()
+                    .expect("plan_delivery guarantees line_channel_access_token is Some");
+                use crate::channels::Channel;
+                match crate::channels::line::LineChannel::new(token) {
+                    Ok(channel) => match channel.send_proactive(&recipient, &item.body).await {
+                        Ok(_) => {
+                            delivered += 1;
+                            (ProactiveStatus::Delivered, recipient)
+                        }
+                        Err(e) => {
+                            warn!(
+                                channel = "line",
+                                dedup_key = %item.dedup_key,
+                                error = %e,
+                                "proactive send failed; recorded as failed (not re-enqueued)"
+                            );
+                            (ProactiveStatus::Failed, recipient)
+                        }
+                    },
+                    Err(e) => {
+                        warn!(
+                            channel = "line",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "line adapter construct failed; recorded as failed"
+                        );
+                        (ProactiveStatus::Failed, recipient)
+                    }
+                }
+            }
+            DeliveryRoute::Mattermost { channel_id } => {
+                let url = credentials
+                    .mattermost_url
+                    .clone()
+                    .expect("plan_delivery guarantees mattermost_url is Some");
+                let token = credentials
+                    .mattermost_token
+                    .clone()
+                    .expect("plan_delivery guarantees mattermost_token is Some");
+                let channel = crate::channels::mattermost::MattermostChannel::new(url, token);
+                use crate::channels::Channel;
+                match channel.send_proactive(&channel_id, &item.body).await {
+                    Ok(_) => {
+                        delivered += 1;
+                        (ProactiveStatus::Delivered, channel_id)
+                    }
+                    Err(e) => {
+                        warn!(
+                            channel = "mattermost",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "proactive send failed; recorded as failed (not re-enqueued)"
+                        );
+                        (ProactiveStatus::Failed, channel_id)
+                    }
+                }
+            }
+            DeliveryRoute::IMessage { chat_guid } => {
+                let url = credentials
+                    .bluebubbles_url
+                    .clone()
+                    .expect("plan_delivery guarantees bluebubbles_url is Some");
+                let password = credentials
+                    .bluebubbles_password
+                    .clone()
+                    .expect("plan_delivery guarantees bluebubbles_password is Some");
+                use crate::channels::Channel;
+                match crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
+                    url, password, None, None,
+                ) {
+                    Ok(channel) => match channel.send_proactive(&chat_guid, &item.body).await {
+                        Ok(_) => {
+                            delivered += 1;
+                            (ProactiveStatus::Delivered, chat_guid)
+                        }
+                        Err(e) => {
+                            warn!(
+                                channel = "imessage_bluebubbles",
+                                dedup_key = %item.dedup_key,
+                                error = %e,
+                                "proactive send failed; recorded as failed (not re-enqueued)"
+                            );
+                            (ProactiveStatus::Failed, chat_guid)
+                        }
+                    },
+                    Err(e) => {
+                        warn!(
+                            channel = "imessage_bluebubbles",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "bluebubbles adapter construct failed; recorded as failed"
+                        );
+                        (ProactiveStatus::Failed, chat_guid)
                     }
                 }
             }
@@ -1196,6 +1399,106 @@ mod tests {
             plan_delivery("discord", AutonomyLevel::Full, &cfg, &default_rt(), &creds),
             DeliveryRoute::SidecarOnly
         );
+    }
+
+    #[test]
+    fn plan_delivery_b9_channels_route_when_configured() {
+        // B9 parity — Signal/LINE/Mattermost/iMessage route when credentials
+        // + operator-own destination are present.
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.signal_recipient = Some("+491701234567".to_string());
+        rt.destinations.line_recipient = Some("Uab12cd34".to_string());
+        rt.destinations.mattermost_channel_id = Some("chanid26".to_string());
+        rt.destinations.imessage_chat_guid = Some("iMessage;-;+4917".to_string());
+        let creds = crate::config::credentials::Credentials {
+            signal_cli_url: Some("http://127.0.0.1:8080".to_string()),
+            signal_phone_number: Some("+491700000000".to_string()),
+            line_channel_access_token: Some(crate::secret::SecretString::from(
+                "line-token".to_string(),
+            )),
+            mattermost_url: Some("https://mm.example.com".to_string()),
+            mattermost_token: Some(crate::secret::SecretString::from("mm".to_string())),
+            bluebubbles_url: Some("http://192.168.1.5:1234".to_string()),
+            bluebubbles_password: Some(crate::secret::SecretString::from("pw".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("signal", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::Signal {
+                recipient: "+491701234567".to_string()
+            }
+        );
+        assert_eq!(
+            plan_delivery("line", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::Line {
+                recipient: "Uab12cd34".to_string()
+            }
+        );
+        assert_eq!(
+            plan_delivery("mattermost", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::Mattermost {
+                channel_id: "chanid26".to_string()
+            }
+        );
+        // both alias spellings hit the same route
+        for ch in ["imessage", "imessage_bluebubbles"] {
+            assert_eq!(
+                plan_delivery(ch, AutonomyLevel::Full, &cfg, &rt, &creds),
+                DeliveryRoute::IMessage {
+                    chat_guid: "iMessage;-;+4917".to_string()
+                },
+                "{ch} routes to IMessage"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_delivery_b9_without_destination_or_creds_is_sidecar_only() {
+        // Credentials WITHOUT destination → sidecar; destination WITHOUT
+        // credentials → sidecar. Never guess a recipient.
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let creds_only = crate::config::credentials::Credentials {
+            signal_cli_url: Some("http://127.0.0.1:8080".to_string()),
+            signal_phone_number: Some("+491700000000".to_string()),
+            line_channel_access_token: Some(crate::secret::SecretString::from(
+                "line-token".to_string(),
+            )),
+            ..Default::default()
+        };
+        for ch in ["signal", "line", "mattermost", "imessage"] {
+            assert_eq!(
+                plan_delivery(ch, AutonomyLevel::Full, &cfg, &default_rt(), &creds_only),
+                DeliveryRoute::SidecarOnly,
+                "{ch} without destination must be sidecar-only"
+            );
+        }
+        let mut rt = default_rt();
+        rt.destinations.signal_recipient = Some("+491701234567".to_string());
+        assert_eq!(
+            plan_delivery("signal", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
+            DeliveryRoute::SidecarOnly,
+            "signal destination without signal-cli credentials must be sidecar-only"
+        );
+    }
+
+    #[test]
+    fn plan_delivery_b9_connection_bound_channels_are_sidecar_only() {
+        // Matrix/IRC/Twitch/Nostr are connection-bound — destinations are
+        // stored but the tick can't construct their adapters on demand.
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.matrix_room_id = Some("!r:server".to_string());
+        rt.destinations.irc_channel = Some("#neoth".to_string());
+        rt.destinations.twitch_channel = Some("#chan".to_string());
+        rt.destinations.nostr_recipient = Some("npub1x".to_string());
+        for ch in ["matrix", "irc", "twitch", "nostr"] {
+            assert_eq!(
+                plan_delivery(ch, AutonomyLevel::Full, &cfg, &rt, &default_creds()),
+                DeliveryRoute::SidecarOnly,
+                "{ch} is connection-bound → sidecar-only"
+            );
+        }
     }
 
     #[test]
