@@ -7,7 +7,7 @@
       <stop offset=".6" stop-color="#0d0d0d"/>
       <stop offset="1" stop-color="#050505"/>
     </radialGradient>
-    <linearGradient id="loop" x1="225" y1="260" x2="1175" y2="260">
+    <linearGradient id="loop" x1="225" y1="260" x2="1175" y2="260" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#00ff80"/>
       <stop offset=".5" stop-color="#ff2a6d"/>
       <stop offset="1" stop-color="#05d5ff"/>
@@ -49,7 +49,7 @@
   </circle>
 
   <g class="sans">
-    <rect x="585" y="190" width="230" height="160" rx="36" fill="#050505" fill-opacity=".72" stroke="white" stroke-opacity=".1"/>
+    <rect x="548" y="190" width="304" height="160" rx="36" fill="#0d0d0d" fill-opacity=".92" stroke="white" stroke-opacity=".14"/>
     <text x="700" y="252" text-anchor="middle" fill="white" font-size="48" font-weight="100" letter-spacing="18">NEOTH</text>
     <text x="700" y="292" text-anchor="middle" fill="#8e8e8e" font-size="12" letter-spacing="5">YOUR SIDE OF THE STACK</text>
 

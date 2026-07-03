@@ -7,7 +7,7 @@
       <stop offset=".6" stop-color="#0d0d0d"/>
       <stop offset="1" stop-color="#050505"/>
     </radialGradient>
-    <linearGradient id="ma-flow" x1="430" y1="0" x2="980" y2="0">
+    <linearGradient id="ma-flow" x1="430" y1="0" x2="980" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#05d5ff"/>
       <stop offset="1" stop-color="#00ff80"/>
     </linearGradient>

@@ -35,7 +35,7 @@
 
     <text x="172" y="262" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">plain chat</text>
     <text x="334" y="248" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">vault tools</text>
-    <text x="486" y="92" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">learning workflow</text>
+    <text x="396" y="92" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">learning workflow</text>
 
     <g transform="translate(690 82)" filter="url(#glow)">
       <circle r="40" fill="#00ff80" fill-opacity=".12" stroke="#00ff80" stroke-opacity=".74"/>
@@ -55,12 +55,12 @@
     </g>
 
     <g class="mono" font-size="10" letter-spacing="2.3">
-      <rect x="612" y="136" width="166" height="30" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".24"/>
-      <text x="695" y="156" text-anchor="middle" fill="#00ff80">NO HOSTED CORE</text>
-      <rect x="612" y="176" width="166" height="30" rx="8" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".24"/>
-      <text x="695" y="196" text-anchor="middle" fill="#05d5ff">WAL EVIDENCE</text>
-      <rect x="612" y="216" width="166" height="30" rx="8" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".24"/>
-      <text x="695" y="236" text-anchor="middle" fill="#ff2a6d">BUDDY + CODE + MESH</text>
+      <rect x="656" y="136" width="166" height="30" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".24"/>
+      <text x="739" y="156" text-anchor="middle" fill="#00ff80">NO HOSTED CORE</text>
+      <rect x="656" y="176" width="166" height="30" rx="8" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".24"/>
+      <text x="739" y="196" text-anchor="middle" fill="#05d5ff">WAL EVIDENCE</text>
+      <rect x="656" y="216" width="166" height="30" rx="8" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".24"/>
+      <text x="739" y="236" text-anchor="middle" fill="#ff2a6d">BUDDY + CODE + MESH</text>
     </g>
   </g>
 

@@ -2,7 +2,7 @@
   <title id="title">NEOTH trust stack</title>
   <desc id="desc">A bottom-up trust stack: WAL evidence, local learning and routing, permissioned profile memory, capability gates, and operator override.</desc>
   <defs>
-    <linearGradient id="rail" x1="290" y1="0" x2="1110" y2="0">
+    <linearGradient id="rail" x1="290" y1="0" x2="1110" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#05d5ff" stop-opacity="0"/>
       <stop offset=".5" stop-color="#00ff80" stop-opacity=".9"/>
       <stop offset="1" stop-color="#ff2a6d" stop-opacity="0"/>

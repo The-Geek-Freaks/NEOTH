@@ -2,7 +2,7 @@
   <title id="title">NEOTH first-run journey</title>
   <desc id="desc">A coherent NEOTH journey from first hello to trusted action and audit.</desc>
   <defs>
-    <linearGradient id="rail" x1="120" y1="218" x2="1280" y2="218">
+    <linearGradient id="rail" x1="120" y1="218" x2="1280" y2="218" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#00ff80"/>
       <stop offset=".48" stop-color="#ff2a6d"/>
       <stop offset="1" stop-color="#05d5ff"/>

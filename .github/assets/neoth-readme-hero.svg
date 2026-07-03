@@ -7,17 +7,17 @@
       <stop offset=".55" stop-color="#0d0d0d"/>
       <stop offset="1" stop-color="#050505"/>
     </radialGradient>
-    <linearGradient id="h-left" x1="60" y1="0" x2="700" y2="0">
+    <linearGradient id="h-left" x1="60" y1="0" x2="700" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#00ff80" stop-opacity="0"/>
       <stop offset=".55" stop-color="#00ff80" stop-opacity=".7"/>
       <stop offset="1" stop-color="#00ff80" stop-opacity=".95"/>
     </linearGradient>
-    <linearGradient id="h-right" x1="1340" y1="0" x2="700" y2="0">
+    <linearGradient id="h-right" x1="1340" y1="0" x2="700" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#05d5ff" stop-opacity="0"/>
       <stop offset=".55" stop-color="#05d5ff" stop-opacity=".6"/>
       <stop offset="1" stop-color="#05d5ff" stop-opacity=".9"/>
     </linearGradient>
-    <linearGradient id="h-rule" x1="560" y1="0" x2="840" y2="0">
+    <linearGradient id="h-rule" x1="560" y1="0" x2="840" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#00ff80" stop-opacity="0"/>
       <stop offset=".5" stop-color="#00ff80" stop-opacity=".9"/>
       <stop offset="1" stop-color="#05d5ff" stop-opacity="0"/>
@@ -37,11 +37,19 @@
   <rect x="1" y="1" width="1398" height="418" rx="39" stroke="white" stroke-opacity=".08"/>
 
   <!-- ambient hemisphere fields -->
-  <circle cx="260" cy="200" r="230" fill="#00ff80" opacity=".04" filter="url(#h-glow)">
-    <animate attributeName="opacity" dur="14s" values=".028;.06;.028" repeatCount="indefinite"/>
+  <radialGradient id="h-amb-l" cx="50%" cy="50%" r="50%">
+    <stop offset="0" stop-color="#00ff80" stop-opacity=".07"/>
+    <stop offset="1" stop-color="#00ff80" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="h-amb-r" cx="50%" cy="50%" r="50%">
+    <stop offset="0" stop-color="#05d5ff" stop-opacity=".07"/>
+    <stop offset="1" stop-color="#05d5ff" stop-opacity="0"/>
+  </radialGradient>
+  <circle cx="240" cy="200" r="260" fill="url(#h-amb-l)">
+    <animate attributeName="opacity" dur="14s" values=".6;1;.6" repeatCount="indefinite"/>
   </circle>
-  <circle cx="1140" cy="200" r="230" fill="#05d5ff" opacity=".04" filter="url(#h-glow)">
-    <animate attributeName="opacity" dur="17s" values=".028;.058;.028" repeatCount="indefinite"/>
+  <circle cx="1160" cy="200" r="260" fill="url(#h-amb-r)">
+    <animate attributeName="opacity" dur="17s" values=".6;1;.6" repeatCount="indefinite"/>
   </circle>
 
   <!-- left hemisphere bundle: fast path -->
@@ -65,8 +73,8 @@
     <path id="h-r3" d="M1340 312 C 1120 330, 910 322, 700 296" stroke="url(#h-right)" stroke-width="1" opacity=".35">
       <animate attributeName="opacity" dur="12s" begin="-7s" values=".22;.48;.22" repeatCount="indefinite"/>
     </path>
-    <!-- corpus callosum: arbitration strand crossing both -->
-    <path id="h-cc" d="M360 340 C 520 300, 880 300, 1040 340" stroke="#ff2a6d" stroke-opacity=".5" stroke-width="1.2" stroke-dasharray="3 7">
+    <!-- corpus callosum: arbitration strand passing through the core -->
+    <path id="h-cc" d="M400 326 C 540 296, 860 296, 1000 326" stroke="#ff2a6d" stroke-opacity=".5" stroke-width="1.2" stroke-dasharray="3 7">
       <animate attributeName="stroke-dashoffset" dur="3.5s" values="0;-40" repeatCount="indefinite"/>
       <animate attributeName="stroke-opacity" dur="8s" values=".3;.6;.3" repeatCount="indefinite"/>
     </path>

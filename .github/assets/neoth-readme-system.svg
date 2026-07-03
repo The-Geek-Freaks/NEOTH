@@ -1,4 +1,4 @@
-<svg width="1400" height="480" viewBox="0 0 1400 480" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<svg width="1400" height="512" viewBox="0 0 1400 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">NEOTH control plane</title>
   <desc id="desc">Layered NEOTH architecture with surfaces, trust gates, runtime, WAL and provider sidecars.</desc>
   <defs>
@@ -10,8 +10,8 @@
       .box{fill:#121212;stroke:white;stroke-opacity:.1}
     </style>
   </defs>
-  <rect width="1400" height="480" rx="40" fill="#0d0d0d"/>
-  <rect x="1" y="1" width="1398" height="478" rx="39" stroke="white" stroke-opacity=".08"/>
+  <rect width="1400" height="512" rx="40" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="510" rx="39" stroke="white" stroke-opacity=".08"/>
   <text x="72" y="62" fill="white" class="sans title" font-size="30">The 1.0 control plane.</text>
   <text x="72" y="92" fill="#9a9a9a" class="sans" font-size="15">Every route crosses trust gates and lands in the WAL-backed memory core.</text>
 

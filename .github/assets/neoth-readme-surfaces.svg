@@ -18,7 +18,7 @@
   <rect width="1400" height="480" rx="40" fill="#0d0d0d"/>
   <rect x="1" y="1" width="1398" height="478" rx="39" stroke="white" stroke-opacity=".08"/>
   <text x="72" y="62" fill="white" class="sans title" font-size="30">One memory. Many doors.</text>
-  <text x="72" y="92" fill="#9a9a9a" class="sans" font-size="15">Surfaces can change. The operator-owned memory, policy and audit core stays the same.</text>
+  <text x="72" y="92" fill="#9a9a9a" class="sans" font-size="15">Surfaces change. The memory core stays yours.</text>
 
   <circle cx="700" cy="258" r="160" stroke="white" stroke-opacity=".055"/>
   <circle cx="700" cy="258" r="220" stroke="white" stroke-opacity=".045" stroke-dasharray="6 14"/>
