@@ -12,6 +12,12 @@
 //!     PL-03 keyword scan over the Paperless folder. Prints the
 //!     ranked match list with score + filename + excerpt.
 //!
+//!   - `neoth paperless quarantine list`
+//!     List all quarantined email items (uid, from, subject, received, reason).
+//!
+//!   - `neoth paperless quarantine show <uid>`
+//!     Print full quarantine item JSON for operator review.
+//!
 //! Pure CLI shim — `run_paperless` calls into the already-shipped
 //! `security::paperless_ingest::ingest_ocr_text` + `paperless::sync_*`
 //! + `paperless::consult::consult` primitives. Operators run these
@@ -23,8 +29,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
-use crate::paperless::{self, OcrSyncOutcome, consult::consult};
+use crate::paperless::{self, OcrSyncOutcome, consult::consult, quarantine};
 use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
+
+// serde_json used for quarantine show serialisation.
+use serde_json;
 
 #[derive(Args, Debug, Clone)]
 pub struct PaperlessArgs {
@@ -68,12 +77,76 @@ pub enum PaperlessAction {
         #[arg(long, default_value_t = 5)]
         max: usize,
     },
+    /// GOLD-ADAPT-JV-PAPERLESS-01 — review emails quarantined by the
+    /// content scanner. Items land here when the scanner finds HIGH-severity
+    /// patterns (prompt-injection, malware indicators) or when the scanner
+    /// itself errors (fail-closed). Operator reviews + decides to discard.
+    Quarantine {
+        #[command(subcommand)]
+        action: QuarantineAction,
+    },
+}
+
+/// Subcommands under `neoth paperless quarantine`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum QuarantineAction {
+    /// List all pending quarantine items (uid, from, subject, timestamp, reason).
+    List,
+    /// Print the full quarantine item JSON for a specific uid.
+    Show {
+        /// The uid returned by `quarantine list`.
+        uid: String,
+    },
 }
 
 pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
     let vault = args.vault.clone().unwrap_or_else(default_vault_path);
 
     match args.action {
+        PaperlessAction::Quarantine { action } => {
+            let neoth_home = neoth_home_path();
+            match action {
+                QuarantineAction::List => {
+                    let items = quarantine::summarise_quarantine_items(&neoth_home)
+                        .context("read quarantine dir")?;
+                    if items.is_empty() {
+                        println!("quarantine: no pending items");
+                        return Ok(());
+                    }
+                    println!(
+                        "{:<30} {:<30} {:<20} {:>12} {:>8} reason",
+                        "uid", "from", "subject", "received", "findings"
+                    );
+                    println!("{}", "-".repeat(110));
+                    for it in &items {
+                        let subject = truncate(&it.subject, 18);
+                        let from = truncate(&it.from, 28);
+                        let uid = truncate(&it.uid, 28);
+                        println!("{uid:<30} {from:<30} {subject:<20} {:>12} {:>8} {}",
+                            it.received_unix,
+                            it.high_finding_count,
+                            it.reason_kind,
+                        );
+                    }
+                    println!("\n{} item(s). Use `neoth paperless quarantine show <uid>` to inspect.", items.len());
+                }
+                QuarantineAction::Show { uid } => {
+                    match quarantine::load_quarantine_item(&neoth_home, &uid)
+                        .context("load quarantine item")?
+                    {
+                        Some(item) => {
+                            let json = serde_json::to_string_pretty(&item)
+                                .context("serialize quarantine item")?;
+                            println!("{json}");
+                        }
+                        None => {
+                            anyhow::bail!("quarantine item not found: {uid}");
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         PaperlessAction::Ingest {
             doc_id,
             text,
@@ -182,6 +255,25 @@ fn default_vault_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     home.join("Documents").join("NEOTH-Vault")
+}
+
+fn neoth_home_path() -> PathBuf {
+    if let Ok(p) = std::env::var("NEOTH_HOME") {
+        return PathBuf::from(p);
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    home.join(".neoth")
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>())
+    }
 }
 
 #[cfg(test)]

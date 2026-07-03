@@ -3973,6 +3973,9 @@ pub(crate) struct BackgroundHandles {
     /// GOLD-ADAPT-ODY-26 — session auto-sort cron handle.
     /// `None` when `session_sort_cron.enabled = false` (default).
     pub session_sort_cron_handle: Option<JoinHandle<()>>,
+    /// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless→Obsidian ingest cron.
+    /// `None` when `email_ingest_cron.enabled = false` (default).
+    pub email_ingest_cron_handle: Option<JoinHandle<()>>,
     /// GOLD-FEAT-11 — skill-curator cron handle.
     /// `None` when `skill_curator.enabled = false` (default).
     pub skill_curator_cron_handle: Option<JoinHandle<()>>,
@@ -4107,6 +4110,7 @@ pub(crate) async fn shutdown_background_tasks(
         guidance_cron_handle,
         checkin_cron_handle,
         session_sort_cron_handle,
+        email_ingest_cron_handle,
         skill_curator_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
@@ -4347,6 +4351,10 @@ pub(crate) async fn shutdown_background_tasks(
     // GOLD-ADAPT-ODY-26 — abort the session-sort cron. Card writes are
     // atomic per file; mid-tick abort is safe (re-run is idempotent).
     crate::cli::serve_tasks::abort_optional(session_sort_cron_handle).await;
+    // GOLD-ADAPT-JV-PAPERLESS-01 — abort the email-ingest cron. Quarantine
+    // writes are per-file atomic; a mid-tick abort re-fetches unseen mail
+    // next boot (IMAP unseen flag is the cursor).
+    crate::cli::serve_tasks::abort_optional(email_ingest_cron_handle).await;
     // GOLD-FEAT-11 — abort the skill-curator cron. Writes only skill YAML via
     // atomic_write; mid-tick abort is safe (partial writes become dead tmp files).
     crate::cli::serve_tasks::abort_optional(skill_curator_cron_handle).await;

@@ -71,7 +71,7 @@ pub use automation::{
     MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig, ProactiveConfig,
     ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig, ResourceWatchConfig,
     SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
-    SelfActivationConfig, WatchdogConfig,
+    SelfActivationConfig, WatchdogConfig, EmailIngestCronConfig,
 };
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -675,6 +675,12 @@ pub struct FreedomConfig {
     /// nudge once per UTC day. Default OFF (provider call per tick, opt-in).
     #[serde(default)]
     pub checkin_cron: CheckinCronConfig,
+    /// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless ingest cron. When `enabled`,
+    /// polls IMAP on `interval_secs` cadence, runs the content scanner,
+    /// quarantines HIGH findings, and uploads clean documents to Paperless-NGX
+    /// + writes Obsidian notes. Default OFF. Credentials in `credentials.yaml`.
+    #[serde(default)]
+    pub email_ingest_cron: EmailIngestCronConfig,
     /// GOLD-FEAT-11 — skill-curator cron. When `enabled`, auto-promotes mature
     /// (`>= min_age_days`) operator-accepted skill proposals from
     /// `~/.neoth/proposals/` to `~/.neoth/skills/`. Default OFF.

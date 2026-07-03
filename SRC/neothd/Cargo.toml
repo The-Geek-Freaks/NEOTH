@@ -13,6 +13,19 @@ categories = ["command-line-utilities"]
 
 [features]
 default = ["wizard", "cluster"]
+# GOLD-ADAPT-HANDY-02 — Silero ONNX VAD backend for `media::vad::SileroBackend`.
+# Default OFF: the pure-energy `SmoothedVad` ships in every build; this feature
+# gates the ONNX runtime (`ort`) which adds significant transitive deps + requires
+# native ONNX Runtime libraries at link time. Runtime behaviour is unchanged when
+# the feature is absent (energy-based VAD remains active).
+# The `freedom.yaml::media.vad_enabled` flag controls whether VAD gating fires
+# regardless of which backend is compiled in.
+vad = []
+# GOLD-ADOPT-25 — dictation input mode (voice-to-chat via the existing local
+# STT pipeline). No new crate deps: uses the already-present candle WhisperEngine
+# + the `media::vad::SmoothedVad` gate. Default OFF; source-build opt-in.
+# Runtime is gated by `freedom.yaml::input.dictation` (default false).
+whisper-stt = []
 # Interactive TTY wizard for `neoth init`. Disable for slim daemon-only builds
 # (containers, embedded targets). When off, `neoth init --non-interactive` still works.
 wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]

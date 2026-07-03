@@ -40,6 +40,11 @@ pub mod risk_gate;
 /// `neoth credential scan <path>`. Findings redact the matched value.
 pub mod secrets_scan;
 pub mod stream_batch_sanitizer;
+/// GOLD-ADAPT-JV-PAPERLESS-01 — 29-entry regex pattern table ported verbatim
+/// from the Jarvis Python content scanner. Classifies email/document content
+/// into severity buckets (Low/Medium/High) before anything leaves the box.
+/// HIGH severity → quarantine gate; scanner error → same quarantine path.
+pub mod content_scanner;
 
 /// GOLD-ADOPT-23 — a combined egress + dangerous-command finding for one tool
 /// call, for operator-visible surfacing in the dispatch loop.

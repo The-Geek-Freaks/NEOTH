@@ -336,6 +336,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "neoth_debt",
         include_str!("../../assets/skills/neoth_debt/skill.yaml"),
     ),
+    // GOLD-ADAPT-JV-SEC-REST (2026-07-03) — nmap tactical recon skill (Jarvis nmap-recon port).
+    (
+        "nmap_recon",
+        include_str!("../../assets/skills/nmap_recon/skill.yaml"),
+    ),
     // GOLD-ADAPT-DOC-04 (2026-06-23) — officecli family (11 skills), binary-gated, Apache-2.0.
     // All ship `enabled: false`; operator enables after installing officecli from d.officecli.ai.
     // Sorted: officecli_docx_convert < officecli_docx_create < officecli_docx_edit <
@@ -390,10 +395,20 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "omega_prime",
         include_str!("../../assets/skills/omega_prime/skill.yaml"),
     ),
+    // GOLD-ADAPT-JV-SEC-REST (2026-07-03) — ops network diagnostics (Jarvis ping/dns/firewall bundle).
+    (
+        "ops_network",
+        include_str!("../../assets/skills/ops_network/skill.yaml"),
+    ),
     // GOLD-ADAPT-KBD-01 (2026-06-19) — bundled skill.
     (
         "paper_review",
         include_str!("../../assets/skills/paper_review/skill.yaml"),
+    ),
+    // GOLD-ADAPT-JV-SEC-REST (2026-07-03) — pentagi-style pentest orchestration (Jarvis pentagi port).
+    (
+        "pentagi",
+        include_str!("../../assets/skills/pentagi/skill.yaml"),
     ),
     // GOLD-ADAPT-SKILL2-03 (2026-06-19) — bundled skill.
     (
@@ -699,6 +714,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "security_and_hardening",
         include_str!("../../assets/skills/security_and_hardening/skill.yaml"),
+    ),
+    // GOLD-ADAPT-JV-SEC-REST (2026-07-03) — NEOTH/OpenClaw host security audit (Jarvis openclaw-security-audit port).
+    (
+        "security_audit",
+        include_str!("../../assets/skills/security_audit/skill.yaml"),
     ),
     // GOLD-ADAPT-SKILL-08 (2026-06-14) — re-implemented from addyosmani/agent-skills (MIT).
     (

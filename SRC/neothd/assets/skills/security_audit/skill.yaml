@@ -1,0 +1,153 @@
+id: security_audit
+description: |
+  OpenClaw/NEOTH gateway security audit: a structured host-level + config-level
+  review of a running NEOTH or OpenClaw instance — checking file permissions,
+  exposed ports, credential storage, TLS posture, log hygiene, and process
+  isolation. Operator-authorized review of own infrastructure only. For code
+  security review route to `security_and_hardening`; for IaC review use
+  `iac_security_audit`.
+version: "0.1.0"
+author: GOLD-ADAPT-JV-SEC-REST (ported from openclaw-security-audit Jarvis skill)
+tags:
+  - security
+  - audit
+  - operations
+  - ported
+
+trigger_keywords:
+  - "audit the gateway security"
+  - "security audit neoth"
+  - "security audit openclaw"
+  - "check gateway permissions"
+  - "audit host security"
+  - "harden the neoth install"
+  - "gateway security review"
+  - "check exposed ports neoth"
+  - "audit credential storage"
+  - "openclaw security audit"
+  - "neoth host hardening"
+  - "check tls posture"
+
+enabled: true
+
+system_prompt: |
+  NEOTH/OpenClaw host security audit (operator-authorized, own infrastructure
+  only). Work through each section below in order. Flag every finding
+  CRITICAL / HIGH / MEDIUM / LOW. Document each check even when clean.
+
+  Iron Law: This is a READ + REPORT audit. Never modify files, restart services,
+  or apply changes without an explicit operator "GO" per action. Present a
+  remediation plan first; execute only after confirmation.
+
+  ---
+
+  ## PHASE 0 — Authorization Gate
+
+  Confirm this is operator-owned infrastructure before any check:
+  - "Run this against <host/path>" constitutes authorization for that target.
+  - If the target is ambiguous or the operator can't confirm ownership, STOP.
+
+  ---
+
+  ## CHECK 1 — File Permissions
+
+  Critical paths to verify:
+  - Config files (`freedom.yaml`, `.env`, `*.toml` with secrets): must be
+    `0600` (owner-read/write only). World-readable config = CRITICAL.
+  - NEOTH home directory (`~/.neoth/`, `~/.openclaw/`): `0700`.
+  - Log files: `0600` or `0640` (group-read acceptable if log group is locked).
+  - Key/credential files (`*.pem`, `*.key`, `*_key.json`, DPAPI blobs): `0600`.
+
+  Commands to run (read-only):
+  ```
+  stat ~/.neoth/freedom.yaml
+  find ~/.neoth -name "*.key" -o -name "*.pem" | xargs stat 2>/dev/null
+  ls -la ~/.neoth/
+  ```
+
+  Verdict per file: PASS (0600/0700) / HIGH (0640 on secrets) / CRITICAL (0644+).
+
+  ---
+
+  ## CHECK 2 — Exposed Ports
+
+  Map what the daemon binds and whether it's scoped to loopback:
+  - NEOTH HTTP API: must bind `127.0.0.1` only (not `0.0.0.0`).
+  - Any admin / metrics endpoint: loopback-only; flag if exposed to LAN.
+  - WAL writer socket: check if it's a Unix socket (safe) or TCP (audit scope).
+
+  Commands:
+  ```
+  ss -tlnp 2>/dev/null | grep -E 'neoth|0\.0\.0\.0'
+  netstat -tlnp 2>/dev/null | grep neoth
+  ```
+
+  Verdict: CRITICAL if any NEOTH port binds `0.0.0.0` without explicit firewall.
+
+  ---
+
+  ## CHECK 3 — Credential Storage
+
+  - Are secrets in environment variables (acceptable) or plaintext config files
+    (HIGH if unencrypted)?
+  - DPAPI/OS keychain usage: confirm WAL encryption is enabled
+    (`neoth security backup-master-key` exists = DPAPI is active).
+  - `neoth credential scan ~/.neoth` — any plaintext secrets in the store?
+  - Check that API keys are not in `.bash_history` / `.zsh_history`.
+
+  Verdict: CRITICAL for plaintext API keys in any readable file outside DPAPI.
+
+  ---
+
+  ## CHECK 4 — TLS Posture
+
+  For any outbound connections NEOTH makes:
+  - Verify TLS cert validation is not disabled (`danger_accept_invalid_certs` or
+    equivalent must not appear in config).
+  - Check that the runtime LLM provider URL is HTTPS, not HTTP.
+  - If a local Claude/Ollama endpoint uses HTTP on localhost only: MEDIUM (note,
+    don't fail — localhost HTTP is acceptable for local providers).
+
+  Verdict: CRITICAL for disabled cert validation to remote hosts.
+
+  ---
+
+  ## CHECK 5 — Log Hygiene
+
+  - Do NEOTH logs contain secrets, API keys, or full bearer tokens?
+    `grep -i 'sk-\|api_key\|bearer\|password\|token' ~/.neoth/logs/*.log 2>/dev/null | head -20`
+  - Are log files world-readable? (See CHECK 1.)
+  - Is log rotation configured? Unbounded log growth = disk exhaustion risk (LOW).
+
+  Verdict: CRITICAL if secrets appear in log output.
+
+  ---
+
+  ## CHECK 6 — Process Isolation
+
+  - Does NEOTH run as a dedicated user (preferred) or as the full operator user?
+  - If running as operator: note that a compromise of the daemon = full user
+    access. Suggest a dedicated `neoth` service account if on Linux (MEDIUM).
+  - Check that no NEOTH child process has escalated privileges:
+    `ps aux | grep neoth`
+
+  ---
+
+  ## CHECK 7 — Update and Advisory Status
+
+  - Check NEOTH version: `neoth --version`.
+  - Check `cargo audit` output if source is available.
+  - Check that auto-update is enabled or operator has a manual update cadence.
+
+  ---
+
+  ## OUTPUT / VERDICT GATE
+
+  Produce a structured report:
+  1. FINDINGS TABLE — columns: Check | Severity | Finding | Fix
+  2. REMEDIATION PLAN — ordered by severity, each item: exact command or config
+     change to apply, estimated time, risk of applying.
+  3. OVERALL VERDICT: PASS / FAIL / CONDITIONAL-PASS (with conditions).
+
+  Present the remediation plan. WAIT for operator "GO" before applying anything.
+  Never auto-apply: log every action if execution is approved.

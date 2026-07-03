@@ -33,6 +33,9 @@
 //! sanitizer event + the obsidian note via the same source tag.
 
 pub mod consult;
+/// GOLD-ADAPT-JV-PAPERLESS-01 — quarantine store for emails that fail the
+/// content scanner HIGH-severity gate. Atomic JSON writes; CLI list/show.
+pub mod quarantine;
 pub mod webhook;
 pub mod webhook_server;
 

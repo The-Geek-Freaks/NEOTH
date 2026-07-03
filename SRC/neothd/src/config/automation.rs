@@ -1376,3 +1376,65 @@ impl SelfActivationConfig {
             .any(|s| s.trim().to_lowercase() == id_lc)
     }
 }
+
+/// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless ingest cron configuration.
+///
+/// When `enabled` the daemon polls the configured IMAP mailbox on `interval_secs`
+/// cadence, runs the content scanner, quarantines HIGH findings, and for clean
+/// messages uploads to Paperless-NGX + writes an Obsidian note.
+///
+/// Credentials for IMAP and Paperless live in `[credentials]`, not here:
+/// - IMAP password: `NEOTH_IMAP_PASSWORD` env or OAuth via `google_oauth_*`
+/// - Paperless URL + token: `credentials.paperless_url` / `credentials.paperless_token`
+///
+/// Config block (`freedom.yaml`):
+/// ```yaml
+/// email_ingest_cron:
+///   enabled: false          # opt-in
+///   interval_secs: 300      # 5 minutes
+///   imap_username: "you@gmail.com"
+///   imap_host: "imap.gmail.com"   # omit to use gmail default
+///   imap_port: 993                # omit to use gmail default
+///   fetch_limit: 20
+/// ```
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EmailIngestCronConfig {
+    /// Master enable. Default `false` — inert until operator opts in.
+    pub enabled: bool,
+
+    /// Poll interval in seconds. Default 300 (5 minutes).
+    pub interval_secs: u64,
+
+    /// IMAP username (e.g. `you@gmail.com`). Required when enabled.
+    pub imap_username: Option<String>,
+
+    /// IMAP hostname. `None` → use Gmail default (`imap.gmail.com`).
+    pub imap_host: Option<String>,
+
+    /// IMAP port. `None` → use Gmail default (993).
+    pub imap_port: Option<u16>,
+
+    /// Max unseen messages to fetch per tick. Default 20.
+    pub fetch_limit: usize,
+}
+
+impl Default for EmailIngestCronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 300,
+            imap_username: None,
+            imap_host: None,
+            imap_port: None,
+            fetch_limit: 20,
+        }
+    }
+}
+
+impl EmailIngestCronConfig {
+    /// Returns the poll interval as a `std::time::Duration`.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(30))
+    }
+}

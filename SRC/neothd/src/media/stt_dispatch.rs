@@ -312,6 +312,34 @@ pub fn rms_energy(samples: &[f32]) -> f32 {
     (sum_sq / samples.len() as f32).sqrt()
 }
 
+/// GOLD-ADAPT-HANDY-02 — VAD-gated feed helper.
+///
+/// Passes `samples` through `SmoothedVad` when `vad` is `Some`; then feeds the
+/// samples into `buf` unconditionally (the VAD decision governs `is_speaking`
+/// but the buffer always receives the PCM so it can properly track energy +
+/// hangover). Returns `true` if the VAD (or the buffer's own energy gate) thinks
+/// speech is active after this chunk.
+///
+/// Callers in the dictation capture loop use the return value to decide whether
+/// to forward the next completed utterance from `buf.poll_completed_utterance()`
+/// to the STT provider.
+///
+/// When `vad` is `None`, the VAD gate is bypassed and the function always returns
+/// `true` (all audio reaches the STT path).
+pub fn feed_with_vad(
+    buf: &mut LiveTranscriptBuffer,
+    vad: Option<&mut crate::media::vad::SmoothedVad>,
+    samples: &[f32],
+    sample_rate_hz: u32,
+) -> bool {
+    buf.feed_pcm_f32(samples);
+    if let Some(v) = vad {
+        v.process(samples, sample_rate_hz) == crate::media::vad::VadDecision::Speaking
+    } else {
+        true
+    }
+}
+
 // HANDY-03 + HANDY-06 are WIRED in `stt_provider::transcribe_and_audit`:
 // clean_transcript() runs on every `result.text`; resolve_language() (below)
 // steers an unsupported requested language to a safe fallback using each

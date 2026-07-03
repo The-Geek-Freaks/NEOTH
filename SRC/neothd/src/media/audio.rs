@@ -113,6 +113,12 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
 /// Pitfall: we are inside `spawn_blocking`; both the download and the
 /// faster-whisper path MUST use synchronous or mini-runtime patterns to
 /// avoid nested-runtime panic.
+/// `pub(crate)` so `media::dictation` can reuse the same STT path without
+/// duplicating the faster-whisper → candle priority logic.
+pub(crate) fn transcribe_pcm_samples(samples: &[f32]) -> (String, &'static str) {
+    transcribe_if_cached(samples)
+}
+
 fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
     // ── Path 1: faster-whisper subprocess (JV-VOICE-02/03) ─────────────────
     if let Some(exe) = crate::media::stt_provider::faster_whisper_exe() {

@@ -421,6 +421,36 @@ pub struct MediaConfig {
     /// (graceful degradation).
     #[serde(default)]
     pub docling_enabled: bool,
+    /// GOLD-ADAPT-HANDY-02 — enable `media::vad::SmoothedVad` as a pre-STT
+    /// energy gate in the dictation capture path.
+    ///
+    /// When `true`, PCM frames from the microphone are passed through
+    /// `SmoothedVad` before being forwarded to the STT provider. Silence
+    /// frames (VAD says `VadDecision::Silence`) are dropped, saving STT calls
+    /// for quiet stretches between utterances.
+    ///
+    /// Default `false` — gate is bypassed; all captured audio reaches STT.
+    /// Flip to `true` in `freedom.yaml` under `media.vad_enabled`.
+    ///
+    /// The `vad` Cargo feature replaces the energy backend with a Silero ONNX
+    /// neural backend (scaffold; see `media::vad::SileroBackend`). The config
+    /// flag is backend-independent.
+    #[serde(default)]
+    pub vad_enabled: bool,
+    /// GOLD-ADOPT-25 — opt-in dictation input mode.
+    ///
+    /// When `true`, `neoth dictate` (or the in-chat push-to-talk shortcut)
+    /// captures microphone audio, gates it through the VAD (if `vad_enabled`),
+    /// and routes the utterance to the active local STT provider (candle
+    /// `WhisperEngine` or `faster-whisper`). The transcribed text is injected
+    /// into the chat turn as if the operator had typed it.
+    ///
+    /// Default `false` — microphone capture is opt-in because it records audio.
+    /// First use prints a consent notice regardless of this flag.
+    ///
+    /// Configure in `freedom.yaml` under `input.dictation`.
+    #[serde(default)]
+    pub dictation_enabled: bool,
 }
 
 fn default_whisper_idle_unload_secs() -> Option<u64> {
@@ -439,6 +469,10 @@ impl Default for MediaConfig {
             // HANDY-05 — default 2-minute idle unload; matches serde default.
             whisper_idle_unload_secs: default_whisper_idle_unload_secs(),
             docling_enabled: false,
+            // GOLD-ADAPT-HANDY-02 — VAD gate: off by default; operator opt-in.
+            vad_enabled: false,
+            // GOLD-ADOPT-25 — dictation: off by default; mic capture is opt-in.
+            dictation_enabled: false,
         }
     }
 }

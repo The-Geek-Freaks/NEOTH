@@ -499,6 +499,11 @@ mod tests {
             // GOLD-ADAPT-PT-06/07 — ponytail lazy-dev + over-engineering audit
             "lazy_dev",
             "lazy_review",
+            // GOLD-ADAPT-JV-SEC-REST (2026-07-03) — 4 Jarvis security skills
+            "nmap_recon",
+            "ops_network",
+            "pentagi",
+            "security_audit",
         ];
         for id in expected {
             assert!(

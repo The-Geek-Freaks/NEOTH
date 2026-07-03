@@ -26,6 +26,15 @@
 //! every backend is its own typed `Asset` consumer + producer.
 
 pub mod audio;
+/// GOLD-ADOPT-25 — Dictation input mode: microphone PCM → VAD gate → local STT.
+/// Scope: dictation-surface-only (reuses existing candle WhisperEngine; no
+/// second GGML engine). `whisper-stt` Cargo feature reserved for future GGML.
+pub mod dictation;
+/// GOLD-ADAPT-HANDY-02 — SmoothedVad: energy-based voice-activity detector with
+/// probability smoothing + hangover, wired as a pre-STT gate in the dictation
+/// capture path. The `vad` Cargo feature extends the energy backend with a
+/// Silero ONNX neural backend (scaffold; ONNX runtime pending).
+pub mod vad;
 /// GOLD-ADAPT-AWE-DOC-01 — Docling subprocess extractor for PDF/Document/Image.
 /// Invokes `docling --output-format json <file>` in a headless subprocess when
 /// `MediaConfig::docling_enabled` is true AND the binary is on PATH; otherwise

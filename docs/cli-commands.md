@@ -1789,6 +1789,20 @@ Ingest one OCR document through the SC-16 sanitizer + write the Obsidian note un
 - `--text-file <PATH>` — Path to a file containing the OCR text
 - `--source <SOURCE>` — Source enum: `paperless_ngx` / `tesseract_direct` / `paperless_ai` / `manual_upload`. Default `paperless_ngx`
 
+### `neoth paperless quarantine`
+
+GOLD-ADAPT-JV-PAPERLESS-01 — review emails quarantined by the content scanner. Items land here when the scanner finds HIGH-severity patterns (prompt-injection, malware indicators) or when the scanner itself errors (fail-closed). Operator reviews + decides to discard
+
+#### `neoth paperless quarantine list`
+
+List all pending quarantine items (uid, from, subject, timestamp, reason)
+
+#### `neoth paperless quarantine show`
+
+Print the full quarantine item JSON for a specific uid
+
+- `<UID>` — The uid returned by `quarantine list`
+
 ## `neoth permissions`
 
 Inspect the autonomy-gate decision matrix (Phase 28b R-23). `show [--level X]` prints the active level + per-action decisions across all 5 levels (strict / standard / elevated / full / custom). `check <action>` runs a single permission evaluation against the configured level for any of the 8 `Action` variants

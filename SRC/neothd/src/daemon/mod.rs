@@ -236,6 +236,11 @@ pub mod goal_persist;
 /// enqueues one `ProactiveItem` per UTC day. Gated by `checkin_cron.enabled`
 /// (default `false`).
 pub mod checkin_cron;
+/// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless ingest cron. Polls IMAP,
+/// runs the content scanner, quarantines HIGH-severity findings, and for
+/// clean messages uploads to Paperless-NGX + writes an Obsidian vault note.
+/// Gated by `email_ingest_cron.enabled` (default `false`).
+pub mod email_ingest_cron;
 /// GOLD-FEAT-11 — skill-curator cron (gated off, `enabled: false`). Scans
 /// `~/.neoth/proposals/*.json` for mature accepted `Skill` proposals and
 /// atomically promotes them to `~/.neoth/skills/<slug>.yaml`.

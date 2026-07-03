@@ -187,6 +187,14 @@ pub struct Credentials {
     /// GOLD-FEAT-10 — Twitch bot username (the account NEOTH chats as).
     /// Lowercased at connect. Not a secret.
     pub twitch_username: Option<String>,
+    /// GOLD-ADAPT-JV-PAPERLESS-01 — base URL of the operator's Paperless-NGX
+    /// instance (e.g. `http://localhost:8010`). Documents are POSTed to
+    /// `{paperless_url}/api/documents/post_document/`. Not a secret.
+    pub paperless_url: Option<String>,
+    /// GOLD-ADAPT-JV-PAPERLESS-01 — Paperless-NGX API token.  Generate via
+    /// the Paperless web UI → Settings → API token.  Sent as
+    /// `Authorization: Token <value>`. Secret (mlock+zeroize via SecretString).
+    pub paperless_token: Option<SecretString>,
     /// GOLD-FEAT-10 — Twitch OAuth token (`chat:read` + `chat:edit` scopes).
     /// NEOTH prepends the required `oauth:` prefix. Secret.
     pub twitch_oauth_token: Option<SecretString>,
@@ -437,6 +445,8 @@ impl Credentials {
             ms_todo_refresh_token,
             cluster_passphrase,
             tududi_api_token,
+            paperless_url,
+            paperless_token,
         } = self;
         provider_key.is_none()
             && telegram_token.is_none()
@@ -497,6 +507,8 @@ impl Credentials {
             && ms_todo_refresh_token.is_none()
             && cluster_passphrase.is_none()
             && tududi_api_token.is_none()
+            && paperless_url.is_none()
+            && paperless_token.is_none()
     }
 
     /// True if either field is set. Mirror of `!is_empty()` for call-site

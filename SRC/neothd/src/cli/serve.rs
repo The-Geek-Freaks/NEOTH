@@ -1220,6 +1220,36 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         crate::daemon::session_sort_cron::spawn_session_sort_cron(&config, &reload_controller)
             .await;
 
+    // ── GOLD-ADAPT-JV-PAPERLESS-01 email-ingest cron (default OFF) ───────
+    let email_ingest_cron_handle = if config.email_ingest_cron.enabled {
+        let ctrl = reload_controller.clone();
+        let home = FreedomConfig::default_neoth_home();
+        info!("email ingest cron spawned (GOLD-ADAPT-JV-PAPERLESS-01)");
+        Some(tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(ctrl.latest().email_ingest_cron.interval_duration());
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let current = ctrl.latest();
+                if !current.email_ingest_cron.enabled {
+                    continue;
+                }
+                if let Err(e) = crate::daemon::email_ingest_cron::run_email_ingest_tick(
+                    &home,
+                    &current.email_ingest_cron,
+                    &current,
+                )
+                .await
+                {
+                    warn!(error = %e, "email_ingest_cron tick error");
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
     // ── GOLD-FEAT-11 skill-curator cron (default OFF) ────────────────────
     let skill_curator_cron_handle =
         crate::cli::serve_tasks::spawn_skill_curator_cron(&config, &reload_controller);
@@ -1873,6 +1903,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         guidance_cron_handle,
         checkin_cron_handle,
         session_sort_cron_handle,
+        email_ingest_cron_handle,
         skill_curator_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
