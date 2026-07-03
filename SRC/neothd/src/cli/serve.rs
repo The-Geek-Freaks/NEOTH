@@ -640,12 +640,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // handler so gates can switch to Channel confirm strategy.
     let (confirm_bus, mut confirm_rx) =
         crate::permissions::confirm_bus::ConfirmBus::new();
-    // Capture the Telegram token + operator user-id for the drain task.
-    let drain_telegram_token = config.telegram_token.clone();
-    let drain_telegram_user_id = config.telegram_user_id;
+    // Late-read the Telegram token per request (ULTRA_REVIEW): a boot
+    // snapshot froze a rotated token into this task for the daemon's
+    // lifetime. `telegram_user_id` is reload-immutable but read from the
+    // same snapshot for consistency.
+    let drain_reload_controller = std::sync::Arc::clone(&reload_controller);
     let confirm_drain_task: Option<tokio::task::JoinHandle<()>> =
         Some(tokio::spawn(async move {
             while let Some(req) = confirm_rx.recv().await {
+                let drain_config = drain_reload_controller.latest();
+                let drain_telegram_token = drain_config.telegram_token.clone();
+                let drain_telegram_user_id = drain_config.telegram_user_id;
                 // Format a human-readable elicitation message with the UUID
                 // the operator must echo back as "yes <uuid>" or "no <uuid>".
                 let msg = format!(
@@ -689,6 +694,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // GOLD-ARCH-01: the channel-adapter bootstrap (Telegram polling + Slack
     // socket-mode + WhatsApp Meta webhook listener) is relocated to serve_tasks.
+    let confirm_bus = Some(confirm_bus);
     crate::cli::serve_tasks::spawn_channel_adapters(
         &config,
         &shared_provider,
@@ -701,9 +707,86 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &dispatch_join,
         &creds,
         &mut channel_tasks,
-        &Some(confirm_bus),
+        &confirm_bus,
         &views_executor, // GOLD-ADAPT-TRAIL-04: multi-reader executor
     );
+
+    // ── 5b-bis. Adapter-fleet reload supervisor (ULTRA_REVIEW wire-in) ─────
+    //
+    // Adapters freeze their credentials at construction (Telegram token,
+    // Slack bot+app tokens, WhatsApp app-secret, …) — Pick #39 made the
+    // per-message PIPELINE config live, but a rotated credential never
+    // reached a RUNNING listener: rotation required a daemon restart.
+    // On every successful `neoth reload` swap this supervisor aborts the
+    // whole channel fleet and respawns it from `latest()` + a FRESH
+    // credentials.yaml read. Abort-then-spawn (not spawn-then-abort) so
+    // two Telegram long-pollers never overlap (API 409) and webhook
+    // ports are free to rebind. Reloads are operator-invoked and rare;
+    // the seconds-long channel blip is the accepted cost.
+    let channel_tasks = std::sync::Arc::new(std::sync::Mutex::new(channel_tasks));
+    let channel_supervisor_task: tokio::task::JoinHandle<()> = {
+        let mut gen_rx = reload_controller.subscribe_generation();
+        let tasks = std::sync::Arc::clone(&channel_tasks);
+        let shared_provider = shared_provider.clone();
+        let writer = writer.clone();
+        let provider_meter = provider_meter.clone();
+        let rate_limiter = std::sync::Arc::clone(&rate_limiter);
+        let segment_path = segment_path.clone();
+        let shared_views_conn = shared_views_conn.clone();
+        let reload_controller = std::sync::Arc::clone(&reload_controller);
+        let dispatch_join = std::sync::Arc::clone(&dispatch_join);
+        let confirm_bus = confirm_bus.clone();
+        let views_executor = views_executor.clone();
+        tokio::spawn(async move {
+            while gen_rx.changed().await.is_ok() {
+                let generation = *gen_rx.borrow_and_update();
+                info!(
+                    generation,
+                    "config reloaded — respawning channel adapters with fresh credentials"
+                );
+                // 1. Abort + drain the old fleet (frees long-polls,
+                //    webhook binds, WS connections).
+                let old: Vec<tokio::task::JoinHandle<()>> = {
+                    let mut guard = tasks.lock().expect("channel_tasks mutex poisoned");
+                    std::mem::take(&mut *guard)
+                };
+                for t in &old {
+                    t.abort();
+                }
+                for t in old {
+                    let _ = t.await;
+                }
+                // 2. Respawn from the LATEST config + fresh credentials.
+                let fresh_config = reload_controller.latest();
+                let fresh_creds = crate::config::credentials::Credentials::load_or_default(
+                    &crate::config::credentials::default_path(),
+                )
+                .unwrap_or_default();
+                let mut new_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+                crate::cli::serve_tasks::spawn_channel_adapters(
+                    &fresh_config,
+                    &shared_provider,
+                    &writer,
+                    &provider_meter,
+                    &rate_limiter,
+                    &segment_path,
+                    &shared_views_conn,
+                    &reload_controller,
+                    &dispatch_join,
+                    &fresh_creds,
+                    &mut new_tasks,
+                    &confirm_bus,
+                    &views_executor,
+                );
+                let respawned = new_tasks.len();
+                {
+                    let mut guard = tasks.lock().expect("channel_tasks mutex poisoned");
+                    *guard = new_tasks;
+                }
+                info!(generation, adapters = respawned, "channel fleet respawned");
+            }
+        })
+    };
 
     // ── 5b-tris. Obsidian vault auto-sync (R-5 follow-up) ──────────────────
     //
@@ -1830,13 +1913,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     }
 
     // ── 6. Idle until shutdown signal arrives ──────────────────────────────
-    if channel_tasks.is_empty() {
-        info!("no channels configured; idling until shutdown signal");
-    } else {
-        info!(
-            channels = channel_tasks.len(),
-            "channels running; idling until shutdown signal (SIGTERM / Ctrl+C)"
-        );
+    {
+        let live_channels = channel_tasks
+            .lock()
+            .expect("channel_tasks mutex poisoned")
+            .len();
+        if live_channels == 0 {
+            info!("no channels configured; idling until shutdown signal");
+        } else {
+            info!(
+                channels = live_channels,
+                "channels running; idling until shutdown signal (SIGTERM / Ctrl+C)"
+            );
+        }
     }
     // Supervision fix (Agent 4 audit 2026-05-16): race the shutdown
     // signal against the WAL writer's join handle. Without this race,
@@ -1987,6 +2076,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let bg = crate::cli::serve_tasks::BackgroundHandles {
         worker_watch_handle,
         channel_tasks,
+        channel_supervisor_task,
         dispatch_join,
         cron_task,
         doctor_cron_task,

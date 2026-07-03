@@ -3975,7 +3975,12 @@ pub(crate) fn run_preflight_guards(
 /// separately (the idle-wait `select!` borrows `&mut writer_join` before the call).
 pub(crate) struct BackgroundHandles {
     pub worker_watch_handle: Option<JoinHandle<()>>,
-    pub channel_tasks: Vec<JoinHandle<()>>,
+    /// Shared with the adapter-fleet reload supervisor, which swaps the
+    /// vec's contents on every successful `neoth reload`.
+    pub channel_tasks: Arc<std::sync::Mutex<Vec<JoinHandle<()>>>>,
+    /// The fleet supervisor itself — aborted BEFORE the channel tasks
+    /// so a reload racing shutdown can't respawn into a dying daemon.
+    pub channel_supervisor_task: JoinHandle<()>,
     pub dispatch_join: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     pub cron_task: Option<JoinHandle<()>>,
     pub doctor_cron_task: Option<JoinHandle<()>>,
@@ -4131,6 +4136,7 @@ pub(crate) async fn shutdown_background_tasks(
     let BackgroundHandles {
         worker_watch_handle,
         channel_tasks,
+        channel_supervisor_task,
         dispatch_join,
         cron_task,
         doctor_cron_task,
@@ -4216,7 +4222,15 @@ pub(crate) async fn shutdown_background_tasks(
     // watched workers (below) is never mistaken for an unexpected death + alerted.
     crate::cli::serve_tasks::abort_optional(worker_watch_handle).await;
 
+    // Abort the fleet supervisor BEFORE the channel tasks — a reload
+    // racing shutdown must not respawn adapters into a dying daemon.
+    crate::cli::serve_tasks::abort_join(channel_supervisor_task).await;
+
     // Abort channel tasks first so they stop generating new WAL frames.
+    let channel_tasks: Vec<JoinHandle<()>> = {
+        let mut guard = channel_tasks.lock().expect("channel_tasks mutex poisoned");
+        std::mem::take(&mut *guard)
+    };
     for task in &channel_tasks {
         task.abort();
     }

@@ -90,6 +90,12 @@ pub struct ReloadController {
     /// the full parse. `None` means "not yet computed";
     /// `try_reload` populates it after every read.
     snapshot_hash: Arc<std::sync::Mutex<Option<u64>>>,
+    /// Reload-generation counter — bumped once per SUCCESSFUL swap
+    /// (`ReloadResult::Reloaded` only; Unchanged / Rejected leave it
+    /// alone). Long-lived consumers that freeze config at construction
+    /// (channel adapters) subscribe via [`Self::subscribe_generation`]
+    /// and rebuild on a bump.
+    generation_tx: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 impl ReloadController {
@@ -97,11 +103,21 @@ impl ReloadController {
     /// that `try_reload()` will re-read.
     pub fn new(initial: FreedomConfig, source_path: PathBuf) -> Self {
         let initial_hash = compute_snapshot_hash(&source_path).ok();
+        let (generation_tx, _initial_rx) = tokio::sync::watch::channel(0u64);
         Self {
             inner: Arc::new(ArcSwap::new(Arc::new(initial))),
             source_path,
             snapshot_hash: Arc::new(std::sync::Mutex::new(initial_hash)),
+            generation_tx: Arc::new(generation_tx),
         }
+    }
+
+    /// Subscribe to reload-generation bumps. `changed().await` fires
+    /// once per successful `try_reload` swap; read the new config via
+    /// [`Self::latest`] — the generation value itself is only a
+    /// monotonic tick.
+    pub fn subscribe_generation(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.generation_tx.subscribe()
     }
 
     /// Lock-free snapshot of the current config. Returns an `Arc`;
@@ -172,6 +188,10 @@ impl ReloadController {
 
         // Atomic swap. Lock-free, no reader contention.
         self.inner.store(Arc::new(candidate));
+
+        // Wake generation subscribers (adapter fleet supervisor) AFTER
+        // the store, so a woken consumer's `latest()` is the new config.
+        self.generation_tx.send_modify(|g| *g += 1);
 
         Ok(ReloadResult::Reloaded { changed_fields })
     }
@@ -463,6 +483,49 @@ mod tests {
             ctrl.latest().review_gate_enabled,
             !initial.review_gate_enabled,
             "latest() must reflect the swapped value"
+        );
+    }
+
+    #[test]
+    fn generation_bumps_only_on_reloaded() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        // Round-trip the current config to disk → Unchanged.
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        let ctrl = ReloadController::new(initial.clone(), yaml_path.clone());
+        let rx = ctrl.subscribe_generation();
+        assert_eq!(*rx.borrow(), 0);
+
+        assert!(matches!(
+            ctrl.try_reload().unwrap(),
+            ReloadResult::Unchanged
+        ));
+        assert_eq!(*rx.borrow(), 0, "Unchanged must not bump");
+
+        // Immutable-field edit → Rejected, still no bump.
+        let mut rejected = initial.clone();
+        rejected.operator_id = Some("attacker".into());
+        write_yaml(&yaml_path, &serde_yaml::to_string(&rejected).unwrap());
+        assert!(matches!(
+            ctrl.try_reload().unwrap(),
+            ReloadResult::Rejected { .. }
+        ));
+        assert_eq!(*rx.borrow(), 0, "Rejected must not bump");
+
+        // Tunable edit → Reloaded → bump, and latest() already reflects
+        // the new value when the subscriber wakes.
+        let mut tuned = initial.clone();
+        tuned.review_gate_enabled = !initial.review_gate_enabled;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&tuned).unwrap());
+        assert!(matches!(
+            ctrl.try_reload().unwrap(),
+            ReloadResult::Reloaded { .. }
+        ));
+        assert_eq!(*rx.borrow(), 1, "Reloaded must bump exactly once");
+        assert_eq!(
+            ctrl.latest().review_gate_enabled,
+            !initial.review_gate_enabled
         );
     }
 
