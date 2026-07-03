@@ -114,6 +114,9 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Nostr => Some(Box::new(NostrFormatter)),
         // iMessage renders plain text — same treatment as Signal.
         ChannelKind::IMessageBlueBubbles => Some(Box::new(SignalFormatter)),
+        // Google Chat renders plain text with a 4096-char message cap —
+        // same shape as Matrix, so it reuses that formatter.
+        ChannelKind::GoogleChat => Some(Box::new(MatrixFormatter)),
     }
 }
 

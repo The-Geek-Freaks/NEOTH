@@ -66,7 +66,7 @@ pub(crate) async fn step6_channel(
     } else if interactive {
         println!(
             "  [6/9] Telegram skipped. Add any channel later: `neoth channel add \
-             telegram|slack|whatsapp|keet|discord|signal|line|irc|imessage|mattermost`"
+             telegram|slack|whatsapp|keet|discord|signal|line|irc|imessage|mattermost|gchat`"
         );
     }
 

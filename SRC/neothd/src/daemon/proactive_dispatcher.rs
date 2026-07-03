@@ -342,7 +342,11 @@ pub(crate) fn plan_delivery(
         // client held by the serve loop): same constraint as Keet — the tick
         // can't construct them on demand, so routing destinations are stored
         // but delivery stays ledger-only until the daemon adapter is shared.
-        "matrix" | "irc" | "twitch" | "nostr" => DeliveryRoute::SidecarOnly,
+        // gchat additionally sits behind the `gchat-channel` cargo feature,
+        // which this always-compiled tick can't assume.
+        "matrix" | "irc" | "twitch" | "nostr" | "gchat" | "google_chat" => {
+            DeliveryRoute::SidecarOnly
+        }
         _ => DeliveryRoute::SidecarOnly,
     }
 }
@@ -1492,7 +1496,8 @@ mod tests {
         rt.destinations.irc_channel = Some("#neoth".to_string());
         rt.destinations.twitch_channel = Some("#chan".to_string());
         rt.destinations.nostr_recipient = Some("npub1x".to_string());
-        for ch in ["matrix", "irc", "twitch", "nostr"] {
+        rt.destinations.gchat_space = Some("spaces/AAAA".to_string());
+        for ch in ["matrix", "irc", "twitch", "nostr", "gchat", "google_chat"] {
             assert_eq!(
                 plan_delivery(ch, AutonomyLevel::Full, &cfg, &rt, &default_creds()),
                 DeliveryRoute::SidecarOnly,

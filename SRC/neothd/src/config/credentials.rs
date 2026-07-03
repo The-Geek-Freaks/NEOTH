@@ -234,6 +234,18 @@ pub struct Credentials {
     /// that may reach the pipeline. `None` = open (any sender in a watched chat).
     /// Checked via `sender_blocked_by_allowlist` (D2 gate). Not a secret.
     pub imessage_allowed_sender: Option<String>,
+    /// B9 — path to the GCP service-account JSON key for Google Chat (the key
+    /// FILE is the secret; this stores only its path). When present alongside
+    /// `gchat_subscription` (and the build carries the `gchat-channel`
+    /// feature), the daemon spawns the Pub/Sub pull loop. Not a secret.
+    pub gchat_service_account_json: Option<String>,
+    /// B9 — Pub/Sub pull subscription carrying the Chat app's events
+    /// (`projects/<p>/subscriptions/<s>`). Not a secret.
+    pub gchat_subscription: Option<String>,
+    /// D2 — operator sender allowlist for Google Chat (`users/<id>`). `None` ⇒
+    /// open; set ⇒ only this Google-asserted user id is accepted (others
+    /// dropped + audited 0x3B). Not a secret.
+    pub gchat_allowed_sender: Option<String>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -439,6 +451,9 @@ impl Credentials {
             bluebubbles_password,
             bluebubbles_chat_guid,
             imessage_allowed_sender,
+            gchat_service_account_json,
+            gchat_subscription,
+            gchat_allowed_sender,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -502,6 +517,9 @@ impl Credentials {
             && bluebubbles_password.is_none()
             && bluebubbles_chat_guid.is_none()
             && imessage_allowed_sender.is_none()
+            && gchat_service_account_json.is_none()
+            && gchat_subscription.is_none()
+            && gchat_allowed_sender.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

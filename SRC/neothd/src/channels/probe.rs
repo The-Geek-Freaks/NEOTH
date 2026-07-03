@@ -97,6 +97,10 @@ pub struct ChannelCredsView {
     pub nostr_key: bool,
     /// GOLD-FEAT-10 — Nostr relay list present.
     pub nostr_relays: bool,
+    /// B9 — Google Chat service-account JSON path present.
+    pub gchat_sa_json: bool,
+    /// B9 — Google Chat Pub/Sub subscription name present.
+    pub gchat_subscription: bool,
 }
 
 impl ChannelCredsView {
@@ -137,12 +141,14 @@ impl ChannelCredsView {
             twitch_oauth: creds.twitch_oauth_token.is_some(),
             nostr_key: creds.nostr_secret_key.is_some(),
             nostr_relays: creds.nostr_relays.is_some(),
+            gchat_sa_json: creds.gchat_service_account_json.is_some(),
+            gchat_subscription: creds.gchat_subscription.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 14] = [
+pub const ALL_CHANNELS: [ChannelKind; 15] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -157,6 +163,7 @@ pub const ALL_CHANNELS: [ChannelKind; 14] = [
     ChannelKind::Mattermost,
     ChannelKind::Twitch,
     ChannelKind::Nostr,
+    ChannelKind::GoogleChat,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -321,6 +328,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             _ => (
                 ProbeStatus::Error,
                 "Nostr needs BOTH nostr_secret_key AND nostr_relays",
+            ),
+        },
+        ChannelKind::GoogleChat => match (v.gchat_sa_json, v.gchat_subscription) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "gchat_service_account_json + gchat_subscription configured — NEOTH pulls the Pub/Sub subscription (no public URL); requires a `gchat-channel` feature build to start",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no gchat config"),
+            _ => (
+                ProbeStatus::Error,
+                "Google Chat needs BOTH gchat_service_account_json AND gchat_subscription",
             ),
         },
     };

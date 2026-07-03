@@ -175,6 +175,12 @@ irc-channel = ["dep:irc"]
 # in every build (they carry no `nostr-sdk` dependency); only the relay adapter
 # needs the feature.
 nostr-channel = ["dep:nostr-sdk"]
+# B9 — Google Chat via a GCP Pub/Sub PULL subscription (no public URL; NEOTH
+# dials out). Off by default — needs `jsonwebtoken` (ring RS256) for the
+# service-account JWT. The `ChannelKind::GoogleChat` variant + formatter +
+# probe row + the pure `gchat_api` mapping stay compiled in every build; only
+# the pull/send adapter needs the feature.
+gchat-channel = ["dep:jsonwebtoken"]
 
 [dependencies]
 # GOLD-FEAT-10 — IRC channel (optional, behind `irc-channel`). Tokio-native,
@@ -184,6 +190,9 @@ irc = { version = "1", default-features = false, features = ["tls-rust"], option
 # feature pulls the gift-wrap + NIP-44 encryption that NIP-17 private DMs need;
 # default features keep the tokio relay-pool + rustls WSS transport.
 nostr-sdk = { version = "0.44", features = ["nip59"], optional = true }
+# B9 — Google Chat channel (optional, behind `gchat-channel`). RS256 service-
+# account JWT signing; rides the ring 0.17 already in the tree (russh).
+jsonwebtoken = { version = "9", optional = true }
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
 serde              = { version = "1", features = ["derive"] }

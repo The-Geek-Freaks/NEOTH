@@ -550,10 +550,31 @@ pub fn stage_channel_add(
             creds.mattermost_url = Some(url);
             creds.mattermost_token = Some(SecretString::from(t.as_str()));
         }
+        "gchat" | "google_chat" => {
+            let path = require(
+                &fields.url,
+                "path to the GCP service-account JSON key (the file stays where it is)",
+            )?;
+            if !std::path::Path::new(&path).is_file() {
+                anyhow::bail!("service-account key not found at `{path}`");
+            }
+            let sub = require(
+                &fields.server,
+                "Pub/Sub subscription (projects/<p>/subscriptions/<s>)",
+            )?;
+            if !sub.starts_with("projects/") || !sub.contains("/subscriptions/") {
+                anyhow::bail!(
+                    "subscription must be the full resource name \
+                     `projects/<project>/subscriptions/<name>` (got `{sub}`)"
+                );
+            }
+            creds.gchat_service_account_json = Some(path);
+            creds.gchat_subscription = Some(sub);
+        }
         other => anyhow::bail!(
             "unknown channel `{other}`. Addable: telegram, slack, whatsapp, keet, discord, \
-             signal, line, irc, imessage, mattermost. `neoth channel list` shows configured \
-             state."
+             signal, line, irc, imessage, mattermost, gchat. `neoth channel list` shows \
+             configured state."
         ),
     }
     Ok(creds)
@@ -587,6 +608,8 @@ pub async fn run_add(channel: &str, output: &OutputFormat) -> Result<()> {
             | "imessage_bluebubbles"
             | "bluebubbles"
             | "mattermost"
+            | "gchat"
+            | "google_chat"
     ) {
         stage_channel_add(&chan, &ChannelAddFields::default(), base)?;
         return Ok(()); // unreachable — the line above always errors for these
@@ -668,6 +691,14 @@ fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
                 "Mattermost server URL (e.g. https://mm.example.com)",
             )?);
             f.token = Some(read_secret("Mattermost bot/personal-access token")?);
+        }
+        "gchat" | "google_chat" => {
+            f.url = Some(read_plain(
+                "Path to the GCP service-account JSON key (kept in place, only the path is stored)",
+            )?);
+            f.server = Some(read_plain(
+                "Pub/Sub subscription (projects/<p>/subscriptions/<s>)",
+            )?);
         }
         _ => {}
     }
@@ -780,10 +811,18 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.mattermost_allowed_user_id = None;
             had
         }
+        "gchat" | "google_chat" => {
+            let had =
+                creds.gchat_service_account_json.is_some() || creds.gchat_subscription.is_some();
+            creds.gchat_service_account_json = None;
+            creds.gchat_subscription = None;
+            creds.gchat_allowed_sender = None;
+            had
+        }
         other => anyhow::bail!(
             "unknown channel `{other}`. Removable: telegram, slack, whatsapp, keet, discord, \
-             signal, line, irc, imessage, mattermost. `neoth channel list` shows configured \
-             state."
+             signal, line, irc, imessage, mattermost, gchat. `neoth channel list` shows \
+             configured state."
         ),
     };
     Ok((creds, removed))
@@ -1283,6 +1322,54 @@ mod tests {
         let c = stage_channel_add("mattermost", &f, Credentials::default()).unwrap();
         assert_eq!(c.mattermost_url.as_deref(), Some("https://mm.example.com"));
         assert!(c.mattermost_token.is_some());
+    }
+
+    #[test]
+    fn stage_add_gchat_validates_key_path_and_subscription() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("sa.json");
+        std::fs::write(&key, "{}").unwrap();
+        let key_str = key.display().to_string();
+        // missing key file → err
+        let f = ChannelAddFields {
+            url: Some(dir.path().join("nope.json").display().to_string()),
+            server: Some("projects/p/subscriptions/s".into()),
+            ..Default::default()
+        };
+        assert!(stage_channel_add("gchat", &f, Credentials::default()).is_err());
+        // malformed subscription → err
+        let f = ChannelAddFields {
+            url: Some(key_str.clone()),
+            server: Some("my-sub".into()),
+            ..Default::default()
+        };
+        assert!(stage_channel_add("gchat", &f, Credentials::default()).is_err());
+        // good — both alias spellings
+        for alias in ["gchat", "google_chat"] {
+            let f = ChannelAddFields {
+                url: Some(key_str.clone()),
+                server: Some("projects/p/subscriptions/s".into()),
+                ..Default::default()
+            };
+            let c = stage_channel_add(alias, &f, Credentials::default()).unwrap();
+            assert_eq!(c.gchat_service_account_json.as_deref(), Some(key_str.as_str()));
+            assert_eq!(
+                c.gchat_subscription.as_deref(),
+                Some("projects/p/subscriptions/s")
+            );
+        }
+        // remove clears everything
+        let mut base = Credentials::default();
+        base.gchat_service_account_json = Some(key_str);
+        base.gchat_subscription = Some("projects/p/subscriptions/s".into());
+        base.gchat_allowed_sender = Some("users/1".into());
+        let (c, removed) = stage_channel_remove("gchat", base).unwrap();
+        assert!(removed);
+        assert!(
+            c.gchat_service_account_json.is_none()
+                && c.gchat_subscription.is_none()
+                && c.gchat_allowed_sender.is_none()
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ NEOTH exposes the same buddy through multiple surfaces. Channels are not second-
 | **Mattermost** | Self-hosted team chat. | WebSocket + REST, dial-out. |
 | **Nostr** | Decentralized encrypted DMs. | NIP-17 via relays (`nostr-channel` feature). |
 | **iMessage** | Apple-ecosystem messaging. | BlueBubbles server on a Mac, REST poll (dial-out). |
+| **Google Chat** | Workspace orgs. | GCP Pub/Sub PULL subscription, no public URL (`gchat-channel` feature). |
 | **Email** | Important-message detection, drafts, replies. | IMAP/OAuth provider adapters. |
 | **Calendar** | Read/create/update schedule items with approval. | CalDAV/Google-style adapters. |
 
@@ -63,7 +64,8 @@ they are sensitive ingest surfaces, not bot tokens.
 URL + own E.164 number · **line** channel access token (+ channel secret for
 inbound webhooks; blank = push-only) · **irc** server host, nick, optional
 NickServ password + channels csv · **imessage** BlueBubbles server URL +
-password · **mattermost** server URL + token. Optional hardening fields
+password · **mattermost** server URL + token · **gchat** path to the GCP
+service-account JSON key + Pub/Sub subscription name. Optional hardening fields
 (`irc_allowed_account`, `imessage_allowed_sender`, per-channel allowlists) are
 set directly in `credentials.yaml`. `test` live-checks telegram/slack/whatsapp/
 keet; the rest report configured state via `neoth channel list`.

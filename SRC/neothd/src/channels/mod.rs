@@ -39,6 +39,13 @@ pub mod keet_dht;
 pub mod keet_pairing;
 pub mod keet_udp;
 pub mod keet_wal;
+/// B9 — Google Chat via a GCP Pub/Sub PULL subscription (NEOTH dials out, no
+/// public URL). The pure wire types + event mapping (`gchat_api`) stay
+/// always-compiled; the pull/send adapter (`gchat`) is behind the
+/// `gchat-channel` feature (needs `jsonwebtoken` for the RS256 SA grant).
+#[cfg(feature = "gchat-channel")]
+pub mod gchat;
+pub mod gchat_api;
 /// GOLD-FEAT-10 — LINE Messaging API adapter. Inbound rides the shared webhook
 /// listener (LINE pushes events to a public URL); outbound goes through the
 /// push REST endpoint. Zero extra deps (pure reqwest + serde) → always
@@ -212,6 +219,12 @@ pub enum ChannelKind {
     /// The adapter dials OUT to the operator's Mac running BlueBubbles — no
     /// public URL needed. Sender handles are Apple-ID verified (LOW spoof risk).
     IMessageBlueBubbles,
+    /// B9 — Google Chat via a GCP Pub/Sub PULL subscription (no public URL).
+    /// The adapter module is behind the `gchat-channel` feature; this variant
+    /// + its formatter/probe row + the pure `gchat_api` mapping stay compiled
+    /// in every build. Sender ids are Google-asserted `users/<id>` (LOW spoof
+    /// risk).
+    GoogleChat,
 }
 
 impl ChannelKind {
@@ -231,6 +244,7 @@ impl ChannelKind {
             ChannelKind::Twitch => "twitch",
             ChannelKind::Nostr => "nostr",
             ChannelKind::IMessageBlueBubbles => "imessage_bluebubbles",
+            ChannelKind::GoogleChat => "gchat",
         }
     }
 }

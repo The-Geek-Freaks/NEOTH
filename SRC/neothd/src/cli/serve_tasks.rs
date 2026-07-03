@@ -3321,6 +3321,66 @@ pub(crate) fn spawn_channel_adapters(
         }
     }
 
+    // B9 — Google Chat via a GCP Pub/Sub PULL subscription (NEOTH dials OUT,
+    // no public URL). Compiled only in `--features gchat-channel` builds.
+    // Starts when gchat_service_account_json + gchat_subscription + a provider
+    // are all present.
+    #[cfg(feature = "gchat-channel")]
+    {
+        match (
+            creds.gchat_service_account_json.clone(),
+            creds.gchat_subscription.clone(),
+            shared_provider.as_ref(),
+        ) {
+            (Some(sa_path), Some(subscription), Some(provider)) => {
+                match crate::channels::gchat::GChatChannel::new(
+                    std::path::Path::new(&sa_path),
+                    subscription,
+                ) {
+                    Ok(channel) => {
+                        let channel = channel
+                            .with_allowlist(creds.gchat_allowed_sender.clone(), writer.clone());
+                        let handler: PipelineHandler = build_channel_handler(
+                            provider.clone(),
+                            config,
+                            writer,
+                            provider_meter,
+                            rate_limiter,
+                            segment_path,
+                            shared_views_conn,
+                            reload_controller,
+                            confirm_bus.clone(),
+                            views_executor.clone(),
+                        );
+                        spawn_channel_run(channel, handler, "GoogleChat", channel_tasks);
+                        info!(
+                            channel = "gchat",
+                            status = "LIVE",
+                            "channel: spawned (google chat pubsub pull loop)"
+                        );
+                    }
+                    Err(e) => warn!(
+                        channel = "gchat",
+                        status = "CONFIGURED-NOT-STARTED",
+                        error = %e,
+                        "Google Chat service-account key unreadable; channel not started"
+                    ),
+                }
+            }
+            (Some(_), Some(_), None) => warn!(
+                channel = "gchat",
+                status = "CONFIGURED-NOT-STARTED",
+                "Google Chat configured but provider unavailable; channel not started"
+            ),
+            (Some(_), None, _) | (None, Some(_), _) => warn!(
+                channel = "gchat",
+                status = "CONFIGURED-NOT-STARTED",
+                "Google Chat needs BOTH gchat_service_account_json and gchat_subscription; only one supplied — not started"
+            ),
+            (None, None, _) => {}
+        }
+    }
+
     // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
     // verify-token + app-secret + provider are all present. Listens on
     // 127.0.0.1:<whatsapp_webhook_port> (default 8443).
