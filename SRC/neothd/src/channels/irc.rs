@@ -155,11 +155,19 @@ impl IrcChannel {
 }
 
 /// Connect + identify a client. Owned (the caller's receive loop needs `&mut`
-/// for `stream()`).
-async fn connect(config: &Config) -> Result<Client> {
+/// for `stream()`). `extra_caps` are requested BEFORE `identify()` — the irc
+/// crate's `identify()` sends `CAP END`, and a `CAP REQ` issued after that is
+/// only honoured on networks with IRCv3.2 post-registration re-negotiation;
+/// requesting inside the negotiation window works everywhere.
+async fn connect(config: &Config, extra_caps: &[irc::client::prelude::Capability]) -> Result<Client> {
     let client = Client::from_config(config.clone())
         .await
         .context("irc connect")?;
+    if !extra_caps.is_empty() {
+        client
+            .send_cap_req(extra_caps)
+            .context("irc cap-req (pre-identify)")?;
+    }
     client.identify().context("irc identify")?;
     Ok(client)
 }
@@ -192,20 +200,23 @@ impl Channel for IrcChannel {
     /// restart-spin on a broken config); the irc crate retries transient
     /// line-level errors internally.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
-        let mut client = connect(&self.config).await.context("irc client init")?;
+        // B9 — hardened mode needs the server to attach `account=` tags to
+        // inbound messages. The cap is requested inside the registration
+        // window (before `CAP END`); a network that doesn't support it simply
+        // never tags, and every message is then dropped by the account gate
+        // below (fail-closed, never fail-open).
+        let caps: &[irc::client::prelude::Capability] = if self.allowed_account.is_some() {
+            &[irc::client::prelude::Capability::AccountTag]
+        } else {
+            &[]
+        };
+        let mut client = connect(&self.config, caps)
+            .await
+            .context("irc client init")?;
         // Publish the clonable send handle so `send_text` (a `&self` method that
         // can't reach this owned client) can send while the loop runs.
         let sender = client.sender();
         let _ = self.sender.set(sender.clone());
-        // B9 — hardened mode needs the server to attach `account=` tags to
-        // inbound messages. Request the cap up front; a network that doesn't
-        // support it simply never tags, and every message is then dropped by
-        // the account gate below (fail-closed, never fail-open).
-        if self.allowed_account.is_some() {
-            sender
-                .send_cap_req(&[irc::client::prelude::Capability::AccountTag])
-                .context("irc cap-req account-tag")?;
-        }
         let mut stream = client.stream().context("irc stream")?;
         info!(nick = %self.nick, "irc adapter live");
         while let Some(message) = stream.next().await.transpose().context("irc stream recv")? {

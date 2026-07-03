@@ -179,8 +179,10 @@ pub struct Credentials {
     /// value. Nick-only allowlists are trivially spoofable on public networks
     /// (`/nick` race); the account tag is asserted by the network's services
     /// (NickServ/SASL) and can't be forged by a nick change. Needs a network
-    /// with IRCv3 `account-tag` support (Libera, OFTC, …). `None` ⇒ nick-only
-    /// gating. Not a secret.
+    /// with IRCv3 `account-tag` support (Libera, OFTC, …). Compared EXACTLY
+    /// (case-sensitive) against the tag the network emits — use the account
+    /// name as the services registry stores it. `None` ⇒ nick-only gating.
+    /// Not a secret.
     pub irc_allowed_account: Option<String>,
     /// GOLD-FEAT-10 — Mattermost server base URL (e.g. `https://mm.example.com`).
     /// NEOTH dials out to the WebSocket API, so no public URL is needed. Not a

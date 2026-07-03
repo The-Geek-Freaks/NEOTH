@@ -239,9 +239,9 @@ pub(crate) enum DeliveryRoute {
 /// every channel. A channel with no token or no configured destination →
 /// `SidecarOnly` (the operator still sees it in the ledger). Wired:
 /// Telegram/Slack/Discord/WhatsApp + B9 Signal/LINE/Mattermost/iMessage
-/// (stateless HTTP adapters). Connection-bound channels (Keet/Matrix/IRC/
-/// Twitch/Nostr) stay `SidecarOnly` until the daemon's live adapter is
-/// shared with the tick.
+/// (stateless HTTP adapters). Connection-bound or feature-gated channels
+/// (Keet/Matrix/IRC/Twitch/Nostr/GoogleChat) stay `SidecarOnly` until the
+/// daemon's live adapter is shared with the tick.
 pub(crate) fn plan_delivery(
     channel: &str,
     autonomy: AutonomyLevel,

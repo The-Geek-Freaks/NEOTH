@@ -541,7 +541,15 @@ impl Channel for BlueBubblesChannel {
             .to_string();
         if let Some(c) = caption {
             if !c.trim().is_empty() {
-                self.post_text(chat_id, c).await?;
+                // The attachment is already delivered — a caption failure must
+                // NOT surface as Err, or the proactive tick would mark the item
+                // Failed and a retry would deliver the attachment twice.
+                if let Err(e) = self.post_text(chat_id, c).await {
+                    tracing::warn!(
+                        error = %e,
+                        "bluebubbles caption send failed after attachment delivery (dropped)"
+                    );
+                }
             }
         }
         Ok(MessageId(guid))

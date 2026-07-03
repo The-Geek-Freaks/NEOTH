@@ -94,6 +94,14 @@ impl GChatChannel {
         })?;
         let key: ServiceAccountKey =
             serde_json::from_str(&raw).context("parse gchat service-account JSON key")?;
+        // The signed JWT assertion is POSTed to token_uri — never let a
+        // tampered key file point that at a plaintext/internal endpoint.
+        if !key.token_uri.starts_with("https://") {
+            anyhow::bail!(
+                "gchat: token_uri in the service-account key must be an https:// URL \
+                 (got a non-https value)"
+            );
+        }
         // Security: never follow redirects — a redirect would forward the
         // Authorization bearer header to the redirect target.
         let http = crate::providers::http_client::build_client_no_redirect()
@@ -178,7 +186,12 @@ impl GChatChannel {
         Ok(tok.access_token)
     }
 
-    /// One `:pull` round trip. Empty vec on no traffic.
+    /// One `:pull` round trip. Empty vec on no traffic. Without the
+    /// deprecated `returnImmediately` flag the server long-polls ("may wait
+    /// for a bounded amount of time until at least one message is available"
+    /// — REST v1 `subscriptions.pull` docs), so an idle subscription costs
+    /// one request per server hold period, well inside the 120s client
+    /// timeout.
     async fn pull(&self) -> Result<PullResponse, ChannelError> {
         let bearer = self.bearer().await?;
         let url = format!(
@@ -290,6 +303,13 @@ impl Channel for GChatChannel {
                     continue;
                 }
             };
+            // The server MAY return early with an empty batch; a short pause
+            // keeps a fast-returning idle server from turning the long-poll
+            // loop into a hot spin (quota + billing guard).
+            if pulled.received_messages.is_empty() {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
             let mut ack_ids: Vec<String> = Vec::with_capacity(pulled.received_messages.len());
             for received in pulled.received_messages {
                 ack_ids.push(received.ack_id.clone());
@@ -384,9 +404,11 @@ mod tests {
     async fn bearer_rejects_invalid_pem_without_leaking_key() {
         let dir = tempfile::tempdir().unwrap();
         let key = dir.path().join("sa.json");
+        // PEM check fires BEFORE any network I/O — the https token_uri is
+        // never contacted.
         std::fs::write(
             &key,
-            r#"{"client_email":"bot@p.iam.gserviceaccount.com","private_key":"not-a-pem","token_uri":"http://127.0.0.1:1/token"}"#,
+            r#"{"client_email":"bot@p.iam.gserviceaccount.com","private_key":"not-a-pem","token_uri":"https://127.0.0.1:1/token"}"#,
         )
         .unwrap();
         let ch = GChatChannel::new(&key, "projects/p/subscriptions/s").unwrap();
@@ -394,5 +416,22 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("not a valid RSA PEM"), "clear diagnosis: {msg}");
         assert!(!msg.contains("not-a-pem"), "key material never echoed");
+    }
+
+    #[test]
+    fn new_rejects_non_https_token_uri() {
+        // Security review: a tampered key file must not point the signed JWT
+        // assertion at a plaintext/internal endpoint.
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("sa.json");
+        std::fs::write(
+            &key,
+            r#"{"client_email":"b@p","private_key":"x","token_uri":"http://169.254.169.254/token"}"#,
+        )
+        .unwrap();
+        let Err(err) = GChatChannel::new(&key, "projects/p/subscriptions/s") else {
+            panic!("non-https token_uri must be rejected");
+        };
+        assert!(err.to_string().contains("https://"), "{err}");
     }
 }

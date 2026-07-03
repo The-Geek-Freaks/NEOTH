@@ -16,6 +16,14 @@
 //! from the Chat event — authenticated by Google's infrastructure and
 //! delivered over an authenticated Pub/Sub pull, so it is LOW
 //! spoof-risk (comparable to iMessage handles, unlike raw IRC nicks).
+//!
+//! CAVEAT the code cannot enforce: the trust chain assumes ONLY Google
+//! Chat publishes to the topic. Anyone with `roles/pubsub.publisher`
+//! on the topic can inject crafted Chat-event JSON with an arbitrary
+//! `sender_id`. Operators must grant publisher on the topic ONLY to
+//! Google Chat's system account (`chat-api-push@system.gserviceaccount.com`)
+//! and keep the subscription's subscriber role limited to NEOTH's
+//! service account.
 
 use serde::Deserialize;
 
