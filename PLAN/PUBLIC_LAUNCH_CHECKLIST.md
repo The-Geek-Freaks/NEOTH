@@ -24,8 +24,19 @@ visitor hits.
 - [x] neothd Cargo.toml: repository placeholder fixed, crates.io
       description/keywords/categories set
 
-## Open — needs a human or a release event
+## Done — live and public
 
+- [x] **GitHub Release v1.0.0-beta.1 published** (2026-07-03) — public,
+      pre-release: https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.1
+- [x] **Discussions seeded** — Announcements ("NEOTH is public — start here"),
+      Q&A ("Q&A and claim checks"), Show-and-tell posts live.
+- [x] Repo topics + About description + docs/assets overhaul on public `main`.
+
+## Open — needs a human (browser login required, cannot be automated)
+
+- [ ] **THE traction trigger — Show HN + Reddit**: paste from
+      `PLAN/LAUNCH_KIT.md` (Tue-Thu ~15:00 UTC). Everything else is prep; this
+      is what actually pulls stars. Reply to comments the first 4 hours.
 - [ ] **Social preview upload**: PNG is rendered and committed at
       `.github/assets/neoth-social-preview.png` (1280×640). Just upload it via
       Settings → General → Social preview (no API for this — one manual click).
@@ -38,8 +49,8 @@ visitor hits.
 - [ ] **Verify license badge** on github.com shows both licenses after push
       (licensee runs server-side; if still NOASSERTION, check LICENSE-MIT
       wording against the exact MIT template)
-- [ ] **Discussions categories**: seed Welcome + Q&A + Show-and-tell, pin a
-      "start here" post
+- [x] **Discussions categories**: Announcements + Q&A + Show-and-tell seeded.
+      (Optionally pin the "start here" announcement via the web UI.)
 - [x] **Demo loops**: replaced the four raster GIFs with animated SVGs
       (install/memory/coding/privacy) — text-editable, accurate to current
       product (fixed the old GIFs' `cargo install neoth` and "six memory
