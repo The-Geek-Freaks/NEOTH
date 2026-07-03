@@ -6,21 +6,29 @@
 //!    `neoth email fetch` uses). Non-destructive `BODY.PEEK[]`. Gated on the
 //!    `imap_fetch` build feature; without it the tick is a no-op.
 //!
-//! 2. **Content scanner** — `security::content_scanner::scan_content` runs on
-//!    the email body BEFORE anything leaves the box.  Scanner error = fail-closed
-//!    (quarantined, not forwarded).
+//! 2. **Email triage** — `email::inbound::triage_inbound` runs the SAME
+//!    pipeline as `neoth email fetch`: SC-15 MIME/quoted-reply sanitizer →
+//!    ingress prompt-injection gate → PL-05 phishing scorer.  Quarantine /
+//!    DroppedAtSanitizer → quarantined; ReviewQueue → skipped (operator must
+//!    release — the cron never auto-acts on a borderline email); Deliver →
+//!    the SANITIZED `clean_body` is what continues downstream.
 //!
-//! 3. **Quarantine gate** — any HIGH finding → item written to
+//! 3. **Content scanner** — `security::content_scanner::scan_content` runs on
+//!    the clean body as the Paperless-specific malware gate (PDF/macro
+//!    patterns the phishing scorer doesn't cover).  Scanner error =
+//!    fail-closed (quarantined, not forwarded).
+//!
+//! 4. **Quarantine gate** — any HIGH finding → item written to
 //!    `~/.neoth/paperless_quarantine/` via `paperless::quarantine::quarantine_item`.
 //!    The document never reaches Paperless NGX or Obsidian until the operator
 //!    releases it via `neoth paperless quarantine show/list`.
 //!
-//! 4. **Paperless NGX upload** — clean documents POST to
+//! 5. **Paperless NGX upload** — clean documents POST to
 //!    `<paperless_url>/api/documents/post_document/` using the `paperless_token`
 //!    from `credentials.yaml` via `reqwest`.  Missing credentials → skip the
 //!    upload step (note still lands in Obsidian).
 //!
-//! 5. **Obsidian note** — `paperless::sync_ocr_to_obsidian` writes a markdown
+//! 6. **Obsidian note** — `paperless::sync_ocr_to_obsidian` writes a markdown
 //!    note to `<vault>/<subdir>/Paperless/<uid>.md` via the existing atomic-write
 //!    helper.  Requires `obsidian_vault` in `freedom.yaml`.
 //!
@@ -59,8 +67,11 @@ use crate::email::gmail::AuthMethod;
 #[cfg(feature = "imap_fetch")]
 use crate::email::gmail::{ImapConnectionConfig, GMAIL_IMAP_HOST, GMAIL_IMAP_PORT};
 #[cfg(feature = "imap_fetch")]
+use crate::email::inbound::{triage_inbound, InboundAction};
+#[cfg(feature = "imap_fetch")]
 use crate::paperless::quarantine::{
-    build_quarantine_item, build_quarantine_item_error, quarantine_item,
+    build_quarantine_item, build_quarantine_item_error, build_quarantine_item_triage,
+    quarantine_item,
 };
 #[cfg(feature = "imap_fetch")]
 use crate::security::content_scanner::scan_content;
@@ -247,6 +258,7 @@ pub async fn run_email_ingest_tick(
 
     let now_unix = crate::time::now_unix_secs() as i64;
     let mut quarantined = 0usize;
+    let mut review_queued = 0usize;
     let mut uploaded = 0usize;
     let mut vault_written = 0usize;
 
@@ -256,8 +268,53 @@ pub async fn run_email_ingest_tick(
         let from = &email.from;
         let body = &email.body;
 
-        // 3. Content scanner — runs BEFORE anything leaves the box.
-        let scan = scan_content(body);
+        // 3. Email triage — the SAME SC-15 sanitizer + ingress gate +
+        // PL-05 phishing scorer as `neoth email fetch`. Phishing-scored
+        // and quoted-reply-injection mail must never reach Paperless or
+        // the vault; everything downstream uses the sanitized clean_body.
+        let triage = triage_inbound(email);
+        match triage.action {
+            InboundAction::DroppedAtSanitizer | InboundAction::Quarantine => {
+                let item =
+                    build_quarantine_item_triage(uid, from, subject, now_unix, body, &triage);
+                match quarantine_item(neoth_home, &item) {
+                    Ok(path) => {
+                        warn!(
+                            uid,
+                            subject,
+                            action = triage.action.as_str(),
+                            score = ?triage.threat.as_ref().map(|t| t.score),
+                            path = %path.display(),
+                            "email_ingest_cron: quarantined by email triage"
+                        );
+                        quarantined += 1;
+                    }
+                    Err(e) => {
+                        warn!(uid, error = %e, "email_ingest_cron: triage-quarantine write failed — item dropped, not forwarded");
+                    }
+                }
+                continue; // Never reaches Paperless or Obsidian.
+            }
+            InboundAction::ReviewQueue => {
+                // Borderline (50 ≤ score < 80): the operator sees it via
+                // `neoth email fetch`; the unattended cron must not
+                // auto-forward it to the vault. Skip, no quarantine file.
+                warn!(
+                    uid,
+                    subject,
+                    score = ?triage.threat.as_ref().map(|t| t.score),
+                    "email_ingest_cron: review_queue — skipping Paperless/vault (operator review required)"
+                );
+                review_queued += 1;
+                continue;
+            }
+            InboundAction::Deliver => {}
+        }
+        let clean_body = triage.clean_body.as_str();
+
+        // 4. Content scanner — Paperless-specific malware gate (PDF/macro
+        // patterns) on the sanitized body, BEFORE anything leaves the box.
+        let scan = scan_content(clean_body);
 
         if scan.quarantine {
             let item =
@@ -281,9 +338,9 @@ pub async fn run_email_ingest_tick(
             continue; // Never reaches Paperless or Obsidian.
         }
 
-        // 4. Paperless NGX upload (if credentials present).
+        // 5. Paperless NGX upload (if credentials present).
         if let Some((ref url, ref token)) = paperless_creds {
-            match upload_to_paperless(url, token, subject, body).await {
+            match upload_to_paperless(url, token, subject, clean_body).await {
                 Ok(_) => {
                     info!(uid, subject, "email_ingest_cron: uploaded to Paperless NGX");
                     uploaded += 1;
@@ -294,10 +351,10 @@ pub async fn run_email_ingest_tick(
             }
         }
 
-        // 5. Obsidian note via existing ingest path (SC-16 sanitizer + vault write).
+        // 6. Obsidian note via existing ingest path (SC-16 sanitizer + vault write).
         if let Some(ref vault_path) = vault {
             let doc_id = sanitize_doc_id(uid);
-            match ingest_ocr_text(body, OcrSource::TesseractDirect, &doc_id) {
+            match ingest_ocr_text(clean_body, OcrSource::TesseractDirect, &doc_id) {
                 Ok(payload) => {
                     match crate::paperless::sync_ocr_to_obsidian(&payload, vault_path, &subdir) {
                         Ok(outcome) => {
@@ -337,6 +394,7 @@ pub async fn run_email_ingest_tick(
 
     info!(
         quarantined,
+        review_queued,
         uploaded,
         vault_written,
         "email_ingest_cron: tick complete"
@@ -451,6 +509,59 @@ mod tests {
         let list = list_quarantine_items(home.path()).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].uid, "fail-closed@test");
+    }
+
+    #[test]
+    fn phishing_email_quarantined_by_triage_before_vault() {
+        // ULTRA_REVIEW wave-2: the cron used to bypass triage_inbound —
+        // a phishing-scored email (PL-05) reached Paperless + the vault
+        // because scan_content only knows injection/malware patterns.
+        // Pin that the triage stage the cron now runs quarantines it
+        // and blanks the body (nothing to forward).
+        use crate::email::inbound::{extract_from_domain, triage_inbound, InboundAction, InboundEmail};
+        use crate::paperless::quarantine::{build_quarantine_item_triage, QuarantineReason};
+        let from = "Security <noreply@phisher.tk>";
+        let email = InboundEmail {
+            uid: "phish-cron@test".to_string(),
+            from: from.to_string(),
+            from_domain: extract_from_domain(from),
+            subject: "Urgent: Account Suspended".to_string(),
+            body: "Your account has been suspended. Verify your account and confirm your identity."
+                .to_string(),
+            attachment_filenames: vec![],
+            message_id: None,
+            auth_results: None,
+        };
+        let triage = triage_inbound(&email);
+        assert_eq!(
+            triage.action,
+            InboundAction::Quarantine,
+            "phishing email must be quarantined by the cron's triage gate; got {:?} (score {:?})",
+            triage.action,
+            triage.threat.as_ref().map(|t| t.score),
+        );
+        assert!(
+            triage.clean_body.is_empty(),
+            "Quarantine band must blank clean_body"
+        );
+        // The quarantine record carries the triage verdict + raw preview.
+        let home = tempfile::tempdir().unwrap();
+        let item = build_quarantine_item_triage(
+            email.dedup_key(),
+            &email.from,
+            &email.subject,
+            1_700_000_000,
+            &email.body,
+            &triage,
+        );
+        quarantine_item(home.path(), &item).unwrap();
+        let list = list_quarantine_items(home.path()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(matches!(
+            list[0].reason,
+            QuarantineReason::EmailTriage { .. }
+        ));
+        assert!(list[0].body_preview.contains("suspended"));
     }
 
     #[test]

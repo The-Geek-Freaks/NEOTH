@@ -39,6 +39,11 @@ pub enum QuarantineReason {
     HighSeverityFindings,
     /// The scanner itself returned an error — fail-closed.
     ScannerError { description: String },
+    /// The full email-triage pipeline (SC-15 sanitizer + PL-05 phishing
+    /// scorer) blocked it — `action` is the `InboundAction` band
+    /// (`dropped_at_sanitizer` / `quarantine`), `score` the PL-05 score
+    /// when the email reached the scorer.
+    EmailTriage { action: String, score: Option<u8> },
 }
 
 /// A quarantined email item persisted under the quarantine dir.
@@ -141,6 +146,32 @@ pub fn build_quarantine_item(
     }
 }
 
+/// Build a quarantine item from an email-triage verdict (the SC-15 +
+/// PL-05 pipeline said Quarantine / DroppedAtSanitizer). `body` is the
+/// RAW body — the preview must show the operator what actually arrived,
+/// not the blanked `clean_body`.
+pub fn build_quarantine_item_triage(
+    uid: impl Into<String>,
+    from: impl Into<String>,
+    subject: impl Into<String>,
+    received_unix: i64,
+    body: &str,
+    triage: &crate::email::inbound::InboundTriage,
+) -> QuarantineItem {
+    QuarantineItem {
+        uid: uid.into(),
+        from: from.into(),
+        subject: subject.into(),
+        received_unix,
+        reason: QuarantineReason::EmailTriage {
+            action: triage.action.as_str().to_string(),
+            score: triage.threat.as_ref().map(|t| t.score),
+        },
+        findings: vec![],
+        body_preview: body.chars().take(512).collect(),
+    }
+}
+
 /// Build a quarantine item for a scanner error (fail-closed path).
 pub fn build_quarantine_item_error(
     uid: impl Into<String>,
@@ -225,6 +256,7 @@ pub fn summarise_quarantine_items(neoth_home: &Path) -> Result<Vec<QuarantineSum
             let reason_kind = match &it.reason {
                 QuarantineReason::HighSeverityFindings => "high_severity_findings",
                 QuarantineReason::ScannerError { .. } => "scanner_error",
+                QuarantineReason::EmailTriage { .. } => "email_triage",
             };
             let high_finding_count = it
                 .findings
