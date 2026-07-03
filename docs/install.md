@@ -13,7 +13,7 @@ NEOTH 1.0 installs as a Rust operator runtime with an optional GUI. Normal users
 
 ## Path A: install from source (cargo)
 
-> ⚠️ Not yet on crates.io (`1.0.0-beta.2`) — `cargo install neoth` lands with the
+> ⚠️ Not yet on crates.io (`1.0.0-beta.3`) — `cargo install neoth` lands with the
 > 1.0 release. Until then, install from a source checkout:
 
 ```bash

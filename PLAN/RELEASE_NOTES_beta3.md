@@ -1,4 +1,4 @@
-# NEOTH 1.0.0-beta.2 — first public release candidate
+# NEOTH 1.0.0-beta.3 — first public release candidate
 
 **NEOTH is a local-first personal AI daemon in Rust.** One memory, three
 role-bound brain paths, five memory tiers plus your vault, and a signed audit
@@ -6,8 +6,9 @@ log for every sensitive action. Simple enough for a normal user (GUI wizard,
 no YAML), serious enough for an operator (CLI, local models, WAL, plugins,
 private mesh).
 
-This is the first public release candidate. Beta.2 supersedes beta.1 only to
-rebuild release artifacts with current GitHub macOS runner labels. It is not on crates.io yet
+This is the first public release candidate. Beta.3 supersedes beta.1/beta.2
+only to rebuild release artifacts with current GitHub macOS runner labels and
+portable macOS checksum generation. It is not on crates.io yet
 (`cargo install neoth` lands with 1.0) — install from source or the bootstrap
 script.
 

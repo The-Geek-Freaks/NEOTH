@@ -188,10 +188,13 @@ jobs:
             ARCHIVE_FILE="${ARCHIVE_NAME}.tar.gz"
           fi
 
-          # SHA-256 — sha256sum is available on Linux + macOS + Git-
-          # for-Windows bash. The output goes to a .sha256 sidecar
-          # that install-binary.{sh,ps1} verify against.
-          SHA256=$(sha256sum "${ARCHIVE_FILE}" | cut -d' ' -f1)
+          # SHA-256 sidecar for install-binary.{sh,ps1}. GNU sha256sum is on
+          # Linux and Git-for-Windows bash; macOS provides shasum instead.
+          if command -v sha256sum >/dev/null 2>&1; then
+            SHA256=$(sha256sum "${ARCHIVE_FILE}" | cut -d' ' -f1)
+          else
+            SHA256=$(shasum -a 256 "${ARCHIVE_FILE}" | cut -d' ' -f1)
+          fi
           echo "${SHA256}  ${ARCHIVE_FILE}" > "${ARCHIVE_FILE}.sha256"
 
           echo "archive=${ARCHIVE_FILE}" >> "$GITHUB_OUTPUT"

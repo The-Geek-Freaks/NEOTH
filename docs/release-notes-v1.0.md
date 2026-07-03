@@ -1,6 +1,6 @@
 # NEOTH 1.0 Release Notes
 
-> **Release stage: `1.0.0-beta.2`.** The v1.0 surface is substantially
+> **Release stage: `1.0.0-beta.3`.** The v1.0 surface is substantially
 > shipped and usable for real personal use, but this is a BETA, not the final
 > 1.0 — see **Known v1.0 gaps** below for the honest list of what is not yet
 > complete. Pre-release version on purpose; nothing here claims more than it
