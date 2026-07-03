@@ -100,33 +100,30 @@ pub fn run_proactive_drain_tick(home: &Path, now_unix: i64) -> Result<usize, Str
     if !queue_path.exists() {
         return Ok(0);
     }
-    let mut queue =
-        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
-    if queue.is_empty() {
-        return Ok(0);
-    }
-    let len_before = queue.len();
-    let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
-    if drained.is_empty() {
-        // Either daily-budget exhausted OR cap=0 OR every item is
-        // future-scheduled. JV-PRO-10: drain may still have pruned expired
-        // items — persist the smaller queue so dead items don't accumulate.
-        if queue.len() < len_before {
-            queue
-                .save_to(&queue_path)
-                .map_err(|e| format!("queue save after ttl-prune failed: {e}"))?;
-        }
-        return Ok(0);
-    }
-
     let sidecar_path = home.join(PROACTIVE_DELIVERED_SIDECAR);
-    append_to_sidecar(&sidecar_path, &drained, now_unix)
-        .map_err(|e| format!("sidecar append failed: {e}"))?;
-
-    queue
-        .save_to(&queue_path)
-        .map_err(|e| format!("queue save after drain failed: {e}"))?;
-    Ok(drained.len())
+    // Review H-1 — the whole load→drain→append→save cycle holds the
+    // process-global queue lock, so a concurrent producer enqueue can no
+    // longer be lost to this tick's save. No network I/O in this path.
+    ProactiveQueue::modify(&queue_path, |queue| {
+        if queue.is_empty() {
+            return (false, Ok(0));
+        }
+        let len_before = queue.len();
+        let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
+        if drained.is_empty() {
+            // Either daily-budget exhausted OR cap=0 OR every item is
+            // future-scheduled. JV-PRO-10: drain may still have pruned
+            // expired items — persist the smaller queue then.
+            return (queue.len() < len_before, Ok(0));
+        }
+        if let Err(e) = append_to_sidecar(&sidecar_path, &drained, now_unix) {
+            // Not persisted → the batch re-drains next tick (at-least-once,
+            // same semantics as before the lock landed).
+            return (false, Err(format!("sidecar append failed: {e}")));
+        }
+        (true, Ok(drained.len()))
+    })
+    .map_err(|e| format!("queue load/save failed: {e}"))?
 }
 
 fn append_to_sidecar(
@@ -372,11 +369,12 @@ fn evict_inflight_claimed(
     queue: &mut crate::proactive::ProactiveQueue,
     sidecar_path: &Path,
     now_unix: i64,
-) {
+) -> Vec<String> {
+    let mut evicted_keys: Vec<String> = Vec::new();
     let dir = home.join(PROACTIVE_INFLIGHT_DIR);
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
-        Err(_) => return, // Dir missing → nothing to evict.
+        Err(_) => return evicted_keys, // Dir missing → nothing to evict.
     };
     use std::io::Write;
     let mut f_opt: Option<std::fs::File> = None;
@@ -404,8 +402,11 @@ fn evict_inflight_claimed(
                 continue;
             }
         };
-        // Evict from the in-memory queue (no-op if already absent).
+        // Evict from the in-memory queue (no-op if already absent). The key
+        // is tracked so the H-1 reconcile commit removes it from the FRESH
+        // queue too at the tick's save point.
         queue.remove_by_key(&item.dedup_key);
+        evicted_keys.push(item.dedup_key.clone());
         // Append crash_recovered sidecar line.
         let line = serde_json::to_string(&serde_json::json!({
             "delivered_at_unix": now_unix,
@@ -453,6 +454,7 @@ fn evict_inflight_claimed(
     if let Some(mut f) = f_opt {
         let _ = f.flush();
     }
+    evicted_keys
 }
 
 /// G-01 delivery tick — drains the queue + ACTUALLY SENDS each item to the
@@ -557,20 +559,27 @@ pub async fn run_proactive_delivery_tick(
     // Evict any surviving claim files from a previous crashed tick BEFORE
     // draining — so those keys are gone and cannot be re-drained.
     let sidecar_path = home.join(PROACTIVE_DELIVERED_SIDECAR);
-    evict_inflight_claimed(home, &mut queue, &sidecar_path, now_unix);
+    let evicted_keys = evict_inflight_claimed(home, &mut queue, &sidecar_path, now_unix);
 
-    if queue.is_empty() {
+    if queue.is_empty() && evicted_keys.is_empty() {
         return Ok(0);
     }
     let len_before = queue.len();
     let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
     if drained.is_empty() {
-        // JV-PRO-10: drain may have pruned expired items even when nothing
-        // was eligible to fire — persist the smaller queue.
-        if queue.len() < len_before {
-            queue
-                .save_to(&queue_path)
-                .map_err(|e| format!("queue save after ttl-prune failed: {e}"))?;
+        // JV-PRO-10: drain may have pruned expired items (or eviction may
+        // have removed crashed claims) even when nothing was eligible to
+        // fire — reconcile those removals against the FRESH queue (H-1:
+        // never blind-save the working copy over concurrent enqueues).
+        if queue.len() < len_before || !evicted_keys.is_empty() {
+            ProactiveQueue::modify(&queue_path, |fresh| {
+                for key in &evicted_keys {
+                    fresh.remove_by_key(key);
+                }
+                let pruned = fresh.prune_expired(now_unix);
+                (pruned > 0 || !evicted_keys.is_empty(), ())
+            })
+            .map_err(|e| format!("queue save after ttl-prune failed: {e}"))?;
         }
         return Ok(0);
     }
@@ -796,10 +805,23 @@ pub async fn run_proactive_delivery_tick(
 
     // Saved LAST — at-most-once across a mid-send crash (claim files
     // handle the crash window; this save removes items from the queue
-    // file so they don't re-drain on the next tick).
-    queue
-        .save_to(&queue_path)
-        .map_err(|e| format!("queue save after delivery failed: {e}"))?;
+    // file so they don't re-drain on the next tick). Review H-1: the save
+    // RECONCILES against the freshly reloaded queue instead of blind-
+    // saving the pre-delivery working copy — items producers enqueued
+    // while the channel sends ran survive; delivered/evicted keys are
+    // removed and the drain budget is recorded on the fresh state.
+    let removed_keys: Vec<String> = evicted_keys
+        .iter()
+        .cloned()
+        .chain(records.iter().map(|(item, _)| item.dedup_key.clone()))
+        .collect();
+    let budget_used = records.len();
+    ProactiveQueue::modify(&queue_path, |fresh| {
+        fresh.commit_drain(&removed_keys, budget_used, now_unix);
+        fresh.prune_expired(now_unix);
+        (true, ())
+    })
+    .map_err(|e| format!("queue save after delivery failed: {e}"))?;
 
     // CLAW-01: claims are deleted ONLY now — after the queue save is durable.
     // A crash before the save leaves EVERY in-flight claim on disk, so the

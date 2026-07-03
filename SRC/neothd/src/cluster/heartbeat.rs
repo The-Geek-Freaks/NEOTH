@@ -301,6 +301,16 @@ pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
             body.task_id.len()
         );
     }
+    // Review C-1 (2026-07-03): task_id flows into WAL payloads, dedup keys
+    // and operator-channel notice bodies — a remote peer must not be able to
+    // smuggle newlines/markup through it. Strict charset, fail-closed.
+    if !body
+        .task_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    {
+        anyhow::bail!("task_delegate: task_id contains non [A-Za-z0-9._:-] characters");
+    }
     if body.prompt.is_empty() {
         anyhow::bail!("task_delegate: empty prompt");
     }
@@ -688,6 +698,29 @@ mod tests {
                 model_hint: Some("x".repeat(MAX_TASK_ID_BYTES + 1)),
             })
             .is_err()
+        );
+
+        // Review C-1: task_id flows into WAL payloads, dedup keys and
+        // operator-channel bodies — hostile charsets are rejected outright.
+        for bad in ["t\nx", "t\"x", "t}x", "täsk", "t x", "<b>t</b>"] {
+            assert!(
+                validate_task_delegate(&TaskDelegateBody {
+                    task_id: bad.into(),
+                    prompt: "p".into(),
+                    model_hint: None,
+                })
+                .is_err(),
+                "task_id {bad:?} must be rejected"
+            );
+        }
+        // The full legal charset passes.
+        assert!(
+            validate_task_delegate(&TaskDelegateBody {
+                task_id: "task-42_v1.0:retry".into(),
+                prompt: "p".into(),
+                model_hint: None,
+            })
+            .is_ok()
         );
     }
 

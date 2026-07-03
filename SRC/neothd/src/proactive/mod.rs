@@ -135,9 +135,31 @@ pub struct ProactiveQueue {
     pub config: ProactiveConfig,
 }
 
+/// Review H-1 (2026-07-03) — process-global lock serialising every
+/// load→mutate→save cycle on `proactive_queue.json`. Producers (cluster
+/// accept notices, crons) and the drain loop all run in the daemon
+/// process; without it two overlapping cycles silently lose the slower
+/// writer's update (atomic rename prevents torn FILES, not lost updates).
+/// Callers use [`ProactiveQueue::modify`]; bare `load_from`/`save_to`
+/// stays for single-writer contexts (tests, one-shot CLI).
+static QUEUE_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl ProactiveQueue {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Locked load→mutate→save cycle. `f` returns `(persist, out)` —
+    /// `persist=false` skips the write for no-op mutations. A missing
+    /// file loads as the empty queue (same contract as `load_from`).
+    pub fn modify<T>(path: &Path, f: impl FnOnce(&mut Self) -> (bool, T)) -> Result<T> {
+        let _guard = QUEUE_FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let mut queue = Self::load_from(path)?;
+        let (persist, out) = f(&mut queue);
+        if persist {
+            queue.save_to(path)?;
+        }
+        Ok(out)
     }
 
     pub fn with_config(config: ProactiveConfig) -> Self {
@@ -227,6 +249,29 @@ impl ProactiveQueue {
             self.drained_at.push(now_unix);
         }
         out
+    }
+
+    /// Review H-1 — reconcile a completed drain against the FRESH on-disk
+    /// queue: remove every delivered/evicted key and record `budget_used`
+    /// drain timestamps. Used inside [`Self::modify`] at the delivery
+    /// tick's save point so items producers enqueued WHILE sends ran are
+    /// never lost to a blind save of the pre-delivery working copy.
+    pub fn commit_drain(&mut self, removed_keys: &[String], budget_used: usize, now_unix: i64) {
+        for key in removed_keys {
+            self.remove_by_key(key);
+        }
+        for _ in 0..budget_used {
+            self.drained_at.push(now_unix);
+        }
+    }
+
+    /// JV-PRO-10 expiry prune, callable outside `drain` (the reconcile
+    /// path re-prunes the fresh queue). Returns the number dropped.
+    pub fn prune_expired(&mut self, now_unix: i64) -> usize {
+        let before = self.items.len();
+        self.items
+            .retain(|i| i.expires_unix == 0 || i.expires_unix > now_unix);
+        before - self.items.len()
     }
 
     /// Peek at items currently in the queue (immutable view). Useful
@@ -538,5 +583,50 @@ mod tests {
             7,
             "with max_per_day=10 + cap=99, all 7 queued items drain",
         );
+    }
+
+    // ── Review H-1 — locked modify + reconcile commit ────────────────────────
+
+    #[test]
+    fn commit_drain_preserves_concurrent_enqueue() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("proactive_queue.json");
+
+        // Tick loads a queue holding A+B and drains A in its working copy…
+        let mut q = ProactiveQueue::new();
+        q.enqueue(item(50, "a", "test"));
+        q.enqueue(item(50, "b", "test"));
+        q.save_to(&path).expect("seed save");
+
+        // …while delivery runs, a producer lands C on disk…
+        ProactiveQueue::modify(&path, |fresh| (fresh.enqueue(item(50, "c", "test")), ()))
+            .expect("producer enqueue");
+
+        // …and the tick's save reconciles instead of blind-saving.
+        ProactiveQueue::modify(&path, |fresh| {
+            fresh.commit_drain(&["a".to_string()], 1, 1_800_000_000);
+            (true, ())
+        })
+        .expect("commit");
+
+        let after = ProactiveQueue::load_from(&path).expect("reload");
+        let keys: Vec<&str> = after.peek().iter().map(|i| i.dedup_key.as_str()).collect();
+        assert_eq!(keys, vec!["b", "c"], "delivered A removed; concurrent C survives");
+        assert_eq!(
+            after.budget_left(1_800_000_000),
+            after.config.max_per_day - 1,
+            "the drain budget entry survives the reconcile"
+        );
+    }
+
+    #[test]
+    fn prune_expired_drops_only_dead_items() {
+        let mut q = ProactiveQueue::new();
+        q.enqueue(ProactiveItem { expires_unix: 100, ..item(50, "dead", "test") });
+        q.enqueue(ProactiveItem { expires_unix: 0, ..item(50, "evergreen", "test") });
+        q.enqueue(ProactiveItem { expires_unix: 500, ..item(50, "alive", "test") });
+        assert_eq!(q.prune_expired(200), 1);
+        let keys: Vec<&str> = q.peek().iter().map(|i| i.dedup_key.as_str()).collect();
+        assert_eq!(keys, vec!["evergreen", "alive"]);
     }
 }

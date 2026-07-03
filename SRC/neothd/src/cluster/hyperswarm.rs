@@ -1075,32 +1075,28 @@ async fn notify_task_accepted(neoth_home: &std::path::Path, task_id: &str, peer_
     let peer_short: String = peer_pk_hex.chars().take(16).collect();
     let join = tokio::task::spawn_blocking(move || {
         let queue_path = home.join("proactive_queue.json");
-        let mut queue = match crate::proactive::ProactiveQueue::load_from(&queue_path) {
-            Ok(q) => q,
-            Err(e) => {
-                warn!(error = %e, task_id = %task_id,
-                    "cluster: proactive queue unreadable — accept notice dropped");
-                return;
-            }
-        };
-        let inserted = queue.enqueue(crate::proactive::ProactiveItem {
+        let item = crate::proactive::ProactiveItem {
             priority: 50,
             dedup_key: format!("cluster:accept:{task_id}"),
             channel: String::new(), // operator's default channel
             source: "cluster_task_accept".to_string(),
             body: format!(
-                "Cluster: task {task_id} accepted from peer {peer_short}\u{2026} — running locally."
+                "Cluster: task {task_id} accepted from peer {peer_short}... — running locally."
             ),
             scheduled_for_unix: 0,
             is_failure: false,
             // A day-old "accepted" notice is stale noise — expire it.
-            expires_unix: now_unix_secs() as i64 + 86_400,
-        });
-        if !inserted {
-            return; // duplicate accept (re-delivered frame) — prior item wins
-        }
-        match queue.save_to(&queue_path) {
-            Ok(()) => debug!(task_id = %task_id, "cluster: proactive accept notice queued"),
+            expires_unix: (now_unix_secs() as i64).saturating_add(86_400),
+        };
+        // H-1: locked load→enqueue→save so a concurrent drain tick can't
+        // lose this notice. `false` from enqueue = duplicate accept
+        // (re-delivered frame) — prior item wins, nothing written.
+        match crate::proactive::ProactiveQueue::modify(&queue_path, |q| {
+            let inserted = q.enqueue(item);
+            (inserted, inserted)
+        }) {
+            Ok(true) => debug!(task_id = %task_id, "cluster: proactive accept notice queued"),
+            Ok(false) => {}
             Err(e) => warn!(error = %e, task_id = %task_id,
                 "cluster: proactive accept notice not persisted"),
         }
