@@ -91,6 +91,7 @@ pub mod jobs;
 pub mod kanban;
 pub mod keys;
 pub mod lease;
+pub mod loop_cmd;
 pub mod mcp;
 pub mod memory;
 pub mod eval;
@@ -254,6 +255,12 @@ pub enum Commands {
     /// skills, daemon crons, CLI + slash commands) from the self-wiki map.
     /// `--kind skill|cron|cli|slash`, `--search <keyword>`, `--output json`.
     Capabilities(capabilities::CapabilitiesArgs),
+
+    /// GOLD-LOOP-02/07 — run a multi-round autonomous loop on a prompt
+    /// (`neoth loop run "<prompt>" -n 5 --until "<criterion>" --level l2`)
+    /// or inspect past runs (`neoth loop history`, `neoth loop show <id>`).
+    /// L3 requires `--budget`. Same engine as `neoth chat --loop`.
+    Loop(loop_cmd::LoopArgs),
 
     /// GOLD-ADOPT-23 — open a TTL-bounded risk-confirm window so the next
     /// risk-gate-blocked tool call proceeds. Sugar over the `operator`
@@ -1124,6 +1131,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Capabilities(mut args) => {
             args.output = global_output;
             capabilities::run_capabilities(args)?;
+        }
+        Commands::Loop(mut args) => {
+            args.output = global_output;
+            loop_cmd::run_loop_cmd(args).await?;
         }
         Commands::Edit(args) => {
             // The freedom.yaml::tokens fields apply when not overridden on the

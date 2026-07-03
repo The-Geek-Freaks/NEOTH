@@ -9,6 +9,8 @@
 ///
 /// This module is **not** agentic itself — it purely orchestrates the
 /// existing agentic primitives in a converge loop.
+pub mod autonomy;
 pub mod engine;
 
+pub use autonomy::LoopAutonomyLevel;
 pub use engine::{run_loop, LoopConfig, LoopRunRecord, LoopRound, LoopState, StopReason};

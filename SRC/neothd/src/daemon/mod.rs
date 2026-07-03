@@ -177,6 +177,12 @@ pub mod arxiv_skill_scan_cron;
 /// WAL-free (groundtruth insert is the durable record).  Off by default
 /// (`obsidian_vault_reader_enabled = false`).
 pub mod obsidian_vault_reader_cron;
+/// GOLD-ADAPT-ODY-26 — session auto-sort cron. Prunes throwaway
+/// [`HindsightCard`]s, then calls an LLM to group remaining sessions into
+/// topic folders (persisted as `"folder:<name>"` tags in `top_topics`).
+/// WAL-free. Off by default (`session_sort_cron.enabled = false`).
+/// Exposes [`session_sort_cron::folders_view`] for `neoth sessions --folders`.
+pub mod session_sort_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

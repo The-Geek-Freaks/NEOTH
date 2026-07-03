@@ -89,6 +89,12 @@ pub struct RecallArgs {
     #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check"])]
     pub sessions: Option<String>,
 
+    /// GOLD-ADAPT-ODY-26 — render past sessions grouped into topic folders
+    /// (assigned by the session-sort cron; ungrouped sessions listed below).
+    /// Read-only view over the hindsight cards.
+    #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions"])]
+    pub session_folders: bool,
+
     /// GOLD-ADAPT-MEM-09 — classify how much recall a query warrants (`skip` /
     /// `single` / `multi`) and print the verdict instead of searching. Lets an
     /// operator see why a trivial status/identity query would skip recall.
@@ -185,6 +191,18 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // HindsightCards (no DB, no WAL, no network) and ranks them by query.
     if let Some(q) = args.sessions.clone() {
         return run_session_search(&q, args.limit, args.output);
+    }
+
+    // GOLD-ADAPT-ODY-26 topic-folder view short-circuit — the read side of
+    // the session-sort cron (folder tags live on the cards' top_topics).
+    if args.session_folders {
+        let home = FreedomConfig::default_neoth_home();
+        let cards = crate::memory::hindsight::list_cards(&home);
+        print!(
+            "{}",
+            crate::daemon::session_sort_cron::folders_view(&cards)
+        );
+        return Ok(());
     }
 
     // GOLD-ADAPT-ODY-26 raw-transcript FTS short-circuit. Opens views.db and
@@ -1915,6 +1933,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            session_folders: false,
             transcript: None,
             context_rows: 2,
             classify: None,
@@ -2200,6 +2219,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            session_folders: false,
             transcript: None,
             context_rows: 2,
             classify: None,
@@ -2240,6 +2260,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            session_folders: false,
             transcript: None,
             context_rows: 2,
             classify: None,
@@ -2280,6 +2301,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            session_folders: false,
             transcript: None,
             context_rows: 2,
             classify: None,
@@ -2497,6 +2519,7 @@ mod tests {
             similar_kind: "image".to_string(),
             citation_check: None,
             sessions: None,
+            session_folders: false,
             transcript: None,
             context_rows: 2,
             classify: None,

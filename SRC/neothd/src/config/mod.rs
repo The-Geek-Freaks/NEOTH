@@ -712,6 +712,15 @@ pub struct FreedomConfig {
     /// Loopback-only; default OFF (`enabled: false`). Port defaults to 9745.
     #[serde(default)]
     pub companion: CompanionConfig,
+    /// GOLD-ADAPT-ODY-26 — session auto-sort cron. When `enabled`, a daily
+    /// background cron prunes throwaway [`HindsightCard`]s and calls an LLM
+    /// to group remaining sessions into topic folders (persisted as
+    /// `"folder:<name>"` entries in `top_topics`). Default OFF (LLM call per
+    /// tick, opt-in). `dry_run: true` simulates without writing.
+    ///
+    /// [`HindsightCard`]: crate::memory::hindsight::HindsightCard
+    #[serde(default)]
+    pub session_sort_cron: crate::config::automation::SessionSortCronConfig,
     /// PC-01 — OS-tool surface (file/folder access). Default DENY-ALL: an
     /// empty `tools.os.allowed_paths` means NEOTH can read no operator file.
     /// Operators at `elevated`/`full` autonomy opt in by listing absolute

@@ -1360,6 +1360,31 @@ Revoke a lease by id (full id or a unique prefix)
 
 - `<ID>` — Lease id (or unique prefix) from `neoth lease list`
 
+## `neoth loop`
+
+GOLD-LOOP-02/07 — run a multi-round autonomous loop on a prompt (`neoth loop run "<prompt>" -n 5 --until "<criterion>" --level l2`) or inspect past runs (`neoth loop history`, `neoth loop show <id>`). L3 requires `--budget`. Same engine as `neoth chat --loop`
+
+### `neoth loop history`
+
+List past loop runs (from `~/.neoth/loops/`)
+
+### `neoth loop run`
+
+Run a multi-round autonomous loop on a prompt
+
+- `<PROMPT>` — The task prompt the loop iterates on
+- `-n, --iterations <ITERATIONS>` — Max outer rounds (default: freedom.yaml `loop.max_rounds`)
+- `--until <UNTIL>` — Structural stop criterion (repeatable) — the stop verifier gates convergence on these at L2+
+- `--critique <CRITIQUE>` — Enable the self-reflect critique/refine pass each round (L2+)
+- `--budget <BUDGET>` — Cumulative tool-call budget across all rounds (MANDATORY at l3)
+- `--level <LEVEL>` — Loop autonomy level: l1 (bounded iterate), l2 (verifier + refine), l3 (full — requires --budget). Default: the session autonomy
+
+### `neoth loop show`
+
+Show one loop-run record by id (unique prefix accepted)
+
+- `<ID>` — The loop id (or a unique prefix of it) as shown by `history`
+
 ## `neoth mcp`
 
 Model Context Protocol (MCP) client operations. `list` shows configured servers from `~/.neoth/mcp_servers.yaml`; `tools <server>` spawns the server + dumps its tool catalogue; `call <server> <tool> [--args JSON]` invokes one tool
@@ -2108,6 +2133,7 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--similar-kind <KIND>` — Optional kind filter for `--similar-to{,-text}`. Defaults to `image`. Use `any` to search across every stored kind
 - `--citation-check <TEXT>` — QM-18 citation-check: run the offline citation-extraction + contamination heuristics against the supplied text and report findings. Bypasses recall search entirely; no DB / no WAL / no network. Use `--citation-check -` to read from stdin
 - `--sessions <TEXT>` — GOLD-ADAPT-ODY-25 — search past session cards (title / ranked topics / one-line summary / opening+closing utterance) for this query and print the matching sessions ranked by relevance. NEOTH compresses transcripts into cards, so this finds *which session* discussed something rather than raw transcript lines. Bypasses episode recall entirely
+- `--session-folders <SESSION_FOLDERS>` — GOLD-ADAPT-ODY-26 — render past sessions grouped into topic folders (assigned by the session-sort cron; ungrouped sessions listed below). Read-only view over the hindsight cards
 - `--classify <TEXT>` — GOLD-ADAPT-MEM-09 — classify how much recall a query warrants (`skip` / `single` / `multi`) and print the verdict instead of searching. Lets an operator see why a trivial status/identity query would skip recall
 - `--downvote <EVENT_ID>` — GOLD-ADAPT-MEM-08 — operator negative feedback: weaken the importance of the memory with this `event_id` (asymmetric Hebbian −0.10, floored at 0) across whichever tier holds it. Bypasses search
 - `--graph <ENTITY>` — GOLD-ADAPT-MEM-06 — knowledge-graph query: print the entities reachable from this entity name within `--graph-depth` hops (BFS over the extracted entity/relation graph). Bypasses search

@@ -1264,3 +1264,46 @@ impl Default for CompanionConfig {
         }
     }
 }
+
+/// GOLD-ADAPT-ODY-26 — session auto-sort cron config.
+///
+/// When `enabled`, a background cron (default 24h) loads all [`HindsightCard`]s,
+/// prunes unambiguous throwaway sessions, and calls an LLM to group the
+/// remaining sessions into topic folders. Folder assignments persist via a
+/// `"folder:<name>"` synthetic topic tag on each card.
+///
+/// Default OFF — makes an LLM call per tick, opt-in only.
+/// `dry_run: true` loads + prunes + groups but writes nothing to disk.
+///
+/// [`HindsightCard`]: crate::memory::hindsight::HindsightCard
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SessionSortCronConfig {
+    /// Master switch. Default `false` (opt-in — makes one LLM call per tick).
+    pub enabled: bool,
+    /// Tick interval, seconds. Default 24h; clamped to 60s floor.
+    pub interval_secs: u64,
+    /// When `true`, prune + group logic runs but no files are written.
+    /// Useful for inspecting what the pass would do. Default `false`.
+    pub dry_run: bool,
+}
+
+fn default_session_sort_interval() -> u64 {
+    86_400 // 24h
+}
+
+impl Default for SessionSortCronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: default_session_sort_interval(),
+            dry_run: false,
+        }
+    }
+}
+
+impl SessionSortCronConfig {
+    pub fn interval_duration(self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}

@@ -105,7 +105,7 @@ pub enum StopReason {
 }
 
 impl StopReason {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Converged => "converged",
             Self::CapHit => "cap_hit",
@@ -515,17 +515,23 @@ pub async fn run_loop(
     let rounds_run = per_round.len() as u32;
 
     // --- WAL: LOOP_COMPLETED ---
-    emit_wal(
-        writer,
-        EVENT_TYPE_LOOP_COMPLETED,
-        serde_json::json!({
-            "loop_id": loop_id,
-            "rounds_run": rounds_run,
-            "stop_reason": stop_reason.as_str(),
-            "ts_unix": ts_end,
-        }),
-    )
-    .await;
+    // GOLD-LOOP-05 — the budget-escalation audit rides HERE: the WAL byte
+    // space is exhausted (255/256 codes assigned), so a dedicated
+    // LOOP_ESCALATED event is impossible AND redundant — a budget exit is
+    // grep-able as `stop_reason: "budget_exceeded"` and now carries the
+    // numbers a dedicated frame would have carried.
+    let mut completed = serde_json::json!({
+        "loop_id": loop_id,
+        "rounds_run": rounds_run,
+        "stop_reason": stop_reason.as_str(),
+        "ts_unix": ts_end,
+    });
+    if matches!(stop_reason, StopReason::BudgetExceeded) {
+        completed["accumulated_tool_calls"] =
+            serde_json::json!(state.accumulated_tool_calls);
+        completed["budget"] = serde_json::json!(config.tool_call_budget);
+    }
+    emit_wal(writer, EVENT_TYPE_LOOP_COMPLETED, completed).await;
 
     info!(
         loop_id = %loop_id,

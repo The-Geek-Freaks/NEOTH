@@ -62,7 +62,7 @@ const ARTIFACT_MIN_AGE_SECS: u64 = 300;
 // ── Report type ───────────────────────────────────────────────────────────────
 
 /// Summary produced by one [`run_evolver_pass`] call.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvolverReport {
     /// Number of new proposals successfully staged into the proactive queue.
     pub proposals_staged: usize,
@@ -72,6 +72,122 @@ pub struct EvolverReport {
     /// Number of signals skipped because they are not in the auto-safe
     /// category (`PatchSkill`, `ConfigChange`, `Escalate`, …).
     pub proposals_skipped_not_auto_safe: usize,
+    /// `true` when every claim made during this pass was confirmed on disk
+    /// after the modify-closure completed. `false` means at least one
+    /// staged proposal either lacks its artifact file or is absent from the
+    /// persisted queue — the pass lied and the operator must investigate.
+    ///
+    /// Always `true` when `proposals_staged == 0` (nothing was claimed).
+    pub verified_ok: bool,
+    /// Number of staged proposals whose disk state could not be confirmed
+    /// after the pass. Non-zero value indicates a silent save failure or
+    /// race condition; each discrepancy is logged at `error` level.
+    pub claims_missing: usize,
+}
+
+impl Default for EvolverReport {
+    fn default() -> Self {
+        Self {
+            proposals_staged: 0,
+            proposals_skipped_deployed: 0,
+            proposals_skipped_not_auto_safe: 0,
+            // Nothing staged yet → vacuously verified.
+            verified_ok: true,
+            claims_missing: 0,
+        }
+    }
+}
+
+// ── Post-pass verifier ────────────────────────────────────────────────────────
+
+/// Cross-check every claim the pass made this tick against the actual disk
+/// state. Called immediately after [`ProactiveQueue::modify`] completes so
+/// a silent save failure or partial staging can be surfaced before the
+/// report is returned to the caller.
+///
+/// Checks per staged proposal id:
+/// 1. Artifact file `<home>/proposals/<id>.json` exists and is non-empty.
+/// 2. The persisted queue contains an item whose `dedup_key` is
+///    `"ob_03_proposal:<id>"`.
+///
+/// Each discrepancy is logged at `tracing::error!` (operator-visible).
+/// The function updates `result.verified_ok` and `result.claims_missing`
+/// in place.
+///
+/// Only proposals staged THIS tick (`staged_ids`) are verified — not the
+/// whole queue — so the check is O(staged) not O(queue).
+fn verify_staged_report(
+    home: &Path,
+    staged_ids: &[String],
+    result: &mut EvolverReport,
+) {
+    use crate::proactive::ProactiveQueue;
+    use crate::proactive::action_staging::proposal_path;
+
+    if staged_ids.is_empty() {
+        // Nothing was claimed → vacuously verified; defaults already correct.
+        return;
+    }
+
+    let queue_path = home.join("proactive_queue.json");
+    // Read-only single load — outside the modify lock (lock already released).
+    let queue = match ProactiveQueue::load_from(&queue_path) {
+        Ok(q) => q,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                claims = staged_ids.len(),
+                "capability_evolver: verifier could not load queue — all claims unverifiable"
+            );
+            result.verified_ok = false;
+            result.claims_missing += staged_ids.len();
+            return;
+        }
+    };
+
+    for id in staged_ids {
+        let mut ok = true;
+
+        // 1. Artifact file must exist and be non-empty.
+        let artifact = proposal_path(home, id);
+        match std::fs::metadata(&artifact) {
+            Ok(m) if m.len() > 0 => {}
+            Ok(_) => {
+                tracing::error!(
+                    proposal_id = %id,
+                    path = %artifact.display(),
+                    "capability_evolver: staged proposal artifact is empty — claim is a lie"
+                );
+                ok = false;
+            }
+            Err(e) => {
+                tracing::error!(
+                    proposal_id = %id,
+                    path = %artifact.display(),
+                    error = %e,
+                    "capability_evolver: staged proposal artifact missing — claim is a lie"
+                );
+                ok = false;
+            }
+        }
+
+        // 2. Queue must contain the matching dedup_key.
+        let expected_key = format!("ob_03_proposal:{id}");
+        if !queue.peek().iter().any(|item| item.dedup_key == expected_key) {
+            tracing::error!(
+                proposal_id = %id,
+                dedup_key = %expected_key,
+                "capability_evolver: staged proposal absent from persisted queue — claim is a lie"
+            );
+            ok = false;
+        }
+
+        if !ok {
+            result.claims_missing += 1;
+        }
+    }
+
+    result.verified_ok = result.claims_missing == 0;
 }
 
 // ── Auto-safe gate ────────────────────────────────────────────────────────────
@@ -157,7 +273,11 @@ pub async fn run_evolver_pass(
     let queue_path = home.join("proactive_queue.json");
     // Locked load→mutate→save; tolerates a corrupt file (same as the old
     // `unwrap_or_default()`) by logging + skipping the whole staging pass.
+    // The closure returns `(persist, staged_ids)` so the post-pass verifier
+    // can cross-check exactly the proposals claimed this tick.
     let modify_result = ProactiveQueue::modify(&queue_path, |queue| {
+        let mut staged_ids: Vec<String> = Vec::new();
+
         for signal in &report.signals {
             if !is_auto_safe(signal) {
                 result.proposals_skipped_not_auto_safe += 1;
@@ -195,7 +315,8 @@ pub async fn run_evolver_pass(
             }
 
             match stage_and_enqueue(home, proposal, queue) {
-                Ok((_, true)) => {
+                Ok((staged, true)) => {
+                    staged_ids.push(staged.id);
                     result.proposals_staged += 1;
                 }
                 Ok((_, false)) => {
@@ -217,11 +338,11 @@ pub async fn run_evolver_pass(
 
         // Persist only when at least one new proposal was staged.
         let persist = result.proposals_staged > 0;
-        (persist, ())
+        (persist, staged_ids)
     });
 
     match modify_result {
-        Ok(()) => {
+        Ok(staged_ids) => {
             if result.proposals_staged > 0 {
                 tracing::info!(
                     staged = result.proposals_staged,
@@ -230,6 +351,8 @@ pub async fn run_evolver_pass(
                     "HERMES-06 GAP-B: capability evolver staged proposals"
                 );
             }
+            // Post-pass truth check: verify every claim this tick landed on disk.
+            verify_staged_report(home, &staged_ids, &mut result);
         }
         Err(e) => {
             tracing::warn!(
@@ -490,6 +613,84 @@ mod tests {
         assert!(
             !is_verified_deployed(std::path::Path::new("/nonexistent/skill.yaml"), 0),
             "nonexistent path must not be considered deployed"
+        );
+    }
+
+    // ── verify_staged_report: happy path ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn verify_staged_report_clean_after_successful_stage() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = make_report(vec![CollectorSignal::PromptEdit {
+            target: "golang".into(),
+            reason: "operator uses Go daily".into(),
+        }]);
+
+        let result = run_evolver_pass(dir.path(), &report, 1_000_000, None).await;
+
+        // Staging must have succeeded.
+        assert_eq!(result.proposals_staged, 1, "one proposal must be staged");
+
+        // Verifier must confirm clean.
+        assert!(
+            result.verified_ok,
+            "verified_ok must be true when artifact and queue entry both exist"
+        );
+        assert_eq!(
+            result.claims_missing, 0,
+            "claims_missing must be zero on a clean stage"
+        );
+    }
+
+    // ── verify_staged_report: tampered artifact ───────────────────────────────
+
+    #[tokio::test]
+    async fn verify_staged_report_detects_missing_artifact() {
+        use crate::proactive::action_staging::{
+            proposals_dir, ProposalKind, ProposedAction, ProposalStatus, stage_and_enqueue,
+        };
+        use crate::proactive::ProactiveQueue;
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let queue_path = home.join("proactive_queue.json");
+
+        // Manually stage one proposal so we fully control the id and content.
+        let proposal = ProposedAction {
+            id: "1000000-skill-deadbeef".to_string(),
+            kind: ProposalKind::Skill,
+            title: "Test skill proposal".to_string(),
+            rationale: "used in verifier unit test".to_string(),
+            draft_yaml: "name: test-skill\n".to_string(),
+            generated_ts_unix: 1_000_000,
+            status: ProposalStatus::Pending,
+            operator_note: String::new(),
+        };
+        let proposal_id = proposal.id.clone();
+
+        // Write it through the real staging path so the queue file is created.
+        ProactiveQueue::modify(&queue_path, |queue| {
+            let (_, enqueued) = stage_and_enqueue(home, proposal, queue).unwrap();
+            assert!(enqueued, "must enqueue on first call");
+            (true, ())
+        })
+        .unwrap();
+
+        // Tamper: delete the artifact file that was just written.
+        let artifact = proposals_dir(home).join(format!("{proposal_id}.json"));
+        std::fs::remove_file(&artifact).expect("artifact must exist before deletion");
+
+        // Invoke verify_staged_report directly with the known id.
+        let mut report = EvolverReport::default();
+        verify_staged_report(home, std::slice::from_ref(&proposal_id), &mut report);
+
+        assert!(
+            !report.verified_ok,
+            "verified_ok must be false when artifact is missing"
+        );
+        assert_eq!(
+            report.claims_missing, 1,
+            "claims_missing must count the deleted artifact"
         );
     }
 }

@@ -1219,6 +1219,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let checkin_cron_handle =
         crate::cli::serve_tasks::spawn_checkin_cron(&config, &reload_controller).await;
 
+    // ── GOLD-ADAPT-ODY-26 session auto-sort cron (default OFF) ───────────
+    let session_sort_cron_handle =
+        crate::daemon::session_sort_cron::spawn_session_sort_cron(&config, &reload_controller)
+            .await;
+
     // ── GOLD-FEAT-11 skill-curator cron (default OFF) ────────────────────
     let skill_curator_cron_handle =
         crate::cli::serve_tasks::spawn_skill_curator_cron(&config, &reload_controller);
@@ -1877,6 +1882,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         contradiction_resolve_cron_handle,
         guidance_cron_handle,
         checkin_cron_handle,
+        session_sort_cron_handle,
         skill_curator_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
