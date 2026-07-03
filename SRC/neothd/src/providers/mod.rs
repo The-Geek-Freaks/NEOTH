@@ -431,10 +431,18 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
         ));
     };
     let mut synthetic = config.clone();
+    // Secret-boundary guard (mirrors build_utility_config): the cloned
+    // provider_key / provider_endpoint / provider_model all belong to the MAIN
+    // vendor. When the learn provider is a DIFFERENT vendor, reusing them would
+    // ship the main key to the learn vendor's endpoint (secret egress) and a
+    // foreign model id (404). Strip them so the learn build resolves its OWN
+    // credentials (or fails cleanly). Same-vendor learn keeps the shared key.
+    if config.provider_kind != Some(kind) {
+        synthetic.provider_key = None;
+        synthetic.provider_endpoint = None;
+        synthetic.provider_model = None;
+    }
     synthetic.provider_kind = Some(kind);
-    // Per-learn-provider model overrides aren't in scope today; the
-    // operator's main-provider model carries over (local_qwen ignores
-    // it; cloud providers use the same default they'd use elsewhere).
     match from_config(&synthetic).await {
         Ok(p) => Ok(p),
         Err(e) if config.profile.allow_cloud_fallback => {
