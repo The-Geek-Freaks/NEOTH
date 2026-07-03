@@ -115,6 +115,57 @@ than reported) · 🕰️ MULTI-WEEK (real gap, large refactor).
   webhook ACK tradeoff (intentional to avoid Meta retry storms; durable inbound
   spool is the real closure).
 
+## Wave 2 — un-reviewed subsystems (coding/dispatch, media/ingest, skills/config)
+
+Three more agents over the subsystems wave 1 didn't cover. Same verify-then-
+triage discipline. 6 genuine bugs fixed (all `cargo check` verified):
+
+- ✅ **Skills path-gate failed OPEN** (`skills/router.rs:176`). A malformed
+  `paths:` glob made `GitignoreBuilder::build()` fail → `return true` → the
+  skill became eligible for **every** message (a file-scoped skill turned
+  global). Now fail-closed + warn. Commit `01809658`.
+- ✅ **`self-improve disable` silently overridden** (`cli/self_improve.rs`).
+  Disable set `enabled=false` but not `asked=true`; `effective()` re-enables
+  under Full autonomy (`Full && !asked`), so disable did nothing. Now sets
+  `asked=true` like Enable. `01809658`.
+- ✅ **Obsidian vault → ground truth had no ingress gate**
+  (`daemon/obsidian_vault_reader_cron.rs`). Note bodies (external: n8n sync,
+  plugins, shared files) were promoted VERBATIM to `idx_groundtruth` with no
+  `ingress_sanitizer` — a prompt-injection path into the highest-trust tier.
+  Now gated + quarantine-skip like every other ingest path. `01809658`.
+- ✅ **OMI transcript failure invisible** (`daemon/omi_ingest_task.rs`).
+  `debug!` → `warn!` so silent ground-truth-promotion loss shows at default
+  log level. `01809658`.
+- ✅ **Audio decode OOM** (`media/audio.rs`). No size cap → a multi-GB file
+  OOMs the daemon. Added a 512 MiB metadata gate before `fs::read`. `14f9020b`.
+- ✅ **Dispatcher task-strand** (`coding/dispatcher.rs`).
+  `handle_retryable_failure`'s re-queue used `?` (the only propagating write in
+  a fn all callers `let _ =`) → DB failure silently stranded the task
+  InProgress. Now logs loudly. `14f9020b`.
+
+Genuine-but-moderate, NOT rushed (documented for focused follow-up):
+- 🔧 **WASM invoker not rebuilt on `neoth reload`** (skills-agent #1, HIGH) —
+  a plugin added to `revoked_ids` keeps running until daemon restart; the
+  reload swaps the ArcSwap but not the compiled invoker. Fix: re-bootstrap the
+  invoker on `ReloadResult::Reloaded`, or check live `revoked_ids` in
+  `invoke()`.
+- 🔧 **`smart_loader::plan_loader` unwired** (coding-agent #2, HIGH) — N-04
+  per-turn MCP schema selection is dead; every turn loads all servers' full
+  tool lists (token burn). Fix: call `plan_loader` in `run_tool_loop_with_cap`.
+- 🔧 **Email ingest cron skips `triage_inbound` / `sanitize_email_body`**
+  (media-agent #2/#3) — phishing-scored + quoted-reply-injection emails reach
+  the vault. Fix: route the cron through `email::inbound::triage_inbound`.
+- 🔧 **faster-whisper bypasses `allow_huggingface_downloads`** (media-agent #6/
+  #7) — air-gapped policy silently violated by a PATH binary. Fix: gate the
+  faster-whisper path on the same flag as the candle path.
+- 🔧 **Dispatcher counter skew on DB-write failure** (coding #4/#5) —
+  `tasks_blocked` incremented before the confirming write; inflated on failure.
+
+Verified INTENTIONAL/OVERSTATED (not bugs): loop_engine round-1 budget skip,
+plan-review APPROVED-injection guard, zero-test all_green guard, evolver/accept
+no-autonomy-gate (staging ≠ applying), paperless quarantine fail-closed, wiki
+groundtruth (NEOTH-controlled slugs), VAD thresholds.
+
 ## GUI feature parity (part 2)
 
 Measured, not assumed: the GUI has **51 wired callbacks across 14 nav tabs**
