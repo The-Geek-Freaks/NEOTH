@@ -314,6 +314,13 @@ SPEC Phase 2 mDNS scan — spawn the `mdns-sd` daemon for `--timeout` seconds, p
 
 Enable cluster auto-discovery (writes `freedom.yaml::cluster.mdns.enabled = true`)
 
+### `neoth cluster events`
+
+GOLD-G02-CLUSTER-01 — list ingested foreign gossip events (`idx_foreign_events`): what paired peers replicated to this node. Read-only over views.db; foreign events never mix into local memory
+
+- `--peer <PEER_PK>` — Filter to one origin peer public key (hex)
+- `--limit <LIMIT>` — Max rows (newest first)
+
 ### `neoth cluster list`
 
 SPEC `cluster_auto_discovery` Phase 4: list confirmed peers from `~/.neoth/cluster.yaml`

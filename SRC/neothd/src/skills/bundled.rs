@@ -768,6 +768,13 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "verifier",
         include_str!("../../assets/skills/verifier/skill.yaml"),
     ),
+    // GOLD-ADAPT-JV-MISC-01 (2026-07-03) — CSS-targeted web extraction wiring
+    // tools::web_extract (GOLD-ADOPT-04). Ported from Jarvis firecrawl-search
+    // skill; replaces external Firecrawl API with the native scraper extractor.
+    (
+        "web_extract_search",
+        include_str!("../../assets/skills/web_extract_search/skill.yaml"),
+    ),
     // GOLD-ADAPT-WEBQ-01 (2026-06-19) — bundled skill.
     (
         "webq_a11y",
@@ -1060,7 +1067,6 @@ mod tests {
         // to THAT skill — proves the triggers are live, not just declared.
         use crate::skills::router::route;
         use crate::skills::schema::Skill;
-        use std::path::PathBuf;
 
         let pack = [
             ("engineering_code_review", "please review this pull request"),
@@ -1100,7 +1106,7 @@ mod tests {
                 assert!(manifest.enabled, "`{id}` must ship enabled (proactive use)");
                 Skill {
                     manifest,
-                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
                     content_hash: String::new(),
                 }
             })
@@ -1125,7 +1131,6 @@ mod tests {
         // distinctive multi-word triggers with no cross-activation among them.
         use crate::skills::router::route;
         use crate::skills::schema::Skill;
-        use std::path::PathBuf;
 
         let pack = [
             (
@@ -1161,7 +1166,7 @@ mod tests {
                 assert!(manifest.enabled, "`{id}` must ship enabled (proactive use)");
                 Skill {
                     manifest,
-                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
                     content_hash: String::new(),
                 }
             })
@@ -1193,7 +1198,6 @@ mod tests {
     fn gold_adapt_doc_04_officecli_bundled_gated_and_routes() {
         use crate::skills::router::route;
         use crate::skills::schema::Skill;
-        use std::path::PathBuf;
 
         // (skill-id, trigger phrase that must route exclusively to it)
         let pack: &[(&str, &str)] = &[
@@ -1246,7 +1250,7 @@ mod tests {
                 manifest.enabled = true; // simulate freedom.yaml::skills.enabled
                 Skill {
                     manifest,
-                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
                     content_hash: String::new(),
                 }
             })
@@ -1280,7 +1284,7 @@ mod tests {
                 assert!(!manifest.enabled);
                 Skill {
                     manifest,
-                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
                     content_hash: String::new(),
                 }
             })
@@ -1491,7 +1495,6 @@ mod tests {
     fn gold_adapt_hermes_10_skills_bundled_enabled_and_route() {
         use crate::skills::router::route;
         use crate::skills::schema::Skill;
-        use std::path::PathBuf;
 
         // (id, prompts that must route exclusively to it)
         let pack: &[(&str, &[&str])] = &[
@@ -1543,7 +1546,7 @@ mod tests {
                 );
                 Skill {
                     manifest,
-                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
                     content_hash: String::new(),
                 }
             })
@@ -1561,6 +1564,62 @@ mod tests {
                     m.skill.id()
                 );
             }
+        }
+    }
+
+    /// GOLD-ADAPT-JV-MISC-01 (2026-07-03) — `web_extract_search` must be
+    /// bundled, parse cleanly, ship enabled, and route from its distinctive
+    /// multi-word triggers with no cross-activation against neighbouring skills.
+    #[test]
+    fn gold_adapt_jv_misc_01_web_extract_search_bundled_enabled_and_routes() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+
+        let id = "web_extract_search";
+        let (_, body) = BUNDLED_SKILLS
+            .iter()
+            .find(|(bid, _)| *bid == id)
+            .unwrap_or_else(|| panic!("JV-MISC-01: `{id}` must be in BUNDLED_SKILLS"));
+
+        let manifest: SkillManifest = serde_yaml::from_str(body)
+            .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+        assert_eq!(manifest.id, id, "`{id}` manifest id mismatch");
+        assert!(manifest.enabled, "`{id}` must ship enabled");
+        assert!(
+            !manifest.trigger_keywords.is_empty(),
+            "`{id}` must have trigger_keywords"
+        );
+        assert!(
+            !manifest.system_prompt.trim().is_empty(),
+            "`{id}` must have a non-empty system_prompt"
+        );
+
+        let skill = Skill {
+            manifest: manifest.clone(),
+            path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+            content_hash: String::new(),
+        };
+        let skills = vec![skill];
+
+        for prompt in [
+            "extract from website",
+            "extract this page",
+            "scrape this url",
+            "web extract",
+            "get content from url",
+            "pull content from page",
+            "fetch page content",
+            "read this webpage",
+        ] {
+            let m = route(prompt, &skills).unwrap_or_else(|| {
+                panic!("JV-MISC-01: `{id}` prompt `{prompt}` routed to nothing")
+            });
+            assert_eq!(
+                m.skill.id(),
+                id,
+                "prompt `{prompt}` should route to `{id}`, got `{}`",
+                m.skill.id()
+            );
         }
     }
 }

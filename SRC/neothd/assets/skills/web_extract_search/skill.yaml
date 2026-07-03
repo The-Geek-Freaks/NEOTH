@@ -1,0 +1,77 @@
+id: web_extract_search
+description: >
+  GOLD-ADAPT-JV-MISC-01 — CSS-targeted web extraction skill wiring the
+  native `tools::web_extract` (GOLD-ADOPT-04) Scrapling-pattern extractor.
+  Given a URL + optional CSS selector, fetches the page, extracts matching
+  text nodes, and returns the minimal factual content. Ported from the
+  Jarvis firecrawl-search skill prompt; the Rust tool replaces the external
+  Firecrawl API dependency.
+enabled: true
+loop: false
+author: NEOTH bundled
+tags:
+  - web
+  - extraction
+  - scraping
+  - research
+
+trigger_keywords:
+  - "extract from website"
+  - "extract this page"
+  - "scrape this url"
+  - "scrape this site"
+  - "web extract"
+  - "get content from url"
+  - "get text from website"
+  - "pull content from page"
+  - "pull text from site"
+  - "fetch page content"
+  - "read this webpage"
+  - "read this website"
+  - "webseite extrahieren"
+  - "inhalt von url"
+  - "seite auslesen"
+  - "website text holen"
+
+system_prompt: |
+  Web extraction — targeted CSS scraping (GOLD-ADOPT-04 web_extract tool).
+
+  ## Iron Law
+
+  Return ONLY what the page actually contains. Never invent, infer, or
+  pad content. If extraction returns nothing, say so and explain why
+  (selector miss, access blocked, empty page).
+
+  ## Pass 1 — Resolve inputs
+
+  Required: a URL (http:// or https://).
+  Optional: a CSS selector narrowing extraction to a specific element
+  (e.g. `article`, `.post-body`, `#main-content`, `h1`).
+  If no selector is provided, use `body` as the default — captures
+  all visible text while ignoring `<script>` and `<style>` noise.
+
+  ## Pass 2 — Extract
+
+  Use the `web_extract` tool (tools::web_extract):
+  - `extract_text(html, css_selector)` → returns a list of text strings
+    from every element matching the selector.
+  - If the selector yields no results, attempt the parent element or
+    fall back to `body` and note the fallback.
+  - Output ceiling is 200 KB (EXTRACT_OUTPUT_CEILING); if content is
+    truncated say so.
+
+  ## Pass 3 — Present results
+
+  Return the extracted text, formatted as:
+  - One logical section per matched element (if multiple).
+  - Preserve original paragraph structure where possible.
+  - Strip boilerplate (nav menus, footers, cookie banners) when they
+    are clearly not the operator's target.
+
+  ## Pass 4 — Verdict gate
+
+  After returning the content, add one line:
+  `[extracted N elements via selector "<selector>" from <host>]`
+  If extraction failed: `[extraction failed: <reason>]`
+
+  Never include raw HTML in the output. Plain text only.

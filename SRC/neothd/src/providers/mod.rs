@@ -607,6 +607,24 @@ pub(crate) fn default_model(
 }
 
 pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    // GOLD-ADAPT-JV-MISC (model-alias map) — resolve the operator's alias ONCE
+    // at the single provider chokepoint so every per-kind arm below sees the
+    // real model id. Unknown tokens pass through (additive map).
+    let aliased_config: Option<FreedomConfig> = match config.provider_model.as_deref() {
+        Some(id) => {
+            let resolved = config.resolve_model_alias(id);
+            if resolved != id {
+                tracing::info!(alias = id, model = %resolved, "model alias resolved");
+                let mut c = config.clone();
+                c.provider_model = Some(resolved.to_string());
+                Some(c)
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+    let config = aliased_config.as_ref().unwrap_or(config);
     let kind = config
         .provider_kind
         .ok_or_else(|| anyhow::anyhow!("no provider configured. Run `neoth provider add`."))?;

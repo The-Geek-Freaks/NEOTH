@@ -49,7 +49,7 @@ use rusqlite::Connection;
 ///      to recall. The contradiction detector calls `invalidate_relation`
 ///      best-effort whenever a negation-contradiction or temporal-supersede
 ///      auto-resolution closes a ground-truth fact.
-pub const SCHEMA_VERSION: i64 = 23;
+pub const SCHEMA_VERSION: i64 = 24;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -997,6 +997,27 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         "ALTER TABLE idx_human_identity ADD COLUMN merged_into TEXT",
         [],
     );
+
+    // G-02 CLUSTER-01: foreign event ingest surface.
+    // Accepted gossip frames from paired peers land here — never in idx_episode
+    // (foreign ≠ operator truth). UNIQUE(origin_peer_pk, origin_seq) makes
+    // INSERT OR IGNORE idempotent: a re-gossiped frame is a silent no-op.
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_foreign_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_peer_pk  TEXT    NOT NULL,
+            origin_seq      INTEGER NOT NULL,
+            event_type      INTEGER NOT NULL,
+            payload         BLOB    NOT NULL,
+            received_at     INTEGER NOT NULL,
+            UNIQUE (origin_peer_pk, origin_seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
+            ON idx_foreign_events (origin_peer_pk, received_at DESC);
+        "#,
+    )
+    .context("create idx_foreign_events")?;
 
     // Stamp schema version (idempotent).
     conn.execute(

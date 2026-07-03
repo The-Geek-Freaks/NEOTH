@@ -28,6 +28,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Context as _;
+
 use super::PeerPubkey;
 use super::gossip::{GossipPolicy, GossipTag, ReplayBudget};
 use super::gossip_wire::{GossipAcceptance, GossipFrame, VectorClock};
@@ -387,6 +389,131 @@ fn now_unix_ms() -> u64 {
     crate::time::now_unix_ms()
 }
 
+// ── Foreign event ingest surface (G-02 CLUSTER-01) ───────────────────────────
+
+/// Persist one accepted gossip frame into `idx_foreign_events`.
+///
+/// Called from the `GossipAcceptance::Accept` arm in
+/// `cluster::hyperswarm::peer_connect_outbound` after
+/// `GossipState::accept_inbound` has passed the band-filter ACL and dedup
+/// gate. The UNIQUE constraint on `(origin_peer_pk, origin_seq)` makes the
+/// INSERT idempotent: a re-gossiped frame silently no-ops (conflict
+/// resolution v0 per the module doc).
+///
+/// Consent / pairing guarantee: `accept_inbound` is only reachable from the
+/// authenticated peer session loop in `hyperswarm`, which has already cleared
+/// the Noise handshake and (for inbound delegation) the `is_paired` registry
+/// check. Foreign events are therefore from known-paired peers by the time
+/// this fn is called.
+///
+/// Foreign events are NEVER mixed into `idx_episode` or `idx_groundtruth`
+/// — they are a separate, queryable surface. See `list_foreign_events`.
+pub fn ingest_foreign_event(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    origin_seq: u64,
+    event_type: u8,
+    payload: &[u8],
+    received_at: i64,
+) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO idx_foreign_events \
+         (origin_peer_pk, origin_seq, event_type, payload, received_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            origin_peer_pk,
+            origin_seq as i64,
+            event_type as i64,
+            payload,
+            received_at,
+        ],
+    )
+    .map(|_| ())
+    .with_context(|| {
+        format!(
+            "ingest_foreign_event: insert {}/{} failed",
+            origin_peer_pk, origin_seq
+        )
+    })
+}
+
+/// A single row from `idx_foreign_events`.
+#[derive(Debug, Clone)]
+pub struct ForeignEventRow {
+    pub id: i64,
+    pub origin_peer_pk: String,
+    pub origin_seq: u64,
+    pub event_type: u8,
+    pub payload: Vec<u8>,
+    pub received_at: i64,
+}
+
+/// Query `idx_foreign_events` with an optional peer filter.
+///
+/// When `origin_filter` is `Some(pk_hex)` only events from that peer are
+/// returned. Results are ordered by `(origin_peer_pk, received_at DESC)`,
+/// capped at `limit`.
+///
+/// CLI wire for the orchestrator — example usage:
+/// ```rust,ignore
+/// let conn = memory::store::open(&home.join("views.db"))?;
+/// let rows = cluster::wal_sync::list_foreign_events(&conn, None, 50)?;
+/// for r in rows {
+///     println!("{} seq={} et=0x{:02X}", r.origin_peer_pk, r.origin_seq, r.event_type);
+/// }
+/// ```
+pub fn list_foreign_events(
+    conn: &rusqlite::Connection,
+    origin_filter: Option<&str>,
+    limit: usize,
+) -> anyhow::Result<Vec<ForeignEventRow>> {
+    let sql = match origin_filter {
+        Some(_) => {
+            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at \
+             FROM idx_foreign_events \
+             WHERE origin_peer_pk = ?1 \
+             ORDER BY received_at DESC \
+             LIMIT ?2"
+        }
+        None => {
+            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at \
+             FROM idx_foreign_events \
+             ORDER BY received_at DESC \
+             LIMIT ?1"
+        }
+    };
+
+    // rusqlite doesn't support binding Optional cleanly for positional params
+    // in a single prepared statement shape, so branch on the two shapes.
+    let rows: Vec<ForeignEventRow> = if let Some(pk) = origin_filter {
+        let mut stmt = conn
+            .prepare(sql)
+            .context("list_foreign_events: prepare filtered")?;
+        stmt.query_map(rusqlite::params![pk, limit as i64], map_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("list_foreign_events: query filtered")?
+    } else {
+        let mut stmt = conn
+            .prepare(sql)
+            .context("list_foreign_events: prepare unfiltered")?;
+        stmt.query_map(rusqlite::params![limit as i64], map_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("list_foreign_events: query unfiltered")?
+    };
+    Ok(rows)
+}
+
+fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ForeignEventRow> {
+    Ok(ForeignEventRow {
+        id: r.get(0)?,
+        origin_peer_pk: r.get(1)?,
+        origin_seq: r.get::<_, i64>(2)? as u64,
+        event_type: r.get::<_, i64>(3)? as u8,
+        payload: r.get(4)?,
+        received_at: r.get(5)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +776,93 @@ mod tests {
             VcOrdering::After,
             "after accept the local clock must advance past the peer's causal frontier"
         );
+    }
+
+    // ── Foreign event ingest (G-02 CLUSTER-01) ─────────────────────────────
+
+    /// Open an in-memory SQLite db with the idx_foreign_events schema for
+    /// testing without touching the full `memory::store` migration stack.
+    fn open_foreign_events_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS idx_foreign_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin_peer_pk  TEXT    NOT NULL,
+                origin_seq      INTEGER NOT NULL,
+                event_type      INTEGER NOT NULL,
+                payload         BLOB    NOT NULL,
+                received_at     INTEGER NOT NULL,
+                UNIQUE (origin_peer_pk, origin_seq)
+            );
+            CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
+                ON idx_foreign_events (origin_peer_pk, received_at DESC);
+            "#,
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn migration_creates_foreign_events_table() {
+        // The migration fn creates the table; verify it is queryable after.
+        let conn = open_foreign_events_db();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM idx_foreign_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "fresh table is empty");
+    }
+
+    #[test]
+    fn ingest_foreign_event_stores_row_and_idempotent_on_duplicate() {
+        let conn = open_foreign_events_db();
+        let pk = "aabbccdd";
+        let seq = 7u64;
+        let et = 0x90u8;
+        let payload = b"test-payload";
+        let ts = 1_700_000_000i64;
+
+        // First ingest succeeds.
+        ingest_foreign_event(&conn, pk, seq, et, payload, ts).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM idx_foreign_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+
+        // Second ingest of same (peer, seq) — idempotent, still 1 row.
+        ingest_foreign_event(&conn, pk, seq, et, b"different-payload", ts + 1).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM idx_foreign_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "double-ingest same (peer,seq) must remain 1 row");
+    }
+
+    #[test]
+    fn list_foreign_events_unfiltered_and_filtered() {
+        let conn = open_foreign_events_db();
+        let pk_a = "aaa111";
+        let pk_b = "bbb222";
+
+        ingest_foreign_event(&conn, pk_a, 1, 0x90, b"pa1", 1000).unwrap();
+        ingest_foreign_event(&conn, pk_a, 2, 0x91, b"pa2", 1001).unwrap();
+        ingest_foreign_event(&conn, pk_b, 1, 0x90, b"pb1", 1002).unwrap();
+
+        // Unfiltered — all 3 rows.
+        let all = list_foreign_events(&conn, None, 100).unwrap();
+        assert_eq!(all.len(), 3, "unfiltered returns all rows");
+
+        // Filtered to pk_a — 2 rows.
+        let for_a = list_foreign_events(&conn, Some(pk_a), 100).unwrap();
+        assert_eq!(for_a.len(), 2, "filtered to pk_a returns 2 rows");
+        assert!(for_a.iter().all(|r| r.origin_peer_pk == pk_a));
+
+        // Limit caps result set.
+        let limited = list_foreign_events(&conn, None, 1).unwrap();
+        assert_eq!(limited.len(), 1, "limit=1 returns 1 row");
+
+        // Row fields are round-tripped correctly.
+        let row = for_a.iter().find(|r| r.origin_seq == 1).unwrap();
+        assert_eq!(row.event_type, 0x90u8);
+        assert_eq!(row.payload, b"pa1");
     }
 }

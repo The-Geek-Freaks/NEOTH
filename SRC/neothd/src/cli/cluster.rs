@@ -7,7 +7,7 @@
 //! transport lands so the experience is concrete now and the
 //! upgrade path is visible.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -28,6 +28,17 @@ pub struct ClusterArgs {
 pub enum ClusterAction {
     /// Print the active policy + known peer state.
     Status,
+    /// GOLD-G02-CLUSTER-01 — list ingested foreign gossip events
+    /// (`idx_foreign_events`): what paired peers replicated to this node.
+    /// Read-only over views.db; foreign events never mix into local memory.
+    Events {
+        /// Filter to one origin peer public key (hex).
+        #[arg(long, value_name = "PEER_PK")]
+        peer: Option<String>,
+        /// Max rows (newest first).
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
     /// Run the routing policy against a synthetic load table to show
     /// what `pick_peer` would decide. Useful for sanity-checking the
     /// `LeastLoaded` selection logic without spinning up a real
@@ -145,6 +156,9 @@ pub fn validate_pub_key_hex(s: &str) -> Result<()> {
 pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
     match args.action {
         ClusterAction::Status => run_status(&args.output),
+        ClusterAction::Events { peer, limit } => {
+            run_foreign_events(peer.as_deref(), limit, &args.output)
+        }
         ClusterAction::Plan { peers, policy } => run_plan(&peers, policy.as_deref(), &args.output),
         ClusterAction::List => run_list(),
         ClusterAction::Topology => run_topology(&args.output),
@@ -1103,6 +1117,72 @@ fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
         });
     }
     Ok(out)
+}
+
+
+/// GOLD-G02-CLUSTER-01 — render the foreign-event ledger.
+fn run_foreign_events(
+    peer: Option<&str>,
+    limit: usize,
+    output: &crate::cli::OutputFormat,
+) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let conn = crate::memory::store::open(&home.join("views.db"))
+        .context("open views.db — has the daemon run at least once?")?;
+    let rows = crate::cluster::wal_sync::list_foreign_events(&conn, peer, limit)?;
+    match output {
+        crate::cli::OutputFormat::Json => {
+            let v: Vec<_> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "origin_peer_pk": r.origin_peer_pk,
+                        "origin_seq": r.origin_seq,
+                        "event_type": format!("0x{:02X}", r.event_type),
+                        "payload_bytes": r.payload.len(),
+                        "received_at": r.received_at,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&v)?);
+        }
+        crate::cli::OutputFormat::Jsonl => {
+            for r in &rows {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "origin_peer_pk": r.origin_peer_pk,
+                        "origin_seq": r.origin_seq,
+                        "event_type": format!("0x{:02X}", r.event_type),
+                        "payload_bytes": r.payload.len(),
+                        "received_at": r.received_at,
+                    })
+                );
+            }
+        }
+        crate::cli::OutputFormat::Table => {
+            if rows.is_empty() {
+                println!("(no foreign events ingested — peers gossip after pairing)");
+                return Ok(());
+            }
+            println!(
+                "{:<20} {:>8} {:>6} {:>8} {:>12}",
+                "ORIGIN PEER", "SEQ", "TYPE", "BYTES", "RECEIVED"
+            );
+            for r in &rows {
+                let short: String = r.origin_peer_pk.chars().take(16).collect();
+                println!(
+                    "{:<20} {:>8} 0x{:02X} {:>8} {:>12}",
+                    format!("{short}..."),
+                    r.origin_seq,
+                    r.event_type,
+                    r.payload.len(),
+                    r.received_at,
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

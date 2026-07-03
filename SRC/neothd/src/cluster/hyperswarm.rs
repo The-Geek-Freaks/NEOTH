@@ -790,6 +790,45 @@ async fn handle_peeroxide_connection(
                 match gossip_state.accept_inbound(&gframe, payload_et, &gossip_policy, now) {
                     GossipAcceptance::Accept => {
                         emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
+                        // G-02 CLUSTER-01: persist the accepted foreign frame into
+                        // idx_foreign_events (separate from idx_episode — foreign ≠
+                        // operator truth). Runs in spawn_blocking to keep the async
+                        // peer loop non-blocking. Fire-and-forget: a write failure is
+                        // non-fatal (the frame is already ACK'd via VC merge; the next
+                        // re-gossip from the peer will retry the INSERT OR IGNORE).
+                        let home = neoth_home.clone();
+                        let origin_pk = gframe.origin.as_str().to_owned();
+                        let origin_seq = gframe.event_seq;
+                        let et_byte = payload_et.unwrap_or(0);
+                        let payload_bytes = gframe.payload.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let db_path = home.join("views.db");
+                            match crate::memory::store::open(&db_path) {
+                                Ok(conn) => {
+                                    if let Err(e) = crate::cluster::wal_sync::ingest_foreign_event(
+                                        &conn,
+                                        &origin_pk,
+                                        origin_seq,
+                                        et_byte,
+                                        &payload_bytes,
+                                        crate::time::now_unix_i64(),
+                                    ) {
+                                        tracing::warn!(
+                                            origin = %origin_pk,
+                                            seq = origin_seq,
+                                            error = %e,
+                                            "cluster: foreign event ingest failed (non-fatal)"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "cluster: could not open views.db for foreign event ingest"
+                                    );
+                                }
+                            }
+                        });
                     }
                     dropped => {
                         emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);

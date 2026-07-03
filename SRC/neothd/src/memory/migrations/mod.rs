@@ -189,7 +189,43 @@ pub const MIGRATIONS: &[Migration] = &[
                       to recall. Wired into MEM-02 contradiction detector.",
         run: migration_v22_to_v23,
     },
+    Migration {
+        from: 23,
+        to: 24,
+        description: "G-02 CLUSTER-01: add idx_foreign_events — accepted gossip frames \
+                      from paired peers (origin_peer_pk, origin_seq, event_type, payload, \
+                      received_at). UNIQUE(origin_peer_pk, origin_seq) makes ingest \
+                      idempotent. Separate from idx_episode: foreign ≠ operator truth.",
+        run: migration_v23_to_v24,
+    },
 ];
+
+/// v23 → v24: G-02 CLUSTER-01 — create `idx_foreign_events`.
+///
+/// Accepted gossip frames from paired peers land here after the band-filter
+/// ACL passes in `cluster::wal_sync::GossipState::accept_inbound`. The table
+/// is intentionally separate from `idx_episode` (foreign events are never
+/// operator ground-truth). UNIQUE on `(origin_peer_pk, origin_seq)` makes
+/// INSERT OR IGNORE idempotent: a re-gossiped frame is a silent no-op (the
+/// conflict resolution v0 described in the wal_sync module doc).
+fn migration_v23_to_v24(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_foreign_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_peer_pk  TEXT    NOT NULL,
+            origin_seq      INTEGER NOT NULL,
+            event_type      INTEGER NOT NULL,
+            payload         BLOB    NOT NULL,
+            received_at     INTEGER NOT NULL,
+            UNIQUE (origin_peer_pk, origin_seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
+            ON idx_foreign_events (origin_peer_pk, received_at DESC);
+        "#,
+    )
+    .context("migration_v23_to_v24: create idx_foreign_events")
+}
 
 /// v22 → v23: refines-MEM-06 — add `valid_to TEXT` to `idx_relations`.
 ///

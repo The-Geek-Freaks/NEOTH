@@ -142,6 +142,22 @@ pub struct FreedomConfig {
     pub provider_endpoint: Option<String>,
     #[serde(default)]
     pub provider_model: Option<String>,
+    /// GOLD-ADAPT-JV-MISC-01 — operator-defined model alias map.
+    ///
+    /// Declared in `freedom.yaml` as:
+    /// ```yaml
+    /// models_aliases:
+    ///   fast: gpt-5.5
+    ///   smart: gpt-4o
+    ///   local: qwen3-8b-q8
+    /// ```
+    ///
+    /// Resolved by `models::catalog::ModelsCatalog::resolve_alias` BEFORE
+    /// catalog validation. Aliases never override real model ids: if an alias
+    /// key equals a real id the alias is ignored (real id passes through).
+    /// Unknown alias with a non-empty map → loud error listing available aliases.
+    #[serde(default)]
+    pub models_aliases: crate::models::catalog::ModelAliasMap,
     /// C-3 Phase 2 (Session 14) — AWS region for the `aws_bedrock`
     /// provider in single-mode dispatch. Examples: `us-east-1`,
     /// `eu-central-1`. Ignored by every non-AWS provider. When set
@@ -1009,6 +1025,13 @@ impl FreedomConfig {
     /// is enforced in exactly one place. JV-MODE-04 (self-activation) and any
     /// other downstream consumer MUST use this method.
     #[inline]
+    /// GOLD-ADAPT-JV-MISC (model-alias map) — resolve an operator alias to
+    /// its real model id; unknown tokens pass through unchanged (the map is
+    /// purely additive — it can never shadow a real id the operator typed).
+    pub fn resolve_model_alias<'a>(&'a self, id: &'a str) -> &'a str {
+        self.models_aliases.get(id).map(String::as_str).unwrap_or(id)
+    }
+
     pub fn sovereign_active(&self) -> bool {
         self.sovereign_buddy && matches!(self.autonomy, crate::permissions::AutonomyLevel::Full)
     }

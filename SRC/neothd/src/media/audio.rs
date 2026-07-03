@@ -5,19 +5,29 @@
 //! doc previously claimed this was unimplemented "Phase 2b"; it IS wired):
 //! [`transcribe_if_cached`] runs `providers::whisper::WhisperEngine` (candle)
 //! over the decoded samples once the model artifacts (tokenizer + config +
-//! safetensors) are cached. The model (`providers::whisper::DEFAULT_WHISPER_REPO`,
-//! ~1.6 GiB) is NOT auto-downloaded on this path — until it is pre-fetched,
-//! `text` stays empty with status `"model not cached"`.
+//! safetensors) are cached.
+//!
+//! ## First-STT-use auto-download (GOLD-ADAPT-HANDY-04)
+//!
+//! When the model is absent **and** `freedom.yaml::updater.allow_huggingface_downloads`
+//! is `true` (the default), the first STT call triggers an automatic download
+//! of the configured Whisper model (~1.6 GiB) via `WhisperEngine::ensure_artifacts`
+//! (HuggingFace Hub, resumable). `0xD7 MODEL_DOWNLOAD_START` + `0xD8 MODEL_DOWNLOAD_COMPLETE`
+//! WAL frames are emitted around the fetch. If the flag is `false`, the call
+//! returns `status = "model download blocked"` with an actionable hint naming
+//! the flag rather than silently producing an empty transcript.
 //!
 //! Operator-visible behaviour:
 //!   - WAV / MP3 / … bytes or path → decoded f32 samples + sample-rate
 //!     metadata. Returned in `Extraction.metadata` as `sample_count` +
 //!     `sample_rate` + `decoded_duration_secs`.
-//!   - `text` carries the real Whisper transcript when the model is cached;
-//!     empty (status `"model not cached"`) until the operator pre-fetches it.
+//!   - `text` carries the real Whisper transcript once the model is cached
+//!     (auto-fetched on first use when downloads are permitted).
 //!
 //! Limitations:
-//!   - Transcription needs the cached model (no first-call auto-download here).
+//!   - The auto-download blocks the calling audio-extraction for the duration
+//!     of the fetch (~1.6 GiB). This is intentional: the operator opted in via
+//!     the default `allow_huggingface_downloads = true`.
 //!   - Single-channel mix-down — stereo inputs are averaged to mono.
 //!   - 16 kHz resample is approximate (linear interpolation, not
 //!     low-pass-filtered); swap for `rubato` if quality measurably drifts.
@@ -64,12 +74,11 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     };
     let duration_secs = samples.len() as f64 / TARGET_SAMPLE_RATE as f64;
 
-    // Phase 2b: real whisper transcription when the model artifacts are
-    // already cached. First-call download is ~1.6 GiB (whisper-large-v3-
-    // turbo); we don't trigger it from inside the extract path because
-    // that would block on network. Operator runs `neothd hardware` (or
-    // pairs with the wizard's installer) to pre-cache before audio
-    // ingestion needs it.
+    // Phase 2b + GOLD-ADAPT-HANDY-04: real whisper transcription.
+    // If the model is not yet cached AND allow_huggingface_downloads is true
+    // (the default), `transcribe_if_cached` triggers an auto-download on first
+    // use before returning the transcript. When downloads are disabled the
+    // function returns an empty text with status "model download blocked".
     let (text, status) = transcribe_if_cached(&samples);
     Ok(Extraction {
         text,
@@ -85,7 +94,8 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     })
 }
 
-/// Best-effort transcription. Returns `(text, status_string)`.
+/// Best-effort transcription with first-use auto-download (GOLD-ADAPT-HANDY-04).
+/// Returns `(text, status_string)`.
 ///
 /// Priority order:
 ///   1. **faster-whisper** (JV-VOICE-02/03): probe for `faster-whisper` on
@@ -94,11 +104,15 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
 ///      fires WITHOUT the model-cache check — faster-whisper downloads its
 ///      own models on first use (into `~/.cache/huggingface/`).
 ///   2. **candle WhisperEngine** (existing path): fires when
-///      `faster-whisper` is absent but the candle model artifacts are cached.
-///   3. **model not cached**: both paths unavailable — empty text.
+///      `faster-whisper` is absent. If the model is not yet cached, triggers
+///      an auto-download gated by `updater.allow_huggingface_downloads`
+///      (default `true`). Emits `0xD7`/`0xD8` WAL frames around the fetch.
+///   3. **blocked / unavailable**: download disabled or failed — empty text
+///      with an actionable status string.
 ///
-/// Pitfall: we are inside `spawn_blocking`; the faster-whisper path MUST use
-/// `std::process::Command` (synchronous) to avoid nested-runtime panic.
+/// Pitfall: we are inside `spawn_blocking`; both the download and the
+/// faster-whisper path MUST use synchronous or mini-runtime patterns to
+/// avoid nested-runtime panic.
 fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
     // ── Path 1: faster-whisper subprocess (JV-VOICE-02/03) ─────────────────
     if let Some(exe) = crate::media::stt_provider::faster_whisper_exe() {
@@ -115,17 +129,45 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
     // via `init_global_engine_sync`, which builds it once and reuses it
     // thereafter. The idle-watcher task on the engine will free VRAM after
     // the configured idle timeout (default 120 s) between calls.
+    //
+    // GOLD-ADAPT-HANDY-04: when `init_global_engine_sync` reports "not cached",
+    // attempt an auto-download before returning an empty transcript.
     let engine = match crate::providers::whisper::init_global_engine_sync(None) {
         Ok(e) => e,
         Err(e) => {
-            tracing::debug!("whisper: engine unavailable — {e:#}");
-            // Map "model not cached" vs other errors to distinct statuses.
-            let status = if e.to_string().contains("not cached") {
-                "model not cached"
+            let msg = e.to_string();
+            if msg.contains("not cached") {
+                // Model absent — try auto-download if the operator permits it.
+                match maybe_auto_download_whisper() {
+                    Ok(()) => {
+                        // Artifacts now on disk; build the engine.
+                        match crate::providers::whisper::init_global_engine_sync(None) {
+                            Ok(e) => e,
+                            Err(e2) => {
+                                tracing::warn!("whisper: engine init after download failed — {e2:#}");
+                                return (String::new(), "whisper engine init failed");
+                            }
+                        }
+                    }
+                    Err(dl_err) => {
+                        tracing::info!("whisper: auto-download skipped/failed — {dl_err:#}");
+                        // Return the dl_err message as status so callers/logs see
+                        // whether it was a consent block or a network error.
+                        let status: &'static str = if dl_err
+                            .to_string()
+                            .contains("allow_huggingface_downloads")
+                        {
+                            "model download blocked"
+                        } else {
+                            "model download failed"
+                        };
+                        return (String::new(), status);
+                    }
+                }
             } else {
-                "whisper engine init failed"
-            };
-            return (String::new(), status);
+                tracing::debug!("whisper: engine unavailable — {e:#}");
+                return (String::new(), "whisper engine init failed");
+            }
         }
     };
 
@@ -155,6 +197,86 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
         ),
         Err(()) => (String::new(), "transcription failed"),
     }
+}
+
+/// GOLD-ADAPT-HANDY-04 — first-STT-use auto-download for the candle Whisper model.
+///
+/// Called from inside `spawn_blocking` when `init_global_engine_sync` reports
+/// "not cached". Uses a mini current-thread runtime (same pattern as
+/// `init_global_engine_sync` itself) to drive the async download.
+///
+/// Gate: `freedom.yaml::updater.allow_huggingface_downloads` (default `true`).
+/// WAL: emits `0xD7 MODEL_DOWNLOAD_START` + `0xD8 MODEL_DOWNLOAD_COMPLETE`
+///      via `daemon::model_download_audit` (best-effort; never aborts the download).
+///
+/// Returns `Ok(())` when the artifacts are on disk (download completed or were
+/// already present). Returns `Err` with an actionable message when the download
+/// is blocked (`allow_huggingface_downloads = false`) or fails on the network.
+fn maybe_auto_download_whisper() -> anyhow::Result<()> {
+    use crate::providers::whisper::DEFAULT_WHISPER_REPO;
+
+    // HF-01 consent gate — reuse UpdaterConfig::check_model_download.
+    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    cfg.updater
+        .check_model_download(DEFAULT_WHISPER_REPO, Some("whisper"))
+        .map_err(|msg| anyhow::anyhow!("{msg}"))?;
+
+    // Build a mini runtime (we're inside spawn_blocking).
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| anyhow::anyhow!("build runtime for whisper download: {e}"))?;
+
+    rt.block_on(async {
+        let start = std::time::Instant::now();
+        // 0xD7 MODEL_DOWNLOAD_START
+        crate::daemon::model_download_audit::emit_start(DEFAULT_WHISPER_REPO).await;
+
+        // `WhisperEngine::new_with_idle_secs` calls `ensure_artifacts` which
+        // uses hf_hub to download tokenizer.json + config.json + model.safetensors.
+        // idle_secs=Some(0) → no background idle-watcher spawned in this transient rt.
+        let result =
+            crate::providers::whisper::WhisperEngine::new_with_idle_secs(None, Some(0)).await;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        match &result {
+            Ok(_) => {
+                let cache_path = {
+                    let home = std::env::var("HOME")
+                        .map(std::path::PathBuf::from)
+                        .or_else(|_| {
+                            std::env::var("USERPROFILE").map(std::path::PathBuf::from)
+                        })
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    let flattened = DEFAULT_WHISPER_REPO.replace('/', "-");
+                    home.join(".neoth").join("models").join(flattened)
+                };
+                // 0xD8 MODEL_DOWNLOAD_COMPLETE
+                crate::daemon::model_download_audit::emit_complete(
+                    DEFAULT_WHISPER_REPO,
+                    &cache_path.to_string_lossy(),
+                    duration_ms,
+                )
+                .await;
+                tracing::info!(
+                    model = DEFAULT_WHISPER_REPO,
+                    duration_ms,
+                    "whisper: auto-download complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    model = DEFAULT_WHISPER_REPO,
+                    error = %e,
+                    "whisper: auto-download failed"
+                );
+            }
+        }
+        // Drop the engine immediately — GLOBAL_WHISPER_ENGINE will be
+        // populated by the subsequent `init_global_engine_sync` call in the
+        // caller, which shares the same OnceLock path.
+        result.map(|_| ())
+    })
 }
 
 /// JV-VOICE-02/03 — invoke faster-whisper CLI synchronously (must be inside
@@ -542,5 +664,92 @@ mod tests {
         assert_eq!(mime_hint_from_path(Path::new("x.WAV")), "audio/wav");
         assert_eq!(mime_hint_from_path(Path::new("x.flac")), "audio/flac");
         assert_eq!(mime_hint_from_path(Path::new("x.unknown")), "");
+    }
+
+    // ── GOLD-ADAPT-HANDY-04: auto-download gate tests ────────────────────────
+
+    /// When `allow_huggingface_downloads = false`, `maybe_auto_download_whisper`
+    /// must return Err whose message references the config flag — not attempt
+    /// any network request.
+    #[test]
+    fn auto_download_blocked_when_hf_downloads_disabled() {
+        use crate::config::ops::UpdaterConfig;
+
+        let mut updater = UpdaterConfig::default();
+        updater.allow_huggingface_downloads = false;
+
+        // Directly test the consent gate that `maybe_auto_download_whisper` uses.
+        let result = updater.check_model_download(
+            crate::providers::whisper::DEFAULT_WHISPER_REPO,
+            Some("whisper"),
+        );
+        assert!(
+            result.is_err(),
+            "check_model_download must return Err when downloads disabled"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("allow_huggingface_downloads"),
+            "error must name the config flag; got: {msg}"
+        );
+    }
+
+    /// When all three artifact files exist in the cache directory,
+    /// `init_global_engine_sync` returns Ok — confirming the "model present"
+    /// fast path does NOT invoke `maybe_auto_download_whisper`.
+    /// Uses a temp directory pointed at via the HOME override so no real
+    /// ~/.neoth layout is required.
+    #[test]
+    fn model_present_does_not_trigger_download() {
+        use crate::providers::whisper::{CONFIG_FILE, DEFAULT_WHISPER_REPO, SAFETENSORS_FILE, TOKENIZER_FILE};
+
+        // Build a fake model directory under a temp HOME.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let flattened = DEFAULT_WHISPER_REPO.replace('/', "-");
+        let model_dir = tmp.path().join(".neoth").join("models").join(&flattened);
+        std::fs::create_dir_all(&model_dir).unwrap();
+
+        // Touch all three sentinel files (content irrelevant — presence is the gate).
+        for name in &[SAFETENSORS_FILE, TOKENIZER_FILE, CONFIG_FILE] {
+            std::fs::write(model_dir.join(name), b"stub").unwrap();
+        }
+
+        // Override HOME so `default_cache_dir` resolves to our temp tree.
+        // NOTE: this is process-global; tests run in isolation via `cargo test`'s
+        // per-binary parallelism, but within-process test threads may race on env.
+        // We scope the env mutation tightly and accept the risk for this unit test.
+        let prev_home = std::env::var("HOME").ok();
+        let prev_userprofile = std::env::var("USERPROFILE").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+            std::env::set_var("USERPROFILE", tmp.path());
+        }
+
+        // `init_global_engine_sync` checks file existence before touching OnceLock.
+        // With stubs present the existence check passes; it then tries to build the
+        // engine (which fails because the stubs are not real weights). The test
+        // asserts the error is NOT "not cached" — proving the gate did NOT trigger.
+        let result = crate::providers::whisper::init_global_engine_sync(None);
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_userprofile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+
+        // If somehow the global engine was already set from another test that
+        // actually has the model cached, the call returns Ok — that is fine.
+        if let Err(e) = result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("not cached"),
+                "expected a load/parse error (stubs), not a cache-miss; got: {msg}"
+            );
+        }
     }
 }
