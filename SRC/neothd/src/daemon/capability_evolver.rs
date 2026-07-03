@@ -151,78 +151,91 @@ pub async fn run_evolver_pass(
     use crate::proactive::ProactiveQueue;
     use crate::proactive::action_staging::stage_and_enqueue;
 
-    let queue_path = home.join("proactive_queue.json");
-    let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
-
     let signals_in = report.signals.len();
     let mut result = EvolverReport::default();
 
-    for signal in &report.signals {
-        if !is_auto_safe(signal) {
-            result.proposals_skipped_not_auto_safe += 1;
-            continue;
-        }
-
-        // Only PromptEdit reaches here (is_auto_safe guarantees it).
-        let (target, reason) = match signal {
-            CollectorSignal::PromptEdit { target, reason } => (target.as_str(), reason.as_str()),
-            _ => unreachable!("is_auto_safe only passes PromptEdit"),
-        };
-
-        let Some(proposal) = build_proposal_from_collector_signal(target, reason, ts_unix) else {
-            tracing::debug!(
-                topic = target,
-                "capability_evolver: PromptEdit topic un-slugifiable, skipping proposal"
-            );
-            result.proposals_skipped_not_auto_safe += 1;
-            continue;
-        };
-
-        // Idempotent guard: skip if the skill artifact is already settled on disk.
-        let artifact_path = home.join("skills").join(&proposal.id).join("skill.yaml");
-        if is_verified_deployed(&artifact_path, ARTIFACT_MIN_AGE_SECS) {
-            tracing::debug!(
-                skill_id = %proposal.id,
-                "capability_evolver: skill artifact already deployed, skipping"
-            );
-            result.proposals_skipped_deployed += 1;
-            continue;
-        }
-
-        match stage_and_enqueue(home, proposal, &mut queue) {
-            Ok((_, true)) => {
-                result.proposals_staged += 1;
+    let queue_path = home.join("proactive_queue.json");
+    // Locked load→mutate→save; tolerates a corrupt file (same as the old
+    // `unwrap_or_default()`) by logging + skipping the whole staging pass.
+    let modify_result = ProactiveQueue::modify(&queue_path, |queue| {
+        for signal in &report.signals {
+            if !is_auto_safe(signal) {
+                result.proposals_skipped_not_auto_safe += 1;
+                continue;
             }
-            Ok((_, false)) => {
-                // Already in queue — dedup by proposal id; not an error.
+
+            // Only PromptEdit reaches here (is_auto_safe guarantees it).
+            let (target, reason) = match signal {
+                CollectorSignal::PromptEdit { target, reason } => {
+                    (target.as_str(), reason.as_str())
+                }
+                _ => unreachable!("is_auto_safe only passes PromptEdit"),
+            };
+
+            let Some(proposal) =
+                build_proposal_from_collector_signal(target, reason, ts_unix)
+            else {
                 tracing::debug!(
                     topic = target,
-                    "capability_evolver: proposal already in queue (dedup), skipping"
+                    "capability_evolver: PromptEdit topic un-slugifiable, skipping proposal"
                 );
+                result.proposals_skipped_not_auto_safe += 1;
+                continue;
+            };
+
+            // Idempotent guard: skip if the skill artifact is already settled on disk.
+            let artifact_path = home.join("skills").join(&proposal.id).join("skill.yaml");
+            if is_verified_deployed(&artifact_path, ARTIFACT_MIN_AGE_SECS) {
+                tracing::debug!(
+                    skill_id = %proposal.id,
+                    "capability_evolver: skill artifact already deployed, skipping"
+                );
+                result.proposals_skipped_deployed += 1;
+                continue;
             }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    topic = target,
-                    "capability_evolver: proposal staging failed"
+
+            match stage_and_enqueue(home, proposal, queue) {
+                Ok((_, true)) => {
+                    result.proposals_staged += 1;
+                }
+                Ok((_, false)) => {
+                    // Already in queue — dedup by proposal id; not an error.
+                    tracing::debug!(
+                        topic = target,
+                        "capability_evolver: proposal already in queue (dedup), skipping"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        topic = target,
+                        "capability_evolver: proposal staging failed"
+                    );
+                }
+            }
+        }
+
+        // Persist only when at least one new proposal was staged.
+        let persist = result.proposals_staged > 0;
+        (persist, ())
+    });
+
+    match modify_result {
+        Ok(()) => {
+            if result.proposals_staged > 0 {
+                tracing::info!(
+                    staged = result.proposals_staged,
+                    skipped_deployed = result.proposals_skipped_deployed,
+                    skipped_not_auto_safe = result.proposals_skipped_not_auto_safe,
+                    "HERMES-06 GAP-B: capability evolver staged proposals"
                 );
             }
         }
-    }
-
-    // Persist the updated queue atomically.
-    if result.proposals_staged > 0 {
-        match queue.save_to(&queue_path) {
-            Ok(()) => tracing::info!(
-                staged = result.proposals_staged,
-                skipped_deployed = result.proposals_skipped_deployed,
-                skipped_not_auto_safe = result.proposals_skipped_not_auto_safe,
-                "HERMES-06 GAP-B: capability evolver staged proposals"
-            ),
-            Err(e) => tracing::warn!(
+        Err(e) => {
+            tracing::warn!(
                 error = %e,
-                "capability_evolver: queue save failed after staging proposals"
-            ),
+                "capability_evolver: queue load/save failed, staging pass skipped"
+            );
         }
     }
 

@@ -244,20 +244,24 @@ pub async fn run_job(
             );
             let home = crate::config::FreedomConfig::default_neoth_home();
             let queue_path = home.join("proactive_queue.json");
-            let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
-            let inserted = queue.enqueue(ProactiveItem {
-                priority: 80,
-                dedup_key,
-                channel: "cli".to_string(),
-                source: "hermes_07".to_string(),
-                body,
-                scheduled_for_unix: 0,
-                is_failure: true,
-                expires_unix: crate::time::now_unix_i64().saturating_add(86_400),
+            // Locked load→mutate→save; tolerates a corrupt file (same as
+            // the old `unwrap_or_default()`) by silently ignoring the error
+            // (this whole block is best-effort, same as `let _ =` on save).
+            let _ = ProactiveQueue::modify(&queue_path, |queue| {
+                let inserted = queue.enqueue(ProactiveItem {
+                    priority: 80,
+                    dedup_key,
+                    channel: "cli".to_string(),
+                    source: "hermes_07".to_string(),
+                    body,
+                    scheduled_for_unix: 0,
+                    is_failure: true,
+                    expires_unix: crate::time::now_unix_i64().saturating_add(86_400),
+                });
+                // Persist only when enqueue accepted the item (same as old
+                // `if inserted { let _ = queue.save_to(...) }` logic).
+                (inserted, inserted)
             });
-            if inserted {
-                let _ = queue.save_to(&queue_path);
-            }
         }
     }
 

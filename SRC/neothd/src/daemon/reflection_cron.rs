@@ -264,12 +264,13 @@ pub fn run_reflection_tick_once(
     };
 
     let queue_path = home.join("proactive_queue.json");
-    let mut queue =
-        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
-    let enqueued = queue.enqueue(item);
-    queue
-        .save_to(&queue_path)
-        .map_err(|e| format!("queue save failed: {e}"))?;
+    // Always persist (dirty=true) — same as the old code which called save_to
+    // unconditionally regardless of whether enqueue deduped the item.
+    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
+        let inserted = queue.enqueue(item);
+        (true, inserted)
+    })
+    .map_err(|e| format!("queue load/save failed: {e}"))?;
 
     // GOLD-ADAPT-OH-07: persist last_emitted_unix on successful enqueue so
     // subsequent ticks within the window are suppressed even across restarts.
@@ -362,12 +363,13 @@ async fn run_tech_currency_tick_once(
         }
     };
     let queue_path = home.join("proactive_queue.json");
-    let mut queue =
-        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
-    let enqueued = queue.enqueue(item);
-    queue
-        .save_to(&queue_path)
-        .map_err(|e| format!("queue save failed: {e}"))?;
+    // Always persist (dirty=true) — same as the old code which called save_to
+    // unconditionally regardless of dedup.
+    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
+        let inserted = queue.enqueue(item);
+        (true, inserted)
+    })
+    .map_err(|e| format!("queue load/save failed: {e}"))?;
     // GR-fix: mark the week done ONLY after the queue save succeeds. The old order
     // wrote the marker BEFORE the enqueue/save, so a queue-save failure still
     // marked the week → the next tick's marker check skipped and the nudge was

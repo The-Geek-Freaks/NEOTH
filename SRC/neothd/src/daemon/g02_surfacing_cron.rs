@@ -69,19 +69,18 @@ pub fn run_g02_surfacing_tick(home: &std::path::Path, now_unix: i64) -> Result<u
     }
 
     let queue_path = home.join("proactive_queue.json");
-    let mut queue =
-        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
-    let mut enqueued_count = 0usize;
-    for claim in &claims {
-        let item = build_g02_proactive_item(claim, G02_DEFAULT_CHANNEL, now_unix);
-        if queue.enqueue(item) {
-            enqueued_count += 1;
+    ProactiveQueue::modify(&queue_path, |queue| {
+        let mut enqueued_count = 0usize;
+        for claim in &claims {
+            let item = build_g02_proactive_item(claim, G02_DEFAULT_CHANNEL, now_unix);
+            if queue.enqueue(item) {
+                enqueued_count += 1;
+            }
         }
-    }
-    queue
-        .save_to(&queue_path)
-        .map_err(|e| format!("queue save failed: {e}"))?;
-    Ok(enqueued_count)
+        // Always persist — same as the old unconditional save_to call.
+        (true, enqueued_count)
+    })
+    .map_err(|e| format!("queue load/save failed: {e}"))
 }
 
 /// Spawn the daemon-side G-02 cron loop. Matches the doctor_cron /

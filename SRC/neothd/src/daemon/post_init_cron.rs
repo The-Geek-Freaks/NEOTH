@@ -70,19 +70,16 @@ async fn run_post_init_check_inner(home: &Path) -> anyhow::Result<()> {
     };
 
     let queue_path = home.join("proactive_queue.json");
-    let mut queue = if queue_path.exists() {
-        ProactiveQueue::load_from(&queue_path)
-            .map_err(|e| anyhow::anyhow!("queue load: {e}"))?
-    } else {
-        ProactiveQueue::new()
-    };
 
     // enqueue returns false when the dedup_key already exists — no-op on
     // re-runs within the same binary version.
-    if queue.enqueue(item) {
-        queue
-            .save_to(&queue_path)
-            .map_err(|e| anyhow::anyhow!("queue save: {e}"))?;
+    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
+        let inserted = queue.enqueue(item);
+        (inserted, inserted)
+    })
+    .map_err(|e| anyhow::anyhow!("queue load/save: {e}"))?;
+
+    if enqueued {
         tracing::info!("post_init_cron: enqueued onboarding checklist item ({} gap(s))", gaps.len());
     } else {
         tracing::debug!("post_init_cron: item already queued (dedup), skipping");

@@ -3413,13 +3413,19 @@ async fn run_post_reply_pipelines(
                 }
                 // Stage + enqueue in the proactive review queue (dedup via proposal id).
                 let queue_path = home.join("proactive_queue.json");
-                let mut q = crate::proactive::ProactiveQueue::load_from(&queue_path)
-                    .unwrap_or_default();
-                if let Ok((_, _enqueued)) = crate::proactive::action_staging::stage_and_enqueue(
-                    &home, proposal, &mut q,
-                ) {
-                    let _ = q.save_to(&queue_path);
-                }
+                // Locked load→mutate→save; tolerates a corrupt file (same as the
+                // old `unwrap_or_default()`) by silently ignoring the error
+                // (this block is best-effort; the `let _ =` on the outer result
+                // mirrors the old `let _ = q.save_to(...)` best-effort save).
+                let _ = crate::proactive::ProactiveQueue::modify(&queue_path, |q| {
+                    // Persist only when stage_and_enqueue succeeds — same condition
+                    // as the old `if let Ok(...) { let _ = q.save_to(...) }`.
+                    let staged = crate::proactive::action_staging::stage_and_enqueue(
+                        &home, proposal, q,
+                    )
+                    .is_ok();
+                    (staged, staged)
+                });
             }
         }
     }

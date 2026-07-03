@@ -153,15 +153,15 @@ pub async fn run_checkin_tick(
     let dedup_key = format!("checkin:{}:{}", template.source_tag(), day_bucket);
 
     let queue_path = home.join("proactive_queue.json");
-    let mut queue = if queue_path.exists() {
-        ProactiveQueue::load_from(&queue_path)
-            .map_err(|e| anyhow::anyhow!("queue load: {e}"))?
-    } else {
-        ProactiveQueue::new()
-    };
 
-    // dedup: skip LLM call entirely when key already present in queue
-    if queue.peek().iter().any(|i| i.dedup_key == dedup_key) {
+    // dedup: skip LLM call entirely when key already present in queue.
+    // Read-only peek (persist=false) under the process-global lock.
+    let already_queued = ProactiveQueue::modify(&queue_path, |queue| {
+        let found = queue.peek().iter().any(|i| i.dedup_key == dedup_key);
+        (false, found)
+    })
+    .map_err(|e| anyhow::anyhow!("queue load: {e}"))?;
+    if already_queued {
         debug!(?dedup_key, "checkin_cron: already enqueued for today — skipping");
         return Ok(());
     }
@@ -200,10 +200,12 @@ pub async fn run_checkin_tick(
         expires_unix: now_unix + 86_400, // expire after 24h (stale nudge not wanted)
     };
 
-    if queue.enqueue(item) {
-        queue
-            .save_to(&queue_path)
-            .map_err(|e| anyhow::anyhow!("queue save: {e}"))?;
+    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
+        let inserted = queue.enqueue(item);
+        (inserted, inserted)
+    })
+    .map_err(|e| anyhow::anyhow!("queue save: {e}"))?;
+    if enqueued {
         info!(template = ?template, "checkin_cron: enqueued check-in nudge");
     }
 

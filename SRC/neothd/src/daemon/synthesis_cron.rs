@@ -895,71 +895,75 @@ fn stage_skill_perf_proposals(
     }
 
     let queue_path = home.join("proactive_queue.json");
-    let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
-    let mut staged = 0usize;
+    // Locked load→mutate→save; tolerates a corrupt file (same as the old
+    // `unwrap_or_default()`) by logging + returning 0.
+    match ProactiveQueue::modify(&queue_path, |queue| {
+        let mut staged = 0usize;
 
-    for s in suggestions {
-        // Produce a minimal YAML block describing what the operator should
-        // review. The `ConfigTweak` kind signals "this is about a config or
-        // skill prompt change", not a new skill file.
-        let draft_yaml = format!(
-            "# HERMES-06 SkillPerfSuggestion\nskill_id: {skill_id}\nsignal_kind: {signal_kind}\n\
-             score_delta_mean: {score_delta_mean:.4}\nrejection_rate: {rejection_rate:.4}\n\
-             suggestion: |\n  {suggestion}\n",
-            skill_id = s.skill_id,
-            signal_kind = s.signal_kind,
-            score_delta_mean = s.score_delta_mean,
-            rejection_rate = s.rejection_rate,
-            suggestion = s.suggestion.replace('\n', "\n  "),
-        );
-        let title = format!("Skill prompt review: {}", s.skill_id);
-        let rationale = format!(
-            "The weekly synthesis SWIRL pass detected a performance concern for skill `{}`.\n\n\
-             Signal: **{}** (score delta mean: {:.3}, rejection rate: {:.1}%).\n\n\
-             Suggestion: {}\n\n\
-             Review the YAML draft; `accept` acknowledges the suggestion and logs it, \
-             `reject` discards it. No files are modified automatically.",
-            s.skill_id,
-            s.signal_kind,
-            s.score_delta_mean,
-            s.rejection_rate * 100.0,
-            s.suggestion,
-        );
-        let proposal_id =
-            make_proposal_id(ProposalKind::ConfigTweak, &title, &draft_yaml, tick_ts_unix);
-        let proposal = ProposedAction {
-            id: proposal_id,
-            kind: ProposalKind::ConfigTweak,
-            title,
-            rationale,
-            draft_yaml,
-            generated_ts_unix: tick_ts_unix,
-            status: ProposalStatus::Pending,
-            operator_note: String::new(),
-        };
-        match stage_and_enqueue(home, proposal, &mut queue) {
-            Ok((_, true)) => staged += 1,
-            Ok((_, false)) => {} // dedup: already in queue from a prior tick
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    skill_id = %s.skill_id,
-                    "synthesis cron: SkillPerfSuggestion proposal staging failed"
-                );
+        for s in suggestions {
+            // Produce a minimal YAML block describing what the operator should
+            // review. The `ConfigTweak` kind signals "this is about a config or
+            // skill prompt change", not a new skill file.
+            let draft_yaml = format!(
+                "# HERMES-06 SkillPerfSuggestion\nskill_id: {skill_id}\nsignal_kind: {signal_kind}\n\
+                 score_delta_mean: {score_delta_mean:.4}\nrejection_rate: {rejection_rate:.4}\n\
+                 suggestion: |\n  {suggestion}\n",
+                skill_id = s.skill_id,
+                signal_kind = s.signal_kind,
+                score_delta_mean = s.score_delta_mean,
+                rejection_rate = s.rejection_rate,
+                suggestion = s.suggestion.replace('\n', "\n  "),
+            );
+            let title = format!("Skill prompt review: {}", s.skill_id);
+            let rationale = format!(
+                "The weekly synthesis SWIRL pass detected a performance concern for skill `{}`.\n\n\
+                 Signal: **{}** (score delta mean: {:.3}, rejection rate: {:.1}%).\n\n\
+                 Suggestion: {}\n\n\
+                 Review the YAML draft; `accept` acknowledges the suggestion and logs it, \
+                 `reject` discards it. No files are modified automatically.",
+                s.skill_id,
+                s.signal_kind,
+                s.score_delta_mean,
+                s.rejection_rate * 100.0,
+                s.suggestion,
+            );
+            let proposal_id =
+                make_proposal_id(ProposalKind::ConfigTweak, &title, &draft_yaml, tick_ts_unix);
+            let proposal = ProposedAction {
+                id: proposal_id,
+                kind: ProposalKind::ConfigTweak,
+                title,
+                rationale,
+                draft_yaml,
+                generated_ts_unix: tick_ts_unix,
+                status: ProposalStatus::Pending,
+                operator_note: String::new(),
+            };
+            match stage_and_enqueue(home, proposal, queue) {
+                Ok((_, true)) => staged += 1,
+                Ok((_, false)) => {} // dedup: already in queue from a prior tick
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        skill_id = %s.skill_id,
+                        "synthesis cron: SkillPerfSuggestion proposal staging failed"
+                    );
+                }
             }
         }
-    }
 
-    if staged > 0 {
-        if let Err(e) = queue.save_to(&queue_path) {
+        // Persist only when at least one new proposal was staged.
+        (staged > 0, staged)
+    }) {
+        Ok(staged) => staged,
+        Err(e) => {
             tracing::warn!(
                 error = %e,
-                "synthesis cron: queue save after HERMES-06 GAP-B staging failed"
+                "synthesis cron: queue load/save failed, HERMES-06 GAP-B staging skipped"
             );
+            0
         }
     }
-
-    staged
 }
 
 /// Render the synthesis note as a human-readable Obsidian markdown file.

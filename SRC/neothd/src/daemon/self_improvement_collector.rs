@@ -174,49 +174,54 @@ fn stage_prompt_edit_proposals(home: &Path, report: &CollectorReport, tick_ts_un
     use crate::proactive::action_staging::stage_and_enqueue;
 
     let queue_path = home.join("proactive_queue.json");
-    let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
-    let mut staged = 0usize;
+    // Locked load→mutate→save; tolerates a corrupt file (same as the old
+    // `unwrap_or_default()`) by logging + skipping the staging pass.
+    match ProactiveQueue::modify(&queue_path, |queue| {
+        let mut staged = 0usize;
 
-    for signal in &report.signals {
-        let (target, reason) = match signal {
-            CollectorSignal::PromptEdit { target, reason } => (target.as_str(), reason.as_str()),
-            // PatchSkill and Escalate require operator attention beyond a skill
-            // YAML draft — skip them here.
-            _ => continue,
-        };
-        let Some(proposal) =
-            build_proposal_from_collector_signal(target, reason, tick_ts_unix)
-        else {
-            tracing::debug!(
-                topic = target,
-                "self_improvement_collector: PromptEdit topic un-slugifiable, skipping proposal"
-            );
-            continue;
-        };
-        match stage_and_enqueue(home, proposal, &mut queue) {
-            Ok((_, true)) => staged += 1,
-            Ok((_, false)) => {} // already in queue (dedup by proposal id)
-            Err(e) => {
-                warn!(
-                    error = %e,
+        for signal in &report.signals {
+            let (target, reason) = match signal {
+                CollectorSignal::PromptEdit { target, reason } => {
+                    (target.as_str(), reason.as_str())
+                }
+                // PatchSkill and Escalate require operator attention beyond a skill
+                // YAML draft — skip them here.
+                _ => continue,
+            };
+            let Some(proposal) =
+                build_proposal_from_collector_signal(target, reason, tick_ts_unix)
+            else {
+                tracing::debug!(
                     topic = target,
-                    "self_improvement_collector: proposal staging failed"
+                    "self_improvement_collector: PromptEdit topic un-slugifiable, skipping proposal"
                 );
+                continue;
+            };
+            match stage_and_enqueue(home, proposal, queue) {
+                Ok((_, true)) => staged += 1,
+                Ok((_, false)) => {} // already in queue (dedup by proposal id)
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        topic = target,
+                        "self_improvement_collector: proposal staging failed"
+                    );
+                }
             }
         }
-    }
 
-    if staged > 0 {
-        match queue.save_to(&queue_path) {
-            Ok(()) => tracing::info!(
-                staged,
-                "HERMES-06 GAP-A: staged PromptEdit skill proposal(s) for operator review"
-            ),
-            Err(e) => warn!(
-                error = %e,
-                "self_improvement_collector: queue save after proposal staging failed"
-            ),
-        }
+        // Persist only when at least one new proposal was staged.
+        (staged > 0, staged)
+    }) {
+        Ok(staged) if staged > 0 => tracing::info!(
+            staged,
+            "HERMES-06 GAP-A: staged PromptEdit skill proposal(s) for operator review"
+        ),
+        Ok(_) => {}
+        Err(e) => warn!(
+            error = %e,
+            "self_improvement_collector: queue load/save failed, staging pass skipped"
+        ),
     }
 }
 

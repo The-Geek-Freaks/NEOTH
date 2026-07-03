@@ -456,21 +456,20 @@ pub fn run_pattern_tick_once(
     let cap = config.max_nudges_per_tick.max(1) as usize;
 
     let queue_path = home.join("proactive_queue.json");
-    let mut queue =
-        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
-    let mut enqueued = 0usize;
-    for item in items {
-        if enqueued >= cap {
-            break;
+    ProactiveQueue::modify(&queue_path, |queue| {
+        let mut enqueued = 0usize;
+        for item in items {
+            if enqueued >= cap {
+                break;
+            }
+            if queue.enqueue(item) {
+                enqueued += 1;
+            }
         }
-        if queue.enqueue(item) {
-            enqueued += 1;
-        }
-    }
-    queue
-        .save_to(&queue_path)
-        .map_err(|e| format!("queue save failed: {e}"))?;
-    Ok(enqueued)
+        // Always persist — same as the old unconditional save_to call.
+        (true, enqueued)
+    })
+    .map_err(|e| format!("queue load/save failed: {e}"))
 }
 
 /// Spawn the pattern-cron loop. Returns `None` when
