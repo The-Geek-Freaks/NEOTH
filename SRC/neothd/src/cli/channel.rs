@@ -179,8 +179,9 @@ pub enum ChannelTestPlan {
     Whatsapp,
     /// Keet — OFFLINE seed-phrase format validation (no network).
     KeetOffline,
-    /// Discord — no credential field yet, not testable.
-    DiscordNoCred,
+    /// Discord — credential stored (`discord_bot_token`), but no live test
+    /// implemented yet; reports configured-and-untested rather than probing.
+    DiscordNotTestable,
 }
 
 /// Decide the test plan for `<name>`. PURE. Slack needs only the BOT token to
@@ -208,7 +209,10 @@ pub fn plan_channel_test(name: &str, cfg: &FreedomConfig, creds: &Credentials) -
             creds.keet_seed_phrase.is_some(),
             ChannelTestPlan::KeetOffline,
         ),
-        "discord" => ChannelTestPlan::DiscordNoCred,
+        "discord" => yes_if(
+            creds.discord_bot_token.is_some(),
+            ChannelTestPlan::DiscordNotTestable,
+        ),
         _ => ChannelTestPlan::Unknown,
     }
 }
@@ -245,9 +249,10 @@ pub async fn run_test(name: &str, output: &OutputFormat) -> Result<()> {
             chan,
             "not configured — `neoth channel list` shows what to set".to_string(),
         ),
-        ChannelTestPlan::DiscordNoCred => skipped(
+        ChannelTestPlan::DiscordNotTestable => skipped(
             chan,
-            "no credentials.yaml field yet — outbound adapter only".to_string(),
+            "configured — live test not implemented for discord; `neoth serve` starts it"
+                .to_string(),
         ),
         ChannelTestPlan::Telegram => {
             let ch = crate::channels::telegram::TelegramChannel::new(
@@ -382,7 +387,8 @@ fn render_test(r: &ChannelTestResult, output: &OutputFormat) -> Result<String> {
 /// missing rather than panicking.
 #[derive(Debug, Default, Clone)]
 pub struct ChannelAddFields {
-    /// telegram bot token / whatsapp access token.
+    /// telegram bot token / whatsapp access token / discord bot token /
+    /// line channel access token / mattermost token.
     pub token: Option<String>,
     /// slack bot token (`xoxb-…`).
     pub bot_token: Option<String>,
@@ -392,6 +398,39 @@ pub struct ChannelAddFields {
     pub phone_id: Option<String>,
     /// keet 24-word pairing phrase.
     pub seed: Option<String>,
+    /// B9 — base URL (signal-cli daemon / BlueBubbles server / Mattermost).
+    pub url: Option<String>,
+    /// B9 — signal own phone number (E.164).
+    pub phone: Option<String>,
+    /// B9 — irc server host (no scheme).
+    pub server: Option<String>,
+    /// B9 — irc bot nick.
+    pub nick: Option<String>,
+    /// B9 — password/secret (irc NickServ · BlueBubbles server password ·
+    /// LINE channel secret).
+    pub password: Option<String>,
+    /// B9 — irc channels csv (`#neoth,#dev`).
+    pub channels_csv: Option<String>,
+}
+
+/// B9 — a base URL field must be `http(s)://…` (fail fast on a bare host —
+/// the adapters build request URLs by string-joining).
+fn require_http_url(v: &Option<String>, what: &str) -> Result<String> {
+    let s = require(v, what)?;
+    if !(s.starts_with("http://") || s.starts_with("https://")) {
+        anyhow::bail!("{what} must start with http:// or https:// (got `{s}`)");
+    }
+    Ok(s.trim_end_matches('/').to_string())
+}
+
+/// B9 — an E.164-ish phone number: `+` then 7-15 digits.
+fn require_e164(v: &Option<String>, what: &str) -> Result<String> {
+    let s = require(v, what)?;
+    let digits = s.strip_prefix('+').unwrap_or("");
+    if digits.len() < 7 || digits.len() > 15 || !digits.chars().all(|c| c.is_ascii_digit()) {
+        anyhow::bail!("{what} must be E.164, e.g. +491701234567 (got `{s}`)");
+    }
+    Ok(s)
 }
 
 fn require(v: &Option<String>, what: &str) -> Result<String> {
@@ -450,13 +489,71 @@ pub fn stage_channel_add(
             }
             creds.keet_seed_phrase = Some(SecretString::from(seed.as_str()));
         }
-        "discord" => anyhow::bail!(
-            "discord has no credentials.yaml field yet — outbound adapter only; inbound \
-             credential wiring is a follow-up"
-        ),
+        "discord" => {
+            let t = require(&fields.token, "discord bot token (from the developer portal)")?;
+            creds.discord_bot_token = Some(SecretString::from(t.as_str()));
+        }
+        "signal" => {
+            let url = require_http_url(&fields.url, "signal-cli daemon URL")?;
+            let phone = require_e164(&fields.phone, "signal phone number")?;
+            creds.signal_cli_url = Some(url);
+            creds.signal_phone_number = Some(phone);
+        }
+        "line" => {
+            let t = require(&fields.token, "LINE channel access token")?;
+            // The channel secret verifies inbound webhook signatures — optional
+            // (push-only works without it), but inbound stays off until set.
+            creds.line_channel_access_token = Some(SecretString::from(t.as_str()));
+            if let Some(s) = fields
+                .password
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                creds.line_channel_secret = Some(SecretString::from(s));
+            }
+        }
+        "irc" => {
+            let server = require(&fields.server, "irc server host (e.g. irc.libera.chat)")?;
+            if server.contains("://") {
+                anyhow::bail!("irc server is a bare host, not a URL (drop the scheme)");
+            }
+            let nick = require(&fields.nick, "irc bot nick")?;
+            creds.irc_server = Some(server);
+            creds.irc_nick = Some(nick);
+            if let Some(pw) = fields
+                .password
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                creds.irc_password = Some(SecretString::from(pw));
+            }
+            if let Some(ch) = fields
+                .channels_csv
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                creds.irc_channels = Some(ch.to_string());
+            }
+        }
+        "imessage" | "imessage_bluebubbles" | "bluebubbles" => {
+            let url = require_http_url(&fields.url, "BlueBubbles server URL")?;
+            let pw = require(&fields.password, "BlueBubbles server password")?;
+            creds.bluebubbles_url = Some(url);
+            creds.bluebubbles_password = Some(SecretString::from(pw.as_str()));
+        }
+        "mattermost" => {
+            let url = require_http_url(&fields.url, "Mattermost server URL")?;
+            let t = require(&fields.token, "Mattermost bot/personal-access token")?;
+            creds.mattermost_url = Some(url);
+            creds.mattermost_token = Some(SecretString::from(t.as_str()));
+        }
         other => anyhow::bail!(
-            "unknown channel `{other}`. Addable: telegram, slack, whatsapp, keet. \
-             `neoth channel list` shows configured state."
+            "unknown channel `{other}`. Addable: telegram, slack, whatsapp, keet, discord, \
+             signal, line, irc, imessage, mattermost. `neoth channel list` shows configured \
+             state."
         ),
     }
     Ok(creds)
@@ -474,9 +571,23 @@ pub async fn run_add(channel: &str, output: &OutputFormat) -> Result<()> {
     let path = crate::config::credentials::default_path();
     let base = Credentials::load_or_default(&path).unwrap_or_default();
 
-    // Reject discord/unknown BEFORE prompting (no point asking for a token we
+    // Reject unknown channels BEFORE prompting (no point asking for a token we
     // can't store) — let the staging validator produce the precise message.
-    if !matches!(chan.as_str(), "telegram" | "slack" | "whatsapp" | "keet") {
+    if !matches!(
+        chan.as_str(),
+        "telegram"
+            | "slack"
+            | "whatsapp"
+            | "keet"
+            | "discord"
+            | "signal"
+            | "line"
+            | "irc"
+            | "imessage"
+            | "imessage_bluebubbles"
+            | "bluebubbles"
+            | "mattermost"
+    ) {
         stage_channel_add(&chan, &ChannelAddFields::default(), base)?;
         return Ok(()); // unreachable — the line above always errors for these
     }
@@ -527,6 +638,37 @@ fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
             )?);
         }
         "keet" => f.seed = Some(read_secret("Keet 24-word pairing phrase")?),
+        "discord" => f.token = Some(read_secret("Discord bot token (developer portal)")?),
+        "signal" => {
+            f.url = Some(read_plain(
+                "signal-cli daemon URL (e.g. http://127.0.0.1:8080)",
+            )?);
+            f.phone = Some(read_plain("Signal phone number (E.164, e.g. +4917…)")?);
+        }
+        "line" => {
+            f.token = Some(read_secret("LINE channel access token")?);
+            f.password = Some(read_secret(
+                "LINE channel secret (empty = push-only, no inbound webhook)",
+            )?);
+        }
+        "irc" => {
+            f.server = Some(read_plain("IRC server host (e.g. irc.libera.chat)")?);
+            f.nick = Some(read_plain("IRC bot nick")?);
+            f.password = Some(read_secret("NickServ/bouncer password (empty = none)")?);
+            f.channels_csv = Some(read_plain("Channels to join, csv (e.g. #neoth,#dev)")?);
+        }
+        "imessage" | "imessage_bluebubbles" | "bluebubbles" => {
+            f.url = Some(read_plain(
+                "BlueBubbles server URL (e.g. http://192.168.1.5:1234)",
+            )?);
+            f.password = Some(read_secret("BlueBubbles server password")?);
+        }
+        "mattermost" => {
+            f.url = Some(read_plain(
+                "Mattermost server URL (e.g. https://mm.example.com)",
+            )?);
+            f.token = Some(read_secret("Mattermost bot/personal-access token")?);
+        }
         _ => {}
     }
     Ok(f)
@@ -593,11 +735,55 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.keet_seed_phrase = None;
             had
         }
-        // Discord stores no credential, so there is never anything to remove.
-        "discord" => false,
+        "discord" => {
+            let had = creds.discord_bot_token.is_some();
+            creds.discord_bot_token = None;
+            had
+        }
+        "signal" => {
+            let had = creds.signal_cli_url.is_some() || creds.signal_phone_number.is_some();
+            creds.signal_cli_url = None;
+            creds.signal_phone_number = None;
+            had
+        }
+        "line" => {
+            let had = creds.line_channel_access_token.is_some();
+            creds.line_channel_access_token = None;
+            creds.line_channel_secret = None;
+            creds.line_webhook_port = None;
+            had
+        }
+        "irc" => {
+            let had = creds.irc_server.is_some() || creds.irc_nick.is_some();
+            creds.irc_server = None;
+            creds.irc_port = None;
+            creds.irc_nick = None;
+            creds.irc_password = None;
+            creds.irc_channels = None;
+            creds.irc_tls = None;
+            creds.irc_allowed_nick = None;
+            creds.irc_allowed_account = None;
+            had
+        }
+        "imessage" | "imessage_bluebubbles" | "bluebubbles" => {
+            let had = creds.bluebubbles_url.is_some() || creds.bluebubbles_password.is_some();
+            creds.bluebubbles_url = None;
+            creds.bluebubbles_password = None;
+            creds.bluebubbles_chat_guid = None;
+            creds.imessage_allowed_sender = None;
+            had
+        }
+        "mattermost" => {
+            let had = creds.mattermost_url.is_some() || creds.mattermost_token.is_some();
+            creds.mattermost_url = None;
+            creds.mattermost_token = None;
+            creds.mattermost_allowed_user_id = None;
+            had
+        }
         other => anyhow::bail!(
-            "unknown channel `{other}`. Removable: telegram, slack, whatsapp, keet. \
-             `neoth channel list` shows configured state."
+            "unknown channel `{other}`. Removable: telegram, slack, whatsapp, keet, discord, \
+             signal, line, irc, imessage, mattermost. `neoth channel list` shows configured \
+             state."
         ),
     };
     Ok((creds, removed))
@@ -770,7 +956,14 @@ mod tests {
         );
         assert_eq!(
             plan_channel_test("discord", &cfg, &creds),
-            ChannelTestPlan::DiscordNoCred
+            ChannelTestPlan::NotConfigured,
+            "no discord token → NotConfigured (B9: discord token is storable now)"
+        );
+        let mut creds_dc = creds_empty();
+        creds_dc.discord_bot_token = Some(SecretString::from("bot"));
+        assert_eq!(
+            plan_channel_test("discord", &cfg, &creds_dc),
+            ChannelTestPlan::DiscordNotTestable
         );
         assert_eq!(
             plan_channel_test("nope", &cfg, &creds),
@@ -976,7 +1169,8 @@ mod tests {
     }
 
     #[test]
-    fn stage_add_rejects_discord_and_unknown() {
+    fn stage_add_rejects_missing_fields_and_unknown() {
+        // discord IS addable now (B9) — but a missing token still errors.
         assert!(
             stage_channel_add(
                 "discord",
@@ -993,6 +1187,128 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn stage_add_discord_stores_token() {
+        let f = ChannelAddFields {
+            token: Some("bot-token".into()),
+            ..Default::default()
+        };
+        let c = stage_channel_add("discord", &f, Credentials::default()).unwrap();
+        assert!(c.discord_bot_token.is_some());
+    }
+
+    #[test]
+    fn stage_add_signal_validates_url_and_e164() {
+        let bad_url = ChannelAddFields {
+            url: Some("127.0.0.1:8080".into()),
+            phone: Some("+491701234567".into()),
+            ..Default::default()
+        };
+        assert!(stage_channel_add("signal", &bad_url, Credentials::default()).is_err());
+        let bad_phone = ChannelAddFields {
+            url: Some("http://127.0.0.1:8080".into()),
+            phone: Some("0170-123".into()),
+            ..Default::default()
+        };
+        assert!(stage_channel_add("signal", &bad_phone, Credentials::default()).is_err());
+        let good = ChannelAddFields {
+            url: Some("http://127.0.0.1:8080/".into()),
+            phone: Some("+491701234567".into()),
+            ..Default::default()
+        };
+        let c = stage_channel_add("signal", &good, Credentials::default()).unwrap();
+        assert_eq!(c.signal_cli_url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(c.signal_phone_number.as_deref(), Some("+491701234567"));
+    }
+
+    #[test]
+    fn stage_add_line_secret_optional_push_only() {
+        let push_only = ChannelAddFields {
+            token: Some("line-token".into()),
+            password: Some("  ".into()),
+            ..Default::default()
+        };
+        let c = stage_channel_add("line", &push_only, Credentials::default()).unwrap();
+        assert!(c.line_channel_access_token.is_some());
+        assert!(c.line_channel_secret.is_none(), "blank secret stays unset");
+        let full = ChannelAddFields {
+            token: Some("line-token".into()),
+            password: Some("channel-secret".into()),
+            ..Default::default()
+        };
+        let c = stage_channel_add("line", &full, Credentials::default()).unwrap();
+        assert!(c.line_channel_secret.is_some());
+    }
+
+    #[test]
+    fn stage_add_irc_requires_bare_host_and_nick() {
+        let with_scheme = ChannelAddFields {
+            server: Some("https://irc.libera.chat".into()),
+            nick: Some("neoth".into()),
+            ..Default::default()
+        };
+        assert!(stage_channel_add("irc", &with_scheme, Credentials::default()).is_err());
+        let good = ChannelAddFields {
+            server: Some("irc.libera.chat".into()),
+            nick: Some("neoth".into()),
+            password: Some("".into()),
+            channels_csv: Some("#neoth,#dev".into()),
+            ..Default::default()
+        };
+        let c = stage_channel_add("irc", &good, Credentials::default()).unwrap();
+        assert_eq!(c.irc_server.as_deref(), Some("irc.libera.chat"));
+        assert_eq!(c.irc_nick.as_deref(), Some("neoth"));
+        assert!(c.irc_password.is_none(), "empty password stays unset");
+        assert_eq!(c.irc_channels.as_deref(), Some("#neoth,#dev"));
+    }
+
+    #[test]
+    fn stage_add_imessage_and_mattermost_aliases_and_urls() {
+        for alias in ["imessage", "imessage_bluebubbles", "bluebubbles"] {
+            let f = ChannelAddFields {
+                url: Some("http://192.168.1.5:1234".into()),
+                password: Some("bb-pass".into()),
+                ..Default::default()
+            };
+            let c = stage_channel_add(alias, &f, Credentials::default()).unwrap();
+            assert!(c.bluebubbles_url.is_some() && c.bluebubbles_password.is_some());
+        }
+        let f = ChannelAddFields {
+            url: Some("https://mm.example.com/".into()),
+            token: Some("mm-token".into()),
+            ..Default::default()
+        };
+        let c = stage_channel_add("mattermost", &f, Credentials::default()).unwrap();
+        assert_eq!(c.mattermost_url.as_deref(), Some("https://mm.example.com"));
+        assert!(c.mattermost_token.is_some());
+    }
+
+    #[test]
+    fn stage_remove_b9_channels_clear_all_fields() {
+        let mut base = Credentials::default();
+        base.irc_server = Some("irc.libera.chat".into());
+        base.irc_nick = Some("neoth".into());
+        base.irc_allowed_nick = Some("alex".into());
+        base.irc_allowed_account = Some("alex".into());
+        let (c, removed) = stage_channel_remove("irc", base).unwrap();
+        assert!(removed);
+        assert!(
+            c.irc_server.is_none()
+                && c.irc_nick.is_none()
+                && c.irc_allowed_nick.is_none()
+                && c.irc_allowed_account.is_none()
+        );
+        let mut base = Credentials::default();
+        base.bluebubbles_url = Some("http://x".into());
+        base.bluebubbles_password = Some(SecretString::from("pw"));
+        let (c, removed) = stage_channel_remove("imessage", base).unwrap();
+        assert!(removed);
+        assert!(c.bluebubbles_url.is_none() && c.bluebubbles_password.is_none());
+        // removing an unconfigured B9 channel reports false, no error
+        let (_, removed) = stage_channel_remove("signal", Credentials::default()).unwrap();
+        assert!(!removed);
     }
 
     #[test]

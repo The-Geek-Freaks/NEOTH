@@ -64,7 +64,10 @@ pub(crate) async fn step6_channel(
         state.telegram_token = Some(crate::secret::SecretString::from(t.as_str()));
         state.telegram_user_id = args.telegram_user_id;
     } else if interactive {
-        println!("  [6/9] Telegram skipped. Add later: `neoth channel add telegram`");
+        println!(
+            "  [6/9] Telegram skipped. Add any channel later: `neoth channel add \
+             telegram|slack|whatsapp|keet|discord|signal|line|irc|imessage|mattermost`"
+        );
     }
 
     state.steps_completed.push(WizardStep::Channel as u8);

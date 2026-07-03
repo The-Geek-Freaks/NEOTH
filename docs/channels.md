@@ -13,6 +13,13 @@ NEOTH exposes the same buddy through multiple surfaces. Channels are not second-
 | **Slack** | Workspaces and team workflows. | Socket Mode WebSocket + Web API. |
 | **Discord** | Community and DM usage. | Gateway WebSocket. |
 | **Keet** | P2P/private channel direction. | Pears/Keet bridge. |
+| **Signal** | Private personal messaging. | Local signal-cli daemon (JSON-RPC/REST poll). |
+| **Matrix** | Federated rooms/DMs. | matrix-sdk (`matrix-channel` feature). |
+| **LINE** | Mainstream phone access (Asia). | Messaging API webhook + push REST. |
+| **IRC / Twitch** | Ops channels, streams. | `irc` crate, dial-out TCP (`irc-channel` feature). |
+| **Mattermost** | Self-hosted team chat. | WebSocket + REST, dial-out. |
+| **Nostr** | Decentralized encrypted DMs. | NIP-17 via relays (`nostr-channel` feature). |
+| **iMessage** | Apple-ecosystem messaging. | BlueBubbles server on a Mac, REST poll (dial-out). |
 | **Email** | Important-message detection, drafts, replies. | IMAP/OAuth provider adapters. |
 | **Calendar** | Read/create/update schedule items with approval. | CalDAV/Google-style adapters. |
 
@@ -29,7 +36,8 @@ Every channel should pass through:
 ## Managing channels from the CLI
 
 The `neoth channel` family manages the messaging channels (Telegram, Slack,
-WhatsApp, Keet) without the full wizard:
+WhatsApp, Keet, Discord, Signal, LINE, IRC, iMessage/BlueBubbles, Mattermost)
+without the full wizard:
 
 ```bash
 neoth channel list                 # which channels are configured right now
@@ -48,9 +56,17 @@ neoth channel remove telegram      # clear a channel's credentials
   `--output json`.
 
 Channel credentials live only in `credentials.yaml`; `neoth serve` reads them on
-start. Discord ships an outbound adapter but has no credential field yet, so it
-is not yet `add`-able. Email and calendar are configured through the wizard
-(`neoth init`) — they are sensitive ingest surfaces, not bot tokens.
+start. Email and calendar are configured through the wizard (`neoth init`) —
+they are sensitive ingest surfaces, not bot tokens.
+
+`add` prompts per channel (B9): **discord** bot token · **signal** signal-cli
+URL + own E.164 number · **line** channel access token (+ channel secret for
+inbound webhooks; blank = push-only) · **irc** server host, nick, optional
+NickServ password + channels csv · **imessage** BlueBubbles server URL +
+password · **mattermost** server URL + token. Optional hardening fields
+(`irc_allowed_account`, `imessage_allowed_sender`, per-channel allowlists) are
+set directly in `credentials.yaml`. `test` live-checks telegram/slack/whatsapp/
+keet; the rest report configured state via `neoth channel list`.
 
 ## Telegram
 
@@ -130,9 +146,9 @@ Required Slack scopes:
 
 ## Discord
 
-Discord ships an outbound adapter, but inbound credential storage is a follow-up
-— it has no `credentials.yaml` field yet, so `neoth channel add discord` is not
-available. Track the gap in the project status.
+Discord stores its bot token in `credentials.yaml` (`discord_bot_token`) —
+`neoth channel add discord` prompts for it, and `neoth serve` starts the
+Gateway loop when it is present.
 
 Discord notes:
 
