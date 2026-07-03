@@ -746,6 +746,7 @@ export component SettingsView inherits Rectangle {
                     mirrors-slash: "(primary daily surface)";
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-base;
@@ -782,6 +783,7 @@ export component SettingsView inherits Rectangle {
                 }
                 // ODY-11 — Chat density picker card.
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-base;
@@ -840,6 +842,7 @@ export component SettingsView inherits Rectangle {
                     mirrors-slash: "/provider [role] <kind>   |   neoth hemispheres set";
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -898,6 +901,7 @@ export component SettingsView inherits Rectangle {
                 // options — local GGUF refs (abliterated-first, VRAM-fitting) for
                 // local_qwen/ouro, else the live cloud catalog.
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -977,6 +981,7 @@ export component SettingsView inherits Rectangle {
                     }
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1048,6 +1053,7 @@ export component SettingsView inherits Rectangle {
                 }
                 // PF-01-GUI — skill auto-routing toggle (skills.always_embed_route).
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1077,6 +1083,7 @@ export component SettingsView inherits Rectangle {
                     edited(t) => { root.skills-filter-edited(t); }
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1170,6 +1177,7 @@ export component SettingsView inherits Rectangle {
                     mirrors-slash: "/plugin list   |   neoth plugin enable <id>";
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1223,6 +1231,7 @@ export component SettingsView inherits Rectangle {
                     mirrors-slash: "/memory view [topic]   |   /memory forget <topic>";
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1269,6 +1278,7 @@ export component SettingsView inherits Rectangle {
                 // permanent wipe (`neoth memory --forget <t> --confirm`) is gated
                 // behind an inline confirm because it is irreversible.
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1350,6 +1360,7 @@ export component SettingsView inherits Rectangle {
                     mirrors-slash: "/consent list   |   /autonomy <level>";
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1479,6 +1490,7 @@ export component SettingsView inherits Rectangle {
                 // GOLD-PROG-08 — live token budget (council-path meter), polled
                 // from ~/.neoth/usage_meter.json (daemon writes it every 10s).
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1521,6 +1533,7 @@ export component SettingsView inherits Rectangle {
                 // GR-10 — Safety Rails card: which restrictions are actively
                 // engaged on the daemon (`neoth security safe-mode --json`).
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1579,6 +1592,7 @@ export component SettingsView inherits Rectangle {
                 // single "what protects me + what I can prove" surface
                 // (`neoth trust --output json`).
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1692,6 +1706,7 @@ export component SettingsView inherits Rectangle {
                 // VRAM / disk + cached local models (`neoth hardware --output
                 // json`). Read-only; the operator sees node capacity at a glance.
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1778,6 +1793,7 @@ export component SettingsView inherits Rectangle {
                 // from `neoth cluster topology --output json`; live RTT/stability
                 // populate only while the daemon runs. Empty until a peer pairs.
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1825,6 +1841,7 @@ export component SettingsView inherits Rectangle {
                     }
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1856,6 +1873,7 @@ export component SettingsView inherits Rectangle {
                     }
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1883,6 +1901,7 @@ export component SettingsView inherits Rectangle {
                     }
                 }
                 Card {
+                    shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;

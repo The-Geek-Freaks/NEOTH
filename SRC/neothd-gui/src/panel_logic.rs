@@ -1180,6 +1180,9 @@ pub struct LoopRoundView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoopRunView {
     pub id: String,
+    /// Raw epoch seconds — the sort key (review B8: sorting the formatted
+    /// string was correct only by accident of the format).
+    pub ts_start: i64,
     /// Pre-formatted start time ("2026-07-03 14:22").
     pub started: String,
     pub rounds_run: u32,
@@ -1202,6 +1205,8 @@ fn format_secs(total: i64) -> String {
 /// Epoch seconds → "YYYY-MM-DD HH:MM" (UTC, no chrono dep — the civil-date
 /// arithmetic is the classic days-to-ymd conversion, exact for 1970..9999).
 fn format_epoch_utc(ts: i64) -> String {
+    // `<= 0` on purpose: parse sites use `unwrap_or(0)`, so 0 means
+    // "field absent", not "midnight 1970" — render the missing marker.
     if ts <= 0 {
         return "—".into();
     }
@@ -1264,9 +1269,11 @@ pub fn parse_loop_record(json: &str) -> Option<LoopRunView> {
                 .collect()
         })
         .unwrap_or_default();
+    let ts_start = v.get("ts_start").and_then(|x| x.as_i64()).unwrap_or(0);
     Some(LoopRunView {
         id,
-        started: format_epoch_utc(v.get("ts_start").and_then(|x| x.as_i64()).unwrap_or(0)),
+        ts_start,
+        started: format_epoch_utc(ts_start),
         rounds_run: v.get("rounds_run").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
         stop_reason: v
             .get("stop_reason")
@@ -1300,7 +1307,7 @@ pub fn load_loop_history(neoth_home: &std::path::Path, limit: usize) -> Vec<Loop
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
         .filter_map(|json| parse_loop_record(&json))
         .collect();
-    runs.sort_by(|a, b| b.started.cmp(&a.started));
+    runs.sort_by_key(|r| std::cmp::Reverse(r.ts_start));
     runs.truncate(limit);
     runs
 }

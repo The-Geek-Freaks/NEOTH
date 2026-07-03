@@ -1387,12 +1387,20 @@ fn main() -> Result<()> {
             });
         }
 
-        // Refresh — worker thread reads + parses the record files.
+        // Refresh — worker thread reads + parses the record files. The
+        // AtomicBool caps it at one scan in flight (review B8: unbounded
+        // spawn let a slow stale scan overwrite a fresh one).
         let weak_loop_refresh = window.as_weak();
         let cache_refresh = loop_cache.clone();
+        let loop_fetch_in_flight =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let refresh_history = move |select: Option<String>| {
+            if loop_fetch_in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                return;
+            }
             let weak = weak_loop_refresh.clone();
             let cache = cache_refresh.clone();
+            let done = loop_fetch_in_flight.clone();
             std::thread::spawn(move || {
                 let runs = panel_logic::load_loop_history(&default_neoth_home(), 20);
                 if let Ok(mut c) = cache.lock() {
@@ -1403,6 +1411,7 @@ fn main() -> Result<()> {
                         apply_loop_history(&w, &runs, select.as_deref(), loop_max_rounds);
                     }
                 });
+                done.store(false, std::sync::atomic::Ordering::Release);
             });
         };
 
@@ -1459,20 +1468,24 @@ fn main() -> Result<()> {
                     if let Ok(mut slot) = child_slot.lock() {
                         *slot = Some(child);
                     }
+                    // Drain stderr on its own thread — sequential draining
+                    // deadlocks when the child fills the 64K stderr pipe
+                    // before stdout reaches EOF (review B8).
+                    let err_join = std::thread::spawn(move || {
+                        let mut err_text = String::new();
+                        if let Some(err) = stderr.as_mut() {
+                            use std::io::Read as _;
+                            let _ = err.read_to_string(&mut err_text);
+                        }
+                        err_text
+                    });
                     // Drain stdout to EOF (keeps the child unblocked).
                     let mut sink = String::new();
                     if let Some(out) = stdout.as_mut() {
                         use std::io::Read as _;
                         let _ = out.read_to_string(&mut sink);
                     }
-                    // ponytail: stderr read after stdout EOF — loop stderr is
-                    // short (refusal/one error line); switch to a reader
-                    // thread if it ever exceeds the 64K pipe buffer.
-                    let mut err_text = String::new();
-                    if let Some(err) = stderr.as_mut() {
-                        use std::io::Read as _;
-                        let _ = err.read_to_string(&mut err_text);
-                    }
+                    let err_text = err_join.join().unwrap_or_default();
                     let status = child_slot
                         .lock()
                         .ok()
@@ -3268,10 +3281,13 @@ fn apply_skills(window: &MainWindow, skills: Vec<panel_logic::SkillSummary>) {
 fn render_skill_index(window: &MainWindow) {
     use slint::{ModelRc, VecModel};
     let filter = window.get_skills_filter().to_string();
-    let rows: Vec<SkillRow> = SKILLS_CACHE
+    // Clone out of the lock immediately — holding it across the grouping
+    // would stall any future off-thread cache writer.
+    let skills = SKILLS_CACHE
         .lock()
-        .map(|c| panel_logic::group_skill_rows(&c, &filter))
-        .unwrap_or_default()
+        .map(|c| c.clone())
+        .unwrap_or_default();
+    let rows: Vec<SkillRow> = panel_logic::group_skill_rows(&skills, &filter)
         .into_iter()
         .map(|s| SkillRow {
             id: s.id.into(),
@@ -4306,7 +4322,10 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
     let Some(pos) = raw.rfind("{\"neoth_stream\":\"done\"") else {
         return (raw.trim_end().to_string(), false, StreamStats::default());
     };
-    let stats = serde_json::from_str::<serde_json::Value>(raw[pos..].trim())
+    // Parse ONLY the sentinel line — any stray byte after it would make
+    // serde reject the whole slice and silently zero the stats.
+    let sentinel_line = raw[pos..].lines().next().unwrap_or("");
+    let stats = serde_json::from_str::<serde_json::Value>(sentinel_line.trim())
         .ok()
         .map(|v| {
             let g = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);

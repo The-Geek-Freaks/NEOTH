@@ -121,7 +121,7 @@ component ChatBubble inherits Rectangle {
                         chip-txt := Text {
                             text: root.message.metrics;
                             font-family: Theme.font-mono;
-                            font-size: 10px;
+                            font-size: Theme.font-size-2xs;
                             color: Theme.audit;
                             horizontal-alignment: center;
                             vertical-alignment: center;
@@ -212,11 +212,11 @@ component ConversationItem inherits Rectangle {
                 width: 22px;
                 height: 18px;
                 background: Theme.accent-green;
-                border-radius: 9px;
+                border-radius: Theme.radius-pill;
                 Text {
                     text: root.unread-count > 9 ? "9+" : root.unread-count;
                     font-family: Theme.font-display;
-                    font-size: 10px;
+                    font-size: Theme.font-size-2xs;
                     font-weight: Theme.weight-bold;
                     color: Theme.bg-base;
                     horizontal-alignment: center;

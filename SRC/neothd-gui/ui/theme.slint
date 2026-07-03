@@ -13,6 +13,8 @@
 //
 // Anti-pattern guards (kept from the prior spec):
 //   - Every radius MUST be one of the Theme.radius-* values (never 0px).
+//     Exception: pixel-scale primitives (progress tracks, indicator rails
+//     ≤6px tall) may use 1–3px where the token set is geometrically invalid.
 //   - Every colour MUST come from this module, never inline hex.
 //   - Glow — not drop-shadow — is the brand's true elevation on dark.
 //
@@ -221,6 +223,11 @@ export global Theme {
     // --ease-back). For SHORT movements only (nav rails, active bars):
     // the 1.56 overshoot reads snappy at ≤40px travel, rubbery beyond.
     out property <easing> ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+    // Ambient-motion periods (design-taste audit B8): named so a
+    // theme-wide timing pass reaches them.
+    out property <duration> duration-sweep:   700ms;   // card shimmer travel
+    out property <duration> duration-spin:    900ms;   // button loading spinner
+    out property <duration> duration-breathe: 1600ms;  // Led opacity breathe
     out property <duration> duration-fast:       120ms;
     out property <duration> duration-micro:      220ms;
     out property <duration> duration-base:       220ms;

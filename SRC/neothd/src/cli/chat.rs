@@ -4546,11 +4546,15 @@ async fn render_attachments_block(paths: &[PathBuf]) -> String {
 }
 
 fn attachment_block(name: &str, text: &str) -> String {
-    if text.chars().count() > ATTACH_TEXT_CAP {
-        let capped: String = text.chars().take(ATTACH_TEXT_CAP).collect();
-        format!("[Attachment: {name}]\n{capped}\n[…truncated at {ATTACH_TEXT_CAP} chars]\n[End attachment]\n")
-    } else {
-        format!("[Attachment: {name}]\n{text}\n[End attachment]\n")
+    // Single pass: find the byte offset of the cap'th char (None = the
+    // text is shorter than the cap). Avoids an O(n) chars().count() walk
+    // over a multi-MB file just to decide whether to truncate.
+    match text.char_indices().nth(ATTACH_TEXT_CAP) {
+        Some((byte_cap, _)) => format!(
+            "[Attachment: {name}]\n{}\n[…truncated at {ATTACH_TEXT_CAP} chars]\n[End attachment]\n",
+            &text[..byte_cap]
+        ),
+        None => format!("[Attachment: {name}]\n{text}\n[End attachment]\n"),
     }
 }
 
