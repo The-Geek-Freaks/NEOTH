@@ -1,0 +1,93 @@
+<svg width="1400" height="560" viewBox="0 0 1400 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH Babel-Index — collapse prediction on its own runtime</title>
+  <desc id="desc">NEOTH scores every window of its own WAL event stream with seven collapse variables; threshold breaches fire an early warning before failure, the predictor self-calibrates, and anonymised windows can be federated opt-in to the delta-kosmologie research pool.</desc>
+  <defs>
+    <radialGradient id="bb-bg" cx="50%" cy="46%" r="80%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".6" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <filter id="bb-glow" x="-40%" y="-80%" width="180%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1400" height="560" rx="40" fill="url(#bb-bg)"/>
+  <rect x="1" y="1" width="1398" height="558" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="62" text-anchor="middle" fill="white" class="sans" font-size="32" font-weight="200" letter-spacing="6">IT PREDICTS ITS OWN COLLAPSE</text>
+  <text x="700" y="96" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="15">Every window of NEOTH's own event stream is scored for collapse risk — the warning fires before the failure, not in the post-mortem.</text>
+
+  <!-- WAL stream source -->
+  <g class="sans">
+    <rect x="64" y="178" width="244" height="206" rx="22" fill="#111" stroke="white" stroke-opacity=".12"/>
+    <text x="186" y="216" text-anchor="middle" fill="white" font-size="19" font-weight="300">own WAL stream</text>
+    <text x="186" y="242" text-anchor="middle" fill="#8b8b8b" class="mono" font-size="11">content-free · HMAC-chained</text>
+    <g class="mono" font-size="11">
+      <text x="92" y="272" fill="#05d5ff">0x20</text><text x="132" y="272" fill="#cfcfcf">LLM_REQUEST</text>
+      <text x="92" y="292" fill="#05d5ff">0xC0</text><text x="132" y="292" fill="#cfcfcf">MCP_TOOL_CALLED</text>
+      <text x="92" y="312" fill="#05d5ff">0xFC</text><text x="132" y="312" fill="#cfcfcf">AGENT_DISPATCHED</text>
+    </g>
+    <text x="186" y="344" text-anchor="middle" fill="#8b8b8b" font-size="12">derived metrics only —</text>
+    <text x="186" y="362" text-anchor="middle" fill="#8b8b8b" font-size="12">never prompts or responses</text>
+  </g>
+
+  <!-- signal lanes -->
+  <g class="mono" font-size="12">
+    <line x1="308" y1="232" x2="556" y2="232" stroke="#00ff80" stroke-opacity=".5" stroke-width="1.5"/>
+    <line x1="308" y1="282" x2="556" y2="282" stroke="#05d5ff" stroke-opacity=".5" stroke-width="1.5"/>
+    <line x1="308" y1="332" x2="556" y2="332" stroke="#ff2a6d" stroke-opacity=".5" stroke-width="1.5"/>
+    <text x="330" y="226" fill="#00ff80">tool / agent calls</text>
+    <text x="330" y="276" fill="#05d5ff">output histograms</text>
+    <text x="330" y="326" fill="#ff2a6d">retries · fallbacks</text>
+  </g>
+
+  <!-- the index -->
+  <g class="sans">
+    <rect x="566" y="172" width="180" height="218" rx="20" fill="#0a0a0a" stroke="#00ff80" stroke-opacity=".55" filter="url(#bb-glow)"/>
+    <text x="656" y="208" text-anchor="middle" fill="white" font-size="17" font-weight="300">Babel-Index</text>
+    <g class="mono" font-size="12" fill="#05d5ff">
+      <text x="656" y="240" text-anchor="middle" letter-spacing="4">C K M A V</text>
+      <text x="656" y="260" text-anchor="middle" letter-spacing="4" fill="#ff2a6d">D H</text>
+    </g>
+    <text x="656" y="290" text-anchor="middle" fill="#8b8b8b" class="mono" font-size="10">7 collapse variables</text>
+    <text x="656" y="326" text-anchor="middle" fill="#8b8b8b" class="mono" font-size="10">B = Σ log amplifiers</text>
+    <text x="656" y="342" text-anchor="middle" fill="#8b8b8b" class="mono" font-size="10">− Σ log buffers</text>
+    <text x="656" y="372" text-anchor="middle" fill="#00ff80" class="mono" font-size="10" letter-spacing="2">5·15·30·60 MIN</text>
+  </g>
+
+  <!-- outcomes -->
+  <g class="sans">
+    <!-- early warning -->
+    <rect x="800" y="170" width="300" height="100" rx="18" fill="#1a0c12" stroke="#ff2a6d" stroke-opacity=".55"/>
+    <text x="824" y="206" fill="#ff2a6d" class="mono" font-size="11" letter-spacing="3">⚠ EARLY WARNING</text>
+    <text x="824" y="234" fill="white" font-size="17" font-weight="300">threshold breach → alert</text>
+    <text x="824" y="256" fill="#8b8b8b" font-size="12">8 pre-registered collapse labels</text>
+    <!-- self-calibration -->
+    <rect x="800" y="292" width="300" height="100" rx="18" fill="#111" stroke="#00ff80" stroke-opacity=".44"/>
+    <text x="824" y="328" fill="#00ff80" class="mono" font-size="11" letter-spacing="3">✓ SELF-CALIBRATING</text>
+    <text x="824" y="356" fill="white" font-size="17" font-weight="300">learns from its misses</text>
+    <text x="824" y="378" fill="#8b8b8b" font-size="12">FP/FN tuned · Brier-scored</text>
+  </g>
+
+  <!-- federation sink -->
+  <g class="sans">
+    <rect x="1136" y="210" width="200" height="140" rx="18" fill="#111" stroke="#05d5ff" stroke-opacity=".44"/>
+    <text x="1236" y="242" text-anchor="middle" fill="#05d5ff" class="mono" font-size="11" letter-spacing="3">FEDERATION</text>
+    <text x="1236" y="268" text-anchor="middle" fill="white" font-size="14" font-weight="300">delta-kosmologie</text>
+    <text x="1236" y="286" text-anchor="middle" fill="white" font-size="13" font-weight="300">research pool</text>
+    <text x="1236" y="312" text-anchor="middle" fill="#8b8b8b" font-size="11">anonymised · Ed25519-signed</text>
+    <text x="1236" y="330" text-anchor="middle" fill="#ff2a6d" class="mono" font-size="10" letter-spacing="2">OFF BY DEFAULT</text>
+  </g>
+  <path d="M1100 342 C1118 342 1118 280 1136 280" stroke="#05d5ff" stroke-opacity=".6" stroke-width="2" fill="none" filter="url(#bb-glow)"/>
+
+  <g class="mono" font-size="11" letter-spacing="2">
+    <rect x="430" y="476" width="540" height="36" rx="9" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".25"/>
+    <text x="700" y="499" text-anchor="middle" fill="#05d5ff">neoth babel status</text>
+  </g>
+</svg>

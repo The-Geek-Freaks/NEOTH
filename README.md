@@ -24,6 +24,7 @@
   · <a href="#for-normal-users-and-pros">DAUs + Pros</a>
   · <a href="#privacy">Privacy</a>
   · <a href="#coding-buddy">Coding</a>
+  · <a href="#babel-index-it-predicts-its-own-collapse">Babel-Index</a>
   · <a href="#comparison">Comparison</a>
   · <a href="#docs">Docs</a>
 </p>
@@ -151,6 +152,7 @@ operator.
 | **Memory** | Uses five durable memory tiers — episode, profile, ground truth, consolidated, long-term — plus your external vault (Obsidian/Paperless) ingested into them. |
 | **Daily life** | Ingests Paperless documents, email, calendar, notes, files, images, audio, and video into reviewable memory. |
 | **Coding** | Plans work, tracks tasks on a canvas/Kanban board, runs checks, learns repo context, and promotes reviewed decisions into memory. |
+| **Self-diagnosis** | Scores its own event stream for collapse risk (Babel-Index): seven variables per rolling window, pre-registered failure labels, early warning before the agent loop — not after. |
 | **Self-reflection** | Looks back on its own work — weekly topic recap plus opt-in daily and yearly summaries archived and written to Obsidian as daily notes / yearly summaries — runs an opt-in weekly Hacker News tech-currency scan that flags trending topics your skills don't cover, and proposes review-gated SkillOpt improvements to its own skills (never auto-applied). |
 | **Recon** | Authorized-engagement recon through gated `uncover` (exposed-host discovery) and `tlsx` (TLS/cert intel) shims — refused under Strict autonomy and audit-logged. |
 | **Automation** | Runs small local cron jobs and bigger localhost n8n workflows through the same policy and audit layer. |
@@ -277,6 +279,33 @@ The point is not mystical branding. The point is operational separation: fast
 tasks stay fast, serious tasks get more scrutiny, and durable memory gets
 evidence instead of vibes.
 
+## Babel-Index: It Predicts Its Own Collapse
+
+<img src=".github/assets/neoth-readme-babel.svg" alt="NEOTH Babel-Index — every window of NEOTH's own WAL stream is scored with seven collapse variables; threshold breaches warn before failure, and anonymised windows can be federated opt-in to the delta-kosmologie research pool" width="100%">
+
+Agent systems fail in recognizable shapes — retry storms, agent loops,
+context death spirals. Most frameworks let you find them in the post-mortem.
+NEOTH watches its **own** WAL event stream, scores every rolling window with
+seven collapse variables (coupling, convergence, pressure, agent density,
+throughput vs. diversity and redundancy buffers), and warns you before the
+failure. The failure definitions are deterministic and pre-registered; the
+predictor self-calibrates against its own misses and reports a Brier score,
+so the accuracy claim is measurable instead of asserted.
+
+```bash
+neoth babel status      # threshold, calibration, latest scores
+neoth babel windows     # the actual measurements, window by window
+```
+
+There is a bigger bet underneath: the collapse model comes from
+[delta-kosmologie](https://github.com/The-Geek-Freaks/delta-kosmologie), an
+open framework asking whether one scalar family predicts collapse across
+complex systems in general. Opting in (**off by default**, consent- and
+autonomy-gated) federates anonymised, Ed25519-signed, content-free window
+records into the shared falsification pool — making NEOTH the first
+production instrument of an open research program, with
+[docs/babel-index.md](docs/babel-index.md) spelling out every rule.
+
 ## Comparison
 
 Different projects optimize for different jobs. NEOTH's bet is the harder
@@ -295,6 +324,7 @@ system, private mesh, and inspectable operator runtime in one product.
 | WAL/audit trail for sensitive actions | **Yes** | Partial | Partial | Partial |
 | Five-tier memory model + vault ingest | **Yes** | No | No | Partial |
 | Three role-bound brain paths | **Yes** | No | Partial | Partial |
+| Collapse prediction on its own runtime (Babel-Index) | **Yes** | No | No | No |
 | Coding canvas + Kanban | **Yes** | Partial | Canvas-focused | CLI-focused |
 | Obsidian/vault workflow | **Yes** | Yes | File-based | Context-file based |
 | Paperless/email/calendar as memory inputs | **Yes** | Integrations | Skills/tools | Tools/skills |
@@ -351,6 +381,7 @@ runbook so beginners get plain fixes and pros get scriptable diagnostics.
 | Local models | [docs/local-models.md](docs/local-models.md) |
 | Providers | [docs/providers.md](docs/providers.md) |
 | Plugins | [docs/plugins.md](docs/plugins.md) |
+| Babel-Index / collapse prediction | [docs/babel-index.md](docs/babel-index.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Release notes | [docs/release-notes-v1.0.md](docs/release-notes-v1.0.md) |
 | Security policy | [SECURITY.md](SECURITY.md) |

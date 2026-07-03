@@ -5,7 +5,8 @@ NEOTH ships an instrument that measures whether NEOTH itself is degrading.
 Agent systems fail in recognizable shapes: retry storms, agent loops, context
 death spirals, tool-timeout cascades, semantic drift. Most frameworks let you
 discover these in the post-mortem. NEOTH watches its own WAL event stream,
-scores every rolling window with seven collapse variables, and warns you
+scores every rolling window (5/15/30/60 minutes) with seven collapse
+variables, and warns you
 **before** the failure — then lets you (optionally, off by default) contribute
 anonymised measurements to an open research pool that tests whether the
 underlying collapse model holds across instances.
@@ -47,8 +48,8 @@ The observer is deliberately boring where it must be:
 
 ## The seven variables
 
-Each 5/15/60-minute window gets seven normalised features, extracted from WAL
-band codes:
+Each 5/15/30/60-minute window gets seven normalised features, extracted from
+WAL band codes:
 
 | Variable | Meaning | Source events |
 | :-- | :-- | :-- |
@@ -70,8 +71,8 @@ primary discriminator for pooled falsification:
 
 | Form | Definition | Notes |
 | :-- | :-- | :-- |
-| `B_log` | `Σ log(C,K,M,A,V) − log(D) − log(H)` | Primary. No epsilon. Undefined (NULL) until all amplifiers are warm. |
-| `B_mult` | `norm((C·K·M) / ((D/A)·(H/V) + ε))` | ε = `0.01 · median((D/A)·(H/V))`, frozen at the first 50-window calibration batch. Value **and** governance rule ship in every federated record. |
+| `B_log` | `Σ log(C,K,M,A,V) − log(D) − log(H)` | Primary. No epsilon. NULL for any window where an amplifier is exactly 0 (log undefined). |
+| `B_mult` | `norm((C·K·M) / ((D/A)·(H/V) + ε))` | ε = `0.01 · median((D/A)·(H/V))`, frozen once 50 fifteen-minute windows exist. Value **and** governance rule ship in every federated record. |
 | `B_bottleneck` | `min(C,K,M,A,V) / max(D,H)` | Weakest amplifier over strongest buffer; used for local fitness verdicts. |
 
 A 15-minute threshold breach raises a warning in the daemon log and on the
