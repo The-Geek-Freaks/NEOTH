@@ -61,7 +61,7 @@
 ## Install
 
 > NEOTH is at the **1.0 release-candidate** stage (current crate version
-> `1.0.0-beta.1`). It is **not yet published to crates.io**, so install from source
+> `1.0.0-beta.2`). It is **not yet published to crates.io**, so install from source
 > or the bootstrap script — `cargo install neoth` will land with the 1.0 release.
 
 One-command install (Linux/macOS):

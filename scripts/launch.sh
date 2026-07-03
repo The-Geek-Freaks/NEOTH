@@ -12,20 +12,21 @@
 set -uo pipefail
 
 REPO="The-Geek-Freaks/NEOTH"
+TAG="v1.0.0-beta.2"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
 echo "==> NEOTH launch from $ROOT"
 
 # 1) Publish the pre-release (source tarball auto-attaches; binaries later).
-if gh release view v1.0.0-beta.1 -R "$REPO" >/dev/null 2>&1; then
-  echo "--> release v1.0.0-beta.1 already exists, skipping"
+if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+  echo "--> release $TAG already exists, skipping"
 else
-  echo "--> publishing release v1.0.0-beta.1"
-  gh release create v1.0.0-beta.1 \
+  echo "--> publishing release $TAG"
+  gh release create "$TAG" \
     -R "$REPO" \
-    --title "NEOTH 1.0.0-beta.1 — first public release candidate" \
-    --notes-file PLAN/RELEASE_NOTES_beta1.md \
+    --title "NEOTH 1.0.0-beta.2 — first public release candidate" \
+    --notes-file PLAN/RELEASE_NOTES_beta2.md \
     --prerelease --target main
 fi
 
@@ -56,4 +57,4 @@ echo "==> Done with the automatable parts. Two browser-only steps left:"
 echo "  1. Social preview  : https://github.com/$REPO/settings  (General -> Social preview -> upload .github/assets/neoth-social-preview.png)"
 echo "  2. Show HN + Reddit: paste from PLAN/LAUNCH_KIT.md  (Tue-Thu ~15:00 UTC) — this is the real traction trigger"
 echo ""
-echo "Release: https://github.com/$REPO/releases/tag/v1.0.0-beta.1"
+echo "Release: https://github.com/$REPO/releases/tag/$TAG"

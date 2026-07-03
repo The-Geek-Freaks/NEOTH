@@ -5,7 +5,7 @@ Follow it in order. Do not edit YAML unless you choose the operator path.
 
 ## The 3-command path
 
-> ⚠️ NEOTH is at `1.0.0-beta.1` and is **not yet published to crates.io** — use
+> ⚠️ NEOTH is at `1.0.0-beta.2` and is **not yet published to crates.io** — use
 > the bootstrap installer below (or the source build); `cargo install neoth`
 > lands with the 1.0 release.
 

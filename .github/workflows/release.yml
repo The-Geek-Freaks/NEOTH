@@ -58,9 +58,10 @@ jobs:
             use_cross: true
             archive_ext: tar.gz
 
-          # macOS x86_64 (Intel)
+          # macOS x86_64 (Intel). GitHub's current standard Intel labels are
+          # versioned `*-intel`; plain `macos-13` queues indefinitely.
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-15-intel
             use_cross: false
             archive_ext: tar.gz
 
@@ -104,7 +105,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: release-${{ matrix.target }}-cargo-${{ hashFiles('SRC/neothd/Cargo.lock') }}
+          key: release-${{ matrix.target }}-cargo-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
             release-${{ matrix.target }}-cargo-
 

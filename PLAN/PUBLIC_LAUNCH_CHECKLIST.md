@@ -27,7 +27,12 @@ visitor hits.
 ## Done — live and public
 
 - [x] **GitHub Release v1.0.0-beta.1 published** (2026-07-03) — public,
-      pre-release: https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.1
+      pre-release source anchor:
+      https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.1
+- [ ] **GitHub Release v1.0.0-beta.2 binaries** — non-destructive rebuild with
+      current GitHub macOS Intel runner labels; verify artifacts after
+      release.yml completes:
+      https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.2
 - [x] **Discussions seeded** — Announcements ("NEOTH is public — start here"),
       Q&A ("Q&A and claim checks"), Show-and-tell posts live.
 - [x] Repo topics + About description + docs/assets overhaul on public `main`.
@@ -37,15 +42,10 @@ visitor hits.
 - [ ] **THE traction trigger — Show HN + Reddit**: paste from
       `PLAN/LAUNCH_KIT.md` (Tue-Thu ~15:00 UTC). Everything else is prep; this
       is what actually pulls stars. Reply to comments the first 4 hours.
-- [ ] **Social preview upload**: PNG is rendered and committed at
-      `.github/assets/neoth-social-preview.png` (1280×640). Just upload it via
-      Settings → General → Social preview (no API for this — one manual click).
-- [ ] **CI is stuck (credibility blocker for the build badge)**: all recent
-      `ci.yml` runs sit in `queued` and never complete (20/20 no conclusion),
-      so the README build badge renders grey "no status". `runs-on` uses
-      standard GitHub-hosted runners, so this is an account/org setting —
-      check Settings → Actions (enabled? runner access?) and billing/spending
-      limits. Until a run goes green, the build badge undersells the repo.
+- [x] **Social preview upload**: GitHub reports `usesCustomOpenGraphImage=true`
+      and the committed PNG is 1280×640.
+- [x] **CI queue unstuck**: stale queued main runs cancelled; current Security
+      run is green and current CI is executing on GitHub-hosted runners.
 - [ ] **Verify license badge** on github.com shows both licenses after push
       (licensee runs server-side; if still NOASSERTION, check LICENSE-MIT
       wording against the exact MIT template)
