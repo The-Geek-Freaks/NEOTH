@@ -246,6 +246,7 @@ async fn run_one(
     // MCP tool-loop, council, hooks) fires; `message` is guaranteed non-empty by
     // render (else run_chat would block on stdin).
     let make_args = || crate::cli::chat::ChatArgs {
+        attach: Vec::new(),
         message: Some(rendered.prompt.clone()),
         model: rendered.settings.model.clone(),
         system: rendered.system.clone(),

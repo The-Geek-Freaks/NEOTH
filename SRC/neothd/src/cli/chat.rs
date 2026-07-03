@@ -63,6 +63,13 @@ pub struct ChatArgs {
     #[arg(long, value_name = "TEXT")]
     pub system: Option<String>,
 
+    /// GOLD-ADAPT-ODY-03 — attach files to this turn. Each file runs the
+    /// media extraction pipeline (PDF/image/audio/video/document; plain
+    /// UTF-8 files inline directly) and its text is prepended to the
+    /// prompt as a labelled attachment block. Repeatable.
+    #[arg(long, value_name = "PATH")]
+    pub attach: Vec<PathBuf>,
+
     /// GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of
     /// passing it inline. Any inline message/`--message` seeds the editor as
     /// prefill. Aborts if the editor is left empty.
@@ -4481,6 +4488,73 @@ async fn emit_stream_chunk(
 }
 
 async fn resolve_prompt(args: &ChatArgs) -> Result<String> {
+    let base = resolve_prompt_base(args).await?;
+    // GOLD-ADAPT-ODY-03 — prepend extracted attachment blocks.
+    if args.attach.is_empty() {
+        return Ok(base);
+    }
+    let block = render_attachments_block(&args.attach).await;
+    if block.is_empty() {
+        Ok(base)
+    } else {
+        Ok(format!("{block}\n{base}"))
+    }
+}
+
+/// GOLD-ADAPT-ODY-03 — hard cap per attachment so one fat PDF can't blow
+/// the context window; the block notes the truncation.
+const ATTACH_TEXT_CAP: usize = 8_000;
+
+/// Extract each attached file into a labelled prompt block. Best-effort
+/// per file — an unreadable attachment becomes an inline error note, never
+/// a turn abort (the operator sees exactly what the model saw).
+async fn render_attachments_block(paths: &[PathBuf]) -> String {
+    let backends = crate::cli::ingest::default_backends();
+    let mut out = String::new();
+    for p in paths {
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("attachment");
+        let rendered = match crate::cli::ingest::detect_kind(p) {
+            Some(kind) => {
+                let asset = crate::media::Asset::Path {
+                    kind,
+                    mime: crate::cli::ingest::mime_hint(kind, p),
+                    path: p.clone(),
+                };
+                match crate::media::route_to_first_match(&backends, &asset).await {
+                    Ok(ex) if !ex.text.is_empty() => attachment_block(name, &ex.text),
+                    Ok(_) => format!("[Attachment {name}: no text extracted]\n"),
+                    Err(e) => format!("[Attachment {name}: extraction failed — {e}]\n"),
+                }
+            }
+            // Unknown extension → plain-UTF-8 fast path (.txt/.md/source
+            // files are the most common chat attachments and have no
+            // media backend). Invalid UTF-8 → honest skip note.
+            None => match std::fs::read_to_string(p) {
+                Ok(text) if !text.trim().is_empty() => attachment_block(name, &text),
+                Ok(_) => format!("[Attachment {name}: empty file]\n"),
+                Err(e) => format!(
+                    "[Attachment {name}: unsupported or unreadable — {e}]\n"
+                ),
+            },
+        };
+        out.push_str(&rendered);
+    }
+    out
+}
+
+fn attachment_block(name: &str, text: &str) -> String {
+    if text.chars().count() > ATTACH_TEXT_CAP {
+        let capped: String = text.chars().take(ATTACH_TEXT_CAP).collect();
+        format!("[Attachment: {name}]\n{capped}\n[…truncated at {ATTACH_TEXT_CAP} chars]\n[End attachment]\n")
+    } else {
+        format!("[Attachment: {name}]\n{text}\n[End attachment]\n")
+    }
+}
+
+async fn resolve_prompt_base(args: &ChatArgs) -> Result<String> {
     // GOLD-ADOPT-24 — `--edit`: compose the prompt in $EDITOR (inline message,
     // if any, seeds the editor). Takes precedence over inline/stdin.
     if args.edit {
@@ -7372,6 +7446,7 @@ mod tests {
         };
         let provider = NeverCalledProvider::default();
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("Do you remember when we talked about rust?".into()),
             model: None,
             system: None,
@@ -7485,6 +7560,7 @@ mod tests {
         };
 
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("hi".into()),
             model: None,
             system: None,
@@ -7661,6 +7737,7 @@ mod tests {
         };
 
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("do the dangerous thing".into()),
             model: None,
             system: None,
@@ -7778,6 +7855,7 @@ mod tests {
             ..Default::default()
         };
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("Capital of France?".into()),
             model: None,
             system: None,
@@ -7923,6 +8001,7 @@ mod tests {
             ..Default::default()
         };
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("hi".into()),
             model: None,
             system: None,
@@ -8096,6 +8175,7 @@ mod tests {
             ..Default::default()
         };
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("trigger".into()),
             model: None,
             system: None,
@@ -9474,6 +9554,7 @@ mod tests {
         };
 
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("test prompt".to_string()),
             model: args_model,
             system: None,
@@ -9639,6 +9720,7 @@ mod tests {
         };
 
         let args = ChatArgs {
+            attach: Vec::new(),
             message: Some("effort test".to_string()),
             model: None,
             system: None,
@@ -10079,3 +10161,74 @@ mod tests {
 // use the same baseline importance as every other write, so the
 // `idx_episode` ranking is honest about origin instead of secretly biasing
 // chat-originated rows.
+
+// GOLD-ADAPT-ODY-03 — attachment-block rendering.
+#[cfg(test)]
+mod attach_tests {
+    use super::*;
+
+    #[test]
+    fn attachment_block_labels_and_caps() {
+        let small = attachment_block("notes.txt", "hello world");
+        assert!(small.starts_with("[Attachment: notes.txt]\n"));
+        assert!(small.contains("hello world"));
+        assert!(small.ends_with("[End attachment]\n"));
+        assert!(!small.contains("truncated"));
+
+        let big_input = "x".repeat(ATTACH_TEXT_CAP + 100);
+        let big = attachment_block("big.log", &big_input);
+        assert!(big.contains("[…truncated at 8000 chars]"), "{}", &big[..80]);
+        // Capped payload: block stays bounded.
+        assert!(big.len() < ATTACH_TEXT_CAP + 200);
+    }
+
+    #[tokio::test]
+    async fn render_attachments_block_plain_text_and_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let txt = dir.path().join("ctx.md");
+        std::fs::write(&txt, "# heading\nbody line").unwrap();
+        let missing = dir.path().join("nope.bin");
+        let block = render_attachments_block(&[txt, missing]).await;
+        assert!(block.contains("[Attachment: ctx.md]"));
+        assert!(block.contains("# heading"));
+        assert!(block.contains("[Attachment nope.bin: unsupported or unreadable"));
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_prepends_attachment_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let txt = dir.path().join("a.txt");
+        std::fs::write(&txt, "attached context").unwrap();
+        let args = ChatArgs {
+            message: Some("the question".into()),
+            attach: vec![txt],
+            ..test_chat_args_default()
+        };
+        let prompt = resolve_prompt(&args).await.unwrap();
+        assert!(prompt.starts_with("[Attachment: a.txt]"));
+        assert!(prompt.ends_with("the question"));
+        assert!(prompt.contains("attached context"));
+    }
+
+    /// Minimal ChatArgs for tests in this module (mirrors clap defaults).
+    fn test_chat_args_default() -> ChatArgs {
+        ChatArgs {
+            message: None,
+            attach: Vec::new(),
+            model: None,
+            system: None,
+            edit: false,
+            config: None,
+            wal_segment: None,
+            stream: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
+        }
+    }
+}

@@ -251,7 +251,12 @@ component Composer inherits Rectangle {
     /// Whether the operator's draft starts with `/` — Rust side
     /// surfaces the slash-autocomplete dropdown when this is true.
     in property <bool> slash-active: false;
+    /// GOLD-ADAPT-ODY-03 — display names of pending attachments; the
+    /// paths live Rust-side (Arc<Mutex<Vec<PathBuf>>>).
+    in property <[string]> pending-attachments: [];
     callback send-clicked(string);
+    callback attach-clicked();
+    callback remove-attachment(int);
     /// Operator pressed ArrowUp with an empty composer — fires so Rust
     /// can write the last sent input back into `draft`.
     callback recall-requested();
@@ -291,8 +296,52 @@ component Composer inherits Rectangle {
             color: Theme.accent-green;
         }
 
+        // ODY-03 — pending-attachment strip: one removable chip per file.
+        if root.pending-attachments.length > 0: HorizontalLayout {
+            spacing: Theme.space-tight;
+            alignment: start;
+            for name[i] in root.pending-attachments: Rectangle {
+                height: 24px;
+                width: att-txt.preferred-width + att-x.preferred-width + 26px;
+                border-radius: Theme.radius-pill;
+                background: Theme.accent-tint;
+                border-width: 1px;
+                border-color: Theme.border-accent;
+                HorizontalLayout {
+                    padding-left: 10px; padding-right: 6px; spacing: 6px;
+                    att-txt := Text {
+                        text: "📎 " + name;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        color: Theme.accent;
+                        vertical-alignment: center;
+                    }
+                    att-x := Text {
+                        text: "✕";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        color: x-touch.has-hover ? Theme.consent : Theme.text-tertiary;
+                        vertical-alignment: center;
+                        x-touch := TouchArea {
+                            clicked => { root.remove-attachment(i); }
+                        }
+                    }
+                }
+            }
+        }
+
         HorizontalLayout {
             spacing: Theme.space-base;
+
+        // ODY-03 — attach button (native picker via Rust callback).
+        NeothButton {
+            label: "📎";
+            primary: false;
+            width: 44px;
+            height: 44px;
+            enabled: !root.send-in-flight;
+            clicked => { root.attach-clicked(); }
+        }
 
         // Slash hint — visible only when the draft starts with `/`,
         // gives the operator a discoverable cue that they can run a
@@ -442,11 +491,15 @@ export component ChatView inherits Rectangle {
     /// GOLD-ADAPT-ODY-04 — stream stall watchdog banner (60s without a
     /// chunk while a reply is in flight).
     in property <bool> stall-active: false;
+    /// GOLD-ADAPT-ODY-03 — pending attachment display names.
+    in property <[string]> pending-attachments: [];
 
     callback send-clicked(string);
     callback channel-switched(int);
     callback open-settings();
     callback session-selected(string);
+    callback attach-clicked();
+    callback remove-attachment(int);
     /// Stall banner actions: keep waiting (reset the watchdog clock) or
     /// stop (kill the chat subprocess).
     callback stall-continue-clicked();
@@ -708,7 +761,10 @@ export component ChatView inherits Rectangle {
                 send-enabled: root.send-enabled;
                 send-in-flight: root.send-in-flight;
                 slash-active: root.slash-active;
+                pending-attachments: root.pending-attachments;
                 send-clicked(text) => { root.send-clicked(text); }
+                attach-clicked => { root.attach-clicked(); }
+                remove-attachment(i) => { root.remove-attachment(i); }
                 recall-requested => { root.recall-requested(); }
             }
         }

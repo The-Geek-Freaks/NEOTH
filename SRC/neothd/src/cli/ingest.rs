@@ -388,7 +388,7 @@ fn canonical_source_ref(p: &std::path::Path) -> String {
         .unwrap_or_else(|_| p.display().to_string())
 }
 
-fn detect_kind(p: &std::path::Path) -> Option<AssetKind> {
+pub(crate) fn detect_kind(p: &std::path::Path) -> Option<AssetKind> {
     let ext = p
         .extension()
         .and_then(|e| e.to_str())
@@ -403,7 +403,7 @@ fn detect_kind(p: &std::path::Path) -> Option<AssetKind> {
     })
 }
 
-fn mime_hint(kind: AssetKind, p: &std::path::Path) -> String {
+pub(crate) fn mime_hint(kind: AssetKind, p: &std::path::Path) -> String {
     let ext = p
         .extension()
         .and_then(|e| e.to_str())
@@ -442,7 +442,7 @@ fn mime_hint(kind: AssetKind, p: &std::path::Path) -> String {
     }
 }
 
-fn default_backends() -> Vec<Arc<dyn MediaExtractor>> {
+pub(crate) fn default_backends() -> Vec<Arc<dyn MediaExtractor>> {
     // GOLD-ADAPT-AWE-DOC-01: DoclingExtractor is prepended before the pure-Rust
     // PDF/Document backends. It returns Unsupported (not Backend) when:
     //   - MediaConfig::docling_enabled is false (default), OR

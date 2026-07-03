@@ -28,6 +28,9 @@ slint = { version = "1.8", default-features = false, features = [
     "std",
 ] }
 
+# GOLD-ADAPT-ODY-03 — native file picker for the chat attachment strip.
+rfd = "0.15"
+
 # Shared deps from the workspace.
 anyhow = "1"
 serde.workspace      = true

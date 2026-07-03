@@ -368,6 +368,11 @@ export component MainWindow inherits Window {
     in property <bool> chat-stall-active: false;
     callback chat-stall-continue();
     callback chat-stall-stop();
+    /// GOLD-ADAPT-ODY-03 — pending attachments (names for the strip;
+    /// the paths live Rust-side).
+    in property <[string]> chat-pending-attachments: [];
+    callback chat-attach-clicked();
+    callback chat-remove-attachment(int);
     /// Channel labels for the chat sidebar. CLI is always first
     /// + always available; the rest reflect the operator's
     /// configured channels from freedom.yaml.
@@ -1758,7 +1763,10 @@ export component MainWindow inherits Window {
                     session-history: root.chat-session-history;
                     active-session-id: root.chat-active-session-id;
                     stall-active: root.chat-stall-active;
+                    pending-attachments: root.chat-pending-attachments;
                     send-clicked(text) => { root.chat-send-clicked(text); }
+                    attach-clicked => { root.chat-attach-clicked(); }
+                    remove-attachment(i) => { root.chat-remove-attachment(i); }
                     recall-requested => { root.chat-composer-recall-requested(); }
                     channel-switched(idx) => { root.chat-channel-switched(idx); }
                     session-selected(id) => { root.chat-session-selected(id); }

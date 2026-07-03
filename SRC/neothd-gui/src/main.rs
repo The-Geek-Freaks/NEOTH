@@ -413,10 +413,16 @@ fn main() -> Result<()> {
     let chat_auto_nudge_budget = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
     let chat_auto_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // GOLD-ADAPT-ODY-03 — pending attachment paths; the strip shows the
+    // file names, the send worker consumes the paths as `--attach` args.
+    let chat_attachments: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
     let chat_child_for_send = chat_child.clone();
     let chat_last_chunk_for_send = chat_last_chunk_ms.clone();
     let chat_budget_for_send = chat_auto_nudge_budget.clone();
     let chat_auto_flag_for_send = chat_auto_in_progress.clone();
+    let chat_attach_for_send = chat_attachments.clone();
 
     let weak_chat_send = window.as_weak();
     window.on_chat_send_clicked(move |text| {
@@ -470,6 +476,14 @@ fn main() -> Result<()> {
         }
         w.set_chat_stall_active(false);
 
+        // ODY-03 — consume the pending attachments for this turn (the
+        // strip empties immediately; the paths ride as `--attach` args).
+        let attach_paths: Vec<PathBuf> = chat_attach_for_send
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default();
+        sync_attachment_strip(&w, &[]);
+
         let child_slot = chat_child_for_send.clone();
         let last_chunk = chat_last_chunk_for_send.clone();
         let nudge_budget = chat_budget_for_send.clone();
@@ -486,9 +500,13 @@ fn main() -> Result<()> {
             use std::io::Read as _;
             let outcome: std::result::Result<(String, StreamStats), String> = (|| {
                 let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
-                let mut child = spawn_neothd_plain(&bin)
-                    .arg("chat")
-                    .arg("--stream")
+                let mut cmd = spawn_neothd_plain(&bin);
+                cmd.arg("chat").arg("--stream");
+                // ODY-03 — attachments ride as repeatable --attach args.
+                for p in &attach_paths {
+                    cmd.arg("--attach").arg(p);
+                }
+                let mut child = cmd
                     .arg(&body)
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null())
@@ -710,6 +728,43 @@ fn main() -> Result<()> {
             }
         });
     }
+    // GOLD-ADAPT-ODY-03 — attach/remove handlers. The picker is the native
+    // modal dialog (blocks the UI thread while open — standard Open-dialog
+    // semantics on Windows).
+    {
+        let attachments = chat_attachments.clone();
+        let weak_attach = window.as_weak();
+        window.on_chat_attach_clicked(move || {
+            let picked = rfd::FileDialog::new()
+                .set_title("Attach files to this message")
+                .pick_files();
+            let Some(files) = picked else {
+                return;
+            };
+            if let Ok(mut v) = attachments.lock() {
+                v.extend(files);
+                if let Some(w) = weak_attach.upgrade() {
+                    sync_attachment_strip(&w, &v);
+                }
+            }
+        });
+    }
+    {
+        let attachments = chat_attachments.clone();
+        let weak_rm = window.as_weak();
+        window.on_chat_remove_attachment(move |i| {
+            if let Ok(mut v) = attachments.lock() {
+                let i = i as usize;
+                if i < v.len() {
+                    v.remove(i);
+                }
+                if let Some(w) = weak_rm.upgrade() {
+                    sync_attachment_strip(&w, &v);
+                }
+            }
+        });
+    }
+
     // Watchdog timer: 2s cadence, banner at >60s chunk silence while a
     // reply is in flight.
     let weak_watchdog = window.as_weak();
@@ -5013,6 +5068,21 @@ fn now_epoch_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// ODY-03 — mirror the pending attachment paths into the strip (names only).
+fn sync_attachment_strip(w: &MainWindow, paths: &[PathBuf]) {
+    use slint::{ModelRc, VecModel};
+    let names: Vec<slint::SharedString> = paths
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file")
+                .into()
+        })
+        .collect();
+    w.set_chat_pending_attachments(ModelRc::new(VecModel::from(names)));
 }
 
 // ODY-11 — density persistence helpers (pure, testable without Slint window).
