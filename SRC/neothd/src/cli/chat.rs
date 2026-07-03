@@ -4776,6 +4776,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
             &sub_right,
             &sub_cere,
             None, // inner council uses the cheap Jaccard dissent
+            &[], // inner council: no groundtruth re-injection (outer already tagged)
         )
         .await;
         // Aggregation: winning_text on Consensus → use it.
@@ -6595,6 +6596,40 @@ fn maybe_fire_fan_out_advisory(config: &FreedomConfig) {
     }
 }
 
+/// GOLD-G02-COUNCIL-01 — fetch up to `limit` VERIFIED groundtruth rows and
+/// shape them into the orchestrator's [`FactualAssertion`]s. Subject/keyword
+/// derive from the first copula split (" is "/" are "/" = "); statements
+/// without one are skipped (no synthetic assertions). Best-effort: any DB
+/// error → empty vec — a missing views.db must never block a council run.
+fn fetch_council_assertions(limit: usize) -> Vec<crate::council::factual_check::FactualAssertion> {
+    let path = crate::memory::store::default_path();
+    let Ok(conn) = crate::memory::store::open(&path) else {
+        return Vec::new();
+    };
+    let Ok(rows) = crate::memory::groundtruth::surface_for_recall(&conn, limit, false) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|gt| {
+            let st = gt.statement.trim();
+            let (subject, rest) = [" is ", " are ", " = "]
+                .iter()
+                .find_map(|cop| st.split_once(cop))?;
+            let keyword = rest.split_whitespace().next()?;
+            if subject.trim().is_empty() || keyword.is_empty() {
+                return None;
+            }
+            Some(crate::council::factual_check::FactualAssertion {
+                subject: subject.trim().to_string(),
+                expected_keyword: keyword
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase(),
+            })
+        })
+        .filter(|a| !a.expected_keyword.is_empty())
+        .collect()
+}
+
 async fn run_council_debate(
     config: &FreedomConfig,
     req: &crate::providers::Request,
@@ -6633,6 +6668,13 @@ async fn run_council_debate(
     // KF-08: probe-clone shares the `Arc<AtomicU32>` counter so we can
     // read the final tally after the orchestrator consumes `budget`.
     let budget_probe = budget.clone();
+    // GOLD-G02-COUNCIL-01 — verified groundtruth flows into every
+    // hemisphere prompt + the post-response contradiction check.
+    let assertions = if config.council.groundtruth_injection {
+        tokio::task::block_in_place(|| fetch_council_assertions(10))
+    } else {
+        Vec::new()
+    };
     let outcome = crate::council::run_debate_with_depth_budget(
         &req.prompt,
         prompt_hash,
@@ -6642,6 +6684,7 @@ async fn run_council_debate(
         &right,
         &cere,
         dissent_embed.as_deref(),
+        &assertions,
     )
     .await;
     // Persist the council-budget posture for `neoth council budget`
@@ -8202,6 +8245,7 @@ mod tests {
         responses: Vec<crate::council::HemisphereResponse>,
     ) -> crate::council::CouncilDebate {
         crate::council::CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: crate::council::dissent::DissentScore(0.1),
@@ -8216,6 +8260,7 @@ mod tests {
         responses: Vec<crate::council::HemisphereResponse>,
     ) -> crate::council::CouncilDebate {
         crate::council::CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: crate::council::dissent::DissentScore(0.7),

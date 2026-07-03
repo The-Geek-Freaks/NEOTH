@@ -2467,6 +2467,27 @@ GR-10 — single-glance view of the active safety RAILS: which protective defaul
 - `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests)
 - `--json` — Emit JSON instead of the human-readable table
 
+## `neoth self-activate`
+
+GOLD-ADAPT-JV-MODE-04 — NEOTH toggles its own skills / crons under sovereign mode (sovereign_buddy && Full autonomy)
+
+### `neoth self-activate cron`
+
+Register (or toggle) a cron job entry
+
+- `<JOB_ID>` — Cron job id to register / modify
+- `--enable` — Enable the cron job
+- `--disable` — Disable the cron job
+- `--confirm-cron` — Required safety flag — cron registration is never auto-allowed at any autonomy level
+
+### `neoth self-activate skill`
+
+Toggle a bundled skill on or off
+
+- `<ID>` — Skill id to toggle (case-insensitive, e.g. `fact-check`)
+- `--enable` — Enable the skill (add to `skills.enabled`, remove from `skills.disabled`)
+- `--disable` — Disable the skill (add to `skills.disabled`).  `disabled` always wins — this also overrides a prior `--enable`
+
 ## `neoth self-dev`
 
 P-04 proactive self-development workflow. `review` lists pending proposals; `accept <id>` applies + emits 0x1D SELF_DEV_ACCEPTED; `decline <id>` records refusal + emits 0x1E SELF_DEV_DECLINED; `propose --from-profile <p>` generates proposals from a recorded BehaviouralProfile + emits 0x1C SELF_DEV_PROPOSED per proposal. Local store at `~/.neoth/self_dev/proposals.json`

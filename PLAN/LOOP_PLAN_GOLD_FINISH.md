@@ -320,7 +320,9 @@ current_batch: >
   12th producer site, verify_staged race-softening, docgen bool-flag
   placeholders, LOOP-06 outer-branch engage (autoroute-off), loop_cmd
   daemon-running WAL guard. 58 open boxes. New in-flight tracker items:
-  G02-COUNCIL-01 (factual_check council wire, M), G02-CLUSTER-01
+  G02-COUNCIL-01 [x] (factual_check council wire — orchestrator Wire(a)+Wire(b),
+  config gate groundtruth_injection:bool default ON, factual_outcomes field on
+  CouncilDebate, 4 tests: no-op/tag-inject/demote/graceful-fallback), G02-CLUSTER-01
   (foreign-event ingest, M-L). Accepted/filed: QUEUE_FILE_LOCK std-mutex on
   async threads = pre-existing blocking-fs pattern (tracker note below).
 hazard: >

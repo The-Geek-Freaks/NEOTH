@@ -605,6 +605,12 @@ fn default_self_score_max_redos() -> u8 {
     1
 }
 
+/// GOLD-G02-COUNCIL-01 — groundtruth injection default ON
+/// (features-default-on rule).
+fn default_groundtruth_injection() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CouncilConfig {
     /// Winner-selection strategy. See [`SelectionMode`].
@@ -766,6 +772,25 @@ pub struct CouncilConfig {
     /// `freedom.yaml::council.trigger`.
     #[serde(default)]
     pub trigger: CouncilTriggerConfig,
+
+    /// GOLD-G02-COUNCIL-01 — verified groundtruth injection.
+    ///
+    /// When `true` (default), `run_debate_with_depth_budget` accepts a
+    /// slice of pre-fetched `FactualAssertion`s (sourced from
+    /// `idx_groundtruth` rows with `fact_state = 'verified'`), wraps them
+    /// in a `[GROUND_TRUTH]…[/GROUND_TRUTH]` block via
+    /// `council::factual_check::embed_ground_truth_tag`, and appends it to
+    /// every hemisphere's prompt. After responses arrive,
+    /// `factual_contradiction_check` is run per-response; a contradicting
+    /// hemisphere is demoted (cannot become `winning_text`) and the
+    /// contradiction is logged at WARN with the assertion id.
+    ///
+    /// Empty assertion slice → no-op (no block appended, no check run).
+    /// No DB connection available → caller passes `&[]` → no-op.
+    /// Set to `false` to disable entirely (disables both prompt injection
+    /// and post-response check). Features-default-on rule: `true`.
+    #[serde(default = "default_groundtruth_injection")]
+    pub groundtruth_injection: bool,
 }
 
 /// SPEC-03b operator override surface for the council smart-trigger gates.

@@ -1307,3 +1307,72 @@ impl SessionSortCronConfig {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
 }
+
+/// GOLD-ADAPT-JV-MODE-04 — self-activation configuration.
+///
+/// Controls whether NEOTH may toggle its own skills or register new cron
+/// jobs under sovereign mode. All fields default to the most-restrictive
+/// position (feature off, no allowed skills, cron registration locked) so
+/// that a fresh `freedom.yaml` is inert and the feature must be
+/// deliberately opted into.
+///
+/// Operator-sovereignty rule: `skills.disabled` ALWAYS wins over any
+/// self-activation toggle — the preflight in `cli::self_activate` rejects
+/// the request before the permissions gate runs. Cron registration never
+/// auto-allows even at `Full` sovereign mode; the CLI requires an explicit
+/// `--confirm-cron` flag per invocation.
+///
+/// Config block (`freedom.yaml`):
+/// ```yaml
+/// self_activation:
+///   enabled: true
+///   skill_allowlist:
+///     - my-skill-id
+///     - other-skill-id
+///   allow_cron_registration: false
+/// ```
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SelfActivationConfig {
+    /// Master kill-switch. Default `false` — self-activation is entirely
+    /// inert until the operator explicitly enables it. Even at Full + sovereign,
+    /// a disabled `SelfActivationConfig` causes an immediate Deny.
+    pub enabled: bool,
+
+    /// Allowlist of skill ids that NEOTH may toggle itself. An empty list
+    /// (the default) means no skill may be self-toggled — the allowlist is
+    /// a hard opt-in, not a deny-list.
+    ///
+    /// When the requested skill id is NOT in this list, the permissions
+    /// gate returns Confirm (operator reviews) even at Full + sovereign.
+    pub skill_allowlist: Vec<String>,
+
+    /// Whether NEOTH may register (add) new cron jobs under sovereign mode.
+    /// Default `false`. Note: even when `true`, the CLI still requires
+    /// `--confirm-cron` on every invocation — cron toggles are never
+    /// silently auto-allowed because they have higher blast radius than
+    /// skill toggles (they fire on a schedule without further operator
+    /// confirmation).
+    pub allow_cron_registration: bool,
+}
+
+impl Default for SelfActivationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            skill_allowlist: Vec::new(),
+            allow_cron_registration: false,
+        }
+    }
+}
+
+impl SelfActivationConfig {
+    /// Returns `true` when `skill_id` (case-insensitive) is explicitly
+    /// listed in `skill_allowlist`. An empty allowlist always returns `false`.
+    pub fn skill_allowed(&self, skill_id: &str) -> bool {
+        let id_lc = skill_id.trim().to_lowercase();
+        self.skill_allowlist
+            .iter()
+            .any(|s| s.trim().to_lowercase() == id_lc)
+    }
+}

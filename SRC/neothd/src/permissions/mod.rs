@@ -224,6 +224,45 @@ pub enum Action {
         /// `"add"` or `"close"`.
         action: String,
     },
+    /// GOLD-ADAPT-JV-MODE-04 — NEOTH toggles one of its own skills (enable
+    /// or disable) under sovereign mode. Gate table:
+    ///
+    /// | Level          | Decision                                                  |
+    /// |----------------|-----------------------------------------------------------|
+    /// | Strict         | Deny — agents never self-modify skills below Elevated     |
+    /// | Standard       | Deny                                                      |
+    /// | Elevated       | Confirm — operator reviews each self-toggle               |
+    /// | Full (no sov)  | Confirm — sovereign_active() must be true for Allow       |
+    /// | Full + sov, allowlist hit  | Allow                                         |
+    /// | Full + sov, allowlist miss | Confirm                                       |
+    ///
+    /// Never leasable: `lease_scope_for` returns `None`. No batch
+    /// self-enable scripts may bypass the per-skill operator gate.
+    SelfSkillToggle {
+        /// Lowercase skill id, as stored in `freedom.yaml::skills.enabled/disabled`.
+        skill_id: String,
+        /// `true` = enable, `false` = disable.
+        enable: bool,
+    },
+    /// GOLD-ADAPT-JV-MODE-04 — NEOTH registers a new cron job under sovereign
+    /// mode. Stricter than `SelfSkillToggle`: cron registration fires on a
+    /// schedule without further confirmation, so its blast radius is higher.
+    ///
+    /// Gate table:
+    ///
+    /// | Level           | Decision                                               |
+    /// |-----------------|--------------------------------------------------------|
+    /// | Strict          | Deny                                                   |
+    /// | Standard        | Deny                                                   |
+    /// | Elevated        | Confirm                                                |
+    /// | Full (any)      | Confirm — NEVER auto-Allow for cron, even at Full sov  |
+    ///
+    /// Never leasable. The CLI additionally requires `--confirm-cron` on
+    /// every invocation as a second-layer gate (enforced in `cli::self_activate`).
+    SelfCronRegister {
+        /// The `id` field of the job being registered.
+        job_id: String,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -397,7 +436,12 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         | Action::OsClipboardWrite
         // TD-02 external task write: no coarse lease scope models it yet; the
         // operator confirms each (or runs at Elevated+) — gate-only for now.
-        | Action::ExternalTaskWrite { .. } => None,
+        | Action::ExternalTaskWrite { .. }
+        // JV-MODE-04 self-activation: never leasable — no batch self-enable
+        // scripts may pre-authorise a skill or cron toggle; every self-toggle
+        // must pass through the per-call operator gate.
+        | Action::SelfSkillToggle { .. }
+        | Action::SelfCronRegister { .. } => None,
     }
 }
 
@@ -469,6 +513,15 @@ fn evaluate_strict(action: &Action) -> Decision {
             action: act,
         } => Decision::Confirm(format!(
             "strict: external task {act} on {provider} requires confirm"
+        )),
+        // JV-MODE-04: agents below Elevated may never self-modify skills or
+        // register crons — deny outright (no confirm path; this is a hard floor).
+        Action::SelfSkillToggle { skill_id, enable } => Decision::Deny(format!(
+            "strict: self-toggle skill '{skill_id}' {} denied — self-activation requires Elevated+",
+            if *enable { "enable" } else { "disable" }
+        )),
+        Action::SelfCronRegister { job_id } => Decision::Deny(format!(
+            "strict: self-register cron '{job_id}' denied — self-activation requires Elevated+"
         )),
     }
 }
@@ -557,6 +610,14 @@ fn evaluate_standard(action: &Action) -> Decision {
         } => Decision::Confirm(format!(
             "standard: external task {act} on {provider} requires confirm"
         )),
+        // JV-MODE-04: Standard denies self-activation (same as Strict floor).
+        Action::SelfSkillToggle { skill_id, enable } => Decision::Deny(format!(
+            "standard: self-toggle skill '{skill_id}' {} denied — self-activation requires Elevated+",
+            if *enable { "enable" } else { "disable" }
+        )),
+        Action::SelfCronRegister { job_id } => Decision::Deny(format!(
+            "standard: self-register cron '{job_id}' denied — self-activation requires Elevated+"
+        )),
     }
 }
 
@@ -642,6 +703,17 @@ fn evaluate_elevated(action: &Action) -> Decision {
         // Elevated = the operator opted into autonomous behaviour; writing to
         // their own task service proceeds (the creds are the operator's).
         Action::ExternalTaskWrite { .. } => Decision::Allow,
+        // JV-MODE-04: Elevated gets Confirm for both (operator reviews each
+        // self-toggle). Full + sovereign is required for Allow.
+        Action::SelfSkillToggle { skill_id, enable } => Decision::Confirm(format!(
+            "elevated: self-toggle skill '{skill_id}' {} requires confirm — \
+             Full + sovereign mode required for auto-allow",
+            if *enable { "enable" } else { "disable" }
+        )),
+        Action::SelfCronRegister { job_id } => Decision::Confirm(format!(
+            "elevated: self-register cron '{job_id}' requires confirm — \
+             cron registration always requires explicit confirm"
+        )),
     }
 }
 
@@ -743,6 +815,27 @@ fn evaluate_full(action: &Action) -> Decision {
         | Action::ClusterTaskAccept
         | Action::ProactiveChannelSend { .. }
         | Action::ExternalTaskWrite { .. } => Decision::Allow,
+        // JV-MODE-04 — self-skill toggle: at Full the permissions gate alone
+        // signals Allow; the CALLER (`cli::self_activate::run_self_activate`)
+        // is responsible for checking `sovereign_active()` and the
+        // `skill_allowlist` BEFORE calling `evaluate`, so this arm is the
+        // post-gate path. If the caller did NOT check those preconditions and
+        // calls `evaluate` directly, it gets Allow here — the caller contract
+        // is the firewall. Tests in `cli::self_activate` cover the full chain.
+        //
+        // Rationale for putting the sovereign/allowlist check in the CALLER:
+        // `evaluate` takes only an `Action` + `AutonomyLevel`; it has no
+        // access to `FreedomConfig`. The caller must gate on
+        // `cfg.sovereign_active()` and `cfg.self_activation.skill_allowed(id)`
+        // BEFORE dispatching — otherwise fall back to Confirm.
+        Action::SelfSkillToggle { .. } => Decision::Allow,
+        // JV-MODE-04 — cron registration: NEVER auto-Allow even at Full +
+        // sovereign. Higher blast radius (fires on schedule without further
+        // confirmation); the CLI additionally requires `--confirm-cron`.
+        Action::SelfCronRegister { job_id } => Decision::Confirm(format!(
+            "full: self-register cron '{job_id}' requires confirm — \
+             cron registration is never auto-allowed (use --confirm-cron)"
+        )),
     }
 }
 
@@ -1530,5 +1623,114 @@ mod tests {
         assert!(Full.meets_gate(Custom));
         assert!(!Elevated.meets_gate(Custom));
         assert!(!Custom.meets_gate(Custom));
+    }
+
+    // ── JV-MODE-04 self-activation permission gate ────────────────────────────
+
+    #[test]
+    fn self_skill_toggle_strict_denies() {
+        let a = Action::SelfSkillToggle {
+            skill_id: "my-skill".into(),
+            enable: true,
+        };
+        assert!(evaluate(&a, AutonomyLevel::Strict).is_deny());
+    }
+
+    #[test]
+    fn self_skill_toggle_standard_denies() {
+        let a = Action::SelfSkillToggle {
+            skill_id: "my-skill".into(),
+            enable: false,
+        };
+        assert!(evaluate(&a, AutonomyLevel::Standard).is_deny());
+    }
+
+    #[test]
+    fn self_skill_toggle_elevated_confirms() {
+        let a = Action::SelfSkillToggle {
+            skill_id: "my-skill".into(),
+            enable: true,
+        };
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Elevated),
+            Decision::Confirm(_)
+        ));
+    }
+
+    #[test]
+    fn self_skill_toggle_full_allows_post_caller_gate() {
+        // At Full the permissions gate returns Allow; the CALLER
+        // (`run_self_activate`) is responsible for the sovereign_active +
+        // allowlist check BEFORE invoking evaluate.
+        let a = Action::SelfSkillToggle {
+            skill_id: "my-skill".into(),
+            enable: true,
+        };
+        assert!(evaluate(&a, AutonomyLevel::Full).is_allow());
+    }
+
+    #[test]
+    fn self_skill_toggle_is_not_lease_coverable() {
+        let a = Action::SelfSkillToggle {
+            skill_id: "my-skill".into(),
+            enable: true,
+        };
+        assert_eq!(
+            lease_scope_for(&a),
+            None,
+            "SelfSkillToggle must never be pre-authorised by a lease"
+        );
+    }
+
+    #[test]
+    fn self_cron_register_strict_denies() {
+        let a = Action::SelfCronRegister {
+            job_id: "morning-brief".into(),
+        };
+        assert!(evaluate(&a, AutonomyLevel::Strict).is_deny());
+    }
+
+    #[test]
+    fn self_cron_register_standard_denies() {
+        let a = Action::SelfCronRegister {
+            job_id: "morning-brief".into(),
+        };
+        assert!(evaluate(&a, AutonomyLevel::Standard).is_deny());
+    }
+
+    #[test]
+    fn self_cron_register_elevated_confirms() {
+        let a = Action::SelfCronRegister {
+            job_id: "morning-brief".into(),
+        };
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Elevated),
+            Decision::Confirm(_)
+        ));
+    }
+
+    #[test]
+    fn self_cron_register_full_confirms_never_auto_allows() {
+        // Cron is NEVER auto-allowed even at Full sovereign — higher blast
+        // radius than skill toggles (fires on schedule without further confirm).
+        let a = Action::SelfCronRegister {
+            job_id: "morning-brief".into(),
+        };
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Full),
+            Decision::Confirm(_)
+        ));
+    }
+
+    #[test]
+    fn self_cron_register_is_not_lease_coverable() {
+        let a = Action::SelfCronRegister {
+            job_id: "morning-brief".into(),
+        };
+        assert_eq!(
+            lease_scope_for(&a),
+            None,
+            "SelfCronRegister must never be pre-authorised by a lease"
+        );
     }
 }

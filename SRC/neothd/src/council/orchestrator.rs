@@ -37,6 +37,10 @@ use crate::config::inference::HemisphereRole;
 
 use super::budget::BudgetToken;
 use super::dissent::{DissentScore, score_dissent, score_dissent_via_embedding};
+use super::factual_check::{
+    DEFAULT_NEGATION_MARKERS, DEFAULT_NEGATION_WINDOW_CHARS, FactualAssertion,
+    embed_ground_truth_tag, factual_contradiction_check,
+};
 use super::types::{CouncilDebate, HemisphereRefusal, HemisphereResponse, Verdict, dur_to_ms};
 use crate::security::refusal_cause::classify_cause;
 use crate::security::refusal_detect::classify as classify_refusal;
@@ -143,6 +147,7 @@ pub async fn run_debate(
         left,
         right,
         cerebellum,
+        &[], // no groundtruth assertions on the compat path
     )
     .await
 }
@@ -160,6 +165,10 @@ pub async fn run_debate_with_depth(
     left: &dyn HemisphereProvider,
     right: &dyn HemisphereProvider,
     cerebellum: &dyn HemisphereProvider,
+    // GOLD-G02-COUNCIL-01 — pre-fetched verified groundtruth assertions.
+    // Pass `&[]` when no DB connection is available; the orchestrator
+    // treats an empty slice as a no-op (no tag injection, no check).
+    assertions: &[FactualAssertion],
 ) -> CouncilDebate {
     // Backwards-compat entry: creates a fresh BudgetToken with the
     // default cap so callers that don't yet know about budget
@@ -175,6 +184,7 @@ pub async fn run_debate_with_depth(
         cerebellum,
         None, // compat entry — Jaccard dissent (callers wanting embedding
               // call run_debate_with_depth_budget directly with a provider)
+        assertions,
     )
     .await
 }
@@ -190,6 +200,7 @@ pub async fn run_debate_with_depth(
 /// Adapters that internally recurse (override `ask_with_depth_budget`
 /// to call this function with a smaller `depth`) MUST clone the same
 /// token so the cap stays shared across the entire recursion tree.
+#[allow(clippy::too_many_arguments)] // GOLD-G02-COUNCIL-01 added the assertions slice; a params struct is a follow-up refactor if a 10th arg ever lands
 pub async fn run_debate_with_depth_budget(
     prompt: &str,
     prompt_hash_xxh3: u64,
@@ -207,17 +218,35 @@ pub async fn run_debate_with_depth_budget(
     // `None` (the compat entry points + every non-chat caller) keeps the
     // pure Jaccard behaviour.
     embed_provider: Option<&dyn crate::providers::embed::EmbedProvider>,
+    // GOLD-G02-COUNCIL-01 — pre-fetched verified groundtruth assertions
+    // (sourced from `idx_groundtruth` WHERE `fact_state = 'verified'`).
+    // Empty slice → no-op: no `[GROUND_TRUTH]` block is appended and
+    // no contradiction check runs. The caller is responsible for
+    // fetching via `memory::groundtruth::surface_for_recall` with
+    // `include_unverified = false` and converting rows to
+    // `FactualAssertion` values (statement → subject, scope → tag).
+    assertions: &[FactualAssertion],
 ) -> CouncilDebate {
     let overall_start = Instant::now();
 
+    // GOLD-G02-COUNCIL-01 Wire (a) — prompt enrichment.
+    // `embed_ground_truth_tag` is a pure fn; empty assertions → unchanged.
+    let enriched_prompt: std::borrow::Cow<'_, str> = if assertions.is_empty() {
+        std::borrow::Cow::Borrowed(prompt)
+    } else {
+        std::borrow::Cow::Owned(embed_ground_truth_tag(prompt, assertions))
+    };
+    let effective_prompt: &str = &enriched_prompt;
+
     // K-Perf-1 2026-05-17: FuturesUnordered + early-exit on quorum-
     // with-consensus. Three concurrent tasks; first 2-3 to settle
-    // drive the verdict.
+    // drive the verdict. GOLD-G02-COUNCIL-01: uses `effective_prompt`
+    // (= prompt + optional [GROUND_TRUTH] block).
     let mut tasks: FuturesUnordered<_> = FuturesUnordered::new();
     tasks.push(Box::pin(run_one(
         HemisphereRole::Left,
         left,
-        prompt,
+        effective_prompt,
         depth,
         budget.clone(),
     ))
@@ -227,7 +256,7 @@ pub async fn run_debate_with_depth_budget(
     tasks.push(Box::pin(run_one(
         HemisphereRole::Right,
         right,
-        prompt,
+        effective_prompt,
         depth,
         budget.clone(),
     ))
@@ -237,7 +266,7 @@ pub async fn run_debate_with_depth_budget(
     tasks.push(Box::pin(run_one(
         HemisphereRole::Cerebellum,
         cerebellum,
-        prompt,
+        effective_prompt,
         depth,
         budget.clone(),
     ))
@@ -282,6 +311,56 @@ pub async fn run_debate_with_depth_budget(
         .iter()
         .filter_map(|r| r.outcome().text())
         .collect();
+
+    // GOLD-G02-COUNCIL-01 Wire (b) — per-hemisphere factual contradiction check.
+    //
+    // Run `factual_contradiction_check` on each hemisphere's response text
+    // against the same `assertions` slice that was injected into the prompt.
+    // A hemisphere whose response CONTRADICTS an assertion (negation-in-window)
+    // is demoted: it cannot be selected as `winning_text` by `decide_verdict`.
+    // Contradictions are logged at WARN with only the assertion subject (not the
+    // full snippet) to comply with secrets-out policy. Missing keywords (assertion
+    // addressed but keyword absent) are logged at DEBUG and do NOT demote.
+    //
+    // Empty assertions slice → outcomes vec stays empty, no demotion, no logging.
+    let factual_outcomes: Vec<(String, bool, usize)> = if assertions.is_empty() {
+        Vec::new()
+    } else {
+        responses
+            .iter()
+            .filter_map(|r| {
+                let text = r.outcome().text()?;
+                let outcome = factual_contradiction_check(
+                    text,
+                    assertions,
+                    DEFAULT_NEGATION_MARKERS,
+                    DEFAULT_NEGATION_WINDOW_CHARS,
+                );
+                // Log each contradiction at WARN — subject only, no full snippet.
+                for (subject, _snippet) in &outcome.contradicting_phrases {
+                    tracing::warn!(
+                        role = r.role.as_str(),
+                        assertion_subject = %subject,
+                        "council hemisphere contradicts verified groundtruth assertion"
+                    );
+                }
+                Some((
+                    r.role.as_str().to_string(),
+                    outcome.agrees,
+                    outcome.contradicting_phrases.len(),
+                ))
+            })
+            .collect()
+    };
+
+    // Build a set of roles whose responses actively contradict at least one
+    // verified assertion. These are excluded from `winning_text` selection.
+    let contradicting_roles: std::collections::HashSet<&str> = factual_outcomes
+        .iter()
+        .filter(|(_, _, contradiction_count)| *contradiction_count > 0)
+        .map(|(role, _, _)| role.as_str())
+        .collect();
+
     // SP-4: embedding-cosine dissent when a provider is wired, else the
     // Jaccard heuristic. Embed failure folds back to Jaccard (never
     // blocks the verdict on a flaky embed call).
@@ -295,13 +374,14 @@ pub async fn run_debate_with_depth_budget(
         },
         None => score_dissent(&texts),
     };
-    let verdict = decide_verdict(&responses, dissent, &texts);
+    let verdict = decide_verdict(&responses, dissent, &texts, &contradicting_roles);
     CouncilDebate {
         prompt_hash_xxh3,
         responses,
         dissent,
         verdict,
         total_latency_ms: dur_to_ms(overall_start.elapsed()),
+        factual_outcomes,
     }
 }
 
@@ -396,10 +476,18 @@ fn classify_per_hemisphere(text: &str) -> Option<HemisphereRefusal> {
     })
 }
 
+/// GOLD-G02-COUNCIL-01: `contradicting_roles` is the set of role strings
+/// (e.g. `"left"`, `"right"`, `"cerebellum"`) whose hemisphere response
+/// was flagged by `factual_contradiction_check` as actively contradicting a
+/// verified groundtruth assertion. These hemispheres are excluded from
+/// `winning_text` selection. If ALL present hemispheres contradict, the set
+/// is ignored and `pick_median` fires normally (never block a council run
+/// on a groundtruth miss — graceful degradation per the no-conn no-op rule).
 fn decide_verdict(
     responses: &[HemisphereResponse],
     dissent: DissentScore,
     texts: &[&str],
+    contradicting_roles: &std::collections::HashSet<&str>,
 ) -> Verdict {
     let responded = responses
         .iter()
@@ -412,10 +500,34 @@ fn decide_verdict(
         };
     }
     if dissent.is_consensus() {
+        // GOLD-G02-COUNCIL-01: build a candidate list that excludes
+        // contradicting hemispheres. If no non-contradicting candidates
+        // remain (all contradicted), fall through to the full `texts` set
+        // so a council run is never blocked by groundtruth mismatches.
+        let candidate_texts: Vec<&str> = if contradicting_roles.is_empty() {
+            texts.to_vec()
+        } else {
+            responses
+                .iter()
+                .filter_map(|r| {
+                    if contradicting_roles.contains(r.role.as_str()) {
+                        None
+                    } else {
+                        r.outcome().text()
+                    }
+                })
+                .collect()
+        };
+        let eligible = if candidate_texts.is_empty() {
+            // All hemispheres contradicted — graceful fallback to full set.
+            texts
+        } else {
+            &candidate_texts[..]
+        };
         // Pick the response whose token length is the median — proxy
         // for "most representative" without an LLM judge. With 2 or 3
         // present responses this is deterministic.
-        let winning = pick_median(texts);
+        let winning = pick_median(eligible);
         Verdict::Consensus {
             winning_text: winning.to_string(),
         }
@@ -781,7 +893,7 @@ mod tests {
             id: "cere",
             recorded: recorded.clone(),
         };
-        let _ = run_debate_with_depth("p", 0, 3, &l, &r, &c).await;
+        let _ = run_debate_with_depth("p", 0, 3, &l, &r, &c, &[]).await;
         let depths = recorded.lock().unwrap().clone();
         assert!(
             !depths.is_empty(),
@@ -859,7 +971,7 @@ mod tests {
         // Pass depth=4 even though mocks don't read it — the trait's
         // default impl must delegate to ask() so legacy hemispheres
         // keep working without re-implementing.
-        let _ = run_debate_with_depth("p", 0, 4, &l, &r, &c).await;
+        let _ = run_debate_with_depth("p", 0, 4, &l, &r, &c, &[]).await;
         let n = calls.load(std::sync::atomic::Ordering::SeqCst);
         assert!(n >= 2, "at least 2 hemispheres must have settled; got {n}");
     }
@@ -975,7 +1087,7 @@ mod tests {
         let r = mk("gemini", "beta");
         let c = mk("local_qwen", "gamma");
         let budget = BudgetToken::new(2);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         assert_eq!(d.responses.len(), 3, "all three slots present");
         let skipped: Vec<_> = d
             .responses
@@ -1005,7 +1117,7 @@ mod tests {
         let r = mk("gemini", "y");
         let c = mk("local_qwen", "z");
         let budget = BudgetToken::new(0);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, None).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, None, &[]).await;
         assert_eq!(d.responses.len(), 3);
         for r in &d.responses {
             assert!(r.text.is_none(), "no LLM text should reach the verdict");
@@ -1025,7 +1137,7 @@ mod tests {
         let r = mk("gemini", "q");
         let c = mk("local_qwen", "r");
         let budget = BudgetToken::new(crate::config::inference::DEFAULT_MAX_CALLS_PER_USER_MESSAGE);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         let any_skipped = d
             .responses
             .iter()
@@ -1090,7 +1202,7 @@ mod tests {
         let c = mk("local_qwen", "gamma");
         let budget = BudgetToken::new(15);
         let embed = DistinctEmbed;
-        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed)).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed), &[]).await;
         assert_eq!(d.responses.len(), 3);
         assert!(
             d.dissent.0 > 0.0,
@@ -1109,7 +1221,7 @@ mod tests {
         let c = mk("local_qwen", "gamma");
         let budget = BudgetToken::new(15);
         let embed = FailEmbed;
-        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed)).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed), &[]).await;
         assert_eq!(d.responses.len(), 3, "fallback still yields a full debate");
         assert!(
             d.dissent.0 >= 0.0,
@@ -1127,14 +1239,14 @@ mod tests {
         let r = mk("gemini", "b");
         let c = mk("local_qwen", "c");
         let budget = BudgetToken::new(4);
-        let d1 = run_debate_with_depth_budget("p1", 0, 1, budget.clone(), &l, &r, &c, None).await;
+        let d1 = run_debate_with_depth_budget("p1", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         let skipped1 = d1
             .responses
             .iter()
             .filter(|r| r.error.as_deref() == Some(BUDGET_EXHAUSTED_ERROR))
             .count();
         assert_eq!(skipped1, 0, "first debate must complete fully");
-        let d2 = run_debate_with_depth_budget("p2", 0, 1, budget.clone(), &l, &r, &c, None).await;
+        let d2 = run_debate_with_depth_budget("p2", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         let skipped2 = d2
             .responses
             .iter()
@@ -1186,6 +1298,7 @@ mod tests {
                 &inner_r,
                 &inner_c,
                 None,
+                &[], // no groundtruth assertions in recursion test
             )
             .await;
             Ok(CompletionRecord {
@@ -1207,11 +1320,199 @@ mod tests {
         let r = RecursingMock { id: "outer-r" };
         let c = RecursingMock { id: "outer-c" };
         let budget = BudgetToken::new(5);
-        let _ = run_debate_with_depth_budget("p", 0, 2, budget.clone(), &l, &r, &c, None).await;
+        let _ = run_debate_with_depth_budget("p", 0, 2, budget.clone(), &l, &r, &c, None, &[]).await;
         assert_eq!(
             budget.used(),
             5,
             "shared budget must converge to cap exactly across outer+inner"
+        );
+    }
+
+    // ── GOLD-G02-COUNCIL-01: groundtruth injection + contradiction demotion ──
+
+    fn mk_assertion(subject: &str, keyword: &str) -> FactualAssertion {
+        FactualAssertion {
+            subject: subject.to_string(),
+            expected_keyword: keyword.to_string(),
+        }
+    }
+
+    /// Wire (a): verified assertions are embedded into the prompt via
+    /// `[GROUND_TRUTH]…[/GROUND_TRUTH]` before hemispheres fire.
+    /// The tag block must appear in every hemisphere's received prompt;
+    /// here we verify it lands in `CouncilDebate.winning_text` only when
+    /// the prompt itself is reflected back (mock echoes its input).
+    #[tokio::test]
+    async fn groundtruth_tag_injected_into_hemisphere_prompt() {
+        use crate::council::factual_check::{GROUND_TRUTH_TAG_OPEN, GROUND_TRUTH_TAG_CLOSE};
+
+        struct EchoHemisphere {
+            id: &'static str,
+        }
+        #[async_trait::async_trait]
+        impl HemisphereProvider for EchoHemisphere {
+            fn provider_id(&self) -> String {
+                self.id.to_string()
+            }
+            async fn ask(&self, prompt: &str) -> Result<CompletionRecord, String> {
+                // Echo back the prompt text so the test can verify the tag was present.
+                Ok(CompletionRecord {
+                    text: prompt.to_string(),
+                    input_tokens: None,
+                    output_tokens: None,
+                })
+            }
+        }
+
+        let assertions = vec![mk_assertion("Sam's birthday", "March")];
+        let l = EchoHemisphere { id: "l" };
+        let r = EchoHemisphere { id: "r" };
+        let c = EchoHemisphere { id: "c" };
+        let d = run_debate_with_depth("base prompt", 0, 1, &l, &r, &c, &assertions).await;
+
+        // All three hemispheres echo the enriched prompt; consensus text
+        // should contain the [GROUND_TRUTH] tag block.
+        let winning = d.winning_text().expect("consensus should have winning_text");
+        assert!(
+            winning.contains(GROUND_TRUTH_TAG_OPEN),
+            "winning_text must contain [GROUND_TRUTH] open tag"
+        );
+        assert!(
+            winning.contains(GROUND_TRUTH_TAG_CLOSE),
+            "winning_text must contain [/GROUND_TRUTH] close tag"
+        );
+        assert!(
+            winning.contains("Sam's birthday: March"),
+            "winning_text must contain the injected assertion"
+        );
+        // factual_outcomes is populated for every hemisphere that produced
+        // text. Identical echo responses trip the early-consensus quorum, so
+        // cerebellum may never be consulted — 2 outcomes is the legitimate
+        // floor, 3 the ceiling.
+        assert!(
+            (2..=3).contains(&d.factual_outcomes.len()),
+            "one outcome per consulted hemisphere, got {}",
+            d.factual_outcomes.len()
+        );
+        assert!(
+            d.factual_outcomes.iter().all(|(_, agrees, n)| *agrees && *n == 0),
+            "echoing the assertion keyword must count as agreement"
+        );
+    }
+
+    /// Wire (b): a hemisphere that contradicts a verified assertion
+    /// is demoted — it cannot be the `winning_text` when non-contradicting
+    /// candidates remain.
+    #[tokio::test]
+    async fn contradicting_hemisphere_demoted_from_winning_text() {
+        // Left contradicts: "Sam's birthday is NOT in March"
+        // Right and Cerebellum agree: "Sam's birthday is in March"
+        // Consensus should pick one of the agreeing hemispheres.
+        let assertions = vec![mk_assertion("Sam's birthday", "March")];
+
+        struct FixedHemisphere {
+            id: &'static str,
+            text: &'static str,
+        }
+        #[async_trait::async_trait]
+        impl HemisphereProvider for FixedHemisphere {
+            fn provider_id(&self) -> String {
+                self.id.to_string()
+            }
+            async fn ask(&self, _prompt: &str) -> Result<CompletionRecord, String> {
+                Ok(CompletionRecord {
+                    text: self.text.to_string(),
+                    input_tokens: None,
+                    output_tokens: None,
+                })
+            }
+        }
+
+        let l = FixedHemisphere {
+            id: "left",
+            text: "Sam's birthday is NOT in March, that is incorrect.",
+        };
+        let r = FixedHemisphere {
+            id: "right",
+            text: "Sam's birthday is in March, confirmed.",
+        };
+        let c = FixedHemisphere {
+            id: "cerebellum",
+            text: "Sam's birthday falls in March every year.",
+        };
+
+        let d = run_debate_with_depth("When is Sam's birthday?", 0, 1, &l, &r, &c, &assertions).await;
+
+        // factual_outcomes should record left as contradicting
+        let left_outcome = d
+            .factual_outcomes
+            .iter()
+            .find(|(role, _, _)| role == "left")
+            .expect("left outcome must be recorded");
+        assert_eq!(left_outcome.2, 1, "left must have 1 contradiction");
+        assert!(!left_outcome.1, "left must not agree");
+
+        // right and cerebellum should agree
+        for role in &["right", "cerebellum"] {
+            let outcome = d
+                .factual_outcomes
+                .iter()
+                .find(|(r, _, _)| r == role)
+                .unwrap_or_else(|| panic!("{role} outcome must be recorded"));
+            assert_eq!(outcome.2, 0, "{role} must have 0 contradictions");
+        }
+
+        // The winning_text must NOT be the contradicting left response.
+        if let Some(winning) = d.winning_text() {
+            assert!(
+                !winning.contains("NOT in March"),
+                "winning_text must not come from the contradicting left hemisphere; got: {winning}"
+            );
+        }
+    }
+
+    /// No-op when assertions slice is empty: factual_outcomes is empty,
+    /// existing verdict path unchanged.
+    #[tokio::test]
+    async fn empty_assertions_no_op_no_outcomes() {
+        let l = mk("l", "the answer is alpha");
+        let r = mk("r", "the answer is alpha");
+        let c = mk("c", "the answer is alpha");
+        let d = run_debate_with_depth("q", 0, 1, &l, &r, &c, &[]).await;
+        assert!(
+            d.factual_outcomes.is_empty(),
+            "empty assertions must produce no factual_outcomes"
+        );
+        assert!(
+            d.winning_text().is_some(),
+            "empty assertions must not block the verdict"
+        );
+    }
+
+    /// Graceful fallback: when ALL hemispheres contradict (pathological case),
+    /// the debate still produces a Consensus verdict rather than blocking.
+    #[tokio::test]
+    async fn all_contradicting_graceful_fallback_still_produces_verdict() {
+        let assertions = vec![mk_assertion("capital", "Paris")];
+        // All three hemispheres say "capital is not Paris"
+        let l = mk("l", "the capital is not Paris, it is elsewhere");
+        let r = mk("r", "the capital is not Paris, it is elsewhere");
+        let c = mk("c", "the capital is not Paris, it is elsewhere");
+        let d = run_debate_with_depth("What is the capital?", 0, 1, &l, &r, &c, &assertions).await;
+        // All three should be flagged as contradicting
+        assert!(
+            d.factual_outcomes.iter().all(|(_, agrees, _)| !*agrees),
+            "every consulted hemisphere must be recorded as contradicting: {:?}",
+            d.factual_outcomes
+        );
+        assert!(
+            d.factual_outcomes.len() >= 2,
+            "at least the quorum pair is consulted"
+        );
+        // But the verdict must still be produced (graceful fallback)
+        assert!(
+            d.winning_text().is_some(),
+            "all-contradicting case must still produce a verdict (graceful degradation)"
         );
     }
 }

@@ -209,6 +209,16 @@ pub struct CouncilDebate {
     /// Total wall-clock time from `run_debate` start to verdict.
     /// Useful for the cost/latency dashboard.
     pub total_latency_ms: u64,
+    /// GOLD-G02-COUNCIL-01 — per-hemisphere factual-check outcomes from
+    /// `council::factual_check::factual_contradiction_check`. Empty when
+    /// no verified groundtruth assertions were available at debate time
+    /// (no-conn, empty assertion set, or feature disabled). Each entry is
+    /// `(role_as_str, agrees, contradiction_count)` — the assertion ids
+    /// and full snippets are logged at WARN by the orchestrator and are
+    /// NOT stored here to comply with the secrets-out / WAL policy (the
+    /// assertions may contain operator facts).
+    #[serde(default)]
+    pub factual_outcomes: Vec<(String, bool, usize)>,
 }
 
 impl CouncilDebate {
@@ -733,6 +743,7 @@ mod tests {
 
     fn debate(responses: Vec<HemisphereResponse>) -> CouncilDebate {
         CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: super::super::dissent::DissentScore(0.1),
@@ -857,6 +868,7 @@ mod tests {
     #[test]
     fn winning_text_returns_consensus_payload() {
         let d = CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses: vec![],
             dissent: super::super::dissent::DissentScore(0.0),
@@ -871,6 +883,7 @@ mod tests {
     #[test]
     fn winning_text_returns_none_on_split() {
         let d = CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses: vec![],
             dissent: super::super::dissent::DissentScore(0.5),
@@ -885,6 +898,7 @@ mod tests {
     #[test]
     fn response_for_finds_by_role() {
         let d = CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses: vec![
                 mk_resp(HemisphereRole::Left, Some("L")),
@@ -960,6 +974,7 @@ mod tests {
 
     fn debate_with(responses: Vec<HemisphereResponse>) -> CouncilDebate {
         CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: super::super::dissent::DissentScore(0.0),

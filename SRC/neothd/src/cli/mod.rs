@@ -138,6 +138,7 @@ pub mod search;
 /// security-posture aggregator. Runs HMAC key + WAL segment +
 /// memory drift + credential sidecar checks in one pass.
 pub mod security;
+pub mod self_activate;
 pub mod self_dev;
 pub mod self_dev_outbox;
 pub mod self_improve;
@@ -390,6 +391,14 @@ pub enum Commands {
     /// status / enable / disable / run / log).
     #[command(name = "self-improve")]
     SelfImprove(self_improve::SelfImproveArgs),
+    /// GOLD-ADAPT-JV-MODE-04 — NEOTH toggles its own skills / crons under
+    /// sovereign mode (sovereign_buddy && Full autonomy).
+    ///
+    /// Gate: `self_activation.enabled` + `sovereign_active()` +
+    /// `skill_allowlist`. Cron always requires `--confirm-cron`.
+    /// See `cli/self_activate.rs` module doc for the full gate chain.
+    #[command(name = "self-activate")]
+    SelfActivate(self_activate::SelfActivateArgs),
     /// Export NEOTH's knowledge as an Open Knowledge Format (OKF) bundle —
     /// interconnected Obsidian-native markdown concept docs.
     Okf(okf::OkfArgs),
@@ -1223,6 +1232,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::SelfImprove(args) => {
             self_improve::run_self_improve(args, global_output)?;
+        }
+        Commands::SelfActivate(args) => {
+            self_activate::run_self_activate(args, global_output)?;
         }
         Commands::Okf(args) => {
             okf::run_okf(args, global_output)?;

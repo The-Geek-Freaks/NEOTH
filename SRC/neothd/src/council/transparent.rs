@@ -131,6 +131,7 @@ mod tests {
 
     fn debate(verdict: Verdict, responses: Vec<HemisphereResponse>) -> CouncilDebate {
         CouncilDebate {
+            factual_outcomes: Vec::new(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: DissentScore(0.25),

@@ -71,7 +71,7 @@ pub use automation::{
     MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig, ProactiveConfig,
     ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig, ResourceWatchConfig,
     SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
-    WatchdogConfig,
+    SelfActivationConfig, WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
@@ -850,6 +850,25 @@ pub struct FreedomConfig {
     /// code is used — the byte space is exhausted (255/256 codes assigned).
     #[serde(default)]
     pub sovereign_buddy: bool,
+
+    /// GOLD-ADAPT-JV-MODE-04 — self-activation configuration.
+    ///
+    /// Governs whether NEOTH may toggle its own skills or register new cron
+    /// jobs under sovereign mode. All subfields default to OFF; the operator
+    /// must explicitly populate `skill_allowlist` and set `enabled: true`
+    /// before any self-toggle is accepted.
+    ///
+    /// See [`SelfActivationConfig`] for the full field docs and safety
+    /// invariants. The gate chain is:
+    ///   1. `self_activation.enabled` must be `true` (else immediate Deny).
+    ///   2. `skills.disabled` must NOT contain the target skill id (else Err
+    ///      before the permissions gate — operator veto is unconditional).
+    ///   3. Permissions gate: `Action::SelfSkillToggle` / `Action::SelfCronRegister`
+    ///      must Allow or Confirm (see `permissions::evaluate`).
+    ///   4. For skill toggles: `skill_allowlist` must contain the id, else Confirm.
+    ///   5. For cron: `--confirm-cron` flag required every time.
+    #[serde(default)]
+    pub self_activation: crate::config::automation::SelfActivationConfig,
 }
 
 /// GOLD-ADAPT-OH-11 — serde default returning `true` so that existing
