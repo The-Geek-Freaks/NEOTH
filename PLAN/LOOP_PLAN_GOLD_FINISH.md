@@ -297,7 +297,22 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-03 (Fable 5 session #2 — GUI wave: B7 COMPLETE, B8 chat cluster COMPLETE)
+updated: 2026-07-03 (Fable 5 session #2 — GUI MEGA-WAVE B7+B8 COMPLETE incl. design-taste gate)
+b7_b8_final: >
+  B7+B8 FULLY SHIPPED (0752c920..79e7e442, 8 commits): GUI-01..08,
+  GOLD-LOOP-03, ODY-01..05, AOS-01..06, OH-12 — all [x] in tracker with
+  SHIPPED notes + spec-corrections (AOS-02 was stale/wrong-surface,
+  AOS-05's `skill triggers` CLI never existed, LOOP-03 engine-channel
+  impossible cross-process). Design-taste gate RAN (agent audit vs
+  theme.slint contract): PASS-WITH-FIXES, all P1/P2 applied in 79e7e442
+  (inline-hex kill, motion tokens duration-sweep/spin/breathe, settings
+  shimmer:false ×19, token'd radii/fonts). Code-review wave: 6 real fixes
+  (sentinel line-parse, loop refresh in-flight guard, stderr reader
+  thread, ts_start sort, lock-scope, single-pass attach cap) + 1 false
+  positive (epoch-0 = absent, by design). neothd-gui tests 127→137;
+  cli::chat 96/96 + attach_tests; kanban 24/24 (new `kanban add`).
+  Foreign commit 3320b7eb (parallel session: Paperless egress allowlist)
+  landed mid-wave — clean, no conflicts.
 gui_wave_state: >
   FULL SUITE 9816/9816 green at session start (grew from 9765 — wave-5 tests).
   B7 COMPLETE (0752c920): GUI-01..08 [x] + GOLD-LOOP-03 [x] (spec-corrected:
@@ -313,9 +328,12 @@ gui_wave_state: >
   picker GUI + daemon --attach → resolve_prompt extraction blocks, ingest
   helpers pub(crate)). neothd-gui tests 127→133; cli::chat 96/96.
   Screenshot-verify SKIPPED (operator denied screen access — gates+tests
-  are the evidence). NEXT IN B8: AOS-01..06 (settings cluster) + OH-12
-  first-run tour, THEN the B8 design-taste gate (impeccable /audit +
-  design-review) over the whole GUI diff.
+  are the evidence). B8 rest COMPLETE (see b7_b8_final above).
+next: B9 Channel parity (Signal/LINE/iMessage/IRC adapters, one commit+gate
+  per adapter, template from session 2026-06-15b) — then B10 media rest
+  (HANDY-04 model manager landed in wave 5? VERIFY tracker first),
+  B11 Security/API (security-reviewer MANDATORY), B12 skill bundles,
+  B13 RMAS, B14, B15 steal-backlog, B16 Jarvis re-sync, B17 release gate.
 base: 37249a8c
 current_batch: >
   B3 COMPLETE (02b072c1 slice1 + 1b06e94e GRILL loop + f6fa1205 review-wave +
