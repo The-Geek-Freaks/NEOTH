@@ -15,16 +15,21 @@
 //! HMAC-failing impersonations from peers without `cluster_key`
 //! are rejected before they surface to the caller.
 //!
-//! Operator-facing knobs (Phase 2 wire-in via freedom.yaml):
-//!   - `cluster.mdns.enabled` (bool, default true via Q4 ratify)
-//!   - `cluster.mdns.service_name` (str, default
-//!     `_neoth._udp.local.`)
-//!   - `cluster.mdns.interval_secs` (u64, default 60)
+//! Operator-facing knobs (freedom.yaml):
+//!   - `cluster.mdns.enabled` (bool, default true via Q4 ratify) —
+//!     WIRED: `cli/serve` gates `spawn_announcer` on it (via
+//!     `policy::load_policy_from_freedom` + `gate_discover`, the same
+//!     path `neoth cluster discover` uses).
+//!   - `cluster.mdns.service_name` / `cluster.mdns.interval_secs` —
+//!     NOT consumed: the service type is pinned to
+//!     [`DEFAULT_SERVICE_TYPE`] (both ends must agree anyway) and
+//!     `mdns-sd` maintains the announce TTL itself (no re-announce
+//!     loop to tune).
 //!
-//! Q2 ratify follow-on: `cluster.announce_on_untrusted_wifi`
-//! gate lives in the caller (cli/serve decides whether to call
-//! `spawn_announcer` at all based on the SSID check). This
-//! module assumes the caller already cleared the policy.
+//! Q2 ratify follow-on: the untrusted-wifi gate lives in the caller
+//! (cli/serve + cli/cluster consult `AnnouncePolicy` / SSID before
+//! calling `spawn_announcer`). This module assumes the caller
+//! already cleared the policy.
 
 use std::net::IpAddr;
 
@@ -192,6 +197,94 @@ pub fn via() -> DiscoveryVia {
     DiscoveryVia::Mdns
 }
 
+/// Domain-separation namespace for [`derive_node_id`].
+const NODE_ID_NS: &[u8] = b"neoth.cluster.mdns-node-id.v1:";
+
+/// Deterministic per-node announce identity: HMAC-SHA256(cluster_key,
+/// NS || node_label). No on-disk keypair — announce authenticity is
+/// already the HMAC `auth` field (any passphrase holder can announce),
+/// so the pub_key's only job is to be a STABLE, unique node id that
+/// `neoth cluster confirm <pub_key>` survives reboots with.
+pub fn derive_node_id(key: &ClusterKey, node_label: &str) -> [u8; 32] {
+    let mut msg = Vec::with_capacity(NODE_ID_NS.len() + node_label.len());
+    msg.extend_from_slice(NODE_ID_NS);
+    msg.extend_from_slice(node_label.as_bytes());
+    let mut out = [0u8; 32];
+    crate::channels::keet_crypto::hmac_sha256(&key.0, &msg, &mut out);
+    out
+}
+
+/// The operator-readable label this node announces as. Hostname when
+/// the OS provides one; otherwise a `neoth-<unix_ts>` label persisted
+/// to `<neoth_home>/node_label` so the derived node id stays stable
+/// across reboots.
+pub fn node_label(neoth_home: &std::path::Path) -> String {
+    let env_label = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    node_label_from(env_label, neoth_home)
+}
+
+/// Testable core of [`node_label`] — `env_label` is the
+/// COMPUTERNAME/HOSTNAME value when present.
+pub fn node_label_from(env_label: Option<String>, neoth_home: &std::path::Path) -> String {
+    if let Some(l) = env_label {
+        return l;
+    }
+    let path = neoth_home.join("node_label");
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        let s = s.trim();
+        if !s.is_empty() {
+            return s.to_string();
+        }
+    }
+    let label = format!("neoth-{}", crate::time::now_unix_secs());
+    // Best-effort persist; an unwritable home just means the label
+    // (and thus the derived node id) changes next boot.
+    let _ = std::fs::write(&path, &label);
+    label
+}
+
+/// The primary outbound LAN IP — the classic UDP-connect trick: a
+/// `connect` on a UDP socket picks the route without sending a packet.
+/// `None` on hosts with no route (announce is skipped there anyway).
+// ponytail: single primary IP only — multi-homed hosts announce their
+// default-route interface; publish-all-interfaces needs a per-addr
+// auth field (announce schema v2).
+pub fn primary_local_ip() -> Option<IpAddr> {
+    let sock = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    sock.connect(("192.0.2.1", 80)).ok()?; // TEST-NET-1: never sent, route-select only
+    let ip = sock.local_addr().ok()?.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        return None;
+    }
+    Some(ip)
+}
+
+/// Build the full announce identity for this node: derived node id +
+/// `sign_announce` over EXACTLY the `ip:port` that gets published, so
+/// a browse-side `verify_announce` on the resolved address succeeds.
+/// Pure (caller supplies the ip) — unit-testable round-trip.
+pub fn build_announce_identity(
+    key: &ClusterKey,
+    node_label: &str,
+    ip: IpAddr,
+    listen_port: u16,
+) -> MdnsIdentity {
+    let pub_key = derive_node_id(key, node_label);
+    let addr = std::net::SocketAddr::new(ip, listen_port);
+    let auth = super::discovery::sign_announce(key, node_label, &pub_key, &addr);
+    MdnsIdentity {
+        instance_label: node_label.to_string(),
+        pub_key,
+        listen_port,
+        auth,
+        local_ips: vec![ip],
+    }
+}
+
 /// Verify a parsed announce against the operator's cluster_key.
 /// Wraps `discovery::verify_announce` so mdns-side callers don't
 /// reach across modules.
@@ -334,5 +427,62 @@ mod tests {
     fn default_constants_pinned() {
         assert_eq!(DEFAULT_SERVICE_TYPE, "_neoth._udp.local.");
         assert_eq!(DEFAULT_ANNOUNCE_INTERVAL_SECS, 60);
+    }
+
+    #[test]
+    fn derive_node_id_is_stable_and_distinct() {
+        use super::super::discovery::cluster_key;
+        let key_a = cluster_key("phrase a").unwrap();
+        let key_b = cluster_key("phrase b").unwrap();
+        // Stable: same inputs ⇒ same id (the `cluster confirm` contract).
+        assert_eq!(
+            derive_node_id(&key_a, "office-pc"),
+            derive_node_id(&key_a, "office-pc")
+        );
+        // Distinct per label AND per key.
+        assert_ne!(
+            derive_node_id(&key_a, "office-pc"),
+            derive_node_id(&key_a, "laptop")
+        );
+        assert_ne!(
+            derive_node_id(&key_a, "office-pc"),
+            derive_node_id(&key_b, "office-pc")
+        );
+    }
+
+    #[test]
+    fn build_announce_identity_round_trips_through_verify() {
+        // The announce a daemon publishes must verify on the browse side
+        // when reconstructed from the resolved `ip:port` — pins that
+        // sign_announce covers EXACTLY the published address.
+        use super::super::discovery::{ClusterAnnouncePacket, cluster_key};
+        let key = cluster_key("alpha bravo charlie delta").unwrap();
+        let ip: IpAddr = "192.0.2.7".parse().unwrap();
+        let id = build_announce_identity(&key, "office-pc", ip, 49737);
+        assert_eq!(id.instance_label, "office-pc");
+        assert_eq!(id.local_ips, vec![ip]);
+        let pkt = ClusterAnnouncePacket {
+            instance_label: id.instance_label.clone(),
+            pub_key: id.pub_key,
+            addr: std::net::SocketAddr::new(ip, id.listen_port),
+            auth: id.auth,
+        };
+        assert!(verify_with_cluster_key(&pkt, &key), "round-trip must verify");
+    }
+
+    #[test]
+    fn node_label_prefers_env_then_persists_fallback() {
+        let home = tempfile::tempdir().unwrap();
+        // Env label wins outright — nothing persisted.
+        assert_eq!(
+            node_label_from(Some("office-pc".into()), home.path()),
+            "office-pc"
+        );
+        assert!(!home.path().join("node_label").exists());
+        // No env ⇒ generated + persisted ⇒ stable on re-read.
+        let first = node_label_from(None, home.path());
+        assert!(first.starts_with("neoth-"), "generated label: {first}");
+        let second = node_label_from(None, home.path());
+        assert_eq!(first, second, "persisted label must be stable");
     }
 }

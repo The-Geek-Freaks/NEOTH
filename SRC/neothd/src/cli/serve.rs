@@ -1545,10 +1545,78 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     #[cfg(all(feature = "cluster", not(feature = "cluster-iroh")))]
     let iroh_active = false;
 
+    // mDNS LAN announce handle (ULTRA_REVIEW wire-in). Dropping the
+    // ServiceDaemon unregisters the service, so the handle rides in
+    // BackgroundHandles until shutdown.
+    #[cfg(feature = "cluster")]
+    let mut mdns_daemon: Option<mdns_sd::ServiceDaemon> = None;
     #[cfg(feature = "cluster")]
     let cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle> =
         match crate::cluster::identity::cluster_transport_activation(&config, &creds) {
             Some(identity) if !iroh_active => {
+                // ── mDNS announce (Phase-2 wire-in) ────────────────────
+                // The Hyperswarm DHT covers WAN rendezvous; pure-LAN
+                // peers browse `_neoth._udp.local.` — dark until now
+                // because `spawn_announcer` had no caller. Gated exactly
+                // like `neoth cluster discover`: `cluster.mdns.enabled`
+                // (default ON, Q4) + the trusted-SSID AnnouncePolicy
+                // (Q2 — never announce on untrusted wifi). Non-fatal on
+                // every failure path.
+                {
+                    let freedom_path = FreedomConfig::default_path();
+                    let (mdns_enabled, announce_policy) =
+                        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+                    let ssid = crate::cluster::policy::current_ssid();
+                    match crate::cluster::policy::gate_discover(
+                        mdns_enabled,
+                        &announce_policy,
+                        ssid.as_deref(),
+                    ) {
+                        crate::cluster::policy::DiscoverGate::Proceed => {
+                            match crate::cluster::mdns::primary_local_ip() {
+                                Some(ip) => {
+                                    let listen_port =
+                                        crate::cluster::policy::load_listen_port_from_freedom(
+                                            &freedom_path,
+                                        );
+                                    let node_label = crate::cluster::mdns::node_label(
+                                        &FreedomConfig::default_neoth_home(),
+                                    );
+                                    let mdns_id = crate::cluster::mdns::build_announce_identity(
+                                        &identity.key,
+                                        &node_label,
+                                        ip,
+                                        listen_port,
+                                    );
+                                    match crate::cluster::mdns::spawn_announcer(&mdns_id) {
+                                        Ok(d) => {
+                                            info!(
+                                                label = %node_label,
+                                                ip = %ip,
+                                                port = listen_port,
+                                                "cluster: mDNS announcer up (_neoth._udp.local.)"
+                                            );
+                                            mdns_daemon = Some(d);
+                                        }
+                                        Err(e) => warn!(
+                                            error = %e,
+                                            "cluster: mDNS announcer failed to start (non-fatal; DHT discovery unaffected)"
+                                        ),
+                                    }
+                                }
+                                None => warn!(
+                                    "cluster: mDNS announce skipped — no non-loopback local IP"
+                                ),
+                            }
+                        }
+                        crate::cluster::policy::DiscoverGate::SkipWith(reason) => {
+                            info!(
+                                reason = ?reason,
+                                "cluster: mDNS announce gated OFF (policy) — DHT discovery unaffected"
+                            );
+                        }
+                    }
+                }
                 let registry = std::sync::Arc::new(std::sync::Mutex::new(
                     crate::cluster::PeerLoadRegistry::new(),
                 ));
@@ -1940,6 +2008,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         cluster_gossip_task,
         #[cfg(feature = "cluster")]
         cluster_swarm,
+        #[cfg(feature = "cluster")]
+        mdns_daemon,
         installer_audit_task,
         credentials_import_task,
         detect_complete_task,

@@ -3997,6 +3997,10 @@ pub(crate) struct BackgroundHandles {
     pub cluster_gossip_task: Option<JoinHandle<()>>,
     #[cfg(feature = "cluster")]
     pub cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle>,
+    /// mDNS LAN announcer (Phase-2 wire-in). Dropping the ServiceDaemon
+    /// unregisters `_neoth._udp.local.`; torn down beside the swarm.
+    #[cfg(feature = "cluster")]
+    pub mdns_daemon: Option<mdns_sd::ServiceDaemon>,
     pub installer_audit_task: JoinHandle<()>,
     pub credentials_import_task: JoinHandle<()>,
     pub detect_complete_task: JoinHandle<()>,
@@ -4148,6 +4152,8 @@ pub(crate) async fn shutdown_background_tasks(
         cluster_gossip_task,
         #[cfg(feature = "cluster")]
         cluster_swarm,
+        #[cfg(feature = "cluster")]
+        mdns_daemon,
         installer_audit_task,
         credentials_import_task,
         detect_complete_task,
@@ -4308,6 +4314,12 @@ pub(crate) async fn shutdown_background_tasks(
             } else {
                 info!("cluster transport shut down");
             }
+        }
+        // Unregister the mDNS announce (drop ⇒ goodbye packets). Beside
+        // the swarm teardown so the LAN + DHT presence disappear together.
+        if let Some(d) = mdns_daemon {
+            info!("cluster: stopping mDNS announcer");
+            let _ = d.shutdown();
         }
     }
 
