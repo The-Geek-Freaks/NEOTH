@@ -312,6 +312,17 @@ Different projects optimize for different jobs. NEOTH's bet is the harder
 overlap: a DAU-friendly buddy, serious coding partner, local-first memory
 system, private mesh, and inspectable operator runtime in one product.
 
+Five things you will not find documented in any of the compared projects —
+each with the command that proves it on your machine:
+
+| Only in NEOTH | Prove it |
+| :-- | :-- |
+| Collapse prediction on its own runtime ([Babel-Index](docs/babel-index.md)) | `neoth babel status` |
+| HMAC-chained audit log you can verify yourself | `neoth verify` |
+| Evidence-linked profile memory behind explicit consent | `neoth profile pending` |
+| WASM capability sandbox that refuses + audits over-level calls at runtime | `neoth plugin ledger` |
+| Fail-closed trust boundaries as the default, not a setting | `neoth privacy audit --last 30d` |
+
 <img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH advantage map" width="100%">
 
 | Capability | NEOTH | OpenHuman | OpenClaw | Hermes Agent |
