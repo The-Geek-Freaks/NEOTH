@@ -297,7 +297,24 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-03 (Fable 5 session #2 — GUI MEGA-WAVE B7+B8 COMPLETE incl. design-taste gate)
+updated: 2026-07-03 (Fable 5 session #3 — B9 CHANNEL-PARITY COMPLETE incl. review-fix wave)
+b9_final: >
+  B9 FULLY SHIPPED (7 commits 40752049/4b68524c/fd897d1b/bb2fe22e/ad6a5490/
+  934bbeb8/4fdfac9e). VERIFY-FIRST: the B9 prose (Signal/LINE/iMessage/IRC
+  adapters) was STALE — all four existed; real rest per GOLD-FEAT-10b:
+  GChat Pub/Sub PULL adapter (feature gchat-channel, jsonwebtoken/ring RS256
+  SA-JWT, +2 lock pkgs, long-poll pull/ack-everything + 2s idle guard,
+  token_uri https:// gate, topic-IAM caveat), BB send_media (multipart vs BB
+  server SOURCE, caption degrade-not-Err), wizard/CLI channel add/remove ×7
+  (discord stale-bail killed), routing parity (Destinations 14 families +
+  proactive Signal/LINE/Mattermost/iMessage), IRC account-tag hardening
+  (cap-req INSIDE registration window — identify() sends CAP END), GUI
+  Channels 11→14 rows. GOLD-FEAT-10b [x] + PROGRESS entry. Review-wave:
+  verify-first REFUTED maxWaitDuration claim (field absent in REST v1;
+  long-poll default) + confirmed CAP-END bug. Foreign commit 8c11ab00
+  (docs launch) landed mid-wave, no conflict. Gates: default+feature clippy
+  0, module filters green, full suite = see push note. Bats now throttle
+  (-j 4 clippy/test + --test-threads=2 hardcoded, operator BSOD directive).
 b7_b8_final: >
   B7+B8 FULLY SHIPPED (0752c920..79e7e442, 8 commits): GUI-01..08,
   GOLD-LOOP-03, ODY-01..05, AOS-01..06, OH-12 — all [x] in tracker with
@@ -329,11 +346,14 @@ gui_wave_state: >
   helpers pub(crate)). neothd-gui tests 127→133; cli::chat 96/96.
   Screenshot-verify SKIPPED (operator denied screen access — gates+tests
   are the evidence). B8 rest COMPLETE (see b7_b8_final above).
-next: B9 Channel parity (Signal/LINE/iMessage/IRC adapters, one commit+gate
-  per adapter, template from session 2026-06-15b) — then B10 media rest
-  (HANDY-04 model manager landed in wave 5? VERIFY tracker first),
-  B11 Security/API (security-reviewer MANDATORY), B12 skill bundles,
-  B13 RMAS, B14, B15 steal-backlog, B16 Jarvis re-sync, B17 release gate.
+next: B10 media rest — VERIFY-FIRST the tracker: HANDY-04 auto-download
+  landed (wave 3), HANDY-02 VAD + ADOPT-25 dictation landed (wave 5) → B10
+  may be VOLLSTÄNDIG STALE; check GOLD-ADAPT-HANDY-04 model_manager.rs
+  URL+SHA consumer (ADOPT-25/GGUF slice) as the only possible rest. Then
+  B11 Security/API rest (ODY-31 [x] wave 4 — verify what remains),
+  B12 skill bundles, B13 RMAS, B14 big features, B16 Jarvis re-sync,
+  B17 release gate. Open GUI follow-up: Slint Channels tab renders 14 rows
+  dynamically (no .slint change was needed).
 base: 37249a8c
 current_batch: >
   B3 COMPLETE (02b072c1 slice1 + 1b06e94e GRILL loop + f6fa1205 review-wave +
