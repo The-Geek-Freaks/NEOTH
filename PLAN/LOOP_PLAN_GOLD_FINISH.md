@@ -297,7 +297,25 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-03 (Fable 5 session — B3+B5 COMPLETE, B4 nearly)
+updated: 2026-07-03 (Fable 5 session #2 — GUI wave: B7 COMPLETE, B8 chat cluster COMPLETE)
+gui_wave_state: >
+  FULL SUITE 9816/9816 green at session start (grew from 9765 — wave-5 tests).
+  B7 COMPLETE (0752c920): GUI-01..08 [x] + GOLD-LOOP-03 [x] (spec-corrected:
+  record-at-end → history browser + subprocess run/kill; gui-loop cargo
+  feature default-on; new loop.slint + SegBar/Led/ease-back/NeothButton
+  loading+size+danger in components/theme). Gate = SRC/_gui_check.bat
+  (gitignored local bat, `cargo %*`, pass -j 4 BEFORE any `--`).
+  B8 CHAT CLUSTER COMPLETE (47803513 + be32b1e6): ODY-01 sessions sidebar
+  (HindsightCardMini mirror), ODY-02/05 extended stream sentinel
+  (used/limit/input/output/elapsed_ms; limit=effective_cap) + metrics chip
+  + popup, ODY-04 stall watchdog (60s banner, Stop kills parked child,
+  capped auto-continue w/ refill guard), ODY-03 attachment strip (rfd
+  picker GUI + daemon --attach → resolve_prompt extraction blocks, ingest
+  helpers pub(crate)). neothd-gui tests 127→133; cli::chat 96/96.
+  Screenshot-verify SKIPPED (operator denied screen access — gates+tests
+  are the evidence). NEXT IN B8: AOS-01..06 (settings cluster) + OH-12
+  first-run tour, THEN the B8 design-taste gate (impeccable /audit +
+  design-review) over the whole GUI diff.
 base: 37249a8c
 current_batch: >
   B3 COMPLETE (02b072c1 slice1 + 1b06e94e GRILL loop + f6fa1205 review-wave +
