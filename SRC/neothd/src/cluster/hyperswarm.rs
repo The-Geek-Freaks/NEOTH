@@ -1017,10 +1017,7 @@ fn fire_wal(writer: &WalWriterHandle, event_type: u8, payload: Vec<u8>) {
 }
 
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::time::now_unix_secs()
 }
 
 // ── SL-01 task-delegation accept gate + handler ────────────────────────────
@@ -1601,10 +1598,7 @@ pub async fn run_inbound_loop<R: AsyncRead + Unpin>(
 }
 
 fn now_unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    crate::time::now_unix_ms()
 }
 
 /// Lowercase hex encoding without a separate `hex` dep.

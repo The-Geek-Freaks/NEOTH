@@ -110,7 +110,7 @@ pub fn spawn_g02_surfacing_cron_loop(home: PathBuf, interval_secs: u64) -> JoinH
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
-            let now_unix = chrono::Utc::now().timestamp();
+            let now_unix = crate::time::utc_now().timestamp();
             match run_g02_surfacing_tick(&home, now_unix) {
                 Ok(0) => tracing::debug!("G-02 surfacing tick: no novel claims"),
                 Ok(n) => info!(

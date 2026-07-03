@@ -48,10 +48,7 @@ pub(crate) fn maybe_run_groundtruth_qa(state: &WizardState) -> Result<()> {
                 return Ok(());
             }
         };
-        let now_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-            .unwrap_or(0);
+        let now_ns = crate::time::now_unix_ns_i64(); // ARCH-07b: exact semantics match
         let db = crate::memory::store::default_path();
         match crate::cli::groundtruth_wizard::persist_answers(&db, &bank, &answers, lang, now_ns) {
             Ok(n) => println!("  {n} ground-truth row(s) stored."),
@@ -382,10 +379,7 @@ pub(crate) async fn snapshot_existing_config(freedom_yaml: &std::path::Path) -> 
         Ok(cfg) => cfg.rollback,
         Err(_) => crate::config::RollbackConfig::default(),
     };
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let wal_dir = crate::config::FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for init snapshot")?;
     let segment = wal_dir.join(format!("init-snapshot-{now_unix}.wal"));
@@ -473,11 +467,8 @@ pub(crate) fn write_initialized_marker(
     neoth_dir: &std::path::Path,
     state: &WizardState,
 ) -> Result<()> {
-    let now_system = std::time::SystemTime::now();
-    let now = now_system
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    // ARCH-07b: now_unix_secs() = same semantics (.map(|d| d.as_secs()).unwrap_or(0))
+    let now = crate::time::now_unix_secs();
 
     let marker = InitializedMarker {
         wizard_version: 2, // F-22: bumped to 2 after extending the schema

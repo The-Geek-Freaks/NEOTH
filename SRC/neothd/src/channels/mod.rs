@@ -143,10 +143,7 @@ pub(crate) async fn emit_gate_rejected(
     let Some(w) = writer else {
         return;
     };
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let payload = match serde_json::to_vec(&serde_json::json!({
         "channel": channel,
         "sender_id": sender_id,
@@ -635,10 +632,7 @@ pub async fn send_text_with_snapshot(
     text: &str,
 ) -> std::result::Result<MessageId, ChannelError> {
     let message_id = channel.send_text(chat_id, text).await?;
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let target = format!("{}:{}:{}", platform.as_str(), chat_id, message_id.0);
     let wal_dir = crate::config::FreedomConfig::default_wal_dir();
     if let Err(e) = std::fs::create_dir_all(&wal_dir) {
@@ -695,10 +689,7 @@ pub async fn send_text_with_snapshot_using(
     text: &str,
 ) -> std::result::Result<MessageId, ChannelError> {
     let message_id = channel.send_text(chat_id, text).await?;
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let target = format!("{}:{}:{}", platform.as_str(), chat_id, message_id.0);
     let emit = crate::wal::snapshot::emit_if_policy_allows(
         writer,

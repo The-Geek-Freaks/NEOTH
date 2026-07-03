@@ -498,7 +498,7 @@ pub fn spawn_pattern_cron_loop(
         );
         loop {
             ticker.tick().await;
-            let now_unix = chrono::Utc::now().timestamp();
+            let now_unix = crate::time::utc_now().timestamp();
             match run_pattern_tick_once(&home, now_unix, &config) {
                 Ok(0) => tracing::debug!("pattern cron: no nudge this tick"),
                 Ok(n) => tracing::info!(nudges = n, "pattern cron: proactive nudges enqueued"),

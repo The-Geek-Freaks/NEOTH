@@ -51,7 +51,7 @@ pub async fn run_scheduler(
     info!(jobs = jobs_file.jobs.len(), "cron scheduler online");
     loop {
         ticker.tick().await;
-        let now = Utc::now();
+        let now = crate::time::utc_now();
         // Snapshot completions (brief lock; never held across an await), then ask
         // the validated wave scheduler which jobs are dependency-ready this tick.
         // A job with no `depends_on` is always ready, so no-dependency behaviour
@@ -91,7 +91,7 @@ pub async fn run_scheduler(
                             completed_for_task
                                 .lock()
                                 .unwrap()
-                                .insert(job_id, Utc::now());
+                                .insert(job_id, crate::time::utc_now());
                         }
                         Err(e) => {
                             warn!(job_id = %job_for_task.id, error = %e, "job dispatch error");

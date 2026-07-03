@@ -68,7 +68,7 @@ impl ModelSource for BedrockSource {
             &self.region,
             SERVICE_NAME,
             &self.credentials,
-            chrono::Utc::now(),
+            crate::time::utc_now(),
         );
 
         let client = crate::providers::http_client::build_client()?;

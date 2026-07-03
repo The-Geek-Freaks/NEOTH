@@ -220,7 +220,7 @@ pub fn preflight(job: &Job) -> Vec<String> {
     // (5) schedule fires more often than every minute (< 1-min granularity)
     // Standard 5-field cron minimum is 1 minute; we check by computing two
     // consecutive fire times and measuring the gap.
-    if let Some(t0) = job.schedule.next_after(Utc::now()) {
+    if let Some(t0) = job.schedule.next_after(crate::time::utc_now()) {
         if let Some(t1) = job.schedule.next_after(t0) {
             let gap_secs = (t1 - t0).num_seconds();
             if gap_secs > 0 && gap_secs < 60 {
@@ -244,7 +244,7 @@ pub fn schedule_collides(
     horizon_hours: i64,
 ) -> Vec<String> {
     let horizon = chrono::Duration::hours(horizon_hours);
-    let now = Utc::now();
+    let now = crate::time::utc_now();
     let end = now + horizon;
 
     // Collect fire-minute buckets for the new schedule.

@@ -258,7 +258,7 @@ fn safe_join(base: &Path, rel: &Path) -> Result<PathBuf> {
 
 /// Conventional default backup path: `<home>/backups/neoth-<ts>.tar.gz`.
 pub fn default_backup_path() -> PathBuf {
-    let now = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let now = crate::time::utc_now().format("%Y%m%dT%H%M%SZ").to_string();
     FreedomConfig::default_neoth_home()
         .join("backups")
         .join(format!("neoth-{now}.tar.gz"))

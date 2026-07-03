@@ -103,7 +103,7 @@ fn slugify(s: &str) -> String {
 }
 
 fn render_adr_md(number: u32, title: &str, body: &str) -> String {
-    let now_iso = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let now_iso = crate::time::utc_now().format("%Y-%m-%d").to_string();
     format!(
         "# ADR-{:04}: {title}\n\n\
          **Status:** Proposed  \n\

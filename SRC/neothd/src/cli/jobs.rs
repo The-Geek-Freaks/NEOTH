@@ -228,7 +228,7 @@ fn run_preview(jobs: &JobsFile, id: &str, output: &OutputFormat) -> Result<()> {
 pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
     let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
 
-    let now = Utc::now();
+    let now = crate::time::utc_now();
     let mut next_fires: Vec<String> = Vec::with_capacity(3);
     let mut cursor = now;
     for _ in 0..3 {
@@ -440,7 +440,7 @@ fn list_bg_jobs(output: &OutputFormat) -> Result<()> {
 }
 
 fn print_table(jobs: &JobsFile) {
-    let now = Utc::now();
+    let now = crate::time::utc_now();
     println!(
         "{:<24} {:<32} {:<8} {:<24} cron",
         "id", "name", "enabled", "next_fire_utc"

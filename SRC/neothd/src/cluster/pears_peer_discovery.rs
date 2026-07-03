@@ -46,7 +46,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -251,10 +251,7 @@ impl PearsPeerDiscovery {
     /// surface as anyhow::Error so the caller decides retry vs
     /// supervisor restart.
     pub async fn announce_self(&self) -> Result<Election> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = crate::time::now_unix_secs();
         let payload = AnnouncePayload {
             pubkey: self.local_pubkey.0.clone(),
             role: "follower".to_string(),

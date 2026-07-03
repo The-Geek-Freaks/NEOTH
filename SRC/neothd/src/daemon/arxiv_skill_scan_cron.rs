@@ -123,10 +123,7 @@ pub async fn run_one_scan_pass(
     max_per_topic: usize,
 ) -> Result<ScanReport> {
     let db_path = home.join("views.db");
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
 
     let mut papers_scanned = 0usize;
     let mut facts_inserted = 0usize;

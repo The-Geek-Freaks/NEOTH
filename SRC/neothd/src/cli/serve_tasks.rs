@@ -1799,7 +1799,7 @@ pub(crate) fn spawn_pattern_cron(
                     "pattern cron: interval updated via config reload (TRAIL-03)",
                 );
             }
-            let now_unix = chrono::Utc::now().timestamp();
+            let now_unix = crate::time::utc_now().timestamp();
             match crate::daemon::pattern_cron::run_pattern_tick_once(&home, now_unix, &live_cfg) {
                 Ok(0) => tracing::debug!("pattern cron: no nudge this tick"),
                 Ok(n) => tracing::info!(nudges = n, "pattern cron: proactive nudges enqueued"),
@@ -1943,10 +1943,7 @@ pub(crate) fn spawn_catalog_refresh(config: &FreedomConfig) -> JoinHandle<()> {
 /// failure is logged + skipped — hygiene, not load-bearing on liveness.
 pub(crate) fn run_stale_kanban_reapers_on_startup() {
     const STALE_CUTOFF_NS: u64 = 3_600 * 1_000_000_000;
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns();
     match crate::memory::store::open(&crate::memory::store::default_path()) {
         Ok(conn) => {
             // ensure_schema is idempotent + cheap; covers the fresh-install
@@ -2026,10 +2023,7 @@ pub(crate) async fn run_journal_recovery_on_startup(writer: &WalWriterHandle) {
     use crate::wal::events::EVENT_TYPE_STALE_INTERRUPTED;
 
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let now_ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_ts = crate::time::now_unix_i64();
 
     // ── orphaned turn-journals ──────────────────────────────────────────────
     match scan_for_journals(&home) {
@@ -3576,10 +3570,7 @@ pub(crate) fn prepare_wal(wal_segment: Option<std::path::PathBuf>) -> anyhow::Re
             Ok(master) => {
                 let auth = crate::wal::cpt_auth::CompactionAuthenticator::from_master_key(&master);
                 match crate::wal::cpt_recovery::scan_and_apply(&wal_dir, &auth, || {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0)
+                    crate::time::now_unix_secs()
                 }) {
                     Ok(report) => {
                         if report.total() > 0 {
@@ -3624,10 +3615,7 @@ pub(crate) fn prepare_wal(wal_segment: Option<std::path::PathBuf>) -> anyhow::Re
     // ── 3b. ADV-01 — emit deferred audit frames for quarantined `.cpt`s ────
     for report in pending_auth_failures {
         for quarantine_path in report.quarantined {
-            let now_unix = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+            let now_unix = crate::time::now_unix_secs();
             // Reconstruct the original `.cpt` path from the quarantine
             // suffix so the audit payload names the original file.
             let cpt_path = quarantine_path
@@ -3826,10 +3814,7 @@ pub(crate) fn run_preflight_guards(
     // Bail before any WAL write if the system clock is far behind the last
     // observed timestamp. `--allow-clock-rollback` skips it (intentional rewind).
     if !allow_clock_rollback {
-        let now_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-            .unwrap_or(0);
+        let now_ns = crate::time::now_unix_ns();
         crate::daemon::clock_floor::check(
             &crate::daemon::clock_floor::default_floor_path(),
             now_ns,
@@ -4434,10 +4419,7 @@ pub(crate) fn build_boot_payload(config: &FreedomConfig) -> anyhow::Result<Vec<u
         "operator_id": config.operator_id,
         "provider_kind": config.provider_kind,
         "daemon_version": env!("CARGO_PKG_VERSION"),
-        "boot_unix": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        "boot_unix": crate::time::now_unix_secs(),
     });
     Ok(serde_json::to_vec(&payload)?)
 }

@@ -494,7 +494,7 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
         // the body is slow.
         loop {
             ticker.tick().await;
-            let now_unix = chrono::Utc::now().timestamp();
+            let now_unix = crate::time::utc_now().timestamp();
             match run_reflection_tick_once(&home, now_unix, DEFAULT_CRON_INTERVAL_SECS) {
                 Ok(true) => info!(
                     "reflection cron: new weekly item enqueued (ISO week {})",

@@ -125,7 +125,7 @@ pub async fn run_job(
     // ticks that may both visit the same cron minute, but rotates daily.
     let system_prompt: Option<String> = if classify_role(job) == CronRole::Briefing {
         let tz = job.schedule.timezone();
-        let now_local = chrono::Utc::now().with_timezone(&tz);
+        let now_local = crate::time::utc_now().with_timezone(&tz);
         let local_dt = now_local.format("%A, %Y-%m-%d %H:%M").to_string();
         // Use the IANA name string (via the tz field or "UTC" fallback).
         let tz_name = job.schedule.tz.as_deref().unwrap_or("UTC");
@@ -233,7 +233,7 @@ pub async fn run_job(
 
             // (b) Enqueue a ProactiveItem for the drain loop to surface.
             // Dedup key uses the UTC date so at most one alert per job per day.
-            let utc_day = chrono::Utc::now().date_naive();
+            let utc_day = crate::time::utc_now().date_naive();
             let dedup_key = format!("self-heal:{}:{}", job.id, utc_day);
             let body = format!(
                 "[CRON SELF-HEAL] Job `{}` failed (cause: {}, risk: {:.2})\n\nRecommendation: {}",

@@ -12,7 +12,7 @@
 //! here via `crate::cli::serve::emit_required_audit`.
 
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
@@ -116,10 +116,7 @@ pub(crate) async fn emit_channel_privilege_blocked(
     sender_id: &str,
     action: &str,
 ) {
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     let payload = match serde_json::to_vec(&serde_json::json!({
         "channel": channel,
         "sender_id": sender_id,
@@ -404,10 +401,7 @@ pub(crate) async fn emit_inbound_ingress(
     // permission failure on the marker file MUST NOT fail the inbound handler.
     let _ = crate::profile::briefing_gate::record_last_active(
         &crate::config::FreedomConfig::default_neoth_home(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
+        crate::time::now_unix_i64(),
     );
 
     // CHANNEL_INGRESS (hashed metadata).
@@ -483,10 +477,7 @@ pub(crate) async fn release_channel_reply(
     // Last filter before the channel adapter sends the reply. A Replace
     // rewrites the outbound text (per-messenger formatting, profanity
     // scrub); a Block silently drops it with a HOOK_BLOCKED audit frame.
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
 
     // Pre-filter once=true hooks that already fired this session.
     let mut skipped_once_egress: Vec<String> = Vec::new();
@@ -569,10 +560,7 @@ pub(crate) async fn release_channel_reply(
                 "channel": channel_str,
                 "recipient_hash": sender_hash,
                 "reason": reason,
-                "ts_unix": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
+                "ts_unix": crate::time::now_unix_secs(),
             })) {
                 emit_required_audit(
                     writer,
@@ -618,10 +606,7 @@ pub(crate) async fn release_channel_reply(
                 .await
                 .unwrap_or_default()
         };
-        let now = ::std::time::SystemTime::now()
-            .duration_since(::std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = crate::time::now_unix_i64();
         let gate = {
             let base = Gate::for_level(autonomy)
                 .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
@@ -747,10 +732,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // the pipeline.
             {
                 use crate::recall::reconstruct::ModeCheckpoint;
-                let ts_unix = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
+                let ts_unix = crate::time::now_unix_i64();
                 // Stable per-turn id: xxh3-64 of sender_hash + ts_unix.
                 let turn_id = format!(
                     "{:016x}-{ts_unix}",
@@ -813,10 +795,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // turn_id variable computed in the checkpoint block ~30 lines down
             // uses the same formula — forward-compatible because this fires first.
             {
-                let ody26_ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
+                let ody26_ts = crate::time::now_unix_i64();
                 let ody26_session = format!(
                     "{:016x}-{ody26_ts}",
                     xxhash_rust::xxh3::xxh3_64(
@@ -866,10 +845,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 );
                 Default::default()
             });
-            let ingress_ts_unix = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+            let ingress_ts_unix = crate::time::now_unix_secs();
             // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
             let mut skipped_once_ingress: Vec<String> = Vec::new();
             let active_ingress_hooks: Vec<crate::hooks::schema::HookDef> = {
@@ -957,10 +933,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         "channel": channel_str,
                         "sender_id_hash": sender_hash,
                         "reason": reason,
-                        "ts_unix": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0),
+                        "ts_unix": crate::time::now_unix_secs(),
                     })) {
                         Ok(p) => p,
                         Err(e) => {
@@ -1245,10 +1218,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .iter()
                 .filter(|b| b.source == crate::memory::operator_md::BlockSource::SubDir)
             {
-                let now_unix = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
+                let now_unix = crate::time::now_unix_secs();
                 let payload = serde_json::to_vec(&serde_json::json!({
                     "path": b.path.display().to_string(),
                     "bytes": b.content.len(),
@@ -1783,10 +1753,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 );
                 Default::default()
             });
-            let provider_call_ts_unix = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+            let provider_call_ts_unix = crate::time::now_unix_secs();
             // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
             let mut skipped_once_provider: Vec<String> = Vec::new();
             let active_provider_hooks: Vec<crate::hooks::schema::HookDef> = {
@@ -2379,10 +2346,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         "response_hash_xxh3": xxhash_rust::xxh3::xxh3_64(
                             completion.text.as_bytes(),
                         ),
-                        "ts_unix": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0),
+                        "ts_unix": crate::time::now_unix_secs(),
                     }));
                     match payload {
                         Ok(bytes) => {
@@ -2433,10 +2397,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         model: None,
                         ..Default::default()
                     };
-                    let now_unix = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+                    let now_unix = crate::time::now_unix_secs();
                     match crate::security::refusal_recovery::try_recover_multi(
                         &*provider,
                         &recovery_req,
@@ -2516,10 +2477,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let original_provider_is_local =
                     crate::providers::is_local_provider((*provider).name());
                 if original_provider_is_local {
-                    let now_unix_ch = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0) as i64;
+                    let now_unix_ch = crate::time::now_unix_secs() as i64;
                     match crate::skills::teacher::try_teacher_escalation(
                         &completion.text,
                         &final_prompt,
@@ -2585,7 +2543,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // the WAL is the source of truth.
             {
                 let session_id = format!("{}-{}", channel_str, inbound.sender_id);
-                let now = chrono::Utc::now();
+                let now = crate::time::utc_now();
                 let archive = crate::memory::archive::SessionArchive::new(
                     crate::memory::archive::default_archive_root(),
                     session_id,
@@ -2620,7 +2578,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // task and starve other channel messages.
             // KF-05: a reply was produced for this channel message — record a
             // best-effort Hebbian acceptance for (channel, topic) so the
-            // per-channel familiarity store accumulates. Fire-and-forget: a
+            // familiarity store accumulates. Fire-and-forget: a
             // write error never blocks the reply. Read back via
             // `neoth ecology channel-weights`.
             {
@@ -2641,10 +2599,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     let topic_hash = xxhash_rust::xxh3::xxh3_64(
                         inbound.text.as_deref().unwrap_or("").as_bytes(),
                     );
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+                    let now = crate::time::now_unix_secs();
                     let home = crate::config::FreedomConfig::default_neoth_home();
                     if let Err(e) = crate::memory::channel_weights::record_channel_acceptance_scoped(
                         &home,
@@ -2743,10 +2698,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             let extensions =
                                 crate::profile::extension_registry::TypedExtensionRegistry::load()
                                     .unwrap_or_default();
-                            let now_unix = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
+                            let now_unix = crate::time::now_unix_secs();
                             let run = if let Some(shared) = &views_conn_for_pipeline {
                                 // replay needs the conn too — take a short lock
                                 // just for it; run_pipeline re-locks per DB stage.
@@ -2870,10 +2822,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // session_id is reconstructed identically to the operator-turn
             // insert above (same sender_hash + same-second ts → same key).
             {
-                let ody26_agent_ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
+                let ody26_agent_ts = crate::time::now_unix_i64();
                 // Use the turn_id from the mode-checkpoint block when available;
                 // fall back to reconstructing the same formula as the operator block.
                 let ody26_agent_session = format!(
@@ -3013,10 +2962,7 @@ pub(crate) async fn handle_media_attachment(
             "text_bytes": extraction.text.len(),
             "model": model_name,
             "channel": inbound.channel.as_str(),
-            "ts_unix": SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            "ts_unix": crate::time::now_unix_secs(),
         })) {
             Ok(payload) => {
                 emit_required_audit(w, EVENT_TYPE_INGEST_EXTRACTED, "INGEST_EXTRACTED", payload)
@@ -3050,10 +2996,7 @@ pub(crate) async fn handle_media_attachment(
                     "model": model,
                     "dim": dim,
                     "channel": inbound.channel.as_str(),
-                    "ts_unix": SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0),
+                    "ts_unix": crate::time::now_unix_secs(),
                 })) {
                     Ok(payload) => {
                         emit_required_audit(

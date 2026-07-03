@@ -17,7 +17,6 @@
 //! already exists + is wired.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{Channel, ChannelError, ChannelKind, MessageId};
 use crate::config::LiveDeliveryConfig;
@@ -80,10 +79,7 @@ fn should_send_edit(
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    crate::time::now_unix_ms()
 }
 
 impl LiveDelivery {
@@ -200,10 +196,7 @@ impl LiveDelivery {
     /// frame is the audit nicety). Mirrors the inbound-edit payload shape +
     /// adds `direction: "outbound"`.
     async fn emit_edit(&self, writer: &WalWriterHandle, message_id: &MessageId, new_text: &str) {
-        let ts_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let ts_unix = crate::time::now_unix_i64();
         let payload = match serde_json::to_vec(&serde_json::json!({
             "channel": self.kind.as_str(),
             "direction": "outbound",

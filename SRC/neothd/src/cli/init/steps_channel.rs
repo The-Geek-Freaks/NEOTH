@@ -673,10 +673,7 @@ pub(crate) async fn step6g_credential_import(
     #[cfg(not(feature = "wizard"))]
     let bitwarden_password: Option<crate::secret::SecretString> = None;
 
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let importers = crate::credentials::wizard_step::build_wizard_importer_list(
         bitwarden_path.as_deref(),
         bitwarden_password,
@@ -739,10 +736,7 @@ pub(crate) fn step6h_install_recommended(
         debug!("skipping install-command preview in non-interactive mode");
         return;
     }
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
     let Some(report) = crate::installers::detect::load_cache(neoth_dir, now_unix) else {
         debug!("no detect cache; W-05 step has nothing to recommend");
         return;

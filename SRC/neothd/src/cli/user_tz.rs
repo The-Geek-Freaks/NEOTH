@@ -48,7 +48,7 @@ pub fn resolve_tz_name(config: &crate::config::FreedomConfig) -> Option<String> 
 /// Computes offset as the difference between local naive time and UTC naive time
 /// (avoids any dependency on the specific `Offset` trait impl of `chrono_tz`).
 fn format_utc_offset(tz: Tz) -> String {
-    let now_utc = chrono::Utc::now();
+    let now_utc = crate::time::utc_now();
     let local = now_utc.with_timezone(&tz);
     // Compute total offset seconds: (local naive) - (utc naive).
     let diff = local.naive_local() - now_utc.naive_utc();
@@ -72,7 +72,7 @@ pub fn format_tz_context(tz_name: &str) -> String {
         Ok(t) => t,
         Err(_) => return String::new(),
     };
-    let now_utc = chrono::Utc::now();
+    let now_utc = crate::time::utc_now();
     let local = now_utc.with_timezone(&tz);
     let utc_offset = format_utc_offset(tz);
     // ISO weekday name (Mon/Tue/…) + ISO date + HH:MM local time.

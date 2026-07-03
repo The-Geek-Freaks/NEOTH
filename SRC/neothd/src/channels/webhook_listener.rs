@@ -555,10 +555,7 @@ async fn handle_slack(
     cfg: &WebhookListenerConfig,
     req: WebhookRequest,
 ) -> Result<HyperResponse<Full<Bytes>>> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64();
     let (resp, outcome) = route_slack_webhook(&req, &cfg.slack_signing_secret, now);
     match outcome {
         SlackRouteOutcome::UrlVerification { .. } => {
@@ -836,10 +833,7 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                     // number / text in the clear).
                     use crate::channels::send_gate::{self, ChannelSendVerdict};
                     let gov = &cfg.send_governance;
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+                    let now = crate::time::now_unix_secs();
                     let verdict = send_gate::decide_channel_send(
                         &gov.decision,
                         gov.dry_run,
@@ -1070,10 +1064,7 @@ async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMe
                     xxhash_rust::xxh3::xxh3_64(outbound.recipient_id.as_bytes())
                 );
                 let gov = &cfg.send_governance;
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                let now = crate::time::now_unix_secs();
                 let verdict = send_gate::decide_channel_send(
                     &gov.decision,
                     gov.dry_run,

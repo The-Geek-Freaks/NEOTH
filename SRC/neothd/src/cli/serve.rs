@@ -12,7 +12,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -147,10 +146,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Persist the boot-time wall-clock as the new clock floor. Cheap on
     // disk (one small write) — captures the "last alive moment" so the
     // next start can detect a rollback even if we crash mid-run.
-    let now_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns();
     // Pick #35 (Session 14, silent-failure audit-fix #4): clock-floor
     // is the anti-rollback mechanism that protects WAL replay ordering
     // on the next daemon start. Prior `let _ = ...` swallowed write
@@ -1638,10 +1634,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     let payload = match serde_json::to_vec(&serde_json::json!({
                         "name": name,
                         "stage": "on_session_start",
-                        "ts_unix": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0),
+                        "ts_unix": crate::time::now_unix_secs(),
                     })) {
                         Ok(p) => p,
                         Err(e) => {
@@ -1793,10 +1786,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     let payload = match serde_json::to_vec(&serde_json::json!({
                         "name": name,
                         "stage": "on_shutdown",
-                        "ts_unix": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0),
+                        "ts_unix": crate::time::now_unix_secs(),
                     })) {
                         Ok(p) => p,
                         Err(e) => {
@@ -1986,10 +1976,7 @@ pub(crate) async fn handle_reload_sentinel(
             return;
         }
     };
-    let ts_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_secs();
     match result {
         crate::config::reload::ReloadResult::Reloaded { changed_fields } => {
             info!(

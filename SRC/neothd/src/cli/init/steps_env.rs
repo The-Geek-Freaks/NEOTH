@@ -167,10 +167,7 @@ pub(crate) async fn step1b_detect_environment(
             "  (headless — GUI / browser-OAuth steps are optional here; `neoth init --cli` skips them)"
         );
     }
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_secs();
     let (docker, compose_v2, compose_v1, node_npm, ffmpeg) = tokio::join!(
         crate::installers::n8n::check_docker_available(),
         crate::installers::paperless::check_docker_compose_available(),

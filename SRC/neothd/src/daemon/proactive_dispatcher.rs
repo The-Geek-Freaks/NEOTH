@@ -886,7 +886,7 @@ pub fn spawn_proactive_drain_loop(
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
-            let now_unix = chrono::Utc::now().timestamp();
+            let now_unix = crate::time::utc_now().timestamp();
             // Fresh config read per tick — honours mid-run enable/disable.
             let proactive_enabled = FreedomConfig::load_from_default_path()
                 .map(|c| c.proactive.enabled)

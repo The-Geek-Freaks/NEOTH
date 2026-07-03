@@ -6,7 +6,6 @@
 // Phase 33b SP-1: segment rotation when size > 16 MiB or age > 24 h.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -605,10 +604,7 @@ async fn rotate(state: &mut WriterState, reason: RotationReason) -> Result<(), W
 }
 
 fn current_ns() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+    crate::time::now_unix_ns()
 }
 
 async fn run_writer(
@@ -799,10 +795,7 @@ async fn run_writer(
             "good_through": rec.good_through,
             "torn_at": rec.torn_at,
             "bytes_dropped": rec.bytes_dropped,
-            "ts_unix": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            "ts_unix": crate::time::now_unix_secs(),
         });
         let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
         let header = crate::wal::HeaderBuilder::new(

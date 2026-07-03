@@ -11,7 +11,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use teloxide::net::Download;
 use teloxide::prelude::*;
@@ -301,10 +300,7 @@ async fn emit_gate_rejected(writer: Option<&crate::wal::writer::WalWriterHandle>
     let Some(w) = writer else {
         return;
     };
-    let ts_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let ts_unix = crate::time::now_unix_i64();
     let payload = match serde_json::to_vec(&serde_json::json!({
         "channel": "telegram",
         "sender_id": sender_id,
@@ -479,10 +475,7 @@ async fn audit_notice_egress(
     let Some(w) = gate_writer else {
         return;
     };
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::time::now_unix_secs();
     let payload = crate::channels::send_gate::channel_egress_payload(
         "telegram", chat_id, body, None, false, false, now,
     );

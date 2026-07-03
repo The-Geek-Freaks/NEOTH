@@ -401,10 +401,7 @@ async fn handle_pair(
     let payload = serde_json::json!({
         "session_id": session_id,
         "token_hash_xxh3": token_hash,
-        "ts_unix": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        "ts_unix": crate::time::now_unix_secs(),
     });
     let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
     let hdr = HeaderBuilder::new(EVENT_TYPE_COMPANION_PAIRED, &payload_bytes).build();
@@ -885,10 +882,7 @@ mod p2p {
             "{:016x}",
             xxhash_rust::xxh3::xxh3_64(token.as_bytes())
         );
-        let ts_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let ts_unix = crate::time::now_unix_secs();
         let payload = serde_json::json!({
             "topic_hash_xxh3": topic_hash,
             "peer_pk_hex": peer_pk_hex,
@@ -923,10 +917,7 @@ mod p2p {
         reason: &str,
         _detail: &str,
     ) {
-        let ts_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let ts_unix = crate::time::now_unix_secs();
         let payload = serde_json::json!({
             "topic_hash_xxh3": topic_hash,
             "peer_pk_hex": peer_pk_hex,

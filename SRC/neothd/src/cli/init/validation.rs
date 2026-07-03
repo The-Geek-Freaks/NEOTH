@@ -106,10 +106,7 @@ pub(crate) fn format_checkpoint_age(ts_unix: i64) -> String {
     if ts_unix <= 0 {
         return "timestamp unavailable".into();
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now = crate::time::now_unix_i64(); // ARCH-07b: exact semantics match
     let delta = now.saturating_sub(ts_unix);
     let phrase = match delta {
         d if d < 60 => "less than a minute ago".to_string(),

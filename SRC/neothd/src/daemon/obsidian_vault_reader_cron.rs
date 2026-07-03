@@ -309,10 +309,7 @@ pub async fn run_one_reader_pass(
     }
 
     let db_path = home.join("views.db");
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0);
+    let now_ns = crate::time::now_unix_ns_i64();
 
     // Collect (statement, scope, path, digest) — all Send.
     let rows: Vec<(String, String, PathBuf, [u8; 32])> = changed
@@ -494,10 +491,7 @@ fn iso_week_label(unix_secs: i64) -> String {
 ///
 /// Returns `true` if a synthesis note was written this call.
 pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_unix = crate::time::now_unix_i64();
     let this_week = iso_week_label(now_unix);
 
     // Read last_synthesis_week from a side-file.
@@ -581,10 +575,7 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
             "[NEOTH-Synthesis {week_label}] {count} verified facts as of this week.",
             count = rows.len()
         );
-        let now_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
+        let now_ns = crate::time::now_unix_ns_i64();
         if let Err(e) = groundtruth::insert(&conn, &statement, &Source::Synthesis, "meta", now_ns) {
             warn!(error = %e, "obsidian synthesis: groundtruth::insert failed (non-fatal)");
         }

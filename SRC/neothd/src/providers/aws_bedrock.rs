@@ -165,7 +165,7 @@ impl Provider for AwsBedrockAdapter {
                 &self.region,
                 SERVICE_NAME,
                 &self.credentials,
-                chrono::Utc::now(),
+                crate::time::utc_now(),
             );
 
             let response = self

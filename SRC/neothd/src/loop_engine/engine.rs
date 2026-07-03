@@ -13,7 +13,6 @@
 /// 3. `cli/serve_pipeline.rs` — channel `use_loop` branch when
 ///    `loop_config.enabled = true && loop_config.max_rounds > 1`.
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -168,18 +167,12 @@ impl LoopState {
 // ---------------------------------------------------------------------------
 
 fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
+    crate::time::now_unix_i64()
 }
 
 /// Generate a loop_id: `loop_<unix_ts>_<pseudo_random>`.
 fn new_loop_id() -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+    let ts = crate::time::now_unix_ms_u128();
     // Use the lower bits of the system time as entropy — sufficient for a
     // file-system key; not a security primitive.
     let lo = (ts & 0xFFFF) as u32;

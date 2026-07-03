@@ -393,7 +393,7 @@ pub fn parse_since(since: Option<&str>) -> Result<i64> {
 
 /// Default export destination: `~/.neoth/exports/neoth-export-<UTC>/`.
 pub fn default_export_dir() -> PathBuf {
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let stamp = crate::time::utc_now().format("%Y%m%d-%H%M%S");
     FreedomConfig::default_neoth_home()
         .join("exports")
         .join(format!("neoth-export-{stamp}"))

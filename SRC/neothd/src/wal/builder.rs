@@ -13,8 +13,6 @@
 //! `event_id` is set to `now_ns` for monotonic ordering; switch to a real
 //! UUID-v7 / Snowflake source once Phase 19 cluster mode lands.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use super::header::{CRC_LEN, EventHeaderV2, HEADER_BODY_LEN, PREAMBLE_LEN};
 use super::hlc::Hlc;
 use super::types::{EventFlags, EventId, Importance, NodeId, SessionId, WalCategory, WalScope};
@@ -119,10 +117,7 @@ impl<'p> HeaderBuilder<'p> {
     /// forward by 1 ns to reset the counter rather than crash the
     /// whole writer task.
     pub fn build(self) -> EventHeaderV2 {
-        let now_ns: u64 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-            .unwrap_or(0);
+        let now_ns: u64 = crate::time::now_unix_ns();
         let hlc = tick_global_hlc(now_ns);
         let payload_hash = xxhash_rust::xxh3::xxh3_64(self.payload);
         let payload_len = self.payload.len();

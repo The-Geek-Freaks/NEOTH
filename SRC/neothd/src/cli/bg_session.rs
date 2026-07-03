@@ -41,10 +41,7 @@ impl BgJobId {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let secs = crate::time::now_unix_secs();
         let id_raw = secs.wrapping_mul(0x9e37_79b9) ^ u64::from(nanos);
         Self(format!("{id_raw:016x}"))
     }

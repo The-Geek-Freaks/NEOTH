@@ -81,6 +81,16 @@ pub fn now_unix_ns_u128() -> u128 {
         .unwrap_or(0)
 }
 
+/// Current UTC wall-clock time as a `chrono::DateTime<Utc>`.
+///
+/// GOLD-ARCH-07 chokepoint for calendar/formatting uses (`chrono::Utc::now()`).
+/// Delegates directly to `chrono::Utc::now()` — semantics are identical.
+/// Centralised here so the ARCH-07 acceptance grep can exclude `time.rs` as the
+/// single source of truth for all wall-clock calls.
+pub fn utc_now() -> chrono::DateTime<chrono::Utc> {
+    chrono::Utc::now()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
