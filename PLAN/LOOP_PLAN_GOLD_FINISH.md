@@ -297,26 +297,33 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-03 (Fable 5 session — B3 in flight)
-base: 02b072c1
+updated: 2026-07-03 (Fable 5 session — B3+B5 COMPLETE, B4 nearly)
+base: 37249a8c
 current_batch: >
-  B3 wiring & unwired-primitive audit — SLICE 1 SHIPPED (02b072c1):
-  PROG-06 [x] (cluster accept → proactive producer, notify_task_accepted + dedup test),
-  G-02 [x] (sweep burned: coupling.rs deleted, 0xC3+0xC5 WAL emits live incl.
-  spin-plugin fuel test under wasm-plugin-host, Pick#9 second_opinion wired into
-  auto_classify_and_assign, coding/mod.rs 13 dead allows pruned; >30min findings
-  filed as GOLD-G02-COUNCIL-01 + GOLD-G02-CLUSTER-01). Dashboard §3 recomputed
-  (WS-DELTA row, corrected counts). Federation transport review-fix closed
-  (9bf29353 single-frame + 68728a4d signer_pubkey_hex end-to-end verify test).
-  REMAINING B3: GRILL-02+04 = ONE consumer (interactive brainstorm→write_plan→
-  review_plan→decompose loop in cli/code.rs; raw-prompt wiring would be cargo-cult —
-  research workflow wf_9f3114f7-cba has the full API extract, resumable/cached).
-b3_hazard: >
+  B3 COMPLETE (02b072c1 slice1 + 1b06e94e GRILL loop + f6fa1205 review-wave +
+  5607a13d queue-sweep): PROG-06/G-02/GRILL-02/GRILL-04 [x] + review fixes
+  (task_id charset gate, ProactiveQueue::modify process-lock + reconcile
+  commit_drain — ALL 13 producer/drain sites converted) + G02-QUEUE-01 [x].
+  B5 COMPLETE (d0d1b004 + 37249a8c): LOOP-02 (neoth loop run/history/show),
+  LOOP-04 (LoopAutonomyLevel L1/L2/L3 + L3-requires-budget), LOOP-05
+  (SPEC-CORRECTED: WAL bytes EXHAUSTED 255/256 + 0x6D taken → budget audit
+  rides 0x7F payload), LOOP-06 (loop:true skill header + verifier/loop_triage
+  stdlib skills + channel-path routing), LOOP-07 (history reader).
+  LOOP-03 = GUI wave (B7). B4: ODY-26 [x] (session_sort_cron + recall
+  --session-folders), PRO-08 [x] (report-verifier), SPEAKR-01 dup [x].
+  Open B4 rest: ARCH-07b (~130 hot-lane time sites, line-based migrator +
+  DRY-RUN), HR-06 (decision: add tiny SmartCrusher 10-50-row metering counter
+  + conditional-skip verdict — verify report says metering infra absent).
+  60 open boxes remain. New in-flight tracker items: G02-COUNCIL-01 (factual_check
+  council wire, M), G02-CLUSTER-01 (foreign-event ingest, M-L).
+hazard: >
   ⚠ BOX BSODs (IRQL_NOT_LESS_OR_EQUAL) under parallel test load — 2 crashes
   2026-07-03. MANDATORY: tests via `_feat.bat test -p neothd --lib <filter> --
-  --test-threads=2`; builds -j4 when agents run; NEVER cargo concurrent with
-  multi-agent workflows; ≤4 read-only agents. Memory: box_bsod_on_test_load.md.
-next_after_b3: B4 memory/context core (verify results cached in wf_9f3114f7-cba: SPEAKR-01/ODY-26/HR-06/ARCH-07-rest/PRO-08)
+  --test-threads=2`; builds -j4; NEVER cargo concurrent with multi-agent
+  workflows; ≤4 agents. Memory: box_bsod_on_test_load.md.
+  ⚠ WAL BYTE SPACE EXHAUSTED (255/256) — §2 free-band table is STALE; no new
+  WAL events possible, ride existing payloads (LOOP-05 pattern).
+next: HR-06 + ARCH-07b close B4 → then B6 (TASK-01, ODY-12, JV-MODE-02/04, ODY-14) → B7/B8 GUI → B9 channels → B10 media → B11 security → B12 skills → B13 RMAS → B14 features → B15 eval queue → B16 Jarvis sync → B17 release
 prev_batch: B-DELTA 100% COMPLETE — ALL 16 items shipped incl. the operator-delegated pair: 03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443, 16=9a0f39ec, 13=dc011f9d, 15=34466060, Q1/Q3 panel decisions=a2615f0b (3-lens gremium under operator delegation "spawne agenten, berate, baue fertig"), 10=580c1a16 (pending-first federation submit + CLI federate + consent prompt), 14=77360338 (pooled predictor download, 4 firewalls enforced in code). FULL suite 9631/9631 + feature-matrix green at close. B2 sweep chunks A+B landed in a2615f0b (3 stale flips, HANDY-04 unwired-note).
 next: B3   # wiring & unwired-primitive audit (B2 chunks A+B done; a chunk-C re-check of any unswept items folds into B3's G-02 sweep)
 completed_addendum: [B-DELTA FULL 2026-07-02 Fable-5 — 16/16 items, 2 clean error-hunt waves, panel-ratified Q1/Q3; memory file neoth_babel_batch_2026_07_02.md]
