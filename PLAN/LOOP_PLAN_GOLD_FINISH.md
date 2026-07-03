@@ -330,7 +330,21 @@ hazard: >
   workflows; ≤4 agents. Memory: box_bsod_on_test_load.md.
   ⚠ WAL BYTE SPACE EXHAUSTED (255/256) — §2 free-band table is STALE; no new
   WAL events possible, ride existing payloads (LOOP-05 pattern).
-next: HR-06 + ARCH-07b close B4 → then B6 (TASK-01, ODY-12, JV-MODE-02/04, ODY-14) → B7/B8 GUI → B9 channels → B10 media → B11 security → B12 skills → B13 RMAS → B14 features → B15 eval queue → B16 Jarvis sync → B17 release
+b6_research: >
+  DONE (wf_f6fef820-225; full reports at REVIEWS/_gold_audit/research/
+  b6_task_sovereign_research_2026-07-03.md). Verdicts: TASK-01 = real build
+  (build_pipeline_handler has ZERO decomposer calls; needs general-task
+  intent detector + decompose_non_coding + routing branch; spec's "WAL 0x78"
+  is TAKEN and byte space exhausted → NO new event, ride existing).
+  MODE-02 = sovereign_buddy mode (freedom.yaml flag + consent ceremony +
+  reuse 0xDD/0xD0 band events — agent's "0xDE free" claim FALSE); hard
+  blocker for MODE-04. MODE-04 = self-activation (Action::SelfSkillToggle
+  gates, SelfActivationConfig default-off, disabled-list always wins,
+  PromptEdit-only evolver firewall untouched; needs MODE-02 + jobs.yaml
+  hot-reload gap). ODY-12 = UiControl sentinel + panel_logic (GUI-coupled).
+  ODY-14 = DEFER→B8 GUI wave (display-gated; ChatBubble refactor batched
+  with ODY-01..05).
+next: B6 build order — MODE-02 ∥ TASK-01 (disjoint files) → MODE-04 + ODY-12 (UiControl pair) → then B7/B8 GUI (incl. ODY-14, LOOP-03) → B9 channels → B10 media → B11 security → B12 skills → B13 RMAS → B14 features → B15 eval queue → B16 Jarvis sync → B17 release
 prev_batch: B-DELTA 100% COMPLETE — ALL 16 items shipped incl. the operator-delegated pair: 03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443, 16=9a0f39ec, 13=dc011f9d, 15=34466060, Q1/Q3 panel decisions=a2615f0b (3-lens gremium under operator delegation "spawne agenten, berate, baue fertig"), 10=580c1a16 (pending-first federation submit + CLI federate + consent prompt), 14=77360338 (pooled predictor download, 4 firewalls enforced in code). FULL suite 9631/9631 + feature-matrix green at close. B2 sweep chunks A+B landed in a2615f0b (3 stale flips, HANDY-04 unwired-note).
 next: B3   # wiring & unwired-primitive audit (B2 chunks A+B done; a chunk-C re-check of any unswept items folds into B3's G-02 sweep)
 completed_addendum: [B-DELTA FULL 2026-07-02 Fable-5 — 16/16 items, 2 clean error-hunt waves, panel-ratified Q1/Q3; memory file neoth_babel_batch_2026_07_02.md]
