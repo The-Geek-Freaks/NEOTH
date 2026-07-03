@@ -18,6 +18,12 @@
 </p>
 
 <p>
+  <strong>Normal user?</strong> Open the GUI and talk — no YAML.
+  &nbsp;·&nbsp; <strong>Pro?</strong> Every claim has a CLI command that proves it.
+  &nbsp;·&nbsp; <strong>Skeptic?</strong> <a href="docs/evaluation.md">15 minutes, proof on your own machine</a>.
+</p>
+
+<p>
   <a href="#install"><strong>Install</strong></a>
   · <a href="#why-neoth">Why NEOTH</a>
   · <a href="#demo-loops">Demos</a>
@@ -160,6 +166,8 @@ operator.
 | **Private mesh** | Pairs nodes over LAN/mDNS, Tailscale, Hysteria, and consent-gated cluster discovery. |
 | **Plugins** | Loads skills and WASM plugins behind capability gates, signature checks, revocation, and hostcall audit. |
 | **Doctor** | Explains broken setup, missing keys, model cache problems, channel wiring, disk issues, plugin state, provider flapping, and cluster discovery. |
+
+<img src=".github/assets/neoth-readme-life-automation.svg" alt="NEOTH real-life automation — Paperless documents, email, calendar, workflows, and notes become useful only after memory, approval, and audit gates" width="100%">
 
 ## Privacy
 

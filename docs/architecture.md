@@ -4,6 +4,8 @@ NEOTH is a Rust-first, local-first operator runtime. The visible product is a lo
 
 ## System map
 
+<img src="../.github/assets/neoth-readme-system.svg" alt="NEOTH 1.0 control plane — every route crosses trust gates and lands in the WAL-backed memory core" width="100%">
+
 ```text
 Operator
   |

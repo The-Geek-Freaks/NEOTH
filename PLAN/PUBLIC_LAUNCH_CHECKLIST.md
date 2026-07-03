@@ -42,7 +42,8 @@ visitor hits.
 - [ ] **Announce**: HN (Show HN), r/rust, r/LocalLLaMA, lobste.rs — lead with
       the evaluation page (docs/evaluation.md), not adjectives; delta-kosmologie
       cross-post links back
-- [ ] **Orphan assets decision**: 12 unreferenced files in .github/assets
-      (act-*.svg, hero-dark/light, brain-regions, divider, neoth-hero-white,
-      life-automation, system, trust-stack, v02-stats) — delete or re-use
+- [x] **Orphan assets resolved**: 3 accurate ones re-used (system.svg →
+      architecture.md, trust-stack.svg → privacy.md, life-automation.svg →
+      README), 9 stale ones deleted (act-*, old heros, brain-regions,
+      divider, v02-stats — recoverable from git history)
 - [ ] **DeepWiki refresh** after the docs wave lands on main

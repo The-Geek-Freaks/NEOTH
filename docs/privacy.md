@@ -6,6 +6,8 @@ fail-closed profile extraction, auditable actions.
 This document is the proof surface for users who do not want to trust the
 README.
 
+<img src="../.github/assets/neoth-readme-trust-stack.svg" alt="NEOTH trust stack — WAL evidence, local learning, permissioned memory, and capability gates under operator control" width="100%">
+
 ## The contract
 
 | Rule | Meaning |
