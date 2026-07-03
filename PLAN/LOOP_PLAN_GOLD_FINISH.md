@@ -297,9 +297,27 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-02 (Fable 5 session, late)
-base: 77360338
-current_batch: B-DELTA 100% COMPLETE — ALL 16 items shipped incl. the operator-delegated pair: 03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443, 16=9a0f39ec, 13=dc011f9d, 15=34466060, Q1/Q3 panel decisions=a2615f0b (3-lens gremium under operator delegation "spawne agenten, berate, baue fertig"), 10=580c1a16 (pending-first federation submit + CLI federate + consent prompt), 14=77360338 (pooled predictor download, 4 firewalls enforced in code). FULL suite 9631/9631 + feature-matrix green at close. B2 sweep chunks A+B landed in a2615f0b (3 stale flips, HANDY-04 unwired-note).
+updated: 2026-07-03 (Fable 5 session — B3 in flight)
+base: 02b072c1
+current_batch: >
+  B3 wiring & unwired-primitive audit — SLICE 1 SHIPPED (02b072c1):
+  PROG-06 [x] (cluster accept → proactive producer, notify_task_accepted + dedup test),
+  G-02 [x] (sweep burned: coupling.rs deleted, 0xC3+0xC5 WAL emits live incl.
+  spin-plugin fuel test under wasm-plugin-host, Pick#9 second_opinion wired into
+  auto_classify_and_assign, coding/mod.rs 13 dead allows pruned; >30min findings
+  filed as GOLD-G02-COUNCIL-01 + GOLD-G02-CLUSTER-01). Dashboard §3 recomputed
+  (WS-DELTA row, corrected counts). Federation transport review-fix closed
+  (9bf29353 single-frame + 68728a4d signer_pubkey_hex end-to-end verify test).
+  REMAINING B3: GRILL-02+04 = ONE consumer (interactive brainstorm→write_plan→
+  review_plan→decompose loop in cli/code.rs; raw-prompt wiring would be cargo-cult —
+  research workflow wf_9f3114f7-cba has the full API extract, resumable/cached).
+b3_hazard: >
+  ⚠ BOX BSODs (IRQL_NOT_LESS_OR_EQUAL) under parallel test load — 2 crashes
+  2026-07-03. MANDATORY: tests via `_feat.bat test -p neothd --lib <filter> --
+  --test-threads=2`; builds -j4 when agents run; NEVER cargo concurrent with
+  multi-agent workflows; ≤4 read-only agents. Memory: box_bsod_on_test_load.md.
+next_after_b3: B4 memory/context core (verify results cached in wf_9f3114f7-cba: SPEAKR-01/ODY-26/HR-06/ARCH-07-rest/PRO-08)
+prev_batch: B-DELTA 100% COMPLETE — ALL 16 items shipped incl. the operator-delegated pair: 03=da9a306d, 04=c312f9b0, 05+06=c3b21240, wave#1=eb345671, 07=a96201f2, 08+09=caa32a46, 11=3d346384, 12=5ae8f214, wave#2=5b16f443, 16=9a0f39ec, 13=dc011f9d, 15=34466060, Q1/Q3 panel decisions=a2615f0b (3-lens gremium under operator delegation "spawne agenten, berate, baue fertig"), 10=580c1a16 (pending-first federation submit + CLI federate + consent prompt), 14=77360338 (pooled predictor download, 4 firewalls enforced in code). FULL suite 9631/9631 + feature-matrix green at close. B2 sweep chunks A+B landed in a2615f0b (3 stale flips, HANDY-04 unwired-note).
 next: B3   # wiring & unwired-primitive audit (B2 chunks A+B done; a chunk-C re-check of any unswept items folds into B3's G-02 sweep)
 completed_addendum: [B-DELTA FULL 2026-07-02 Fable-5 — 16/16 items, 2 clean error-hunt waves, panel-ratified Q1/Q3; memory file neoth_babel_batch_2026_07_02.md]
 handoff: PLAN/HANDOFF_OPUS_2026-07-02.md   # full Opus-4.8 handoff — read FIRST on a fresh session; upstream delta repo fixed+pushed a4bd367

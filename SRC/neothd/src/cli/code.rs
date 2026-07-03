@@ -143,33 +143,46 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         );
     }
 
+    let cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml — run `neoth init` first")?;
+
+    // GOLD-ADAPT-GRILL-02/04 — Socratic brainstorm gate BEFORE any DB write.
+    // Pure heuristic (zero LLM cost). Interactive refinement needs a TTY;
+    // piped/scripted invocations degrade to a single warn-and-proceed pass.
+    // stdin reads are blocking → the whole gate runs on spawn_blocking.
+    let (prompt, spec) = if cfg.coding.brainstorm_gate {
+        let initial = args.prompt.clone();
+        let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
+        tokio::task::spawn_blocking(move || {
+            run_brainstorm_gate(&initial, interactive, read_spec_block_stdin)
+        })
+        .await
+        .context("brainstorm gate task")??
+    } else {
+        (args.prompt.clone(), None)
+    };
+
     // QM-7 (2026-05-22 Session 20) — TDD pre-flight. Classify the
     // operator's prompt before decomposition + surface the matching
     // checklist so the discipline expectation is visible up front.
     // Non-blocking by design: the operator's authority is final;
     // pre-flight is education, not gatekeeping.
-    let preflight = crate::coding::tdd_preflight::evaluate(&args.prompt);
+    let preflight = crate::coding::tdd_preflight::evaluate(&prompt);
     println!("{}", preflight.headline);
     if !preflight.skip_tdd {
         println!("{}", preflight.checklist);
     }
-
-    let cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml — run `neoth init` first")?;
 
     let db_path = args.db.clone().unwrap_or_else(memstore::default_path);
     let conn = memstore::open(&db_path).context("open views.db")?;
     store::ensure_schema(&conn).context("ensure kanban schema")?;
 
     let now_ns = now_unix_ns();
-    let prompt_hash = format!(
-        "{:016x}",
-        xxhash_rust::xxh3::xxh3_64(args.prompt.as_bytes())
-    );
+    let prompt_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()));
     let session_id = store::insert_session(
         &conn,
         now_ns,
-        &args.prompt,
+        &prompt,
         &prompt_hash,
         &args.source_channel,
         cfg.operator_id.as_deref(),
@@ -195,16 +208,9 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     if repo_ctx.is_some() {
         println!("injecting repo-map context (code_map summary) …");
     }
-    let result = decompose(
-        &llm,
-        &conn,
-        session_id,
-        &args.prompt,
-        repo_ctx.as_deref(),
-        now_ns,
-    )
-    .await
-    .context("decompose prompt via cerebellum")?;
+    let result = decompose(&llm, &conn, session_id, &prompt, repo_ctx.as_deref(), now_ns)
+        .await
+        .context("decompose prompt via cerebellum")?;
 
     if result.input_truncated {
         eprintln!("⚠  input was truncated to fit the 12k-token budget");
@@ -238,6 +244,35 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     }
 
     println!("decomposed into {} task(s):", result.task_ids.len());
+
+    // GOLD-ADAPT-GRILL-02 — adversarial plan review on the decomposed plan
+    // (spec sections + task list rendered as markdown). Deadlock surfaces
+    // the unresolved critiques and continues — operator sovereignty; the
+    // review must NEVER emit a false approval, and a hard block would make
+    // a flaky reviewer LLM a denial-of-service on `neoth code`.
+    if cfg.coding.plan_review {
+        use crate::coding::plan_review::{MAX_REVIEW_ROUNDS, ReviewOutcome, review_plan};
+        let plan_text = render_plan_text(spec.as_deref(), &prompt, &conn, &result)?;
+        println!("adversarial plan review (≤{MAX_REVIEW_ROUNDS} rounds, cerebellum) …");
+        match review_plan(&llm, &plan_text).await {
+            Ok(ReviewOutcome::Approved { log }) => {
+                println!("plan review: APPROVED after {} round(s)", log.len());
+            }
+            Ok(ReviewOutcome::Deadlock { log, unresolved }) => {
+                eprintln!(
+                    "⚠  plan review DEADLOCK — {} round(s) without APPROVED; unresolved critiques:",
+                    log.len()
+                );
+                for u in &unresolved {
+                    eprintln!("  • {u}");
+                }
+                eprintln!("   (tasks stay queued — review them before dispatching)");
+            }
+            Err(e) => {
+                eprintln!("⚠  plan review unavailable (reviewer LLM error) — proceeding: {e}");
+            }
+        }
+    }
 
     if !args.no_assign {
         auto_classify_and_assign(&conn, &result, Some(&llm as &dyn DecomposerLlm)).await?;
@@ -588,6 +623,154 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
     Ok(())
 }
 
+/// GOLD-ADAPT-GRILL-02/04 — the Socratic brainstorm gate. Drives
+/// `brainstorm::evaluate_with_rounds` (pure heuristic, zero LLM cost):
+/// Skip-class prompts pass straight through; a pasted 6-section spec is
+/// parsed AND must clear the plan_writer Iron-Law placeholder gate
+/// (`plan_from_brainstorm` + `validate_plan`); feature-shaped prompts
+/// without a spec enter the interactive refinement loop (TTY) or degrade
+/// to warn-and-proceed (non-interactive). Deadlock NEVER falls through to
+/// the decomposer — no false approvals. `read_line` is injected so tests
+/// drive the loop without a real stdin.
+fn run_brainstorm_gate(
+    initial: &str,
+    interactive: bool,
+    mut read_line: impl FnMut() -> Option<String>,
+) -> Result<(String, Option<Box<crate::coding::brainstorm::BrainstormSpec>>)> {
+    use crate::coding::brainstorm::{Decision, MAX_BRAINSTORM_ROUNDS, evaluate_with_rounds};
+    let mut prompt = initial.to_string();
+    let mut unresolved: Vec<String> = Vec::new();
+    for round in 1..=MAX_BRAINSTORM_ROUNDS {
+        match evaluate_with_rounds(&prompt, round, unresolved.clone()) {
+            Decision::Skip { reason } => {
+                println!("brainstorm gate: skip — {reason}");
+                return Ok((prompt, None));
+            }
+            Decision::SpecReady { spec } => {
+                // Iron Law: a spec carrying placeholder tokens never
+                // reaches the decomposer.
+                let plan = crate::coding::plan_writer::plan_from_brainstorm(&spec, &prompt);
+                if let Err(v) = crate::coding::plan_writer::validate_plan(&plan) {
+                    if !interactive {
+                        anyhow::bail!(
+                            "spec failed the Iron-Law placeholder check: {v} — \
+                             finish the spec before decomposing"
+                        );
+                    }
+                    eprintln!("spec incomplete — {v}");
+                    unresolved.push(v.to_string());
+                    eprintln!("paste the corrected spec (finish with two empty lines):");
+                    match read_line() {
+                        Some(next) if !next.trim().is_empty() => prompt = next,
+                        _ => anyhow::bail!("stdin closed during brainstorm — aborting"),
+                    }
+                    continue;
+                }
+                println!(
+                    "brainstorm gate: spec accepted ({} user stories, Iron-Law clean)",
+                    spec.user_stories.len()
+                );
+                return Ok((prompt, Some(spec)));
+            }
+            Decision::NeedsBrainstorm { rationale } => {
+                if !interactive {
+                    eprintln!("⚠  brainstorm gate: {rationale}");
+                    eprintln!(
+                        "   (non-interactive stdin — proceeding with the raw prompt; \
+                         paste a 6-section spec to skip this warning)"
+                    );
+                    return Ok((prompt, None));
+                }
+                eprintln!("brainstorm round {round}/{MAX_BRAINSTORM_ROUNDS}: {rationale}");
+                eprintln!(
+                    "refine the prompt or paste a full spec (## Problem / ## Solution / \
+                     ## User Stories / ## Implementation Decisions / ## Testing Decisions / \
+                     ## Out-of-Scope). Finish with two empty lines; Ctrl-D aborts:"
+                );
+                unresolved.push(rationale);
+                match read_line() {
+                    Some(next) if !next.trim().is_empty() => prompt = next,
+                    Some(_) => {} // blank input — re-evaluate the same prompt
+                    None => anyhow::bail!(
+                        "stdin closed during brainstorm — aborting (never a false approval)"
+                    ),
+                }
+            }
+            Decision::Deadlock { unresolved } => {
+                eprintln!(
+                    "brainstorm DEADLOCK after {MAX_BRAINSTORM_ROUNDS} rounds — unresolved:"
+                );
+                for u in &unresolved {
+                    eprintln!("  • {u}");
+                }
+                anyhow::bail!(
+                    "brainstorm deadlock: provide a complete 6-section spec to proceed \
+                     (the gate never emits a false approval)"
+                );
+            }
+        }
+    }
+    anyhow::bail!("brainstorm deadlock: {MAX_BRAINSTORM_ROUNDS} rounds without a ready spec")
+}
+
+/// Production stdin reader for the brainstorm loop: collects lines until
+/// two consecutive empty lines (spec paste) or EOF. `None` = stdin closed
+/// with nothing read (Ctrl-D abort).
+fn read_spec_block_stdin() -> Option<String> {
+    use std::io::BufRead as _;
+    let stdin = std::io::stdin();
+    let mut buf = String::new();
+    let mut empty_streak = 0u8;
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            empty_streak += 1;
+            if empty_streak >= 2 {
+                break;
+            }
+        } else {
+            empty_streak = 0;
+        }
+        buf.push_str(&line);
+        buf.push('\n');
+    }
+    let trimmed = buf.trim();
+    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+}
+
+/// Render the reviewed plan as markdown: spec sections (when the gate
+/// produced one) + the decomposed task list. `review_plan` takes free-form
+/// markdown — this is the reviewer's whole context.
+fn render_plan_text(
+    spec: Option<&crate::coding::brainstorm::BrainstormSpec>,
+    prompt: &str,
+    conn: &Connection,
+    result: &DecompositionResult,
+) -> Result<String> {
+    use std::fmt::Write as _;
+    let mut out = String::from("# Plan under review\n\n");
+    let _ = writeln!(out, "## Operator request\n{prompt}\n");
+    if let Some(s) = spec {
+        let _ = writeln!(out, "## Problem\n{}\n", s.problem);
+        let _ = writeln!(out, "## Solution\n{}\n", s.solution);
+        let _ = writeln!(out, "## Out-of-Scope\n{}\n", s.out_of_scope.join("\n"));
+    }
+    out.push_str("## Decomposed tasks\n");
+    for task in collect_tasks(conn, &result.task_ids)? {
+        let _ = writeln!(
+            out,
+            "- [{}] {} ({})",
+            task.task_id.raw(),
+            task.title,
+            task.task_type
+        );
+        if let Some(d) = &task.description {
+            let _ = writeln!(out, "  {d}");
+        }
+    }
+    Ok(out)
+}
+
 /// Classify every inserted task heuristically + persist the hemisphere
 /// assignment. Tasks the heuristic marks `Ambiguous` escalate to the
 /// Pick #9 LLM second opinion when a Cerebellum handle is bound; without
@@ -936,5 +1119,97 @@ mod tests {
             Hemisphere::Left,
             "LLM FAST verdict must assign the ambiguous task to Left"
         );
+    }
+
+    // ── GOLD-ADAPT-GRILL-02/04 — brainstorm gate ─────────────────────────────
+
+    const FULL_SPEC: &str = "## Problem\noperators lose track of long migrations\n\
+        ## Solution\na kanban board fed by the decomposer\n\
+        ## User Stories\n- see every task's hemisphere\n\
+        ## Implementation Decisions\n- rows in idx_kanban_task\n\
+        ## Testing Decisions\n- board renders seeded tasks\n\
+        ## Out-of-Scope\n- GUI drag-and-drop\n";
+
+    #[test]
+    fn gate_passes_skip_class_prompts_untouched() {
+        let (prompt, spec) =
+            run_brainstorm_gate("fix the panic in recall", true, || panic!("no stdin read"))
+                .expect("skip class");
+        assert_eq!(prompt, "fix the panic in recall");
+        assert!(spec.is_none());
+    }
+
+    #[test]
+    fn gate_accepts_pasted_spec_and_returns_it() {
+        let (_, spec) = run_brainstorm_gate(FULL_SPEC, true, || panic!("no stdin read"))
+            .expect("spec ready");
+        let spec = spec.expect("spec extracted");
+        assert_eq!(spec.user_stories.len(), 1);
+    }
+
+    #[test]
+    fn gate_noninteractive_warns_and_proceeds_on_feature_prompt() {
+        let (prompt, spec) =
+            run_brainstorm_gate("build a kanban board", false, || panic!("no stdin read"))
+                .expect("non-interactive degrade");
+        assert_eq!(prompt, "build a kanban board");
+        assert!(spec.is_none(), "no spec — raw prompt proceeds with a warning");
+    }
+
+    #[test]
+    fn gate_interactive_loop_reaches_spec_via_revision() {
+        let mut fed = false;
+        let (prompt, spec) = run_brainstorm_gate("build a kanban board", true, || {
+            fed = true;
+            Some(FULL_SPEC.to_string())
+        })
+        .expect("revised to spec");
+        assert!(fed, "reader consulted");
+        assert_eq!(prompt, FULL_SPEC);
+        assert!(spec.is_some());
+    }
+
+    #[test]
+    fn gate_deadlocks_after_max_rounds_never_false_approves() {
+        let err = run_brainstorm_gate("build a kanban board", true, || {
+            Some("build me something cool".to_string())
+        })
+        .expect_err("must deadlock, not fall through");
+        assert!(err.to_string().contains("deadlock"), "{err}");
+    }
+
+    #[test]
+    fn gate_noninteractive_rejects_placeholder_spec() {
+        let spec_with_tbd = FULL_SPEC.replace("rows in idx_kanban_task", "storage TBD");
+        let err = run_brainstorm_gate(&spec_with_tbd, false, || panic!("no stdin read"))
+            .expect_err("TBD spec must be rejected");
+        assert!(err.to_string().contains("Iron-Law"), "{err}");
+    }
+
+    #[test]
+    fn gate_aborts_on_stdin_close_during_refinement() {
+        let err = run_brainstorm_gate("build a kanban board", true, || None)
+            .expect_err("EOF aborts");
+        assert!(err.to_string().contains("stdin closed"), "{err}");
+    }
+
+    #[test]
+    fn render_plan_text_carries_spec_and_tasks() {
+        let (_dir, conn) = fresh_db();
+        let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let t = store::insert_task(&conn, s, 10, "Add board rendering", None, "ui", None)
+            .unwrap();
+        let result = DecompositionResult {
+            task_ids: vec![t],
+            clarifying_question: None,
+            session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
+            input_truncated: false,
+        };
+        let spec = crate::coding::brainstorm::parse_spec(FULL_SPEC).expect("spec parses");
+        let text =
+            render_plan_text(Some(&spec), "build a kanban board", &conn, &result).unwrap();
+        assert!(text.contains("## Problem"));
+        assert!(text.contains("Add board rendering"));
+        assert!(text.contains("## Decomposed tasks"));
     }
 }

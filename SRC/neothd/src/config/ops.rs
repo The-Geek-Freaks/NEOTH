@@ -306,10 +306,26 @@ pub struct CodingConfig {
     pub test_cmd: Option<String>,
     #[serde(default = "default_test_timeout_secs")]
     pub test_timeout_secs: u64,
+    /// GOLD-ADAPT-GRILL-04 — Socratic brainstorm pre-flight ahead of
+    /// `neoth code` decomposition. Pure heuristic (zero LLM cost);
+    /// interactive refinement only on a TTY, warn-and-proceed otherwise.
+    /// Default ON (features-default-on rule); this is the kill-switch.
+    #[serde(default = "default_coding_gate")]
+    pub brainstorm_gate: bool,
+    /// GOLD-ADAPT-GRILL-02 — adversarial plan review after decomposition
+    /// (`coding::plan_review::review_plan`, ≤5 Cerebellum rounds). A review
+    /// deadlock warns + lists unresolved critiques but never blocks —
+    /// operator sovereignty. Kill-switch for cost-sensitive setups.
+    #[serde(default = "default_coding_gate")]
+    pub plan_review: bool,
 }
 
 fn default_test_timeout_secs() -> u64 {
     5 * 60
+}
+
+fn default_coding_gate() -> bool {
+    true
 }
 
 impl Default for CodingConfig {
@@ -317,6 +333,8 @@ impl Default for CodingConfig {
         Self {
             test_cmd: None,
             test_timeout_secs: default_test_timeout_secs(),
+            brainstorm_gate: default_coding_gate(),
+            plan_review: default_coding_gate(),
         }
     }
 }

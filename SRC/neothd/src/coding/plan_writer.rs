@@ -272,6 +272,46 @@ fn check_placeholder(field: &str, text: &str) -> Result<(), PlanValidationError>
     Ok(())
 }
 
+/// GOLD-ADAPT-GRILL-02 — bridge a parsed [`BrainstormSpec`] into the typed
+/// [`Plan`] so the Iron-Law `validate_plan` gate runs on operator-pasted
+/// specs: a spec carrying placeholder tokens (TBD / TODO / "?" / …) never
+/// reaches the decomposer. One `PlanTask` per user story; acceptance =
+/// the spec's testing decisions, evidence = its implementation decisions
+/// (shared across tasks in v0 — per-story granularity arrives with the LLM
+/// plan writer).
+pub fn plan_from_brainstorm(
+    spec: &super::brainstorm::BrainstormSpec,
+    source_prompt: &str,
+) -> Plan {
+    let source = format!(
+        "spec-{:016x}",
+        xxhash_rust::xxh3::xxh3_64(source_prompt.as_bytes())
+    );
+    let tasks = spec
+        .user_stories
+        .iter()
+        .enumerate()
+        .map(|(i, story)| PlanTask {
+            id: format!("T-{:02}", i + 1),
+            title: story.clone(),
+            acceptance: spec.testing_decisions.clone(),
+            evidence: spec.implementation_decisions.clone(),
+            size: PlanSize::M,
+        })
+        .collect();
+    Plan {
+        source,
+        owner: "operator".to_string(),
+        scope: spec.solution.clone(),
+        out_of_scope: if spec.out_of_scope.is_empty() {
+            "(none declared)".to_string()
+        } else {
+            spec.out_of_scope.join("; ")
+        },
+        tasks,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,5 +539,39 @@ mod tests {
         for (idx, r) in rounds.iter().enumerate() {
             assert_eq!(r.round as usize, idx + 1);
         }
+    }
+
+    // ── GOLD-ADAPT-GRILL-02 — BrainstormSpec → Plan bridge ──────────────────
+
+    fn sample_spec() -> crate::coding::brainstorm::BrainstormSpec {
+        crate::coding::brainstorm::BrainstormSpec {
+            problem: "operators lose track of long refactors".into(),
+            solution: "a kanban board fed by the decomposer".into(),
+            user_stories: vec![
+                "as an operator I see every task's hemisphere".into(),
+                "as an operator I can re-run blocked tasks".into(),
+            ],
+            implementation_decisions: vec!["store rows in idx_kanban_task".into()],
+            testing_decisions: vec!["board renders 2 seeded tasks".into()],
+            out_of_scope: vec!["GUI drag-and-drop".into()],
+        }
+    }
+
+    #[test]
+    fn plan_from_brainstorm_builds_validatable_plan() {
+        let plan = plan_from_brainstorm(&sample_spec(), "build a kanban board");
+        assert_eq!(plan.tasks.len(), 2, "one task per user story");
+        assert!(plan.source.starts_with("spec-"));
+        assert_eq!(plan.tasks[0].id, "T-01");
+        validate_plan(&plan).expect("clean spec passes the Iron-Law gate");
+    }
+
+    #[test]
+    fn plan_from_brainstorm_placeholder_spec_fails_validation() {
+        let mut spec = sample_spec();
+        spec.implementation_decisions = vec!["storage layer TBD".into()];
+        let plan = plan_from_brainstorm(&spec, "build a kanban board");
+        let err = validate_plan(&plan).expect_err("TBD must be rejected");
+        assert!(err.to_string().contains("placeholder"), "{err}");
     }
 }
