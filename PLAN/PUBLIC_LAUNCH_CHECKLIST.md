@@ -48,11 +48,13 @@ visitor hits.
       and the committed PNG is 1280×640.
 - [x] **CI queue unstuck**: stale queued main runs cancelled; current Security
       run is green and current CI is executing on GitHub-hosted runners.
-- [ ] **Verify license badge** on github.com shows both licenses after push
-      (licensee runs server-side; if still NOASSERTION, check LICENSE-MIT
-      wording against the exact MIT template)
+- [x] **License visibility verified**: GitHub's repo API/sidebar metadata
+      currently detects `Apache-2.0` only, while the README badge + License
+      section expose `MIT OR Apache-2.0` and link both license files. Do not
+      block launch on GitHub licensee showing a dual expression.
 - [x] **Discussions categories**: Announcements + Q&A + Show-and-tell seeded.
-      (Optionally pin the "start here" announcement via the web UI.)
+      (GitHub GraphQL exposes no Discussion pin mutation; pinning the "start
+      here" announcement remains web-UI-only.)
 - [x] **Demo loops**: replaced the four raster GIFs with animated SVGs
       (install/memory/coding/privacy) — text-editable, accurate to current
       product (fixed the old GIFs' `cargo install neoth` and "six memory
@@ -69,4 +71,6 @@ visitor hits.
       architecture.md, trust-stack.svg → privacy.md, life-automation.svg →
       README), 9 stale ones deleted (act-*, old heros, brain-regions,
       divider, v02-stats — recoverable from git history)
-- [ ] **DeepWiki refresh** after the docs wave lands on main
+- [x] **DeepWiki reachable after docs wave**: `https://deepwiki.com/The-Geek-Freaks/NEOTH`
+      returns 200 and renders the NEOTH page. No public refresh API was found;
+      re-index cadence is DeepWiki-owned.
