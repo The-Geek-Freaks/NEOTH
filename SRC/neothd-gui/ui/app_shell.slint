@@ -111,6 +111,8 @@ export component Sidebar inherits Rectangle {
     in property <int> complexity: 2;             // 0 minimal .. 2 full
     // GOLD-LOOP-03 — Rust sets this from the `gui-loop` cargo feature.
     in property <bool> show-loops: false;
+    // GOLD-ADAPT-AOS-03 — project domain from the wizard's context step.
+    in property <string> project-domain: "";
     in property <bool> theme-dark: true;
     in property <string> operator-name: "operator";
     in property <int> channels-count: 0;
@@ -203,8 +205,14 @@ export component Sidebar inherits Rectangle {
                     overflow: elide;
                 }
                 Text {
-                    text: "OPERATOR"; color: Theme.text-tertiary;
+                    // AOS-03: the project domain rides the operator card
+                    // when captured ("OPERATOR · security research").
+                    text: root.project-domain != ""
+                        ? "OPERATOR · " + root.project-domain
+                        : "OPERATOR";
+                    color: Theme.text-tertiary;
                     font-family: Theme.font-mono; font-size: 9px; letter-spacing: Theme.letter-spacing-wide;
+                    overflow: elide;
                 }
             }
             Rectangle {

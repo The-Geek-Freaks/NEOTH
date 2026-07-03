@@ -20,7 +20,7 @@
 
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade } from "components.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade, NeothLineEdit } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
@@ -43,6 +43,10 @@ export enum WizardStep {
     welcome,
     license,
     identity,
+    /// GOLD-ADAPT-AOS-03 — optional project-context capture (agent-os
+    /// plan-product): what you're building / domain / stack. Skippable;
+    /// feeds the sidebar operator card + ~/.neoth/.project-context.
+    project-context,
     provider,
     autonomy,
     channels,
@@ -165,6 +169,18 @@ export component MainWindow inherits Window {
     // GOLD-ADAPT-AOS-06 — New-Spec pane fired (title, goal, acceptance).
     // Rust shells `neothd kanban add` + refreshes the board.
     callback spec-create(string, string, string);
+    // GOLD-ADAPT-AOS-03 — project-context step drafts + persist callback.
+    // Rust writes ~/.neoth/.project-context + feeds the sidebar card.
+    in-out property <string> project-building: "";
+    in-out property <string> project-domain: "";
+    in-out property <string> project-stack: "";
+    callback project-context-set(string, string, string);
+    // GOLD-ADAPT-OH-12 — first-run tour overlay (chat surface only).
+    // Rust arms it when ~/.neoth/.gui-tour-done is absent; dismiss/finish
+    // writes the marker.
+    in-out property <bool> tour-active: false;
+    in-out property <int> tour-step: 0;
+    callback tour-dismissed();
 
     // Pick #28 (12/10 polish): derive the step counter + label from
     // the active `WizardStep` so the top ProgressIndicator always
@@ -179,17 +195,19 @@ export component MainWindow inherits Window {
     /// operator picked claude_cli + no channels — visibly confusing.
     /// When keys is skipped, current-step jumps from 6 (Channels) to
     /// 8 (Summary), which the bar fills smoothly.
-    out property <int> total-steps: 9;
+    // AOS-03: project-context step inserted after Identity → 10 total.
+    out property <int> total-steps: 10;
     out property <int> current-step:
         root.step == WizardStep.welcome  ? 1 :
         root.step == WizardStep.license  ? 2 :
         root.step == WizardStep.identity ? 3 :
-        root.step == WizardStep.provider ? 4 :
-        root.step == WizardStep.autonomy ? 5 :
-        root.step == WizardStep.channels ? 6 :
-        root.step == WizardStep.cluster  ? 7 :
-        root.step == WizardStep.keys     ? 8 :
-        root.step == WizardStep.done     ? 9 :
+        root.step == WizardStep.project-context ? 4 :
+        root.step == WizardStep.provider ? 5 :
+        root.step == WizardStep.autonomy ? 6 :
+        root.step == WizardStep.channels ? 7 :
+        root.step == WizardStep.cluster  ? 8 :
+        root.step == WizardStep.keys     ? 9 :
+        root.step == WizardStep.done     ? 10 :
         0;
     // G-23 fix: removed dead `mode-selection` branch — the progress
     // indicator is hidden on that screen so the label is never read.
@@ -197,6 +215,7 @@ export component MainWindow inherits Window {
         root.step == WizardStep.welcome  ? "Welcome" :
         root.step == WizardStep.license  ? "License" :
         root.step == WizardStep.identity ? "Identity" :
+        root.step == WizardStep.project-context ? "Project" :
         root.step == WizardStep.provider ? "Provider" :
         root.step == WizardStep.autonomy ? "Autonomy" :
         root.step == WizardStep.channels ? "Channels" :
@@ -972,7 +991,7 @@ export component MainWindow inherits Window {
                         text <=> root.operator-id;
                         edited(t) => { root.operator-id-edited(t); }
                         accepted(t) => {
-                            if (root.operator-id-valid) { root.step = WizardStep.provider; }
+                            if (root.operator-id-valid) { root.step = WizardStep.project-context; }
                         }
                     }
                     if !root.operator-id-valid && root.operator-id == "": Text {
@@ -999,7 +1018,60 @@ export component MainWindow inherits Window {
                 NeothButton {
                     label: "Continue →";
                     enabled: root.operator-id-valid;
-                    clicked => { root.step = WizardStep.provider; }
+                    clicked => { root.step = WizardStep.project-context; }
+                }
+            }
+        }
+
+        // ── Project context (GOLD-ADAPT-AOS-03) ────────────────────────
+        // Three optional questions (agent-os plan-product): what you're
+        // building, the domain, the stack. Skippable — NEOTH works fine
+        // without; answers seed the sidebar card + future repo-context.
+        if root.step == WizardStep.project-context: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Project context";
+                subtitle: "Optional — three quick questions so NEOTH knows what world you work in. Skip freely; you can set this later in Settings.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    NeothLineEdit {
+                        text <=> root.project-building;
+                        placeholder-text: "What are you building? — e.g. \"a self-hosted AI companion\"";
+                    }
+                    NeothLineEdit {
+                        text <=> root.project-domain;
+                        placeholder-text: "Domain — e.g. \"security research\", \"e-commerce\", \"music\"";
+                    }
+                    NeothLineEdit {
+                        text <=> root.project-stack;
+                        placeholder-text: "Stack — e.g. \"Rust + Slint\", \"TypeScript/React\", \"none\"";
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.identity; }
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-base;
+                    NeothButton {
+                        label: "Skip";
+                        primary: false;
+                        clicked => { root.step = WizardStep.provider; }
+                    }
+                    NeothButton {
+                        label: "Continue →";
+                        clicked => {
+                            root.project-context-set(root.project-building, root.project-domain, root.project-stack);
+                            root.step = WizardStep.provider;
+                        }
+                    }
                 }
             }
         }
@@ -1062,7 +1134,7 @@ export component MainWindow inherits Window {
                 NeothButton {
                     label: "← Back";
                     primary: false;
-                    clicked => { root.step = WizardStep.identity; }
+                    clicked => { root.step = WizardStep.project-context; }
                 }
                 NeothButton {
                     label: "Continue →";
@@ -1590,6 +1662,7 @@ export component MainWindow inherits Window {
                 show-loops: root.show-loops;
                 channels-count: root.chat-channels.length;
                 operator-name: root.operator-id != "" ? root.operator-id : "operator";
+                project-domain: root.project-domain;
                 nav(t) => {
                     root.nav-active = t;
                     root.step = (t == "chat") ? WizardStep.chat : WizardStep.settings;
@@ -1871,5 +1944,72 @@ export component MainWindow inherits Window {
         x: root.width - self.width - 24px;
         y: root.height - self.height - 24px;
         clicked => { root.buddy-clicked(); }
+    }
+
+    // ── GOLD-ADAPT-OH-12 — first-run guided tour ───────────────────────
+    // Declared after the Buddy so it covers everything. A scrim + one
+    // walkthrough card per step; no per-element spotlight (Slint has no
+    // mask primitive — the card TEXT names each surface instead, honest).
+    if root.tour-active && root.step == WizardStep.chat: Rectangle {
+        background: Theme.scrim;
+        // Swallow clicks so the surfaces below stay untouched mid-tour.
+        TouchArea { }
+        tour-card := Rectangle {
+            width: min(520px, root.width - 48px);
+            height: card-body.preferred-height + 48px;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: Theme.surface-2;
+            border-radius: Theme.radius-xl;
+            border-width: 1px;
+            border-color: Theme.border-accent;
+            card-body := VerticalLayout {
+                x: 24px; y: 24px;
+                width: parent.width - 48px;
+                spacing: Theme.space-base;
+                Text {
+                    text: "TOUR " + (root.tour-step + 1) + " / 5";
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    letter-spacing: Theme.letter-spacing-wide;
+                    color: Theme.accent;
+                }
+                Text {
+                    text: root.tour-step == 0
+                        ? "The rail (left) — Chat, Memory, Channels, Loops and more. The COMPLEXITY switch at the bottom (MIN/STD/FULL) decides how much of it you see."
+                        : root.tour-step == 1
+                        ? "Chat — your primary surface. Enter sends, Shift+Enter breaks lines, ArrowUp recalls your last message, 📎 attaches files to a turn."
+                        : root.tour-step == 2
+                        ? "The Buddy (bottom-right orb) — it mirrors what NEOTH is doing right now: thinking, streaming, celebrating, erroring."
+                        : root.tour-step == 3
+                        ? "The footer — live daemon LED, your hardware line, WAL + local dots, and a status ticker. Machine truth, always visible."
+                        : "Settings ⚙ — every slash command has a panel twin: skills index, presets, autonomy, private mesh, the coding kanban.";
+                    font-family: Theme.font-sans;
+                    font-size: Theme.font-size-base;
+                    color: Theme.text-primary;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: space-between;
+                    NeothButton {
+                        label: "Skip tour";
+                        primary: false;
+                        size: "sm";
+                        clicked => { root.tour-dismissed(); }
+                    }
+                    NeothButton {
+                        label: root.tour-step >= 4 ? "Finish" : "Next →";
+                        size: "sm";
+                        clicked => {
+                            if (root.tour-step >= 4) {
+                                root.tour-dismissed();
+                            } else {
+                                root.tour-step += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

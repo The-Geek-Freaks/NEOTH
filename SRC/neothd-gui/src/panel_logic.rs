@@ -1438,6 +1438,42 @@ pub fn format_stream_metrics(
     Some((chip_parts.join(" · "), detail.join("\n")))
 }
 
+// ── GOLD-ADAPT-AOS-03 — project-context persistence ─────────────────────
+// Three optional wizard answers, stored as JSON at
+// `<home>/.project-context` (own file — freedom.yaml stays daemon-owned).
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectContext {
+    #[serde(default)]
+    pub building: String,
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub stack: String,
+}
+
+pub fn read_project_context(neoth_home: &std::path::Path) -> ProjectContext {
+    std::fs::read_to_string(neoth_home.join(".project-context"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Atomic-enough single-file write (tmp+rename like the daemon's small
+/// state files). Errors return `false` — the wizard step is optional.
+pub fn write_project_context(neoth_home: &std::path::Path, ctx: &ProjectContext) -> bool {
+    let Ok(json) = serde_json::to_string_pretty(ctx) else {
+        return false;
+    };
+    let tmp = neoth_home.join(".project-context.tmp");
+    let dst = neoth_home.join(".project-context");
+    std::fs::create_dir_all(neoth_home).ok();
+    if std::fs::write(&tmp, json).is_err() {
+        return false;
+    }
+    std::fs::rename(&tmp, &dst).is_ok()
+}
+
 // ── GOLD-ADAPT-AOS-06 — spec-shape description composition ─────────────
 
 /// Compose the `--description` body for `neoth kanban add` from the
@@ -2514,6 +2550,23 @@ mod tests {
         // No timing → token count fallback.
         let (chip, _) = format_stream_metrics(500, 0, 400, 100, 0).unwrap();
         assert_eq!(chip, "500 tok");
+    }
+
+    // ── GOLD-ADAPT-AOS-03 — project context round-trip ─────────────────
+    #[test]
+    fn project_context_roundtrip_and_missing_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_project_context(dir.path()), ProjectContext::default());
+        let ctx = ProjectContext {
+            building: "AI companion".into(),
+            domain: "security research".into(),
+            stack: "Rust + Slint".into(),
+        };
+        assert!(write_project_context(dir.path(), &ctx));
+        assert_eq!(read_project_context(dir.path()), ctx);
+        // Corrupt file degrades to default, never panics.
+        std::fs::write(dir.path().join(".project-context"), "{oops").unwrap();
+        assert_eq!(read_project_context(dir.path()), ProjectContext::default());
     }
 
     // ── GOLD-ADAPT-AOS-06 — spec description ───────────────────────────

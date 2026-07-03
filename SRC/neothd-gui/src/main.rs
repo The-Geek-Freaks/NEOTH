@@ -739,6 +739,54 @@ fn main() -> Result<()> {
         });
     }
 
+    // GOLD-ADAPT-AOS-03 — project context: load at startup (feeds the
+    // sidebar operator card + prefills the wizard step on re-runs);
+    // persist on the wizard step's Continue.
+    {
+        let ctx = panel_logic::read_project_context(&default_neoth_home());
+        window.set_project_building(ctx.building.into());
+        window.set_project_domain(ctx.domain.into());
+        window.set_project_stack(ctx.stack.into());
+        let weak_ctx = window.as_weak();
+        window.on_project_context_set(move |building, domain, stack| {
+            let ok = panel_logic::write_project_context(
+                &default_neoth_home(),
+                &panel_logic::ProjectContext {
+                    building: building.trim().to_string(),
+                    domain: domain.trim().to_string(),
+                    stack: stack.trim().to_string(),
+                },
+            );
+            if let Some(w) = weak_ctx.upgrade() {
+                w.set_status_line(
+                    if ok {
+                        "project context saved to ~/.neoth/.project-context"
+                    } else {
+                        "project context could not be saved (disk?)"
+                    }
+                    .into(),
+                );
+            }
+        });
+    }
+
+    // GOLD-ADAPT-OH-12 — first-run tour: armed while the done-marker is
+    // absent; the overlay itself only shows on the chat surface. Both
+    // Finish and Skip write the marker (a tour never nags twice).
+    {
+        let marker = default_neoth_home().join(".gui-tour-done");
+        window.set_tour_active(!marker.exists());
+        let weak_tour = window.as_weak();
+        window.on_tour_dismissed(move || {
+            let marker = default_neoth_home().join(".gui-tour-done");
+            let _ = std::fs::create_dir_all(default_neoth_home());
+            let _ = std::fs::write(&marker, "1");
+            if let Some(w) = weak_tour.upgrade() {
+                w.set_tour_active(false);
+            }
+        });
+    }
+
     // GOLD-ADAPT-AOS-06 — New-Spec pane: `neothd kanban add` off-thread,
     // then a board refresh so the new task shows in Backlog immediately.
     {
