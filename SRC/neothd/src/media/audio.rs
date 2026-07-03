@@ -401,7 +401,22 @@ struct DecodedAudio {
     original_sample_rate: u32,
 }
 
+/// Hard cap on audio file size read into memory. A multi-GB file (e.g. a
+/// hostile or accidental email attachment) would otherwise OOM the daemon:
+/// `fs::read` allocates the whole file and `decode_from_bytes` may clone it.
+const MAX_AUDIO_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
+
 fn decode_from_path(path: &Path) -> Result<DecodedAudio, ExtractionError> {
+    // Size-gate before reading the whole file into memory.
+    let len = std::fs::metadata(path)
+        .map_err(|e| ExtractionError::Io(format!("stat {}: {e}", path.display())))?
+        .len();
+    if len > MAX_AUDIO_BYTES {
+        return Err(ExtractionError::Backend {
+            backend: "audio",
+            reason: format!("input {len} bytes exceeds {MAX_AUDIO_BYTES}-byte cap"),
+        });
+    }
     let bytes = std::fs::read(path)
         .map_err(|e| ExtractionError::Io(format!("read {}: {e}", path.display(),)))?;
     // Symphonia probes the format from the bytes; the MIME hint is just a

@@ -1279,8 +1279,19 @@ fn handle_retryable_failure(
                 store::attach_task_artifact(conn, task.task_id, Some(&o.patch_path), Some(o.tests));
         }
         // Back to Backlog for the next dispatch loop iteration.
-        store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
-            .context("re-queue task to Backlog for retry")?;
+        // Never propagate: every caller does `let _ = handle_retryable_failure(..)`,
+        // so a `?` here would silently strand the task InProgress (it was set
+        // InProgress before execution). Log loudly instead — consistent with the
+        // fn's other DB writes; the daemon reaper recovers InProgress tasks.
+        if let Err(e) =
+            store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
+        {
+            warn!(
+                error = %e,
+                task_id = ?task.task_id,
+                "re-queue to Backlog for retry failed — task may be stranded InProgress until the daemon reaper runs"
+            );
+        }
         // Don't count as blocked or completed yet — the dispatcher's
         // budget cap will end the loop if we churn too long.
     } else if task.hemisphere == Hemisphere::Left {
