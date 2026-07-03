@@ -301,8 +301,17 @@ async fn serve(
                 result
             }
             Err(e) => {
-                tracing::debug!(error = %e, "api_tokens load failed; falling back to deny");
-                VerifyResult::Denied
+                // Infrastructure failure — the token file is unreadable. This is NOT
+                // an auth failure: the client's token may be perfectly valid but the
+                // store is temporarily unavailable. Do NOT call cooldown.record_failure
+                // (that would penalise the client for a server-side fault).
+                tracing::warn!(error = %e, path = %path, "n8n_api: api_tokens store unreadable — returning 503");
+                return HandlerOutcome::error(
+                    ApiErrorCode::StoreUnavailable,
+                    "token store temporarily unavailable",
+                    "check disk permissions on ~/.neoth/ and retry",
+                )
+                .into_http_response(&request_id);
             }
         };
 
@@ -509,5 +518,53 @@ mod tests {
         // Re-load returns the same token (idempotent).
         let token2 = load_or_init_token(dir.path()).unwrap();
         assert_eq!(token, token2);
+    }
+
+    // ── FIX-2: StoreUnavailable maps to 503 ─────────────────────────────────
+
+    #[test]
+    fn store_unavailable_maps_to_503() {
+        let outcome = HandlerOutcome::error(
+            ApiErrorCode::StoreUnavailable,
+            "token store temporarily unavailable",
+            "check disk permissions on ~/.neoth/ and retry",
+        );
+        let resp = outcome.into_http_response("req-503");
+        assert_eq!(resp.status(), 503);
+    }
+
+    // ── FIX-6: required_scope_for contract ───────────────────────────────────
+
+    #[test]
+    fn required_scope_for_all_mapped_routes_return_some() {
+        // Every explicitly-mapped (method, path) must return a scope string —
+        // this pins the fail-closed contract: add a route here when adding it
+        // to required_scope_for.
+        let cases = [
+            ("GET", "/api/health"),
+            ("POST", "/api/recall"),
+            ("GET", "/api/stats"),
+            ("POST", "/api/memory/save"),
+            ("POST", "/api/provider/call"),
+            ("POST", "/api/channel/send"),
+        ];
+        for (method, path) in cases {
+            let scope = required_scope_for(method, path);
+            assert!(
+                scope.is_some(),
+                "({method}, {path}) must return Some(scope) — add it to required_scope_for"
+            );
+        }
+    }
+
+    #[test]
+    fn required_scope_for_unmapped_path_returns_none() {
+        // Unknown paths must return None so the caller can fail CLOSED.
+        // This pins the contract: scoped tokens are denied on unknown routes,
+        // not silently granted.
+        assert_eq!(required_scope_for("GET", "/api/unknown"), None);
+        assert_eq!(required_scope_for("POST", "/api/unknown"), None);
+        assert_eq!(required_scope_for("DELETE", "/api/health"), None);
+        assert_eq!(required_scope_for("GET", "/"), None);
     }
 }

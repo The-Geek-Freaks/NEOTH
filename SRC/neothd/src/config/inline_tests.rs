@@ -921,4 +921,51 @@ mod tests {
             "chat_onboarding_completed=false must survive save→reload (write_config re-arms hint)"
         );
     }
+
+    // ── FIX-4: resolve_model_alias single-level contract ─────────────────────
+
+    #[test]
+    fn resolve_model_alias_maps_known_alias() {
+        let mut cfg = FreedomConfig::default();
+        cfg.models_aliases
+            .insert("@fast".to_string(), "gpt-5.5".to_string());
+        assert_eq!(cfg.resolve_model_alias("@fast"), "gpt-5.5");
+    }
+
+    #[test]
+    fn resolve_model_alias_unknown_passes_through() {
+        let mut cfg = FreedomConfig::default();
+        cfg.models_aliases
+            .insert("@fast".to_string(), "gpt-5.5".to_string());
+        // Unknown key goes through verbatim — no error at this layer.
+        assert_eq!(cfg.resolve_model_alias("gpt-4o"), "gpt-4o");
+    }
+
+    #[test]
+    fn resolve_model_alias_single_level_only() {
+        // Alias→alias chains resolve ONE level; the intermediate is NOT
+        // recursively expanded — it lands at the provider as-is.
+        let mut cfg = FreedomConfig::default();
+        cfg.models_aliases
+            .insert("@a".to_string(), "@b".to_string());
+        cfg.models_aliases
+            .insert("@b".to_string(), "real-model".to_string());
+        // @a → @b (one step); @b is NOT further resolved here.
+        assert_eq!(cfg.resolve_model_alias("@a"), "@b");
+    }
+
+    #[test]
+    fn resolve_model_alias_key_shadowing_a_real_id_redirects_it() {
+        // Documents the honest contract: if an alias key == a real model id
+        // the alias WINS (config layer has no catalog access). Operators must
+        // use distinct names (e.g. @-prefixed) to avoid this.
+        let mut cfg = FreedomConfig::default();
+        cfg.models_aliases
+            .insert("gpt-5.5".to_string(), "gpt-4o".to_string());
+        assert_eq!(
+            cfg.resolve_model_alias("gpt-5.5"),
+            "gpt-4o",
+            "alias key that equals a real id WILL redirect it at the config layer"
+        );
+    }
 }

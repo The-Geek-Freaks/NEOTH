@@ -199,15 +199,6 @@ pub struct ModelsCatalog {
     /// Per-provider catalogs. Keyed by provider name string.
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderCatalog>,
-    /// Operator-defined model aliases loaded from
-    /// `freedom.yaml::models.aliases`. Resolved by [`Self::resolve_alias`]
-    /// before any catalog validation. Empty by default.
-    ///
-    /// Injected at load time by `cli::catalog` (or tests) — NOT persisted
-    /// to `models_catalog.json` because aliases are operator config, not
-    /// catalog data.
-    #[serde(skip)]
-    pub aliases: ModelAliasMap,
     /// The local path the catalog was loaded from. Skipped from
     /// serde so the file itself never embeds its own location.
     #[serde(skip)]
@@ -228,7 +219,6 @@ impl Default for ModelsCatalog {
             version: CATALOG_VERSION,
             ttl_secs: None,
             providers: BTreeMap::new(),
-            aliases: ModelAliasMap::new(),
             path: None,
         }
     }
@@ -295,56 +285,6 @@ impl ModelsCatalog {
     pub fn with_path(mut self, path: PathBuf) -> Self {
         self.path = Some(path);
         self
-    }
-
-    /// Inject operator aliases (from `freedom.yaml::models.aliases`).
-    /// Aliases are runtime config, never written to disk.
-    pub fn with_aliases(mut self, aliases: ModelAliasMap) -> Self {
-        self.aliases = aliases;
-        self
-    }
-
-    /// Resolve a model id through the alias layer.
-    ///
-    /// - If `model_id` matches a key in `self.aliases`, returns the
-    ///   mapped real id.
-    /// - If `model_id` is NOT an alias key, returns it unchanged —
-    ///   real model ids pass through transparently.
-    /// - Unknown alias: returns `Err` with a listing of configured aliases
-    ///   so the operator sees what is available.
-    ///
-    /// Contract: aliases NEVER override real model ids. If an alias
-    /// maps to an id that does not exist in the live catalog that is the
-    /// provider's problem to surface at call time — not our job here.
-    pub fn resolve_alias<'a>(&'a self, model_id: &'a str) -> Result<&'a str> {
-        match self.aliases.get(model_id) {
-            Some(real_id) => Ok(real_id.as_str()),
-            None => {
-                // Not found as an alias — it might be a literal model id.
-                // Validate only if the alias map is non-empty: if the
-                // operator configured aliases and the token is not among
-                // them AND not among real catalog ids, surface an error.
-                if self.aliases.is_empty() {
-                    return Ok(model_id);
-                }
-                // Check whether it is a real model id in any provider.
-                let is_real = self
-                    .providers
-                    .values()
-                    .any(|pc| pc.models.iter().any(|m| m.id == model_id));
-                if is_real || self.providers.is_empty() {
-                    return Ok(model_id);
-                }
-                // Operator gave a token that is neither an alias nor a
-                // known model id — tell them what aliases are available.
-                let alias_list: Vec<&str> =
-                    self.aliases.keys().map(String::as_str).collect();
-                anyhow::bail!(
-                    "unknown model alias or id {model_id:?}; \
-                     configured aliases: {alias_list:?}"
-                );
-            }
-        }
     }
 
     /// Persist atomically (temp + rename). No-op when the catalog has
@@ -630,81 +570,8 @@ mod tests {
         assert!(path.ends_with(".neoth/models_catalog.json"));
     }
 
-    // ── alias map tests ───────────────────────────────────────────────────────
-
-    fn alias_catalog() -> ModelsCatalog {
-        let mut cat = ModelsCatalog::default();
-        // Populate one provider with a real model id so resolve_alias can
-        // distinguish "real id" from "unknown token" when the alias map is
-        // non-empty.
-        cat.upsert(
-            "openai_api",
-            SourceOrigin::Api,
-            vec![entry("gpt-5.5"), entry("gpt-4o")],
-        );
-        let mut aliases = ModelAliasMap::new();
-        aliases.insert("fast".to_string(), "gpt-5.5".to_string());
-        aliases.insert("smart".to_string(), "gpt-4o".to_string());
-        cat.with_aliases(aliases)
-    }
-
-    #[test]
-    fn alias_resolves_to_real_model_id() {
-        let cat = alias_catalog();
-        assert_eq!(cat.resolve_alias("fast").unwrap(), "gpt-5.5");
-        assert_eq!(cat.resolve_alias("smart").unwrap(), "gpt-4o");
-    }
-
-    #[test]
-    fn real_model_id_passes_through_unchanged() {
-        let cat = alias_catalog();
-        // "gpt-5.5" is a real id in the catalog, not an alias key — passes.
-        assert_eq!(cat.resolve_alias("gpt-5.5").unwrap(), "gpt-5.5");
-    }
-
-    #[test]
-    fn unknown_alias_is_loud_error_listing_aliases() {
-        let cat = alias_catalog();
-        let err = cat.resolve_alias("turbo").unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("turbo"),
-            "error must mention the unknown token"
-        );
-        // Alias listing must appear so the operator knows what is valid.
-        assert!(
-            msg.contains("fast") || msg.contains("smart"),
-            "error must list configured aliases: {msg}"
-        );
-    }
-
-    #[test]
-    fn empty_alias_map_passes_any_id_through() {
-        // No aliases configured → every model_id is returned verbatim.
-        let cat = ModelsCatalog::default();
-        assert_eq!(
-            cat.resolve_alias("some-future-model-xyz").unwrap(),
-            "some-future-model-xyz"
-        );
-    }
-
-    #[test]
-    fn aliases_not_persisted_to_catalog_json() {
-        // Aliases are runtime config — round-tripping through disk must drop them.
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("models_catalog.json");
-        let mut aliases = ModelAliasMap::new();
-        aliases.insert("fast".into(), "gpt-5.5".into());
-        let cat = ModelsCatalog::default()
-            .with_path(path.clone())
-            .with_aliases(aliases);
-        cat.save().unwrap();
-
-        // After reload the aliases field is empty (serde(skip)).
-        let reloaded = ModelsCatalog::load_from(&path);
-        assert!(
-            reloaded.aliases.is_empty(),
-            "aliases must not be written to or read from disk"
-        );
-    }
 }
+// NOTE: with_aliases / resolve_alias / aliases field were removed (FIX-4b).
+// Alias resolution lives solely in config::FreedomConfig::resolve_model_alias
+// (plain first-match HashMap lookup). Tests for that contract live in
+// config/inline_tests.rs.

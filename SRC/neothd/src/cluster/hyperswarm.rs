@@ -64,6 +64,7 @@
 //!   `freedom.yaml::cluster.hyperswarm.bootstrap` for
 //!   operator-private DHT networks.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -794,8 +795,12 @@ async fn handle_peeroxide_connection(
                         // idx_foreign_events (separate from idx_episode — foreign ≠
                         // operator truth). Runs in spawn_blocking to keep the async
                         // peer loop non-blocking. Fire-and-forget: a write failure is
-                        // non-fatal (the frame is already ACK'd via VC merge; the next
-                        // re-gossip from the peer will retry the INSERT OR IGNORE).
+                        // non-fatal (the frame is already ACK'd via VC merge). Under
+                        // sustained views.db contention the frame is an accepted loss —
+                        // dedup-before-persist is deliberate v0 design (the dedup
+                        // high-water already advanced; the peer does NOT retry because
+                        // the VC merge succeeded).
+                        // FOLLOW-UP(G02-CLUSTER-02): redesign to persist-then-dedup.
                         let home = neoth_home.clone();
                         let origin_pk = gframe.origin.as_str().to_owned();
                         let origin_seq = gframe.event_seq;
@@ -832,6 +837,18 @@ async fn handle_peeroxide_connection(
                     }
                     dropped => {
                         emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);
+                        // Rate-limited drop counter: one warn per 32 drops so sustained
+                        // dedup/budget drops don't flood the log. The counter is
+                        // per-process (not per-connection) — AtomicU64 is lock-free.
+                        static GOSSIP_DROP_COUNT: AtomicU64 = AtomicU64::new(0);
+                        let total = GOSSIP_DROP_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                        if total % 32 == 0 {
+                            warn!(
+                                total_drops = total,
+                                reason = ?dropped,
+                                "cluster: gossip ingest drops accumulating (sampled every 32)"
+                            );
+                        }
                     }
                 }
             }

@@ -66,6 +66,11 @@ pub enum ApiErrorCode {
     UpstreamError,
     /// Localhost-only enforcement caught a non-loopback peer.
     NonLoopback,
+    /// Token store (file on disk) is unreadable — infrastructure failure,
+    /// not an auth failure. Maps to HTTP 503. Cooldown is NOT incremented
+    /// for this variant: the client token may be correct; the store is just
+    /// temporarily unavailable.
+    StoreUnavailable,
 }
 
 impl ApiErrorCode {
@@ -77,6 +82,7 @@ impl ApiErrorCode {
             Self::BadRequest => "BadRequest",
             Self::UpstreamError => "UpstreamError",
             Self::NonLoopback => "NonLoopback",
+            Self::StoreUnavailable => "StoreUnavailable",
         }
     }
 
@@ -88,6 +94,7 @@ impl ApiErrorCode {
             Self::BadRequest => 400,
             Self::UpstreamError => 502,
             Self::NonLoopback => 403,
+            Self::StoreUnavailable => 503,
         }
     }
 }
@@ -161,9 +168,13 @@ pub fn new_request_id() -> String {
 /// must be timing-safe so a future remote-exposure misconfig doesn't
 /// leak the token byte-by-byte.
 pub fn constant_time_token_eq(provided: &str, expected: &str) -> bool {
-    // Security review 2026-07-03: no length early-return — compare fixed-width
-    // digests so neither content NOR length leaks through timing. Hashing both
-    // sides to 32 bytes makes the comparison length-independent.
+    // Security review 2026-07-03: digest-compare removes the content-timing
+    // channel (no byte-by-byte early exit) and eliminates the early-length-
+    // return (both inputs are hashed to a fixed 32-byte digest before the
+    // constant-time comparison). Residual length signal via SHA-256 block
+    // count is negligible for the fixed-width tokens this function guards
+    // (base64url-encoded 32-byte secrets fit in one block). Full content
+    // timing confidentiality holds; length confidentiality is best-effort.
     use sha2::{Digest, Sha256};
     let a = Sha256::digest(provided.as_bytes());
     let b = Sha256::digest(expected.as_bytes());
@@ -244,6 +255,7 @@ mod tests {
         assert_eq!(ApiErrorCode::BadRequest.as_str(), "BadRequest");
         assert_eq!(ApiErrorCode::UpstreamError.as_str(), "UpstreamError");
         assert_eq!(ApiErrorCode::NonLoopback.as_str(), "NonLoopback");
+        assert_eq!(ApiErrorCode::StoreUnavailable.as_str(), "StoreUnavailable");
     }
 
     #[test]
@@ -254,6 +266,7 @@ mod tests {
         assert_eq!(ApiErrorCode::BadRequest.http_status(), 400);
         assert_eq!(ApiErrorCode::UpstreamError.http_status(), 502);
         assert_eq!(ApiErrorCode::NonLoopback.http_status(), 403);
+        assert_eq!(ApiErrorCode::StoreUnavailable.http_status(), 503);
     }
 
     #[test]

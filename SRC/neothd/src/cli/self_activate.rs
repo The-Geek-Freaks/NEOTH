@@ -274,6 +274,14 @@ fn run_cron_toggle(
     confirm_cron: bool,
     output: OutputFormat,
 ) -> Result<()> {
+    // Error-hunt #2: the config opt-in was shipped dead — wire it. Cron
+    // self-toggling needs the freedom.yaml flag AND --confirm-cron AND the
+    // permission Confirm below (three independent gates, all fail-closed).
+    if !cfg.self_activation.allow_cron_registration {
+        anyhow::bail!(
+            "cron self-registration is disabled — set              freedom.yaml::self_activation.allow_cron_registration: true first"
+        );
+    }
     // Gate — cron always requires --confirm-cron, regardless of autonomy level.
     // This is enforced by the permission system (SelfCronRegister → always Confirm),
     // plus an explicit flag check so even Full+sovereign cannot auto-allow.

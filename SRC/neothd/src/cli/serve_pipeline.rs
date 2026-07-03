@@ -1252,6 +1252,31 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     "task queued [{category_label}] #{} — run `neoth code --run-pending` to execute",
                                     session_id.raw()
                                 );
+                                // GOLD-TASK-01: persist the ack as the agent turn so
+                                // the session has both sides in the transcript.
+                                // Without this the operator turn is orphaned — there is
+                                // no agent-turn row for the ack path. Best-effort:
+                                // matches the same policy as the normal agent-turn
+                                // insert at the end of the handler (GOLD-ADAPT-ODY-26).
+                                {
+                                    let ody26_task_ts = crate::time::now_unix_i64();
+                                    let ody26_task_session = format!(
+                                        "{:016x}-{ody26_task_ts}",
+                                        xxhash_rust::xxh3::xxh3_64(
+                                            format!("{sender_hash}-{ody26_task_ts}").as_bytes()
+                                        )
+                                    );
+                                    if let Some(ref vc) = views_conn {
+                                        let g = vc.lock().await;
+                                        crate::memory::transcript_store::insert_turn_best_effort(
+                                            &g,
+                                            &ody26_task_session,
+                                            "agent",
+                                            ody26_task_ts,
+                                            &ack,
+                                        );
+                                    }
+                                }
                                 let outbound = OutboundMessage {
                                     recipient_id: inbound.sender_id.clone(),
                                     text: ack,

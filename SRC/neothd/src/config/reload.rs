@@ -204,6 +204,16 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<String> {
             old.provider_kind, new.provider_kind
         ));
     }
+    // Error-hunt #2 (2026-07-03) HIGH: sovereign-buddy must NEVER escalate via a
+    // hand-edited freedom.yaml + `neoth reload` — the typed-phrase consent
+    // ceremony (`neoth autonomy sovereign --enable`) is the ONLY on-ramp.
+    // De-escalation (true→false) through reload is always allowed.
+    if new.sovereign_buddy && !old.sovereign_buddy {
+        return Some(
+            "sovereign_buddy cannot be enabled via reload — run              `neoth autonomy sovereign --enable` (consent ceremony required)"
+                .to_string(),
+        );
+    }
     if old.telegram_user_id != new.telegram_user_id {
         return Some(format!(
             "telegram_user_id is immutable post-init (old={:?}, new={:?}); restart \

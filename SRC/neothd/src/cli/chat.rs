@@ -6604,9 +6604,17 @@ fn maybe_fire_fan_out_advisory(config: &FreedomConfig) {
 fn fetch_council_assertions(limit: usize) -> Vec<crate::council::factual_check::FactualAssertion> {
     let path = crate::memory::store::default_path();
     let Ok(conn) = crate::memory::store::open(&path) else {
+        static OPEN_WARN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        OPEN_WARN.get_or_init(|| {
+            warn!("council: groundtruth injection enabled but views.db unreadable — assertions empty");
+        });
         return Vec::new();
     };
     let Ok(rows) = crate::memory::groundtruth::surface_for_recall(&conn, limit, false) else {
+        static QUERY_WARN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        QUERY_WARN.get_or_init(|| {
+            warn!("council: groundtruth injection enabled but views.db unreadable — assertions empty");
+        });
         return Vec::new();
     };
     rows.iter()

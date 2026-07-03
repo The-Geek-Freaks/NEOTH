@@ -152,10 +152,15 @@ pub struct FreedomConfig {
     ///   local: qwen3-8b-q8
     /// ```
     ///
-    /// Resolved by `models::catalog::ModelsCatalog::resolve_alias` BEFORE
-    /// catalog validation. Aliases never override real model ids: if an alias
-    /// key equals a real id the alias is ignored (real id passes through).
-    /// Unknown alias with a non-empty map → loud error listing available aliases.
+    /// Resolved by [`FreedomConfig::resolve_model_alias`] at the config layer
+    /// (plain first-match `HashMap` lookup — no catalog access). **Warning:**
+    /// if an alias key equals a real model id the alias WILL redirect it; the
+    /// config-layer resolver has no catalog visibility to detect the collision.
+    /// Use distinct alias names (prefix with `@`, e.g. `@fast`) to avoid
+    /// accidental shadowing. Unknown key → passes through verbatim (the
+    /// provider sees it as-is and surfaces an error if it is not a valid id).
+    /// Alias→alias chains resolve ONE level only; the intermediate name goes to
+    /// the provider verbatim.
     #[serde(default)]
     pub models_aliases: crate::models::catalog::ModelAliasMap,
     /// C-3 Phase 2 (Session 14) — AWS region for the `aws_bedrock`
@@ -1024,10 +1029,15 @@ impl FreedomConfig {
     /// this accessor instead of reading the flag raw, so the dual-requirement
     /// is enforced in exactly one place. JV-MODE-04 (self-activation) and any
     /// other downstream consumer MUST use this method.
-    #[inline]
     /// GOLD-ADAPT-JV-MISC (model-alias map) — resolve an operator alias to
-    /// its real model id; unknown tokens pass through unchanged (the map is
-    /// purely additive — it can never shadow a real id the operator typed).
+    /// its real model id via a plain first-match `HashMap` lookup.
+    ///
+    /// **Contract:** the map has no catalog access. If an alias key equals a
+    /// real model id the alias WILL redirect it — choose distinct alias names
+    /// (e.g. prefix with `@`) to avoid accidental shadowing. Alias→alias chains
+    /// resolve ONE level; the intermediate is sent to the provider verbatim.
+    /// Unknown keys pass through unchanged (provider surfaces the error).
+    #[inline]
     pub fn resolve_model_alias<'a>(&'a self, id: &'a str) -> &'a str {
         self.models_aliases.get(id).map(String::as_str).unwrap_or(id)
     }

@@ -180,6 +180,10 @@ pub fn save_store(home: &Path, records: &[ApiTokenRecord]) -> Result<()> {
     let json = serde_json::to_vec_pretty(records).context("serialize api_tokens.json")?;
     // Atomic write: temp file in the same directory, then rename.
     let tmp_path = path.with_extension("json.tmp");
+    // Error-hunt #2 HIGH: write_key_securely opens create_new (O_EXCL) on unix —
+    // a stale tmp from a crashed prior save would make every future save fail
+    // permanently. Clearing it first keeps the atomic-rename contract.
+    let _ = std::fs::remove_file(&tmp_path);
     crate::wal::compaction::write_key_securely(&tmp_path, &json)
         .with_context(|| format!("write api_tokens.json.tmp at {}", tmp_path.display()))?;
     std::fs::rename(&tmp_path, &path)

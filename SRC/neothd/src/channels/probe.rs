@@ -142,7 +142,7 @@ impl ChannelCredsView {
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 13] = [
+pub const ALL_CHANNELS: [ChannelKind; 14] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -150,6 +150,7 @@ pub const ALL_CHANNELS: [ChannelKind; 13] = [
     ChannelKind::Keet,
     ChannelKind::Discord,
     ChannelKind::Signal,
+    ChannelKind::IMessageBlueBubbles,
     ChannelKind::Matrix,
     ChannelKind::Line,
     ChannelKind::Irc,
