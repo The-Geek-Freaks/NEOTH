@@ -119,6 +119,14 @@
 //!                                    endpoint (api.omi.me rejected), so the
 //!                                    `reqwest` GET only ever dials the
 //!                                    operator's self-hosted backend.
+//!   - `src/daemon/email_ingest_cron.rs`
+//!                                  — GOLD-ADAPT-JV-PAPERLESS-01 default-OFF
+//!                                    email → Paperless NGX cron. IMAP is
+//!                                    feature-gated and credential-gated; the
+//!                                    HTTP POST only runs when the operator
+//!                                    configured `paperless_url` +
+//!                                    `paperless_token`. The client is
+//!                                    timeout-bounded and redirects are disabled.
 //!   - `src/security/osv_check.rs` — supply-chain malware gate for explicit
 //!                                    installer/update flows. It queries OSV
 //!                                    before installing a requested package and
@@ -190,6 +198,12 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/transport/",
     "src/email/imap_fetch.rs",
     "src/daemon/omi_ingest_task.rs",
+    // GOLD-ADAPT-JV-PAPERLESS-01 — default-OFF email ingest cron. IMAP fetch is
+    // build-feature + credential gated; Paperless NGX upload requires the
+    // operator-configured `paperless_url` + `paperless_token`, uses a 10 s
+    // timeout, and refuses redirects. This is an explicit integration push,
+    // not unsolicited phone-home.
+    "src/daemon/email_ingest_cron.rs",
     "src/security/osv_check.rs",
     "src/sources/hackernews.rs",
     // GOLD-ADOPT-26 RSS feed poller — fetches operator-configured feed URLs

@@ -125,7 +125,11 @@ async fn upload_to_paperless(
 ) -> Result<u64> {
     use reqwest::multipart;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("build Paperless NGX HTTP client")?;
     // Use the subject as the document title; fall back to a timestamp.
     let title = if subject.is_empty() {
         format!("email-{}", crate::time::now_unix_secs())
