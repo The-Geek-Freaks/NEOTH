@@ -26,9 +26,9 @@ visitor hits.
 
 ## Open — needs a human or a release event
 
-- [ ] **Social preview upload**: render `.github/assets/neoth-social-preview.svg`
-      to 1280×640 PNG and upload via Settings → General → Social preview
-      (no API for this; SVG is the source of truth)
+- [ ] **Social preview upload**: PNG is rendered and committed at
+      `.github/assets/neoth-social-preview.png` (1280×640). Just upload it via
+      Settings → General → Social preview (no API for this — one manual click).
 - [ ] **CI is stuck (credibility blocker for the build badge)**: all recent
       `ci.yml` runs sit in `queued` and never complete (20/20 no conclusion),
       so the README build badge renders grey "no status". `runs-on` uses
