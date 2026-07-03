@@ -60,9 +60,11 @@ imap_fetch = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mai
 # `ring` crypto backend → builds on Windows MSVC with NO cmake/nasm; ring ships
 # pre-assembled objects from crates.io). Default OFF (same precedent as
 # `imap_fetch`); source-build opt-in only — NOT flipped on in release.yml
-# (cargo-dist rejected, D-001). The `freedom.yaml::transport.ssh_tunnels`
-# config field is planned, not yet present in the config struct. The TERMIX-03/04 primitives
-# (`transport::ssh_socks5` / `ssh_tofu`) compile WITHOUT this feature.
+# (cargo-dist rejected, D-001). Config: `freedom.yaml::ssh_tunnels`
+# (Vec<SshTunnelConfig>, parses on EVERY build via `transport::ssh_config`);
+# `serve.rs` spawns the tunnels at step 5a-ssh when this feature is on.
+# The TERMIX-03/04 primitives (`transport::ssh_socks5` / `ssh_tofu`)
+# compile WITHOUT this feature.
 ssh-tunnel = ["dep:russh"]
 
 # PC-01 (clipboard slice) — gated OS clipboard read/write via `arboard`. Default

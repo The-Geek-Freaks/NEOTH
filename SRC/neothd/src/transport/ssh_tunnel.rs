@@ -7,7 +7,6 @@
 //! Crypto: `russh` is pulled with the `ring` backend (NOT aws-lc-rs) so it
 //! builds on Windows MSVC with no cmake/nasm.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,50 +16,11 @@ use russh::keys::ssh_key;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
+// Config types live unconditionally in `ssh_config` (so freedom.yaml
+// round-trips on slim builds); re-exported here so runtime callers keep
+// the natural `ssh_tunnel::SshTunnelConfig` path.
+pub use super::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
 use super::ssh_tofu::{TofuOutcome, TofuStore};
-
-/// Auth method for one SSH hop.
-#[derive(Clone, Debug)]
-pub enum SshAuth {
-    /// Password auth.
-    Password(String),
-    /// Public-key auth from an on-disk OpenSSH private key.
-    PrivateKey {
-        path: PathBuf,
-        passphrase: Option<String>,
-    },
-}
-
-/// One SSH endpoint — a jump hop or the final target.
-#[derive(Clone, Debug)]
-pub struct SshEndpoint {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub auth: SshAuth,
-}
-
-impl SshEndpoint {
-    /// Canonical `"host:port"` key for the TOFU host-key store.
-    pub fn host_key(&self) -> String {
-        format!("{}:{}", self.host, self.port)
-    }
-}
-
-/// A local-forward tunnel: SSH to `endpoint` (optionally through `jump_hosts`),
-/// then forward `local_port` → `remote_host:remote_port` on the far side.
-#[derive(Clone, Debug)]
-pub struct SshTunnelConfig {
-    pub endpoint: SshEndpoint,
-    pub remote_host: String,
-    pub remote_port: u16,
-    /// Local listener port; `0` lets the OS assign one.
-    pub local_port: u16,
-    /// Ordered jump hosts (empty = direct). `jump_hosts[0]` is dialed first.
-    pub jump_hosts: Vec<SshEndpoint>,
-    pub max_retries: u32,
-    pub retry_delay: Duration,
-}
 
 /// Whether a TOFU outcome lets the SSH handshake proceed: a first sight or an
 /// exact re-sight proceeds; a CHANGED host key is refused (possible MITM).
@@ -281,14 +241,6 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn endpoint_host_key_is_host_colon_port() {
-        let e = SshEndpoint {
-            host: "h.example".into(),
-            port: 2222,
-            username: "u".into(),
-            auth: SshAuth::Password("p".into()),
-        };
-        assert_eq!(e.host_key(), "h.example:2222");
-    }
+    // endpoint_host_key_is_host_colon_port moved to `ssh_config.rs`
+    // (runs on the default build there).
 }

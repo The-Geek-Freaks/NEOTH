@@ -4098,6 +4098,10 @@ pub(crate) struct BackgroundHandles {
     pub self_map_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub cloud_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor>,
+    /// TERMIX-01 — running SSH local-forward tunnels. Shut down (task
+    /// abort) after Hysteria; inert background tasks, no WAL interaction.
+    #[cfg(feature = "ssh-tunnel")]
+    pub ssh_tunnel_handles: Vec<crate::transport::ssh_tunnel::SshTunnel>,
     /// GOLD-ADAPT-GOOSE-03 — drain task that reads `ConfirmRequest`s off the
     /// bus's mpsc channel and forwards them as elicitation messages to the
     /// operator's primary channel (Telegram). WAL-free; aborted before
@@ -4197,6 +4201,8 @@ pub(crate) async fn shutdown_background_tasks(
         self_map_task,
         cloud_task,
         hysteria_supervisor,
+        #[cfg(feature = "ssh-tunnel")]
+        ssh_tunnel_handles,
         confirm_drain_task,
     } = handles;
 
@@ -4532,6 +4538,16 @@ pub(crate) async fn shutdown_background_tasks(
     if let Some(sup) = hysteria_supervisor {
         info!("stopping Hysteria subprocess");
         drop(sup);
+    }
+
+    // TERMIX-01: abort the SSH tunnel tasks (inert forwards — no WAL
+    // frames, so ordering relative to `drop(writer)` is not critical;
+    // kept here beside the Hysteria teardown for symmetric transport
+    // shutdown logs).
+    #[cfg(feature = "ssh-tunnel")]
+    for t in ssh_tunnel_handles {
+        info!(local_port = t.local_port(), "stopping ssh tunnel");
+        t.shutdown();
     }
 
     // GOLD-ADAPT-GOOSE-03: abort the confirm-bus drain task. WAL-free so it

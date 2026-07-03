@@ -342,6 +342,14 @@ pub struct FreedomConfig {
     /// `~/.neoth/bin/hysteria` per the transport module's search order.
     #[serde(default)]
     pub hysteria: Option<crate::transport::hysteria::HysteriaConfig>,
+    /// TERMIX-01 — SSH local-forward tunnels the daemon establishes at
+    /// startup (e.g. to reach a provider / DB behind a bastion). Each
+    /// entry binds `127.0.0.1:<local_port>` and forwards through the SSH
+    /// endpoint (jump-chain aware, host-key TOFU). Empty = off. Runtime
+    /// requires the `ssh-tunnel` build feature; a slim build parses +
+    /// preserves this block and warns that tunnels are not compiled in.
+    #[serde(default)]
+    pub ssh_tunnels: Vec<crate::transport::ssh_config::SshTunnelConfig>,
     /// R-8 Cloud archive destination — local folder that the operator's
     /// cloud client (Dropbox / GDrive / OneDrive / iCloud / SMB / NAS
     /// mount, …) already syncs upstream. Daemon mirrors
