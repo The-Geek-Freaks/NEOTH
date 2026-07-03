@@ -112,6 +112,37 @@ than reported) · 🕰️ MULTI-WEEK (real gap, large refactor).
   webhook ACK tradeoff (intentional to avoid Meta retry storms; durable inbound
   spool is the real closure).
 
+## GUI feature parity (part 2)
+
+Measured, not assumed: the GUI has **51 wired callbacks across 14 nav tabs**
+(chat, memory, hemispheres, channels, coding/kanban, agents, automation, loops,
+privacy/trust, plugins, mesh/cluster, resources/hardware, doctor, config). The
+loop's B7+B8 "GUI mega-wave" already delivered DAU-facing parity. The parity
+agent's gap table was **partly overstated** (it flagged the Privacy tab as
+"no content" — it actually has Safety-Rails + a Trust panel populated by
+`set_trust_privacy`; coding/loops/config showed as "0 refs" only because they
+use different handler names — kanban/loop/etc.).
+
+Fixed: the one real GUI bug — Agents tab probed `cluster status` (99db83e1).
+
+Genuine remaining gaps (verified absent — 0 refs), all Pro/long-tail, each =
+one Slint element + one `neoth <cmd> --output json` probe handler:
+
+- `fact-check` — a "verify this" action in the chat context (0 refs).
+- `undo` — an undo button in the chat toolbar (0 refs).
+- **Privacy AUDIT output** — the Privacy tab shows trust/safety-rails config but
+  not `neoth privacy audit --last 30d` (what actually left the device — NEOTH's
+  headline privacy proof). Highest-value GUI add.
+- `jobs` panel (background-job visibility), `self-improve`/`moral-core`
+  read-only panels, `goal` tracker, `credential` manager (post-onboarding key
+  rotation), standalone recall browser.
+
+These are **not shipped here on purpose**: building Slint UI blind (compile-only,
+no render test in this environment) would violate verify-before-done — a panel
+can compile and still mis-render. They belong in the GUI wave where the loop
+render-tests against the design-taste gate. Each is small (the subprocess
+bridge is uniform); the list above is the actionable backlog.
+
 ## Method note
 
 Local build was toolchain-blocked (GNU `link` shadowing MSVC + vcvars not
