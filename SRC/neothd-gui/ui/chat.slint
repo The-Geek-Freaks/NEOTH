@@ -31,6 +31,19 @@ export struct ChatMessage {
     /// `true` while the daemon is still streaming this bubble. Used
     /// to render a pulsing cursor at the tail.
     streaming: bool,
+    /// GOLD-ADAPT-ODY-02/05 — per-message metrics chip ("ctx 6% · 38 tok/s")
+    /// + the click-popup detail block. Pre-formatted Rust-side
+    /// (`panel_logic::format_stream_metrics`); empty = no chip.
+    metrics: string,
+    metrics-detail: string,
+}
+
+/// GOLD-ADAPT-ODY-01 — one recent session in the sidebar (from the
+/// hindsight cards). `label` = display-name or one-line summary.
+export struct SessionRow {
+    id: string,
+    label: string,
+    meta: string,
 }
 
 // ── ChatBubble ───────────────────────────────────────────────────────
@@ -85,11 +98,55 @@ component ChatBubble inherits Rectangle {
                     wrap: word-wrap;
                 }
 
-                if root.message.timestamp != "": Text {
-                    text: root.message.timestamp;
-                    font-family: Theme.font-mono;
-                    font-size: Theme.font-size-caption;
-                    color: Theme.text-dim;
+                if root.message.timestamp != "": HorizontalLayout {
+                    spacing: Theme.space-tight;
+                    alignment: start;
+                    Text {
+                        text: root.message.timestamp;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-dim;
+                        vertical-alignment: center;
+                    }
+                    // ODY-02/05 — context/throughput chip; click pops the
+                    // full metrics detail.
+                    if root.message.metrics != "": Rectangle {
+                        width: chip-txt.preferred-width + 14px;
+                        height: 18px;
+                        border-radius: Theme.radius-pill;
+                        background: Theme.audit-tint;
+                        border-width: 1px;
+                        border-color: chip-touch.has-hover ? Theme.audit : Theme.border-subtle;
+                        animate border-color { duration: Theme.duration-micro; easing: ease-out; }
+                        chip-txt := Text {
+                            text: root.message.metrics;
+                            font-family: Theme.font-mono;
+                            font-size: 10px;
+                            color: Theme.audit;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                        }
+                        chip-touch := TouchArea { clicked => { metrics-popup.show(); } }
+                        metrics-popup := PopupWindow {
+                            x: 0; y: parent.height + 4px;
+                            Rectangle {
+                                background: Theme.surface-2;
+                                border-radius: Theme.radius-md;
+                                border-width: 1px;
+                                border-color: Theme.border-default;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    Text {
+                                        text: root.message.metrics-detail;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        color: Theme.text-secondary;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -379,10 +436,21 @@ export component ChatView inherits Rectangle {
     in-out property <int> active-channel-index: 0;
     /// Per-channel unread count, parallel-indexed with `channels`.
     in property <[int]> unread-counts: [0, 0, 0];
+    /// GOLD-ADAPT-ODY-01 — recent sessions (hindsight cards, newest first).
+    in property <[SessionRow]> session-history: [];
+    in property <string> active-session-id: "";
+    /// GOLD-ADAPT-ODY-04 — stream stall watchdog banner (60s without a
+    /// chunk while a reply is in flight).
+    in property <bool> stall-active: false;
 
     callback send-clicked(string);
     callback channel-switched(int);
     callback open-settings();
+    callback session-selected(string);
+    /// Stall banner actions: keep waiting (reset the watchdog clock) or
+    /// stop (kill the chat subprocess).
+    callback stall-continue-clicked();
+    callback stall-stop-clicked();
     /// Operator pressed ArrowUp with an empty composer — bubbles up to
     /// Rust so it can write the last sent input back into `composer-draft`.
     callback recall-requested();
@@ -450,6 +518,63 @@ export component ChatView inherits Rectangle {
                     clicked => {
                         root.active-channel-index = idx;
                         root.channel-switched(idx);
+                    }
+                }
+
+                // ── ODY-01: recent sessions (hindsight cards) ─────────
+                if root.session-history.length > 0: Rectangle {
+                    height: 1px; background: Theme.border-subtle;
+                }
+                if root.session-history.length > 0: Text {
+                    text: "SESSIONS";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    font-weight: Theme.weight-bold;
+                    letter-spacing: Theme.letter-spacing-extra-wide;
+                    color: Theme.text-dim;
+                }
+                Flickable {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 2px;
+                        for s in root.session-history: Rectangle {
+                            height: 46px;
+                            border-radius: Theme.radius-button;
+                            background: s.id == root.active-session-id ? Theme.bg-card
+                                : (sess-touch.has-hover ? Theme.bg-card.with-alpha(0.5) : transparent);
+                            animate background { duration: Theme.duration-micro; easing: ease-out; }
+                            Rectangle {
+                                x: 0; width: 3px;
+                                height: s.id == root.active-session-id ? parent.height - 14px : 0px;
+                                y: (parent.height - self.height) / 2;
+                                background: Theme.accent-green;
+                                border-radius: 2px;
+                                animate height { duration: Theme.duration-base; easing: Theme.ease-back; }
+                            }
+                            VerticalLayout {
+                                x: Theme.space-base;
+                                width: parent.width - Theme.space-base * 2;
+                                alignment: center;
+                                spacing: 1px;
+                                Text {
+                                    text: s.label;
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: s.meta;
+                                    font-family: Theme.font-mono;
+                                    font-size: 10px;
+                                    color: Theme.text-dim;
+                                    overflow: elide;
+                                }
+                            }
+                            sess-touch := TouchArea {
+                                clicked => { root.session-selected(s.id); }
+                            }
+                        }
                     }
                 }
             }
@@ -540,6 +665,40 @@ export component ChatView inherits Rectangle {
                     for msg in root.messages: ChatBubble {
                         message: msg;
                         bubble-max-width: 560px;
+                    }
+                }
+            }
+
+            // ODY-04 — stall watchdog banner above the composer.
+            if root.stall-active: Rectangle {
+                height: 44px;
+                background: Theme.warning-tint;
+                border-width: 1px;
+                border-color: Theme.warning;
+                HorizontalLayout {
+                    padding-left: Theme.space-base;
+                    padding-right: Theme.space-base;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: "⚠ Stream stalled — no output for 60s.";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.warning;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    NeothButton {
+                        label: "Keep waiting";
+                        primary: false;
+                        size: "sm";
+                        clicked => { root.stall-continue-clicked(); }
+                    }
+                    NeothButton {
+                        label: "Stop";
+                        danger: true;
+                        size: "sm";
+                        clicked => { root.stall-stop-clicked(); }
                     }
                 }
             }

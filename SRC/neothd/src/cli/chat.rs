@@ -1924,11 +1924,31 @@ async fn dispatch_provider(
             );
         }
         // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
-        // truncated streams.
+        // truncated streams. GOLD-ADAPT-ODY-02/05 — the sentinel also carries
+        // the turn's token usage + the model-agnostic context cap (same
+        // `effective_cap` the non-stream context bar uses) + wall time, so
+        // GUI consumers can render context/metrics chips without re-probing.
+        // Fields are additive: older consumers `rfind` the prefix and ignore
+        // unknown keys.
+        let sentinel_cap = crate::tokens::budget::effective_cap(
+            provider_name,
+            &model_used,
+            config.tokens.max_per_request,
+        );
         println!();
         println!(
             "{}",
-            serde_json::json!({"neoth_stream":"done","count":chunk_count})
+            serde_json::json!({
+                "neoth_stream": "done",
+                "count": chunk_count,
+                "used_tokens": input_tokens
+                    .unwrap_or(0)
+                    .saturating_add(output_tokens.unwrap_or(0)),
+                "limit_tokens": sentinel_cap,
+                "input_tokens": input_tokens.unwrap_or(0),
+                "output_tokens": output_tokens.unwrap_or(0),
+                "elapsed_ms": stream_call_started.elapsed().as_millis() as u64,
+            })
         );
         (acc, input_tokens, output_tokens, model_used)
     } else {

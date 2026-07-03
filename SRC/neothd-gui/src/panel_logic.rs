@@ -1250,6 +1250,120 @@ pub fn parse_loop_budget(freedom_yaml: &str) -> (u32, u64) {
     (max_rounds, budget)
 }
 
+// ── GOLD-ADAPT-ODY-01 — chat-sidebar session history ────────────────────
+// GUI-decoupled mirror of `memory/hindsight.rs::HindsightCard` (the GUI
+// never links the daemon crate; it reads `~/.neoth/hindsight/*.json`).
+// Only the fields the sidebar renders are mirrored — serde ignores the rest.
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HindsightCardMini {
+    pub session_id: String,
+    #[serde(default)]
+    pub ended_at_unix: i64,
+    #[serde(default)]
+    pub one_line_summary: String,
+    /// GOLD-ADOPT-21 optional LLM session title — preferred label.
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+/// One sidebar row, display-ready.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEntry {
+    pub id: String,
+    pub label: String,
+    pub meta: String,
+}
+
+impl HindsightCardMini {
+    fn label(&self) -> String {
+        match self.display_name.as_deref() {
+            Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+            _ if !self.one_line_summary.trim().is_empty() => {
+                self.one_line_summary.trim().to_string()
+            }
+            _ => self.session_id.clone(),
+        }
+    }
+}
+
+/// Load the newest `limit` session cards from `<home>/hindsight/`,
+/// newest-first (same ordering contract as `hindsight::list_cards`).
+/// Malformed files skip — a torn write must not empty the sidebar.
+pub fn load_session_history(neoth_home: &std::path::Path, limit: usize) -> Vec<SessionEntry> {
+    let dir = neoth_home.join("hindsight");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut cards: Vec<HindsightCardMini> = entries
+        .flatten()
+        .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|json| serde_json::from_str::<HindsightCardMini>(&json).ok())
+        .collect();
+    cards.sort_by_key(|c| std::cmp::Reverse(c.ended_at_unix));
+    cards.truncate(limit);
+    cards
+        .into_iter()
+        .map(|c| SessionEntry {
+            label: c.label(),
+            meta: format_epoch_utc(c.ended_at_unix),
+            id: c.session_id,
+        })
+        .collect()
+}
+
+// ── GOLD-ADAPT-ODY-02/05 — per-message metrics chip formatting ──────────
+// Pure: sentinel stats in, (chip, popup-detail) strings out. `None` when
+// the sentinel carried no token data (older daemon / recall early-return).
+
+fn fmt_k(n: u64) -> String {
+    if n >= 10_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+pub fn format_stream_metrics(
+    used_tokens: u64,
+    limit_tokens: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    elapsed_ms: u64,
+) -> Option<(String, String)> {
+    if used_tokens == 0 && output_tokens == 0 {
+        return None;
+    }
+    let mut chip_parts: Vec<String> = Vec::new();
+    let mut detail: Vec<String> = Vec::new();
+    if limit_tokens > 0 {
+        let pct = ((used_tokens as f64 / limit_tokens as f64) * 100.0).round() as u64;
+        chip_parts.push(format!("ctx {pct}%"));
+        detail.push(format!(
+            "context: {} / {} tokens ({pct}%)",
+            fmt_k(used_tokens),
+            fmt_k(limit_tokens)
+        ));
+    }
+    if elapsed_ms > 0 && output_tokens > 0 {
+        let tps = output_tokens as f64 * 1000.0 / elapsed_ms as f64;
+        chip_parts.push(format!("{tps:.0} tok/s"));
+    }
+    detail.push(format!(
+        "in: {} · out: {}",
+        fmt_k(input_tokens),
+        fmt_k(output_tokens)
+    ));
+    if elapsed_ms > 0 {
+        detail.push(format!("wall: {:.1}s", elapsed_ms as f64 / 1000.0));
+    }
+    if chip_parts.is_empty() {
+        chip_parts.push(format!("{} tok", fmt_k(used_tokens.max(output_tokens))));
+    }
+    Some((chip_parts.join(" · "), detail.join("\n")))
+}
+
 // ── GOLD-ADAPT-GUI-05 — TypedStatus footer ticker ──────────────────────
 // Pure frame function: the Rust timer feeds a monotonic tick; each frame
 // is the current message typed up to N chars, then held, then the next
@@ -2194,6 +2308,72 @@ mod tests {
         assert_eq!(parse_loop_budget("loop:\n  enabled: true\n"), (3, 0));
         assert_eq!(parse_loop_budget("not yaml: ["), (3, 0));
         assert_eq!(parse_loop_budget(""), (3, 0));
+    }
+
+    // ── GOLD-ADAPT-ODY-01 — session history loader ─────────────────────
+    #[test]
+    fn load_session_history_prefers_display_name_and_sorts_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let hs = dir.path().join("hindsight");
+        std::fs::create_dir_all(&hs).unwrap();
+        std::fs::write(
+            hs.join("s-old.json"),
+            r#"{"session_id":"s-old","ended_at_unix":1751400000,
+                "one_line_summary":"12 turns over 30 min on rust, wal",
+                "display_name":null}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            hs.join("s-new.json"),
+            r#"{"session_id":"s-new","ended_at_unix":1751500000,
+                "one_line_summary":"3 turns over 5 min on gui",
+                "display_name":"GUI polish session"}"#,
+        )
+        .unwrap();
+        std::fs::write(hs.join("torn.json"), "{oops").unwrap();
+        let rows = load_session_history(dir.path(), 20);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "s-new");
+        assert_eq!(rows[0].label, "GUI polish session");
+        assert_eq!(rows[1].label, "12 turns over 30 min on rust, wal");
+        assert!(rows[0].meta.starts_with("2025-07-02"), "{}", rows[0].meta);
+        assert_eq!(load_session_history(dir.path(), 1).len(), 1);
+        assert!(load_session_history(&dir.path().join("none"), 5).is_empty());
+    }
+
+    #[test]
+    fn session_label_falls_back_summary_then_id() {
+        let c = |dn: Option<&str>, s: &str| HindsightCardMini {
+            session_id: "sid".into(),
+            ended_at_unix: 0,
+            one_line_summary: s.into(),
+            display_name: dn.map(Into::into),
+        };
+        assert_eq!(c(Some("Title"), "sum").label(), "Title");
+        assert_eq!(c(Some("  "), "sum").label(), "sum");
+        assert_eq!(c(None, "").label(), "sid");
+    }
+
+    // ── GOLD-ADAPT-ODY-02/05 — metrics chip formatting ─────────────────
+    #[test]
+    fn format_stream_metrics_full_stats() {
+        let (chip, detail) =
+            format_stream_metrics(12_400, 200_000, 12_000, 400, 10_000).unwrap();
+        assert_eq!(chip, "ctx 6% · 40 tok/s");
+        assert!(detail.contains("context: 12.4k / 200.0k tokens (6%)"), "{detail}");
+        assert!(detail.contains("in: 12.0k · out: 400"), "{detail}");
+        assert!(detail.contains("wall: 10.0s"), "{detail}");
+    }
+
+    #[test]
+    fn format_stream_metrics_no_data_is_none_and_partial_degrades() {
+        assert!(format_stream_metrics(0, 0, 0, 0, 0).is_none());
+        // No limit (cap 0) → no ctx part, still a chip.
+        let (chip, _) = format_stream_metrics(500, 0, 400, 100, 2_000).unwrap();
+        assert_eq!(chip, "50 tok/s");
+        // No timing → token count fallback.
+        let (chip, _) = format_stream_metrics(500, 0, 400, 100, 0).unwrap();
+        assert_eq!(chip, "500 tok");
     }
 
     // ── GOLD-ADAPT-GUI-05 — ticker frame math ──────────────────────────

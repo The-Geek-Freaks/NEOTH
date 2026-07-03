@@ -397,6 +397,27 @@ fn main() -> Result<()> {
         std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let last_operator_input_for_send = std::sync::Arc::clone(&last_operator_input);
 
+    // GOLD-ADAPT-ODY-04 — shared stream-supervision state:
+    //   chat_child          — the running `neothd chat --stream` subprocess
+    //                         (Stop on the stall banner kills it).
+    //   chat_last_chunk_ms  — epoch-millis of the last stdout chunk; -1 when
+    //                         no stream is in flight. The 2s watchdog timer
+    //                         raises the banner at >60s silence.
+    //   chat_auto_nudge_budget / chat_auto_in_progress — capped (1 per
+    //                         operator send) auto-"continue" when a stream
+    //                         ends truncated; the in-progress flag stops the
+    //                         auto-turn from refilling its own budget.
+    let chat_child: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let chat_last_chunk_ms = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1));
+    let chat_auto_nudge_budget = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+    let chat_auto_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let chat_child_for_send = chat_child.clone();
+    let chat_last_chunk_for_send = chat_last_chunk_ms.clone();
+    let chat_budget_for_send = chat_auto_nudge_budget.clone();
+    let chat_auto_flag_for_send = chat_auto_in_progress.clone();
+
     let weak_chat_send = window.as_weak();
     window.on_chat_send_clicked(move |text| {
         let body = text.trim().to_string();
@@ -426,19 +447,33 @@ fn main() -> Result<()> {
             text: body.clone().into(),
             timestamp: format_now_hms().into(),
             streaming: false,
+            ..Default::default()
         });
         rows.push(ChatMessage {
             role: "assistant".into(),
             text: "…".into(),
             timestamp: format_now_hms().into(),
             streaming: true,
+            ..Default::default()
         });
         w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
         w.set_chat_composer_draft("".into());
         // GOLD-ADAPT-GUI-07 — Send spins + re-sends are blocked until the
         // stream settles (flipped back in the completion closure below).
         w.set_chat_send_in_flight(true);
+        // ODY-04 — arm the stall watchdog; refill the auto-nudge budget on
+        // a MANUAL send only (the auto-fired "continue" turn must not
+        // refill its own budget or it would loop).
+        chat_last_chunk_for_send.store(now_epoch_ms(), std::sync::atomic::Ordering::Relaxed);
+        if !chat_auto_flag_for_send.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            chat_budget_for_send.store(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        w.set_chat_stall_active(false);
 
+        let child_slot = chat_child_for_send.clone();
+        let last_chunk = chat_last_chunk_for_send.clone();
+        let nudge_budget = chat_budget_for_send.clone();
+        let auto_flag = chat_auto_flag_for_send.clone();
         let weak_worker = w.as_weak();
         std::thread::spawn(move || {
             // Chat-feel #3: live token streaming. `neoth chat --stream`
@@ -449,7 +484,7 @@ fn main() -> Result<()> {
             // On a missing binary / spawn failure / truncated stream
             // (EOF with no sentinel) we surface an error bubble.
             use std::io::Read as _;
-            let outcome: std::result::Result<String, String> = (|| {
+            let outcome: std::result::Result<(String, StreamStats), String> = (|| {
                 let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                 let mut child = spawn_neothd_plain(&bin)
                     .arg("chat")
@@ -468,6 +503,11 @@ fn main() -> Result<()> {
                     .stdout
                     .take()
                     .ok_or_else(|| "stream stdout unavailable".to_string())?;
+                // ODY-04 — park the child so the stall banner's Stop can
+                // kill it from the UI thread.
+                if let Ok(mut slot) = child_slot.lock() {
+                    *slot = Some(child);
+                }
                 let mut acc: Vec<u8> = Vec::new();
                 let mut buf = [0u8; 512];
                 loop {
@@ -475,6 +515,9 @@ fn main() -> Result<()> {
                         Ok(0) => break, // EOF
                         Ok(n) => {
                             acc.extend_from_slice(&buf[..n]);
+                            // ODY-04 — feed the watchdog clock.
+                            last_chunk
+                                .store(now_epoch_ms(), std::sync::atomic::Ordering::Relaxed);
                             // Re-decode the whole buffer each chunk so a
                             // split multi-byte char never bakes a U+FFFD.
                             let (live, _done) =
@@ -500,8 +543,16 @@ fn main() -> Result<()> {
                         Err(e) => return Err(format!("stream read error: {e}")),
                     }
                 }
-                let status = child.wait();
-                let (reply, done) = strip_stream_sentinel(&String::from_utf8_lossy(&acc));
+                // Reclaim the parked child for the exit wait (Stop may
+                // already have taken + killed it — then wait() is a no-op
+                // on a None slot and status stays None).
+                let status = child_slot
+                    .lock()
+                    .ok()
+                    .and_then(|mut slot| slot.take())
+                    .and_then(|mut c| c.wait().ok());
+                let (reply, done, stats) =
+                    parse_stream_sentinel(&String::from_utf8_lossy(&acc));
                 if reply.is_empty() {
                     return Err("Provider returned an empty reply. Check `neoth doctor` + \
                                 `~/.neoth/freedom.yaml` provider settings."
@@ -511,36 +562,72 @@ fn main() -> Result<()> {
                     // EOF without the sentinel → the stream was truncated
                     // (provider error / crash mid-reply). Surface what we
                     // got so the operator isn't left guessing.
-                    let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
+                    let code = status.and_then(|s| s.code()).unwrap_or(-1);
                     return Err(format!(
                         "Stream ended before completion (exit {code}). Partial reply:\n\n{reply}"
                     ));
                 }
-                Ok(reply)
+                Ok((reply, stats))
             })();
+            // Stream over (either way) — disarm the watchdog clock.
+            last_chunk.store(-1, std::sync::atomic::Ordering::Relaxed);
 
             let weak_for_loop = weak_worker.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak_for_loop.upgrade() {
                     // GUI-07: the stream settled (reply or error) — unspin Send.
                     w.set_chat_send_in_flight(false);
+                    w.set_chat_stall_active(false);
                     use slint::{Model, ModelRc, VecModel};
                     let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
                     let ts = format_now_hms();
                     let succeeded = outcome.is_ok();
+                    // ODY-04 — capped auto-nudge: a truncated stream fires ONE
+                    // automatic "continue" turn per operator send. The flag
+                    // routes the refill-guard in the send handler.
+                    let auto_nudge = matches!(
+                        &outcome,
+                        Err(e) if e.starts_with("Stream ended before completion")
+                    ) && nudge_budget
+                        .fetch_update(
+                            std::sync::atomic::Ordering::AcqRel,
+                            std::sync::atomic::Ordering::Acquire,
+                            |b| b.checked_sub(1),
+                        )
+                        .is_ok();
                     // Chat-feel parity: a successful reply is segmented into
                     // one bubble per paragraph (openhuman cluster feel); an
                     // error stays a single `error`-role bubble.
                     let replacements: Vec<ChatMessage> = match outcome {
-                        Ok(reply) => segment_reply_into_bubbles(&reply)
-                            .into_iter()
-                            .map(|seg| ChatMessage {
-                                role: "assistant".into(),
-                                text: seg.into(),
-                                timestamp: ts.clone().into(),
-                                streaming: false,
-                            })
-                            .collect(),
+                        Ok((reply, stats)) => {
+                            // ODY-02/05 — the LAST segment carries the
+                            // context/throughput chip (chip on the tail
+                            // reads as "turn summary", not per-paragraph).
+                            let segs = segment_reply_into_bubbles(&reply);
+                            let last = segs.len().saturating_sub(1);
+                            let metrics = panel_logic::format_stream_metrics(
+                                stats.used_tokens,
+                                stats.limit_tokens,
+                                stats.input_tokens,
+                                stats.output_tokens,
+                                stats.elapsed_ms,
+                            );
+                            segs.into_iter()
+                                .enumerate()
+                                .map(|(i, seg)| {
+                                    let m = if i == last { metrics.clone() } else { None };
+                                    let (chip, detail) = m.unwrap_or_default();
+                                    ChatMessage {
+                                        role: "assistant".into(),
+                                        text: seg.into(),
+                                        timestamp: ts.clone().into(),
+                                        streaming: false,
+                                        metrics: chip.into(),
+                                        metrics_detail: detail.into(),
+                                    }
+                                })
+                                .collect()
+                        }
                         Err(err) => vec![ChatMessage {
                             // `error` bubble role lets the .slint side
                             // colour the surface differently (red tint
@@ -551,6 +638,7 @@ fn main() -> Result<()> {
                             text: err.into(),
                             timestamp: ts.clone().into(),
                             streaming: false,
+                            ..Default::default()
                         }],
                     };
                     // Splice the replacement bubble(s) in place of the
@@ -580,10 +668,101 @@ fn main() -> Result<()> {
                             GuiActivity::ChatError
                         },
                     );
+                    // ODY-04 — fire the capped auto-continue as a visible
+                    // operator turn (honest: the nudge shows in scrollback).
+                    if auto_nudge {
+                        auto_flag.store(true, std::sync::atomic::Ordering::Release);
+                        w.set_status_line(
+                            "stream truncated — auto-continue fired (1/1)".into(),
+                        );
+                        w.invoke_chat_send_clicked("continue".into());
+                    }
                 }
             });
         });
     });
+
+    // ODY-04 — stall-banner actions. "Keep waiting" re-arms the watchdog
+    // clock (long tool calls are legitimate); "Stop" kills the subprocess —
+    // the worker's EOF path then lands the truncated-stream error bubble.
+    {
+        let last_chunk = chat_last_chunk_ms.clone();
+        let weak_stall = window.as_weak();
+        window.on_chat_stall_continue(move || {
+            last_chunk.store(now_epoch_ms(), std::sync::atomic::Ordering::Relaxed);
+            if let Some(w) = weak_stall.upgrade() {
+                w.set_chat_stall_active(false);
+            }
+        });
+    }
+    {
+        let child_slot = chat_child.clone();
+        let weak_stop = window.as_weak();
+        window.on_chat_stall_stop(move || {
+            if let Ok(mut slot) = child_slot.lock() {
+                if let Some(child) = slot.as_mut() {
+                    let _ = child.kill();
+                }
+            }
+            if let Some(w) = weak_stop.upgrade() {
+                w.set_chat_stall_active(false);
+                w.set_status_line("chat stream stopped by operator".into());
+            }
+        });
+    }
+    // Watchdog timer: 2s cadence, banner at >60s chunk silence while a
+    // reply is in flight.
+    let weak_watchdog = window.as_weak();
+    let _chat_stall_timer = {
+        let timer = slint::Timer::default();
+        let last_chunk = chat_last_chunk_ms.clone();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_secs(2),
+            move || {
+                if let Some(w) = weak_watchdog.upgrade() {
+                    let armed = last_chunk.load(std::sync::atomic::Ordering::Relaxed);
+                    let stalled = armed >= 0
+                        && w.get_chat_send_in_flight()
+                        && now_epoch_ms().saturating_sub(armed) > 60_000;
+                    if w.get_chat_stall_active() != stalled {
+                        w.set_chat_stall_active(stalled);
+                    }
+                }
+            },
+        );
+        timer
+    };
+
+    // GOLD-ADAPT-ODY-01 — chat-sidebar session history (hindsight cards).
+    // Off-thread startup load; click sets the active marker + a footer note.
+    {
+        let weak_sessions = window.as_weak();
+        std::thread::spawn(move || {
+            let rows = panel_logic::load_session_history(&default_neoth_home(), 20);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak_sessions.upgrade() {
+                    use slint::{ModelRc, VecModel};
+                    let model: Vec<SessionRow> = rows
+                        .into_iter()
+                        .map(|s| SessionRow {
+                            id: s.id.into(),
+                            label: s.label.into(),
+                            meta: s.meta.into(),
+                        })
+                        .collect();
+                    w.set_chat_session_history(ModelRc::new(VecModel::from(model)));
+                }
+            });
+        });
+        let weak_sel = window.as_weak();
+        window.on_chat_session_selected(move |id| {
+            if let Some(w) = weak_sel.upgrade() {
+                w.set_chat_active_session_id(id.clone());
+                w.set_status_line(format!("session {id} selected").into());
+            }
+        });
+    }
 
     // ODY-10: ArrowUp-on-empty-composer recall handler. The callback fires
     // on the Slint event-loop thread; we read the shared buffer and write
@@ -3921,11 +4100,42 @@ fn is_visual_separator_only(s: &str) -> bool {
 /// stdout chunk during streaming (mid-stream: no sentinel yet → done=false,
 /// live partial text) and once at EOF (done=true → final text to segment).
 pub fn strip_stream_sentinel(raw: &str) -> (String, bool) {
-    if let Some(pos) = raw.rfind("{\"neoth_stream\":\"done\"") {
-        (raw[..pos].trim_end().to_string(), true)
-    } else {
-        (raw.trim_end().to_string(), false)
-    }
+    let (text, done, _) = parse_stream_sentinel(raw);
+    (text, done)
+}
+
+/// GOLD-ADAPT-ODY-02/05 — token/timing stats the extended done-sentinel
+/// carries. All-zero when the daemon predates the extension (recall
+/// early-return still emits the minimal `{"neoth_stream":"done","count":1}`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct StreamStats {
+    pub used_tokens: u64,
+    pub limit_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub elapsed_ms: u64,
+}
+
+/// Split the accumulated stream buffer into (reply-text, done, stats).
+/// Mid-stream (no sentinel yet): done=false, zero stats.
+pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
+    let Some(pos) = raw.rfind("{\"neoth_stream\":\"done\"") else {
+        return (raw.trim_end().to_string(), false, StreamStats::default());
+    };
+    let stats = serde_json::from_str::<serde_json::Value>(raw[pos..].trim())
+        .ok()
+        .map(|v| {
+            let g = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            StreamStats {
+                used_tokens: g("used_tokens"),
+                limit_tokens: g("limit_tokens"),
+                input_tokens: g("input_tokens"),
+                output_tokens: g("output_tokens"),
+                elapsed_ms: g("elapsed_ms"),
+            }
+        })
+        .unwrap_or_default();
+    (raw[..pos].trim_end().to_string(), true, stats)
 }
 
 /// Non-streaming chat round-trip (waits for full stdout). The live chat
@@ -4107,6 +4317,37 @@ mod chat_subprocess_tests {
         let (txt, done) = strip_stream_sentinel("\n{\"neoth_stream\":\"done\",\"count\":0}\n");
         assert_eq!(txt, "");
         assert!(done);
+    }
+
+    // ODY-02/05 — the extended sentinel carries token/timing stats.
+    #[test]
+    fn parse_stream_sentinel_reads_extended_token_fields() {
+        let raw = "Answer.\n\n{\"neoth_stream\":\"done\",\"count\":3,\
+                   \"used_tokens\":12400,\"limit_tokens\":200000,\
+                   \"input_tokens\":12000,\"output_tokens\":400,\"elapsed_ms\":10000}\n";
+        let (txt, done, stats) = parse_stream_sentinel(raw);
+        assert_eq!(txt, "Answer.");
+        assert!(done);
+        assert_eq!(
+            stats,
+            StreamStats {
+                used_tokens: 12_400,
+                limit_tokens: 200_000,
+                input_tokens: 12_000,
+                output_tokens: 400,
+                elapsed_ms: 10_000,
+            }
+        );
+    }
+
+    // Minimal legacy sentinel (recall early-return) → zero stats, still done.
+    #[test]
+    fn parse_stream_sentinel_minimal_sentinel_zero_stats() {
+        let (txt, done, stats) =
+            parse_stream_sentinel("hit\n{\"neoth_stream\":\"done\",\"count\":1}\n");
+        assert_eq!(txt, "hit");
+        assert!(done);
+        assert_eq!(stats, StreamStats::default());
     }
 
     #[test]
@@ -4764,6 +5005,14 @@ fn default_neoth_home() -> PathBuf {
         .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
         .unwrap_or_else(|_| PathBuf::from("."));
     home.join(".neoth")
+}
+
+/// ODY-04 — wall-clock epoch millis for the stall-watchdog clock.
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 // ODY-11 — density persistence helpers (pure, testable without Slint window).
