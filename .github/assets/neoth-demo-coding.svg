@@ -1,0 +1,51 @@
+<svg width="960" height="420" viewBox="0 0 960 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d">
+  <title id="t">NEOTH coding buddy</title>
+  <desc id="d">A coding request becomes a scoped plan; a task card moves across the Kanban board from todo to in-progress to review, and the reviewed decision is promoted into audited memory.</desc>
+  <defs>
+    <style>
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .sans{font-family:"SF Pro Display",Inter,ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+    </style>
+  </defs>
+  <rect width="960" height="420" rx="20" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="958" height="418" rx="19" stroke="white" stroke-opacity=".08"/>
+  <text x="40" y="52" fill="white" class="sans" font-size="20" font-weight="300">Coding that remembers the repo</text>
+  <text x="40" y="76" fill="#8f8f8f" class="mono" font-size="13">$ neoth code <tspan fill="#e8e8e8">"plan the auth refactor"</tspan></text>
+
+  <!-- three columns -->
+  <g class="sans">
+    <g class="mono" font-size="11" letter-spacing="2" fill="#8a8a8a">
+      <text x="64" y="120">TODO</text>
+      <text x="384" y="120">IN PROGRESS</text>
+      <text x="704" y="120">REVIEW</text>
+    </g>
+    <rect x="40" y="132" width="280" height="200" rx="14" fill="#0a0a0a" stroke="#00ff80" stroke-opacity=".2"/>
+    <rect x="360" y="132" width="280" height="200" rx="14" fill="#0a0a0a" stroke="#ff2a6d" stroke-opacity=".2"/>
+    <rect x="680" y="132" width="280" height="200" rx="14" fill="#0a0a0a" stroke="#05d5ff" stroke-opacity=".2"/>
+
+    <!-- static cards -->
+    <g font-size="13">
+      <rect x="56" y="150" width="248" height="40" rx="9" fill="#141414" stroke="white" stroke-opacity=".08"/><text x="72" y="175" fill="#d0d0d0">write WAL event</text>
+      <rect x="56" y="198" width="248" height="40" rx="9" fill="#141414" stroke="white" stroke-opacity=".08"/><text x="72" y="223" fill="#d0d0d0">tests + review gates</text>
+      <rect x="696" y="150" width="248" height="40" rx="9" fill="#141414" stroke="white" stroke-opacity=".08"/><text x="712" y="175" fill="#d0d0d0">scope + acceptance</text>
+    </g>
+
+    <!-- moving card: todo -> in progress -> review -->
+    <g font-size="13">
+      <rect x="0" y="0" width="248" height="40" rx="9" fill="#16241d" stroke="#00ff80" stroke-opacity=".5"/>
+      <text x="16" y="25" fill="white">schema migration</text>
+      <animateTransform attributeName="transform" type="translate" dur="9s"
+        values="56,246; 56,246; 376,150; 376,150; 696,246; 696,246; 56,246"
+        keyTimes="0;.12;.30;.52;.70;.92;1" repeatCount="indefinite"/>
+      <animate attributeName="opacity" dur="9s" values="1;1;1;1;1;1;0;1" keyTimes="0;.12;.3;.52;.7;.9;.96;1" repeatCount="indefinite"/>
+    </g>
+  </g>
+
+  <!-- promote bar -->
+  <g>
+    <rect x="40" y="352" width="880" height="44" rx="12" fill="#1a0c12" stroke="#ff2a6d" stroke-opacity=".3"/>
+    <text x="64" y="379" fill="#ff2a6d" class="mono" font-size="11" letter-spacing="2">PROMOTE INTO MEMORY</text>
+    <text x="300" y="379" fill="#b8b8b8" class="sans" font-size="13">reviewed decision + test result → WAL + repo memory</text>
+    <text x="900" y="379" text-anchor="end" fill="#00ff80" class="mono" font-size="11">✓ logged</text>
+  </g>
+</svg>

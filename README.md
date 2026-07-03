@@ -105,11 +105,11 @@ autonomy NEOTH gets. YAML is optional. The happy path is a GUI path.
 
 | First run | Memory proof |
 | :-- | :-- |
-| <img src=".github/assets/neoth-demo-install.gif" alt="NEOTH install and wizard demo loop" width="100%"> | <img src=".github/assets/neoth-demo-memory.gif" alt="NEOTH memory and evidence demo loop" width="100%"> |
+| <img src=".github/assets/neoth-demo-install.svg" alt="NEOTH first-run: installs from the source bootstrap, launches the GUI, wizard asks plain setup questions" width="100%"> | <img src=".github/assets/neoth-demo-memory.svg" alt="NEOTH memory: 'remember I prefer Rust' is saved to profile with evidence across five tiers plus vault, and neoth verify confirms the WAL chain" width="100%"> |
 
 | Coding buddy | Privacy audit |
 | :-- | :-- |
-| <img src=".github/assets/neoth-demo-coding.gif" alt="NEOTH coding canvas and kanban demo loop" width="100%"> | <img src=".github/assets/neoth-demo-privacy.gif" alt="NEOTH local fail-closed privacy demo loop" width="100%"> |
+| <img src=".github/assets/neoth-demo-coding.svg" alt="NEOTH coding: a task card moves todo to in-progress to review, and the reviewed decision is promoted into audited memory" width="100%"> | <img src=".github/assets/neoth-demo-privacy.svg" alt="NEOTH privacy audit in fully-local mode: zero cloud calls, zero profile extractions, zero unapproved egress" width="100%"> |
 
 ## Why NEOTH
 

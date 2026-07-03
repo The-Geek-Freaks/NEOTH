@@ -34,8 +34,11 @@ visitor hits.
       wording against the exact MIT template)
 - [ ] **Discussions categories**: seed Welcome + Q&A + Show-and-tell, pin a
       "start here" post
-- [ ] **Demo GIF freshness**: re-record the four README demo loops against
-      the current GUI before announcing (install/memory/coding/privacy)
+- [x] **Demo loops**: replaced the four raster GIFs with animated SVGs
+      (install/memory/coding/privacy) — text-editable, accurate to current
+      product (fixed the old GIFs' `cargo install neoth` and "six memory
+      layers" errors), render inline on GitHub. Optionally re-record real
+      screencasts later, but the SVGs are correct and shippable now.
 - [ ] **crates.io publish** (`cargo install neoth` path) — lands with 1.0
 - [ ] **Release binaries**: tag → release.yml artifacts verified on all
       targets, checksums in release notes
