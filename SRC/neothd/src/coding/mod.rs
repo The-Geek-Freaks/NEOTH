@@ -57,6 +57,12 @@ pub mod dispatcher;
 /// stop decides whether to bail out of the rotation entirely.
 pub mod early_stop;
 pub mod feed;
+/// GOLD-TASK-01 — general (non-coding) task intent detection for the
+/// channel pipeline. Pure-fn heuristic covering reminders, scheduling,
+/// research, and delegation phrasings. Bilingual EN/DE. The verb set
+/// is explicitly disjoint from `coding::intent::CODING_VERBS` to
+/// prevent double-dispatch.
+pub mod general_task_intent;
 /// Round-3 v0.4 — coding-intent auto-detection for `neoth chat`.
 /// Bilingual EN/DE heuristic that flags "build a function" /
 /// "fix the bug in" / "schreib mir einen Test" patterns so the

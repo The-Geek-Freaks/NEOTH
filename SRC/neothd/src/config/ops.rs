@@ -339,6 +339,49 @@ impl Default for CodingConfig {
     }
 }
 
+/// GOLD-TASK-01 — general-task pipeline knobs.
+///
+/// Controls whether the channel inbound pipeline routes non-coding
+/// prompts (reminders, scheduling, research, delegation) into the
+/// kanban decomposer instead of falling through to chat completion.
+///
+/// **Safety default: `decompose_non_coding = false`** — this flag
+/// makes REMOTE channel text create executable task sessions. Operators
+/// must opt in explicitly. When `false`, the channel pipeline behaves
+/// exactly as before (zero behaviour change).
+///
+/// Gates enforced by the routing branch (all must pass):
+/// 1. `task_engine.decompose_non_coding = true` (this field, default OFF).
+/// 2. `autonomy >= Standard` (Strict blocks all unattended task creation).
+/// 3. High-confidence general-task intent detected AND no coding intent
+///    (mutual-exclusion with the coding auto-dispatch path).
+/// 4. Tasks land in `Backlog` status — never auto-dispatched from the
+///    channel path. Operator drives execution via `neoth code --run-pending`.
+///
+/// ### WAL audit trail note
+///
+/// The WAL byte space is exhausted (255/256 slots used; `0x00` is the
+/// reserved null sentinel). No new WAL event code is allocated.
+/// Audit trail is: the `idx_kanban_session` row itself (`insert_session`),
+/// a `tracing::info!` log line, and the kanban SSE `FeedEntry` broadcast
+/// that the babel cron emits for every new session event.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TaskEngineConfig {
+    /// Master gate: when `false` (default), the channel pipeline does NOT
+    /// route non-coding prompts into the kanban decomposer. Set to `true`
+    /// to enable GOLD-TASK-01 general-task routing.
+    pub decompose_non_coding: bool,
+}
+
+impl Default for TaskEngineConfig {
+    fn default() -> Self {
+        Self {
+            decompose_non_coding: false,
+        }
+    }
+}
+
 /// V03-09 Phase 2a — operator-facing self-update knobs.
 ///
 /// Field semantics:

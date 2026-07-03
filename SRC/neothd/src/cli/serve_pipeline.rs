@@ -1170,6 +1170,99 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 }
             }
 
+            // ── GOLD-TASK-01 — general-task routing branch ────────────────
+            // Non-coding inbound prompts (reminders, scheduling, research,
+            // delegation) can be routed into the kanban decomposer INSTEAD
+            // of falling through to chat completion. Gates (ALL must pass):
+            //
+            //  (a) config_for_handler.task_engine.decompose_non_coding = true
+            //      (default OFF — operator must opt in; zero behaviour change
+            //      when false)
+            //  (b) autonomy >= Standard (Strict blocks all unattended task
+            //      creation from remote channels)
+            //  (c) High-confidence general-task intent AND no coding intent
+            //      (mutual-exclusion enforced inside should_auto_task_dispatch)
+            //
+            // Tasks land in `Backlog` — NEVER auto-dispatched from the channel
+            // path. Operator drives execution via `neoth code --run-pending`.
+            //
+            // Audit trail: the `idx_kanban_session` row created by
+            // `coding::store::insert_session`, the `tracing::info!` below,
+            // and the kanban SSE `FeedEntry` broadcast for the session-opened
+            // WAL frame (0x70 KANBAN_SESSION_OPENED emitted by insert_session
+            // via the WAL writer). No new WAL event code is allocated —
+            // WAL byte space is exhausted (255/256 slots used).
+            //
+            // Spec correction: the tracker listed "WAL 0x78 TASK_SESSION_CREATED"
+            // but 0x78 is already EVENT_TYPE_KANBAN_TASK_DEP_ADDED and the WAL
+            // space has no free slots. Riding existing events per orchestrator
+            // constraint.
+            if config_for_handler.task_engine.decompose_non_coding
+                && crate::coding::general_task_intent::should_auto_task_dispatch(
+                    &sanitized_text,
+                    autonomy,
+                )
+            {
+                let detected = crate::coding::general_task_intent::detect_general_task_intent(
+                    &sanitized_text,
+                );
+                let category_label = detected
+                    .as_ref()
+                    .map(|i| i.category.as_str())
+                    .unwrap_or("task");
+
+                // Open the coding DB (same views.db the CLI `neoth code` uses).
+                // One connection per routed message — matches task_executor pattern.
+                let db_path = crate::memory::store::default_path();
+                match crate::memory::store::open(&db_path) {
+                    Err(e) => {
+                        tracing::warn!(
+                            channel = channel_str,
+                            error = %e,
+                            "GOLD-TASK-01: failed to open views.db for task session — falling through to chat"
+                        );
+                        // Fall through: don't block the turn, just chat-complete.
+                    }
+                    Ok(conn) => {
+                        let op_id = operator_id.as_deref();
+                        match crate::coding::general_task_intent::decompose_non_coding(
+                            &conn,
+                            &sanitized_text,
+                            channel_str,
+                            op_id,
+                        ) {
+                            Err(e) => {
+                                tracing::warn!(
+                                    channel = channel_str,
+                                    error = %e,
+                                    "GOLD-TASK-01: decompose_non_coding failed — falling through to chat"
+                                );
+                            }
+                            Ok(session_id) => {
+                                tracing::info!(
+                                    channel = channel_str,
+                                    session_id = session_id.raw(),
+                                    category = category_label,
+                                    autonomy = autonomy.as_str(),
+                                    "GOLD-TASK-01: general task session queued (Backlog) from channel — run `neoth code --run-pending` to dispatch"
+                                );
+                                // Reply to the channel with an ack so the operator
+                                // knows the task landed without waiting for dispatch.
+                                let ack = format!(
+                                    "task queued [{category_label}] #{} — run `neoth code --run-pending` to execute",
+                                    session_id.raw()
+                                );
+                                let outbound = OutboundMessage {
+                                    recipient_id: inbound.sender_id.clone(),
+                                    text: ack,
+                                };
+                                return Ok(Some(outbound));
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── K-Wire-3 (Session 23) — channel-side enrichment via helper ─
             // Channel inbounds now reach CLI parity on every layer the
             // `pipeline::build_enriched_request` helper composes:

@@ -84,7 +84,8 @@ pub use crate::analytics::babel::BabelConfig;
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
     AutoUpdateConfig, CodeMapConfig, CodingConfig, DoctorConfig, PluginsConfig, ProfileConfig,
-    RefusalRecoveryConfig, SupervisorConfig, SupervisorKind, UpdaterConfig, WasmPluginsConfig,
+    RefusalRecoveryConfig, SupervisorConfig, SupervisorKind, TaskEngineConfig, UpdaterConfig,
+    WasmPluginsConfig,
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
@@ -398,6 +399,16 @@ pub struct FreedomConfig {
     /// the retryable-failure path.
     #[serde(default)]
     pub coding: CodingConfig,
+    /// GOLD-TASK-01 — general-task pipeline knobs.
+    /// Master gate: `task_engine.decompose_non_coding` (default `false`).
+    /// When `false`, zero behaviour change to the channel pipeline.
+    /// When `true`, high-confidence non-coding prompts (reminders,
+    /// scheduling, research, delegation) from channels are routed into
+    /// the kanban decomposer and land in `Backlog` status. Dispatch
+    /// stays operator-driven (`neoth code --run-pending`). Requires
+    /// `autonomy >= Standard`.
+    #[serde(default)]
+    pub task_engine: TaskEngineConfig,
     /// NOOB-UX-3 (Session 19, 2026-05-21): operator-facing
     /// plugin runtime gates. Pairs with the cargo build-time
     /// `wasm-plugin-host` feature per the
@@ -821,6 +832,24 @@ pub struct FreedomConfig {
     /// `analytics/babel/config.rs`.
     #[serde(default)]
     pub babel: BabelConfig,
+
+    /// GOLD-ADAPT-JV-MODE-02 — sovereign-buddy operating mode flag.
+    ///
+    /// Set ONLY via `neoth autonomy sovereign --enable` (typed-phrase consent
+    /// ceremony, TTY-only, no GUI bypass). Cleared by `neoth autonomy gated` or
+    /// `neoth autonomy sovereign --disable` (no ceremony required for disable).
+    ///
+    /// **This flag alone changes nothing.** Gates throughout the codebase MUST
+    /// call [`FreedomConfig::sovereign_active`] which returns `true` ONLY when
+    /// BOTH this field is `true` AND `autonomy == AutonomyLevel::Full`. A
+    /// sovereign_buddy flag on a non-Full autonomy level is an inert noop.
+    ///
+    /// WAL audit: activation is recorded via the three-frame sequence
+    /// `0xA2 LEVEL_ELEVATED + 0xDD SUDOMODE_PRESET_APPLIED + 0xD0 CONFIG_RELOADED`
+    /// (with `changed_fields` including `"sovereign_buddy"`). No new WAL event
+    /// code is used — the byte space is exhausted (255/256 codes assigned).
+    #[serde(default)]
+    pub sovereign_buddy: bool,
 }
 
 /// GOLD-ADAPT-OH-11 — serde default returning `true` so that existing
@@ -947,6 +976,22 @@ impl FreedomConfig {
             .get(stage.as_str())
             .map(|cfg| cfg.fail_fast)
             .unwrap_or(false)
+    }
+
+    /// GOLD-ADAPT-JV-MODE-02 — single chokepoint for sovereign-buddy mode.
+    ///
+    /// Returns `true` ONLY when BOTH conditions hold:
+    /// 1. `self.sovereign_buddy == true` (operator ran the ceremony), AND
+    /// 2. `self.autonomy == AutonomyLevel::Full` (Full autonomy is active).
+    ///
+    /// This is the ONLY place in the codebase that should read `sovereign_buddy`
+    /// directly. Every gate that conditions behaviour on sovereign mode calls
+    /// this accessor instead of reading the flag raw, so the dual-requirement
+    /// is enforced in exactly one place. JV-MODE-04 (self-activation) and any
+    /// other downstream consumer MUST use this method.
+    #[inline]
+    pub fn sovereign_active(&self) -> bool {
+        self.sovereign_buddy && matches!(self.autonomy, crate::permissions::AutonomyLevel::Full)
     }
 }
 

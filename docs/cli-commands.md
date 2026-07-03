@@ -80,6 +80,14 @@ Set the raw autonomy level in freedom.yaml (advanced / power-user path). Persist
 
 Print the current autonomy level + operating mode (read from freedom.yaml)
 
+### `neoth autonomy sovereign`
+
+GOLD-ADAPT-JV-MODE-02 — SOVEREIGN-BUDDY operating mode: full-auto PLUS `proactive.enabled = true` (NEOTH sends unsolicited proactive messages)
+
+- `--enable` — Enable sovereign-buddy mode (requires the typed-phrase ceremony)
+- `--disable` — Disable sovereign-buddy mode (no ceremony required)
+- `--status` — Print current sovereign-buddy status without changing anything
+
 ## `neoth babel`
 
 Babel-Index observer: status, windows, labelling, export (GOLD-DELTA)
