@@ -29,6 +29,12 @@ visitor hits.
 - [ ] **Social preview upload**: render `.github/assets/neoth-social-preview.svg`
       to 1280×640 PNG and upload via Settings → General → Social preview
       (no API for this; SVG is the source of truth)
+- [ ] **CI is stuck (credibility blocker for the build badge)**: all recent
+      `ci.yml` runs sit in `queued` and never complete (20/20 no conclusion),
+      so the README build badge renders grey "no status". `runs-on` uses
+      standard GitHub-hosted runners, so this is an account/org setting —
+      check Settings → Actions (enabled? runner access?) and billing/spending
+      limits. Until a run goes green, the build badge undersells the repo.
 - [ ] **Verify license badge** on github.com shows both licenses after push
       (licensee runs server-side; if still NOASSERTION, check LICENSE-MIT
       wording against the exact MIT template)
