@@ -24,20 +24,23 @@ than reported) · 🕰️ MULTI-WEEK (real gap, large refactor).
 
 ## Genuine, fix-worth (verified real, small-to-moderate)
 
-- 🔧 **Channels/identity merge silently drops colliding aliases**
-  (`channels/identity.rs:145`). `UPDATE OR IGNORE` + `DELETE` on a UNIQUE
-  `(channel,sender_id,chat_id)` collision drops the alias with no record on the
-  tombstone → `neoth identity split` can't restore it. Fix: SELECT conflicting
-  triples pre-merge, store on the tombstone `dropped_aliases` JSON.
-- 🔧 **FallbackProvider misattributes the serving provider**
-  (`providers/fallback.rs:118`). `name()` always returns the primary → after a
-  429 failover the `PROVIDER_RESPONSE` frame credits the primary; WAL cost audit
-  by provider is wrong. (`provider_fallback_attempted` IS emitted, so the data
-  exists; the response frame just carries the wrong name.) Fix: propagate the
-  actually-serving name.
 - 🔧 **Rate-limiter state lost on restart** (`channels/rate_limit.rs`). Buckets
   are in-memory only; a restart refills a throttled sender to full burst. Fix:
-  persist non-idle buckets + TTL-decay on load.
+  persist non-idle buckets + TTL-decay on load. (Genuine; moderate — needs a
+  persistence layer; deferred pending test verification.)
+
+### Re-verified as OVERSTATED on second pass (moved down from fix-worth)
+
+- 📉 **Identity merge "drops aliases"** (`channels/identity.rs:145`). The dropped
+  rows are **exact-triple duplicates** the canonical identity already covers
+  (`UPDATE OR IGNORE` reassigns, the leftover DELETE removes only the redundant
+  victim copy of a triple canonical already owns — the comment states this).
+  The triple still resolves to canonical; no unique data is lost. Not a bug.
+- 📉 **FallbackProvider `name()` misattribution** (`providers/fallback.rs:118`).
+  The `0x25 PROVIDER_FALLBACK_ATTEMPTED` frame already records the actual
+  `to_provider` (correlatable by `prompt_hash`), so the failover IS auditable.
+  `name()` is a `&'static str` provider-identity method — it structurally cannot
+  return a per-call runtime-selected provider. No clean fix, no real gap.
 
 ## Config that silently does nothing (wire it — matches operator "couple it" rule)
 
