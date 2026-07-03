@@ -154,6 +154,18 @@ impl OffloadTransform for SmartCrusher {
         if n < self.config.min_rows {
             return Err(TransformError::skipped(CRUSHER_NAME, "below min_rows"));
         }
+        // GOLD-ADAPT-HR-06 metering — the lossless-CSV-reformat proposal is
+        // gated on evidence that 10–50-row homogeneous arrays actually hit
+        // the lossy path in live sessions. This counter IS that evidence
+        // stream: grep the logs for `smart_crusher_hr06_bucket` before ever
+        // building the reformat. Zero-cost beyond one log line per crush.
+        if (self.config.min_rows..=50).contains(&n) {
+            tracing::debug!(
+                rows = n,
+                target_bucket = "10-50",
+                "smart_crusher_hr06_bucket: mid-size array entered the lossy crush path"
+            );
+        }
         // GOLD-ADAPT-HR-04 — size the sample to the array's diversity (a uniform
         // array keeps the floor; a diverse one keeps up to max_keep).
         let cap = optimal_k(
