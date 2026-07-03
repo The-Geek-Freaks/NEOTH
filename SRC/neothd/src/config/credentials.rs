@@ -174,6 +174,14 @@ pub struct Credentials {
     /// only this nick is accepted (others dropped + audited 0x3B). Best-effort:
     /// IRC nicks aren't authenticated without SASL. Not a secret.
     pub irc_allowed_nick: Option<String>,
+    /// B9 spoof-hardening — require the IRCv3 `account-tag` on inbound IRC
+    /// messages and only accept senders whose services account matches this
+    /// value. Nick-only allowlists are trivially spoofable on public networks
+    /// (`/nick` race); the account tag is asserted by the network's services
+    /// (NickServ/SASL) and can't be forged by a nick change. Needs a network
+    /// with IRCv3 `account-tag` support (Libera, OFTC, …). `None` ⇒ nick-only
+    /// gating. Not a secret.
+    pub irc_allowed_account: Option<String>,
     /// GOLD-FEAT-10 — Mattermost server base URL (e.g. `https://mm.example.com`).
     /// NEOTH dials out to the WebSocket API, so no public URL is needed. Not a
     /// secret.
@@ -417,6 +425,7 @@ impl Credentials {
             irc_channels,
             irc_tls,
             irc_allowed_nick,
+            irc_allowed_account,
             mattermost_url,
             mattermost_token,
             mattermost_allowed_user_id,
@@ -479,6 +488,7 @@ impl Credentials {
             && irc_channels.is_none()
             && irc_tls.is_none()
             && irc_allowed_nick.is_none()
+            && irc_allowed_account.is_none()
             && mattermost_url.is_none()
             && mattermost_token.is_none()
             && mattermost_allowed_user_id.is_none()

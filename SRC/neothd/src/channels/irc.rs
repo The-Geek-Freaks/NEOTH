@@ -23,6 +23,18 @@
 //! in `credentials.yaml`. NEOTH dials OUT to the server, so no public URL is
 //! needed (unlike the webhook channels). Text only; CTCP/DCC/actions are
 //! documented follow-ups, not corner-cuts on the core round-trip.
+//!
+//! ## Spoofing characteristics
+//!
+//! IRC sender identity is the `nick!user@host` prefix — on public networks a
+//! nick is claimable by anyone the moment its holder disconnects (`/nick`
+//! race), so `irc_allowed_nick` alone is a WEAK gate. Hardened mode: set
+//! `irc_allowed_account` and the adapter requests the IRCv3 `account-tag`
+//! capability; inbound messages must then carry an `account=<name>` tag
+//! asserted by the network's services (NickServ/SASL) matching the allowlist
+//! — messages without the tag (unidentified senders, networks without the
+//! cap) are dropped + audited (0x3B). Twitch does not need this: Twitch
+//! authenticates every connection, nicks can't be claimed by strangers.
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -47,6 +59,10 @@ pub struct IrcChannel {
     kind: ChannelKind,
     /// D2 — operator sender allowlist (a nick). `None` ⇒ open.
     allowed_nick: Option<String>,
+    /// B9 — services-account allowlist (IRCv3 `account-tag`). `None` ⇒
+    /// nick-only gating; set ⇒ inbound messages must carry a matching
+    /// `account=` tag (see module docs, "Spoofing characteristics").
+    allowed_account: Option<String>,
     /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
@@ -86,6 +102,7 @@ impl IrcChannel {
             sender: tokio::sync::OnceCell::new(),
             kind: ChannelKind::Irc,
             allowed_nick: None,
+            allowed_account: None,
             gate_writer: None,
         }
     }
@@ -99,6 +116,13 @@ impl IrcChannel {
     ) -> Self {
         self.allowed_nick = allowed_nick;
         self.gate_writer = Some(gate_writer);
+        self
+    }
+
+    /// B9 spoof-hardening — require the IRCv3 `account-tag` to match this
+    /// services account on every inbound message. `None` ⇒ nick-only gating.
+    pub fn with_allowed_account(mut self, allowed_account: Option<String>) -> Self {
+        self.allowed_account = allowed_account;
         self
     }
 
@@ -144,6 +168,18 @@ fn now_unix() -> u64 {
     crate::time::now_unix_secs()
 }
 
+/// B9 — extract the IRCv3 `account=` tag from a raw message. `None` when the
+/// message carries no tags or no account tag (unidentified sender / network
+/// without the cap). A present-but-valueless tag maps to `""` — which a set
+/// allowlist always rejects.
+fn account_tag_value(message: &irc::proto::Message) -> Option<String> {
+    message
+        .tags
+        .as_ref()?
+        .iter()
+        .find_map(|tag| (tag.0 == "account").then(|| tag.1.clone().unwrap_or_default()))
+}
+
 #[async_trait]
 impl Channel for IrcChannel {
     fn name(&self) -> &'static str {
@@ -161,6 +197,15 @@ impl Channel for IrcChannel {
         // can't reach this owned client) can send while the loop runs.
         let sender = client.sender();
         let _ = self.sender.set(sender.clone());
+        // B9 — hardened mode needs the server to attach `account=` tags to
+        // inbound messages. Request the cap up front; a network that doesn't
+        // support it simply never tags, and every message is then dropped by
+        // the account gate below (fail-closed, never fail-open).
+        if self.allowed_account.is_some() {
+            sender
+                .send_cap_req(&[irc::client::prelude::Capability::AccountTag])
+                .context("irc cap-req account-tag")?;
+        }
         let mut stream = client.stream().context("irc stream")?;
         info!(nick = %self.nick, "irc adapter live");
         while let Some(message) = stream.next().await.transpose().context("irc stream recv")? {
@@ -176,6 +221,25 @@ impl Channel for IrcChannel {
             // Twitch chat reuses the IRC mapping; stamp the real channel family so
             // routing / formatting / WAL see "twitch", not "irc".
             inbound.channel = self.kind;
+            // B9 — hardened account gate first: with `irc_allowed_account`
+            // set, the message must carry a services-asserted `account=` tag
+            // matching the allowlist. Missing tag ⇒ blocked (fail-closed) —
+            // an unidentified sender or a network without the cap never
+            // passes. The empty-string sentinel can't collide: a set
+            // allowlist is non-empty, so "" ≠ allowed always blocks.
+            if let Some(allowed) = self.allowed_account.as_deref() {
+                let account = account_tag_value(&message).unwrap_or_default();
+                if super::sender_blocked_by_allowlist(
+                    Some(allowed),
+                    &account,
+                    self.gate_writer.as_ref(),
+                    self.kind.as_str(),
+                )
+                .await
+                {
+                    continue;
+                }
+            }
             // D2 — drop + audit a sender not on the operator allowlist before
             // the pipeline sees the message (open when None).
             if super::sender_blocked_by_allowlist(
@@ -246,6 +310,44 @@ mod tests {
 
     fn ch() -> IrcChannel {
         IrcChannel::new("irc.example.org", 6697, "neoth", None, "#a, #b ,", true)
+    }
+
+    fn msg_with_tags(tags: Option<Vec<irc::proto::message::Tag>>) -> irc::proto::Message {
+        irc::proto::Message {
+            tags,
+            prefix: None,
+            command: Command::PRIVMSG("#a".to_string(), "hi".to_string()),
+        }
+    }
+
+    #[test]
+    fn account_tag_extracted_when_present() {
+        use irc::proto::message::Tag;
+        let m = msg_with_tags(Some(vec![
+            Tag("time".to_string(), Some("x".to_string())),
+            Tag("account".to_string(), Some("alex".to_string())),
+        ]));
+        assert_eq!(account_tag_value(&m).as_deref(), Some("alex"));
+    }
+
+    #[test]
+    fn account_tag_absent_or_valueless_fails_closed() {
+        use irc::proto::message::Tag;
+        // no tags at all → None → gate sees "" → blocked by any allowlist
+        assert_eq!(account_tag_value(&msg_with_tags(None)), None);
+        // tags but no account tag → None
+        let m = msg_with_tags(Some(vec![Tag("time".to_string(), None)]));
+        assert_eq!(account_tag_value(&m), None);
+        // account tag with no value → "" (a set allowlist never matches "")
+        let m = msg_with_tags(Some(vec![Tag("account".to_string(), None)]));
+        assert_eq!(account_tag_value(&m).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn with_allowed_account_stores_allowlist() {
+        let c = ch().with_allowed_account(Some("alex".to_string()));
+        assert_eq!(c.allowed_account.as_deref(), Some("alex"));
+        assert!(ch().allowed_account.is_none(), "default = nick-only gating");
     }
 
     #[test]

@@ -3191,7 +3191,8 @@ pub(crate) fn spawn_channel_adapters(
                     creds.irc_channels.clone().unwrap_or_default(),
                     creds.irc_tls.unwrap_or(true),
                 )
-                .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone());
+                .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone())
+                .with_allowed_account(creds.irc_allowed_account.clone());
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
                     config,
