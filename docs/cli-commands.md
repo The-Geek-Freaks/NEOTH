@@ -233,6 +233,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `<MESSAGE>` — Message to send. If omitted, NEOTH reads from stdin until EOF
 - `--model <MODEL>` — Override the configured model for this single call
 - `--system <TEXT>` — Inject a one-shot system prompt for this call
+- `--attach <PATH>` — GOLD-ADAPT-ODY-03 — attach files to this turn. Each file runs the media extraction pipeline (PDF/image/audio/video/document; plain UTF-8 files inline directly) and its text is prepended to the prompt as a labelled attachment block. Repeatable
 - `--edit` — GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of passing it inline. Any inline message/`--message` seeds the editor as prefill. Aborts if the editor is left empty
 - `--config <PATH>` — Override the freedom.yaml path (mostly for tests)
 - `--wal-segment <PATH>` — Override the WAL segment path (mostly for tests)
@@ -1259,6 +1260,15 @@ List + validate scheduled jobs defined in `~/.neoth/jobs.yaml`
 V11 coding workflow — operator-facing kanban CLI
 
 - `--db <PATH>` — Override the `views.db` path. Defaults to `~/.neoth/views.db`
+
+### `neoth kanban add`
+
+GOLD-ADAPT-AOS-06 — create a task directly on the board (the GUI "New Spec" pane + operator CLI). Lands in `backlog`; the classifier + dispatcher pick it up like any decomposed task. Without `--session` a fresh session is opened so the task has a home
+
+- `<TITLE>`
+- `--description <DESCRIPTION>` — Task body — the spec shape (goal + acceptance criteria)
+- `--session <SESSION_ID>` — Existing session to add into; omit to open a new one
+- `--task-type <TASK_TYPE>` — Task type label (`feature` / `bug` / `chore` / …)
 
 ### `neoth kanban archive`
 
