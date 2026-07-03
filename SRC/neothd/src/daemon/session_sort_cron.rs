@@ -94,13 +94,16 @@ pub struct Folder {
 /// Conservative: all three conditions must hold simultaneously.
 /// See module doc for rationale + spec divergence.
 pub fn is_throwaway(card: &HindsightCard) -> bool {
+    // A folder tag means a prior sort pass already retained this card — it is
+    // never throwaway regardless of the other signals.
+    if card.top_topics.iter().any(|t| t.starts_with("folder:")) {
+        return false; // prior pass retained it
+    }
+
     // ① Very few operator turns (≤2 = effectively empty conversation)
     let thin = card.operator_turn_count <= 2;
-    // ② No topics extracted at all
-    let no_topics = card
-        .top_topics
-        .iter()
-        .all(|t| t.starts_with("folder:"));
+    // ② No organic topics extracted at all (folder: tags already excluded above)
+    let no_topics = card.top_topics.is_empty();
     // ③ Summary is the degenerate "no clear topic" shape
     let degenerate_summary = card.one_line_summary.contains("no clear topic");
 
@@ -335,12 +338,28 @@ pub async fn run_session_sort_pass(
     let mut save_errors = 0usize;
 
     if !dry_run {
-        // Build session_id → folder_name map
+        // Build session_id → folder_name map (first-wins: if the LLM puts the
+        // same session_id in two folders the first folder assignment is kept and
+        // a warning is emitted so the duplicate can be investigated).
         let mut id_to_folder: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         for folder in &folders {
             for sid in &folder.session_ids {
-                id_to_folder.insert(sid.clone(), folder.name.clone());
+                use std::collections::hash_map::Entry;
+                match id_to_folder.entry(sid.clone()) {
+                    Entry::Vacant(e) => {
+                        e.insert(folder.name.clone());
+                    }
+                    Entry::Occupied(existing) => {
+                        warn!(
+                            session_id = %sid,
+                            kept_folder = %existing.get(),
+                            dropped_folder = %folder.name,
+                            "session_sort_cron: LLM assigned session_id to multiple folders \
+                             — keeping first assignment, dropping duplicate"
+                        );
+                    }
+                }
             }
         }
 
@@ -641,10 +660,16 @@ mod tests {
 
     #[test]
     fn not_throwaway_when_only_folder_tag_present() {
-        // Card has only a folder tag from a prior pass but no organic topics;
-        // but operator_turn_count=3 → not throwaway
-        let card = make_card("s5", 3, vec!["folder:misc"], "3 turns over 1 min on no clear topic");
-        assert!(!is_throwaway(&card));
+        // DANGEROUS shape: all three throwaway signals agree (operator_turns≤2,
+        // degenerate summary, no organic topics) — but a folder: tag is present,
+        // meaning a prior sort pass retained this card. Must never be throwaway.
+        let card = make_card(
+            "s5",
+            1, // ≤2 operator turns — would pass signal ①
+            vec!["folder:misc"], // only a folder tag, no organic topics — would pass signal ②
+            "1 turns over 0 min on no clear topic", // degenerate — would pass signal ③
+        );
+        assert!(!is_throwaway(&card), "folder-tagged card must never be throwaway");
     }
 
     #[test]
@@ -704,6 +729,48 @@ mod tests {
         let provider = MockProvider::new("[]");
         let folders = group_titles(&[], &provider).await.unwrap();
         assert!(folders.is_empty());
+    }
+
+    // ── duplicate session_id across folders ───────────────────────────────────
+
+    #[tokio::test]
+    async fn group_titles_duplicate_session_id_first_folder_wins() {
+        // LLM returns "dup-session" in both "folder-a" and "folder-b".
+        // The persist layer must keep folder-a (first occurrence) and drop folder-b.
+        // We drive this through run_session_sort_pass (dry_run=false) so the
+        // id_to_folder map is actually exercised.
+        let dir = tempdir().unwrap();
+        // Create a card for the duplicated session_id
+        let card = make_card("dup-session", 5, vec!["rust"], "5 turns over 3 min on rust");
+        save_card(dir.path(), &card).unwrap();
+
+        let json = r#"[
+            {"folder":"folder-a","session_ids":["dup-session"]},
+            {"folder":"folder-b","session_ids":["dup-session"]}
+        ]"#;
+        let provider = MockProvider::new(json);
+        let report = run_session_sort_pass(dir.path(), &provider, false)
+            .await
+            .unwrap();
+
+        // Report is consistent: one folder assignment triggered (folder-a wins)
+        assert_eq!(report.cards_grouped, 1, "one surviving card");
+        assert_eq!(report.save_errors, 0);
+
+        // Reload card from disk and verify the folder tag is folder-a, not folder-b
+        let saved = crate::memory::hindsight::list_cards(dir.path());
+        assert_eq!(saved.len(), 1);
+        let folder_tag = saved[0]
+            .top_topics
+            .iter()
+            .find(|t| t.starts_with("folder:"))
+            .map(String::as_str);
+        assert_eq!(
+            folder_tag,
+            Some("folder:folder-a"),
+            "first folder assignment must win; got {:?}",
+            folder_tag
+        );
     }
 
     // ── folder tag persistence ─────────────────────────────────────────────

@@ -394,28 +394,47 @@ pub async fn run_one_pass(
 /// an un-forgeable dream is logged + skipped, never fails the dreaming
 /// pass. Dedup is handled by `stage_and_enqueue` (same dream → same
 /// proposal id → enqueued at most once).
+///
+/// Uses `ProactiveQueue::modify` (locked load→mutate→save) so this site
+/// cannot race the delivery tick's reconcile and accidentally resurrect
+/// delivered items via a blind bare-load/save cycle — the same pattern
+/// required by the G02-QUEUE-01 sweep.
 fn forge_and_stage_dreams(home: &Path, dreams: &[crate::daemon::dreaming::Dream]) {
     use crate::proactive::ProactiveQueue;
     use crate::proactive::action_staging::stage_and_enqueue;
     let queue_path = home.join("proactive_queue.json");
-    let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
-    let mut staged = 0usize;
-    for dream in dreams {
-        if let Some(proposal) = crate::daemon::skill_forge::build_skill_proposal_from_dream(dream) {
-            match stage_and_enqueue(home, proposal, &mut queue) {
+
+    // Build proposals outside the lock (pure CPU, no I/O) so the lock
+    // window stays tight.
+    let proposals: Vec<_> = dreams
+        .iter()
+        .filter_map(crate::daemon::skill_forge::build_skill_proposal_from_dream)
+        .collect();
+
+    if proposals.is_empty() {
+        return;
+    }
+
+    let modify_result = ProactiveQueue::modify(&queue_path, |queue| {
+        let mut staged = 0usize;
+        for proposal in proposals {
+            match stage_and_enqueue(home, proposal, queue) {
                 Ok((_, true)) => staged += 1,
                 Ok((_, false)) => {} // already queued (dedup)
                 Err(e) => warn!(error = %e, "skill-forge: stage failed"),
             }
         }
-    }
-    if staged > 0 {
-        match queue.save_to(&queue_path) {
-            Ok(()) => {
-                tracing::info!(staged, "skill-forge: staged candidate skill(s) for review")
-            }
-            Err(e) => warn!(error = %e, "skill-forge: queue save failed"),
+        // Persist only when at least one new proposal was staged.
+        let dirty = staged > 0;
+        (dirty, staged)
+    });
+
+    match modify_result {
+        Ok(staged) if staged > 0 => {
+            tracing::info!(staged, "skill-forge: staged candidate skill(s) for review");
         }
+        Ok(_) => {} // nothing new staged (all dedup)
+        Err(e) => warn!(error = %e, "skill-forge: queue load/save failed"),
     }
 }
 

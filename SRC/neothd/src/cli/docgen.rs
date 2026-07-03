@@ -102,13 +102,30 @@ fn render_arg(arg: &clap::Arg) -> String {
         .or_else(|| arg.get_long_help().map(|h| h.to_string()))
         .map(|h| h.lines().next().unwrap_or("").trim().to_string())
         .unwrap_or_default();
-    let value = arg.get_value_names().map(|names| {
-        names
-            .iter()
-            .map(|n| format!("<{n}>"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    });
+    // Bool presence flags (SetTrue/SetFalse) and counters take NO value —
+    // rendering `--critique <CRITIQUE>` misled operators into passing
+    // `--critique true`, which clap rejects (error-hunt 2026-07-03).
+    let takes_value = !matches!(
+        arg.get_action(),
+        clap::ArgAction::SetTrue
+            | clap::ArgAction::SetFalse
+            | clap::ArgAction::Count
+            | clap::ArgAction::Help
+            | clap::ArgAction::HelpShort
+            | clap::ArgAction::HelpLong
+            | clap::ArgAction::Version
+    );
+    let value = if takes_value {
+        arg.get_value_names().map(|names| {
+            names
+                .iter()
+                .map(|n| format!("<{n}>"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+    } else {
+        None
+    };
 
     let form = if arg.is_positional() {
         value

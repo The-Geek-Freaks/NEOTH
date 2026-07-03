@@ -18,8 +18,18 @@ tags:
   - loop
 
 trigger_keywords:
-  - "triage"
-  - "triagiere"
+  # NOTE: bare "triage"/"triagiere" are NOT listed here — they collide with the
+  # `triage` skill (same weight, tie-break by id means loop_triage always loses).
+  # Multi-word phrases are used instead: they weigh more in the router AND are
+  # unambiguous. Confirmed non-overlapping with triage/skill.yaml keywords.
+  - "triage this list"
+  - "triage these findings"
+  - "triage these items"
+  - "triagiere diese liste"
+  - "triagiere diese findings"
+  - "multi-pass triage"
+  - "breadth-first triage"
+  - "mehrfach-triage"
   - "sort these"
   - "sortiere diese"
   - "prioritize these"

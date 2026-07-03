@@ -2070,7 +2070,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             };
             let autoroute_decision =
                 mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
-            let use_loop = !council_enable && autoroute_decision.is_on();
+            // GOLD-LOOP-06 — a matched loop-skill engages the loop path even
+            // when MCP autoroute is off (iteration without tool dispatch is
+            // legitimate: pure refine rounds). Council still wins over both.
+            let use_loop =
+                !council_enable && (autoroute_decision.is_on() || skill_loop_trigger);
             let mut completion = if council_enable {
                 info!(
                     channel = channel_str,

@@ -132,6 +132,19 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         neoth_home: FreedomConfig::default_neoth_home(),
     };
 
+    // Single-writer guard: a running daemon owns the WAL segment — a second
+    // appender from this process could interleave frame bytes (open_segment
+    // is create+append, no exclusivity lock). This NEW command refuses
+    // loudly instead of inheriting the dual-writer exposure.
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    if let Ok(Some(pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        anyhow::bail!(
+            "neoth serve (pid {pid}) is running and owns the WAL segment — run \
+             loops through the daemon (a `loop: true` skill via a channel, or \
+             `neoth chat --loop`), or stop the daemon first"
+        );
+    }
+
     // Same plumbing trio as the chat path: fallback-chain provider, the
     // operator's MCP server set, a WAL writer on the default segment.
     let provider = crate::providers::fallback_chain_from_config(&config, None)

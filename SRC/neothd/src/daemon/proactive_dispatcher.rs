@@ -816,6 +816,16 @@ pub async fn run_proactive_delivery_tick(
         .chain(records.iter().map(|(item, _)| item.dedup_key.clone()))
         .collect();
     let budget_used = records.len();
+    // Accepted edge-case: if this save fails (e.g. disk full or I/O error),
+    // the claim files written above are NOT deleted (we never reach the
+    // `delete_inflight_claim` loop below). On the next tick,
+    // `evict_inflight_claimed` will find those surviving claim files and
+    // record them as `crash_recovered` — items will NOT be resent, but the
+    // daily budget will undercount for this tick because `commit_drain`
+    // never ran (eviction does not charge budget). This is accepted: a
+    // failing queue-save means the disk is already in serious trouble and
+    // the error propagates loudly to the caller; operator intervention is
+    // required regardless of the budget counter.
     ProactiveQueue::modify(&queue_path, |fresh| {
         fresh.commit_drain(&removed_keys, budget_used, now_unix);
         fresh.prune_expired(now_unix);

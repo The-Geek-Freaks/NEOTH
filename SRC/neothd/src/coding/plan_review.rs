@@ -127,12 +127,20 @@ fn parse_verdict(reply: &str) -> (&'static str, String) {
         None => reply,
     };
     let lower = scan.to_lowercase();
-    // REVISE wins whenever it appears: a genuine APPROVED reply never
-    // contains "revise", but a "this is NOT approved, REVISE: …" reply
-    // does — so a plain `contains("approved")` would mis-read a *negated*
-    // approval as APPROVED. The prompt requires the verdict token FIRST
-    // with nothing before it, so a real approval LEADS with "approved".
-    let revises = lower.contains("revise");
+    // REVISE wins whenever it appears as a standalone word: a genuine
+    // APPROVED reply never contains "revise" as a word, but a "this is
+    // NOT approved, REVISE: …" reply does — so `contains("approved")`
+    // would mis-read a *negated* approval as APPROVED. The prompt
+    // requires the verdict token FIRST with nothing before it, so a real
+    // approval LEADS with "approved".
+    //
+    // Word-boundary check: split on any non-alphanumeric character and
+    // look for the exact token "revise". This prevents "revised" or
+    // "revisions" inside a genuine APPROVED reply (e.g. "APPROVED — the
+    // revised flow is solid") from triggering a false REVISE verdict.
+    let revises = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w == "revise");
     let leads_approved = lower.trim_start().starts_with("approved");
     if leads_approved && !revises {
         ("APPROVED", reply.trim().to_string())
@@ -351,5 +359,35 @@ mod tests {
         let (v4, c4) = parse_verdict("REVISE: race in the writer");
         assert_eq!(v4, "REVISE");
         assert!(c4.contains("race"));
+    }
+
+    /// "APPROVED — the revised flow is solid": "revised" is NOT the word
+    /// "revise" → must parse as APPROVED, not REVISE.
+    #[test]
+    fn parse_verdict_approved_with_revised_in_text_is_approved() {
+        let (v, _) = parse_verdict("APPROVED — the revised flow is solid");
+        assert_eq!(
+            v, "APPROVED",
+            "'revised' inside an APPROVED sentence must not trigger REVISE verdict"
+        );
+    }
+
+    /// "REVISE: split the task" — standalone "revise" as the verdict token.
+    #[test]
+    fn parse_verdict_revise_colon_is_revise() {
+        let (v, c) = parse_verdict("REVISE: split the task");
+        assert_eq!(v, "REVISE");
+        assert!(c.contains("split the task"), "critique body must be captured");
+    }
+
+    /// "we should revise this" — "revise" appears as a standalone word
+    /// (not "revised"/"revisions") → REVISE, matching the word-boundary rule.
+    #[test]
+    fn parse_verdict_standalone_revise_word_is_revise() {
+        let (v, _) = parse_verdict("we should revise this");
+        assert_eq!(
+            v, "REVISE",
+            "standalone 'revise' anywhere in the text must yield REVISE"
+        );
     }
 }

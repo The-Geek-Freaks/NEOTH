@@ -130,60 +130,83 @@ fn verify_staged_report(
     }
 
     let queue_path = home.join("proactive_queue.json");
-    // Read-only single load — outside the modify lock (lock already released).
-    let queue = match ProactiveQueue::load_from(&queue_path) {
-        Ok(q) => q,
+
+    // Reload INSIDE the lock so a concurrent drain tick that ran between the
+    // staging modify and this verify cannot produce a false "absent from
+    // queue" error. The closure captures `staged_ids` and `home` by reference.
+    //
+    // Accepted edge: `modify` re-acquires the file lock and re-reads the
+    // queue, which is a second disk read after staging. The closure returns
+    // `(false, ())` (do NOT persist) — verification is read-only.
+    let verify_result = ProactiveQueue::modify(&queue_path, |queue| {
+        let mut missing = 0usize;
+
+        for id in staged_ids {
+            // 1. Artifact file must exist and be non-empty. A missing artifact
+            //    means staging failed silently — that is always an error.
+            let artifact = proposal_path(home, id);
+            let artifact_ok = match std::fs::metadata(&artifact) {
+                Ok(m) if m.len() > 0 => true,
+                Ok(_) => {
+                    tracing::error!(
+                        proposal_id = %id,
+                        path = %artifact.display(),
+                        "capability_evolver: staged proposal artifact is empty — claim is a lie"
+                    );
+                    false
+                }
+                Err(e) => {
+                    tracing::error!(
+                        proposal_id = %id,
+                        path = %artifact.display(),
+                        error = %e,
+                        "capability_evolver: staged proposal artifact missing — claim is a lie"
+                    );
+                    false
+                }
+            };
+
+            // 2. Queue presence check — but only when the artifact exists.
+            //    If the dedup_key is absent from the queue YET the artifact
+            //    file is present on disk, a concurrent delivery-tick drained
+            //    the item between staging and this verify. That is NOT a lie;
+            //    the staging succeeded. Log at debug so it is operator-visible
+            //    without alarming the operator.
+            let expected_key = format!("ob_03_proposal:{id}");
+            let key_in_queue = queue.peek().iter().any(|item| item.dedup_key == expected_key);
+
+            if artifact_ok && !key_in_queue {
+                tracing::debug!(
+                    proposal_id = %id,
+                    dedup_key = %expected_key,
+                    "capability_evolver: staged proposal already drained by a concurrent tick \
+                     — artifact exists, not a lie"
+                );
+                // Not counted as missing: artifact proves the staging was real.
+                continue;
+            }
+
+            // Both artifact and queue entry absent: a true silent staging failure.
+            if !artifact_ok {
+                missing += 1;
+            }
+        }
+
+        // Never persist — this closure is read-only verification.
+        (false, missing)
+    });
+
+    match verify_result {
+        Ok(missing) => {
+            result.claims_missing += missing;
+        }
         Err(e) => {
             tracing::error!(
                 error = %e,
                 claims = staged_ids.len(),
-                "capability_evolver: verifier could not load queue — all claims unverifiable"
+                "capability_evolver: verifier could not reload queue — all claims unverifiable"
             );
-            result.verified_ok = false;
             result.claims_missing += staged_ids.len();
-            return;
-        }
-    };
-
-    for id in staged_ids {
-        let mut ok = true;
-
-        // 1. Artifact file must exist and be non-empty.
-        let artifact = proposal_path(home, id);
-        match std::fs::metadata(&artifact) {
-            Ok(m) if m.len() > 0 => {}
-            Ok(_) => {
-                tracing::error!(
-                    proposal_id = %id,
-                    path = %artifact.display(),
-                    "capability_evolver: staged proposal artifact is empty — claim is a lie"
-                );
-                ok = false;
-            }
-            Err(e) => {
-                tracing::error!(
-                    proposal_id = %id,
-                    path = %artifact.display(),
-                    error = %e,
-                    "capability_evolver: staged proposal artifact missing — claim is a lie"
-                );
-                ok = false;
-            }
-        }
-
-        // 2. Queue must contain the matching dedup_key.
-        let expected_key = format!("ob_03_proposal:{id}");
-        if !queue.peek().iter().any(|item| item.dedup_key == expected_key) {
-            tracing::error!(
-                proposal_id = %id,
-                dedup_key = %expected_key,
-                "capability_evolver: staged proposal absent from persisted queue — claim is a lie"
-            );
-            ok = false;
-        }
-
-        if !ok {
-            result.claims_missing += 1;
         }
     }
 
@@ -691,6 +714,69 @@ mod tests {
         assert_eq!(
             report.claims_missing, 1,
             "claims_missing must count the deleted artifact"
+        );
+    }
+
+    // ── verify_staged_report: drained-not-lied ────────────────────────────
+    //
+    // When the artifact file EXISTS on disk but the dedup_key is ABSENT from
+    // the queue (a concurrent drain tick delivered the item between stage and
+    // verify), the verifier must treat this as an accepted race — not an
+    // error. `verified_ok` must remain `true`; `claims_missing` must stay 0.
+
+    #[tokio::test]
+    async fn verify_staged_report_drained_not_lied_stays_verified_ok() {
+        use crate::proactive::action_staging::{
+            ProposalKind, ProposedAction, ProposalStatus, stage_and_enqueue,
+        };
+        use crate::proactive::ProactiveQueue;
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let queue_path = home.join("proactive_queue.json");
+
+        // Stage a real proposal so the artifact file is written.
+        let proposal = ProposedAction {
+            id: "2000000-skill-cafef00d".to_string(),
+            kind: ProposalKind::Skill,
+            title: "Drained-not-lied test proposal".to_string(),
+            rationale: "used in drained-not-lied verifier unit test".to_string(),
+            draft_yaml: "name: drain-test-skill\n".to_string(),
+            generated_ts_unix: 2_000_000,
+            status: ProposalStatus::Pending,
+            operator_note: String::new(),
+        };
+        let proposal_id = proposal.id.clone();
+
+        ProactiveQueue::modify(&queue_path, |queue| {
+            let (_, enqueued) = stage_and_enqueue(home, proposal, queue).unwrap();
+            assert!(enqueued, "must enqueue on first call");
+            (true, ())
+        })
+        .unwrap();
+
+        // Simulate a concurrent drain tick: remove the queue entry but leave
+        // the artifact file intact (the delivery tick would drain the item
+        // from the queue and persist it via the sidecar, but never deletes
+        // the artifact).
+        ProactiveQueue::modify(&queue_path, |queue| {
+            let key = format!("ob_03_proposal:{proposal_id}");
+            queue.remove_by_key(&key);
+            (true, ())
+        })
+        .unwrap();
+
+        // Invoke verify_staged_report: artifact present, key absent → NOT a lie.
+        let mut report = EvolverReport::default();
+        verify_staged_report(home, std::slice::from_ref(&proposal_id), &mut report);
+
+        assert!(
+            report.verified_ok,
+            "verified_ok must be true when artifact exists but key was concurrently drained"
+        );
+        assert_eq!(
+            report.claims_missing, 0,
+            "claims_missing must be zero for drained-not-lied shape"
         );
     }
 }

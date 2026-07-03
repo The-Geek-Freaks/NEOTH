@@ -17,6 +17,7 @@ normal users, explicit enough for pros.
 | Configure providers | [providers.md](providers.md) |
 | Build workflows | [cron-vs-n8n.md](cron-vs-n8n.md), [n8n-api.md](n8n-api.md) |
 | Extend NEOTH | [plugins.md](plugins.md) |
+| Watch it watch itself | [babel-index.md](babel-index.md) |
 | Compare alternatives | [compare/README.md](compare/README.md) |
 | Read release notes | [release-notes-v1.0.md](release-notes-v1.0.md) |
 

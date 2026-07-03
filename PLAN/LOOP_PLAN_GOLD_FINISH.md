@@ -311,11 +311,18 @@ current_batch: >
   stdlib skills + channel-path routing), LOOP-07 (history reader).
   LOOP-03 = GUI wave (B7). B4: ODY-26 [x] (session_sort_cron + recall
   --session-folders), PRO-08 [x] (report-verifier), SPEAKR-01 dup [x].
-  Open B4 rest: ARCH-07b (~130 hot-lane time sites, line-based migrator +
-  DRY-RUN), HR-06 (decision: add tiny SmartCrusher 10-50-row metering counter
-  + conditional-skip verdict — verify report says metering infra absent).
-  60 open boxes remain. New in-flight tracker items: G02-COUNCIL-01 (factual_check
-  council wire, M), G02-CLUSTER-01 (foreign-event ingest, M-L).
+  B4 COMPLETE: ARCH-07b [x] (8b666efb — ~100 sites migrated, 5 documented
+  holdouts, FULL suite 9671/9671 green) + HR-06 [x] (1e2a79cc — skip-with-
+  metering: smart_crusher_hr06_bucket counter SHIPPED, reformat stays unbuilt,
+  reopen condition recorded). ERROR-HUNT WAVE #1 over B3-B5 diff ran (3 lenses,
+  11 findings) — fixes in flight/landed: loop_triage keyword collision,
+  is_throwaway folder-tag guard, parse_verdict word-boundary, dreaming_task
+  12th producer site, verify_staged race-softening, docgen bool-flag
+  placeholders, LOOP-06 outer-branch engage (autoroute-off), loop_cmd
+  daemon-running WAL guard. 58 open boxes. New in-flight tracker items:
+  G02-COUNCIL-01 (factual_check council wire, M), G02-CLUSTER-01
+  (foreign-event ingest, M-L). Accepted/filed: QUEUE_FILE_LOCK std-mutex on
+  async threads = pre-existing blocking-fs pattern (tracker note below).
 hazard: >
   ⚠ BOX BSODs (IRQL_NOT_LESS_OR_EQUAL) under parallel test load — 2 crashes
   2026-07-03. MANDATORY: tests via `_feat.bat test -p neothd --lib <filter> --
