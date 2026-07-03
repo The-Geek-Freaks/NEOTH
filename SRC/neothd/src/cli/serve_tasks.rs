@@ -4530,7 +4530,7 @@ pub(crate) fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWr
     // mismatch / unpinned-when-required) are refused before reaching the
     // engine. Collected separately so the operator sees a SECURITY skip,
     // not a benign Pending one.
-    let mut skipped_integrity: Vec<String> = Vec::new();
+    let mut skipped_integrity: Vec<(String, String)> = Vec::new();
     let integrity_policy = crate::wasm_plugin::discovery::IntegrityPolicy {
         pinned: &pinned_hashes,
         require_all_pinned,
@@ -4547,7 +4547,7 @@ pub(crate) fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWr
                 match crate::wasm_plugin::discovery::verify_integrity(p, &integrity_policy) {
                     Ok(()) => true,
                     Err(e) => {
-                        skipped_integrity.push(format!("{}: {e}", p.manifest.id));
+                        skipped_integrity.push((p.manifest.id.clone(), e.to_string()));
                         false
                     }
                 }
@@ -4576,10 +4576,33 @@ pub(crate) fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWr
     });
     if !skipped_integrity.is_empty() {
         warn!(
-            integrity_rejected = ?skipped_integrity,
+            integrity_rejected = ?skipped_integrity
+                .iter()
+                .map(|(id, e)| format!("{id}: {e}"))
+                .collect::<Vec<_>>(),
             "plugins REFUSED by SC-03 integrity gate (revoked / hash mismatch / \
              unpinned / signature invalid or missing) — NOT instantiated"
         );
+        // GOLD-ADAPT-G-02 — forensic anchor: one `0xC3 PLUGIN_REJECTED`
+        // frame per refusal, mirroring the 0xC2 PLUGIN_LOADED anchor, so
+        // WAL replay shows WHICH plugin the SC-03 gate refused and why.
+        // Best-effort sync append — a WAL failure must not block bootstrap.
+        for (id, reason) in &skipped_integrity {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "plugin": id,
+                "reason": reason,
+                "gate": "sc03_integrity",
+            }))
+            .unwrap_or_else(|_| b"{}".to_vec());
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_PLUGIN_REJECTED,
+                &payload,
+            )
+            .build();
+            if let Err(e) = wal_writer.try_append_sync(header, payload) {
+                warn!(error = %e, plugin = %id, "0xC3 plugin-rejected WAL frame failed (best-effort)");
+            }
+        }
     }
     // SC-03 — surface the inactive-gate state so an operator running
     // Active plugins doesn't assume tamper-protection they haven't

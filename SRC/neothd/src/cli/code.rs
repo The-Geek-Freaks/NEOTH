@@ -28,7 +28,7 @@ use rusqlite::Connection;
 use crate::cli::OutputFormat;
 use crate::coding::cerebellum_provider::CerebellumDecomposer;
 use crate::coding::classifier::{Complexity, classify_heuristic};
-use crate::coding::decomposer::{DecompositionResult, decompose};
+use crate::coding::decomposer::{DecomposerLlm, DecompositionResult, decompose};
 use crate::coding::store;
 use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTaskId, SessionStatus};
 use crate::config::FreedomConfig;
@@ -240,7 +240,7 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     println!("decomposed into {} task(s):", result.task_ids.len());
 
     if !args.no_assign {
-        auto_classify_and_assign(&conn, &result)?;
+        auto_classify_and_assign(&conn, &result, Some(&llm as &dyn DecomposerLlm)).await?;
     }
 
     print_decomposition_summary(&conn, &result)?;
@@ -589,37 +589,52 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
 }
 
 /// Classify every inserted task heuristically + persist the hemisphere
-/// assignment. Tasks the heuristic marks `Ambiguous` stay
-/// `Unassigned` — Pick #9 will add the LLM second-opinion step.
-fn auto_classify_and_assign(conn: &Connection, result: &DecompositionResult) -> Result<()> {
+/// assignment. Tasks the heuristic marks `Ambiguous` escalate to the
+/// Pick #9 LLM second opinion when a Cerebellum handle is bound; without
+/// one (tests, degraded boot) they stay `Unassigned`.
+async fn auto_classify_and_assign(
+    conn: &Connection,
+    result: &DecompositionResult,
+    llm: Option<&dyn DecomposerLlm>,
+) -> Result<()> {
     let tasks = collect_tasks(conn, &result.task_ids)?;
     let mut assigned = 0usize;
+    let mut llm_assigned = 0usize;
     let mut ambiguous = 0usize;
     for task in &tasks {
-        let complexity = classify_heuristic(task);
-        match complexity {
-            Complexity::Fast | Complexity::Deep => {
-                let hemi = complexity.to_hemisphere();
-                store::patch_task_hemisphere(conn, task.task_id, hemi, None, None).with_context(
-                    || {
-                        format!(
-                            "patch hemisphere on task #{} → {}",
-                            task.task_id.raw(),
-                            hemi.as_str(),
-                        )
-                    },
-                )?;
-                assigned += 1;
-            }
-            Complexity::Ambiguous => {
-                ambiguous += 1;
-            }
-        }
+        let complexity = match classify_heuristic(task) {
+            c @ (Complexity::Fast | Complexity::Deep) => c,
+            Complexity::Ambiguous => match llm {
+                // Pick #9 — second opinion returns Fast or Deep, never
+                // Ambiguous (parse + LLM failure both default to Deep).
+                Some(llm) => {
+                    let verdict =
+                        crate::coding::second_opinion::second_opinion_classify(llm, task).await;
+                    llm_assigned += 1;
+                    verdict
+                }
+                None => {
+                    ambiguous += 1;
+                    continue;
+                }
+            },
+        };
+        let hemi = complexity.to_hemisphere();
+        store::patch_task_hemisphere(conn, task.task_id, hemi, None, None).with_context(|| {
+            format!(
+                "patch hemisphere on task #{} → {}",
+                task.task_id.raw(),
+                hemi.as_str(),
+            )
+        })?;
+        assigned += 1;
     }
     if assigned + ambiguous > 0 {
         println!(
-            "classified: {assigned} assigned (heuristic), {ambiguous} ambiguous \
-             (deferred to LLM second-opinion — Pick #9)"
+            "classified: {} assigned ({} heuristic, {llm_assigned} LLM second-opinion), \
+             {ambiguous} ambiguous (no LLM bound)",
+            assigned,
+            assigned - llm_assigned,
         );
     }
     Ok(())
@@ -798,8 +813,8 @@ mod tests {
         assert!(tasks.is_empty());
     }
 
-    #[test]
-    fn auto_classify_assigns_fast_signal_to_left() {
+    #[tokio::test]
+    async fn auto_classify_assigns_fast_signal_to_left() {
         let (_dir, conn) = fresh_db();
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let t = store::insert_task(&conn, s, 10, "Add toggle UI in settings", None, "ui", None)
@@ -810,15 +825,15 @@ mod tests {
             session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
             input_truncated: false,
         };
-        auto_classify_and_assign(&conn, &result).expect("classify ok");
+        auto_classify_and_assign(&conn, &result, None).await.expect("classify ok");
 
         let tasks = store::list_tasks_for_session(&conn, s).unwrap();
         let fetched = tasks.into_iter().find(|x| x.task_id == t).unwrap();
         assert_eq!(fetched.hemisphere, Hemisphere::Left);
     }
 
-    #[test]
-    fn auto_classify_assigns_deep_signal_to_right() {
+    #[tokio::test]
+    async fn auto_classify_assigns_deep_signal_to_right() {
         let (_dir, conn) = fresh_db();
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let t = store::insert_task(
@@ -837,15 +852,15 @@ mod tests {
             session_complexity: crate::coding::decomposer::SessionComplexity::Deep,
             input_truncated: false,
         };
-        auto_classify_and_assign(&conn, &result).expect("classify ok");
+        auto_classify_and_assign(&conn, &result, None).await.expect("classify ok");
 
         let tasks = store::list_tasks_for_session(&conn, s).unwrap();
         let fetched = tasks.into_iter().find(|x| x.task_id == t).unwrap();
         assert_eq!(fetched.hemisphere, Hemisphere::Right);
     }
 
-    #[test]
-    fn auto_classify_leaves_ambiguous_unassigned() {
+    #[tokio::test]
+    async fn auto_classify_leaves_ambiguous_unassigned() {
         let (_dir, conn) = fresh_db();
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         // "Implement the foo widget" — neither FAST nor DEEP signal
@@ -866,14 +881,60 @@ mod tests {
             session_complexity: crate::coding::decomposer::SessionComplexity::Mixed,
             input_truncated: false,
         };
-        auto_classify_and_assign(&conn, &result).expect("classify ok");
+        auto_classify_and_assign(&conn, &result, None).await.expect("classify ok");
 
         let tasks = store::list_tasks_for_session(&conn, s).unwrap();
         let fetched = tasks.into_iter().find(|x| x.task_id == t).unwrap();
         assert_eq!(
             fetched.hemisphere,
             Hemisphere::Unassigned,
-            "ambiguous tasks must stay unassigned — Pick #9 escalates to LLM"
+            "without an LLM handle ambiguous tasks must stay unassigned"
+        );
+    }
+
+    // ── Pick #9 — LLM second opinion is wired into the classify pass ────────
+
+    struct FixedReplyLlm(&'static str);
+
+    #[async_trait::async_trait]
+    impl DecomposerLlm for FixedReplyLlm {
+        async fn complete(&self, _prompt: &str) -> Result<String> {
+            Ok(self.0.to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_classify_escalates_ambiguous_to_llm_second_opinion() {
+        let (_dir, conn) = fresh_db();
+        let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        // Same ambiguous title as above — heuristic yields no signal.
+        let t = store::insert_task(
+            &conn,
+            s,
+            10,
+            "Implement the foo widget",
+            None,
+            "refactor",
+            None,
+        )
+        .unwrap();
+        let result = DecompositionResult {
+            task_ids: vec![t],
+            clarifying_question: None,
+            session_complexity: crate::coding::decomposer::SessionComplexity::Mixed,
+            input_truncated: false,
+        };
+        let llm = FixedReplyLlm("FAST — single widget scaffold");
+        auto_classify_and_assign(&conn, &result, Some(&llm))
+            .await
+            .expect("classify ok");
+
+        let tasks = store::list_tasks_for_session(&conn, s).unwrap();
+        let fetched = tasks.into_iter().find(|x| x.task_id == t).unwrap();
+        assert_eq!(
+            fetched.hemisphere,
+            Hemisphere::Left,
+            "LLM FAST verdict must assign the ambiguous task to Left"
         );
     }
 }

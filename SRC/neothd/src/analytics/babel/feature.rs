@@ -189,6 +189,10 @@ impl BabelFeatureAccumulator {
         Some(f)
     }
 
+    /// C_d_v0 — bipartite coupling density: |edges| / (|agents| × |tools|),
+    /// range [0,1]. Edges come straight from agent-tagged `0xC0` tool events
+    /// (see `cron::ingest`) — no temporal co-occurrence correlation needed.
+    /// Single-agent degenerate case: fraction of the MCP tool surface used.
     fn coupling_density(&self) -> f64 {
         let n_agents = self.distinct_agents.len();
         let n_tools = self.distinct_tools.len();

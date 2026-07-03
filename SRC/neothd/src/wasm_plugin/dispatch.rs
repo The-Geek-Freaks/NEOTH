@@ -239,11 +239,38 @@ pub fn invoke_plugin_with_state(
             stage: InvocationStage::Run,
             error: None,
         },
-        Err(e) => InvocationOutcome {
-            plugin_id,
-            stage: InvocationStage::Run,
-            error: Some(redact_text(&format!("neoth_run trapped: {e}"))),
-        },
+        Err(e) => {
+            // GOLD-ADAPT-G-02 — a fuel-exhausted plugin is a resource-abuse
+            // signal, not a generic trap: anchor it as `0xC5
+            // PLUGIN_FUEL_EXHAUSTED` so WAL replay shows which plugin burned
+            // its budget. Best-effort like every plugin frame.
+            if matches!(
+                e.downcast_ref::<wasmtime::Trap>(),
+                Some(wasmtime::Trap::OutOfFuel)
+            ) {
+                if let Some(w) = &store.data().wal_writer {
+                    let payload = serde_json::to_vec(&serde_json::json!({
+                        "plugin": plugin_id,
+                        "fuel_budget": store.data().fuel_budget,
+                    }))
+                    .unwrap_or_else(|_| b"{}".to_vec());
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(we) = w.try_append_sync(header, payload) {
+                        tracing::warn!(error = %we, plugin = %plugin_id,
+                            "0xC5 fuel-exhausted WAL frame failed (best-effort)");
+                    }
+                }
+            }
+            InvocationOutcome {
+                plugin_id,
+                stage: InvocationStage::Run,
+                error: Some(redact_text(&format!("neoth_run trapped: {e}"))),
+            }
+        }
     }
 }
 
@@ -883,6 +910,51 @@ mod tests {
             used >= 1,
             "Write-granted emit via the injected writer MUST leave a 0xC4 frame; found {used}"
         );
+    }
+
+    /// GOLD-ADAPT-G-02 — minimal spin plugin: `neoth_run` loops forever, so
+    /// the wasmtime fuel budget must trap it (`Trap::OutOfFuel`).
+    /// `(module (func (export "neoth_run") (result i32) (loop (br 0)) unreachable))`
+    fn spin_wasm() -> Vec<u8> {
+        vec![
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+            0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f, // type section: () -> i32
+            0x03, 0x02, 0x01, 0x00, // function section: func 0 uses type 0
+            0x07, 0x0d, 0x01, 0x09, b'n', b'e', b'o', b't', b'h', b'_', b'r', b'u', b'n',
+            0x00, 0x00, // export "neoth_run" = func 0
+            0x0a, 0x0a, 0x01, 0x08, 0x00, // code section: 1 body, 8 bytes, 0 locals
+            0x03, 0x40, 0x0c, 0x00, 0x0b, // loop(void) { br 0 } end
+            0x00, 0x0b, // unreachable; end func
+        ]
+    }
+
+    #[tokio::test]
+    async fn fuel_exhausted_run_leaves_0xc5_frame() {
+        use crate::wal::events::EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED;
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = spawn(seg.clone()).expect("spawn writer");
+
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine
+            .compile_from_bytes(&spin_wasm())
+            .expect("compile spin plugin");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker");
+        let state = PluginStoreState::new("spin").with_wal_writer(writer);
+        let outcome = invoke_plugin_with_state(&engine, &module, &linker, state);
+        assert_eq!(outcome.stage, InvocationStage::Run);
+        assert!(
+            outcome.error.as_deref().unwrap_or("").contains("trapped"),
+            "spin plugin must trap on fuel exhaustion, got: {:?}",
+            outcome.error
+        );
+
+        join.await.expect("writer join");
+        let frames = count_event_frames(&seg, EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED);
+        assert_eq!(frames, 1, "exactly one 0xC5 frame for the fuel-exhausted run");
     }
 
     /// UX-07b regression: the refactored `invoke_plugin` wrapper still runs a

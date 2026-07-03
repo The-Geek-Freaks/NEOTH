@@ -1062,6 +1062,54 @@ fn cluster_task_gate(is_paired: bool, decision: &Decision, lease_active: bool) -
     }
 }
 
+/// GOLD-PROG-06 — queue the operator-facing proactive notification for an
+/// accepted cluster task. The daemon drain loop (`daemon/proactive_dispatcher`)
+/// gates delivery per autonomy (`Action::ProactiveChannelSend`) and routes to
+/// the operator's default channel — this producer only records the fact.
+/// Queue I/O is std::fs → `spawn_blocking` so the peer read loop never stalls
+/// on disk. Best-effort: a queue failure must not fail the accept (the task is
+/// already dispatched to the executor).
+async fn notify_task_accepted(neoth_home: &std::path::Path, task_id: &str, peer_pk_hex: &str) {
+    let home = neoth_home.to_path_buf();
+    let task_id = task_id.to_string();
+    let peer_short: String = peer_pk_hex.chars().take(16).collect();
+    let join = tokio::task::spawn_blocking(move || {
+        let queue_path = home.join("proactive_queue.json");
+        let mut queue = match crate::proactive::ProactiveQueue::load_from(&queue_path) {
+            Ok(q) => q,
+            Err(e) => {
+                warn!(error = %e, task_id = %task_id,
+                    "cluster: proactive queue unreadable — accept notice dropped");
+                return;
+            }
+        };
+        let inserted = queue.enqueue(crate::proactive::ProactiveItem {
+            priority: 50,
+            dedup_key: format!("cluster:accept:{task_id}"),
+            channel: String::new(), // operator's default channel
+            source: "cluster_task_accept".to_string(),
+            body: format!(
+                "Cluster: task {task_id} accepted from peer {peer_short}\u{2026} — running locally."
+            ),
+            scheduled_for_unix: 0,
+            is_failure: false,
+            // A day-old "accepted" notice is stale noise — expire it.
+            expires_unix: now_unix_secs() as i64 + 86_400,
+        });
+        if !inserted {
+            return; // duplicate accept (re-delivered frame) — prior item wins
+        }
+        match queue.save_to(&queue_path) {
+            Ok(()) => debug!(task_id = %task_id, "cluster: proactive accept notice queued"),
+            Err(e) => warn!(error = %e, task_id = %task_id,
+                "cluster: proactive accept notice not persisted"),
+        }
+    });
+    if let Err(e) = join.await {
+        warn!(error = %e, "cluster: proactive accept-notice task panicked");
+    }
+}
+
 /// Handle an inbound `TaskDelegate` frame: validate → run the 3-checkpoint gate
 /// → on accept dispatch to the executor (WAL 0xEB) → on reject reply a
 /// `TaskResult{Rejected}` (WAL 0xEC). Best-effort: never returns Err (a bad
@@ -1156,6 +1204,7 @@ async fn handle_task_delegate(
                             lease_backed,
                             autonomy,
                         );
+                        notify_task_accepted(neoth_home, &task_id, remote_pk_hex).await;
                     }
                     // Full ⇒ an inference is already running (bounded(1)) — back
                     // off. Closed ⇒ the executor task died (panic) — surface it
@@ -1923,5 +1972,40 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         let b = now_unix_ms();
         assert!(b >= a, "monotonic within process lifetime");
+    }
+
+    // ── GOLD-PROG-06 — proactive accept notice ──────────────────────────────
+
+    #[tokio::test]
+    async fn notify_task_accepted_enqueues_once_and_dedups_redelivery() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let peer = "ab".repeat(32);
+        notify_task_accepted(home.path(), "t-42", &peer).await;
+        notify_task_accepted(home.path(), "t-42", &peer).await; // re-delivered frame
+
+        let q = crate::proactive::ProactiveQueue::load_from(
+            &home.path().join("proactive_queue.json"),
+        )
+        .expect("queue readable");
+        let items = q.peek();
+        assert_eq!(items.len(), 1, "duplicate accept dedups on cluster:accept:<task_id>");
+        let item = &items[0];
+        assert_eq!(item.source, "cluster_task_accept");
+        assert_eq!(item.dedup_key, "cluster:accept:t-42");
+        assert!(item.body.contains("t-42"), "body names the task: {}", item.body);
+        assert!(
+            !item.body.contains(&peer),
+            "full peer key never reaches the operator channel"
+        );
+        assert!(item.expires_unix > 0, "accept notice must expire, not linger");
+        assert!(item.channel.is_empty(), "routes to the operator default channel");
+
+        // A different task queues alongside.
+        notify_task_accepted(home.path(), "t-43", &peer).await;
+        let q2 = crate::proactive::ProactiveQueue::load_from(
+            &home.path().join("proactive_queue.json"),
+        )
+        .expect("queue readable");
+        assert_eq!(q2.peek().len(), 2);
     }
 }

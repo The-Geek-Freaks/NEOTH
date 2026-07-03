@@ -139,11 +139,11 @@ impl Phase {
 /// allocations land alongside the wasmtime PR; sketched here so the
 /// band reservation is auditable today.
 ///
-/// Sketch (NOT YET EMITTED):
-///   - `0xC2 PLUGIN_LOADED`        — `.wasm` parsed + linked
-///   - `0xC3 PLUGIN_REJECTED`      — manifest invalid / sig mismatch
-///   - `0xC4 PLUGIN_HOSTCALL`      — capability API hostcall fired
-///   - `0xC5 PLUGIN_FUEL_EXHAUSTED` — wasmtime fuel budget hit
+/// All four are LIVE (emit sites in parentheses):
+///   - `0xC2 PLUGIN_LOADED`        — full-auto activation anchor (`cli/serve_tasks.rs`)
+///   - `0xC3 PLUGIN_REJECTED`      — SC-03 integrity-gate refusal (`cli/serve_tasks.rs`)
+///   - `0xC4 PLUGIN_HOSTCALL`      — capability API hostcall fired (`hostcalls.rs`)
+///   - `0xC5 PLUGIN_FUEL_EXHAUSTED` — wasmtime OutOfFuel trap (`dispatch.rs::invoke_plugin_with_state`)
 pub const RESERVED_WAL_BAND_HINT: &str =
     "0xC0..=0xCF (tool band). Concrete codes land with V10-04 implementation PR.";
 
