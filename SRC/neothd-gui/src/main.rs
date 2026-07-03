@@ -1272,7 +1272,7 @@ fn main() -> Result<()> {
         buddy(&w0, GuiActivity::AgentDeploy);
         let weak = weak_agents.clone();
         std::thread::spawn(move || {
-            let output = run_neothd_probe(&["cluster", "status"]);
+            let output = run_neothd_probe(&["agents", "list"]);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     w.set_agents_output(output.into());
