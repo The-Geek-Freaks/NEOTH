@@ -90,9 +90,13 @@ pub struct FederationBatch {
     pub contributor_id: String,
     /// Ed25519 signature over SHA-256(gzip(batch JSON)), hex-encoded.
     pub signature_hex: String,
-    /// Public key fingerprint of the signing key (first 16 hex chars of
-    /// the Ed25519 public key SHA-256 — enough for abuse tracing, not enough
-    /// to reconstruct the key or identify the operator).
+    /// The signer's full Ed25519 public key (32-byte hex). Self-signed
+    /// model: WITHOUT this the receiver could never verify the signature at
+    /// all (external-review fix 2026-07-02) — poisoning defence is outlier
+    /// rejection + rate limiting + fingerprint tracing, not key identity.
+    pub signer_pubkey_hex: String,
+    /// Public key fingerprint (first 16 hex chars of SHA-256(pubkey)) —
+    /// the abuse-tracing handle the pool stores instead of the full key.
     pub signer_fingerprint: String,
 }
 
@@ -382,12 +386,8 @@ pub fn submit_pending_batch(
     };
     use ed25519_dalek::Signer as _;
     let signature_hex = hex::encode(signing_key.sign(&digest).to_bytes());
-    let signer_fingerprint = {
-        use sha2::{Digest, Sha256};
-        let mut h = Sha256::new();
-        h.update(signing_key.verifying_key().as_bytes());
-        hex::encode(h.finalize())[..16].to_string()
-    };
+    let signer_pubkey_hex = hex::encode(signing_key.verifying_key().as_bytes());
+    let signer_fingerprint = fingerprint_of_pubkey(signing_key.verifying_key().as_bytes());
 
     let window_count = records.len();
     let batch = FederationBatch {
@@ -399,6 +399,7 @@ pub fn submit_pending_batch(
         runtime_version: env!("CARGO_PKG_VERSION").to_string(),
         contributor_id: meta.contributor_id.clone(),
         signature_hex,
+        signer_pubkey_hex,
         signer_fingerprint,
     };
 
@@ -437,9 +438,19 @@ fn batch_envelope(batch: &FederationBatch) -> serde_json::Value {
         "runtime_version": batch.runtime_version,
         "contributor_id": batch.contributor_id,
         "signature_hex": batch.signature_hex,
+        "signer_pubkey_hex": batch.signer_pubkey_hex,
         "signer_fingerprint": batch.signer_fingerprint,
         "alpn": String::from_utf8_lossy(FEDERATION_ALPN),
     })
+}
+
+/// First 16 hex chars of SHA-256(pubkey) — the abuse-tracing handle the
+/// pool stores instead of the full key.
+fn fingerprint_of_pubkey(pubkey: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(pubkey);
+    hex::encode(h.finalize())[..16].to_string()
 }
 
 fn gzip_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
@@ -866,6 +877,34 @@ mod tests {
         assert_eq!(env["window_count"], out.windows);
         assert_eq!(env["signature_hex"].as_str().map(str::len), Some(128));
         assert_eq!(env["signer_fingerprint"].as_str().map(str::len), Some(16));
+
+        // Self-signed model: the envelope alone must let the receiver
+        // authenticate the payload (external-review fix 2026-07-02).
+        let pubkey_hex = env["signer_pubkey_hex"].as_str().expect("pubkey in envelope");
+        let pubkey: [u8; 32] = hex::decode(pubkey_hex)
+            .expect("hex pubkey")
+            .try_into()
+            .expect("32-byte pubkey");
+        assert_eq!(
+            env["signer_fingerprint"].as_str().unwrap(),
+            fingerprint_of_pubkey(&pubkey),
+            "fingerprint derives from the shipped pubkey"
+        );
+        use ed25519_dalek::Verifier as _;
+        let sig: [u8; 64] = hex::decode(env["signature_hex"].as_str().unwrap())
+            .expect("hex sig")
+            .try_into()
+            .expect("64-byte sig");
+        let digest = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(&gz);
+            h.finalize()
+        };
+        ed25519_dalek::VerifyingKey::from_bytes(&pubkey)
+            .expect("valid pubkey")
+            .verify(&digest, &ed25519_dalek::Signature::from_bytes(&sig))
+            .expect("receiver-side verification: envelope pubkey authenticates payload");
 
         // Rows flipped; a second pass finds the pool at its sampling cap.
         let submitted: i64 = conn
