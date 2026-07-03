@@ -11,7 +11,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use chrono::Utc;
 use clap::Args;
 use tracing::info;
 
