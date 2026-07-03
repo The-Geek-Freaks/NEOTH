@@ -32,6 +32,7 @@ that may have moved since:
 | Coding workflow | Planning canvas, Kanban, repo memory, check loop | Canvas and agent actions |
 | Privacy proof | WAL, provider destinations, plugin hostcalls, profile evidence | Local-first control, but less memory-proof focused |
 | Plugins/skills | Skills plus WASM capability sandbox, signatures, revocation, hostcall audit | Skills/workspace approach |
+| Runtime self-diagnosis | Babel-Index: collapse prediction on NEOTH's own event stream, pre-registered failure labels, self-calibrating early warning ([details](../babel-index.md)) | None documented |
 | Private mesh | Tailscale, Hysteria, mDNS, consent-gated cluster state | Gateway/nodes path |
 | DAU path | Designed to be usable without terminal-first thinking | Stronger for power users |
 | Best user | Wants "my loyal Jarvis" that can also code and operate infrastructure | Wants local channel automation and Gateway reach |

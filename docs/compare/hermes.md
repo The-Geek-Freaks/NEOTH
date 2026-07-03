@@ -33,6 +33,7 @@ snapshot that may have moved since:
 | Coding workflow | Canvas, Kanban, repo memory, checks, review promotion | Strong CLI agent workflow and tools |
 | Privacy posture | Fail-closed profile extraction, explicit provider destinations, local audit | Security docs and command approval, operator setup dependent |
 | Skills/plugins | Skills plus WASM capability sandbox and hostcall audit | Skills and toolsets |
+| Runtime self-diagnosis | Babel-Index: collapse prediction on NEOTH's own event stream, pre-registered failure labels, self-calibrating early warning ([details](../babel-index.md)) | None documented |
 | Automation | Built-in cron plus n8n localhost API | Cron scheduling and platform delivery |
 | Messaging | Focused release channels plus private mesh path | Messaging gateway across platforms |
 | Private mesh | Tailscale, Hysteria, Keet-style private surfaces, cluster consent | Gateway/platform path |

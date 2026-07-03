@@ -53,6 +53,7 @@ Every sensitive path is designed to cross the same trust boundary: policy, permi
 | **Council** | Triggers multi-model dissent when risk, complexity, contradiction, or explicit policy warrants it. |
 | **WAL** | Durable source of truth for memory, provider calls, plugin actions, channel sends, recovery, and audit. |
 | **SQLite views** | Queryable projections over the WAL: episodes, importance, council, motor state, habits, profile, embeddings. |
+| **Babel-Index observer** | Async, content-free collapse scoring over the WAL stream: seven variables per rolling window, pre-registered failure labels, early warning before degradation ([babel-index.md](babel-index.md)). |
 | **Obsidian mirror** | Human-readable knowledge layer for decisions, notes, reflections, project memory, and operator inspection. |
 | **Plugin runtime** | Skills as data, WASM plugins as sandboxed code with capability gates. |
 | **Private mesh** | LAN/mDNS, Tailscale, Hysteria, Keet, and consent-gated cluster nodes. |

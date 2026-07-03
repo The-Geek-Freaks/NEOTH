@@ -148,7 +148,7 @@ Short version:
 | OpenClaw | Gateway/channel/canvas/agent energy. | NEOTH folds that direction into a Rust local-first buddy with permissioned memory. |
 | NEOTH | Loyal buddy + private memory + coding studio + operator runtime. | One memory, every surface, your rules. |
 
-See the comparison table in the root [README](../README.md#neoth-vs-hermes-vs-openhuman-vs-openclaw).
+See the comparison table in the root [README](../README.md#comparison).
 
 ## What is the WAL?
 
@@ -162,6 +162,26 @@ Useful commands:
 neoth wal verify
 neoth wal show --last 50
 ```
+
+## What is the Babel-Index?
+
+NEOTH's health instrument for its own cognition. It scores every rolling
+window of NEOTH's own event stream with seven collapse variables and warns you
+before failures like agent loops, retry storms, or context death spirals —
+not in the post-mortem. Failure definitions are deterministic and
+pre-registered; the predictor self-calibrates and reports its accuracy.
+
+The model comes from the open
+[delta-kosmologie](https://github.com/The-Geek-Freaks/delta-kosmologie)
+research framework. You can (optionally — off by default, consent-gated)
+federate anonymised, content-free measurements into its shared research pool.
+
+```bash
+neoth babel status
+neoth babel windows
+```
+
+Details: [babel-index.md](babel-index.md).
 
 ## What are skills and plugins?
 
