@@ -101,6 +101,10 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
             let mut cfg = si::SelfImproveConfig::load(&home);
             cfg.enabled = false;
             cfg.auto = false;
+            // Mark the operator's choice as explicit. Without this, effective()
+            // re-enables self-improve under Full autonomy (`Full && !asked`),
+            // silently overriding this Disable. Mirrors the Enable branch.
+            cfg.asked = true;
             cfg.save(&home)?;
             println!("self-improvement disabled.");
             Ok(())

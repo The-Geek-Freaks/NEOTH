@@ -173,8 +173,15 @@ fn passes_path_gate(paths: &[String], active_files: &[String]) -> bool {
         // Ignore add errors — malformed patterns are silently skipped.
         let _ = builder.add_line(None, p);
     }
-    let Ok(gi) = builder.build() else {
-        return true; // Build failure → fail open (always eligible).
+    let gi = match builder.build() {
+        Ok(gi) => gi,
+        Err(e) => {
+            // Fail CLOSED: an unparseable path scope must gate the skill OUT,
+            // not make it eligible for every message. Fail-open here would let
+            // one malformed pattern turn a file-scoped skill into a global one.
+            tracing::warn!(error = %e, "skill path-gate: gitignore build failed — gating skill out (fail-closed)");
+            return false;
+        }
     };
     active_files.iter().any(|f| {
         // Strip any leading slashes so we can consistently re-root the path.

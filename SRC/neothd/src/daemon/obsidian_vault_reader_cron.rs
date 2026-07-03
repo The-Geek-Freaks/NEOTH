@@ -327,7 +327,28 @@ pub async fn run_one_reader_pass(
         };
         let mut results = Vec::with_capacity(rows.len());
         for (statement, scope, path, digest) in rows {
-            match groundtruth::insert(&conn, &statement, &Source::ImportObsidian, &scope, now_ns) {
+            // Ingress gate — vault notes are EXTERNAL content (n8n sync,
+            // Obsidian plugins, shared/imported files), so they must pass the
+            // same prompt-injection gate every other ingest path uses before
+            // being promoted VERBATIM into ground truth (the highest-trust
+            // tier). Without this a note body like "ignore previous
+            // instructions …" would surface as a verified fact in every
+            // context window.
+            let report = crate::security::ingress_sanitizer::sanitize(
+                &statement,
+                "obsidian_vault_reader",
+                false,
+            );
+            if report.quarantined {
+                warn!(
+                    path = %path.display(),
+                    findings = ?report.findings,
+                    "obsidian vault reader: note quarantined by ingress gate; not promoting to ground truth"
+                );
+                results.push((path, digest, false));
+                continue;
+            }
+            match groundtruth::insert(&conn, &report.text, &Source::ImportObsidian, &scope, now_ns) {
                 Ok(_) => results.push((path, digest, true)),
                 Err(e) => {
                     warn!(error = %e, path = %path.display(), "obsidian vault reader: groundtruth::insert failed; skipping");

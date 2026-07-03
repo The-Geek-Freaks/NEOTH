@@ -254,7 +254,7 @@ pub async fn run_omi_ingest_task(cfg: OmiConfig, db_path: PathBuf, writer: WalWr
                     continue;
                 }
                 if let Err(e) = process_transcript(&conn, &w, &item.text, item.score, threshold) {
-                    tracing::debug!(error = %e, "omi: process_transcript failed (non-fatal)");
+                    tracing::warn!(error = %e, "omi: process_transcript failed (non-fatal) — ground-truth promotion skipped");
                 }
             }
         });
