@@ -4568,7 +4568,11 @@ pub(crate) fn build_boot_payload(config: &FreedomConfig) -> anyhow::Result<Vec<u
 /// without registering; the daemon stays up + Plugin hooks degrade
 /// to Allow (their pre-bootstrap behaviour).
 #[cfg(feature = "wasm-plugin-host")]
-pub(crate) fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle) {
+pub(crate) fn bootstrap_plugin_invoker(
+    home: &std::path::Path,
+    wal_writer: WalWriterHandle,
+    reload_controller: std::sync::Arc<crate::config::reload::ReloadController>,
+) {
     use std::sync::Arc;
     let plugins_root = home.join("plugins");
     let mut report = crate::wasm_plugin::discovery::discover(&plugins_root);
@@ -4837,7 +4841,11 @@ pub(crate) fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWr
     let invoker = crate::wasm_plugin::dispatch::CompiledPluginInvoker::from_compile_outcomes(
         engine, &outcomes, linker, grants,
     )
-    .with_runtime_handles(Some(wal_writer), recall_db);
+    .with_runtime_handles(Some(wal_writer), recall_db)
+    // Live revocation: `neoth reload` with an updated
+    // `plugins.wasm.revoked_ids` must reach the compiled invoker without
+    // a daemon restart — the per-invoke check reads this handle.
+    .with_reload_controller(reload_controller);
     if invoker.is_empty() {
         warn!("plugin discovery returned entries but zero compiled — invoker not registered");
         return;

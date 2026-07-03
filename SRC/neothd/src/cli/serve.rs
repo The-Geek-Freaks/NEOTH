@@ -97,6 +97,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         mut writer_join,
     } = crate::cli::serve_tasks::prepare_wal(args.wal_segment.clone())?;
 
+    // ── 3b'. Hot-reload controller (construction only) ─────────────────────
+    // Built HERE (before the plugin bootstrap) so the compiled plugin
+    // invoker can hold a live-config handle for its per-invoke
+    // revocation check. Construction is side-effect-free; the at-boot
+    // sentinel one-shot + the polling task stay in step 5b below.
+    let reload_controller = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+        config.clone(),
+        match &args.config {
+            Some(p) => p.clone(),
+            None => FreedomConfig::default_path(),
+        },
+    ));
+
     // ── 3c. Plugin invoker bootstrap (SC-04) ───────────────────────────────
     // Deferred from step 1a so the invoker carries a clone of the live
     // WAL writer: a denied plugin hostcall must emit its 0xC7
@@ -110,6 +123,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             crate::cli::serve_tasks::bootstrap_plugin_invoker(
                 &FreedomConfig::default_neoth_home(),
                 writer.clone(),
+                reload_controller.clone(),
             );
         } else {
             info!(
@@ -308,20 +322,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // the ArcSwap atomically (or reject), emit a CONFIG_RELOADED /
     // CONFIG_RELOAD_REJECTED WAL audit frame, delete the sentinel.
     //
-    // The ArcSwap doesn't propagate to live channel-pipeline closures
-    // yet — they still capture the original `Arc<FreedomConfig>`.
-    // That follow-up swaps `PipelineHandlerDeps` to hold the
-    // `ReloadController` so each ingress message reads the latest
-    // snapshot. For now the value is: audit-evidence + at-boot
-    // pickup when an operator runs `neoth reload` against a stopped
-    // daemon and the sentinel waits for the next `neoth serve`.
-    let reload_controller = std::sync::Arc::new(crate::config::reload::ReloadController::new(
-        config.clone(),
-        match &args.config {
-            Some(p) => p.clone(),
-            None => FreedomConfig::default_path(),
-        },
-    ));
+    // Pick #39 wired the controller into `PipelineHandlerDeps`, so
+    // tunable config fields ARE re-read per inbound message
+    // (serve_pipeline.rs `reload_controller.latest()`); the controller
+    // itself is constructed in step 3b' above so the plugin invoker's
+    // per-invoke revocation check can hold it.
     // At-boot one-shot: if a sentinel is already on disk (operator
     // ran `neoth reload` against a stopped daemon), process it now
     // before the indexer + handler-spawn use the controller.

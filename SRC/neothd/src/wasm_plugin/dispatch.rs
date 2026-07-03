@@ -305,6 +305,13 @@ pub struct CompiledPluginInvoker {
     /// real hit counts in production (not just 0). Best-effort: `None`
     /// degrades recall_top to "no signal".
     recall_db: Option<RecallDbHandle>,
+    /// Live config handle for the per-invoke revocation check. The
+    /// boot-time `IntegrityPolicy` filter only gates plugins compiled at
+    /// bootstrap; without this handle a plugin added to
+    /// `plugins.wasm.revoked_ids` via `neoth reload` keeps running until
+    /// daemon restart. `None` (tests / dry-run) skips the live check —
+    /// those paths have no reload surface.
+    reload_controller: Option<Arc<crate::config::reload::ReloadController>>,
 }
 
 impl CompiledPluginInvoker {
@@ -332,6 +339,7 @@ impl CompiledPluginInvoker {
             grants,
             wal_writer: None,
             recall_db: None,
+            reload_controller: None,
         }
     }
 
@@ -348,6 +356,19 @@ impl CompiledPluginInvoker {
     ) -> Self {
         self.wal_writer = wal_writer;
         self.recall_db = recall_db;
+        self
+    }
+
+    /// Attach the daemon's live-config handle so `invoke` re-checks
+    /// `plugins.wasm.revoked_ids` on EVERY call. Closes the reload gap
+    /// where a revocation added after boot never reached the compiled
+    /// invoker (the `GLOBAL_INVOKER` OnceLock is never rebuilt).
+    #[must_use]
+    pub fn with_reload_controller(
+        mut self,
+        controller: Arc<crate::config::reload::ReloadController>,
+    ) -> Self {
+        self.reload_controller = Some(controller);
         self
     }
 
@@ -386,6 +407,25 @@ impl CompiledPluginInvoker {
 
 impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
     fn invoke(&self, plugin_id: &str) -> anyhow::Result<()> {
+        // Live revocation gate: the boot-time IntegrityPolicy filter only
+        // covers plugins known at bootstrap. `ReloadController::latest()`
+        // is a lock-free ArcSwap load, so this stays O(revoked_ids.len())
+        // per invoke with no contention. Fail-closed on a hit.
+        if let Some(ctrl) = &self.reload_controller {
+            let cfg = ctrl.latest();
+            if cfg
+                .plugins
+                .wasm
+                .revoked_ids
+                .iter()
+                .any(|id| id == plugin_id)
+            {
+                anyhow::bail!(
+                    "plugin {plugin_id:?} is revoked (plugins.wasm.revoked_ids, \
+                     live config) — refusing invoke"
+                );
+            }
+        }
         let module = self.modules.get(plugin_id).ok_or_else(|| {
             anyhow::anyhow!(
                 "CompiledPluginInvoker: unknown plugin id {plugin_id:?} — \
@@ -1228,6 +1268,60 @@ mod tests {
         assert!(
             err.contains("neoth_run"),
             "error names missing export: {err}"
+        );
+    }
+
+    #[test]
+    fn compiled_invoker_refuses_revoked_plugin_after_config_swap() {
+        // Reload gap regression test: a plugin added to
+        // `plugins.wasm.revoked_ids` via `neoth reload` must be refused
+        // by the very next invoke — WITHOUT rebuilding the invoker (the
+        // GLOBAL_INVOKER OnceLock is never rebuilt in production).
+        use crate::config::reload::{ReloadController, ReloadResult};
+        use crate::hooks::dispatcher::PluginInvoker;
+
+        let dir = tempfile::tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = crate::config::FreedomConfig::default();
+        let ctrl = Arc::new(ReloadController::new(initial.clone(), yaml_path.clone()));
+
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
+        let module = engine
+            .compile_from_bytes(&minimal_wasm())
+            .expect("minimal must compile");
+        let outcomes = vec![CompileOutcome::Compiled {
+            plugin_id: "alpha".into(),
+            module: Arc::new(module),
+        }];
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new())
+                .with_reload_controller(ctrl.clone());
+
+        // Pre-swap: the gate passes (revoked_ids empty) and the invoke
+        // proceeds to export lookup — proving the check is non-blocking
+        // for un-revoked plugins.
+        let err = inv.invoke("alpha").unwrap_err().to_string();
+        assert!(
+            err.contains("neoth_run"),
+            "pre-swap invoke must reach export lookup, not the revocation gate: {err}"
+        );
+
+        // Operator revokes "alpha" + runs `neoth reload`.
+        let mut revoked_cfg = initial;
+        revoked_cfg.plugins.wasm.revoked_ids = vec!["alpha".into()];
+        std::fs::write(&yaml_path, serde_yaml::to_string(&revoked_cfg).unwrap()).unwrap();
+        match ctrl.try_reload().expect("reload must succeed") {
+            ReloadResult::Reloaded { .. } => {}
+            other => panic!("expected Reloaded, got {other:?}"),
+        }
+
+        // Post-swap: the SAME invoker instance refuses the invoke.
+        let err = inv.invoke("alpha").unwrap_err().to_string();
+        assert!(
+            err.contains("revoked"),
+            "post-swap invoke must hit the live revocation gate: {err}"
         );
     }
 
