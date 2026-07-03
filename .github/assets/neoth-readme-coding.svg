@@ -67,8 +67,9 @@
       <rect x="34" y="142" width="46" height="20" rx="6" fill="#00ff80" fill-opacity=".12"/>
       <rect x="116" y="112" width="52" height="20" rx="6" fill="#ff2a6d" fill-opacity=".12"/>
       <rect x="205" y="112" width="50" height="20" rx="6" fill="#05d5ff" fill-opacity=".12"/>
-      <text x="24" y="256" fill="#ddd" font-size="18" font-weight="300">Visible state</text>
-      <text x="24" y="278" fill="#888" font-size="12">Backlog, Todo, Progress, Review, Done</text>
+      <text x="24" y="248" fill="#ddd" font-size="18" font-weight="300">Visible state</text>
+      <text x="24" y="266" fill="#888" font-size="12">Backlog, Todo, Progress, Review,</text>
+      <text x="24" y="282" fill="#888" font-size="12">Done, Blocked, Archived</text>
     </g>
 
     <g transform="translate(916 120)">
