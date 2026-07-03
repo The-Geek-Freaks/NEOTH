@@ -26,6 +26,7 @@ import { ChatView, ChatMessage } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
+import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 export { Theme }
 
@@ -147,6 +148,11 @@ export component MainWindow inherits Window {
     in property <bool> operator-id-valid: false;
     in-out property <string> status-line: "";
     in property <string> hardware-summary: "";
+    // GOLD-ADAPT-GUI-04 — daemon live-state for the footer Led:
+    // "live" | "connecting" | "error" (derived from probe outcomes).
+    in property <string> daemon-state: "connecting";
+    // GOLD-ADAPT-GUI-05 — TypedStatus footer ticker (Rust types it in).
+    in property <string> status-message: "";
     // QM-9 Phase 2: last 24h usage rollup rendered for the dashboard.
     // Format: "<calls> calls (ok=<x>, err=<y>), <cost> (<pct>% of cap)"
     // — populated by a subprocess probe to `neoth usage --format json`.
@@ -291,6 +297,25 @@ export component MainWindow inherits Window {
     in property <string> automation-output: "";
     in property <bool> automation-running: false;
     callback automation-refresh-clicked();
+    // GOLD-LOOP-03 — Loop panel (display-gated: Rust sets show-loops from
+    // the `gui-loop` cargo feature; the wiring drives a `neothd loop run`
+    // subprocess + the `~/.neoth/loops/` history).
+    in property <bool> show-loops: false;
+    in-out property <string> loop-prompt-draft: "";
+    in property <bool> loop-running: false;
+    in property <[LoopRoundRow]> loop-rounds: [];
+    in property <[LoopRunRow]> loop-history: [];
+    in property <string> loop-selected-id: "";
+    in property <string> loop-stop-reason: "";
+    in property <string> loop-final-text: "";
+    in property <int> loop-tool-calls: 0;
+    in property <int> loop-tool-call-budget: 0;
+    in property <float> loop-convergence: 0.0;
+    in property <string> loop-status-note: "";
+    callback loop-run-clicked(string);
+    callback loop-kill-clicked();
+    callback loop-refresh-clicked();
+    callback loop-run-selected(string);
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
     property <string> shell-title:
@@ -306,6 +331,7 @@ export component MainWindow inherits Window {
         : root.nav-active == "cluster"     ? "Private Mesh"
         : root.nav-active == "resources"   ? "Resources"
         : root.nav-active == "doctor"      ? "Doctor"
+        : root.nav-active == "loops"       ? "Loops"
         : "Config";
 
     /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
@@ -331,6 +357,9 @@ export component MainWindow inherits Window {
     in property <[ChatMessage]> chat-messages: [];
     in-out property <string> chat-composer-draft: "";
     in property <bool> chat-send-enabled: true;
+    /// GOLD-ADAPT-GUI-07 — a reply subprocess is streaming; the Send
+    /// button spins and re-sends are blocked until it settles.
+    in property <bool> chat-send-in-flight: false;
     /// Channel labels for the chat sidebar. CLI is always first
     /// + always available; the rest reflect the operator's
     /// configured channels from freedom.yaml.
@@ -1549,6 +1578,7 @@ export component MainWindow inherits Window {
             Sidebar {
                 active-tab: root.nav-active;
                 complexity: root.nav-complexity;
+                show-loops: root.show-loops;
                 channels-count: root.chat-channels.length;
                 operator-name: root.operator-id != "" ? root.operator-id : "operator";
                 nav(t) => {
@@ -1566,7 +1596,8 @@ export component MainWindow inherits Window {
                 // reserves its stretch space and would squash the active tab.
                 if (root.nav-active != "chat"
                         && root.nav-active != "agents" && root.nav-active != "automation"
-                        && root.nav-active != "resources" && root.nav-active != "doctor"): SettingsView {
+                        && root.nav-active != "resources" && root.nav-active != "doctor"
+                        && root.nav-active != "loops"): SettingsView {
                     active: root.nav-active == "memory" ? SettingsTab.memory
                         : root.nav-active == "hemispheres" ? SettingsTab.hemispheres
                         : root.nav-active == "channels" ? SettingsTab.channels
@@ -1711,6 +1742,7 @@ export component MainWindow inherits Window {
                     messages: root.chat-messages;
                     composer-draft <=> root.chat-composer-draft;
                     send-enabled: root.chat-send-enabled;
+                    send-in-flight: root.chat-send-in-flight;
                     slash-active: root.chat-slash-active;
                     channels: root.chat-channels;
                     active-channel-index <=> root.chat-active-channel;
@@ -1755,6 +1787,24 @@ export component MainWindow inherits Window {
                     empty-hint: "Click \"Refresh automation\" to load crons + n8n status.";
                     run-clicked => { root.automation-refresh-clicked(); }
                 }
+                // GOLD-LOOP-03 — Loop panel (history + timeline + run/kill).
+                if root.nav-active == "loops": LoopPanel {
+                    prompt-draft <=> root.loop-prompt-draft;
+                    running: root.loop-running;
+                    rounds: root.loop-rounds;
+                    history: root.loop-history;
+                    selected-id: root.loop-selected-id;
+                    stop-reason: root.loop-stop-reason;
+                    final-text: root.loop-final-text;
+                    tool-calls: root.loop-tool-calls;
+                    tool-call-budget: root.loop-tool-call-budget;
+                    convergence: root.loop-convergence;
+                    status-note: root.loop-status-note;
+                    run-clicked(p) => { root.loop-run-clicked(p); }
+                    kill-clicked => { root.loop-kill-clicked(); }
+                    refresh-clicked => { root.loop-refresh-clicked(); }
+                    run-selected(id) => { root.loop-run-selected(id); }
+                }
 
                 StatusFooter {
                     hardware: root.hardware-summary;
@@ -1762,6 +1812,8 @@ export component MainWindow inherits Window {
                     peers: root.cluster-peers.length;
                     wal-ok: true;
                     local: true;
+                    daemon-state: root.daemon-state;
+                    status-message: root.status-message;
                 }
             }  // close shell content VerticalLayout
         }  // close shell HorizontalLayout

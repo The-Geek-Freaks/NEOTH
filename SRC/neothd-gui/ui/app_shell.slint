@@ -7,6 +7,7 @@
 
 import { Theme } from "theme.slint";
 import { Buddy } from "buddy.slint";
+import { Led } from "components.slint";
 
 // One sidebar nav entry. `tier` tints the active state by meaning
 // (memory=green, consent=pink, default=accent-green), per the mockup.
@@ -27,12 +28,17 @@ component NavBtn inherits Rectangle {
     background: root.active ? Theme.surface-2 : transparent;
     animate background { duration: Theme.duration-fast; easing: ease-out; }
 
-    // active rail (left, 2px, tier-coloured)
+    // active rail (left, 2px, tier-coloured). GOLD-ADAPT-GUI-02: the rail
+    // grows from the centre with the ease-back overshoot — tab switches
+    // read snappy instead of fading in.
     Rectangle {
-        x: 0; width: 2px; y: 8px; height: parent.height - 16px;
+        x: 0; width: 2px;
+        height: root.active ? parent.height - 16px : 0px;
+        y: (parent.height - self.height) / 2;
         border-radius: 2px;
         background: root.tier-color;
         opacity: root.active ? 1.0 : 0.0;
+        animate height { duration: Theme.duration-base; easing: Theme.ease-back; }
         animate opacity { duration: Theme.duration-fast; easing: ease-out; }
     }
 
@@ -103,6 +109,8 @@ component ComplexitySeg inherits Rectangle {
 export component Sidebar inherits Rectangle {
     in property <string> active-tab: "chat";
     in property <int> complexity: 2;             // 0 minimal .. 2 full
+    // GOLD-LOOP-03 — Rust sets this from the `gui-loop` cargo feature.
+    in property <bool> show-loops: false;
     in property <bool> theme-dark: true;
     in property <string> operator-name: "operator";
     in property <int> channels-count: 0;
@@ -150,6 +158,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Coding"; glyph: "⌘"; visible: root.complexity >= 1; active: root.active-tab == "coding"; clicked => { root.nav("coding"); } }
                 NavBtn { label: "Agents"; glyph: "⚇"; visible: root.complexity >= 2; active: root.active-tab == "agents"; clicked => { root.nav("agents"); } }
                 NavBtn { label: "Automation"; glyph: "⟳"; visible: root.complexity >= 2; active: root.active-tab == "automation"; clicked => { root.nav("automation"); } }
+                NavBtn { label: "Loops"; glyph: "∞"; visible: root.complexity >= 2 && root.show-loops; active: root.active-tab == "loops"; clicked => { root.nav("loops"); } }
                 NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }
                 NavBtn { label: "Plugins"; glyph: "⧉"; visible: root.complexity >= 2; active: root.active-tab == "plugins"; clicked => { root.nav("plugins"); } }
                 NavBtn { label: "Mesh"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }
@@ -243,6 +252,12 @@ export component StatusFooter inherits Rectangle {
     in property <int> peers: 0;
     in property <bool> wal-ok: true;
     in property <bool> local: true;
+    // GOLD-ADAPT-GUI-04 — daemon live-state for the Led (green=live /
+    // connecting=amber / error=pink). Rust derives it from probe outcomes.
+    in property <string> daemon-state: "connecting";
+    // GOLD-ADAPT-GUI-05 — TypedStatus ticker line. Rust types it in
+    // character-by-character on a timer; mono keeps the typing read.
+    in property <string> status-message: "";
 
     height: 34px;
     background: Theme.bg-sunken;
@@ -251,10 +266,16 @@ export component StatusFooter inherits Rectangle {
         padding-left: 22px; padding-right: 22px; alignment: space-between;
         HorizontalLayout {
             alignment: start; spacing: 10px;
+            Led { state: root.daemon-state; y: (parent.height - self.height) / 2; }
             Text { text: "⬡"; color: Theme.accent; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
             Text { text: "neoth-core"; color: Theme.text-secondary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
             Text {
                 text: root.hardware != "" ? "· " + root.hardware : "";
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: root.status-message != "" ? "· " + root.status-message : "";
                 color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
                 overflow: elide; horizontal-stretch: 1;
             }

@@ -11,6 +11,13 @@ description = "Operator-facing GUI wizard for NEOTH (Slint frontend)."
 name = "neothd-gui"
 path = "src/main.rs"
 
+[features]
+# GOLD-LOOP-03 — Loop panel display gate. Default-ON per the
+# features-default-on release rule; `--no-default-features` hides the
+# sidebar entry + skips the subprocess wiring.
+default = ["gui-loop"]
+gui-loop = []
+
 [dependencies]
 # Slint native — pure-Rust Femtovg backend on Windows + Linux, system
 # backend on macOS. No Qt, no GTK system deps.

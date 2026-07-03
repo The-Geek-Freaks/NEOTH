@@ -105,24 +105,33 @@ component ConversationItem inherits Rectangle {
     in property <string> last-message: "";
     in property <int> unread-count: 0;
     in property <bool> active: false;
+    // GOLD-ADAPT-GUI-06 — focus-dim (nullframe .focus .dimmable): when any
+    // channel is selected, the non-selected rows recede to 0.6 opacity so
+    // the active conversation visually owns the sidebar.
+    in property <bool> any-active: false;
     callback clicked();
 
     height: 64px;
     background: root.active ? Theme.bg-card : transparent;
     border-radius: Theme.radius-button;
+    opacity: root.any-active && !root.active ? 0.6 : 1.0;
+    animate opacity { duration: Theme.duration-base; easing: ease-out; }
 
     animate background {
         duration: Theme.duration-micro;
         easing: cubic-bezier(0.2, 0.8, 0.2, 1);
     }
 
+    // GOLD-ADAPT-GUI-02: active bar grows from the centre with the
+    // ease-back overshoot (same motion as the sidebar NavBtn rail).
     Rectangle {
         x: 0;
-        y: 8px;
         width: 3px;
-        height: parent.height - 16px;
-        background: root.active ? Theme.accent-green : transparent;
+        height: root.active ? parent.height - 16px : 0px;
+        y: (parent.height - self.height) / 2;
+        background: Theme.accent-green;
         border-radius: 2px;
+        animate height { duration: Theme.duration-base; easing: Theme.ease-back; }
     }
 
     VerticalLayout {
@@ -179,6 +188,9 @@ component ConversationItem inherits Rectangle {
 component Composer inherits Rectangle {
     in-out property <string> draft: "";
     in property <bool> send-enabled: true;
+    /// GOLD-ADAPT-GUI-07 — true while a chat subprocess is streaming a
+    /// reply; the Send button shows its spinner and re-sends are blocked.
+    in property <bool> send-in-flight: false;
     /// Whether the operator's draft starts with `/` — Rust side
     /// surfaces the slash-autocomplete dropdown when this is true.
     in property <bool> slash-active: false;
@@ -298,7 +310,8 @@ component Composer inherits Rectangle {
                             return reject;
                         }
                         // Plain Enter → send (when non-empty) + clear.
-                        if (root.draft != "") {
+                        // GUI-07: swallowed while a reply is in flight.
+                        if (root.draft != "" && !root.send-in-flight) {
                             root.send-clicked(root.draft);
                             root.draft = "";
                         }
@@ -326,8 +339,10 @@ component Composer inherits Rectangle {
         NeothButton {
             label: "Send →";
             enabled: root.send-enabled && root.draft != "";
+            // GUI-07: spinner replaces the label while the daemon streams.
+            loading: root.send-in-flight;
             clicked => {
-                if (root.draft != "") {
+                if (root.draft != "" && !root.send-in-flight) {
                     root.send-clicked(root.draft);
                     root.draft = "";
                 }
@@ -352,6 +367,8 @@ export component ChatView inherits Rectangle {
     in property <[ChatMessage]> messages: [];
     in-out property <string> composer-draft: "";
     in property <bool> send-enabled: true;
+    /// GUI-07 — a reply subprocess is running; Send shows its spinner.
+    in property <bool> send-in-flight: false;
     /// Set by the Rust side when `composer-draft` starts with `/`.
     /// Slint can't run `.starts-with()` in property expressions, so
     /// the host owns the boolean.
@@ -428,6 +445,8 @@ export component ChatView inherits Rectangle {
                     last-message: "";
                     unread-count: idx < root.unread-counts.length ? root.unread-counts[idx] : 0;
                     active: idx == root.active-channel-index;
+                    // GUI-06: one selected channel dims the rest.
+                    any-active: root.active-channel-index >= 0;
                     clicked => {
                         root.active-channel-index = idx;
                         root.channel-switched(idx);
@@ -528,6 +547,7 @@ export component ChatView inherits Rectangle {
             Composer {
                 draft <=> root.composer-draft;
                 send-enabled: root.send-enabled;
+                send-in-flight: root.send-in-flight;
                 slash-active: root.slash-active;
                 send-clicked(text) => { root.send-clicked(text); }
                 recall-requested => { root.recall-requested(); }

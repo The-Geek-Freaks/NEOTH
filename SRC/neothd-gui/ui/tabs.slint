@@ -4,6 +4,7 @@
 // probe; Doctor runs `neoth doctor`.
 
 import { Theme } from "theme.slint";
+import { SegBar } from "components.slint";
 
 // One labelled stat row (mono eyebrow + value).
 component StatRow inherits Rectangle {
@@ -67,13 +68,12 @@ export component ResourcesView inherits Rectangle {
                     Text { text: root.vram != "" ? root.vram : "—"; color: Theme.text-primary;
                            font-family: Theme.font-sans; font-size: Theme.font-size-base; }
                 }
-                Rectangle {
-                    height: 6px; border-radius: 3px; background: Theme.surface-3;
-                    Rectangle {
-                        x: 0; height: parent.height; border-radius: 3px;
-                        width: parent.width * clamp(root.vram-fraction, 0.0, 1.0);
-                        background: Theme.audit;     // cyan = compute/info
-                    }
+                // GOLD-ADAPT-GUI-03 — stepped SegBar replaces the continuous
+                // fill: 12 segments read like an instrument meter.
+                SegBar {
+                    segments: 12;
+                    fraction: root.vram-fraction;
+                    fill: Theme.audit;   // cyan = compute/info
                 }
             }
         }

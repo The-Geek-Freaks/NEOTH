@@ -10,7 +10,7 @@
 
 import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit } from "components.slint";
+import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, SegBar } from "components.slint";
 
 export enum SettingsTab {
     chat,
@@ -1641,20 +1641,13 @@ export component SettingsView inherits Rectangle {
                             color: Theme.text-primary;
                         }
                         // GOLD-PROG-07 — live VRAM utilisation meter. Shown only
-                        // when a GPU is present (fraction > 0): a pill track with
-                        // an accent fill whose width tracks used/total.
-                        if root.hw-vram-fraction > 0.0: Rectangle {
+                        // when a GPU is present (fraction > 0). GOLD-ADAPT-GUI-03:
+                        // stepped SegBar (12 segments) instead of a continuous pill.
+                        if root.hw-vram-fraction > 0.0: SegBar {
                             height: 8px;
-                            background: Theme.border-subtle;
-                            border-radius: Theme.radius-button;
-                            Rectangle {
-                                x: 0;
-                                y: 0;
-                                width: parent.width * root.hw-vram-fraction;
-                                height: parent.height;
-                                background: Theme.accent-green;
-                                border-radius: Theme.radius-button;
-                            }
+                            segments: 12;
+                            fraction: root.hw-vram-fraction;
+                            fill: Theme.accent-green;
                         }
                         if root.hw-cpu != "": Text {
                             text: "disk: " + root.hw-disk;

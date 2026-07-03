@@ -217,6 +217,10 @@ export global Theme {
     // ══ MOTION ═════════════════════════════════════════════════════════
     // The "Sovereign Curve" — fast start, long majestic settle.
     // Canonical: animate <p> { duration: ...; easing: cubic-bezier(0.16,1,0.3,1); }
+    // GOLD-ADAPT-GUI-02 — "ease-back" overshoot token (nullframe
+    // --ease-back). For SHORT movements only (nav rails, active bars):
+    // the 1.56 overshoot reads snappy at ≤40px travel, rubbery beyond.
+    out property <easing> ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);
     out property <duration> duration-fast:       120ms;
     out property <duration> duration-micro:      220ms;
     out property <duration> duration-base:       220ms;

@@ -21,27 +21,40 @@ export component NeothButton inherits Rectangle {
     in property <string> label: "";
     in property <bool> primary: true;
     in property <bool> enabled: true;
+    // GOLD-ADAPT-GUI-07 — async in-flight state (yaak Button isLoading):
+    // a rotating spinner replaces the label; clicks are ignored until the
+    // caller flips `loading` back off.
+    in property <bool> loading: false;
+    // GOLD-ADAPT-GUI-08 — density variants (yaak ButtonSize): "md" (default
+    // 44px), "sm" (32px), "xs" (28px) for dense settings rows.
+    in property <string> size: "md";
+    // Destructive accent (kill/delete actions): consent-pink instead of
+    // memory-green. Same shape, different meaning-colour.
+    in property <bool> danger: false;
     callback clicked();
 
-    height: 44px;
-    width: max(120px, txt.preferred-width + Theme.space-loose * 2);
+    property <color> accent-color: root.danger ? Theme.accent-pink : Theme.accent-green;
+
+    height: root.size == "sm" ? 32px : (root.size == "xs" ? 28px : 44px);
+    width: max(root.size == "md" ? 120px : 64px,
+        txt.preferred-width + (root.size == "md" ? Theme.space-loose : Theme.space-base) * 2);
     border-radius: Theme.radius-button;
     // GUI-overhaul: primary actions were a flat bg-card fill — indistinguishable
     // from the surrounding cards. An accent-tinted fill + accent border reads as
     // a clear primary CTA (secondary stays outline-only), without being flashy.
-    background: root.primary ? Theme.accent-green.with-alpha(0.16) : transparent;
+    background: root.primary ? root.accent-color.with-alpha(0.16) : transparent;
     border-width: 1px;
-    border-color: root.enabled ? Theme.accent-green : Theme.border-subtle;
+    border-color: root.enabled ? root.accent-color : Theme.border-subtle;
     opacity: root.enabled ? 1.0 : 0.4;
 
-    // Sovereign-Curve hover lift via a thin accent-green bar at the
+    // Sovereign-Curve hover lift via a thin accent bar at the
     // bottom. Subtle because the spec says "majestic, not flashy".
     underline := Rectangle {
         x: Theme.space-base;
         y: parent.height - 2px;
         height: 2px;
         width: 0;
-        background: Theme.accent-green;
+        background: root.accent-color;
         animate width {
             duration: Theme.duration-micro;
             easing: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -51,21 +64,35 @@ export component NeothButton inherits Rectangle {
     txt := Text {
         text: root.label;
         font-family: Theme.font-display;
-        font-size: Theme.font-size-body;
+        font-size: root.size == "md" ? Theme.font-size-body : Theme.font-size-caption;
         font-weight: Theme.weight-medium;
         letter-spacing: Theme.letter-spacing-body;
-        color: root.enabled ? Theme.accent-green : Theme.text-dim;
+        color: root.enabled ? root.accent-color : Theme.text-dim;
         horizontal-alignment: center;
         vertical-alignment: center;
+        // Keep the button width stable while the spinner shows — the label
+        // goes invisible but still drives preferred-width.
+        opacity: root.loading ? 0.0 : 1.0;
+    }
+
+    if root.loading: Text {
+        text: "◐";
+        font-size: root.size == "md" ? Theme.font-size-body : Theme.font-size-caption;
+        color: root.accent-color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+        transform-rotation: 360deg * (animation-tick() / 900ms);
     }
 
     touch := TouchArea {
-        enabled: root.enabled;
+        enabled: root.enabled && !root.loading;
         clicked => { root.clicked(); }
     }
 
     states [
-        hovered when touch.has-hover && root.enabled: {
+        hovered when touch.has-hover && root.enabled && !root.loading: {
             underline.width: root.width - Theme.space-base * 2;
             txt.color: Theme.text-primary;
         }
@@ -78,10 +105,91 @@ export component NeothButton inherits Rectangle {
 // (or in a vertical-stack of them).
 
 export component Card inherits Rectangle {
+    // GOLD-ADAPT-GUI-01 — hover shimmer-sweep (nullframe .card.sweep).
+    // Opt-out via `shimmer: false` for cards where any motion distracts.
+    in property <bool> shimmer: true;
+
     background: Theme.bg-card;
     border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.border-subtle;
+
+    // Clipped overlay so the gradient never spills past the Noble Curve.
+    // Declared before the instantiation children, so content (transparent
+    // backgrounds throughout) renders above the sweep.
+    if root.shimmer: Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: root.border-radius;
+        clip: true;
+        sweep := Rectangle {
+            width: parent.width * 0.45;
+            height: parent.height;
+            x: -self.width;
+            // Slint has no skewX; a soft translating gradient carries the
+            // same "light passes over the card" read.
+            background: @linear-gradient(90deg, #ffffff00 0%, #ffffff10 50%, #ffffff00 100%);
+        }
+        shim-touch := TouchArea {}
+        states [
+            sweeping when shim-touch.has-hover: {
+                sweep.x: root.width;
+                in {
+                    animate sweep.x { duration: 700ms; easing: ease-out; }
+                }
+                out {
+                    animate sweep.x { duration: 0ms; }
+                }
+            }
+        ]
+    }
+}
+
+// ── SegBar ───────────────────────────────────────────────────────────
+// GOLD-ADAPT-GUI-03 — stepped-fill meter (nullframe Segbar.tsx): n
+// discrete segments, the first round(fraction·n) light up in the given
+// fill colour. Reads more "instrument panel" than a continuous bar.
+
+export component SegBar inherits Rectangle {
+    in property <int> segments: 12;
+    in property <float> fraction: 0.0;
+    in property <color> fill: Theme.audit;
+
+    height: 6px;
+    background: transparent;
+
+    HorizontalLayout {
+        spacing: 3px;
+        for i in root.segments: Rectangle {
+            border-radius: 2px;
+            horizontal-stretch: 1;
+            background: i < round(clamp(root.fraction, 0.0, 1.0) * root.segments)
+                ? root.fill
+                : Theme.surface-3;
+        }
+    }
+}
+
+// ── Led ──────────────────────────────────────────────────────────────
+// GOLD-ADAPT-GUI-04 — live-state dot (nullframe .led): colour carries
+// the daemon state (green=live · amber=connecting · pink=error), a slow
+// opacity breathe signals "this is a live reading, not a static icon".
+
+export component Led inherits Rectangle {
+    in property <string> state: "live";   // "live" | "connecting" | "error" | "off"
+    in property <length> dot-size: 7px;
+
+    property <color> dot-color: root.state == "live" ? Theme.memory
+        : (root.state == "connecting" ? Theme.warning
+        : (root.state == "error" ? Theme.consent : Theme.text-disabled));
+
+    width: root.dot-size;
+    height: root.dot-size;
+    border-radius: root.dot-size / 2;
+    background: root.dot-color;
+    opacity: root.state == "off"
+        ? 0.5
+        : 0.55 + 0.45 * sin(360deg * (animation-tick() / 1600ms));
 }
 
 // ── ScreenHeader ─────────────────────────────────────────────────────

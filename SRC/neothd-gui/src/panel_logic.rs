@@ -1085,6 +1085,225 @@ pub fn parse_model_recommend_refs(json: &str) -> Vec<String> {
         .collect()
 }
 
+// ── GOLD-LOOP-03 — loop-run record views (mirror of loop_engine JSON) ──
+// The GUI never links the engine crate; it reads the `LoopRunRecord`
+// files the engine writes to `~/.neoth/loops/<loop_id>.json`.
+
+/// One outer round, as rendered in the Loop panel timeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopRoundView {
+    pub round_num: u32,
+    pub iterations: u32,
+    pub ok_calls: u32,
+    pub fail_calls: u32,
+    pub stop_approved: bool,
+    pub refine_fired: bool,
+    /// Pre-formatted round duration ("12s" / "3m04s").
+    pub duration: String,
+}
+
+/// One `LoopRunRecord`, shaped for the panel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopRunView {
+    pub id: String,
+    /// Pre-formatted start time ("2026-07-03 14:22").
+    pub started: String,
+    pub rounds_run: u32,
+    pub stop_reason: String,
+    pub total_tool_calls: u64,
+    pub per_round: Vec<LoopRoundView>,
+    pub final_text: String,
+}
+
+fn format_secs(total: i64) -> String {
+    if total < 0 {
+        return "—".into();
+    }
+    if total < 60 {
+        return format!("{total}s");
+    }
+    format!("{}m{:02}s", total / 60, total % 60)
+}
+
+/// Epoch seconds → "YYYY-MM-DD HH:MM" (UTC, no chrono dep — the civil-date
+/// arithmetic is the classic days-to-ymd conversion, exact for 1970..9999).
+fn format_epoch_utc(ts: i64) -> String {
+    if ts <= 0 {
+        return "—".into();
+    }
+    let days = ts.div_euclid(86_400);
+    let secs = ts.rem_euclid(86_400);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
+        secs / 3600,
+        (secs % 3600) / 60
+    )
+}
+
+/// Parse one `LoopRunRecord` JSON blob into the panel view. Returns `None`
+/// on malformed input (a truncated `.tmp` survivor must not kill the list).
+pub fn parse_loop_record(json: &str) -> Option<LoopRunView> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let id = v.get("loop_id")?.as_str()?.to_string();
+    let per_round = v
+        .get("per_round")
+        .and_then(|r| r.as_array())
+        .map(|rounds| {
+            rounds
+                .iter()
+                .filter_map(|r| {
+                    Some(LoopRoundView {
+                        round_num: r.get("round_num")?.as_u64()? as u32,
+                        iterations: r.get("iterations").and_then(|x| x.as_u64()).unwrap_or(0)
+                            as u32,
+                        ok_calls: r
+                            .get("successful_calls")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32,
+                        fail_calls: r.get("failed_calls").and_then(|x| x.as_u64()).unwrap_or(0)
+                            as u32,
+                        stop_approved: r
+                            .get("stop_approved")
+                            .and_then(|x| x.as_bool())
+                            .unwrap_or(false),
+                        refine_fired: r
+                            .get("refine_fired")
+                            .and_then(|x| x.as_bool())
+                            .unwrap_or(false),
+                        duration: format_secs(
+                            r.get("ts_end").and_then(|x| x.as_i64()).unwrap_or(0)
+                                - r.get("ts_start").and_then(|x| x.as_i64()).unwrap_or(0),
+                        ),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(LoopRunView {
+        id,
+        started: format_epoch_utc(v.get("ts_start").and_then(|x| x.as_i64()).unwrap_or(0)),
+        rounds_run: v.get("rounds_run").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+        stop_reason: v
+            .get("stop_reason")
+            .and_then(|x| x.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        total_tool_calls: v
+            .get("total_tool_calls")
+            .or_else(|| v.get("total_tokens_used"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0),
+        per_round,
+        final_text: v
+            .get("final_text")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
+}
+
+/// Load the newest `limit` loop-run records from `<neoth_home>/loops/`,
+/// newest-first (by the record's own `ts_start`).
+pub fn load_loop_history(neoth_home: &std::path::Path, limit: usize) -> Vec<LoopRunView> {
+    let dir = neoth_home.join("loops");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut runs: Vec<LoopRunView> = entries
+        .flatten()
+        .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|json| parse_loop_record(&json))
+        .collect();
+    runs.sort_by(|a, b| b.started.cmp(&a.started));
+    runs.truncate(limit);
+    runs
+}
+
+/// Read `loop.max_rounds` + `loop.tool_call_budget` from freedom.yaml —
+/// the panel's convergence denominator + budget-meter cap. Missing keys
+/// fall back to the engine defaults (3 rounds, no cap).
+pub fn parse_loop_budget(freedom_yaml: &str) -> (u32, u64) {
+    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(freedom_yaml) else {
+        return (3, 0);
+    };
+    let lp = v.get("loop");
+    let max_rounds = lp
+        .and_then(|l| l.get("max_rounds"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(3) as u32;
+    let budget = lp
+        .and_then(|l| l.get("tool_call_budget"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    (max_rounds, budget)
+}
+
+// ── GOLD-ADAPT-GUI-05 — TypedStatus footer ticker ──────────────────────
+// Pure frame function: the Rust timer feeds a monotonic tick; each frame
+// is the current message typed up to N chars, then held, then the next
+// message. Keeping the math here (not in the Timer closure) makes the
+// typing cadence unit-testable without a Slint window.
+
+/// Brand-true footer lines. Machine-truth register, no marketing voice.
+pub const TICKER_MESSAGES: &[&str] = &[
+    "hippocampus indexing — 3 tiers live",
+    "WAL sealed · audit chain clean",
+    "hemispheres synced · council idle",
+    "consent boundaries armed",
+    "local-first · your compute, your memory",
+    "skills router warm · triggers loaded",
+];
+
+/// Ticks a character is "held" after a message is fully typed before the
+/// ticker moves on (at ~80ms/tick ≈ 4s hold).
+const TICKER_HOLD_TICKS: u64 = 50;
+
+/// Render the ticker frame for `tick` (monotonic, one per timer fire).
+/// Types one char per tick, holds the full line, then advances.
+pub fn ticker_frame(tick: u64) -> &'static str {
+    ticker_frame_over(TICKER_MESSAGES, tick)
+}
+
+fn ticker_frame_over(messages: &[&'static str], tick: u64) -> &'static str {
+    if messages.is_empty() {
+        return "";
+    }
+    // Per-message cycle length = chars to type + hold.
+    let total: u64 = messages
+        .iter()
+        .map(|m| m.chars().count() as u64 + TICKER_HOLD_TICKS)
+        .sum();
+    let mut pos = tick % total.max(1);
+    for m in messages {
+        let len = m.chars().count() as u64;
+        let cycle = len + TICKER_HOLD_TICKS;
+        if pos < cycle {
+            let shown = pos.min(len) as usize;
+            // Byte-index of the char boundary (messages contain non-ASCII "·").
+            let end = m
+                .char_indices()
+                .nth(shown)
+                .map(|(i, _)| i)
+                .unwrap_or(m.len());
+            return &m[..end];
+        }
+        pos -= cycle;
+    }
+    messages[0]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1890,5 +2109,115 @@ mod tests {
         // Missing `implemented` defaults to included (forward-compat).
         let ids = parse_provider_ids(r#"[{"id":"a"},{"description":"no id"}]"#);
         assert_eq!(ids, vec!["a"]);
+    }
+
+    // ── GOLD-LOOP-03 — loop record parsing ────────────────────────────
+    const LOOP_RECORD: &str = r#"{
+        "loop_id": "lp-20260703-abc123",
+        "prompt_hash": "deadbeef",
+        "rounds_run": 2,
+        "stop_reason": "converged",
+        "total_tool_calls": 17,
+        "per_round": [
+            {"round_num":1,"iterations":6,"hit_cap":false,"successful_calls":9,
+             "failed_calls":1,"stop_approved":false,"refine_fired":true,
+             "ts_start":1751500000,"ts_end":1751500042},
+            {"round_num":2,"iterations":3,"hit_cap":false,"successful_calls":7,
+             "failed_calls":0,"stop_approved":true,"refine_fired":false,
+             "ts_start":1751500042,"ts_end":1751500171}
+        ],
+        "final_text": "done — tests green",
+        "ts_start": 1751500000,
+        "ts_end": 1751500171
+    }"#;
+
+    #[test]
+    fn parse_loop_record_maps_rounds_and_headline() {
+        let run = parse_loop_record(LOOP_RECORD).expect("record parses");
+        assert_eq!(run.id, "lp-20260703-abc123");
+        assert_eq!(run.rounds_run, 2);
+        assert_eq!(run.stop_reason, "converged");
+        assert_eq!(run.total_tool_calls, 17);
+        assert_eq!(run.final_text, "done — tests green");
+        assert_eq!(run.per_round.len(), 2);
+        let r1 = &run.per_round[0];
+        assert_eq!(
+            (r1.round_num, r1.iterations, r1.ok_calls, r1.fail_calls),
+            (1, 6, 9, 1)
+        );
+        assert!(r1.refine_fired && !r1.stop_approved);
+        assert_eq!(r1.duration, "42s");
+        let r2 = &run.per_round[1];
+        assert!(r2.stop_approved && !r2.refine_fired);
+        assert_eq!(r2.duration, "2m09s");
+        // Epoch 1751500000 = 2025-07-02 23:46 UTC (civil-from-days exact).
+        assert_eq!(run.started, "2025-07-02 23:46");
+    }
+
+    #[test]
+    fn parse_loop_record_tolerates_old_alias_and_garbage() {
+        // Older records used `total_tokens_used`.
+        let old = LOOP_RECORD.replace("total_tool_calls", "total_tokens_used");
+        assert_eq!(parse_loop_record(&old).unwrap().total_tool_calls, 17);
+        // Truncated `.tmp` survivor must not panic the list.
+        assert!(parse_loop_record("{\"loop_id\": \"x\"").is_none());
+        assert!(parse_loop_record("null").is_none());
+    }
+
+    #[test]
+    fn load_loop_history_sorts_newest_first_and_skips_broken() {
+        let dir = tempfile::tempdir().unwrap();
+        let loops = dir.path().join("loops");
+        std::fs::create_dir_all(&loops).unwrap();
+        let older = LOOP_RECORD
+            .replace("lp-20260703-abc123", "lp-older")
+            .replace("\"ts_start\": 1751500000", "\"ts_start\": 1751400000");
+        std::fs::write(loops.join("a.json"), older).unwrap();
+        std::fs::write(loops.join("b.json"), LOOP_RECORD).unwrap();
+        std::fs::write(loops.join("broken.json"), "{oops").unwrap();
+        let runs = load_loop_history(dir.path(), 20);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].id, "lp-20260703-abc123");
+        assert_eq!(runs[1].id, "lp-older");
+        // Limit applies after the sort.
+        assert_eq!(load_loop_history(dir.path(), 1).len(), 1);
+        // Missing dir → empty, not an error.
+        assert!(load_loop_history(&dir.path().join("nope"), 5).is_empty());
+    }
+
+    #[test]
+    fn parse_loop_budget_reads_keys_with_engine_defaults() {
+        assert_eq!(
+            parse_loop_budget("loop:\n  max_rounds: 5\n  tool_call_budget: 40\n"),
+            (5, 40)
+        );
+        assert_eq!(parse_loop_budget("loop:\n  enabled: true\n"), (3, 0));
+        assert_eq!(parse_loop_budget("not yaml: ["), (3, 0));
+        assert_eq!(parse_loop_budget(""), (3, 0));
+    }
+
+    // ── GOLD-ADAPT-GUI-05 — ticker frame math ──────────────────────────
+    #[test]
+    fn ticker_frame_types_then_holds_then_advances() {
+        let first = TICKER_MESSAGES[0];
+        let len = first.chars().count() as u64;
+        // Mid-typing: a strict prefix by char count.
+        let mid = ticker_frame(len / 2);
+        assert!(first.starts_with(mid));
+        assert_eq!(mid.chars().count(), (len / 2) as usize);
+        // Fully typed + held.
+        assert_eq!(ticker_frame(len), first);
+        assert_eq!(ticker_frame(len + 10), first);
+        // After the hold the SECOND message starts typing.
+        let second_start = ticker_frame(len + 50);
+        assert!(TICKER_MESSAGES[1].starts_with(second_start));
+        // Never panics across a full wrap (non-ASCII "·" boundaries).
+        let total: u64 = TICKER_MESSAGES
+            .iter()
+            .map(|m| m.chars().count() as u64 + 50)
+            .sum();
+        for t in 0..(total * 2) {
+            let _ = ticker_frame(t);
+        }
     }
 }

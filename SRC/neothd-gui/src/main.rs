@@ -177,13 +177,23 @@ fn main() -> Result<()> {
     // appearing. The placeholder string shows until the real probe
     // result lands via `invoke_from_event_loop`.
     window.set_hardware_summary("Probing hardware…".into());
+    window.set_daemon_state("connecting".into());
     let weak_hw = window.as_weak();
     std::thread::spawn(move || {
         let hw_summary = probe_hardware_via_subprocess();
+        // GOLD-ADAPT-GUI-04 — footer Led state derived from the probe
+        // outcome: every failure arm of the probe starts with
+        // "Hardware probe" (missing binary / bad exit / spawn error).
+        let led = if hw_summary.starts_with("Hardware probe") {
+            "error"
+        } else {
+            "live"
+        };
         let weak = weak_hw.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
                 w.set_hardware_summary(hw_summary.into());
+                w.set_daemon_state(led.into());
             }
         });
     });
@@ -425,6 +435,9 @@ fn main() -> Result<()> {
         });
         w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
         w.set_chat_composer_draft("".into());
+        // GOLD-ADAPT-GUI-07 — Send spins + re-sends are blocked until the
+        // stream settles (flipped back in the completion closure below).
+        w.set_chat_send_in_flight(true);
 
         let weak_worker = w.as_weak();
         std::thread::spawn(move || {
@@ -509,6 +522,8 @@ fn main() -> Result<()> {
             let weak_for_loop = weak_worker.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak_for_loop.upgrade() {
+                    // GUI-07: the stream settled (reply or error) — unspin Send.
+                    w.set_chat_send_in_flight(false);
                     use slint::{Model, ModelRc, VecModel};
                     let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
                     let ts = format_now_hms();
@@ -948,6 +963,234 @@ fn main() -> Result<()> {
         });
     });
 
+    // ── GOLD-LOOP-03 — Loop panel wiring (display-gated `gui-loop`) ────
+    // The GUI never links the loop engine: runs go through a
+    // `neothd loop run` subprocess (the CLI's daemon-owns-WAL guard fires
+    // there and lands in the status note), history comes from the
+    // `~/.neoth/loops/*.json` records the engine writes.
+    window.set_show_loops(cfg!(feature = "gui-loop"));
+    #[cfg(feature = "gui-loop")]
+    {
+        use panel_logic::LoopRunView;
+
+        // Convergence denominator + budget cap from freedom.yaml (engine
+        // defaults when missing: 3 rounds, no cap).
+        let (loop_max_rounds, loop_budget) = std::fs::read_to_string(
+            default_neoth_home().join("freedom.yaml"),
+        )
+        .map(|y| panel_logic::parse_loop_budget(&y))
+        .unwrap_or((3, 0));
+        window.set_loop_tool_call_budget(loop_budget as i32);
+
+        // History cache shared by refresh + row-select; the running child
+        // handle shared by run + kill.
+        let loop_cache: std::sync::Arc<std::sync::Mutex<Vec<LoopRunView>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let loop_child: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+
+        // Push a history snapshot into the panel; `select` picks the run
+        // whose detail (timeline/meters/final text) is shown.
+        fn apply_loop_history(
+            w: &MainWindow,
+            runs: &[LoopRunView],
+            select: Option<&str>,
+            max_rounds: u32,
+        ) {
+            use slint::{ModelRc, VecModel};
+            let rows: Vec<LoopRunRow> = runs
+                .iter()
+                .map(|r| LoopRunRow {
+                    id: r.id.clone().into(),
+                    started: r.started.clone().into(),
+                    rounds: r.rounds_run as i32,
+                    stop_reason: r.stop_reason.clone().into(),
+                    tool_calls: r.total_tool_calls as i32,
+                })
+                .collect();
+            w.set_loop_history(ModelRc::new(VecModel::from(rows)));
+            let picked = select
+                .and_then(|id| runs.iter().find(|r| r.id == id))
+                .or_else(|| runs.first());
+            let Some(run) = picked else {
+                w.set_loop_selected_id("".into());
+                w.set_loop_rounds(ModelRc::new(VecModel::from(Vec::<LoopRoundRow>::new())));
+                w.set_loop_stop_reason("".into());
+                w.set_loop_final_text("".into());
+                w.set_loop_tool_calls(0);
+                w.set_loop_convergence(0.0);
+                return;
+            };
+            let round_rows: Vec<LoopRoundRow> = run
+                .per_round
+                .iter()
+                .map(|r| LoopRoundRow {
+                    round: r.round_num as i32,
+                    iterations: r.iterations as i32,
+                    ok_calls: r.ok_calls as i32,
+                    fail_calls: r.fail_calls as i32,
+                    stop_approved: r.stop_approved,
+                    refine_fired: r.refine_fired,
+                    duration: r.duration.clone().into(),
+                })
+                .collect();
+            w.set_loop_selected_id(run.id.clone().into());
+            w.set_loop_rounds(ModelRc::new(VecModel::from(round_rows)));
+            w.set_loop_stop_reason(run.stop_reason.clone().into());
+            w.set_loop_final_text(run.final_text.clone().into());
+            w.set_loop_tool_calls(run.total_tool_calls as i32);
+            w.set_loop_convergence(if run.stop_reason == "converged" {
+                1.0
+            } else {
+                (run.rounds_run as f32 / max_rounds.max(1) as f32).min(1.0)
+            });
+        }
+
+        // Refresh — worker thread reads + parses the record files.
+        let weak_loop_refresh = window.as_weak();
+        let cache_refresh = loop_cache.clone();
+        let refresh_history = move |select: Option<String>| {
+            let weak = weak_loop_refresh.clone();
+            let cache = cache_refresh.clone();
+            std::thread::spawn(move || {
+                let runs = panel_logic::load_loop_history(&default_neoth_home(), 20);
+                if let Ok(mut c) = cache.lock() {
+                    *c = runs.clone();
+                }
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        apply_loop_history(&w, &runs, select.as_deref(), loop_max_rounds);
+                    }
+                });
+            });
+        };
+
+        let refresh_for_click = refresh_history.clone();
+        window.on_loop_refresh_clicked(move || {
+            refresh_for_click(None);
+        });
+
+        // Row select — served from the cache (no disk hit on click).
+        let weak_loop_select = window.as_weak();
+        let cache_select = loop_cache.clone();
+        window.on_loop_run_selected(move |id| {
+            let Some(w) = weak_loop_select.upgrade() else {
+                return;
+            };
+            if let Ok(runs) = cache_select.lock() {
+                apply_loop_history(&w, &runs, Some(id.as_str()), loop_max_rounds);
+            }
+        });
+
+        // Run — spawn `neothd loop run <prompt>`; drain stdout so the
+        // child never blocks on a full pipe; surface a non-zero exit's
+        // stderr (e.g. the daemon-owns-WAL refusal) as the status note.
+        let weak_loop_run = window.as_weak();
+        let child_run = loop_child.clone();
+        let refresh_after_run = refresh_history.clone();
+        window.on_loop_run_clicked(move |prompt| {
+            let Some(w0) = weak_loop_run.upgrade() else {
+                return;
+            };
+            if w0.get_loop_running() {
+                return;
+            }
+            w0.set_loop_running(true);
+            w0.set_loop_status_note("".into());
+            let prompt = prompt.to_string();
+            let weak = weak_loop_run.clone();
+            let child_slot = child_run.clone();
+            let refresh = refresh_after_run.clone();
+            std::thread::spawn(move || {
+                let outcome: Result<(bool, String), String> = (|| {
+                    let bin =
+                        which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
+                    let mut child = spawn_neothd_plain(&bin)
+                        .arg("loop")
+                        .arg("run")
+                        .arg(&prompt)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .map_err(|e| format!("loop subprocess could not start: {e}"))?;
+                    let mut stdout = child.stdout.take();
+                    let mut stderr = child.stderr.take();
+                    if let Ok(mut slot) = child_slot.lock() {
+                        *slot = Some(child);
+                    }
+                    // Drain stdout to EOF (keeps the child unblocked).
+                    let mut sink = String::new();
+                    if let Some(out) = stdout.as_mut() {
+                        use std::io::Read as _;
+                        let _ = out.read_to_string(&mut sink);
+                    }
+                    // ponytail: stderr read after stdout EOF — loop stderr is
+                    // short (refusal/one error line); switch to a reader
+                    // thread if it ever exceeds the 64K pipe buffer.
+                    let mut err_text = String::new();
+                    if let Some(err) = stderr.as_mut() {
+                        use std::io::Read as _;
+                        let _ = err.read_to_string(&mut err_text);
+                    }
+                    let status = child_slot
+                        .lock()
+                        .ok()
+                        .and_then(|mut slot| slot.take())
+                        .and_then(|mut c| c.wait().ok());
+                    let ok = status.map(|s| s.success()).unwrap_or(false);
+                    Ok((ok, err_text))
+                })();
+                let note = match outcome {
+                    Ok((true, _)) => String::new(),
+                    Ok((false, err)) => {
+                        let tail: String = err.lines().rev().take(3).collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect::<Vec<_>>()
+                            .join(" · ");
+                        if tail.is_empty() {
+                            "loop exited non-zero (killed or failed)".to_string()
+                        } else {
+                            tail
+                        }
+                    }
+                    Err(e) => e,
+                };
+                let weak_done = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak_done.upgrade() {
+                        w.set_loop_running(false);
+                        if !note.is_empty() {
+                            w.set_loop_status_note(note.into());
+                        } else {
+                            w.set_loop_prompt_draft("".into());
+                        }
+                    }
+                });
+                // Newest record (if any) becomes the selection.
+                refresh(None);
+            });
+        });
+
+        // Kill — terminate the running child; the run worker's wait()
+        // observes the non-zero exit and lands the status note.
+        let weak_loop_kill = window.as_weak();
+        let child_kill = loop_child.clone();
+        window.on_loop_kill_clicked(move || {
+            if let Ok(mut slot) = child_kill.lock() {
+                if let Some(child) = slot.as_mut() {
+                    let _ = child.kill();
+                }
+            }
+            if let Some(w) = weak_loop_kill.upgrade() {
+                w.set_loop_status_note("kill signal sent — waiting for the subprocess to exit".into());
+            }
+        });
+
+        // Initial history load (cheap file reads, off-thread).
+        refresh_history(None);
+    }
+
     // GUI-overhaul feature parity — live connectivity test for a channel
     // (`neoth channel test <name>`, read-only). Off-thread; the daemon's check
     // result (or error) is shaped into the footer status line.
@@ -1236,6 +1479,33 @@ fn main() -> Result<()> {
     // the naive timer would pile up overlapping fetch threads every 2s.
     // The AtomicBool lets at most ONE fetch be in flight at a time — a
     // late fetch just skips the tick instead of stacking another thread.
+    // GOLD-ADAPT-GUI-05 — TypedStatus footer ticker. One repeated timer
+    // types the current `panel_logic::TICKER_MESSAGES` line in character
+    // by character (80ms/char), holds it, then advances. Pure frame math
+    // lives in `panel_logic::ticker_frame` (unit-tested); only the tick
+    // counter + property write live here. Runs only on the shell surfaces
+    // (chat/settings) — wizard steps keep their own footer.
+    let weak_ticker = window.as_weak();
+    let _status_ticker_timer = {
+        let timer = slint::Timer::default();
+        let tick = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(80),
+            move || {
+                if let Some(w) = weak_ticker.upgrade() {
+                    let s = w.get_step();
+                    if s != WizardStep::Chat && s != WizardStep::Settings {
+                        return;
+                    }
+                    let t = tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    w.set_status_message(panel_logic::ticker_frame(t).into());
+                }
+            },
+        );
+        timer
+    };
+
     let kanban_fetch_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     // B — persistent-stdio-stream: ONE warm `neoth gui-stream` child shared
     // across ticks, lazily connected on first board fetch. Held for the

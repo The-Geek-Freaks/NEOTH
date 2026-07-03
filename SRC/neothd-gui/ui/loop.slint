@@ -1,0 +1,321 @@
+// GOLD-LOOP-03 — Loop panel: operator surface for the multi-round loop
+// engine (`neoth loop`). Shows the run history from `~/.neoth/loops/`,
+// a per-round iteration timeline, a convergence bar, the tool-call
+// budget meter, and a run/kill pair that drives a `neothd loop run`
+// subprocess (same subprocess pattern as the chat stream — the GUI never
+// links the engine in-process; the daemon/CLI owns the WAL).
+//
+// Display-gated behind the `gui-loop` cargo feature (default-on): the
+// Rust side hides the sidebar entry + skips the wiring when the feature
+// is off; this file always compiles (Slint has no cfg).
+
+import { Theme } from "theme.slint";
+import { NeothButton, NeothLineEdit, SegBar, Led, Card } from "components.slint";
+
+/// One outer round of a loop run — mirrors `loop_engine::LoopRound`.
+export struct LoopRoundRow {
+    round: int,
+    iterations: int,
+    ok-calls: int,
+    fail-calls: int,
+    stop-approved: bool,
+    refine-fired: bool,
+    duration: string,
+}
+
+/// One row in the run-history strip — mirrors `LoopRunRecord` headline.
+export struct LoopRunRow {
+    id: string,
+    started: string,
+    rounds: int,
+    stop-reason: string,
+    tool-calls: int,
+}
+
+// One timeline row: round number chip + counts + outcome chip.
+component RoundRow inherits Rectangle {
+    // "row" is a reserved built-in (grid placement) — use "entry".
+    in property <LoopRoundRow> entry;
+    height: 44px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px; padding-right: 14px; spacing: 14px;
+        Text {
+            text: "R\{root.entry.round}";
+            color: Theme.text-primary; font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm; vertical-alignment: center;
+            width: 34px;
+        }
+        Text {
+            text: "\{root.entry.iterations} iter";
+            color: Theme.text-secondary; font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs; vertical-alignment: center;
+        }
+        Text {
+            text: "✓\{root.entry.ok-calls}";
+            color: Theme.memory; font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs; vertical-alignment: center;
+        }
+        Text {
+            text: root.entry.fail-calls > 0 ? "✗\{root.entry.fail-calls}" : "";
+            color: Theme.consent; font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs; vertical-alignment: center;
+        }
+        Text {
+            text: root.entry.duration;
+            color: Theme.text-tertiary; font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs; vertical-alignment: center;
+            horizontal-stretch: 1; horizontal-alignment: right;
+        }
+        // outcome chip: STOP (verifier approved) / REFINE (self-reflect
+        // fired) / a dim continuation dash.
+        Rectangle {
+            width: chip.preferred-width + 16px; height: 20px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-pill;
+            background: root.entry.stop-approved ? Theme.memory-tint
+                : (root.entry.refine-fired ? Theme.warning-tint : transparent);
+            border-width: root.entry.stop-approved || root.entry.refine-fired ? 1px : 0px;
+            border-color: root.entry.stop-approved ? Theme.memory : Theme.warning;
+            chip := Text {
+                text: root.entry.stop-approved ? "STOP ✓"
+                    : (root.entry.refine-fired ? "REFINE ↻" : "—");
+                color: root.entry.stop-approved ? Theme.memory
+                    : (root.entry.refine-fired ? Theme.warning : Theme.text-tertiary);
+                font-family: Theme.font-mono; font-size: 10px;
+                horizontal-alignment: center; vertical-alignment: center;
+                width: 100%;
+            }
+        }
+    }
+}
+
+export component LoopPanel inherits Rectangle {
+    // Run launcher state.
+    in-out property <string> prompt-draft: "";
+    in property <bool> running: false;
+    // Live/selected record.
+    in property <[LoopRoundRow]> rounds: [];
+    in property <string> selected-id: "";
+    in property <string> stop-reason: "";
+    in property <string> final-text: "";
+    in property <int> tool-calls: 0;
+    // 0 = no budget cap configured → the meter hides, the count stays.
+    in property <int> tool-call-budget: 0;
+    // rounds-run / max-rounds; 1.0 once the verifier approved the stop.
+    in property <float> convergence: 0.0;
+    // History strip.
+    in property <[LoopRunRow]> history: [];
+    // One-line status ("loop killed", daemon-owns-WAL refusal, …).
+    in property <string> status-note: "";
+
+    callback run-clicked(string);
+    callback kill-clicked();
+    callback refresh-clicked();
+    callback run-selected(string);
+
+    background: Theme.bg-base;
+
+    HorizontalLayout {
+        // ── History strip (left) ─────────────────────────────────────
+        Rectangle {
+            width: 250px;
+            background: Theme.bg-sunken;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border-subtle; }
+            VerticalLayout {
+                padding: 14px; spacing: 6px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "RUNS";
+                        color: Theme.text-tertiary; font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        letter-spacing: Theme.letter-spacing-wide;
+                        vertical-alignment: center;
+                    }
+                    NeothButton {
+                        label: "↻"; primary: false; size: "xs";
+                        clicked => { root.refresh-clicked(); }
+                    }
+                }
+                Flickable {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 4px;
+                        if root.history.length == 0: Text {
+                            text: "(no loop runs yet)";
+                            color: Theme.text-tertiary; font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                        }
+                        for run in root.history: Rectangle {
+                            height: 54px;
+                            border-radius: Theme.radius-md;
+                            background: run.id == root.selected-id ? Theme.surface-2
+                                : (run-touch.has-hover ? Theme.surface-1 : transparent);
+                            animate background { duration: Theme.duration-fast; easing: ease-out; }
+                            VerticalLayout {
+                                padding: 8px; spacing: 3px;
+                                Text {
+                                    text: run.id;
+                                    color: Theme.text-primary; font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs; overflow: elide;
+                                }
+                                Text {
+                                    text: "\{run.started} · \{run.rounds}r · \{run.stop-reason}";
+                                    color: Theme.text-tertiary; font-family: Theme.font-mono;
+                                    font-size: 10px; overflow: elide;
+                                }
+                            }
+                            run-touch := TouchArea { clicked => { root.run-selected(run.id); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Main pane ────────────────────────────────────────────────
+        VerticalLayout {
+            padding: 24px; spacing: 14px;
+
+            Text {
+                text: "Autonomous loops — outer rounds over the dispatch loop, with stop-condition verification.";
+                color: Theme.text-secondary; font-family: Theme.font-sans;
+                font-size: Theme.font-size-md;
+            }
+
+            // Launcher row: prompt + Run + Kill.
+            HorizontalLayout {
+                spacing: 10px;
+                NeothLineEdit {
+                    horizontal-stretch: 1;
+                    text <=> root.prompt-draft;
+                    placeholder-text: "Loop prompt — e.g. \"fix the failing tests until green\"";
+                    enabled: !root.running;
+                }
+                NeothButton {
+                    label: "Run loop";
+                    loading: root.running;
+                    enabled: root.prompt-draft != "" || root.running;
+                    clicked => {
+                        if (root.prompt-draft != "" && !root.running) {
+                            root.run-clicked(root.prompt-draft);
+                        }
+                    }
+                }
+                if root.running: NeothButton {
+                    label: "Kill";
+                    danger: true;
+                    primary: false;
+                    clicked => { root.kill-clicked(); }
+                }
+            }
+
+            if root.status-note != "": Text {
+                text: root.status-note;
+                color: Theme.warning; font-family: Theme.font-mono;
+                font-size: Theme.font-size-2xs; wrap: word-wrap;
+            }
+
+            // Convergence + budget meters.
+            Card {
+                height: 84px;
+                shimmer: false;
+                VerticalLayout {
+                    padding: 14px; spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Led {
+                            state: root.running ? "connecting"
+                                : (root.stop-reason == "converged" ? "live"
+                                : (root.stop-reason == "" ? "off" : "error"));
+                            y: (parent.height - self.height) / 2;
+                        }
+                        Text {
+                            text: "CONVERGENCE";
+                            color: Theme.text-tertiary; font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.stop-reason != "" ? root.stop-reason : (root.running ? "running…" : "—");
+                            color: Theme.text-secondary; font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs; vertical-alignment: center;
+                            horizontal-stretch: 1; horizontal-alignment: right;
+                        }
+                    }
+                    Rectangle {
+                        height: 6px; border-radius: 3px; background: Theme.surface-3;
+                        Rectangle {
+                            x: 0; height: parent.height; border-radius: 3px;
+                            width: parent.width * clamp(root.convergence, 0.0, 1.0);
+                            background: Theme.memory;
+                            animate width { duration: Theme.duration-slow; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text {
+                            text: "BUDGET";
+                            color: Theme.text-tertiary; font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            vertical-alignment: center;
+                        }
+                        if root.tool-call-budget > 0: SegBar {
+                            horizontal-stretch: 1;
+                            y: (parent.height - self.height) / 2;
+                            segments: 12;
+                            fraction: root.tool-calls / root.tool-call-budget;
+                            fill: Theme.audit;
+                        }
+                        Text {
+                            text: root.tool-call-budget > 0
+                                ? "\{root.tool-calls} / \{root.tool-call-budget} tool calls"
+                                : "\{root.tool-calls} tool calls · no cap";
+                            color: Theme.text-secondary; font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs; vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Iteration timeline.
+            Flickable {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 6px;
+                    if root.rounds.length == 0: Text {
+                        text: root.running
+                            ? "Loop running — rounds land here when the record is written."
+                            : "Select a run on the left, or start one above.";
+                        color: Theme.text-tertiary; font-family: Theme.font-mono;
+                        font-size: Theme.font-size-sm;
+                    }
+                    for r in root.rounds: RoundRow { entry: r; }
+                }
+            }
+
+            // Final text preview (mono, collapsed height).
+            if root.final-text != "": Rectangle {
+                height: 110px;
+                border-radius: Theme.radius-lg;
+                background: Theme.bg-void;
+                border-width: 1px; border-color: Theme.border-subtle;
+                Flickable {
+                    viewport-width: self.width;
+                    Text {
+                        x: 14px; y: 10px; width: parent.width - 28px;
+                        text: root.final-text;
+                        color: Theme.text-secondary; font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs; wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
