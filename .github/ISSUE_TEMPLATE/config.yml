@@ -2,8 +2,8 @@ blank_issues_enabled: false
 
 contact_links:
   - name: Questions & Discussions
-    url: https://github.com/PLACEHOLDER/neoth/discussions
+    url: https://github.com/The-Geek-Freaks/NEOTH/discussions
     about: Ask questions, share configs, and discuss neothd usage here — not in issues.
   - name: Security Disclosure
-    url: https://github.com/PLACEHOLDER/neoth/blob/main/SECURITY.md
+    url: https://github.com/The-Geek-Freaks/NEOTH/blob/main/SECURITY.md
     about: Report security vulnerabilities privately. Do NOT open a public issue.

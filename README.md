@@ -387,6 +387,7 @@ runbook so beginners get plain fixes and pros get scriptable diagnostics.
 | Start from zero | [docs/quickstart.md](docs/quickstart.md) |
 | Install paths | [docs/install.md](docs/install.md) |
 | Privacy proof | [docs/privacy.md](docs/privacy.md) |
+| Verify the claims yourself | [docs/evaluation.md](docs/evaluation.md) |
 | CLI reference | [docs/cli-reference.md](docs/cli-reference.md) |
 | Channels | [docs/channels.md](docs/channels.md) |
 | Local models | [docs/local-models.md](docs/local-models.md) |
@@ -415,4 +416,6 @@ serious for operators, loyal to the user.
 
 ## License
 
-NEOTH is dual-licensed under MIT OR Apache-2.0.
+NEOTH is dual-licensed under MIT OR Apache-2.0, at your option — see
+[LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
+Third-party notices: [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).

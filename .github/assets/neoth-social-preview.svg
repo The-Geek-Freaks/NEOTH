@@ -1,0 +1,37 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH — your private AI buddy</title>
+  <desc id="desc">Social preview card: NEOTH, local-first personal AI daemon. One memory, verifiable audit, and Babel-Index collapse prediction on its own runtime.</desc>
+  <defs>
+    <radialGradient id="sp-bg" cx="50%" cy="42%" r="85%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".6" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <filter id="sp-glow" x="-40%" y="-80%" width="180%" height="260%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#sp-bg)"/>
+  <rect x="1" y="1" width="1278" height="638" stroke="white" stroke-opacity=".08"/>
+
+  <text x="640" y="250" text-anchor="middle" fill="white" class="sans" font-size="128" font-weight="200" letter-spacing="28" filter="url(#sp-glow)">NEOTH</text>
+  <text x="640" y="316" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="26" font-weight="300">Your private AI buddy. Loyal to you. Useful everywhere.</text>
+
+  <g class="mono" font-size="15" letter-spacing="1">
+    <rect x="176" y="392" width="280" height="48" rx="12" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".35"/>
+    <text x="316" y="422" text-anchor="middle" fill="#00ff80">local-first by default</text>
+    <rect x="488" y="392" width="280" height="48" rx="12" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".35"/>
+    <text x="628" y="422" text-anchor="middle" fill="#05d5ff">verify it yourself</text>
+    <rect x="800" y="392" width="304" height="48" rx="12" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".35"/>
+    <text x="952" y="422" text-anchor="middle" fill="#ff2a6d">predicts its own collapse</text>
+  </g>
+
+  <text x="640" y="512" text-anchor="middle" fill="#6f6f6f" class="mono" font-size="16" letter-spacing="2">one memory · three brain paths · five tiers + your vault</text>
+  <text x="640" y="566" text-anchor="middle" fill="#4f4f4f" class="mono" font-size="14" letter-spacing="2">github.com/The-Geek-Freaks/NEOTH</text>
+</svg>

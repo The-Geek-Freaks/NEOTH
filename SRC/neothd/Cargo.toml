@@ -4,8 +4,10 @@ version = "1.0.0-beta.1"
 edition = "2024"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
-description = "Neoth -- personal AI agent. Neoth knows."
-repository = "private"
+description = "Local-first personal AI daemon — five-tier memory, consent-gated tools, WASM plugin sandbox, multi-provider LLM routing, signed audit log, and Babel-Index collapse prediction on its own runtime."
+repository.workspace = true
+keywords = ["ai", "agent", "local-first", "assistant", "llm"]
+categories = ["command-line-utilities"]
 # `authors` deliberately omitted -- Neoth is multi-user.
 # Per-deployment operator identity lives in ~/.neoth/freedom.yaml, not crate metadata.
 

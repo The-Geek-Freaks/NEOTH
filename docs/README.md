@@ -10,6 +10,7 @@ normal users, explicit enough for pros.
 | Install from zero | [quickstart.md](quickstart.md) |
 | Choose an install path | [install.md](install.md) |
 | Prove privacy/local behavior | [privacy.md](privacy.md) |
+| Evaluate NEOTH as a skeptic | [evaluation.md](evaluation.md) |
 | Understand commands | [cli-reference.md](cli-reference.md) |
 | Fix setup problems | [troubleshooting.md](troubleshooting.md) and `neoth doctor --list-checks` |
 | Connect chat apps | [channels.md](channels.md) |

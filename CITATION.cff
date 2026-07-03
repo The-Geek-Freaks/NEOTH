@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use NEOTH or the Babel-Index instrumentation in research, please cite it as below."
+type: software
+title: "NEOTH: local-first personal AI daemon with Babel-Index collapse prediction"
+authors:
+  - name: "The Geek Freaks"
+    website: "https://github.com/The-Geek-Freaks"
+repository-code: "https://github.com/The-Geek-Freaks/NEOTH"
+url: "https://github.com/The-Geek-Freaks/NEOTH"
+license:
+  - MIT
+  - Apache-2.0
+version: 1.0.0-beta.1
+date-released: 2026-07-03
+keywords:
+  - personal-ai
+  - local-first
+  - ai-agent
+  - agent-memory
+  - audit-log
+  - babel-index
+  - collapse-prediction
+references:
+  - type: software
+    title: "delta-kosmologie: open RDelta/Babel-Index framework for collapse dynamics"
+    repository-code: "https://github.com/The-Geek-Freaks/delta-kosmologie"
+    authors:
+      - name: "The Geek Freaks"
