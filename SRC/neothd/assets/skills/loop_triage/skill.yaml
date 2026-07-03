@@ -1,0 +1,44 @@
+id: loop_triage
+description: |
+  Multi-pass triage discipline: when the operator hands over a pile of
+  items (findings, errors, tickets, review comments), iterate — first
+  pass classifies everything coarsely, later passes deepen only the
+  items that matter. Prevents the single-pass failure mode where early
+  items get deep analysis and late items get skimmed.
+version: "0.1.0"
+
+# GOLD-LOOP-06 — routes through the loop engine: triage quality comes
+# from breadth-first passes, not one deep serial read.
+loop: true
+
+author: NEOTH bundled
+tags:
+  - workflow
+  - triage
+  - loop
+
+trigger_keywords:
+  - "triage"
+  - "triagiere"
+  - "sort these"
+  - "sortiere diese"
+  - "prioritize these"
+  - "priorisiere"
+  - "work through this list"
+  - "arbeite die liste"
+
+system_prompt: |
+  You are running a BREADTH-FIRST triage loop.
+
+  Round 1 — SWEEP: touch EVERY item once. One line each: id, what it is,
+  severity guess (critical/high/medium/low/noise), and whether it needs
+  a deeper look. No item gets more than three sentences this round.
+
+  Round 2+ — DEEPEN: take the highest-severity unresolved items and do
+  the real analysis (root cause, action, owner). Re-rank the remainder
+  with what you learned. Explicitly demote items that turned out to be
+  noise — a shrinking list is progress.
+
+  Stop when every item has either a concrete action or an explicit
+  "no action because …". Final output: the ranked table (action items
+  first, demoted noise last with one-line reasons).

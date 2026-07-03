@@ -97,6 +97,14 @@ pub struct SkillManifest {
     #[serde(default)]
     pub effort: Option<crate::providers::effort_override::EffortBudget>,
 
+    /// GOLD-LOOP-06 — `loop: true` in `skill.yaml`. A matched loop-skill
+    /// routes its dispatch through `loop_engine::run_loop` (multi-round
+    /// iterate-until-converged) instead of a single dispatch. For skills
+    /// that are inherently iterative — verify, refine, triage. Round/budget
+    /// defaults come from `freedom.yaml::loop`.
+    #[serde(rename = "loop", default)]
+    pub loop_trigger: bool,
+
     /// GOLD-CCPARITY-SKILLVIS-01 — per-skill routing visibility declared in
     /// `skill.yaml`. The operator-side `freedom.yaml::skills.visibility_overrides`
     /// map takes precedence over this field; the loader stamps the override value
@@ -279,6 +287,11 @@ impl Skill {
         self.manifest.effort
     }
 
+    /// GOLD-LOOP-06 — whether this skill routes through the loop engine.
+    pub fn loop_trigger(&self) -> bool {
+        self.manifest.loop_trigger
+    }
+
     /// GOLD-CCPARITY-SKILLVIS-01 — effective routing visibility for this skill.
     /// Returns the value stamped into the manifest at load time, which may be
     /// the manifest's own `visibility:` field or an operator override from
@@ -440,6 +453,29 @@ system_prompt: "do stuff"
     }
 
     #[test]
+    fn loop_trigger_field_parses_and_defaults_false() {
+        // GOLD-LOOP-06 — `loop:` is the YAML key (Rust keyword → serde rename).
+        let with_loop = r#"
+id: verifier-like
+description: iterative skill
+trigger_keywords: ["verify"]
+system_prompt: "iterate"
+loop: true
+"#;
+        let m: SkillManifest = serde_yaml::from_str(with_loop).expect("parse");
+        assert!(m.loop_trigger, "`loop: true` must parse into loop_trigger");
+
+        let without_loop = r#"
+id: plain-skill
+description: single dispatch
+trigger_keywords: ["hello"]
+system_prompt: "do stuff"
+"#;
+        let m2: SkillManifest = serde_yaml::from_str(without_loop).expect("parse");
+        assert!(!m2.loop_trigger, "loop_trigger defaults to false");
+    }
+
+    #[test]
     fn skill_helpers_proxy_to_manifest() {
         let manifest = SkillManifest {
             id: "x".into(),
@@ -458,6 +494,7 @@ system_prompt: "do stuff"
             model: None,
             paths: vec![],
             effort: None,
+            loop_trigger: false,
             visibility: Default::default(),
         };
         let s = Skill {
@@ -547,6 +584,7 @@ system_prompt: "do stuff"
             model: None,
             paths: vec!["**/*.rs".into()],
             effort: None,
+            loop_trigger: false,
             visibility: Default::default(),
         };
         let s = Skill {
@@ -576,6 +614,7 @@ system_prompt: "do stuff"
             model: Some("claude-opus-4-7".into()),
             paths: vec![],
             effort: None,
+            loop_trigger: false,
             visibility: Default::default(),
         };
         let s = Skill {
@@ -665,6 +704,7 @@ visibility: "off"
             model: None,
             paths: vec![],
             effort: None,
+            loop_trigger: false,
             visibility: crate::config::SkillVisibility::NameOnly,
         };
         let s = Skill {
@@ -725,6 +765,7 @@ system_prompt: "be quick"
             model: None,
             paths: vec![],
             effort: Some(EffortBudget::Max),
+            loop_trigger: false,
             visibility: Default::default(),
         };
         let s = Skill {

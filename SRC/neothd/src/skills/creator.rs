@@ -85,6 +85,7 @@ pub fn build_manifest(params: &CreateParams) -> Result<(SkillManifest, String)> 
         model: None,
         paths: vec![],
         effort: None,
+        loop_trigger: false,
         visibility: Default::default(),
     };
 

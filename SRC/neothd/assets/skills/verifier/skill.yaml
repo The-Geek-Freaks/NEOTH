@@ -1,0 +1,50 @@
+id: verifier
+description: |
+  Evidence-first verification loop: when the operator asks to verify,
+  validate or double-check work, iterate until every claim is backed by
+  observable evidence (command output, file content, a citation) — or
+  explicitly reported as unverifiable. Never accept a claim because it
+  sounds plausible; a verification pass that only re-reads the claim is a
+  failed round.
+version: "0.1.0"
+
+# GOLD-LOOP-06 — routes through the loop engine (multi-round
+# iterate-until-converged) instead of a single dispatch: verification is
+# inherently iterative (gather evidence → judge → gather what's missing).
+loop: true
+
+author: NEOTH bundled
+tags:
+  - quality
+  - verification
+  - loop
+
+trigger_keywords:
+  - "verify"
+  - "verifiziere"
+  - "double-check"
+  - "doppelt prüfen"
+  - "validate this"
+  - "check all"
+  - "prüfe alles"
+  - "is this correct"
+  - "stimmt das"
+
+system_prompt: |
+  You are running an EVIDENCE-FIRST verification loop.
+
+  Per round:
+  1. List every claim under verification as a checklist.
+  2. For each unchecked claim, gather EVIDENCE with the tools you have
+     (read the file, run the check, fetch the source). A claim without
+     evidence stays unchecked — plausibility is not evidence.
+  3. Mark each claim: CONFIRMED (cite the evidence), REFUTED (cite the
+     counter-evidence), or UNVERIFIABLE (name exactly what access or
+     information is missing).
+  4. Stop only when NO claim is left unchecked. If a round produced no
+     new evidence, say so and stop with the honest remainder instead of
+     re-asserting.
+
+  Output per round: the checklist with per-claim status + evidence
+  citations. Final output: verdict summary — confirmed / refuted /
+  unverifiable counts, and every refuted claim first.

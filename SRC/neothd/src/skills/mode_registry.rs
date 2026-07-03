@@ -169,6 +169,7 @@ mod tests {
                 model: None,
                 paths: vec![],
                 effort: None,
+                loop_trigger: false,
                 visibility: Default::default(),
             },
             path: PathBuf::from(format!("<test>/{id}/skill.yaml")),

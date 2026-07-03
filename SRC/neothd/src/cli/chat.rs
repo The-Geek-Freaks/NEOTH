@@ -9896,6 +9896,7 @@ mod tests {
                 model: None,
                 paths: Vec::new(),
                 effort: None,
+                loop_trigger: false,
                 visibility: crate::config::SkillVisibility::On,
             },
             path: std::path::PathBuf::from(format!("/skills/{id}")),

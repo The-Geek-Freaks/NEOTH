@@ -1549,7 +1549,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     current_goal: channel_goal_layer.as_deref(),
                 });
             let channel_enriched_system = channel_enriched.system;
-            let _channel_used_skill_id = channel_enriched.used_skill_id;
+            let channel_used_skill_id = channel_enriched.used_skill_id;
+            // GOLD-LOOP-06 — a matched `loop: true` skill engages the loop
+            // engine below even when freedom.yaml's loop gate is off (the
+            // skill declares itself inherently iterative).
+            let skill_loop_trigger = channel_used_skill_id
+                .as_deref()
+                .and_then(|id| installed_skills.iter().find(|s| s.manifest.id == id))
+                .is_some_and(|s| s.loop_trigger());
 
             // ── GOLD-ADAPT-PWF-01: plan-attestation verify (channel) ──────
             // Re-read task_plan.md and verify hash before dispatch. On
@@ -2134,16 +2141,29 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 );
                 // GOLD-LOOP-01: when loop_config is enabled with max_rounds > 1,
                 // route the channel path through the multi-round loop engine.
-                // Falls back to a single dispatch when the gate is not set.
-                if config_for_handler.loop_config.enabled
-                    && config_for_handler.loop_config.max_rounds > 1
+                // GOLD-LOOP-06: a matched `loop: true` skill engages it too
+                // (freedom.yaml loop.* still supplies rounds/budget defaults).
+                // Falls back to a single dispatch when neither gate is set.
+                if (config_for_handler.loop_config.enabled
+                    && config_for_handler.loop_config.max_rounds > 1)
+                    || skill_loop_trigger
                 {
-                    let loop_cfg = crate::loop_engine::engine::LoopConfig::from_freedom(
+                    let mut loop_cfg = crate::loop_engine::engine::LoopConfig::from_freedom(
                         &config_for_handler.loop_config,
                         autonomy,
                         vec![], // no --until on the channel path; criteria from freedom.yaml not yet surfaced here
                         crate::config::FreedomConfig::default_neoth_home(),
                     );
+                    if skill_loop_trigger {
+                        // A loop-skill must actually iterate — floor at 2
+                        // rounds even when the operator's loop config idles
+                        // at max_rounds=1.
+                        loop_cfg.max_rounds = loop_cfg.max_rounds.max(2);
+                        info!(
+                            skill = channel_used_skill_id.as_deref().unwrap_or("?"),
+                            "GOLD-LOOP-06: loop-skill matched — engaging loop engine"
+                        );
+                    }
                     info!(
                         max_rounds = loop_cfg.max_rounds,
                         "GOLD-LOOP-01: channel loop mode active — routing to loop engine"

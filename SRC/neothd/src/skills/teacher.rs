@@ -228,6 +228,7 @@ fn write_skill_md(skill_id: &str, corrected_text: &str) -> Result<()> {
         model: None,
         paths: vec![],
         effort: None,
+        loop_trigger: false,
         visibility: Default::default(),
     };
 

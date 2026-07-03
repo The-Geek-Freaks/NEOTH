@@ -301,6 +301,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "log_analyzer",
         include_str!("../../assets/skills/log_analyzer/skill.yaml"),
     ),
+    // GOLD-LOOP-06 (2026-07-03) — loop-skill: breadth-first multi-pass triage.
+    (
+        "loop_triage",
+        include_str!("../../assets/skills/loop_triage/skill.yaml"),
+    ),
     (
         "lowkey_base",
         include_str!("../../assets/skills/lowkey_base/skill.yaml"),
@@ -757,6 +762,11 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "verification_before_completion",
         include_str!("../../assets/skills/verification_before_completion/skill.yaml"),
+    ),
+    // GOLD-LOOP-06 (2026-07-03) — loop-skill: evidence-first verification loop.
+    (
+        "verifier",
+        include_str!("../../assets/skills/verifier/skill.yaml"),
     ),
     // GOLD-ADAPT-WEBQ-01 (2026-06-19) — bundled skill.
     (
