@@ -10,7 +10,7 @@
 
 import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, SegBar } from "components.slint";
+import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, SegBar, Expander } from "components.slint";
 
 export enum SettingsTab {
     chat,
@@ -86,11 +86,32 @@ export struct HemisphereRow {
 }
 
 // GU-01 — one installed skill for the Skills panel.
+// GOLD-ADAPT-AOS-01: rows come pre-grouped from Rust
+// (`panel_logic::group_skill_rows`) — `is-header` rows carry the domain
+// eyebrow (first manifest tag), skill rows carry tags + trigger keywords.
 export struct SkillRow {
     id: string,
     description: string,
     enabled: bool,
     keywords: string,  // joined trigger keywords
+    tags: string,      // joined manifest tags
+    is-header: bool,   // domain group header row
+}
+
+// SPEC-05 — one saved preset for the selector (moved here from main.slint
+// so the Config tab (AOS-02) and the chat tile share one definition).
+export struct PresetRow {
+    name: string,
+    active: bool,
+}
+
+// SPEC-05 step5c — one behavioural profile preset (LOWKEY/Formal/Deepdive/…)
+// for the interaction-register selector.
+export struct ProfilePresetRow {
+    name: string,
+    description: string,
+    recommended: bool,
+    active: bool,
 }
 
 // GU-01 — one discovered plugin for the Plugins panel.
@@ -450,6 +471,17 @@ export component SettingsView inherits Rectangle {
     // refs / cloud catalog), refreshed by Rust on provider pick.
     in property <[string]> hemisphere-model-ids: ["(provider default)"];
     in property <[SkillRow]> skills: [];
+    // GOLD-ADAPT-AOS-01 — index search + true install count (the grouped
+    // model shrinks under filter; the count must not).
+    in-out property <string> skills-filter: "";
+    in property <int> skills-total: 0;
+    callback skills-filter-edited(string);
+    // GOLD-ADAPT-AOS-02 — saved presets surfaced in the Config tab (same
+    // data as the chat tile; Rust owns fetch/refresh).
+    in property <[PresetRow]> preset-list: [];
+    in property <string> preset-summary: "";
+    callback preset-activate-clicked(string);
+    callback preset-apply-clicked();
     // PF-01-GUI — skills.always_embed_route toggle (freedom.yaml write-back).
     in-out property <bool> skills-always-embed-route: true;
     callback skills-always-embed-route-changed(bool);
@@ -1031,18 +1063,33 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
+                // GOLD-ADAPT-AOS-01 — searchable, domain-grouped index.
+                // Rust rebuilds the grouped model on every keystroke
+                // (`group_skill_rows` over the cached full list).
+                NeothLineEdit {
+                    text <=> root.skills-filter;
+                    placeholder-text: "Search skills — name, description, trigger, tag…";
+                    edited(t) => { root.skills-filter-edited(t); }
+                }
                 Card {
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
                         Text {
-                            text: root.skills.length + " skill(s) installed";
+                            text: root.skills-total + " skill(s) installed";
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
                         }
-                        if root.skills.length == 0: Text {
+                        if root.skills.length == 0 && root.skills-filter == "": Text {
                             text: "(no skills installed — `neoth skills --install <path>`)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.skills.length == 0 && root.skills-filter != "": Text {
+                            text: "(no skill matches \"" + root.skills-filter + "\")";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -1050,7 +1097,15 @@ export component SettingsView inherits Rectangle {
                         }
                         for s in root.skills: VerticalBox {
                             spacing: 2px;
-                            HorizontalLayout {
+                            // Domain header row (first manifest tag).
+                            if s.is-header: Text {
+                                text: s.id;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                letter-spacing: Theme.letter-spacing-wide;
+                                color: Theme.accent;
+                            }
+                            if !s.is-header: HorizontalLayout {
                                 spacing: Theme.space-base;
                                 // GUI-overhaul — feature parity: enable/disable a
                                 // skill from the GUI (was a read-only on/off label).
@@ -1071,12 +1126,29 @@ export component SettingsView inherits Rectangle {
                                     color: Theme.text-primary;
                                     horizontal-stretch: 1;
                                 }
+                                if s.tags != "": Text {
+                                    text: s.tags;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-tertiary;
+                                    vertical-alignment: center;
+                                }
                             }
-                            if s.description != "": Text {
+                            if !s.is-header && s.description != "": Text {
                                 text: s.description;
                                 font-family: Theme.font-display;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            // GOLD-ADAPT-AOS-05 — WHY this skill activates:
+                            // the trigger phrases, previously parsed but
+                            // never rendered.
+                            if !s.is-header && s.keywords != "": Text {
+                                text: "activates on: " + s.keywords;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-tertiary;
                                 wrap: word-wrap;
                             }
                         }
@@ -1318,6 +1390,24 @@ export component SettingsView inherits Rectangle {
                                         : "custom");
                                 }
                             }
+                        }
+                        // GOLD-ADAPT-AOS-05 — WHY the current level behaves the
+                        // way it does (agent-os "include reasoning" pattern):
+                        // concrete gate consequences, not a name.
+                        Text {
+                            text: root.autonomy-current == "strict"
+                                ? "Why: every action needs your explicit YES — no writes, no sends, no spends without a per-action consent prompt."
+                                : root.autonomy-current == "standard"
+                                ? "Why: routine reads + local writes run free; anything leaving the machine (messages, cloud calls, spends) still prompts you."
+                                : root.autonomy-current == "elevated"
+                                ? "Why: NEOTH acts first and reports after for most operations; only destructive or costly actions (deletes, payments, new channels) prompt."
+                                : root.autonomy-current == "full"
+                                ? "Why: sudomode — NEOTH self-directs including self-updates and spends inside your budget caps. Every action still lands in the WAL audit chain."
+                                : "Why: custom — your per-capability matrix in freedom.yaml decides; capabilities not listed there fall back to standard prompting.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            wrap: word-wrap;
                         }
                         Text {
                             text: "strict / standard / elevated / custom apply immediately. \"full\" (sudomode) needs the confirm below. Writes freedom.yaml::autonomy + a WAL audit frame.";
@@ -2244,20 +2334,88 @@ export component SettingsView inherits Rectangle {
                     subtitle: "Change the LLM provider, force a config reload, or restart the setup wizard. Every choice writes back to ~/.neoth/freedom.yaml — no manual YAML editing required.";
                     mirrors-slash: "/config   |   /wizard   |   /reload";
                 }
+
+                // GOLD-ADAPT-AOS-04 — the Config surface is grouped into
+                // collapsible domain sections (agent-os standards layout):
+                // PROVIDER · PRESETS · COUNCIL · MAINTENANCE below; Channels
+                // and Autonomy keep their own tabs (duplicating them here
+                // would be a second write path to the same yaml keys).
+
+                // ── PROVIDER ─────────────────────────────────────────
+                Expander {
+                    title: "PROVIDER";
+                    hint: root.provider-current;
+                    NeothComboBox {
+                        // GUI-improve — the LIVE implemented-provider list
+                        // (Rust sets provider-ids from `neoth provider list`),
+                        // not a hardcoded subset that silently dropped new
+                        // providers (anthropic_api / codex / antigravity / …)
+                        // and forced an unknown provider to row 0 = claude_cli.
+                        model: root.provider-ids;
+                        current-index: root.provider-current-index;
+                        selected(i) => {
+                            if (i >= 0 && i < root.provider-ids.length) {
+                                root.provider-current-index = i;
+                                root.provider-current = root.provider-ids[i];
+                                root.provider-changed(root.provider-ids[i]);
+                            }
+                        }
+                    }
+                    Text {
+                        text: "Click Reload config (Maintenance below) after any provider change so the daemon picks it up within ~2 seconds.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // ── PRESETS (AOS-02 — surfaces config/presets.rs here) ──
+                Expander {
+                    title: "PRESETS";
+                    hint: "saved config bundles";
+                    if root.preset-list.length == 0: Text {
+                        text: root.preset-summary != "" ? root.preset-summary : "(no presets saved — `neoth preset save <name>`)";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    for p in root.preset-list: TouchArea {
+                        height: 24px;
+                        clicked => { root.preset-activate-clicked(p.name); }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: p.active ? "●" : "○";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: p.active ? Theme.accent-green : Theme.text-muted;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: p.name;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                    if root.preset-list.length > 0: NeothButton {
+                        label: "Apply active preset";
+                        size: "sm";
+                        clicked => { root.preset-apply-clicked(); }
+                    }
+                }
+
+                // ── COUNCIL ──────────────────────────────────────────
                 // KF-08 — Council budget meter: the per-message council call cap
                 // + the last debate's live usage (`neoth council budget --json`).
-                Card {
-                    VerticalBox {
-                        padding: Theme.space-base;
-                        spacing: Theme.space-tight;
-                        Text {
-                            text: "COUNCIL BUDGET";
-                            font-family: Theme.font-display;
-                            font-size: Theme.font-size-caption;
-                            font-weight: Theme.weight-medium;
-                            letter-spacing: Theme.letter-spacing-tight;
-                            color: Theme.accent-green;
-                        }
+                Expander {
+                    title: "COUNCIL";
+                    hint: root.council-cap != "" ? "cap " + root.council-cap : "";
                         if root.council-cap == "": Text {
                             text: "(start the daemon to read the council budget)";
                             font-family: Theme.font-display;
@@ -2307,62 +2465,29 @@ export component SettingsView inherits Rectangle {
                                 color: Theme.text-muted;
                             }
                         }
-                    }
                 }
-                Card {
-                    VerticalBox {
-                        padding: Theme.space-base;
+
+                // ── MAINTENANCE ──────────────────────────────────────
+                Expander {
+                    title: "MAINTENANCE";
+                    hint: "reload · wizard";
+                    Text {
+                        text: "Reload pushes freedom.yaml changes to the running daemon within ~2s (the ~/.neoth/.reload-requested sentinel). Re-run wizard restarts first-run setup without wiping your config.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
                         spacing: Theme.space-base;
-
-                        Text {
-                            text: "ACTIVE PROVIDER";
-                            font-family: Theme.font-display;
-                            font-size: Theme.font-size-caption;
-                            font-weight: Theme.weight-bold;
-                            letter-spacing: Theme.letter-spacing-wide;
-                            color: Theme.accent-green;
+                        NeothButton {
+                            label: "Reload config";
+                            clicked => { root.reload-config-clicked(); }
                         }
-                        NeothComboBox {
-                            // GUI-improve — the LIVE implemented-provider list
-                            // (Rust sets provider-ids from `neoth provider list`),
-                            // not a hardcoded subset that silently dropped new
-                            // providers (anthropic_api / codex / antigravity / …)
-                            // and forced an unknown provider to row 0 = claude_cli.
-                            model: root.provider-ids;
-                            current-index: root.provider-current-index;
-                            selected(i) => {
-                                if (i >= 0 && i < root.provider-ids.length) {
-                                    root.provider-current-index = i;
-                                    root.provider-current = root.provider-ids[i];
-                                    root.provider-changed(root.provider-ids[i]);
-                                }
-                            }
-                        }
-
-                        Text {
-                            text: "Click Reload config below after any provider change so the daemon picks it up within ~2 seconds — the sentinel file at ~/.neoth/.reload-requested handles the dispatch.";
-                            font-family: Theme.font-display;
-                            font-size: Theme.font-size-caption;
-                            color: Theme.text-muted;
-                            wrap: word-wrap;
-                        }
-
-                        Rectangle {
-                            height: 1px;
-                            background: Theme.border-subtle;
-                        }
-
-                        HorizontalLayout {
-                            spacing: Theme.space-base;
-                            NeothButton {
-                                label: "Reload config";
-                                clicked => { root.reload-config-clicked(); }
-                            }
-                            NeothButton {
-                                label: "Re-run wizard";
-                                primary: false;
-                                clicked => { root.wizard-rerun-clicked(); }
-                            }
+                        NeothButton {
+                            label: "Re-run wizard";
+                            primary: false;
+                            clicked => { root.wizard-rerun-clicked(); }
                         }
                     }
                 }

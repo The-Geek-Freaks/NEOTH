@@ -723,6 +723,8 @@ pub struct SkillSummary {
     pub enabled: bool,
     /// Trigger keywords joined with ", " for display.
     pub keywords: String,
+    /// GOLD-ADAPT-AOS-01 — manifest `tags`; first tag = index domain group.
+    pub tags: Vec<String>,
 }
 
 /// Parse `neoth skills --list --output json` (a JSON array of SkillManifest).
@@ -754,14 +756,86 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
                         .join(", ")
                 })
                 .unwrap_or_default();
+            let tags = s
+                .get("tags")
+                .and_then(|t| t.as_array())
+                .map(|ts| {
+                    ts.iter()
+                        .filter_map(|w| w.as_str())
+                        .map(|w| w.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             Some(SkillSummary {
                 id,
                 description,
                 enabled,
                 keywords,
+                tags,
             })
         })
         .collect()
+}
+
+// ── GOLD-ADAPT-AOS-01 — domain-grouped, searchable skills index ──────────────
+// Pure shaping: skills in, a FLAT display list out (Slint structs can't nest
+// models, so group headers ride inline as `is_header` rows).
+
+/// One row of the grouped skills index — either a domain header or a skill.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillIndexRow {
+    pub id: String,
+    pub description: String,
+    pub enabled: bool,
+    pub keywords: String,
+    pub tags: String,
+    pub is_header: bool,
+}
+
+/// Group skills by their first tag ("general" when untagged), alphabetical
+/// groups + ids, filtered case-insensitively over id/description/keywords/
+/// tags. Headers for empty (filtered-out) groups are dropped.
+pub fn group_skill_rows(skills: &[SkillSummary], filter: &str) -> Vec<SkillIndexRow> {
+    let needle = filter.trim().to_lowercase();
+    let matches = |s: &SkillSummary| {
+        needle.is_empty()
+            || s.id.to_lowercase().contains(&needle)
+            || s.description.to_lowercase().contains(&needle)
+            || s.keywords.to_lowercase().contains(&needle)
+            || s.tags.iter().any(|t| t.to_lowercase().contains(&needle))
+    };
+    let mut groups: std::collections::BTreeMap<String, Vec<&SkillSummary>> =
+        std::collections::BTreeMap::new();
+    for s in skills.iter().filter(|s| matches(s)) {
+        let domain = s
+            .tags
+            .first()
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "general".to_string());
+        groups.entry(domain).or_default().push(s);
+    }
+    let mut out = Vec::new();
+    for (domain, mut members) in groups {
+        members.sort_by(|a, b| a.id.cmp(&b.id));
+        out.push(SkillIndexRow {
+            id: domain.to_uppercase(),
+            description: String::new(),
+            enabled: true,
+            keywords: String::new(),
+            tags: String::new(),
+            is_header: true,
+        });
+        out.extend(members.into_iter().map(|s| SkillIndexRow {
+            id: s.id.clone(),
+            description: s.description.clone(),
+            enabled: s.enabled,
+            keywords: s.keywords.clone(),
+            tags: s.tags.join(", "),
+            is_header: false,
+        }));
+    }
+    out
 }
 
 // ── GU-01 plugins panel (parse `neoth plugin list --output json`) ────────────
@@ -2048,6 +2122,57 @@ mod tests {
         assert!(rows[0].enabled);
         assert!(rows[1].enabled, "missing enabled defaults true");
         assert_eq!(rows[1].keywords, "");
+    }
+
+    // ── GOLD-ADAPT-AOS-01 — tags + grouped index ───────────────────────
+    #[test]
+    fn parse_skills_reads_tags() {
+        let rows = parse_skills(
+            r#"[{"id":"a","tags":["security","net"]},{"id":"b"}]"#,
+        );
+        assert_eq!(rows[0].tags, vec!["security", "net"]);
+        assert!(rows[1].tags.is_empty());
+    }
+
+    #[test]
+    fn group_skill_rows_groups_by_first_tag_sorted_with_headers() {
+        let mk = |id: &str, tags: &[&str], desc: &str| SkillSummary {
+            id: id.into(),
+            description: desc.into(),
+            enabled: true,
+            keywords: String::new(),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+        };
+        let skills = vec![
+            mk("zeta", &["security"], ""),
+            mk("alpha", &["security", "extra"], ""),
+            mk("plain", &[], "untagged skill"),
+            mk("writer", &["Docs"], ""),
+        ];
+        let rows = group_skill_rows(&skills, "");
+        let shape: Vec<(bool, &str)> =
+            rows.iter().map(|r| (r.is_header, r.id.as_str())).collect();
+        assert_eq!(
+            shape,
+            vec![
+                (true, "DOCS"),
+                (false, "writer"),
+                (true, "GENERAL"),
+                (false, "plain"),
+                (true, "SECURITY"),
+                (false, "alpha"),
+                (false, "zeta"),
+            ]
+        );
+        // Filter hits description; empty groups drop their headers.
+        let filtered = group_skill_rows(&skills, "UNTAGGED");
+        let shape: Vec<(bool, &str)> = filtered
+            .iter()
+            .map(|r| (r.is_header, r.id.as_str()))
+            .collect();
+        assert_eq!(shape, vec![(true, "GENERAL"), (false, "plain")]);
+        // Filter with no match → fully empty (no orphan headers).
+        assert!(group_skill_rows(&skills, "zzz-nope").is_empty());
     }
 
     #[test]

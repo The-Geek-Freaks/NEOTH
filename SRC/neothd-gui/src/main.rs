@@ -728,6 +728,17 @@ fn main() -> Result<()> {
             }
         });
     }
+    // GOLD-ADAPT-AOS-01 — skills-index search: regroup the cached list on
+    // every keystroke (pure regroup, no subprocess round-trip).
+    {
+        let weak_skill_filter = window.as_weak();
+        window.on_skills_filter_edited(move |_| {
+            if let Some(w) = weak_skill_filter.upgrade() {
+                render_skill_index(&w);
+            }
+        });
+    }
+
     // GOLD-ADAPT-ODY-03 — attach/remove handlers. The picker is the native
     // modal dialog (blocks the UI thread while open — standard Open-dialog
     // semantics on Windows).
@@ -3141,16 +3152,38 @@ fn fetch_skills() -> Vec<panel_logic::SkillSummary> {
     }
 }
 
+/// GOLD-ADAPT-AOS-01 — full skill list cache so the search box can
+/// re-group without a subprocess round-trip per keystroke.
+static SKILLS_CACHE: std::sync::Mutex<Vec<panel_logic::SkillSummary>> =
+    std::sync::Mutex::new(Vec::new());
+
 /// GU-01 — push the installed-skill list onto the MainWindow. UI-thread only.
+/// AOS-01: caches the full list + renders the grouped/filtered index.
 fn apply_skills(window: &MainWindow, skills: Vec<panel_logic::SkillSummary>) {
+    window.set_skills_total(skills.len() as i32);
+    if let Ok(mut c) = SKILLS_CACHE.lock() {
+        *c = skills;
+    }
+    render_skill_index(window);
+}
+
+/// AOS-01 — regroup the cached skills under the current filter and push
+/// the flat header+row model. UI-thread only.
+fn render_skill_index(window: &MainWindow) {
     use slint::{ModelRc, VecModel};
-    let rows: Vec<SkillRow> = skills
+    let filter = window.get_skills_filter().to_string();
+    let rows: Vec<SkillRow> = SKILLS_CACHE
+        .lock()
+        .map(|c| panel_logic::group_skill_rows(&c, &filter))
+        .unwrap_or_default()
         .into_iter()
         .map(|s| SkillRow {
             id: s.id.into(),
             description: s.description.into(),
             enabled: s.enabled,
             keywords: s.keywords.into(),
+            tags: s.tags.into(),
+            is_header: s.is_header,
         })
         .collect();
     window.set_skills(ModelRc::new(VecModel::from(rows)));

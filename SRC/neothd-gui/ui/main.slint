@@ -21,7 +21,7 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
@@ -30,20 +30,9 @@ import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 export { Theme }
 
-// SPEC-05 — one saved preset for the selector tile.
-export struct PresetRow {
-    name: string,
-    active: bool,
-}
-
-// SPEC-05 step5c — one behavioural profile preset (LOWKEY/Formal/Deepdive/…)
-// for the interaction-register selector.
-export struct ProfilePresetRow {
-    name: string,
-    description: string,
-    recommended: bool,
-    active: bool,
-}
+// SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
+// surfaces presets in the Config tab too) — re-exported for Rust.
+export { PresetRow, ProfilePresetRow }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -169,6 +158,10 @@ export component MainWindow inherits Window {
     // SPEC-05 step5c: behavioural-profile presets (LOWKEY/Formal/…) from
     // `neoth profile preset list --json` — the operator's interaction register.
     in property <[ProfilePresetRow]> profile-preset-list: [];
+    // GOLD-ADAPT-AOS-01 — skills-index search state + true install count.
+    in-out property <string> skills-filter: "";
+    in property <int> skills-total: 0;
+    callback skills-filter-edited(string);
 
     // Pick #28 (12/10 polish): derive the step counter + label from
     // the active `WizardStep` so the top ProgressIndicator always
@@ -1663,6 +1656,13 @@ export component MainWindow inherits Window {
             hemisphere-model-ids: root.hemisphere-model-ids;
             provider-ids: root.provider-ids;
             skills: root.skills;
+            skills-filter <=> root.skills-filter;
+            skills-total: root.skills-total;
+            skills-filter-edited(t) => { root.skills-filter-edited(t); }
+            preset-list: root.preset-list;
+            preset-summary: root.preset-summary;
+            preset-activate-clicked(name) => { root.preset-activate-clicked(name); }
+            preset-apply-clicked => { root.preset-apply-clicked(); }
             skills-always-embed-route: root.skills-always-embed-route;
             skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
             skill-toggle-clicked(id, en) => { root.skill-toggle(id, en); }

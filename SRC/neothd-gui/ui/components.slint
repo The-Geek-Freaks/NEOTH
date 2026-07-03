@@ -170,6 +170,78 @@ export component SegBar inherits Rectangle {
     }
 }
 
+// ── Expander ─────────────────────────────────────────────────────────
+// GOLD-ADAPT-AOS-04 — collapsible domain section (agent-os standards/
+// folder layout, translated to UI): mono eyebrow header + chevron, body
+// mounts only while expanded (Slint `if` removes it from layout).
+
+export component Expander inherits Rectangle {
+    in property <string> title: "";
+    in property <string> hint: "";
+    in-out property <bool> expanded: true;
+
+    background: Theme.bg-card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        // Header row — the whole strip toggles.
+        Rectangle {
+            height: 44px;
+            background: head-touch.has-hover ? Theme.surface-2 : transparent;
+            border-radius: Theme.radius-card;
+            animate background { duration: Theme.duration-fast; easing: ease-out; }
+            HorizontalLayout {
+                padding-left: 16px; padding-right: 16px; spacing: 10px;
+                Text {
+                    text: root.expanded ? "▾" : "▸";
+                    color: Theme.accent;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    width: 14px;
+                }
+                Text {
+                    text: root.title;
+                    color: Theme.text-primary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    letter-spacing: Theme.letter-spacing-wide;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.hint;
+                    color: Theme.text-tertiary;
+                    font-family: Theme.font-sans;
+                    font-size: Theme.font-size-2xs;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    horizontal-alignment: right;
+                }
+            }
+            head-touch := TouchArea {
+                clicked => { root.expanded = !root.expanded; }
+            }
+        }
+        // @children can't sit in an `if` — collapse via animated clip
+        // height instead (which also gives the fold a sovereign settle).
+        Rectangle {
+            clip: true;
+            height: root.expanded ? body.preferred-height : 0px;
+            animate height { duration: Theme.duration-base; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+            body := VerticalLayout {
+                width: 100%;
+                padding: 16px;
+                padding-top: 4px;
+                spacing: 8px;
+                @children
+            }
+        }
+    }
+}
+
 // ── Led ──────────────────────────────────────────────────────────────
 // GOLD-ADAPT-GUI-04 — live-state dot (nullframe .led): colour carries
 // the daemon state (green=live · amber=connecting · pink=error), a slow
