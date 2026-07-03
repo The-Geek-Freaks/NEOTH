@@ -476,6 +476,11 @@ export component SettingsView inherits Rectangle {
     in-out property <string> skills-filter: "";
     in property <int> skills-total: 0;
     callback skills-filter-edited(string);
+    // GOLD-ADAPT-AOS-06 — spec-shape entry drafts + create action.
+    in-out property <string> spec-title: "";
+    in-out property <string> spec-goal: "";
+    in-out property <string> spec-acceptance: "";
+    callback spec-create-clicked(string, string, string);
     // GOLD-ADAPT-AOS-02 — saved presets surfaced in the Config tab (same
     // data as the chat tile; Rust owns fetch/refresh).
     in property <[PresetRow]> preset-list: [];
@@ -1917,7 +1922,51 @@ export component SettingsView inherits Rectangle {
                 PanelHeader {
                     title: "Code Sessions";
                     subtitle: "Hermes-style autonomous coding workflow. Decompose a prompt with Cerebellum, dispatch tasks to Left (fast) + Right (deep) hemispheres, watch the kanban board fill.";
-                    mirrors-slash: "/code <prompt>   |   neoth kanban {list,show,task,move,assign,comment,archive,watch,review}";
+                    mirrors-slash: "/code <prompt>   |   neoth kanban {list,show,task,add,move,assign,comment,archive,watch,review}";
+                }
+
+                // GOLD-ADAPT-AOS-06 — spec-shape entry (agent-os shape-spec):
+                // guided 3-field "New Spec" that seeds the board via
+                // `neoth kanban add` (collapsed by default — the board is
+                // the primary surface).
+                Expander {
+                    title: "NEW SPEC";
+                    hint: "shape a task before work starts";
+                    expanded: false;
+                    NeothLineEdit {
+                        text <=> root.spec-title;
+                        placeholder-text: "What — one-line task title";
+                    }
+                    NeothLineEdit {
+                        text <=> root.spec-goal;
+                        placeholder-text: "Why — the goal / problem this solves";
+                    }
+                    NeothLineEdit {
+                        text <=> root.spec-acceptance;
+                        placeholder-text: "Done when — acceptance criteria";
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: Theme.space-base;
+                        NeothButton {
+                            label: "Create task";
+                            size: "sm";
+                            enabled: root.spec-title != "";
+                            clicked => {
+                                root.spec-create-clicked(root.spec-title, root.spec-goal, root.spec-acceptance);
+                                root.spec-title = "";
+                                root.spec-goal = "";
+                                root.spec-acceptance = "";
+                            }
+                        }
+                        Text {
+                            text: "Lands in Backlog; the dispatcher picks it up like any decomposed task.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
 
                 // HO-02: no-Cerebellum fallback banner. Without a bound

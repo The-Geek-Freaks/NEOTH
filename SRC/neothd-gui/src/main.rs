@@ -739,6 +739,54 @@ fn main() -> Result<()> {
         });
     }
 
+    // GOLD-ADAPT-AOS-06 — New-Spec pane: `neothd kanban add` off-thread,
+    // then a board refresh so the new task shows in Backlog immediately.
+    {
+        let weak_spec = window.as_weak();
+        window.on_spec_create(move |title, goal, acceptance| {
+            let title = title.trim().to_string();
+            if title.is_empty() {
+                return;
+            }
+            let desc =
+                panel_logic::compose_spec_description(goal.as_str(), acceptance.as_str());
+            let weak = weak_spec.clone();
+            std::thread::spawn(move || {
+                let outcome: Result<String, String> = (|| {
+                    let bin =
+                        which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
+                    let mut cmd = spawn_neothd_plain(&bin);
+                    cmd.arg("kanban").arg("add").arg(&title);
+                    if let Some(d) = &desc {
+                        cmd.arg("--description").arg(d);
+                    }
+                    match cmd.output() {
+                        Ok(o) if o.status.success() => {
+                            Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        }
+                        Ok(o) => Err(format!(
+                            "kanban add failed: {}",
+                            String::from_utf8_lossy(&o.stderr).trim()
+                        )),
+                        Err(e) => Err(format!("kanban add could not start: {e}")),
+                    }
+                })();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        match outcome {
+                            Ok(line) => {
+                                w.set_status_line(line.into());
+                                // Board refresh reuses the existing handler.
+                                w.invoke_kanban_refresh_clicked();
+                            }
+                            Err(e) => w.set_status_line(e.into()),
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     // GOLD-ADAPT-ODY-03 — attach/remove handlers. The picker is the native
     // modal dialog (blocks the UI thread while open — standard Open-dialog
     // semantics on Windows).

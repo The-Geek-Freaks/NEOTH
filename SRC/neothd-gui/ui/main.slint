@@ -162,6 +162,9 @@ export component MainWindow inherits Window {
     in-out property <string> skills-filter: "";
     in property <int> skills-total: 0;
     callback skills-filter-edited(string);
+    // GOLD-ADAPT-AOS-06 — New-Spec pane fired (title, goal, acceptance).
+    // Rust shells `neothd kanban add` + refreshes the board.
+    callback spec-create(string, string, string);
 
     // Pick #28 (12/10 polish): derive the step counter + label from
     // the active `WizardStep` so the top ProgressIndicator always
@@ -1659,6 +1662,7 @@ export component MainWindow inherits Window {
             skills-filter <=> root.skills-filter;
             skills-total: root.skills-total;
             skills-filter-edited(t) => { root.skills-filter-edited(t); }
+            spec-create-clicked(t, g, a) => { root.spec-create(t, g, a); }
             preset-list: root.preset-list;
             preset-summary: root.preset-summary;
             preset-activate-clicked(name) => { root.preset-activate-clicked(name); }

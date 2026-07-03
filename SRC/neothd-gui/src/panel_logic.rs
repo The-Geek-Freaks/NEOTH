@@ -1438,6 +1438,21 @@ pub fn format_stream_metrics(
     Some((chip_parts.join(" · "), detail.join("\n")))
 }
 
+// ── GOLD-ADAPT-AOS-06 — spec-shape description composition ─────────────
+
+/// Compose the `--description` body for `neoth kanban add` from the
+/// New-Spec pane's goal + acceptance fields. `None` when both are empty.
+pub fn compose_spec_description(goal: &str, acceptance: &str) -> Option<String> {
+    let goal = goal.trim();
+    let acceptance = acceptance.trim();
+    match (goal.is_empty(), acceptance.is_empty()) {
+        (true, true) => None,
+        (false, true) => Some(format!("Goal: {goal}")),
+        (true, false) => Some(format!("Done when: {acceptance}")),
+        (false, false) => Some(format!("Goal: {goal}\n\nDone when: {acceptance}")),
+    }
+}
+
 // ── GOLD-ADAPT-GUI-05 — TypedStatus footer ticker ──────────────────────
 // Pure frame function: the Rust timer feeds a monotonic tick; each frame
 // is the current message typed up to N chars, then held, then the next
@@ -2499,6 +2514,24 @@ mod tests {
         // No timing → token count fallback.
         let (chip, _) = format_stream_metrics(500, 0, 400, 100, 0).unwrap();
         assert_eq!(chip, "500 tok");
+    }
+
+    // ── GOLD-ADAPT-AOS-06 — spec description ───────────────────────────
+    #[test]
+    fn compose_spec_description_shapes() {
+        assert_eq!(compose_spec_description("", "  "), None);
+        assert_eq!(
+            compose_spec_description("fix auth", "").as_deref(),
+            Some("Goal: fix auth")
+        );
+        assert_eq!(
+            compose_spec_description("", "tests green").as_deref(),
+            Some("Done when: tests green")
+        );
+        assert_eq!(
+            compose_spec_description("fix auth", "tests green").as_deref(),
+            Some("Goal: fix auth\n\nDone when: tests green")
+        );
     }
 
     // ── GOLD-ADAPT-GUI-05 — ticker frame math ──────────────────────────

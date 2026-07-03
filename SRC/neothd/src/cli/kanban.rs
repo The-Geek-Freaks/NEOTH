@@ -59,6 +59,22 @@ pub enum KanbanAction {
     Show { session_id: i64 },
     /// Show one task's detail + its comment thread.
     Task { task_id: i64 },
+    /// GOLD-ADAPT-AOS-06 — create a task directly on the board (the GUI
+    /// "New Spec" pane + operator CLI). Lands in `backlog`; the classifier
+    /// + dispatcher pick it up like any decomposed task. Without
+    /// `--session` a fresh session is opened so the task has a home.
+    Add {
+        title: String,
+        /// Task body — the spec shape (goal + acceptance criteria).
+        #[arg(long)]
+        description: Option<String>,
+        /// Existing session to add into; omit to open a new one.
+        #[arg(long, value_name = "SESSION_ID")]
+        session: Option<i64>,
+        /// Task type label (`feature` / `bug` / `chore` / …).
+        #[arg(long, default_value = "feature")]
+        task_type: String,
+    },
     /// Move a task between status columns.
     Move {
         task_id: i64,
@@ -182,6 +198,15 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
         } => {
             let conn = open_views_db(&db_path)?;
             run_assign(&conn, KanbanTaskId(task_id), &hemisphere, worker.as_deref())
+        }
+        KanbanAction::Add {
+            title,
+            description,
+            session,
+            task_type,
+        } => {
+            let conn = open_views_db(&db_path)?;
+            run_add(&conn, &title, description.as_deref(), session, &task_type)
         }
         KanbanAction::Comment {
             task_id,
@@ -460,6 +485,47 @@ fn run_assign(
         task_id.raw(),
         hemi.as_str(),
         worker.unwrap_or("(none)"),
+    );
+    Ok(())
+}
+
+/// GOLD-ADAPT-AOS-06 — direct task creation (spec-shape entry). Lands in
+/// `backlog` with hemisphere `Unassigned`; the classifier/dispatcher fill
+/// those in like any decomposed task. Without an existing session id a
+/// fresh `operator_spec` session is opened.
+fn run_add(
+    conn: &Connection,
+    title: &str,
+    description: Option<&str>,
+    session: Option<i64>,
+    task_type: &str,
+) -> Result<()> {
+    let title = title.trim();
+    if title.is_empty() {
+        anyhow::bail!("kanban add: title cannot be empty");
+    }
+    store::ensure_schema(conn)?;
+    let now_ns = now_unix_ns();
+    let session_id = match session {
+        Some(id) => KanbanSessionId(id),
+        None => {
+            let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(title.as_bytes()));
+            store::insert_session(conn, now_ns, title, &hash, "operator_spec", None)?
+        }
+    };
+    let task_id = store::insert_task(
+        conn,
+        session_id,
+        now_ns,
+        title,
+        description,
+        task_type,
+        None,
+    )?;
+    println!(
+        "task #{} created in session #{} (backlog)",
+        task_id.raw(),
+        session_id.raw()
     );
     Ok(())
 }
@@ -1049,6 +1115,57 @@ mod tests {
         let conn = memstore::open(&path).expect("open views.db");
         store::ensure_schema(&conn).expect("ensure schema");
         (dir, conn)
+    }
+
+    // GOLD-ADAPT-AOS-06 — direct task creation.
+    #[test]
+    fn add_opens_fresh_session_and_lands_task_in_backlog() {
+        let (_dir, conn) = fresh_db();
+        run_add(
+            &conn,
+            "  Ship the spec pane  ",
+            Some("Goal: pane\nAcceptance: task lands"),
+            None,
+            "feature",
+        )
+        .unwrap();
+        let (count, title, status): (i64, String, String) = conn
+            .query_row(
+                "SELECT COUNT(*), MAX(title), MAX(status) FROM idx_kanban_task",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(title, "Ship the spec pane", "title is trimmed");
+        assert_eq!(status, "backlog");
+        // A fresh operator_spec session was opened for it.
+        let chan: String = conn
+            .query_row(
+                "SELECT source_channel FROM idx_kanban_session",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(chan, "operator_spec");
+        // Empty title refuses.
+        assert!(run_add(&conn, "   ", None, None, "feature").is_err());
+    }
+
+    #[test]
+    fn add_into_existing_session_reuses_it() {
+        let (_dir, conn) = fresh_db();
+        let s = store::insert_session(&conn, 1, "existing", "h1", "cli", None).unwrap();
+        run_add(&conn, "follow-up task", None, Some(s.raw()), "chore").unwrap();
+        let (sessions, tasks): (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM idx_kanban_session), \
+                         (SELECT COUNT(*) FROM idx_kanban_task)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((sessions, tasks), (1, 1), "no extra session opened");
     }
 
     #[test]
