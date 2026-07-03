@@ -74,6 +74,11 @@ pub mod routing;
 pub mod send_gate;
 pub mod signal;
 pub mod signal_api;
+/// GOLD-FEAT-10b — iMessage via a local BlueBubbles server (REST polling).
+/// Zero extra deps (pure `reqwest` + `serde` — both always-on). NEOTH dials
+/// OUT to the operator's BB Mac, so no public URL is needed. No feature gate:
+/// same always-compiled stance as Mattermost and LINE.
+pub mod imessage_bluebubbles;
 pub mod slack;
 pub mod slack_api;
 pub mod slack_events;
@@ -203,6 +208,10 @@ pub enum ChannelKind {
     /// the `nostr-channel` feature; this variant + its formatter/probe row + the
     /// pure `nostr_api` mapping stay compiled in every build.
     Nostr,
+    /// GOLD-FEAT-10b — iMessage via a local BlueBubbles server (REST polling).
+    /// The adapter dials OUT to the operator's Mac running BlueBubbles — no
+    /// public URL needed. Sender handles are Apple-ID verified (LOW spoof risk).
+    IMessageBlueBubbles,
 }
 
 impl ChannelKind {
@@ -221,6 +230,7 @@ impl ChannelKind {
             ChannelKind::Mattermost => "mattermost",
             ChannelKind::Twitch => "twitch",
             ChannelKind::Nostr => "nostr",
+            ChannelKind::IMessageBlueBubbles => "imessage_bluebubbles",
         }
     }
 }

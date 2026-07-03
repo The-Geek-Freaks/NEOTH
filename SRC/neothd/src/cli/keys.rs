@@ -1,19 +1,21 @@
-//! `neoth keys` — HMAC key management. Phase 33b SP-2 follow-up.
+//! `neoth keys` — HMAC key management + scope-gated API token management.
 //!
-//! Operators need a way to rotate the WAL HMAC key after a backup leak,
-//! a suspected key compromise, or just as routine hygiene. Rotation is
-//! non-destructive: the old key is moved to `hmac.key.<ts>.archive` so
-//! historical compaction markers continue to verify with their original
-//! key. `neoth verify --key <path>` accepts an explicit key path for
-//! re-checking archived chains.
+//! Phase 33b SP-2 follow-up: HMAC key rotation (show / rotate / archives).
+//! GOLD-ADAPT-ODY-31: API token lifecycle (api-token create / list / revoke).
 //!
-//! Subcommands:
+//! HMAC subcommands:
 //!   `show`    — print path, byte length, mode. **Never prints key bytes.**
 //!   `rotate`  — archive the current key, generate a new one (OS-RNG)
 //!   `archives` — list archived keys with their timestamps
 //!
-//! Key bytes themselves stay on disk only — they're never piped to stdout
-//! or logged, so a `--verbose` flag can't accidentally leak them.
+//! API-token subcommands:
+//!   `api-token create --label NAME --scope S1 [--scope S2] [--expires-in SECS]`
+//!                     — mint token, print plaintext ONCE, store hash.
+//!   `api-token list`  — list tokens (label / id / scopes / status). No plaintext.
+//!   `api-token revoke <ID>` — mark a token revoked by its id.
+//!
+//! Token bytes are shown once at create time and never appear in list output
+//! or on disk.
 
 use std::path::PathBuf;
 
@@ -21,46 +23,241 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
+use crate::config::FreedomConfig;
+use crate::security::api_tokens;
 use crate::wal::compaction;
+
+// ── top-level args ───────────────────────────────────────────────────────────
 
 #[derive(Args, Debug, Clone)]
 pub struct KeysArgs {
     #[command(subcommand)]
     pub action: KeysAction,
-    /// Override the key path (mostly for tests). Default
+    /// Override the HMAC key path (mostly for tests). Default
     /// `~/.neoth/wal/hmac.key`.
     #[arg(long, value_name = "PATH", global = true)]
     pub key: Option<PathBuf>,
+    /// Override the neoth home directory (for tests / custom installs).
+    /// Default: `~/.neoth`.
+    #[arg(long, value_name = "PATH", global = true)]
+    pub home: Option<PathBuf>,
     /// Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
 }
 
+// ── action enum ──────────────────────────────────────────────────────────────
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum KeysAction {
-    /// Show path, byte length, mode. Does NOT print the key bytes.
+    /// Show HMAC key path, byte length, mode. Does NOT print the key bytes.
     Show,
-    /// Archive the current key and generate a new one. Old key kept at
+    /// Archive the current HMAC key and generate a new one. Old key kept at
     /// `<path>.<unix-ts>.archive` for verifying historical markers.
     Rotate {
         /// Print what would happen without changing any files.
         #[arg(long)]
         dry_run: bool,
     },
-    /// List archived keys with their timestamps.
+    /// List archived HMAC keys with their timestamps.
     Archives,
+    /// Manage scope-gated API tokens (GOLD-ADAPT-ODY-31).
+    #[command(name = "api-token", subcommand)]
+    ApiToken(ApiTokenAction),
 }
+
+// ── api-token subcommands ─────────────────────────────────────────────────────
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ApiTokenAction {
+    /// Mint a new scope-gated API token. Prints the plaintext ONCE — store it
+    /// securely. The hash is stored in `~/.neoth/api_tokens.json`.
+    Create {
+        /// Human-readable label (not unique).
+        #[arg(long, short = 'l')]
+        label: String,
+        /// Scope(s) to grant. Repeat for multiple.
+        /// Valid: api:health, recall:read, stats:read, memory:write,
+        ///        provider:call, channel:send
+        /// (memory:write auto-includes recall:read)
+        #[arg(long, short = 's', required = true, num_args = 1..)]
+        scope: Vec<String>,
+        /// Token lifetime in seconds from now. Omit for no expiry.
+        #[arg(long)]
+        expires_in: Option<u64>,
+    },
+    /// List all tokens (label / id / scopes / status). Never shows token bytes.
+    List,
+    /// Revoke a token by its id (shown in `list` output).
+    Revoke {
+        /// Token id to revoke.
+        id: String,
+    },
+}
+
+// ── dispatch ──────────────────────────────────────────────────────────────────
 
 pub async fn run_keys(args: KeysArgs) -> Result<()> {
     let key_path = args
         .key
         .clone()
         .unwrap_or_else(compaction::default_key_path);
+    let home = args
+        .home
+        .clone()
+        .unwrap_or_else(FreedomConfig::default_neoth_home);
     match args.action {
         KeysAction::Show => show(&key_path, args.output),
         KeysAction::Rotate { dry_run } => rotate(&key_path, dry_run, args.output),
         KeysAction::Archives => archives(&key_path, args.output),
+        KeysAction::ApiToken(sub) => api_token(sub, &home, args.output),
     }
+}
+
+// ── api-token handlers ────────────────────────────────────────────────────────
+
+fn api_token(action: ApiTokenAction, home: &std::path::Path, output: OutputFormat) -> Result<()> {
+    match action {
+        ApiTokenAction::Create {
+            label,
+            scope,
+            expires_in,
+        } => api_token_create(label, scope, expires_in, home, output),
+        ApiTokenAction::List => api_token_list(home, output),
+        ApiTokenAction::Revoke { id } => api_token_revoke(&id, home, output),
+    }
+}
+
+fn api_token_create(
+    label: String,
+    scopes: Vec<String>,
+    expires_in: Option<u64>,
+    home: &std::path::Path,
+    output: OutputFormat,
+) -> Result<()> {
+    let expires_at = expires_in.map(|secs| crate::time::now_unix_i64().saturating_add(secs as i64));
+    let (record, plaintext) =
+        api_tokens::create_token(label, scopes, expires_at).context("create API token")?;
+
+    // Load + append + save.
+    let mut records = api_tokens::load_store(home).context("load api_tokens.json")?;
+    records.push(record.clone());
+    api_tokens::save_store(home, &records).context("save api_tokens.json")?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "id": record.id,
+                    "label": record.label,
+                    "scopes": record.scopes,
+                    "created_at": record.created_at,
+                    "expires_at": record.expires_at,
+                    // plaintext shown once in the JSON response.
+                    "token": plaintext,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            println!("API token created:");
+            println!("  id:      {}", record.id);
+            println!("  label:   {}", record.label);
+            println!("  scopes:  {}", record.scopes.join(", "));
+            if let Some(exp) = record.expires_at {
+                println!("  expires: {exp} (unix)");
+            } else {
+                println!("  expires: never");
+            }
+            println!();
+            println!("  TOKEN (copy now — shown ONCE, not stored):");
+            println!("  {plaintext}");
+            println!();
+            println!("  Use:  Authorization: Bearer {plaintext}");
+        }
+    }
+    Ok(())
+}
+
+fn api_token_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
+    let records = api_tokens::load_store(home).context("load api_tokens.json")?;
+    let now = crate::time::now_unix_i64();
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = records
+                .iter()
+                .map(|r| {
+                    let status = if r.revoked_at.is_some() {
+                        "revoked"
+                    } else if r.expires_at.is_some_and(|e| now >= e) {
+                        "expired"
+                    } else {
+                        "active"
+                    };
+                    serde_json::json!({
+                        "id": r.id,
+                        "label": r.label,
+                        "scopes": r.scopes,
+                        "status": status,
+                        "created_at": r.created_at,
+                        "expires_at": r.expires_at,
+                        "last_used": r.last_used,
+                        "revoked_at": r.revoked_at,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::json!({ "count": rows.len(), "tokens": rows }));
+        }
+        OutputFormat::Table => {
+            if records.is_empty() {
+                println!("(no API tokens)");
+                return Ok(());
+            }
+            println!("{:<38}  {:<24}  {:<10}  SCOPES", "ID", "LABEL", "STATUS");
+            println!("{}", "-".repeat(100));
+            for r in &records {
+                let status = if r.revoked_at.is_some() {
+                    "revoked"
+                } else if r.expires_at.is_some_and(|e| now >= e) {
+                    "expired"
+                } else {
+                    "active"
+                };
+                let label = if r.label.len() > 24 {
+                    format!("{}…", &r.label[..23])
+                } else {
+                    r.label.clone()
+                };
+                println!(
+                    "{:<38}  {:<24}  {:<10}  {}",
+                    r.id,
+                    label,
+                    status,
+                    r.scopes.join(", ")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn api_token_revoke(id: &str, home: &std::path::Path, output: OutputFormat) -> Result<()> {
+    let mut records = api_tokens::load_store(home).context("load api_tokens.json")?;
+    let found = api_tokens::revoke_token(&mut records, id);
+    if !found {
+        anyhow::bail!("no token with id {id:?} found");
+    }
+    api_tokens::save_store(home, &records).context("save api_tokens.json")?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::json!({ "revoked": true, "id": id }));
+        }
+        OutputFormat::Table => {
+            println!("token {id} revoked");
+        }
+    }
+    Ok(())
 }
 
 fn show(path: &std::path::Path, output: OutputFormat) -> Result<()> {
@@ -265,6 +462,7 @@ mod tests {
     async fn show_handles_missing_key_gracefully() {
         let dir = tempdir().unwrap();
         let args = KeysArgs {
+            home: None,
             action: KeysAction::Show,
             key: Some(dir.path().join("absent.key")),
             output: OutputFormat::Table,
@@ -284,6 +482,7 @@ mod tests {
             std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
         let args = KeysArgs {
+            home: None,
             action: KeysAction::Rotate { dry_run: false },
             key: Some(key_path.clone()),
             output: OutputFormat::Table,
@@ -338,6 +537,7 @@ mod tests {
         let key_path = dir.path().join("hmac.key");
         std::fs::write(&key_path, vec![0x77u8; 32]).unwrap();
         let args = KeysArgs {
+            home: None,
             action: KeysAction::Rotate { dry_run: true },
             key: Some(key_path.clone()),
             output: OutputFormat::Table,
@@ -353,6 +553,7 @@ mod tests {
         let key_path = dir.path().join("hmac.key");
         assert!(!key_path.exists());
         let args = KeysArgs {
+            home: None,
             action: KeysAction::Rotate { dry_run: false },
             key: Some(key_path.clone()),
             output: OutputFormat::Table,
@@ -375,6 +576,7 @@ mod tests {
         std::fs::write(dir.path().join("hmac.key"), b"current").unwrap();
 
         let args = KeysArgs {
+            home: None,
             action: KeysAction::Archives,
             key: Some(stem),
             output: OutputFormat::Table,

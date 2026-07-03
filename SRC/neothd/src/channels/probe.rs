@@ -70,6 +70,9 @@ pub struct ChannelCredsView {
     pub keet_seed: bool,
     pub discord_bot: bool,
     pub signal_cli_url: bool,
+    /// GOLD-FEAT-10b — BlueBubbles iMessage relay.
+    pub bluebubbles_url: bool,
+    pub bluebubbles_password: bool,
     pub signal_phone_number: bool,
     pub matrix_homeserver: bool,
     /// True when EITHER a password OR a pre-issued access token is present.
@@ -119,6 +122,8 @@ impl ChannelCredsView {
             // the gateway receive loop, so presence == configured.
             discord_bot: creds.discord_bot_token.is_some(),
             signal_cli_url: creds.signal_cli_url.is_some(),
+            bluebubbles_url: creds.bluebubbles_url.is_some(),
+            bluebubbles_password: creds.bluebubbles_password.is_some(),
             signal_phone_number: creds.signal_phone_number.is_some(),
             matrix_homeserver: creds.matrix_homeserver.is_some(),
             matrix_login: creds.matrix_password.is_some() || creds.matrix_access_token.is_some(),
@@ -237,6 +242,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             _ => (
                 ProbeStatus::Error,
                 "Signal needs BOTH signal_cli_url AND signal_phone_number",
+            ),
+        },
+        ChannelKind::IMessageBlueBubbles => match (v.bluebubbles_url, v.bluebubbles_password) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "bluebubbles_url + password configured (poll loop) — requires a reachable BlueBubbles server on the operator's Mac",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no bluebubbles config"),
+            _ => (
+                ProbeStatus::Error,
+                "BlueBubbles needs BOTH bluebubbles_url AND bluebubbles_password",
             ),
         },
         ChannelKind::Matrix => match (v.matrix_homeserver, v.matrix_login) {

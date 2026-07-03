@@ -6,6 +6,10 @@
 //! is the highest-risk shortcut to skip — every operator-facing message goes
 //! through it first. Skipping = memory-poisoning surface wide open.
 
+/// GOLD-ADAPT-ODY-31 — Scope-gated API tokens for the n8n localhost API.
+/// Token lifecycle: create (hash stored, plaintext shown once) / list / revoke.
+/// Verification uses PBKDF2-HMAC-SHA256 with constant-time compare (subtle).
+pub mod api_tokens;
 pub mod credential_redact;
 pub mod dangerous_command;
 /// GOLD-ADAPT-SNYK-03 — offline typosquatting heuristic for packages about to

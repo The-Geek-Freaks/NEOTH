@@ -161,14 +161,14 @@ pub fn new_request_id() -> String {
 /// must be timing-safe so a future remote-exposure misconfig doesn't
 /// leak the token byte-by-byte.
 pub fn constant_time_token_eq(provided: &str, expected: &str) -> bool {
-    if provided.len() != expected.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (a, b) in provided.bytes().zip(expected.bytes()) {
-        diff |= a ^ b;
-    }
-    diff == 0
+    // Security review 2026-07-03: no length early-return — compare fixed-width
+    // digests so neither content NOR length leaks through timing. Hashing both
+    // sides to 32 bytes makes the comparison length-independent.
+    use sha2::{Digest, Sha256};
+    let a = Sha256::digest(provided.as_bytes());
+    let b = Sha256::digest(expected.as_bytes());
+    use subtle::ConstantTimeEq as _;
+    a.as_slice().ct_eq(b.as_slice()).unwrap_u8() == 1
 }
 
 /// Extract the bearer token from an `Authorization: Bearer <token>`

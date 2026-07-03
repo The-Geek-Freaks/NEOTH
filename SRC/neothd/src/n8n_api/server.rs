@@ -7,11 +7,15 @@
 //!    already 127.0.0.1, but a future regression that flips the
 //!    bind address must still get caught here).
 //! 2. Extracts the bearer token + checks the 5-strike cooldown.
-//! 3. Writes the [`super::EVENT_TYPE_N8N_REQUEST`] (0x39) WAL frame
+//! 3. Auth: accepts the static operator master token (full access) OR a
+//!    scope-gated API token from `~/.neoth/api_tokens.json`. Scope-gated
+//!    tokens are checked via PBKDF2-HMAC-SHA256 + constant-time compare
+//!    (see `security::api_tokens`). Each endpoint requires a specific scope.
+//! 4. Writes the [`super::EVENT_TYPE_N8N_REQUEST`] (0x39) WAL frame
 //!    before any handler-side work — operator sees every attempt.
-//! 4. Reads the body with a 256 KiB cap.
-//! 5. Dispatches into [`super::handlers::route`].
-//! 6. Renders the [`super::ApiOkResponse`] / [`super::ApiErrorResponse`]
+//! 5. Reads the body with a 256 KiB cap.
+//! 6. Dispatches into [`super::handlers::route`].
+//! 7. Renders the [`super::ApiOkResponse`] / [`super::ApiErrorResponse`]
 //!    envelope as the HTTP body.
 //!
 //! Cancellation: the task respects a `tokio_util::sync::CancellationToken`
@@ -40,7 +44,29 @@ use super::{
     build_n8n_request_payload, constant_time_token_eq, extract_bearer_token, new_request_id,
 };
 use crate::config::FreedomConfig;
+use crate::security::api_tokens;
+use crate::security::api_tokens::VerifyResult;
 use crate::wal::writer::WalWriterHandle;
+
+/// Map a (method, path) pair to the required API-token scope string.
+/// The static operator master token (`state.token`) is always accepted
+/// for any path and bypasses scope checks. Scope-gated tokens must carry
+/// the scope returned here. Returns `None` for unknown paths (handled
+/// downstream as 404).
+fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
+    match (method, path) {
+        ("GET", "/api/health") => Some(api_tokens::SCOPE_API_HEALTH),
+        ("POST", "/api/recall") => Some(api_tokens::SCOPE_RECALL_READ),
+        ("GET", "/api/stats") => Some(api_tokens::SCOPE_STATS_READ),
+        ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
+        ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
+        ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
+        // Unknown path — pass through, route() will 404.
+        // Security review: fail CLOSED — an unmapped path must never be
+        // reachable with the narrowest scope. New routes must be added here.
+        _ => None,
+    }
+}
 
 /// Shared state passed into every handler. Cheap to clone — the
 /// fields are all `Arc` / handles.
@@ -225,29 +251,106 @@ async fn serve(
         );
         return outcome.into_http_response(&request_id);
     }
-    match extract_bearer_token(&auth_header) {
-        Some(token) if constant_time_token_eq(token, &state.token) => {
-            state.cooldown.record_success(&peer_ip);
-        }
-        _ => {
+
+    // Two-path auth:
+    // Path A — the static operator master token (full access, backward compat).
+    // Path B — a scope-gated token from api_tokens.json (GOLD-ADAPT-ODY-31).
+    let candidate = match extract_bearer_token(&auth_header) {
+        Some(t) => t,
+        None => {
             let tripped = state.cooldown.record_failure(&peer_ip, now);
-            tracing::warn!(
-                peer = %peer_ip,
-                path = %path,
-                tripped = tripped,
-                "n8n_api auth refused"
-            );
+            tracing::warn!(peer = %peer_ip, path = %path, tripped, "n8n_api auth refused: no bearer");
             let hint = if tripped {
-                "5 failures hit — cooldown engaged for 60s. Verify ~/.neoth/n8n_api_token."
+                "5 failures hit — cooldown engaged for 60s. Verify your bearer token."
             } else {
-                "set Authorization: Bearer <token> using ~/.neoth/n8n_api_token"
+                "set Authorization: Bearer <token>"
             };
-            let outcome = HandlerOutcome::error(
+            return HandlerOutcome::error(ApiErrorCode::Unauthorized, "bearer token missing", hint)
+                .into_http_response(&request_id);
+        }
+    };
+
+    if constant_time_token_eq(candidate, &state.token) {
+        // Path A: master token — full access, no scope check needed.
+        state.cooldown.record_success(&peer_ip);
+    } else {
+        // Path B: try scope-gated tokens. An unmapped path fails CLOSED for
+        // scoped tokens — only the master token (Path A) reaches route()'s
+        // 404 for unknown paths (security review 2026-07-03).
+        let Some(required_scope) = required_scope_for(method.as_str(), &path) else {
+            let tripped = state.cooldown.record_failure(&peer_ip, now);
+            tracing::warn!(peer = %peer_ip, path = %path, tripped,
+                "n8n_api: scoped token on unmapped path — denied fail-closed");
+            return HandlerOutcome::error(
                 ApiErrorCode::Unauthorized,
-                "bearer token missing or invalid",
-                hint,
-            );
-            return outcome.into_http_response(&request_id);
+                "endpoint not available to scoped tokens",
+                "use the master token or add the route's scope mapping",
+            )
+            .into_http_response(&request_id);
+        };
+        let auth_result = match api_tokens::load_store(&state.home) {
+            Ok(mut records) => {
+                let result =
+                    api_tokens::verify_token_for_scope(&mut records, candidate, required_scope);
+                // Persist last_used update on success — best-effort, don't fail the request.
+                if matches!(result, VerifyResult::Ok { .. }) {
+                    if let Err(e) = api_tokens::save_store(&state.home, &records) {
+                        tracing::debug!(error = %e, "api_tokens last_used persist failed (non-fatal)");
+                    }
+                }
+                result
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "api_tokens load failed; falling back to deny");
+                VerifyResult::Denied
+            }
+        };
+
+        match auth_result {
+            VerifyResult::Ok { token_id } => {
+                tracing::debug!(token_id = %token_id, path = %path, "n8n_api scope-gated token accepted");
+                state.cooldown.record_success(&peer_ip);
+            }
+            VerifyResult::InsufficientScope { token_id, required } => {
+                tracing::warn!(
+                    token_id = %token_id,
+                    path = %path,
+                    required_scope = %required,
+                    "n8n_api scope-gated token lacks required scope"
+                );
+                let tripped = state.cooldown.record_failure(&peer_ip, now);
+                let hint = if tripped {
+                    "5 failures hit — cooldown active. Token does not grant the required scope."
+                } else {
+                    "token does not grant the scope required for this endpoint"
+                };
+                return HandlerOutcome::error(
+                    ApiErrorCode::PermissionDenied,
+                    format!("insufficient scope — need {required}"),
+                    hint,
+                )
+                .into_http_response(&request_id);
+            }
+            VerifyResult::Denied => {
+                let tripped = state.cooldown.record_failure(&peer_ip, now);
+                tracing::warn!(
+                    peer = %peer_ip,
+                    path = %path,
+                    tripped,
+                    "n8n_api auth refused"
+                );
+                let hint = if tripped {
+                    "5 failures hit — cooldown engaged for 60s. Verify ~/.neoth/n8n_api_token."
+                } else {
+                    "set Authorization: Bearer <token> using ~/.neoth/n8n_api_token"
+                };
+                return HandlerOutcome::error(
+                    ApiErrorCode::Unauthorized,
+                    "bearer token missing or invalid",
+                    hint,
+                )
+                .into_http_response(&request_id);
+            }
         }
     }
 

@@ -1337,21 +1337,44 @@ Scan the WAL directory for kanban event frames + render the activity feed. Defau
 
 HMAC key management — show / rotate / list archived keys. Phase 33b SP-2 follow-up. Rotation is non-destructive: archived keys still verify historical compaction markers
 
-- `--key <PATH>` — Override the key path (mostly for tests). Default `~/.neoth/wal/hmac.key`
+- `--key <PATH>` — Override the HMAC key path (mostly for tests). Default `~/.neoth/wal/hmac.key`
+- `--home <PATH>` — Override the neoth home directory (for tests / custom installs). Default: `~/.neoth`
+
+### `neoth keys api-token`
+
+Manage scope-gated API tokens (GOLD-ADAPT-ODY-31)
+
+#### `neoth keys api-token create`
+
+Mint a new scope-gated API token. Prints the plaintext ONCE — store it securely. The hash is stored in `~/.neoth/api_tokens.json`
+
+- `-l, --label <LABEL>` — Human-readable label (not unique)
+- `-s, --scope <SCOPE>` — Scope(s) to grant. Repeat for multiple. Valid: api:health, recall:read, stats:read, memory:write, provider:call, channel:send (memory:write auto-includes recall:read)
+- `--expires-in <EXPIRES_IN>` — Token lifetime in seconds from now. Omit for no expiry
+
+#### `neoth keys api-token list`
+
+List all tokens (label / id / scopes / status). Never shows token bytes
+
+#### `neoth keys api-token revoke`
+
+Revoke a token by its id (shown in `list` output)
+
+- `<ID>` — Token id to revoke
 
 ### `neoth keys archives`
 
-List archived keys with their timestamps
+List archived HMAC keys with their timestamps
 
 ### `neoth keys rotate`
 
-Archive the current key and generate a new one. Old key kept at `<path>.<unix-ts>.archive` for verifying historical markers
+Archive the current HMAC key and generate a new one. Old key kept at `<path>.<unix-ts>.archive` for verifying historical markers
 
 - `--dry-run` — Print what would happen without changing any files
 
 ### `neoth keys show`
 
-Show path, byte length, mode. Does NOT print the key bytes
+Show HMAC key path, byte length, mode. Does NOT print the key bytes
 
 ## `neoth lease`
 

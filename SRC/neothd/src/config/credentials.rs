@@ -202,6 +202,22 @@ pub struct Credentials {
     /// open; set ⇒ only this pubkey is accepted (others dropped + audited 0x3B).
     /// Not a secret.
     pub nostr_allowed_pubkey: Option<String>,
+    /// GOLD-FEAT-10b — base URL of the operator's BlueBubbles server running on
+    /// their Mac (e.g. `http://192.168.1.5:1234`). When present alongside
+    /// `bluebubbles_password`, the daemon spawns the iMessage poll loop
+    /// (`BlueBubblesChannel::run`). Not a secret (a LAN/Tailscale URL).
+    pub bluebubbles_url: Option<String>,
+    /// GOLD-FEAT-10b — BlueBubbles server password (Settings → Server → Password
+    /// in the BB app). Appended as `?password=…` on every API request. Secret.
+    pub bluebubbles_password: Option<SecretString>,
+    /// GOLD-FEAT-10b — optional comma-separated BlueBubbles chat GUIDs to watch
+    /// (e.g. `iMessage;-;+14155551234,iMessage;+;group-uuid`). `None` = accept
+    /// all chats visible to the BB server. Not a secret.
+    pub bluebubbles_chat_guid: Option<String>,
+    /// GOLD-FEAT-10b — optional single iMessage handle (phone or Apple-ID email)
+    /// that may reach the pipeline. `None` = open (any sender in a watched chat).
+    /// Checked via `sender_blocked_by_allowlist` (D2 gate). Not a secret.
+    pub imessage_allowed_sender: Option<String>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -402,6 +418,10 @@ impl Credentials {
             nostr_secret_key,
             nostr_relays,
             nostr_allowed_pubkey,
+            bluebubbles_url,
+            bluebubbles_password,
+            bluebubbles_chat_guid,
+            imessage_allowed_sender,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -458,6 +478,10 @@ impl Credentials {
             && nostr_secret_key.is_none()
             && nostr_relays.is_none()
             && nostr_allowed_pubkey.is_none()
+            && bluebubbles_url.is_none()
+            && bluebubbles_password.is_none()
+            && bluebubbles_chat_guid.is_none()
+            && imessage_allowed_sender.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

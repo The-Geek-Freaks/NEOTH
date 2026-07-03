@@ -112,6 +112,8 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Mattermost => Some(Box::new(MattermostFormatter)),
         ChannelKind::Twitch => Some(Box::new(TwitchFormatter)),
         ChannelKind::Nostr => Some(Box::new(NostrFormatter)),
+        // iMessage renders plain text — same treatment as Signal.
+        ChannelKind::IMessageBlueBubbles => Some(Box::new(SignalFormatter)),
     }
 }
 

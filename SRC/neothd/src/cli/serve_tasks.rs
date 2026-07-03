@@ -3006,6 +3006,71 @@ pub(crate) fn spawn_channel_adapters(
         (None, None, _) => {}
     }
 
+    // GOLD-FEAT-10b — iMessage via a local BlueBubbles server (REST polling;
+    // NEOTH dials OUT, no public URL). Always compiled — pure `reqwest` +
+    // `serde`, no new dep. Spawns when `bluebubbles_url` + `bluebubbles_password`
+    // + a provider are all present (`BlueBubblesChannel::run` polls `/api/v1/message`).
+    match (
+        creds.bluebubbles_url.clone(),
+        creds.bluebubbles_password.clone(),
+        shared_provider.as_ref(),
+    ) {
+        (Some(url), Some(password), Some(provider)) => {
+            // Parse optional comma-separated chat GUID allowlist.
+            let chat_guid_allowlist: Option<Vec<String>> =
+                creds.bluebubbles_chat_guid.as_deref().map(|s| {
+                    s.split(',')
+                        .map(|g| g.trim().to_string())
+                        .filter(|g| !g.is_empty())
+                        .collect()
+                });
+            match crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
+                url,
+                password,
+                chat_guid_allowlist,
+                creds.imessage_allowed_sender.clone(),
+            ) {
+                Ok(channel) => {
+                    let channel = channel.with_gate_writer(writer.clone());
+                    let handler: PipelineHandler = build_channel_handler(
+                        provider.clone(),
+                        config,
+                        writer,
+                        provider_meter,
+                        rate_limiter,
+                        segment_path,
+                        shared_views_conn,
+                        reload_controller,
+                        confirm_bus.clone(),
+                        views_executor.clone(),
+                    );
+                    spawn_channel_run(channel, handler, "BlueBubbles", channel_tasks);
+                    info!(
+                        channel = "imessage_bluebubbles",
+                        status = "LIVE",
+                        "channel: spawned (bluebubbles REST poll loop)"
+                    );
+                }
+                Err(e) => warn!(
+                    channel = "imessage_bluebubbles",
+                    error = %e,
+                    "BlueBubbles configured but adapter construction failed; channel not started"
+                ),
+            }
+        }
+        (Some(_), Some(_), None) => warn!(
+            channel = "imessage_bluebubbles",
+            status = "CONFIGURED-NOT-STARTED",
+            "BlueBubbles configured but provider unavailable; channel not started"
+        ),
+        (Some(_), None, _) | (None, Some(_), _) => warn!(
+            channel = "imessage_bluebubbles",
+            status = "CONFIGURED-NOT-STARTED",
+            "BlueBubbles needs BOTH bluebubbles_url and bluebubbles_password; only one supplied — not started"
+        ),
+        (None, None, _) => {}
+    }
+
     // GOLD-FEAT-10 — Mattermost inbound via the WebSocket API (NEOTH dials OUT,
     // no public URL). Always compiled (reuses tokio-tungstenite + reqwest, no new
     // crate). Spawns when the server URL + token + a provider are all present

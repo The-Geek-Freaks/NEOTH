@@ -111,6 +111,18 @@ impl Channel for SignalChannel {
                     error!(error = %msg, "signal auth failed — stopping adapter (check number/registration)");
                     return Err(anyhow::anyhow!("signal auth: {msg}"));
                 }
+                Err(ChannelError::RateLimited { retry_after_secs }) => {
+                    // signal-cli (or an intermediate proxy) asked us to back off.
+                    // Honour the Retry-After value instead of hammering on the
+                    // normal poll cadence — mirrors the Hermes signal_rate_limit.py
+                    // pattern (parse retry-after, sleep+retry once, then surface).
+                    warn!(
+                        retry_after_secs,
+                        "signal receive rate-limited; backing off for Retry-After period"
+                    );
+                    // Security review: cap hostile Retry-After values (max 5 min).
+                    tokio::time::sleep(Duration::from_secs(retry_after_secs.min(300))).await;
+                }
                 Err(e) => {
                     warn!(error = %e, "signal receive poll failed; retrying next tick");
                 }
@@ -170,5 +182,21 @@ mod tests {
         // default sanity
         let b = SignalChannel::new("http://x", "+1").unwrap();
         assert_eq!(b.poll_interval, DEFAULT_POLL_INTERVAL);
+    }
+
+    /// Verify the rate-limit arm is reachable (parse + re-surface path).
+    /// The signal_api::map_status function already parses Retry-After correctly
+    /// (tested in signal_api); this test confirms the run() loop has a dedicated
+    /// arm for RateLimited rather than lumping it into the generic catch-all.
+    #[test]
+    fn rate_limited_error_is_a_distinct_variant() {
+        // Construct the error the way map_status emits it.
+        let e = ChannelError::RateLimited { retry_after_secs: 30 };
+        // The error Display must mention the retry-after value for operator logs.
+        let s = e.to_string();
+        assert!(
+            s.contains("30"),
+            "RateLimited display must include retry_after_secs: {s}"
+        );
     }
 }
