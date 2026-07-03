@@ -6,7 +6,8 @@ plane, live Canvas, voice, skills, and local always-on operation.
 NEOTH should win users who want that power, but with deeper memory semantics,
 privacy proof, coding planning, and a friendlier path for non-technical users.
 
-Baseline sources — OpenClaw capabilities below were assessed **as of 2026-06-07** against
+Baseline sources — OpenClaw capabilities below were re-verified **as of 2026-07-03**
+(release v2026.6.11) against
 the project's then-current `main` branch and live docs. No tagged release or pinned commit
 was published to anchor against, so treat every competitor claim as a point-in-time snapshot
 that may have moved since:
@@ -23,10 +24,10 @@ that may have moved since:
 
 ## Capability comparison
 
-| Area | NEOTH | OpenClaw (as of 2026-06-07) |
+| Area | NEOTH | OpenClaw (as of 2026-07-03, v2026.6.11) |
 | :-- | :-- | :-- |
 | Product center | Buddy plus local operator runtime | Gateway plus channel-rich assistant |
-| Normal-user onboarding | GUI wizard and Doctor runbooks | Onboard CLI and docs-heavy setup |
+| Normal-user onboarding | GUI wizard and Doctor runbooks | CLI wizard plus companion apps (Windows Hub, macOS menu bar) |
 | Channel breadth | Focused 1.0 set: GUI, CLI, Telegram, WhatsApp, Slack, Discord, Keet/private | Very broad channel list |
 | Memory | Five-tier memory + vault, with evidence, profile review, redaction semantics | Local workspace and memory files |
 | Coding workflow | Planning canvas, Kanban, repo memory, check loop | Canvas and agent actions |

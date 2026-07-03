@@ -160,6 +160,11 @@ operator.
 | **Coding** | Plans work, tracks tasks on a canvas/Kanban board, runs checks, learns repo context, and promotes reviewed decisions into memory. |
 | **Self-diagnosis** | Scores its own event stream for collapse risk (Babel-Index): seven variables per rolling window, pre-registered failure labels, early warning before the agent loop — not after. |
 | **Self-reflection** | Looks back on its own work — weekly topic recap plus opt-in daily and yearly summaries archived and written to Obsidian as daily notes / yearly summaries — runs an opt-in weekly Hacker News tech-currency scan that flags trending topics your skills don't cover, and proposes review-gated SkillOpt improvements to its own skills (never auto-applied). |
+| **Self-evolution** | Dreams nightly (`neoth dream now`): clusters the week's episodes into themes and writes them to Obsidian. Proposes, council-reviews, and applies upgrades to its own skills with rollback (`neoth self-improve`). Notices its own behavioral patterns and proposes changes you approve or decline (`neoth self-dev`). Distills tool sequences you repeat into candidate skills (`neoth distill`). |
+| **Migration** | Brings your history with you: `neoth-migrate` imports Claude Code / Codex / Gemini sessions as searchable memory; `neoth transfer export` moves whole memories between machines as X25519-encrypted, Ed25519-signed bundles. |
+| **Autonomy** | Four operator-set levels (`neoth autonomy strict..full`) plus one-word `neoth sudomode`; the security floor never moves regardless of level; your own plain-YAML constitution is injected before every prompt (`neoth moral-core`). |
+| **Gateway** | OpenAI-compatible endpoint (`/v1/chat/completions`): point Cursor, Aider, or Continue at NEOTH and every call gets your provider routing, council, and audit trail. |
+| **Loops** | `neoth loop run "<goal>" --until "<criterion>"` — bounded autonomous iteration with L1-L3 budget ladders, full history in `neoth loop history`. |
 | **Recon** | Authorized-engagement recon through gated `uncover` (exposed-host discovery) and `tlsx` (TLS/cert intel) shims — refused under Strict autonomy and audit-logged. |
 | **Automation** | Runs small local cron jobs and bigger localhost n8n workflows through the same policy and audit layer. |
 | **Channels** | Talks through GUI, CLI, Telegram, WhatsApp Business, Slack Socket Mode, Discord, and Keet-style private channels. |
@@ -287,6 +292,22 @@ The point is not mystical branding. The point is operational separation: fast
 tasks stay fast, serious tasks get more scrutiny, and durable memory gets
 evidence instead of vibes.
 
+Each path binds to its own provider — Anthropic on the left, a local model on
+the right, OpenRouter as arbiter, any mix you want — and hard questions go to
+a **council**: the paths argue, dissent is recorded, and the runtime tracks
+which path wins which kind of argument over time and reweights routing
+accordingly.
+
+```bash
+neoth hemispheres set --role right --provider local_ouro
+neoth council voices
+neoth ecology winner-chain   # who has been winning the arguments, and why
+```
+
+Facts you never want the model to overwrite live in a separate register:
+`neoth groundtruth add` pins them immutably, and NEOTH flags contradictions
+across sessions for you to resolve instead of silently picking a side.
+
 ## Babel-Index: It Predicts Its Own Collapse
 
 <img src=".github/assets/neoth-readme-babel.svg" alt="NEOTH Babel-Index — every window of NEOTH's own WAL stream is scored with seven collapse variables; threshold breaches warn before failure, and anonymised windows can be federated opt-in to the delta-kosmologie research pool" width="100%">
@@ -314,6 +335,26 @@ records into the shared falsification pool — making NEOTH the first
 production instrument of an open research program, with
 [docs/babel-index.md](docs/babel-index.md) spelling out every rule.
 
+## Shipped, Easy To Miss
+
+Small commands that quietly carry a lot of the product. All of these work
+today:
+
+| Command | What you get |
+| :-- | :-- |
+| `neoth dream now` | Cluster recent episodes into themes, written to Obsidian as notes. |
+| `neoth groundtruth ask "<q>"` | Query the immutable-facts register; contradictions get flagged, not overwritten. |
+| `neoth identity merge` | The same person on Telegram, WhatsApp, and email becomes one identity. |
+| `neoth recall-score` | LongMemEval-style memory benchmark with inter-rater kappa — prove recall quality. |
+| `neoth memory-eval` | Reproducible recall benchmark in a temp DB; never touches real memory. |
+| `neoth cost "<prompt>"` | Token count and dollar estimate before the call is made. |
+| `neoth lease grant codex code:write --ttl 30m` | Time-limited capability grant that auto-expires; WAL-logged. |
+| `neoth recipe share` | Prompt template as a `neoth://recipe/…` deeplink anyone can run with their own parameters. |
+| `neoth adr extract` | Architecture Decision Records extracted from your sessions as structured files. |
+| `neoth okf export` | Your memory as an interlinked Obsidian knowledge graph. |
+| `neoth kanban watch --follow` | Live terminal feed of task progress, streamed from WAL frames. |
+| `neoth companion pair-phone` | QR-code phone pairing over Noise-XX P2P; no relay server. |
+
 ## Comparison
 
 Different projects optimize for different jobs. NEOTH's bet is the harder
@@ -335,7 +376,7 @@ each with the command that proves it on your machine:
 
 | Capability | NEOTH | OpenHuman | OpenClaw | Hermes Agent |
 | :-- | :--: | :--: | :--: | :--: |
-| GUI-first normal-user onboarding | **Yes** | Yes | Partial | Partial |
+| GUI-first normal-user onboarding | **Yes** | Yes | Partial | Yes (desktop app) |
 | CLI/operator path | **Yes** | Partial | Yes | Yes |
 | Local-first memory as default product shape | **Yes** | Partial | Yes | Yes |
 | Fail-closed profile extraction | **Yes** | Partial | Partial | Partial |
@@ -344,13 +385,17 @@ each with the command that proves it on your machine:
 | Five-tier memory model + vault ingest | **Yes** | No | No | Partial |
 | Three role-bound brain paths | **Yes** | No | Partial | Partial |
 | Collapse prediction on its own runtime (Babel-Index) | **Yes** | No | No | No |
-| Coding canvas + Kanban | **Yes** | Partial | Canvas-focused | CLI-focused |
+| Coding canvas + Kanban | **Yes** | Partial | Canvas-focused | Desktop cockpit + Kanban |
 | Obsidian/vault workflow | **Yes** | Yes | File-based | Context-file based |
 | Paperless/email/calendar as memory inputs | **Yes** | Integrations | Skills/tools | Tools/skills |
 | n8n localhost automation | **Yes** | No | Partial | Cron/tools |
 | WASM plugin capability sandbox | **Yes** | No | Skills | Skills/tools |
 | Private mesh with Tailscale/Hysteria/Keet path | **Partial** | No | Gateway/nodes | Gateway/platforms |
 | Built for DAUs and pros at the same time | **Goal** | DAU-heavy | Power-user-heavy | Operator-heavy |
+
+Competitor columns were re-verified against upstream releases on **2026-07-03**
+(Hermes v0.18.0, OpenClaw v2026.6.11, OpenHuman v0.58.7) — where a competitor
+caught up, the table says so.
 
 NEOTH is pre-1.0, so this table is honest about what is not finished: **Private mesh**
 is **Partial** — node discovery, Tailscale/mDNS pairing, the consent gate, and transport

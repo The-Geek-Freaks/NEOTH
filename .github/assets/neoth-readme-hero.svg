@@ -1,93 +1,126 @@
 <svg width="1400" height="420" viewBox="0 0 1400 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">NEOTH - private Jarvis-like buddy</title>
-  <desc id="desc">Animated NEOTH hero with two neural sine waves and three visible particles for memory, consent, and audit.</desc>
+  <title id="title">NEOTH - your private AI buddy</title>
+  <desc id="desc">Animated NEOTH hero: two hemisphere path bundles, fast green on the left and deep cyan on the right, converge with a red arbitration strand into one pulsing memory core beneath the wordmark.</desc>
   <defs>
-    <radialGradient id="bg" cx="50%" cy="48%" r="78%">
-      <stop offset="0" stop-color="#1b1b1b"/>
+    <radialGradient id="h-bg" cx="50%" cy="44%" r="82%">
+      <stop offset="0" stop-color="#1a1a1a"/>
       <stop offset=".55" stop-color="#0d0d0d"/>
       <stop offset="1" stop-color="#050505"/>
     </radialGradient>
-    <linearGradient id="greenWave" x1="105" y1="0" x2="1295" y2="0">
+    <linearGradient id="h-left" x1="60" y1="0" x2="700" y2="0">
       <stop offset="0" stop-color="#00ff80" stop-opacity="0"/>
-      <stop offset=".5" stop-color="#00ff80" stop-opacity=".92"/>
-      <stop offset="1" stop-color="#00ff80" stop-opacity="0"/>
+      <stop offset=".55" stop-color="#00ff80" stop-opacity=".7"/>
+      <stop offset="1" stop-color="#00ff80" stop-opacity=".95"/>
     </linearGradient>
-    <linearGradient id="cyanWave" x1="105" y1="0" x2="1295" y2="0">
+    <linearGradient id="h-right" x1="1340" y1="0" x2="700" y2="0">
       <stop offset="0" stop-color="#05d5ff" stop-opacity="0"/>
-      <stop offset=".5" stop-color="#05d5ff" stop-opacity=".45"/>
+      <stop offset=".55" stop-color="#05d5ff" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#05d5ff" stop-opacity=".9"/>
+    </linearGradient>
+    <linearGradient id="h-rule" x1="560" y1="0" x2="840" y2="0">
+      <stop offset="0" stop-color="#00ff80" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#00ff80" stop-opacity=".9"/>
       <stop offset="1" stop-color="#05d5ff" stop-opacity="0"/>
     </linearGradient>
-    <filter id="glow" x="-22%" y="-95%" width="144%" height="290%">
-      <feGaussianBlur stdDeviation="8" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    <filter id="h-glow" x="-30%" y="-90%" width="160%" height="280%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <style>
       .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       .logo{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-weight:200;letter-spacing:26px}
     </style>
   </defs>
 
-  <rect width="1400" height="420" rx="40" fill="url(#bg)"/>
+  <rect width="1400" height="420" rx="40" fill="url(#h-bg)"/>
   <rect x="1" y="1" width="1398" height="418" rx="39" stroke="white" stroke-opacity=".08"/>
 
-  <circle cx="270" cy="92" r="210" fill="#ff2a6d" opacity=".045" filter="url(#glow)">
-    <animate attributeName="opacity" dur="16s" values=".03;.07;.03" repeatCount="indefinite"/>
+  <!-- ambient hemisphere fields -->
+  <circle cx="260" cy="200" r="230" fill="#00ff80" opacity=".04" filter="url(#h-glow)">
+    <animate attributeName="opacity" dur="14s" values=".028;.06;.028" repeatCount="indefinite"/>
   </circle>
-  <circle cx="1145" cy="325" r="235" fill="#05d5ff" opacity=".052" filter="url(#glow)">
-    <animate attributeName="opacity" dur="18s" values=".035;.078;.035" repeatCount="indefinite"/>
-  </circle>
-  <circle cx="700" cy="210" r="205" fill="#00ff80" opacity=".034" filter="url(#glow)">
-    <animate attributeName="opacity" dur="13s" values=".024;.055;.024" repeatCount="indefinite"/>
+  <circle cx="1140" cy="200" r="230" fill="#05d5ff" opacity=".04" filter="url(#h-glow)">
+    <animate attributeName="opacity" dur="17s" values=".028;.058;.028" repeatCount="indefinite"/>
   </circle>
 
-  <rect x="308" y="106" width="784" height="194" rx="48" fill="#ffffff" fill-opacity=".022" stroke="white" stroke-opacity=".09"/>
-  <rect x="334" y="132" width="732" height="142" rx="36" fill="#050505" fill-opacity=".5" stroke="white" stroke-opacity=".052"/>
+  <!-- left hemisphere bundle: fast path -->
+  <g fill="none" filter="url(#h-glow)">
+    <path id="h-l1" d="M60 120 C 260 96, 470 170, 700 296" stroke="url(#h-left)" stroke-width="1.8" opacity=".8">
+      <animate attributeName="opacity" dur="7s" values=".5;.9;.5" repeatCount="indefinite"/>
+    </path>
+    <path id="h-l2" d="M60 210 C 280 196, 480 226, 700 296" stroke="url(#h-left)" stroke-width="1.3" opacity=".5">
+      <animate attributeName="opacity" dur="9s" begin="-3s" values=".3;.65;.3" repeatCount="indefinite"/>
+    </path>
+    <path id="h-l3" d="M60 312 C 280 330, 490 322, 700 296" stroke="url(#h-left)" stroke-width="1" opacity=".35">
+      <animate attributeName="opacity" dur="11s" begin="-6s" values=".22;.5;.22" repeatCount="indefinite"/>
+    </path>
+    <!-- right hemisphere bundle: deep path -->
+    <path id="h-r1" d="M1340 120 C 1140 96, 930 170, 700 296" stroke="url(#h-right)" stroke-width="1.8" opacity=".8">
+      <animate attributeName="opacity" dur="8s" begin="-2s" values=".5;.85;.5" repeatCount="indefinite"/>
+    </path>
+    <path id="h-r2" d="M1340 210 C 1120 196, 920 226, 700 296" stroke="url(#h-right)" stroke-width="1.3" opacity=".5">
+      <animate attributeName="opacity" dur="10s" begin="-5s" values=".3;.6;.3" repeatCount="indefinite"/>
+    </path>
+    <path id="h-r3" d="M1340 312 C 1120 330, 910 322, 700 296" stroke="url(#h-right)" stroke-width="1" opacity=".35">
+      <animate attributeName="opacity" dur="12s" begin="-7s" values=".22;.48;.22" repeatCount="indefinite"/>
+    </path>
+    <!-- corpus callosum: arbitration strand crossing both -->
+    <path id="h-cc" d="M360 340 C 520 300, 880 300, 1040 340" stroke="#ff2a6d" stroke-opacity=".5" stroke-width="1.2" stroke-dasharray="3 7">
+      <animate attributeName="stroke-dashoffset" dur="3.5s" values="0;-40" repeatCount="indefinite"/>
+      <animate attributeName="stroke-opacity" dur="8s" values=".3;.6;.3" repeatCount="indefinite"/>
+    </path>
+  </g>
 
-  <path id="memoryWave" d="M108 206 C 304 82, 492 334, 700 206 C 908 78, 1096 334, 1292 206" stroke="url(#greenWave)" stroke-width="2.4" fill="none" filter="url(#glow)">
-    <animate attributeName="d" dur="13s" repeatCount="indefinite"
-      values="M108 206 C 304 82, 492 334, 700 206 C 908 78, 1096 334, 1292 206;
-              M108 206 C 304 330, 492 82, 700 206 C 908 330, 1096 82, 1292 206;
-              M108 206 C 304 82, 492 334, 700 206 C 908 78, 1096 334, 1292 206"/>
-    <animate attributeName="opacity" dur="6s" values=".48;.9;.48" repeatCount="indefinite"/>
-  </path>
-  <path id="auditWave" d="M108 244 C 310 335, 496 134, 700 244 C 904 354, 1090 134, 1292 244" stroke="url(#cyanWave)" stroke-width="1.4" fill="none" opacity=".46" filter="url(#glow)">
-    <animate attributeName="d" dur="18s" repeatCount="indefinite"
-      values="M108 244 C 310 335, 496 134, 700 244 C 904 354, 1090 134, 1292 244;
-              M108 244 C 310 134, 496 354, 700 244 C 904 132, 1090 354, 1292 244;
-              M108 244 C 310 335, 496 134, 700 244 C 904 354, 1090 134, 1292 244"/>
-  </path>
-
-  <g filter="url(#glow)">
-    <circle r="6.2" fill="#00ff80">
-      <animateMotion dur="7.8s" begin="-1.2s" repeatCount="indefinite" rotate="auto">
-        <mpath href="#memoryWave"/>
-      </animateMotion>
-      <animate attributeName="r" dur="2.4s" values="5.2;7.2;5.2" repeatCount="indefinite"/>
-      <animate attributeName="opacity" dur="2.4s" values=".55;1;.55" repeatCount="indefinite"/>
+  <!-- particles flowing into the core -->
+  <g filter="url(#h-glow)">
+    <circle r="5.6" fill="#00ff80">
+      <animateMotion dur="6.5s" begin="-1s" repeatCount="indefinite"><mpath href="#h-l1"/></animateMotion>
+      <animate attributeName="opacity" dur="6.5s" begin="-1s" values="0;.95;1;0" keyTimes="0;.15;.85;1" repeatCount="indefinite"/>
     </circle>
-    <circle r="5.8" fill="#ff2a6d">
-      <animateMotion dur="9.4s" begin="-5s" repeatCount="indefinite" rotate="auto">
-        <mpath href="#memoryWave"/>
-      </animateMotion>
-      <animate attributeName="r" dur="3s" values="4.8;6.8;4.8" repeatCount="indefinite"/>
-      <animate attributeName="opacity" dur="3s" values=".45;.98;.45" repeatCount="indefinite"/>
+    <circle r="4.6" fill="#00ff80">
+      <animateMotion dur="9s" begin="-5.5s" repeatCount="indefinite"><mpath href="#h-l2"/></animateMotion>
+      <animate attributeName="opacity" dur="9s" begin="-5.5s" values="0;.7;.8;0" keyTimes="0;.15;.85;1" repeatCount="indefinite"/>
     </circle>
-    <circle r="5.6" fill="#05d5ff">
-      <animateMotion dur="11.2s" begin="-8s" repeatCount="indefinite" rotate="auto">
-        <mpath href="#auditWave"/>
-      </animateMotion>
-      <animate attributeName="r" dur="3.2s" values="4.6;6.5;4.6" repeatCount="indefinite"/>
-      <animate attributeName="opacity" dur="3.2s" values=".42;.94;.42" repeatCount="indefinite"/>
+    <circle r="5.2" fill="#05d5ff">
+      <animateMotion dur="7.5s" begin="-3s" repeatCount="indefinite"><mpath href="#h-r1"/></animateMotion>
+      <animate attributeName="opacity" dur="7.5s" begin="-3s" values="0;.9;.95;0" keyTimes="0;.15;.85;1" repeatCount="indefinite"/>
+    </circle>
+    <circle r="4.4" fill="#05d5ff">
+      <animateMotion dur="10s" begin="-7s" repeatCount="indefinite"><mpath href="#h-r3"/></animateMotion>
+      <animate attributeName="opacity" dur="10s" begin="-7s" values="0;.65;.75;0" keyTimes="0;.15;.85;1" repeatCount="indefinite"/>
+    </circle>
+    <circle r="4.2" fill="#ff2a6d">
+      <animateMotion dur="8.5s" begin="-2s" repeatCount="indefinite"><mpath href="#h-cc"/></animateMotion>
+      <animate attributeName="opacity" dur="8.5s" begin="-2s" values="0;.8;.85;0" keyTimes="0;.12;.88;1" repeatCount="indefinite"/>
     </circle>
   </g>
 
-  <text x="713" y="198" text-anchor="middle" fill="#ffffff" class="logo" font-size="92">NEOTH</text>
-  <rect x="612" y="226" width="176" height="1.2" fill="url(#greenWave)" opacity=".95"/>
-  <text x="700" y="264" text-anchor="middle" fill="#b0b0b0" class="sans" font-size="14" letter-spacing="7">NEURAL ENGINE OBLIGATED TO HELP</text>
+  <!-- the memory core: everything converges here -->
+  <g>
+    <circle cx="700" cy="296" r="26" fill="none" stroke="#00ff80" stroke-opacity=".25">
+      <animate attributeName="r" dur="4s" values="14;34" repeatCount="indefinite"/>
+      <animate attributeName="stroke-opacity" dur="4s" values=".4;0" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="700" cy="296" r="20" fill="none" stroke="#05d5ff" stroke-opacity=".2">
+      <animate attributeName="r" dur="4s" begin="-2s" values="14;34" repeatCount="indefinite"/>
+      <animate attributeName="stroke-opacity" dur="4s" begin="-2s" values=".32;0" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="700" cy="296" r="7" fill="#0d0d0d" stroke="#00ff80" stroke-opacity=".9" stroke-width="1.6" filter="url(#h-glow)">
+      <animate attributeName="stroke-opacity" dur="2.6s" values=".6;1;.6" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- wordmark on open field -->
+  <text x="713" y="186" text-anchor="middle" fill="#ffffff" class="logo" font-size="96" filter="url(#h-glow)">NEOTH</text>
+  <rect x="560" y="216" width="280" height="1.2" fill="url(#h-rule)"/>
+  <text x="700" y="250" text-anchor="middle" fill="#a8a8a8" class="sans" font-size="14" letter-spacing="7">NEURAL ENGINE OBLIGATED TO HELP</text>
+
+  <!-- the three guarantees, anchored under the core -->
   <g class="mono" font-size="10" letter-spacing="3.2">
-    <text x="418" y="360" text-anchor="middle" fill="#00ff80">MEMORY</text>
-    <text x="700" y="360" text-anchor="middle" fill="#ff2a6d">CONSENT</text>
-    <text x="982" y="360" text-anchor="middle" fill="#05d5ff">AUDIT</text>
+    <text x="440" y="372" text-anchor="middle" fill="#00ff80">MEMORY</text>
+    <text x="700" y="372" text-anchor="middle" fill="#ff2a6d">CONSENT</text>
+    <text x="960" y="372" text-anchor="middle" fill="#05d5ff">AUDIT</text>
   </g>
+  <line x1="700" y1="316" x2="700" y2="352" stroke="white" stroke-opacity=".14"/>
 </svg>
