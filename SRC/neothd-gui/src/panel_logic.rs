@@ -972,6 +972,9 @@ pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
         mattermost_token: Option<String>,
         twitch_oauth_token: Option<String>,
         keet_seed_phrase: Option<String>,
+        nostr_secret_key: Option<String>,
+        bluebubbles_url: Option<String>,
+        gchat_subscription: Option<String>,
     }
     let creds: MinimalCreds = serde_yaml::from_str(yaml).unwrap_or_default();
     let present = |o: &Option<String>| o.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
@@ -994,6 +997,9 @@ pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
         row("mattermost", present(&creds.mattermost_token)),
         row("twitch", present(&creds.twitch_oauth_token)),
         row("keet", present(&creds.keet_seed_phrase)),
+        row("nostr", present(&creds.nostr_secret_key)),
+        row("imessage", present(&creds.bluebubbles_url)),
+        row("gchat", present(&creds.gchat_subscription)),
     ]
 }
 
@@ -2323,6 +2329,9 @@ mod tests {
             "mattermost",
             "twitch",
             "keet",
+            "nostr",
+            "imessage",
+            "gchat",
         ] {
             assert!(
                 rows.iter().any(|c| c.name == ch),
@@ -2330,7 +2339,7 @@ mod tests {
             );
         }
         // The connected bool is all that's exposed — no token value in the struct.
-        assert_eq!(rows.len(), 11);
+        assert_eq!(rows.len(), 14);
     }
 
     #[test]
@@ -2353,7 +2362,7 @@ mod tests {
     fn read_channel_status_missing_file_is_all_off() {
         let dir = tempfile::tempdir().unwrap();
         let rows = read_channel_status(dir.path());
-        assert_eq!(rows.len(), 11);
+        assert_eq!(rows.len(), 14);
         assert!(rows.iter().all(|c| !c.connected));
     }
 
