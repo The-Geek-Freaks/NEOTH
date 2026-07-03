@@ -37,11 +37,11 @@
 //!
 //! ## send_media
 //!
-//! Outbound attachment send is NOT supported in this v0 slice. The
-//! BlueBubbles API does expose `POST /api/v1/attachment/upload` but wiring
-//! multipart + media buffering in this slice would bloat scope without a
-//! concrete operator need. Returns `ChannelError::NotSupported`; a follow-up
-//! slice can add it cheaply once the base adapter is in production.
+//! Outbound attachments go through `POST /api/v1/message/attachment`
+//! (multipart: `chatGuid` + `name` required, file part `attachment` —
+//! verified against the BB server source, `MessageRouter.sendAttachment`).
+//! BB has no caption field on attachment sends; a non-empty caption is
+//! delivered as a follow-up `message/text` call.
 
 use std::time::Duration;
 
@@ -325,9 +325,13 @@ impl BlueBubblesChannel {
             .map_err(|e| ChannelError::Transport(self.scrub(format!("BlueBubbles POST /message/text: {e}"))))?;
         map_bb_status(&resp)?;
         // Parse the returned message GUID if available; fall back to "sent".
+        // BB wraps responses as `{status, message: "<string>", data: {guid}}`
+        // (verified against MessageRouter.sendText upstream) — the guid lives
+        // at `/data/guid`; `/message/guid` kept as a legacy fallback.
         let val: serde_json::Value = resp.json().await.unwrap_or_default();
         let guid = val
-            .pointer("/message/guid")
+            .pointer("/data/guid")
+            .or_else(|| val.pointer("/message/guid"))
             .and_then(|v| v.as_str())
             .unwrap_or("sent")
             .to_string();
@@ -489,18 +493,69 @@ impl Channel for BlueBubblesChannel {
         self.send_text(chat_id, text).await
     }
 
-    /// Outbound attachment send is NOT yet supported. BlueBubbles exposes
-    /// `POST /api/v1/attachment/upload` but multipart wiring is deferred
-    /// to a follow-up slice once the base adapter is in production.
+    /// Outbound attachment via `POST /api/v1/message/attachment` (verified
+    /// against the BB server source: `MessageRouter.sendAttachment`, form
+    /// fields `chatGuid` + `name` required, file part named `attachment`,
+    /// optional `tempGuid`). BB has no caption field on attachment sends —
+    /// a non-empty caption goes out as a follow-up text message.
     async fn send_media(
         &self,
-        _chat_id: &str,
-        _media: &MediaPayload,
-        _caption: Option<&str>,
+        chat_id: &str,
+        media: &MediaPayload,
+        caption: Option<&str>,
     ) -> std::result::Result<MessageId, ChannelError> {
-        Err(ChannelError::NotSupported {
-            feature: "imessage_bluebubbles.send_media — follow-up slice",
-        })
+        let filename = media
+            .filename
+            .clone()
+            .unwrap_or_else(|| default_attachment_name(media.kind).to_string());
+        let part = reqwest::multipart::Part::bytes(media.data.clone())
+            .file_name(filename.clone())
+            .mime_str(&media.mime)
+            .map_err(|e| {
+                ChannelError::Transport(self.scrub(format!("BlueBubbles attachment mime: {e}")))
+            })?;
+        let form = reqwest::multipart::Form::new()
+            .text("chatGuid", chat_id.to_string())
+            .text("tempGuid", format!("neoth-{}", uuid::Uuid::new_v4()))
+            .text("name", filename)
+            .part("attachment", part);
+        let url = self.api_url("message/attachment");
+        let resp = self
+            .http
+            .post(&url)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                ChannelError::Transport(
+                    self.scrub(format!("BlueBubbles POST /message/attachment: {e}")),
+                )
+            })?;
+        map_bb_status(&resp)?;
+        let val: serde_json::Value = resp.json().await.unwrap_or_default();
+        let guid = val
+            .pointer("/data/guid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sent")
+            .to_string();
+        if let Some(c) = caption {
+            if !c.trim().is_empty() {
+                self.post_text(chat_id, c).await?;
+            }
+        }
+        Ok(MessageId(guid))
+    }
+}
+
+/// Fallback filename when the payload carries none — BB requires `name`.
+fn default_attachment_name(kind: crate::channels::MediaKind) -> &'static str {
+    use crate::channels::MediaKind;
+    match kind {
+        MediaKind::Image | MediaKind::Sticker => "image.png",
+        MediaKind::Video => "video.mp4",
+        MediaKind::Audio => "audio.m4a",
+        MediaKind::Document => "file.bin",
     }
 }
 
@@ -704,6 +759,22 @@ mod tests {
         let ch = BlueBubblesChannel::new("http://localhost:1234", pw, None, None).expect("builds");
         assert_eq!(ch.poll_interval, DEFAULT_POLL_INTERVAL);
         assert_eq!(ch.poll_interval.as_secs(), 3);
+    }
+
+    #[test]
+    fn default_attachment_names_cover_every_media_kind() {
+        use crate::channels::MediaKind;
+        // BB requires a non-empty `name` form field — every kind must map.
+        for (kind, expect) in [
+            (MediaKind::Image, "image.png"),
+            (MediaKind::Sticker, "image.png"),
+            (MediaKind::Video, "video.mp4"),
+            (MediaKind::Audio, "audio.m4a"),
+            (MediaKind::Document, "file.bin"),
+        ] {
+            assert_eq!(default_attachment_name(kind), expect);
+            assert!(!default_attachment_name(kind).is_empty());
+        }
     }
 
     #[test]
