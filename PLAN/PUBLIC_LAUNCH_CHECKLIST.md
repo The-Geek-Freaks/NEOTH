@@ -29,10 +29,11 @@ visitor hits.
 - [x] **GitHub Release v1.0.0-beta.1 published** (2026-07-03) — public,
       pre-release source anchor:
       https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.1
-- [ ] **GitHub Release v1.0.0-beta.4 binaries** — non-destructive rebuild with
+- [x] **GitHub Release v1.0.0-beta.4 binaries** — non-destructive rebuild with
       current GitHub macOS Intel runner labels and portable macOS checksum
-      generation plus Windows-safe tag output; verify artifacts after
-      release.yml completes:
+      generation plus Windows-safe tag output; verified 29 release assets
+      including both Windows zips, per-asset `.sha256`, `.cosign.bundle`,
+      `.minisig`, and `SHA256SUMS`:
       https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.4
 - [x] **Discussions seeded** — Announcements ("NEOTH is public — start here"),
       Q&A ("Q&A and claim checks"), Show-and-tell posts live.
@@ -58,8 +59,9 @@ visitor hits.
       layers" errors), render inline on GitHub. Optionally re-record real
       screencasts later, but the SVGs are correct and shippable now.
 - [ ] **crates.io publish** (`cargo install neoth` path) — lands with 1.0
-- [ ] **Release binaries**: tag → release.yml artifacts verified on all
-      targets, checksums in release notes
+- [x] **Release binaries**: tag → release.yml artifacts verified on all
+      targets, with `SHA256SUMS`, per-asset checksums, cosign bundles, and
+      minisigs uploaded
 - [ ] **Announce**: HN (Show HN), r/rust, r/LocalLLaMA, lobste.rs — lead with
       the evaluation page (docs/evaluation.md), not adjectives; delta-kosmologie
       cross-post links back
