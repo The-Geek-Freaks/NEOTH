@@ -19,7 +19,7 @@ and the Babel-Index research angle.
 
 ## Posting order (the playbook)
 
-1. **Day 0, publish the GitHub Release** (`v1.0.0-beta.3`) — gives every link
+1. **Day 0, publish the GitHub Release** (`v1.0.0-beta.4`) — gives every link
    below a stable anchor and shows up in GitHub's release feed.
 2. **Day 0, GitHub Discussions → Announcements**: post the "NEOTH is public"
    note (below), pin it.

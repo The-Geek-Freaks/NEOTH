@@ -29,10 +29,11 @@ visitor hits.
 - [x] **GitHub Release v1.0.0-beta.1 published** (2026-07-03) — public,
       pre-release source anchor:
       https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.1
-- [ ] **GitHub Release v1.0.0-beta.3 binaries** — non-destructive rebuild with
+- [ ] **GitHub Release v1.0.0-beta.4 binaries** — non-destructive rebuild with
       current GitHub macOS Intel runner labels and portable macOS checksum
-      generation; verify artifacts after release.yml completes:
-      https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.3
+      generation plus Windows-safe tag output; verify artifacts after
+      release.yml completes:
+      https://github.com/The-Geek-Freaks/NEOTH/releases/tag/v1.0.0-beta.4
 - [x] **Discussions seeded** — Announcements ("NEOTH is public — start here"),
       Q&A ("Q&A and claim checks"), Show-and-tell posts live.
 - [x] Repo topics + About description + docs/assets overhaul on public `main`.

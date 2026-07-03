@@ -15,7 +15,7 @@ Closes **E-08** (PROGRESS.md) — the pre-v1.0 ship gate that
 operators have a documented path for "I have N MB of past chat
 history; how do I get NEOTH to see it as memory?"
 
-> **Command status (current binary `1.0.0-beta.3`).** This document is the
+> **Command status (current binary `1.0.0-beta.4`).** This document is the
 > import/export *contract*; the binary you run today exposes only:
 >
 > - `neoth-migrate dry-run --manifest <file>` — ✅ **works**: validates the

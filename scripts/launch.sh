@@ -12,7 +12,7 @@
 set -uo pipefail
 
 REPO="The-Geek-Freaks/NEOTH"
-TAG="v1.0.0-beta.3"
+TAG="v1.0.0-beta.4"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
@@ -25,8 +25,8 @@ else
   echo "--> publishing release $TAG"
   gh release create "$TAG" \
     -R "$REPO" \
-    --title "NEOTH 1.0.0-beta.3 — first public release candidate" \
-    --notes-file PLAN/RELEASE_NOTES_beta3.md \
+    --title "NEOTH 1.0.0-beta.4 — first public release candidate" \
+    --notes-file PLAN/RELEASE_NOTES_beta4.md \
     --prerelease --target main
 fi
 

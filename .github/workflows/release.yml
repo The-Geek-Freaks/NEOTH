@@ -149,6 +149,7 @@ jobs:
 
       - name: Extract version from tag
         id: version
+        shell: bash
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Package archive
