@@ -630,7 +630,7 @@ fn default_groundtruth_injection() -> bool {
     true
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CouncilConfig {
     /// Winner-selection strategy. See [`SelectionMode`].
     #[serde(default)]
@@ -898,6 +898,16 @@ pub const DEFAULT_DIVERSITY_BONUS_WEIGHT: f32 = 0.10;
 /// explicitly overrides. 3^2 = 9 leaf calls is the most cost-
 /// reasonable budget for an automatic council pass.
 pub const DEFAULT_MAX_RECURSION_DEPTH: u8 = 2;
+
+/// Route Default through serde so the field-level `#[serde(default =
+/// ...)]` fns apply. A derived Default zeroed them: an ABSENT `council:`
+/// block yielded `groundtruth_injection: false` despite the
+/// G02-COUNCIL-01 default-ON contract (caught by the ZF-01 doctor test).
+impl Default for CouncilConfig {
+    fn default() -> Self {
+        serde_yaml::from_str("{}").expect("empty mapping deserializes CouncilConfig")
+    }
+}
 
 impl CouncilConfig {
     /// Effective `max_calls_per_user_message`, honouring operator
