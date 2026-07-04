@@ -445,7 +445,15 @@ pub fn gossip_handler(
         let origin = frame.origin.as_str().to_string();
         let verdict = {
             let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
-            g.accept_inbound(&frame, payload_et, &policy, now)
+            let v = g.accept_inbound(&frame, payload_et, &policy, now);
+            // accept_inbound is check-only since G02-CLUSTER-02. This path
+            // has no foreign-event persistence step (idx_foreign_events
+            // ingest is the peeroxide loop's job), so commit immediately —
+            // preserving the pre-split dedup/VC semantics here.
+            if matches!(v, GossipAcceptance::Accept) {
+                g.commit_inbound(&frame);
+            }
+            v
         };
         let accepted = matches!(verdict, GossipAcceptance::Accept);
         let verdict_str = format!("{verdict:?}");

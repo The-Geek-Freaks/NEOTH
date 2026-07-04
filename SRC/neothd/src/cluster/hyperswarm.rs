@@ -765,49 +765,50 @@ async fn handle_peeroxide_connection(
                 match gossip_state.accept_inbound(&gframe, payload_et, &gossip_policy, now) {
                     GossipAcceptance::Accept => {
                         emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
-                        // G-02 CLUSTER-01: persist the accepted foreign frame into
-                        // idx_foreign_events (separate from idx_episode — foreign ≠
-                        // operator truth). Runs in spawn_blocking to keep the async
-                        // peer loop non-blocking. Fire-and-forget: a write failure is
-                        // non-fatal (the frame is already ACK'd via VC merge). Under
-                        // sustained views.db contention the frame is an accepted loss —
-                        // dedup-before-persist is deliberate v0 design (the dedup
-                        // high-water already advanced; the peer does NOT retry because
-                        // the VC merge succeeded).
-                        // FOLLOW-UP(G02-CLUSTER-02): redesign to persist-then-dedup.
+                        // G02-CLUSTER-02 persist-then-dedup: INSERT into
+                        // idx_foreign_events FIRST (awaited), advance the dedup
+                        // high-water + merge the sender's VC only after the DB
+                        // write is confirmed. The old fire-and-forget order made
+                        // a views.db-contention drop permanent (high-water +
+                        // VC already advanced ⇒ the peer never re-sent). One
+                        // awaited spawn_blocking per accepted frame is fine —
+                        // this loop does async I/O anyway, and the DB write is
+                        // idempotent (INSERT OR IGNORE on (origin, seq)).
                         let home = neoth_home.clone();
                         let origin_pk = gframe.origin.as_str().to_owned();
                         let origin_seq = gframe.event_seq;
                         let et_byte = payload_et.unwrap_or(0);
                         let payload_bytes = gframe.payload.clone();
-                        tokio::task::spawn_blocking(move || {
+                        let persisted = tokio::task::spawn_blocking(move || {
                             let db_path = home.join("views.db");
-                            match crate::memory::store::open(&db_path) {
-                                Ok(conn) => {
-                                    if let Err(e) = crate::cluster::wal_sync::ingest_foreign_event(
-                                        &conn,
-                                        &origin_pk,
-                                        origin_seq,
-                                        et_byte,
-                                        &payload_bytes,
-                                        crate::time::now_unix_i64(),
-                                    ) {
-                                        tracing::warn!(
-                                            origin = %origin_pk,
-                                            seq = origin_seq,
-                                            error = %e,
-                                            "cluster: foreign event ingest failed (non-fatal)"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        error = %e,
-                                        "cluster: could not open views.db for foreign event ingest"
-                                    );
-                                }
-                            }
+                            let conn = crate::memory::store::open(&db_path)
+                                .map_err(|e| anyhow::anyhow!("open views.db: {e}"))?;
+                            crate::cluster::wal_sync::ingest_foreign_event(
+                                &conn,
+                                &origin_pk,
+                                origin_seq,
+                                et_byte,
+                                &payload_bytes,
+                                crate::time::now_unix_i64(),
+                            )
+                        })
+                        .await
+                        .unwrap_or_else(|join_err| {
+                            Err(anyhow::anyhow!("ingest task panicked: {join_err}"))
                         });
+                        match persisted {
+                            Ok(()) => gossip_state.commit_inbound(&gframe),
+                            Err(e) => {
+                                // High-water NOT advanced, VC NOT merged: the
+                                // peer's anti-entropy will re-send this event.
+                                tracing::warn!(
+                                    origin = %gframe.origin.as_str(),
+                                    seq = gframe.event_seq,
+                                    error = %e,
+                                    "cluster: foreign event ingest failed — high-water not advanced, peer will re-send"
+                                );
+                            }
+                        }
                     }
                     dropped => {
                         emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);

@@ -169,10 +169,16 @@ impl GossipState {
     ///   1. `evaluate_acceptance` (tag replicable / within budget / not dup),
     ///   2. defence-in-depth band re-check on the payload's OWN event_type
     ///      (`payload_event_type`; a buggy/malicious sender could tag a
-    ///      DoNotGossip event as Replicate),
-    /// and on `Accept` updates the dedup table + merges the sender's VC.
+    ///      DoNotGossip event as Replicate).
     /// `payload_event_type` is `None` when the caller couldn't decode the inner
     /// WAL header — treated as un-trusted ⇒ dropped.
+    ///
+    /// CHECK-ONLY (G02-CLUSTER-02 persist-then-dedup): `Accept` mutates
+    /// NOTHING. The caller persists the payload first and calls
+    /// [`Self::commit_inbound`] only after the DB write is confirmed —
+    /// advancing the dedup high-water (and merging the sender's VC) before
+    /// persistence made a failed INSERT a permanent loss: the peer's
+    /// anti-entropy considered the event delivered and never re-sent it.
     pub fn accept_inbound(
         &mut self,
         frame: &GossipFrame,
@@ -193,10 +199,18 @@ impl GossipState {
             Some(et) if is_replicable(et, policy) => {}
             _ => return GossipAcceptance::DroppedDoNotGossipTag,
         }
-        // Accept: record dedup high-water + converge the VC.
+        GossipAcceptance::Accept
+    }
+
+    /// Commit an accepted-AND-persisted inbound frame: record the dedup
+    /// high-water + converge the VC. Call ONLY after the foreign event is
+    /// durably stored (`ingest_foreign_event` returned `Ok`). Idempotent for
+    /// the same frame (re-inserting the same seq / re-merging the same VC is
+    /// a no-op), so a duplicate arriving before the first commit lands is
+    /// harmless — the DB's `INSERT OR IGNORE` on (origin, seq) absorbs it.
+    pub fn commit_inbound(&mut self, frame: &GossipFrame) {
         self.seen.insert(frame.origin.clone(), frame.event_seq);
         self.vc.merge(&frame.vector_clock);
-        GossipAcceptance::Accept
     }
 
     /// Highest applied seq for a peer (observability).
@@ -693,14 +707,29 @@ mod tests {
             payload: vec![0],
         };
         let now = 2_000_000_001;
-        // First arrival of a replicable-band event ⇒ Accept + VC converges.
+        // First arrival of a replicable-band event ⇒ Accept. CHECK-ONLY:
+        // nothing is recorded until the caller confirms persistence
+        // (G02-CLUSTER-02 persist-then-dedup).
         assert_eq!(
             st.accept_inbound(&frame, Some(0x90), &p, now),
             GossipAcceptance::Accept
         );
+        assert_eq!(
+            st.last_seen_seq(&peer),
+            None,
+            "accept_inbound must NOT advance the high-water before commit"
+        );
+        // Re-delivery BEFORE commit is still Accept (DB INSERT OR IGNORE
+        // absorbs the double-persist) — the crash-window contract.
+        assert_eq!(
+            st.accept_inbound(&frame, Some(0x90), &p, now),
+            GossipAcceptance::Accept
+        );
+        // After confirmed persistence the caller commits: high-water + VC.
+        st.commit_inbound(&frame);
         assert_eq!(st.last_seen_seq(&peer), Some(5));
         assert!(st.vc.get(&peer) >= 1, "receiver VC converged on sender");
-        // Re-delivery (<= last seq) ⇒ duplicate drop.
+        // Re-delivery (<= last seq) after commit ⇒ duplicate drop.
         assert!(matches!(
             st.accept_inbound(&frame, Some(0x90), &p, now),
             GossipAcceptance::DroppedDuplicate { .. }
@@ -765,6 +794,8 @@ mod tests {
             st.accept_inbound(&frame, Some(0x90), &policy, now),
             GossipAcceptance::Accept
         );
+        // VC merge happens at commit (post-persist), not at accept.
+        st.commit_inbound(&frame);
         // Every entry of the peer's frontier is now covered by the local clock.
         assert!(st.vc.get(&pa) >= 3);
         assert!(st.vc.get(&pb) >= 2);
