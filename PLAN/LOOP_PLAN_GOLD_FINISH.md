@@ -323,6 +323,25 @@ session4_final: >
   ULTRA still OPEN (real, tracked): webhook durable inbound spool,
   gossip-WAL ingest (=G02-CLUSTER-02), smart-loader plan_loader unwire,
   doctor advisable-config hints, GUI-parity long-tail.
+session4_part5: >
+  94bd7dcf = ODY-12 + ODY-14 SHIPPED as ONE mechanism (deep-link chips):
+  daemon cli/deep_links.rs (extract + DEEP_LINK_PROMPT, stream-only
+  injection into combined_system, additive links array on the
+  done-sentinel) + GUI LinkChip chips row above the composer +
+  parse_stream_links + click router (nav-<panel> validated against
+  NAV_PANELS 14-value drift-guard; kanban-<id> -> nav coding +
+  invoke_kanban_task_selected). SOVEREIGNTY DEVIATION recorded: UI
+  control is click-confirmed, model never flips panels itself.
+  Gates: daemon 9868/9868 (+5), neothd-gui 140/140 (+3), clippy 0.
+  GUI-bat gotcha: args are `test -p neothd-gui -j 4 -- --test-threads=2`
+  (-j AFTER the subcommand; `-j 4 test` fails).
+  ZERO session-buildable items remain. Every open box is now:
+  v1.1-declared (FEAT-05/06), operator-blocked (§9: OH-01-scope,
+  PROG-13, PROG-15, HR-00, MODE-02 wording, tag timing), or a B17
+  release-gate needing CI-streak x3 + 2 clean error-hunt waves + the
+  operator actions. NEXT SESSION: (1) error-hunt wave over
+  e302373a..94bd7dcf (14 code commits — the wave cadence is due),
+  (2) §9 decisions from Alex, (3) B17 roll-up closure + tag.
 session4_part4: >
   1cb61050 = RMAS-03 SHIPPED, B13 COMPLETE. 3 spec-corrections recorded
   in the tracker flip: hysteria (not tailscale) is the subprocess
