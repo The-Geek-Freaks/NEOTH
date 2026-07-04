@@ -50,6 +50,12 @@ export enum WizardStep {
     mode-selection,
     welcome,
     license,
+    /// ZF-05: operating-style picker — express path. Operator picks a
+    /// built-in preset (full-auto / balanced / essentials / local-sovereign
+    /// / custom) right after license acceptance. The preset is applied to
+    /// freedom.yaml after Finish. Later screens show the preset's defaults
+    /// as hints so the operator knows what was pre-filled.
+    preset,
     identity,
     /// GOLD-ADAPT-AOS-03 — optional project-context capture (agent-os
     /// plan-product): what you're building / domain / stack. Skippable;
@@ -117,6 +123,10 @@ export component MainWindow inherits Window {
     /// in apply_provider_ids so the Config combo shows the right selected row.
     in-out property <int> provider-choice-index: 0;
     in-out property <string> autonomy-choice: "standard";
+    /// ZF-05: preset picked on the wizard preset screen. Rust reads this
+    /// in on_finish_clicked and calls `neoth preset apply <name> --yes`
+    /// after freedom.yaml is written. "custom" = skip the apply call.
+    in-out property <string> wizard-preset-choice: "balanced";
 
     // GU-03 — persona-adaptive settings-panel visibility. Rust sets these on
     // startup from `panel_logic::panels_for(read_complexity_level())`; they
@@ -210,24 +220,27 @@ export component MainWindow inherits Window {
     /// When keys is skipped, current-step jumps from 6 (Channels) to
     /// 8 (Summary), which the bar fills smoothly.
     // AOS-03: project-context step inserted after Identity → 10 total.
-    out property <int> total-steps: 10;
+    // ZF-05: preset step inserted after license → 11 total.
+    out property <int> total-steps: 11;
     out property <int> current-step:
         root.step == WizardStep.welcome  ? 1 :
         root.step == WizardStep.license  ? 2 :
-        root.step == WizardStep.identity ? 3 :
-        root.step == WizardStep.project-context ? 4 :
-        root.step == WizardStep.provider ? 5 :
-        root.step == WizardStep.autonomy ? 6 :
-        root.step == WizardStep.channels ? 7 :
-        root.step == WizardStep.cluster  ? 8 :
-        root.step == WizardStep.keys     ? 9 :
-        root.step == WizardStep.done     ? 10 :
+        root.step == WizardStep.preset   ? 3 :
+        root.step == WizardStep.identity ? 4 :
+        root.step == WizardStep.project-context ? 5 :
+        root.step == WizardStep.provider ? 6 :
+        root.step == WizardStep.autonomy ? 7 :
+        root.step == WizardStep.channels ? 8 :
+        root.step == WizardStep.cluster  ? 9 :
+        root.step == WizardStep.keys     ? 10 :
+        root.step == WizardStep.done     ? 11 :
         0;
     // G-23 fix: removed dead `mode-selection` branch — the progress
     // indicator is hidden on that screen so the label is never read.
     out property <string> step-label:
         root.step == WizardStep.welcome  ? "Welcome" :
         root.step == WizardStep.license  ? "License" :
+        root.step == WizardStep.preset   ? "Preset" :
         root.step == WizardStep.identity ? "Identity" :
         root.step == WizardStep.project-context ? "Project" :
         root.step == WizardStep.provider ? "Provider" :
@@ -1067,6 +1080,91 @@ export component MainWindow inherits Window {
                 NeothButton {
                     label: "Continue →";
                     enabled: root.license-accepted;
+                    // ZF-05: go to the preset picker before identity
+                    clicked => { root.step = WizardStep.preset; }
+                }
+            }
+        }
+
+        // ── Preset Picker (ZF-05) ──────────────────────────────────────
+        // Express-path screen: operator picks a built-in operating style.
+        // Presets are applied to freedom.yaml after Finish via
+        // `neoth preset apply <name> --yes` (Rust side). "custom" skips
+        // the apply call, leaving freedom.yaml values as-written by the
+        // wizard.  Positioned before Identity so a DAU can accept a
+        // sensible default and breeze through the remaining screens.
+        if root.step == WizardStep.preset: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Operating Style";
+                subtitle: "Pick a preset that matches how you want NEOTH to work. You can change this any time from Settings → Config.";
+            }
+            NeothComboBox {
+                model: [
+                    "balanced — sensible defaults, occasional confirms (recommended)",
+                    "full-auto — trusts your policy; never interrupts",
+                    "essentials — minimal footprint, local tools only",
+                    "local-sovereign — no cloud, fully air-gapped",
+                    "custom — keep the values you set manually in later screens",
+                ];
+                current-index:
+                    root.wizard-preset-choice == "balanced"         ? 0 :
+                    root.wizard-preset-choice == "full-auto"        ? 1 :
+                    root.wizard-preset-choice == "essentials"       ? 2 :
+                    root.wizard-preset-choice == "local-sovereign"  ? 3 :
+                    4;
+                selected(i) => {
+                    if (i == 0) { root.wizard-preset-choice = "balanced"; }
+                    if (i == 1) { root.wizard-preset-choice = "full-auto"; }
+                    if (i == 2) { root.wizard-preset-choice = "essentials"; }
+                    if (i == 3) { root.wizard-preset-choice = "local-sovereign"; }
+                    if (i == 4) { root.wizard-preset-choice = "custom"; }
+                }
+            }
+            // Inline description — one line per choice so the operator
+            // knows what each preset does without opening Settings.
+            HorizontalLayout {
+                spacing: Theme.space-tight;
+                alignment: start;
+                Text {
+                    text: "Style:";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    font-weight: Theme.weight-medium;
+                    letter-spacing: Theme.letter-spacing-tight;
+                    color: Theme.text-dim;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.wizard-preset-choice;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-body;
+                    color: Theme.accent-green;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text:
+                        root.wizard-preset-choice == "balanced"        ? " — sensible defaults; occasional confirms." :
+                        root.wizard-preset-choice == "full-auto"       ? " — trusts policy.yaml; never interrupts." :
+                        root.wizard-preset-choice == "essentials"      ? " — minimal footprint; local tools only." :
+                        root.wizard-preset-choice == "local-sovereign" ? " — no cloud; fully air-gapped." :
+                                                                          " — keep values you set in later screens.";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.license; }
+                }
+                NeothButton {
+                    label: "Continue →";
                     clicked => { root.step = WizardStep.identity; }
                 }
             }
@@ -1124,7 +1222,8 @@ export component MainWindow inherits Window {
                 NeothButton {
                     label: "← Back";
                     primary: false;
-                    clicked => { root.step = WizardStep.license; }
+                    // ZF-05: identity's back now lands on the preset picker
+                    clicked => { root.step = WizardStep.preset; }
                 }
                 NeothButton {
                     label: "Continue →";
@@ -1329,6 +1428,19 @@ export component MainWindow inherits Window {
                     font-size: Theme.font-size-caption;
                     color: Theme.text-muted;
                     vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+            // ZF-05: when a non-custom preset was chosen, show a note so
+            // the operator knows the preset already set this for them.
+            if root.wizard-preset-choice != "custom": HorizontalLayout {
+                spacing: Theme.space-tight;
+                alignment: start;
+                Text {
+                    text: "ℹ Preset `" + root.wizard-preset-choice + "` already configured this — feel free to override.";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    color: Theme.text-dim;
                     wrap: word-wrap;
                 }
             }
@@ -1695,6 +1807,26 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: Theme.space-base;
                         Text {
+                            text: "Preset";
+                            width: 100px;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.wizard-preset-choice;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
                             text: "License";
                             width: 100px;
                             font-family: Theme.font-display;
@@ -1709,6 +1841,114 @@ export component MainWindow inherits Window {
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: root.license-accepted ? Theme.text-primary : Theme.accent-pink;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            // ZF-05: post-setup tips card. Static rows with command hints
+            // for the offer-style wizard steps that were deliberately kept
+            // out of the wizard flow. No Rust wiring needed — the operator
+            // copies the command or clicks Open Settings.
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "NEXT STEPS (optional)";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        color: Theme.text-dim;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: start;
+                        Text {
+                            text: "Add a messenger";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "→ Settings → Channels";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: start;
+                        Text {
+                            text: "Enable HMAC backup";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "→ neoth security backup-hmac-key";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: start;
+                        Text {
+                            text: "Enable WASM plugins";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "→ Settings → Config → plugins";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: start;
+                        Text {
+                            text: "Connect n8n";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "→ Settings → Automation";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: start;
+                        Text {
+                            text: "Import credentials";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "→ neoth credential import";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
                             vertical-alignment: center;
                         }
                     }

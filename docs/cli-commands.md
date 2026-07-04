@@ -697,12 +697,22 @@ Run operator health checks (freedom/credentials/db/wal/hmac/quota/...). Exit cod
 
 Compose dreams now (SPEC-12 / R-02): `dream now` runs one dreaming pass over the recent window on-demand — embed + cosine-cluster the window's episodes into themed Dream records under `~/.neoth/dreams/` — instead of waiting for the nightly cron. Emits `0xF4 DREAM_COMPOSED`
 
+### `neoth dream list`
+
+List days that have a dream JSONL file in `~/.neoth/dreams/`. Output is sorted newest-first
+
 ### `neoth dream now`
 
 Compose dreams over the recent window right now (default: last 24h)
 
 - `--window-secs <WINDOW_SECS>` — Look-back window in seconds. Default 86400 (24h)
 - `--max-events <MAX_EVENTS>` — Max events to embed + cluster this pass. Default 500
+
+### `neoth dream show`
+
+Show the dreams recorded on a specific day
+
+- `<DAY>` — Day to show (e.g. `2026-06-03`)
 
 ## `neoth ecology`
 
@@ -1705,6 +1715,10 @@ Scaffold a fresh NEOTH-Vault: creates the directory, drops a minimal `.obsidian/
 
 - `--vault <PATH>` — Vault path to create. Defaults to `~/Documents/NEOTH-Vault/` on every platform (the path Obsidian itself uses by default when the operator clicks "Create new vault")
 
+### `neoth obsidian status`
+
+Report the Obsidian integration config from `freedom.yaml`. Pure read, no side effects. Shows whether a vault is configured and the key automation settings (auto-sync, wiki-rebuild, vault-reader)
+
 ### `neoth obsidian sync`
 
 One-way copy: NEOTH archive → vault. Idempotent
@@ -2443,6 +2457,16 @@ GOLD-ADOPT-23 — open a TTL-bounded risk-confirm window so the next risk-gate-b
 - `--ttl <TTL>` — How long the confirm window stays open — `10m`, `300s`, `1h`, or a bare number of seconds. Default `10m`
 - `--egress` — Also lift the egress block (outbound to a non-allowlisted destination), in addition to the dangerous-command block
 - `--egress-only` — Lift ONLY the egress block (leave dangerous commands gated)
+
+## `neoth rmas`
+
+ZF-04 — RecursiveMAS sidecar consent lifecycle
+
+### `neoth rmas consent`
+
+Show RMAS license status, sidecar config, and consent marker state
+
+- `--acknowledge` — Acknowledge running third-party RecursiveMAS code and write the consent marker. REVIEW the upstream repository yourself first — NEOTH never downloads it; this flag confirms you have
 
 ## `neoth rollback`
 

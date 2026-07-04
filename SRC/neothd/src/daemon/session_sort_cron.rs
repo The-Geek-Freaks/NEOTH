@@ -406,7 +406,7 @@ pub async fn run_session_sort_pass(
 /// Called by `neoth sessions --folders` (the CLI shell that wires this is
 /// separate; this fn is the render contract).
 ///
-/// ```
+/// ```text
 /// Folders:
 /// ├── rust-debugging  (3 sessions)
 /// │   ├── [2026-07-01] Borrow checker lifetime issue

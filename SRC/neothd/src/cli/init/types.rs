@@ -615,6 +615,20 @@ pub struct WizardState {
     #[serde(default)]
     pub companion: crate::config::CompanionConfig,
     pub steps_completed: Vec<u8>,
+    /// ZF-02: name of the built-in preset chosen at step 2 (`"full-auto"`,
+    /// `"balanced"`, `"essentials"`, `"local-sovereign"`, or `"custom"`).
+    /// `None` when the operator has not yet reached the preset picker or
+    /// is on a custom path. `#[serde(default)]` keeps old checkpoints valid.
+    #[serde(default)]
+    pub chosen_preset: Option<String>,
+    /// ZF-02: `true` when a non-custom built-in preset was chosen at step 2.
+    /// Gates the express-skip logic in downstream steps: language autodetect,
+    /// HMAC, topology, autonomy, auto-update, WASM, supervisor, and the
+    /// channel/Keet/Obsidian/n8n/tududi/mobile-mcp offers. `false` on a
+    /// custom path (every per-step prompt still fires as usual).
+    /// `#[serde(default)]` keeps old checkpoints valid.
+    #[serde(default)]
+    pub is_express: bool,
 }
 
 /// Outcome of the GUI/CLI mode-selection step. Callers branch on

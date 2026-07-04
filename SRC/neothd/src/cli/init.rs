@@ -73,6 +73,14 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     }
     step1_license(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
+    // ZF-02 — preset picker moved to position 2 (right after license) so it
+    // gates the rest of the wizard. A non-custom built-in preset sets
+    // `state.is_express = true` here and downstream steps skip themselves.
+    // `custom` leaves `is_express = false` and every step fires as usual.
+    // The post-write apply block (after write_config) still uses `chosen_preset`
+    // to overlay the feature-flag overrides — unchanged from ZF-01.
+    let chosen_preset = step_zero_friction(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step1b_detect_environment(&args, interactive, &neoth_dir).await;
     step1c_experience_level(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
@@ -115,11 +123,19 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step6g_credential_import(&args, interactive, &neoth_dir).await;
     // GOLD-ADAPT-TUDU-01 — optional tududi self-hosted task manager MCP rail.
     // No checkpoint save needed (re-offerable each run like step5e_cbm_offer).
-    step6i_tududi_offer(interactive).await?;
+    // GOLD-ADAPT-TUDU-01 — optional tududi self-hosted task manager MCP rail.
+    // ZF-02: skipped on the express path (post-setup tip).
+    // No checkpoint save needed (re-offerable each run like step5e_cbm_offer).
+    if !state.is_express {
+        step6i_tududi_offer(interactive).await?;
+    }
     // GOLD-ADAPT-SYS-01 — optional mobile-mcp iOS/Android device control rail.
+    // ZF-02: skipped on the express path (post-setup tip).
     // No checkpoint save needed (re-offerable each run; device prerequisites
     // vary per operator session).
-    step6j_mobile_mcp_offer(interactive).await?;
+    if !state.is_express {
+        step6j_mobile_mcp_offer(interactive).await?;
+    }
     // GOLD-ADAPT-ODY-24 — companion LAN pairing offer. No checkpoint save
     // needed (re-offerable each run; LAN topology may differ per session).
     step6k_companion_pairing_offer(interactive, &mut state).await?;
@@ -132,11 +148,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step7d_supervisor(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
-    // GOLD-FEAT-01b + ZF-01 — the operating-style preset picker is the FINAL
-    // word: applied after every per-step pick so the chosen built-in
-    // (full-auto / balanced / essentials / local-sovereign) cleanly overrides
-    // autonomy + topology before the summary. `custom` keeps the per-step picks.
-    let chosen_preset = step_zero_friction(&args, interactive, &mut state)?;
+    // ZF-02: `chosen_preset` was set at step 2 (right after license). The
+    // summary and post-write apply block below both use the binding from there.
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {
@@ -174,6 +187,9 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
             }
         }
         write_initialized_marker(&neoth_dir, &state)?;
+        // ZF-02 — print post-setup tips card for express preset users so they
+        // know how to add messengers, HMAC backup, Obsidian, etc. after setup.
+        print_post_setup_tips(&state);
         // R-04: wizard reached the `.initialized` marker — the
         // checkpoint is no longer needed. Clear it so the next
         // `neoth init` (e.g. via --force or reconfigure) starts
@@ -952,6 +968,8 @@ mod tests {
         WizardState {
             experience_level: crate::wizard::recommend::ExperienceLevel::Beginner,
             onboarding_mode: OnboardingMode::New,
+            chosen_preset: None,
+            is_express: false,
             operator_id: Some("alice".to_string()),
             language_primary: Some("en".to_string()),
             language_code: Some("en".to_string()),

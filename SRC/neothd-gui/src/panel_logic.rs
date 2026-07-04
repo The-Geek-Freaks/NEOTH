@@ -1970,7 +1970,7 @@ pub fn parse_calendar_next(json: &str, n: usize) -> (bool, Vec<(String, String)>
     let parsed: Vec<(String, String)> = events
         .iter()
         .take(n)
-        .filter_map(|ev| {
+        .map(|ev| {
             let summary = ev
                 .get("summary")
                 .or_else(|| ev.get("title"))
@@ -1991,7 +1991,7 @@ pub fn parse_calendar_next(json: &str, n: usize) -> (bool, Vec<(String, String)>
                     }
                 })
                 .unwrap_or_else(|| "—".to_string());
-            Some((time, summary))
+            (time, summary)
         })
         .collect();
 

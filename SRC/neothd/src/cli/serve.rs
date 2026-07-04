@@ -1540,6 +1540,129 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     #[cfg(feature = "cluster")]
     info!("cluster audit sidecar ingester spawned (5s tick)");
 
+    // G-02 CLUSTER-02b — Foreign-event indexer: drains idx_foreign_events and
+    // promotes peer signals (importance boosts, groundtruth revocations) into
+    // local recall surfaces. WAL-free; dropped on process exit (no handle in
+    // BackgroundHandles needed, same pattern as the audit ingester's WAL-free
+    // companion tasks). 30s poll interval.
+    #[cfg(feature = "cluster")]
+    let _foreign_indexer_task =
+        crate::cli::serve_tasks::spawn_foreign_indexer(FreedomConfig::default_neoth_home());
+    #[cfg(feature = "cluster")]
+    info!("cluster foreign-event indexer spawned (30s tick)");
+
+    // ── ZF-06 Cron supervisor ────────────────────────────────────────────────
+    // Mirrors channel_supervisor_task: holds a gen_rx watch and calls
+    // diff_cron_fleet on every config reload to start newly-enabled crons and
+    // abort removed ones. Initial fleet is populated from the startup config.
+    let cron_fleet: crate::cli::serve_tasks::CronFleet =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let cron_supervisor_task: tokio::task::JoinHandle<()> = {
+        let mut gen_rx = reload_controller.subscribe_generation();
+        let fleet = std::sync::Arc::clone(&cron_fleet);
+        let reload_controller = std::sync::Arc::clone(&reload_controller);
+        let writer = writer.clone();
+        let wal_dir = wal_dir.clone();
+        let views_executor = views_executor.clone();
+        tokio::spawn(async move {
+            // Seed the initial fleet before entering the reload watch loop.
+            {
+                let initial_cfg = reload_controller.latest();
+                let deps = crate::cli::serve_tasks::SpawnDeps {
+                    reload_controller: std::sync::Arc::clone(&reload_controller),
+                    writer: writer.clone(),
+                    wal_dir: wal_dir.clone(),
+                    views_executor: views_executor.clone(),
+                    sse_tx: None,
+                };
+                let desired = crate::cli::serve_tasks::desired_cron_keys(&initial_cfg);
+                // Spawn WITHOUT holding the fleet lock (std MutexGuard is not
+                // Send across await), then insert under a short lock.
+                let mut seeded: Vec<(
+                    crate::cli::serve_tasks::CronKey,
+                    tokio::task::JoinHandle<()>,
+                )> = Vec::new();
+                for key in desired {
+                    if let Some(handle) =
+                        crate::cli::serve_tasks::spawn_cron_for_key(key, &initial_cfg, &deps).await
+                    {
+                        seeded.push((key, handle));
+                    }
+                }
+                let mut guard = fleet.lock().expect("cron_fleet mutex poisoned");
+                for (key, handle) in seeded {
+                    guard.insert(key, handle);
+                }
+                let started = guard.len();
+                drop(guard);
+                info!(started, "ZF-06 cron fleet seeded from startup config");
+            }
+            // Hot-reload loop: on each config generation bump, diff running
+            // fleet against new desired set and stop/start accordingly.
+            while gen_rx.changed().await.is_ok() {
+                let generation = *gen_rx.borrow_and_update();
+                let new_cfg = reload_controller.latest();
+                let deps = crate::cli::serve_tasks::SpawnDeps {
+                    reload_controller: std::sync::Arc::clone(&reload_controller),
+                    writer: writer.clone(),
+                    wal_dir: wal_dir.clone(),
+                    views_executor: views_executor.clone(),
+                    sse_tx: None,
+                };
+                let new_desired = crate::cli::serve_tasks::desired_cron_keys(&new_cfg);
+                // Lock work lives in its own block: the async-Send checker is
+                // region-based, so the guard must go out of SCOPE (not just be
+                // drop()ed) before any await below.
+                let (stopped_handles, to_start, n_stop) = {
+                    let mut guard = fleet.lock().expect("cron_fleet mutex poisoned");
+                    // Fleet-authoritative diff: stop what runs but is no longer
+                    // desired, start what is desired but absent. Remove under
+                    // the lock; abort+await AFTER the lock scope ends (guard is
+                    // not Send).
+                    let running: std::collections::HashSet<crate::cli::serve_tasks::CronKey> =
+                        guard.keys().copied().collect();
+                    let (to_stop, to_start) =
+                        crate::cli::serve_tasks::diff_cron_fleet(&running, &new_desired);
+                    let mut stopped_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+                    for key in &to_stop {
+                        if let Some(handle) = guard.remove(key) {
+                            stopped_handles.push(handle);
+                        }
+                    }
+                    let n_stop = to_stop.len();
+                    (stopped_handles, to_start, n_stop)
+                };
+                let n_start = to_start.len();
+                for handle in stopped_handles {
+                    handle.abort();
+                    let _ = handle.await;
+                }
+                let mut new_handles: Vec<(
+                    crate::cli::serve_tasks::CronKey,
+                    tokio::task::JoinHandle<()>,
+                )> = Vec::new();
+                for key in to_start {
+                    if let Some(handle) =
+                        crate::cli::serve_tasks::spawn_cron_for_key(key, &new_cfg, &deps).await
+                    {
+                        new_handles.push((key, handle));
+                    }
+                }
+                let mut guard = fleet.lock().expect("cron_fleet mutex poisoned");
+                for (key, handle) in new_handles {
+                    guard.insert(key, handle);
+                }
+                info!(
+                    generation,
+                    stopped = n_stop,
+                    started = n_start,
+                    "ZF-06 cron fleet updated after config reload"
+                );
+            }
+        })
+    };
+    info!("ZF-06 cron supervisor spawned");
+
     // ── SL-00(1b) Cluster transport activation (Hyperswarm DHT) ────────────
     // The live-network flip. Brought up ONLY when BOTH gates are open:
     //   1. operator flipped `cluster.enabled: true`  (transport master-switch)
@@ -2168,6 +2291,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         #[cfg(feature = "ssh-tunnel")]
         ssh_tunnel_handles,
         confirm_drain_task,
+        cron_fleet,
+        cron_supervisor_task,
     };
     crate::cli::serve_tasks::shutdown_background_tasks(bg, writer, writer_join).await;
     Ok(())

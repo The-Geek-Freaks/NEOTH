@@ -107,6 +107,16 @@ pub(crate) fn step5b_inference_topology(
         return Ok(());
     }
 
+    // ZF-02 express gate: preset already determined topology in
+    // step_zero_friction (full-auto forces Single; others have no topology
+    // opinion and the default_slot mirror above already applied). The
+    // interactive topology picker is skipped on the express path so
+    // operators never see hemisphere jargon during first-run onboarding.
+    if state.is_express && interactive {
+        state.steps_completed.push(WizardStep::Topology as u8);
+        return Ok(());
+    }
+
     #[cfg(feature = "wizard")]
     {
         // ─── 1. Topology mode ──────────────────────────────────────────

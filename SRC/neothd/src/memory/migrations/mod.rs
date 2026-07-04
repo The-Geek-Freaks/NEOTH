@@ -198,6 +198,14 @@ pub const MIGRATIONS: &[Migration] = &[
                       idempotent. Separate from idx_episode: foreign ≠ operator truth.",
         run: migration_v23_to_v24,
     },
+    Migration {
+        from: 24,
+        to: 25,
+        description: "G-02 CLUSTER-02b: add idx_foreign_events.processed column + partial \
+                      index for the foreign-event indexer background cron. processed=0 rows \
+                      are drained, promoted into local recall surfaces, then marked processed=1.",
+        run: migration_v24_to_v25,
+    },
 ];
 
 /// v23 → v24: G-02 CLUSTER-01 — create `idx_foreign_events`.
@@ -225,6 +233,31 @@ fn migration_v23_to_v24(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("migration_v23_to_v24: create idx_foreign_events")
+}
+
+/// v24 → v25: G-02 CLUSTER-02b — add `processed` column + unprocessed partial
+/// index to `idx_foreign_events`.
+///
+/// The foreign-event indexer background cron (cluster::foreign_indexer) reads
+/// `WHERE processed = 0 ORDER BY received_at ASC`, promotes the rows into local
+/// recall surfaces, then sets `processed = 1`. The partial index makes that
+/// scan an O(unprocessed) index seek rather than a full-table scan.
+///
+/// Using `ALTER TABLE ... ADD COLUMN` with `DEFAULT 0` is safe on an existing
+/// table; the `let _` idiom swallows "duplicate column" on re-run.
+fn migration_v24_to_v25(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_foreign_events ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    conn.execute_batch(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_foreign_events_unprocessed
+            ON idx_foreign_events (processed, received_at ASC)
+            WHERE processed = 0;
+        "#,
+    )
+    .context("migration_v24_to_v25: create idx_foreign_events_unprocessed index")
 }
 
 /// v22 → v23: refines-MEM-06 — add `valid_to TEXT` to `idx_relations`.

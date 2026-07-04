@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use tracing::debug;
 
 use super::{
-    InitArgs, OperatorRole, WizardState, WizardStep, get_os_username, validate_bcp47,
-    validate_operator_id,
+    InitArgs, OperatorRole, WizardState, WizardStep, detect_os_locale_bcp47, get_os_username,
+    validate_bcp47, validate_operator_id,
 };
 
 pub(crate) fn step2_operator_id(
@@ -70,6 +70,17 @@ pub(crate) fn step3_language(
         .clone()
         .unwrap_or_else(|| args.language.clone());
 
+    // ZF-02 express gate: detect OS locale and skip the two BCP-47 prompts.
+    // Operators can adjust via `neoth config set language <code>` post-setup.
+    if state.is_express && interactive {
+        let lang = detect_os_locale_bcp47();
+        state.language_primary = Some(lang.clone());
+        state.language_code = Some(lang.clone());
+        state.steps_completed.push(WizardStep::Language as u8);
+        println!("  [lang] auto-detected: {lang} (change: `neoth config set language <code>`)");
+        return Ok(());
+    }
+
     let (primary, code) = if !interactive {
         validate_bcp47(&default_code)?;
         (args.language.clone(), default_code)
@@ -125,6 +136,10 @@ pub(crate) fn step3b_hmac_backup(
     if !interactive {
         return Ok(());
     }
+    // ZF-02 express gate: HMAC backup is a post-setup tip on the express path.
+    if state.is_express {
+        return Ok(());
+    }
     #[cfg(feature = "wizard")]
     {
         let do_backup = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -167,6 +182,10 @@ pub(crate) fn step4_role(
     debug!("wizard step 4: role");
     let role = if let Some(r) = args.role {
         r
+    } else if state.is_express && interactive {
+        // ZF-02 express gate: role inference is skipped; operator sets it via
+        // `neoth profile set --role <label>` after setup.
+        OperatorRole::None
     } else if !interactive {
         OperatorRole::None
     } else {
@@ -197,4 +216,85 @@ pub(crate) fn step4_role(
     state.role = Some(role);
     state.steps_completed.push(WizardStep::Role as u8);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn express_state() -> WizardState {
+        let mut s = WizardState::default();
+        s.is_express = true;
+        s.chosen_preset = Some("balanced".to_string());
+        s
+    }
+
+    // ── ZF-02: step3_language express gate ────────────────────────────
+
+    #[test]
+    fn step3_language_express_gate_records_marker() {
+        // InitArgs::default() has an EMPTY language string (the "en" default
+        // is a clap default_value, not a Default impl) — set it explicitly,
+        // as clap would, so the pre-gate validate_bcp47 passes.
+        let args = InitArgs {
+            language: "en".to_string(),
+            ..InitArgs::default()
+        };
+        let mut state = express_state();
+        step3_language(&args, true, &mut state).expect("express gate");
+        assert!(
+            state.steps_completed.contains(&(WizardStep::Language as u8)),
+            "language marker must be recorded on express path"
+        );
+        // Must have auto-detected something (a BCP-47 string, possibly "en").
+        assert!(
+            state.language_primary.is_some(),
+            "language_primary must be set on express path"
+        );
+        assert!(
+            state.language_code.is_some(),
+            "language_code must be set on express path"
+        );
+        let lang = state.language_primary.unwrap();
+        assert!(
+            validate_bcp47(&lang).is_ok(),
+            "auto-detected language must be valid BCP-47: {lang}"
+        );
+    }
+
+    // ── ZF-02: step3b_hmac_backup express gate ─────────────────────────
+
+    #[test]
+    fn step3b_hmac_backup_express_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = express_state();
+        step3b_hmac_backup(true, dir.path(), &mut state).expect("express gate");
+        // The offer flag must NOT be set — express path never shows the prompt.
+        assert!(
+            !state.hmac_backup_offered,
+            "express path must not set hmac_backup_offered"
+        );
+        assert!(
+            !dir.path().join("wal").join("hmac_backup.bin").exists(),
+            "express path must write no backup file"
+        );
+    }
+
+    // ── ZF-02: step4_role express gate ────────────────────────────────
+
+    #[test]
+    fn step4_role_express_sets_none_silently() {
+        let args = InitArgs::default();
+        let mut state = express_state();
+        step4_role(&args, true, &mut state).expect("express gate");
+        assert_eq!(
+            state.role,
+            Some(OperatorRole::None),
+            "express path must set role to None silently"
+        );
+        assert!(
+            state.steps_completed.contains(&(WizardStep::Role as u8)),
+            "role marker must be recorded on express path"
+        );
+    }
 }

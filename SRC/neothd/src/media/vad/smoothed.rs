@@ -82,9 +82,10 @@ pub enum VadDecision {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```no_run
 /// use neothd::media::vad::{SmoothedVad, VadDecision};
 ///
+/// let samples_16k_mono_f32 = vec![0.0f32; 16_000];
 /// let mut vad = SmoothedVad::default();
 /// let decision = vad.process(&samples_16k_mono_f32, 16_000);
 /// if decision == VadDecision::Speaking {

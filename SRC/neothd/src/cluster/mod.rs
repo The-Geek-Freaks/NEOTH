@@ -54,8 +54,21 @@ pub mod executor;
 
 /// SL-01b cluster WAL gossip — band-filter ACL (the security boundary) +
 /// anti-entropy state (VectorClock + dedup) that make the gossip primitives
-/// live on the transport. Foreign-event ingestion into memory is deferred.
+/// live on the transport.
 pub mod wal_sync;
+
+/// G-02 CLUSTER-02b — Foreign-event indexer background cron.
+///
+/// Drains `idx_foreign_events` (persisted by the gossip ingest path) and
+/// promotes accepted peer signals into local recall surfaces:
+/// - `0x90`/`0x91` (EPISODE_CONSOLIDATED/PROMOTED): importance boost on
+///   locally-held episodes.
+/// - `0x92` (EPISODE_ARCHIVED): soft importance decay on local episode.
+/// - `0x98` (GROUNDTRUTH_REVOKED): revoke locally-held groundtruth row.
+/// - `0x94`/`0x13`/unknown: no-op (forward-compatible).
+///
+/// WAL-free; gated behind `#[cfg(feature = "cluster")]` for the spawn path.
+pub mod foreign_indexer;
 
 /// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
 /// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;

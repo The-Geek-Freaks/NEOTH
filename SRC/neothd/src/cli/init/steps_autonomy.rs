@@ -41,6 +41,17 @@ pub(crate) fn step7_autonomy(
 
     #[cfg(feature = "wizard")]
     {
+        // ZF-02 express gate: preset already determined autonomy in
+        // step_zero_friction; confirm to the operator and skip the picker.
+        if state.is_express {
+            println!(
+                "  [7/9] autonomy: {} (set by preset `{}`)",
+                state.autonomy.as_str(),
+                state.chosen_preset.as_deref().unwrap_or("?"),
+            );
+            state.steps_completed.push(WizardStep::Autonomy as u8);
+            return Ok(());
+        }
         // NOOB-UX gate: Beginner silently takes `Standard` — the
         // 5-option matrix ("paid calls > €0.50", "policy.yaml
         // dangerous_targets", "fine-grained matrix") is dense
@@ -171,6 +182,13 @@ pub(crate) fn step7b_auto_update(
         return Ok(());
     }
 
+    // ZF-02 express gate: preset already set auto-update policy via
+    // apply_preset_to_freedom_yaml overrides; skip the interactive prompt.
+    if state.is_express {
+        state.steps_completed.push(WizardStep::AutoUpdate as u8);
+        return Ok(());
+    }
+
     #[cfg(feature = "wizard")]
     {
         let check = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -259,6 +277,13 @@ pub(crate) fn step7c_wasm_plugin_activation(
             );
         }
         state.steps_completed.push(WizardStep::WasmPlugins as u8); // 7c marker (7-and-three-quarters)
+        return Ok(());
+    }
+
+    // ZF-02 express gate: no plugins to review interactively on a first-run
+    // express path; operator enables specific plugins via `neoth plugin enable`.
+    if state.is_express && interactive {
+        state.steps_completed.push(WizardStep::WasmPlugins as u8);
         return Ok(());
     }
 
@@ -384,6 +409,12 @@ pub(crate) fn step7d_supervisor(
 
     if !interactive {
         // Default = disabled (WizardState::default). Just record the step.
+        state.steps_completed.push(WizardStep::Supervisor as u8);
+        return Ok(());
+    }
+
+    // ZF-02 express gate: supervisor is a post-setup option; skip on express.
+    if state.is_express {
         state.steps_completed.push(WizardStep::Supervisor as u8);
         return Ok(());
     }
@@ -567,6 +598,10 @@ pub(crate) fn step_zero_friction(
             println!("  ⚡ `{name}` selected: {desc}");
         }
     }
+    // ZF-02: record routing signals on state so downstream steps can gate
+    // themselves without carrying the preset name through every signature.
+    state.chosen_preset = chosen.map(str::to_string);
+    state.is_express = chosen.is_some_and(|n| n != "custom");
     Ok(chosen.map(str::to_string))
 }
 
@@ -679,5 +714,74 @@ mod zero_friction_tests {
             ),
             "inference.mode twin must match"
         );
+    }
+
+    // ── ZF-02: is_express + chosen_preset routing signals ─────────────
+
+    #[test]
+    fn step_zero_friction_flag_sets_is_express_true() {
+        let mut state = WizardState::default();
+        step_zero_friction(&args_with_zero_friction(true), false, &mut state)
+            .expect("applies");
+        assert!(state.is_express, "--zero-friction must set is_express = true");
+        assert_eq!(
+            state.chosen_preset.as_deref(),
+            Some("full-auto"),
+            "back-compat: --zero-friction maps to full-auto"
+        );
+    }
+
+    #[test]
+    fn step_zero_friction_off_leaves_is_express_false() {
+        let mut state = WizardState::default();
+        step_zero_friction(&args_with_zero_friction(false), false, &mut state)
+            .expect("noop");
+        assert!(!state.is_express, "no preset → is_express must remain false");
+        assert!(state.chosen_preset.is_none());
+    }
+
+    #[test]
+    fn step7_autonomy_express_skips_without_dialoguer() {
+        // Express path must early-return before the dialoguer block so the
+        // test cannot hang on stdin.
+        use crate::permissions::AutonomyLevel;
+        let args = InitArgs::default();
+        let mut state = WizardState::default();
+        state.is_express = true;
+        state.chosen_preset = Some("balanced".to_string());
+        state.autonomy = AutonomyLevel::Standard;
+        // interactive = true would normally open dialoguer, but express gate fires first.
+        step7_autonomy(&args, true, &mut state).expect("express gate");
+        assert!(
+            state.steps_completed.contains(&(WizardStep::Autonomy as u8)),
+            "autonomy marker must be recorded on express path"
+        );
+        assert_eq!(state.autonomy, AutonomyLevel::Standard, "autonomy unchanged");
+    }
+
+    #[test]
+    fn step7b_auto_update_express_skips() {
+        let args = InitArgs::default();
+        let mut state = WizardState::default();
+        state.is_express = true;
+        step7b_auto_update(&args, true, &mut state).expect("express gate");
+        assert!(
+            state.steps_completed.contains(&(WizardStep::AutoUpdate as u8)),
+            "auto-update marker must be recorded on express path"
+        );
+        assert!(!state.auto_update.enabled, "auto_update stays at default");
+    }
+
+    #[test]
+    fn step7d_supervisor_express_skips() {
+        let args = InitArgs::default();
+        let mut state = WizardState::default();
+        state.is_express = true;
+        step7d_supervisor(&args, true, &mut state).expect("express gate");
+        assert!(
+            state.steps_completed.contains(&(WizardStep::Supervisor as u8)),
+            "supervisor marker must be recorded on express path"
+        );
+        assert!(!state.supervisor.enabled, "supervisor stays disabled by default");
     }
 }

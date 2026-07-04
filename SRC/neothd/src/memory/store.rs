@@ -49,7 +49,7 @@ use rusqlite::Connection;
 ///      to recall. The contradiction detector calls `invalidate_relation`
 ///      best-effort whenever a negation-contradiction or temporal-supersede
 ///      auto-resolution closes a ground-truth fact.
-pub const SCHEMA_VERSION: i64 = 24;
+pub const SCHEMA_VERSION: i64 = 25;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -1011,10 +1011,14 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             event_type      INTEGER NOT NULL,
             payload         BLOB    NOT NULL,
             received_at     INTEGER NOT NULL,
+            processed       INTEGER NOT NULL DEFAULT 0,
             UNIQUE (origin_peer_pk, origin_seq)
         );
         CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
             ON idx_foreign_events (origin_peer_pk, received_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_foreign_events_unprocessed
+            ON idx_foreign_events (processed, received_at ASC)
+            WHERE processed = 0;
         "#,
     )
     .context("create idx_foreign_events")?;

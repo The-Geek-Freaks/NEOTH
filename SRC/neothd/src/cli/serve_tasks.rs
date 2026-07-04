@@ -28,6 +28,321 @@ use crate::config::reload::ReloadController;
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
 
+// ── ZF-06 — Cron supervisor types ────────────────────────────────────────────
+//
+// `CronKey` names every config-gated background cron. `desired_cron_keys` maps
+// a `FreedomConfig` snapshot to the set of keys that SHOULD be running.
+// `diff_cron_fleet` computes (to_stop, to_start) between the running fleet
+// and the desired key set.
+// Both are pure functions — no tokio, no Arc, no async — making them directly
+// unit-testable without spinning up a runtime.
+//
+// `CronFleet` is an Arc<Mutex<HashMap<CronKey, JoinHandle<()>>>> that the
+// cron supervisor task owns. At startup the fleet is populated with the
+// same gated crons that `run_serve` currently starts individually; on every
+// config generation bump the supervisor diffs old vs new config and
+// abort/respawns the delta.
+
+/// One variant per config-gated system cron.
+///
+/// Variants marked `// wal-emitting` must be aborted BEFORE `drop(writer)`
+/// in the shutdown sequence (see `shutdown_background_tasks`).
+///
+/// Excluded from this enum (never managed by the supervisor):
+/// - `catalog_task` — unconditionally spawned
+/// - `reflection_cron_handle` — unconditionally spawned
+/// - `proactive_dispatcher_handle` — unconditionally spawned
+/// - `g02_surfacing_cron_handle` — unconditionally spawned
+/// - `worker_watch_handle`, `reload_task`, … — lifecycle tasks, not crons
+/// - `channel_*` — managed by the separate channel_supervisor_task
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum CronKey {
+    // ── WAL-free crons ───────────────────────────────────────────────────────
+    RecallLatency,
+    ResourceWatch,
+    DoctorCron,
+    PatternCron,
+    WatchdogCron,
+    SynthesisCron,
+    GuidanceCron,
+    EcologyCron,
+    ProfileAdapt,
+    DriftAlert,
+    TokenAnomaly,
+    SessionHealth,
+    WebhookManager,
+    CheckinCron,
+    SessionSort,
+    EmailIngest,
+    SkillCurator,
+    SelfWiki,
+    SelfImprovementCollector,
+    Babel,
+    BgMonitor,
+    ContradictionResolve,
+    Regression,
+    // ── Crons with external dep gates (obsidian_vault / provider) ────────────
+    ObsidianSync,
+    ObsidianVaultReader,
+    ObsidianWikiRebuild, // wal-emitting
+    SelfMap,             // wal-emitting
+    // ── WAL-emitting crons ───────────────────────────────────────────────────
+    ConsolidationSweep,  // wal-emitting
+    MonitorCron,
+}
+
+/// The set of `CronKey`s that should be running for the given config snapshot.
+/// Pure function — no side effects, no async.
+pub(crate) fn desired_cron_keys(
+    cfg: &FreedomConfig,
+) -> std::collections::HashSet<CronKey> {
+    let mut set = std::collections::HashSet::new();
+
+    if cfg.recall_latency.enabled {
+        set.insert(CronKey::RecallLatency);
+    }
+    if cfg.resource_watch.enabled {
+        set.insert(CronKey::ResourceWatch);
+    }
+    if cfg.doctor.enabled {
+        set.insert(CronKey::DoctorCron);
+    }
+    if cfg.pattern_cron.enabled {
+        set.insert(CronKey::PatternCron);
+    }
+    if cfg.watchdog.enabled {
+        set.insert(CronKey::WatchdogCron);
+    }
+    if cfg.synthesis_cron.enabled {
+        set.insert(CronKey::SynthesisCron);
+    }
+    if cfg.guidance_cron.enabled {
+        set.insert(CronKey::GuidanceCron);
+    }
+    if cfg.ecology.enabled {
+        set.insert(CronKey::EcologyCron);
+    }
+    if cfg.profile_adapt.enabled {
+        set.insert(CronKey::ProfileAdapt);
+    }
+    if cfg.drift_alert.enabled {
+        set.insert(CronKey::DriftAlert);
+    }
+    if cfg.token_anomaly.enabled {
+        set.insert(CronKey::TokenAnomaly);
+    }
+    if cfg.session_health.enabled {
+        set.insert(CronKey::SessionHealth);
+    }
+    if cfg.webhook_manager.enabled {
+        set.insert(CronKey::WebhookManager);
+    }
+    if cfg.checkin_cron.enabled {
+        set.insert(CronKey::CheckinCron);
+    }
+    if cfg.session_sort_cron.enabled {
+        set.insert(CronKey::SessionSort);
+    }
+    if cfg.email_ingest_cron.enabled {
+        set.insert(CronKey::EmailIngest);
+    }
+    if cfg.skill_curator.enabled {
+        set.insert(CronKey::SkillCurator);
+    }
+    if cfg.self_wiki.enabled {
+        set.insert(CronKey::SelfWiki);
+    }
+    if cfg.self_improvement_collector.enabled {
+        set.insert(CronKey::SelfImprovementCollector);
+    }
+    if cfg.babel.enabled {
+        set.insert(CronKey::Babel);
+    }
+    if cfg.bg_monitor.interval_secs > 0 {
+        set.insert(CronKey::BgMonitor);
+    }
+    if cfg.contradiction_resolve.enabled {
+        set.insert(CronKey::ContradictionResolve);
+    }
+    if cfg.regression_anchor.enabled {
+        set.insert(CronKey::Regression);
+    }
+    if cfg.consolidation_sweep.enabled {
+        set.insert(CronKey::ConsolidationSweep);
+    }
+    if cfg.monitor.enabled {
+        set.insert(CronKey::MonitorCron);
+    }
+    // Obsidian-backed crons — require vault to be configured.
+    if cfg.obsidian_vault.is_some() {
+        set.insert(CronKey::ObsidianSync);
+        if cfg.obsidian_vault_reader_enabled {
+            set.insert(CronKey::ObsidianVaultReader);
+        }
+        if cfg.obsidian_wiki_source_dir.is_some()
+            || std::env::var_os("NEOTH_PLAN_DIR").is_some()
+        {
+            set.insert(CronKey::ObsidianWikiRebuild);
+        }
+        if cfg.self_map_source_dir.is_some()
+            || std::env::var_os("NEOTH_SRC_DIR").is_some()
+        {
+            set.insert(CronKey::SelfMap);
+        }
+    }
+
+    set
+}
+
+/// Compute the delta between the RUNNING fleet and the DESIRED key set.
+///
+/// Returns `(to_stop, to_start)`:
+/// - `to_stop`: keys running but no longer desired.
+/// - `to_start`: keys desired but not currently running.
+///
+/// Pure function — no side effects, no async. The cron supervisor calls
+/// this on every config generation bump with the fleet's current keys as
+/// `running` (fleet-authoritative: a cron whose external dep-gate returned
+/// `None` at spawn time stays absent from `running` and is retried on the
+/// next reload).
+pub(crate) fn diff_cron_fleet(
+    running: &std::collections::HashSet<CronKey>,
+    desired: &std::collections::HashSet<CronKey>,
+) -> (Vec<CronKey>, Vec<CronKey>) {
+    let to_stop: Vec<CronKey> = running.difference(desired).copied().collect();
+    let to_start: Vec<CronKey> = desired.difference(running).copied().collect();
+    (to_stop, to_start)
+}
+
+/// Shared-ownership map of currently-running gated cron handles.
+///
+/// The cron supervisor owns this; shutdown_background_tasks drains it
+/// (WAL-emitting keys first, then the rest).
+pub(crate) type CronFleet = Arc<std::sync::Mutex<std::collections::HashMap<CronKey, JoinHandle<()>>>>;
+
+/// All shared deps consumed by the cron supervisor's `spawn_cron_for_key`
+/// dispatch. Fields that are `Option` reflect deps that may not be wired
+/// (e.g. `views_executor` absent when the DB failed to open).
+#[derive(Clone)]
+pub(crate) struct SpawnDeps {
+    pub reload_controller: Arc<ReloadController>,
+    pub writer: WalWriterHandle,
+    pub wal_dir: std::path::PathBuf,
+    pub views_executor:
+        Option<Arc<crate::memory::store::ViewsExecutor>>,
+    pub sse_tx: Option<Arc<tokio::sync::broadcast::Sender<crate::coding::feed::FeedEntry>>>,
+}
+
+/// Dispatch table: spawn the cron for `key` using the current `cfg` snapshot
+/// and shared `deps`. Returns `None` when the cron's external dep gate is not
+/// met (e.g. obsidian_vault not configured, provider unavailable).
+///
+/// Every arm delegates to the existing `spawn_*` helper unchanged — no logic
+/// duplication. The return type is erased to `JoinHandle<()>` (error variants
+/// are mapped via `.map(|h| h.map(|_| ())…)` where needed — see per-arm notes).
+///
+/// # ZF-06 deviations
+///
+/// The following keys return `None` in this dispatch table and are therefore
+/// not managed by the cron supervisor (they remain as individual startup-time
+/// fields in `BackgroundHandles`):
+/// - `Regression` — async + provider dependency; supervisor would need an
+///   async spawn path. Listed in deviations.
+/// - `CheckinCron` — async (provider built inside). Deferred to step-6.
+/// - `EmailIngest` — inline spawn logic in serve.rs (not a serve_tasks fn).
+/// - `SessionSort` — inline spawn logic in serve.rs.
+///
+/// Full step-6 field migration (removing individual BackgroundHandles fields)
+/// is tracked separately; the diff seam and reload wiring are fully functional
+/// for the majority of cron keys above.
+pub(crate) async fn spawn_cron_for_key(
+    key: CronKey,
+    cfg: &FreedomConfig,
+    deps: &SpawnDeps,
+) -> Option<JoinHandle<()>> {
+    match key {
+        CronKey::RecallLatency => {
+            spawn_recall_latency_cron(cfg, &deps.reload_controller, deps.writer.clone())
+        }
+        CronKey::ResourceWatch => {
+            spawn_resource_watch(cfg, &deps.reload_controller, deps.writer.clone())
+        }
+        CronKey::DoctorCron => {
+            spawn_doctor_cron(cfg, &deps.reload_controller, deps.writer.clone())
+        }
+        CronKey::PatternCron => spawn_pattern_cron(cfg, &deps.reload_controller),
+        CronKey::WatchdogCron => {
+            spawn_watchdog_cron(cfg, &deps.reload_controller, deps.writer.clone())
+        }
+        CronKey::SynthesisCron => spawn_synthesis_cron(cfg, &deps.reload_controller),
+        CronKey::GuidanceCron => {
+            spawn_guidance_cron(cfg, &deps.reload_controller, &deps.wal_dir)
+        }
+        CronKey::EcologyCron => {
+            spawn_ecology_cron(cfg, &deps.reload_controller, &deps.wal_dir, deps.writer.clone())
+        }
+        CronKey::ProfileAdapt => {
+            spawn_profile_adapt_cron(cfg, &deps.reload_controller, &deps.wal_dir, deps.writer.clone())
+        }
+        CronKey::DriftAlert => {
+            spawn_drift_alert_cron(cfg, &deps.reload_controller, &deps.writer)
+        }
+        CronKey::TokenAnomaly => {
+            spawn_token_anomaly_cron(cfg, &deps.reload_controller, &deps.wal_dir, deps.writer.clone())
+        }
+        CronKey::SessionHealth => {
+            spawn_session_health_cron(cfg, &deps.reload_controller, &deps.wal_dir, deps.writer.clone())
+        }
+        CronKey::WebhookManager => {
+            let home = FreedomConfig::default_neoth_home();
+            spawn_webhook_manager_cron(
+                cfg,
+                &deps.reload_controller,
+                &deps.wal_dir,
+                &home,
+                deps.writer.clone(),
+            )
+        }
+        CronKey::SkillCurator => spawn_skill_curator_cron(cfg, &deps.reload_controller),
+        CronKey::SelfWiki => spawn_self_wiki_cron(cfg, &deps.reload_controller),
+        CronKey::SelfImprovementCollector => {
+            spawn_self_improvement_collector_cron(cfg, deps.writer.clone())
+        }
+        CronKey::Babel => {
+            spawn_babel_cron(cfg, &deps.wal_dir, &deps.views_executor, deps.sse_tx.clone())
+        }
+        CronKey::BgMonitor => spawn_bg_monitor_task(cfg, &deps.reload_controller),
+        CronKey::ContradictionResolve => spawn_contradiction_resolve_cron(cfg),
+        CronKey::MonitorCron => {
+            spawn_monitor_cron(cfg, &deps.reload_controller, &deps.wal_dir, deps.writer.clone())
+        }
+        CronKey::ConsolidationSweep => {
+            spawn_consolidation_sweep_cron(cfg, &deps.reload_controller, deps.writer.clone())
+        }
+        CronKey::ObsidianSync => spawn_obsidian_sync(cfg).map(|h| {
+            tokio::spawn(async move { let _ = h.await; })
+        }),
+        CronKey::ObsidianVaultReader => spawn_obsidian_vault_reader(cfg).map(|h| {
+            tokio::spawn(async move { let _ = h.await; })
+        }),
+        CronKey::ObsidianWikiRebuild => {
+            spawn_obsidian_wiki_rebuild(cfg, deps.writer.clone()).map(|h| {
+                tokio::spawn(async move { let _ = h.await; })
+            })
+        }
+        CronKey::SelfMap => {
+            spawn_self_map(cfg, deps.writer.clone()).map(|h| {
+                tokio::spawn(async move { let _ = h.await; })
+            })
+        }
+        // Async or externally-gated crons not yet wired into the dispatch table.
+        // These remain as individual BackgroundHandles fields (step-6 deferred).
+        CronKey::CheckinCron | CronKey::SessionSort | CronKey::EmailIngest | CronKey::Regression => {
+            None
+        }
+    }
+}
+
 /// R-5 — Obsidian vault auto-sync. Spawned only when `freedom.yaml::obsidian_vault`
 /// is set; mirrors the session archive into the operator's vault on a schedule.
 /// `None` (no vault configured) ⇒ no task. WAL-free.
@@ -2829,6 +3144,21 @@ pub(crate) fn spawn_cluster_audit_ingester(writer: &WalWriterHandle) -> JoinHand
     })
 }
 
+/// G-02 CLUSTER-02b — Foreign-event indexer spawner.
+///
+/// Thin wrapper that delegates to
+/// [`crate::cluster::foreign_indexer::spawn_foreign_indexer`]. Placed here so
+/// the serve-layer wiring pattern (`serve.rs` calls `serve_tasks::spawn_*`)
+/// is consistent across all background tasks.
+///
+/// WAL-free; gated behind `#[cfg(feature = "cluster")]`.
+#[cfg(feature = "cluster")]
+pub(crate) fn spawn_foreign_indexer(
+    neoth_home: std::path::PathBuf,
+) -> JoinHandle<()> {
+    crate::cluster::foreign_indexer::spawn_foreign_indexer(neoth_home)
+}
+
 /// Spawn a `Channel::run` adapter loop into `channel_tasks` (Telegram / Slack
 /// socket-mode — every adapter whose receive loop is `Channel::run`, NOT the
 /// WhatsApp webhook listener which uses `webhook_listener::serve`). `label` is
@@ -4030,6 +4360,13 @@ pub(crate) struct BackgroundHandles {
     /// The fleet supervisor itself — aborted BEFORE the channel tasks
     /// so a reload racing shutdown can't respawn into a dying daemon.
     pub channel_supervisor_task: JoinHandle<()>,
+    /// ZF-06 — cron fleet: all config-gated background crons managed by
+    /// the cron supervisor. On shutdown, WAL-emitting keys are aborted
+    /// before `drop(writer)`; the rest after.
+    pub cron_fleet: CronFleet,
+    /// ZF-06 — cron supervisor task. Aborted BEFORE the cron fleet so a
+    /// reload racing shutdown cannot respawn crons into a dying daemon.
+    pub cron_supervisor_task: JoinHandle<()>,
     pub dispatch_join: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     pub cron_task: Option<JoinHandle<()>>,
     pub doctor_cron_task: Option<JoinHandle<()>>,
@@ -4189,6 +4526,8 @@ pub(crate) async fn shutdown_background_tasks(
         worker_watch_handle,
         channel_tasks,
         channel_supervisor_task,
+        cron_fleet,
+        cron_supervisor_task,
         dispatch_join,
         cron_task,
         doctor_cron_task,
@@ -4278,6 +4617,44 @@ pub(crate) async fn shutdown_background_tasks(
     // Abort the fleet supervisor BEFORE the channel tasks — a reload
     // racing shutdown must not respawn adapters into a dying daemon.
     crate::cli::serve_tasks::abort_join(channel_supervisor_task).await;
+
+    // ZF-06: Abort the cron supervisor BEFORE draining the cron fleet — same
+    // reasoning as channel_supervisor_task: a reload racing shutdown must not
+    // respawn crons into a dying daemon.
+    crate::cli::serve_tasks::abort_join(cron_supervisor_task).await;
+
+    // ZF-06: Drain the cron fleet. WAL-emitting keys first (before drop(writer)),
+    // then the rest. This preserves the WAL ordering invariant.
+    {
+        const WAL_EMITTING_CRON_KEYS: &[CronKey] = &[
+            CronKey::ObsidianWikiRebuild,
+            CronKey::SelfMap,
+            CronKey::ConsolidationSweep,
+        ];
+        // Remove under the lock; abort+await after the lock scope ends
+        // (std MutexGuard is not Send across await).
+        let (wal_first, remaining): (Vec<JoinHandle<()>>, Vec<JoinHandle<()>>) = {
+            let mut fleet = cron_fleet.lock().expect("cron_fleet lock poisoned");
+            let wal_first = WAL_EMITTING_CRON_KEYS
+                .iter()
+                .filter_map(|key| fleet.remove(key))
+                .collect();
+            let remaining = fleet.drain().map(|(_, h)| h).collect();
+            (wal_first, remaining)
+        };
+        // First pass: abort WAL-emitting crons (before drop(writer)).
+        for h in wal_first {
+            h.abort();
+            let _ = h.await;
+        }
+        // Second pass: abort all remaining fleet crons.
+        for h in &remaining {
+            h.abort();
+        }
+        for h in remaining {
+            let _ = h.await;
+        }
+    }
 
     // Abort channel tasks first so they stop generating new WAL frames.
     let channel_tasks: Vec<JoinHandle<()>> = {
@@ -5347,6 +5724,190 @@ mod tests {
             "relayed entry must carry the parsed message, got: {}",
             got.message
         );
+    }
+
+    // ── ZF-06 — CronKey diff-seam unit tests ──────────────────────────────────
+
+    /// Default config → exactly the default-ON cron groups are desired.
+    /// (doctor.enabled and babel.enabled default true; bg_monitor gates on
+    /// interval_secs > 0 which is nonzero by default — the features-default-ON
+    /// hard rule. Every other gated cron defaults off.)
+    #[test]
+    fn desired_cron_keys_default_config_contains_only_default_on_crons() {
+        let cfg = FreedomConfig::default();
+        let keys = desired_cron_keys(&cfg);
+        let expected: std::collections::HashSet<CronKey> =
+            [CronKey::DoctorCron, CronKey::Babel, CronKey::BgMonitor]
+                .into_iter()
+                .collect();
+        // If this fails, a cron's default-enabled state changed without the
+        // supervisor tests learning about it.
+        assert_eq!(
+            keys, expected,
+            "default FreedomConfig desired-cron set drifted"
+        );
+    }
+
+    /// Flipping a single field on → exactly that key is ADDED vs the default set.
+    #[test]
+    fn desired_cron_keys_single_toggle_monitor_enabled() {
+        let mut cfg = FreedomConfig::default();
+        cfg.monitor.enabled = true;
+        let keys = desired_cron_keys(&cfg);
+        let default_keys = desired_cron_keys(&FreedomConfig::default());
+        let added: Vec<CronKey> = keys.difference(&default_keys).copied().collect();
+        assert_eq!(
+            added,
+            vec![CronKey::MonitorCron],
+            "monitor.enabled = true must add exactly MonitorCron vs default"
+        );
+    }
+
+    /// diff_cron_fleet: identical configs → empty diff.
+    #[test]
+    fn diff_cron_fleet_no_change_returns_empty_vecs() {
+        let cfg = FreedomConfig::default();
+        let (to_stop, to_start) = diff_cron_fleet(&desired_cron_keys(&cfg), &desired_cron_keys(&cfg));
+        assert!(to_stop.is_empty(), "no change → to_stop empty");
+        assert!(to_start.is_empty(), "no change → to_start empty");
+    }
+
+    /// diff_cron_fleet: enabling monitor on new config → to_start contains MonitorCron.
+    #[test]
+    fn diff_cron_fleet_enable_monitor_produces_correct_start() {
+        let old = FreedomConfig::default();
+        let mut new = FreedomConfig::default();
+        new.monitor.enabled = true;
+        let (to_stop, to_start) = diff_cron_fleet(&desired_cron_keys(&old), &desired_cron_keys(&new));
+        assert!(to_stop.is_empty(), "nothing was running → nothing to stop");
+        assert!(
+            to_start.contains(&CronKey::MonitorCron),
+            "monitor enabled on new config → MonitorCron in to_start"
+        );
+    }
+
+    /// diff_cron_fleet: disabling monitor on new config → to_stop contains MonitorCron.
+    #[test]
+    fn diff_cron_fleet_disable_monitor_produces_correct_stop() {
+        let mut old = FreedomConfig::default();
+        old.monitor.enabled = true;
+        let new = FreedomConfig::default(); // monitor.enabled = false
+        let (to_stop, to_start) = diff_cron_fleet(&desired_cron_keys(&old), &desired_cron_keys(&new));
+        assert!(
+            to_stop.contains(&CronKey::MonitorCron),
+            "monitor disabled on new config → MonitorCron in to_stop"
+        );
+        assert!(to_start.is_empty(), "no new crons enabled");
+    }
+
+    /// diff_cron_fleet: enabling multiple crons → correct to_start set.
+    #[test]
+    fn diff_cron_fleet_enable_several_crons() {
+        let old = FreedomConfig::default();
+        let mut new = FreedomConfig::default();
+        new.recall_latency.enabled = true;
+        new.watchdog.enabled = true;
+        new.synthesis_cron.enabled = true;
+        let (to_stop, to_start) = diff_cron_fleet(&desired_cron_keys(&old), &desired_cron_keys(&new));
+        assert!(to_stop.is_empty());
+        assert!(to_start.contains(&CronKey::RecallLatency));
+        assert!(to_start.contains(&CronKey::WatchdogCron));
+        assert!(to_start.contains(&CronKey::SynthesisCron));
+        assert_eq!(to_start.len(), 3);
+    }
+
+    /// diff_cron_fleet: essentials → full-auto direction (start adds, stop empty).
+    /// This is the key preset-flip scenario ZF-06 is designed to handle.
+    #[test]
+    fn diff_cron_fleet_essentials_to_full_auto_returns_expected_starts() {
+        let essentials = FreedomConfig::default(); // everything off
+        let mut full_auto = FreedomConfig::default();
+        full_auto.monitor.enabled = true;
+        full_auto.watchdog.enabled = true;
+        full_auto.synthesis_cron.enabled = true;
+        full_auto.recall_latency.enabled = true;
+        let (to_stop, to_start) = diff_cron_fleet(&desired_cron_keys(&essentials), &desired_cron_keys(&full_auto));
+        assert!(to_stop.is_empty(), "essentials → full_auto: nothing to stop");
+        assert_eq!(to_start.len(), 4, "four crons to start");
+    }
+
+    /// diff_cron_fleet: full-auto → essentials direction (stop all, start empty).
+    #[test]
+    fn diff_cron_fleet_full_auto_to_essentials_returns_expected_stops() {
+        let mut full_auto = FreedomConfig::default();
+        full_auto.monitor.enabled = true;
+        full_auto.watchdog.enabled = true;
+        full_auto.synthesis_cron.enabled = true;
+        let essentials = FreedomConfig::default(); // everything off
+        let (to_stop, to_start) = diff_cron_fleet(&desired_cron_keys(&full_auto), &desired_cron_keys(&essentials));
+        assert_eq!(to_stop.len(), 3, "three crons to stop");
+        assert!(to_start.is_empty(), "full_auto → essentials: nothing to start");
+    }
+
+    /// desired_cron_keys includes Babel when babel.enabled = true.
+    #[test]
+    fn desired_cron_keys_babel_enabled_includes_babel_key() {
+        let mut cfg = FreedomConfig::default();
+        cfg.babel.enabled = true;
+        let keys = desired_cron_keys(&cfg);
+        assert!(keys.contains(&CronKey::Babel));
+    }
+
+    /// desired_cron_keys includes BgMonitor when interval_secs > 0.
+    #[test]
+    fn desired_cron_keys_bg_monitor_by_interval() {
+        let mut cfg = FreedomConfig::default();
+        // BgMonitor gate: interval_secs > 0.
+        cfg.bg_monitor.interval_secs = 60;
+        let keys = desired_cron_keys(&cfg);
+        assert!(keys.contains(&CronKey::BgMonitor));
+    }
+
+    /// spawn_cron_for_key returns None for MonitorCron when monitor.enabled = false.
+    #[tokio::test]
+    async fn spawn_cron_for_key_monitor_returns_none_when_disabled() {
+        let cfg = FreedomConfig::default(); // monitor.enabled = false
+        let wal_dir = tempfile::tempdir().unwrap();
+        let (writer, _join) =
+            crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
+        let deps = SpawnDeps {
+            reload_controller: Arc::new(ReloadController::new(
+                cfg.clone(),
+                std::path::PathBuf::from("/tmp/freedom_test.yaml"),
+            )),
+            writer,
+            wal_dir: wal_dir.path().to_path_buf(),
+            views_executor: None,
+            sse_tx: None,
+        };
+        let handle = spawn_cron_for_key(CronKey::MonitorCron, &cfg, &deps).await;
+        assert!(handle.is_none(), "monitor disabled → spawn returns None");
+    }
+
+    /// spawn_cron_for_key returns Some and the task aborts cleanly for DoctorCron
+    /// when enabled.
+    #[tokio::test]
+    async fn spawn_cron_for_key_doctor_cron_returns_some_when_enabled() {
+        let mut cfg = FreedomConfig::default();
+        cfg.doctor.enabled = true;
+        let wal_dir = tempfile::tempdir().unwrap();
+        let (writer, _join) =
+            crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
+        let deps = SpawnDeps {
+            reload_controller: Arc::new(ReloadController::new(
+                cfg.clone(),
+                std::path::PathBuf::from("/tmp/freedom_test.yaml"),
+            )),
+            writer,
+            wal_dir: wal_dir.path().to_path_buf(),
+            views_executor: None,
+            sse_tx: None,
+        };
+        let handle = spawn_cron_for_key(CronKey::DoctorCron, &cfg, &deps).await;
+        assert!(handle.is_some(), "doctor.enabled = true → spawn returns Some");
+        let h = handle.unwrap();
+        h.abort();
+        let _ = h.await; // JoinError on abort expected + swallowed
     }
 
     /// Empty kanban table → relay broadcasts nothing (no spurious client events).

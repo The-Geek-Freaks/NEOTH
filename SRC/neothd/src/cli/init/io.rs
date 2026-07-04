@@ -504,6 +504,30 @@ pub(crate) fn format_iso8601(unix_secs: u64) -> String {
 /// reading the marker via `neoth doctor` see exactly which inbound
 /// surfaces are live without parsing freedom.yaml. Extend this when a
 /// future channel (keet, whatsapp, slack) lands.
+/// ZF-02 — print post-setup tips for operators who took an express preset path.
+///
+/// Called from `run_init` right after `write_initialized_marker`; prints a
+/// compact reference card of the steps that were skipped (channels, HMAC
+/// backup, Obsidian, n8n, tududi, mobile-mcp, supervisor). No-op when
+/// `state.is_express` is false (custom path; every interactive prompt fired).
+pub(crate) fn print_post_setup_tips(state: &WizardState) {
+    if !state.is_express {
+        return;
+    }
+    println!();
+    println!("  ─── Add more features anytime ───────────────────────────────────────────");
+    println!("  Messenger:   neoth channel add telegram|slack|whatsapp|keet|discord|signal");
+    println!("  Keet:        neoth channel add keet      (requires pear runtime)");
+    println!("  Obsidian:    neoth installer obsidian");
+    println!("  n8n:         neoth installer n8n          (requires Docker)");
+    println!("  tududi:      neoth installer tududi");
+    println!("  Mobile:      neoth installer mobile-mcp");
+    println!("  HMAC backup: neoth security backup-hmac-key");
+    println!("  Supervisor:  neoth supervisor install");
+    println!("  ─────────────────────────────────────────────────────────────────────────");
+    println!();
+}
+
 pub(crate) fn configured_channels(state: &WizardState) -> Vec<String> {
     // K-4 (Session 21, 2026-05-23): primary-channel ordering. Once
     // Keet pairing succeeded, surface Keet FIRST in the configured

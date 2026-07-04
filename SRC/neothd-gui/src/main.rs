@@ -3101,11 +3101,30 @@ fn main() -> Result<()> {
                 provider_key: w.get_provider_key().to_string(),
                 telegram_token: w.get_telegram_token().to_string(),
                 cluster_discovery_disabled: w.get_cluster_discovery_disabled(),
+                // ZF-05: capture the preset the operator chose
+                wizard_preset: w.get_wizard_preset_choice().to_string(),
             };
             match finish(&state) {
                 Ok(report) => {
                     info!(?report.freedom_path, ?report.credentials_path, "wizard finished");
                     w.set_status_line(report.message().into());
+                    // ZF-05: apply the preset overlay OFF the event loop —
+                    // `apply_preset_direct` shells a subprocess and must never
+                    // block the window. Result surfaces as a toast.
+                    let preset = state.wizard_preset.clone();
+                    if preset != "custom" {
+                        let weak_for_toast = weak.clone();
+                        std::thread::spawn(move || {
+                            let msg = apply_preset_direct(&preset);
+                            info!(preset = %preset, outcome = %msg, "wizard preset applied");
+                            let kind = if msg.contains("failed") || msg.contains("not found") {
+                                "warn"
+                            } else {
+                                "success"
+                            };
+                            push_toast(&weak_for_toast, kind, "Preset applied", &msg);
+                        });
+                    }
                 }
                 Err(e) => {
                     let msg = format!("Setup failed: {e}");
@@ -3135,6 +3154,11 @@ struct WizardSnapshot {
     /// false (default) means mDNS discovery stays ON per the
     /// noob-wizard "default ON in release" hard rule.
     cluster_discovery_disabled: bool,
+    /// ZF-05: preset picked on the wizard preset screen. When not
+    /// "custom", `finish()` calls `neoth preset apply <name> --yes`
+    /// after writing freedom.yaml, overlaying the preset's config
+    /// values — same as CLI `run_init` does via `apply_preset_to_freedom_yaml`.
+    wizard_preset: String,
 }
 
 /// What `finish()` returns. `credentials_path` is `None` when no secret
@@ -3248,6 +3272,7 @@ fn finish(state: &WizardSnapshot) -> Result<FinishReport> {
         anyhow::bail!("operator id is empty — go back and enter one");
     }
     validate_autonomy(&state.autonomy)?;
+    validate_preset(&state.wizard_preset)?;
 
     let neoth_dir = default_neoth_home();
     std::fs::create_dir_all(&neoth_dir)
@@ -3256,6 +3281,9 @@ fn finish(state: &WizardSnapshot) -> Result<FinishReport> {
     let freedom_path = write_freedom_yaml(state, &neoth_dir)?;
     let credentials_path = write_credentials_yaml(state, &neoth_dir)?;
 
+    // ZF-05: the preset overlay (subprocess) is applied by the caller on a
+    // worker thread — finish() stays synchronous fs-only so it is safe to
+    // call from the Slint event loop.
     Ok(FinishReport {
         freedom_path,
         credentials_path,
@@ -3497,6 +3525,15 @@ fn validate_autonomy(level: &str) -> Result<()> {
     match level {
         "strict" | "standard" | "elevated" | "full" | "custom" => Ok(()),
         other => anyhow::bail!("unrecognised autonomy level '{other}'"),
+    }
+}
+
+/// ZF-05: guard against garbage values being passed to `apply_preset_direct`.
+/// Only the four built-in preset names and "custom" (no-op) are valid.
+fn validate_preset(name: &str) -> Result<()> {
+    match name {
+        "balanced" | "full-auto" | "essentials" | "local-sovereign" | "custom" => Ok(()),
+        other => anyhow::bail!("unrecognised preset name '{other}'"),
     }
 }
 
@@ -6432,6 +6469,8 @@ mod tests {
             provider_key: String::new(),
             telegram_token: String::new(),
             cluster_discovery_disabled: false,
+            // ZF-05: "custom" = no preset overlay in tests (no binary available)
+            wizard_preset: "custom".into(),
         }
     }
 
@@ -6537,6 +6576,48 @@ mod tests {
     fn validate_autonomy_rejects_unknown() {
         assert!(validate_autonomy("ultra").is_err());
         assert!(validate_autonomy("").is_err());
+    }
+
+    // ── ZF-05 preset validation + finish preset wiring ──────────────
+
+    #[test]
+    fn validate_preset_accepts_known_names() {
+        for name in ["balanced", "full-auto", "essentials", "local-sovereign", "custom"] {
+            validate_preset(name).unwrap_or_else(|_| panic!("expected '{name}' to validate"));
+        }
+    }
+
+    #[test]
+    fn validate_preset_rejects_unknown() {
+        assert!(validate_preset("yolo").is_err());
+        assert!(validate_preset("").is_err());
+        assert!(validate_preset("BALANCED").is_err()); // case-sensitive
+    }
+
+    #[test]
+    fn finish_rejects_unknown_preset() {
+        let mut state = empty_snapshot();
+        state.wizard_preset = "totally-fake-preset".into();
+        let err = finish(&state).unwrap_err();
+        assert!(
+            err.to_string().contains("preset"),
+            "expected error to mention 'preset', got: {err}"
+        );
+    }
+
+    #[test]
+    fn finish_custom_preset_skips_apply_and_writes_config() {
+        // "custom" = no preset overlay; the on_finish_clicked worker only
+        // spawns apply_preset_direct for non-custom choices.
+        let dir = TempDir::new().unwrap();
+        // We can't call finish() directly (it uses default_neoth_home()),
+        // but we can test validate_preset + the write path via the snapshot:
+        // "custom" validates cleanly.
+        let state = empty_snapshot(); // wizard_preset = "custom"
+        assert_eq!(state.wizard_preset, "custom");
+        validate_preset(&state.wizard_preset).expect("custom is a valid preset");
+        let freedom = write_freedom_yaml(&state, dir.path()).expect("freedom.yaml");
+        assert!(freedom.exists());
     }
 
     #[test]

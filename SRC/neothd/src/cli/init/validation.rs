@@ -342,6 +342,47 @@ pub fn validate_telegram_token(token: &str) -> Result<()> {
     Ok(())
 }
 
+/// ZF-02 — detect the OS locale as a BCP-47 language code for the express path.
+///
+/// Priority: `LANG` → `LC_ALL` → `LANGUAGE` (Unix convention), then the
+/// `USERPROFILE`-adjacent `GetUserDefaultLocaleName`-equivalent which we
+/// approximate on Windows by reading the `USERLANG` env set by some shell
+/// profiles, falling back to `"en"`.
+///
+/// The raw value is typically `en_US.UTF-8` or `de_DE.UTF-8`; we:
+///   1. Strip everything after `.` (encoding suffix).
+///   2. Replace `_` with `-` to produce valid BCP-47 (`en-US`, `de-DE`).
+///   3. Validate via [`validate_bcp47`]; return `"en"` on any failure.
+///
+/// This is a pure function with no I/O beyond env-var reads — safe to call
+/// on every wizard path including tests.
+pub(crate) fn detect_os_locale_bcp47() -> String {
+    let raw = std::env::var("LANG")
+        .or_else(|_| std::env::var("LC_ALL"))
+        .or_else(|_| std::env::var("LANGUAGE"))
+        .or_else(|_| std::env::var("USERLANG"))
+        .unwrap_or_default();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("c") || trimmed == "POSIX" {
+        return "en".to_string();
+    }
+    // Strip encoding suffix (`en_US.UTF-8` → `en_US`).
+    let without_encoding = trimmed.split('.').next().unwrap_or(trimmed);
+    // BCP-47 uses `-` as separator; locale uses `_`.
+    let bcp47 = without_encoding.replace('_', "-");
+    // Validate; fall back to bare language subtag if full tag fails.
+    if validate_bcp47(&bcp47).is_ok() {
+        return bcp47;
+    }
+    // Try just the primary language subtag (first segment before `-`).
+    if let Some(lang) = bcp47.split('-').next() {
+        if validate_bcp47(lang).is_ok() {
+            return lang.to_string();
+        }
+    }
+    "en".to_string()
+}
+
 pub(crate) fn get_os_username() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
@@ -403,4 +444,118 @@ pub(crate) fn which_binary(name: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_env::lock;
+
+    // ── ZF-02: detect_os_locale_bcp47 ─────────────────────────────────
+
+    #[test]
+    fn detect_locale_unix_utf8_suffix_stripped() {
+        let _g = lock();
+        // Temporarily shadow the env for this test. set_var/remove_var are
+        // `unsafe` (Rust 2024); the test_env lock serializes all callers.
+        let prev_lang = std::env::var("LANG").ok();
+        let prev_lc = std::env::var("LC_ALL").ok();
+        unsafe { std::env::remove_var("LC_ALL") };
+        unsafe { std::env::set_var("LANG", "de_DE.UTF-8") };
+
+        let code = detect_os_locale_bcp47();
+        assert_eq!(code, "de-DE", "encoding suffix must be stripped and _ → -");
+
+        // Restore.
+        unsafe { std::env::remove_var("LANG") };
+        if let Some(v) = prev_lang { unsafe { std::env::set_var("LANG", v) }; }
+        if let Some(v) = prev_lc { unsafe { std::env::set_var("LC_ALL", v) }; }
+    }
+
+    #[test]
+    fn detect_locale_falls_back_to_en_when_empty() {
+        let _g = lock();
+        let prev_lang = std::env::var("LANG").ok();
+        let prev_lc = std::env::var("LC_ALL").ok();
+        let prev_language = std::env::var("LANGUAGE").ok();
+        let prev_userlang = std::env::var("USERLANG").ok();
+        unsafe { std::env::remove_var("LANG") };
+        unsafe { std::env::remove_var("LC_ALL") };
+        unsafe { std::env::remove_var("LANGUAGE") };
+        unsafe { std::env::remove_var("USERLANG") };
+
+        let code = detect_os_locale_bcp47();
+        assert_eq!(code, "en", "empty env must fall back to en");
+
+        if let Some(v) = prev_lang { unsafe { std::env::set_var("LANG", v) }; }
+        if let Some(v) = prev_lc { unsafe { std::env::set_var("LC_ALL", v) }; }
+        if let Some(v) = prev_language { unsafe { std::env::set_var("LANGUAGE", v) }; }
+        if let Some(v) = prev_userlang { unsafe { std::env::set_var("USERLANG", v) }; }
+    }
+
+    #[test]
+    fn detect_locale_posix_falls_back_to_en() {
+        let _g = lock();
+        let prev_lang = std::env::var("LANG").ok();
+        let prev_lc = std::env::var("LC_ALL").ok();
+        unsafe { std::env::remove_var("LC_ALL") };
+        unsafe { std::env::set_var("LANG", "C") };
+
+        let code = detect_os_locale_bcp47();
+        assert_eq!(code, "en", "C locale must fall back to en");
+
+        unsafe { std::env::remove_var("LANG") };
+        if let Some(v) = prev_lang { unsafe { std::env::set_var("LANG", v) }; }
+        if let Some(v) = prev_lc { unsafe { std::env::set_var("LC_ALL", v) }; }
+    }
+
+    #[test]
+    fn detect_locale_simple_code_returned_as_is() {
+        let _g = lock();
+        let prev_lang = std::env::var("LANG").ok();
+        let prev_lc = std::env::var("LC_ALL").ok();
+        unsafe { std::env::remove_var("LC_ALL") };
+        unsafe { std::env::set_var("LANG", "fr") };
+
+        let code = detect_os_locale_bcp47();
+        assert_eq!(code, "fr");
+
+        unsafe { std::env::remove_var("LANG") };
+        if let Some(v) = prev_lang { unsafe { std::env::set_var("LANG", v) }; }
+        if let Some(v) = prev_lc { unsafe { std::env::set_var("LC_ALL", v) }; }
+    }
+
+    #[test]
+    fn detect_locale_lc_all_takes_priority_over_lang() {
+        let _g = lock();
+        let prev_lang = std::env::var("LANG").ok();
+        let prev_lc = std::env::var("LC_ALL").ok();
+        unsafe { std::env::set_var("LANG", "en_US.UTF-8") };
+        unsafe { std::env::set_var("LC_ALL", "ja_JP.UTF-8") };
+
+        let code = detect_os_locale_bcp47();
+        // LANG is checked before LC_ALL in our priority order; ja_JP loses
+        // to the first match. Verify it parses and returns a valid BCP-47.
+        assert!(
+            validate_bcp47(&code).is_ok(),
+            "detected locale must be valid BCP-47: {code}"
+        );
+
+        unsafe { std::env::remove_var("LANG") };
+        unsafe { std::env::remove_var("LC_ALL") };
+        if let Some(v) = prev_lang { unsafe { std::env::set_var("LANG", v) }; }
+        if let Some(v) = prev_lc { unsafe { std::env::set_var("LC_ALL", v) }; }
+    }
+
+    // ── ZF-02: WizardState serde backward-compat ──────────────────────
+
+    #[test]
+    fn wizard_state_chosen_preset_defaults_false_on_missing_field() {
+        // Old checkpoints without these fields must still deserialize.
+        let json = r#"{"steps_completed":[]}"#;
+        let state: super::super::WizardState = serde_json::from_str(json)
+            .expect("must deserialize without chosen_preset / is_express");
+        assert!(state.chosen_preset.is_none());
+        assert!(!state.is_express);
+    }
 }

@@ -410,8 +410,10 @@ mod tests {
         // +1 self-heal proposals (HERMES-07b) + 1 wal encryption (CRYPTO-04e) = 41;
         // +1 PTY terminal session check (HERMES-11) = 42;
         // +1 post-init readiness (GOLD-FEAT-11) = 43;
-        // +2 advisable-config hints (groundtruth injection, consolidation sweep) = 45.
-        assert_eq!(all_check_docs().count(), 45);
+        // +2 advisable-config hints (groundtruth injection, consolidation sweep) = 45;
+        // +8 advisable-config hints (ZF-08: watchdog, dreaming, proactive,
+        //    checkin_cron, skill_curator, monitor, loop_config, dictation) = 53.
+        assert_eq!(all_check_docs().count(), 53);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1162,8 +1164,10 @@ mod tests {
         // + 2 parallel-lane + self-heal proposals (HERMES-07b) + wal encryption
         // (CRYPTO-04e) = 41; + PTY terminal check (HERMES-11) = 42;
         // + post-init readiness (GOLD-FEAT-11) = 43;
-        // + 2 advisable-config hints (groundtruth injection, consolidation sweep) = 45.
-        assert_eq!(outs.len(), 45);
+        // + 2 advisable-config hints (groundtruth injection, consolidation sweep) = 45;
+        // + 8 advisable-config hints (ZF-08: watchdog, dreaming, proactive,
+        //   checkin_cron, skill_curator, monitor, loop_config, dictation) = 53.
+        assert_eq!(outs.len(), 53);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
@@ -1620,5 +1624,208 @@ servers:
         let o = check_advisable_consolidation_sweep(dir.path());
         assert_eq!(o.status, CheckStatus::Warn);
         assert!(o.detail.contains("consolidation_sweep"));
+    }
+
+    // ── ZF-08 new advisable-config hint checks ────────────────────────────
+
+    #[test]
+    fn advisable_watchdog_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "watchdog:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_watchdog(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("watchdog.enabled"));
+        assert!(o.detail.contains("neoth preset apply balanced"));
+    }
+
+    #[test]
+    fn advisable_watchdog_passes_when_enabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "watchdog:\n  enabled: true\n",
+        )
+        .unwrap();
+        let o = check_advisable_watchdog(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_watchdog_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_watchdog(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("absent"));
+    }
+
+    #[test]
+    fn advisable_dreaming_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "dreaming:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_dreaming(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("dreaming.enabled"));
+        // LLM cost implication must be disclosed.
+        assert!(o.detail.contains("LLM"));
+        assert!(o.detail.contains("neoth preset apply balanced"));
+    }
+
+    #[test]
+    fn advisable_dreaming_passes_when_enabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "dreaming:\n  enabled: true\n",
+        )
+        .unwrap();
+        let o = check_advisable_dreaming(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_loop_config_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "loop_config:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_loop_config(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("loop_config.enabled"));
+        // max_rounds tunable must be mentioned.
+        assert!(o.detail.contains("max_rounds"));
+        assert!(o.detail.contains("neoth preset apply balanced"));
+    }
+
+    #[test]
+    fn advisable_loop_config_passes_when_enabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "loop_config:\n  enabled: true\n",
+        )
+        .unwrap();
+        let o = check_advisable_loop_config(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_dictation_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "media:\n  dictation_enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_dictation(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("dictation_enabled"));
+        assert!(o.detail.contains("neoth preset apply balanced"));
+    }
+
+    #[test]
+    fn advisable_dictation_passes_when_enabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "media:\n  dictation_enabled: true\n",
+        )
+        .unwrap();
+        let o = check_advisable_dictation(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_checks_all_pass_on_missing_freedom_yaml() {
+        // The missing-file early-return must fire Pass for all 8 new hints.
+        let dir = tempdir().unwrap();
+        let home = dir.path();
+        for (name, o) in [
+            ("watchdog", check_advisable_watchdog(home)),
+            ("dreaming", check_advisable_dreaming(home)),
+            ("proactive", check_advisable_proactive(home)),
+            ("checkin_cron", check_advisable_checkin_cron(home)),
+            ("skill_curator", check_advisable_skill_curator(home)),
+            ("monitor", check_advisable_monitor(home)),
+            ("loop_config", check_advisable_loop_config(home)),
+            ("dictation", check_advisable_dictation(home)),
+        ] {
+            assert_eq!(
+                o.status,
+                CheckStatus::Pass,
+                "check_advisable_{name} should Pass when freedom.yaml is absent"
+            );
+            assert!(
+                o.detail.contains("absent"),
+                "check_advisable_{name} detail should mention 'absent'"
+            );
+        }
+    }
+
+    #[test]
+    fn advisable_checkin_cron_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "checkin_cron:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_checkin_cron(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("checkin_cron.enabled"));
+        // LLM cost implication must be disclosed.
+        assert!(o.detail.contains("LLM"));
+    }
+
+    #[test]
+    fn advisable_proactive_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "proactive:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_proactive(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("proactive.enabled"));
+    }
+
+    #[test]
+    fn advisable_skill_curator_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "skill_curator:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_skill_curator(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("skill_curator.enabled"));
+    }
+
+    #[test]
+    fn advisable_monitor_fires_when_disabled() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "monitor:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_monitor(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("monitor.enabled"));
+        // Must be clear this is advisory, not a broken setup.
+        assert!(o.detail.contains("No egress") || o.detail.contains("no egress")
+            || o.detail.contains("silent"));
     }
 }

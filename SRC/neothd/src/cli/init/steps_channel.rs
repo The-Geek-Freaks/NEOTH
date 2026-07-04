@@ -18,6 +18,13 @@ pub(crate) async fn step6_channel(
 ) -> Result<()> {
     debug!("wizard step 6: channel");
 
+    // ZF-02 express gate: channel setup is a post-setup tip on the express
+    // path. The operator configures messengers via `neoth channel add …` later.
+    if state.is_express && interactive {
+        state.steps_completed.push(WizardStep::Channel as u8);
+        return Ok(());
+    }
+
     // K-4b (Session 21): probe `pear` once so the prompt copy reflects
     // whether Keet is reachable as the preferred primary. The probe is
     // cheap (single subprocess spawn with 5s timeout) and only runs in
@@ -111,6 +118,12 @@ pub(crate) async fn step6b_keet_pairing(
         // No prompt available, no flag yet — K-3.5 deferred non-
         // interactive surface.
         state.steps_completed.push(WizardStep::KeetPairing as u8); // 6b marker
+        return Ok(());
+    }
+
+    // ZF-02 express gate: Keet pairing is a post-setup tip on the express path.
+    if state.is_express {
+        state.steps_completed.push(WizardStep::KeetPairing as u8);
         return Ok(());
     }
 
@@ -216,6 +229,12 @@ pub(crate) async fn step6c_obsidian_install(
 
     debug!("wizard step 6c: obsidian install");
 
+    // ZF-02 express gate: Obsidian install is a post-setup tip on the express path.
+    if state.is_express && interactive {
+        state.steps_completed.push(WizardStep::Obsidian as u8);
+        return Ok(());
+    }
+
     let already = obsidian::detect_obsidian_install();
     if already {
         info!("obsidian already installed; skipping install step");
@@ -298,6 +317,12 @@ pub(crate) fn step6d_obsidian_vault_bootstrap_with_home(
     use crate::installers::obsidian_vault;
 
     debug!("wizard step 6d: obsidian vault bootstrap");
+
+    // ZF-02 express gate: vault bootstrap is a post-setup tip on the express path.
+    if state.is_express && interactive {
+        state.steps_completed.push(WizardStep::ObsidianVault as u8);
+        return Ok(());
+    }
 
     let resolve_vault = || -> Option<std::path::PathBuf> {
         match home_override {
@@ -394,6 +419,12 @@ pub(crate) async fn step6e_n8n_install(
     use crate::installers::n8n;
 
     debug!("wizard step 6e: n8n install");
+
+    // ZF-02 express gate: n8n install is a post-setup tip on the express path.
+    if state.is_express && interactive {
+        state.steps_completed.push(WizardStep::N8n as u8);
+        return Ok(());
+    }
 
     if !interactive {
         if !args.install_n8n {

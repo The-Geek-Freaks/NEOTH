@@ -332,6 +332,378 @@ pub(crate) fn check_advisable_consolidation_sweep(home: &Path) -> CheckOutcome {
     }
 }
 
+/// Advisory hint: `watchdog.enabled` is off.
+///
+/// When enabled, the daemon probes supervised local services (n8n, Ollama) on a
+/// configurable interval and restarts them when they are found unresponsive. The
+/// watchdog manages those external processes only — it does not restart neothd
+/// itself. Useful for operators running long-lived agentic workflows where n8n or
+/// Ollama may crash silently. Requires Elevated+ autonomy to perform restarts.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_watchdog(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: watchdog",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: watchdog",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.watchdog.enabled {
+                CheckOutcome {
+                    name: "advisable: watchdog",
+                    status: CheckStatus::Pass,
+                    detail: "watchdog.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: watchdog",
+                    status: CheckStatus::Warn,
+                    detail: "watchdog.enabled is false — supervised local services (n8n, Ollama) \
+                             will not be automatically restarted when they go down. Set \
+                             `watchdog.enabled: true` in freedom.yaml to enable probe-and-restart \
+                             at Elevated+ autonomy, or apply a preset: \
+                             `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `dreaming.enabled` is off.
+///
+/// When enabled, the daemon runs a nightly memory clustering and theme-composition
+/// pipeline that groups related episodes, distills recurring themes, and promotes
+/// high-signal facts to long-term recall — improving memory quality over time without
+/// any user action. No network egress by default (`allow_cloud_fallback = false`).
+/// Note: the dreaming pipeline invokes the configured local provider once per nightly
+/// run, so it carries a small but non-zero LLM compute cost.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_dreaming(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: dreaming",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: dreaming",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.dreaming.enabled {
+                CheckOutcome {
+                    name: "advisable: dreaming",
+                    status: CheckStatus::Pass,
+                    detail: "dreaming.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: dreaming",
+                    status: CheckStatus::Warn,
+                    detail: "dreaming.enabled is false — nightly memory clustering and theme \
+                             composition are off; recall quality degrades over long sessions as \
+                             related episodes remain unlinked. Note: enabling this incurs one \
+                             LLM provider call per nightly run. Set `dreaming.enabled: true` in \
+                             freedom.yaml, or apply a preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `proactive.enabled` is off.
+///
+/// When enabled, the daemon generates and delivers scheduled briefings and check-ins
+/// via the configured messenger channels. Pairs naturally with `checkin_cron` for
+/// timed outbound messages. The companion `quiet_hours_utc` tunable suppresses
+/// delivery during operator sleep windows. Default is off (opt-in due to outbound
+/// messaging impact).
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_proactive(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: proactive",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: proactive",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.proactive.enabled {
+                CheckOutcome {
+                    name: "advisable: proactive",
+                    status: CheckStatus::Pass,
+                    detail: "proactive.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: proactive",
+                    status: CheckStatus::Warn,
+                    detail: "proactive.enabled is false — scheduled briefings and check-ins will \
+                             not be delivered. Consider also setting `checkin_cron.enabled: true` \
+                             and configuring `proactive.quiet_hours_utc` to suppress messages \
+                             during sleep windows. Set `proactive.enabled: true` in freedom.yaml, \
+                             or apply a preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `checkin_cron.enabled` is off.
+///
+/// When enabled, the daemon runs a scheduled cron job that generates a personalised
+/// check-in message body via a provider call and delivers it through the active
+/// messenger. Useful for operators who want periodic context-aware nudges. Note:
+/// each tick triggers one LLM provider call, so enabling this carries a recurring
+/// LLM cost at the configured cron interval.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_checkin_cron(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: checkin cron",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: checkin cron",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.checkin_cron.enabled {
+                CheckOutcome {
+                    name: "advisable: checkin cron",
+                    status: CheckStatus::Pass,
+                    detail: "checkin_cron.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: checkin cron",
+                    status: CheckStatus::Warn,
+                    detail: "checkin_cron.enabled is false — scheduled check-in message \
+                             generation is off. Note: enabling this incurs one LLM provider call \
+                             per cron tick. Set `checkin_cron.enabled: true` in freedom.yaml, \
+                             or apply a preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `skill_curator.enabled` is off.
+///
+/// When enabled, the daemon runs a weekly background job that promotes
+/// operator-reviewed skill proposals from `~/.neoth/proposals/` into
+/// `~/.neoth/skills/`. Only proposals that the operator has explicitly accepted
+/// are promoted — no unsupervised changes to the skill library occur. Safe by
+/// design; the weekly cadence avoids noisy churn.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_skill_curator(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: skill curator",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: skill curator",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.skill_curator.enabled {
+                CheckOutcome {
+                    name: "advisable: skill curator",
+                    status: CheckStatus::Pass,
+                    detail: "skill_curator.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: skill curator",
+                    status: CheckStatus::Warn,
+                    detail: "skill_curator.enabled is false — accepted skill proposals in \
+                             ~/.neoth/proposals/ will not be promoted automatically to \
+                             ~/.neoth/skills/. Set `skill_curator.enabled: true` in \
+                             freedom.yaml, or apply a preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `monitor.enabled` is off.
+///
+/// When enabled, the daemon runs background alerting for WAL CRC failures,
+/// crash.log growth, and channel silence anomalies. Purely advisory — no egress,
+/// no LLM cost — and high-value for long-running deployments where silent failures
+/// are otherwise invisible. Alerts are delivered via the configured messenger.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_monitor(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: monitor",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: monitor",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.monitor.enabled {
+                CheckOutcome {
+                    name: "advisable: monitor",
+                    status: CheckStatus::Pass,
+                    detail: "monitor.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: monitor",
+                    status: CheckStatus::Warn,
+                    detail: "monitor.enabled is false — WAL CRC alerting, crash.log monitoring, \
+                             and channel silence detection are off; failures on long-running \
+                             deployments will be silent. No egress or LLM cost. Set \
+                             `monitor.enabled: true` in freedom.yaml, or apply a preset: \
+                             `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `loop_config.enabled` is off.
+///
+/// When enabled, the multi-round autonomous loop engine is available for agentic
+/// workflows that run N dispatch rounds with structural stop criteria. High-value
+/// for power users driving automated pipelines. Note: each loop activation costs
+/// up to `loop_config.max_rounds` provider round-trips; tune that value to manage
+/// LLM spend.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_loop_config(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: loop config",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: loop config",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.loop_config.enabled {
+                CheckOutcome {
+                    name: "advisable: loop config",
+                    status: CheckStatus::Pass,
+                    detail: "loop_config.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: loop config",
+                    status: CheckStatus::Warn,
+                    detail: "loop_config.enabled is false — the multi-round autonomous loop \
+                             engine is unavailable; agentic workflows run only a single dispatch \
+                             round. Note: enabling this costs up to `loop_config.max_rounds` \
+                             provider round-trips per activation. Set `loop_config.enabled: true` \
+                             in freedom.yaml, or apply a preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `media.dictation_enabled` is off.
+///
+/// When enabled, the daemon activates push-to-talk mic capture for voice dictation.
+/// A consent notice fires on first use regardless of this setting. Useful discovery
+/// nudge for operators who are unaware the capability exists. The feature is purely
+/// opt-in; no audio is captured without explicit user action.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_dictation(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: dictation",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: dictation",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.media.dictation_enabled {
+                CheckOutcome {
+                    name: "advisable: dictation",
+                    status: CheckStatus::Pass,
+                    detail: "media.dictation_enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: dictation",
+                    status: CheckStatus::Warn,
+                    detail: "media.dictation_enabled is false — push-to-talk voice dictation is \
+                             unavailable. A consent notice fires on first use regardless. Set \
+                             `media.dictation_enabled: true` in freedom.yaml to enable the \
+                             feature, or apply a preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
 pub(crate) const CHECKS: &[CheckFn] = &[
@@ -343,6 +715,15 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_profile_extensions,
     check_advisable_groundtruth_injection,
     check_advisable_consolidation_sweep,
+    // ZF-08 new advisable hints:
+    check_advisable_watchdog,
+    check_advisable_dreaming,
+    check_advisable_proactive,
+    check_advisable_checkin_cron,
+    check_advisable_skill_curator,
+    check_advisable_monitor,
+    check_advisable_loop_config,
+    check_advisable_dictation,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -456,5 +837,128 @@ pub(crate) const DOCS: &[CheckDoc] = &[
         fix: "Set `consolidation_sweep.enabled: true` in \
               `~/.neoth/freedom.yaml`, or run \
               `neoth preset apply balanced` to restore recommended defaults.",
+    },
+    // ZF-08 new advisable hints ────────────────────────────────────────────
+    CheckDoc {
+        name: "advisable: watchdog",
+        purpose: "Advisory hint that fires when `watchdog.enabled` is `false`. \
+                  When enabled, the daemon probes supervised local services \
+                  (n8n, Ollama) on a configurable interval and restarts them \
+                  when unresponsive. The watchdog manages those external \
+                  processes only — it does NOT restart neothd itself. Requires \
+                  Elevated+ autonomy to perform restarts. The check is \
+                  informational only — daemon starts either way.",
+        common_failures: "Fresh install — defaults to `false`. Operator running \
+                         n8n or Ollama and finding them silently dead after \
+                         overnight runs.",
+        fix: "Set `watchdog.enabled: true` in `~/.neoth/freedom.yaml`, or run \
+              `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: dreaming",
+        purpose: "Advisory hint that fires when `dreaming.enabled` is `false`. \
+                  When enabled, the daemon runs a nightly memory clustering and \
+                  theme-composition pipeline — grouping related episodes, \
+                  distilling recurring themes, and promoting high-signal facts \
+                  to long-term recall. No network egress by default \
+                  (`allow_cloud_fallback = false`). Note: incurs one LLM \
+                  provider call per nightly run. The check is informational \
+                  only — daemon starts either way.",
+        common_failures: "Fresh install — defaults to `false`. Operator noticing \
+                         that recall quality does not improve over time despite \
+                         active use.",
+        fix: "Set `dreaming.enabled: true` in `~/.neoth/freedom.yaml`, or run \
+              `neoth preset apply balanced`. Be aware of the nightly LLM call.",
+    },
+    CheckDoc {
+        name: "advisable: proactive",
+        purpose: "Advisory hint that fires when `proactive.enabled` is `false`. \
+                  When enabled, the daemon delivers scheduled briefings and \
+                  check-ins via configured messenger channels. Pairs with \
+                  `checkin_cron`; the companion `proactive.quiet_hours_utc` \
+                  tunable suppresses delivery during operator sleep windows. \
+                  Default is off (opt-in due to outbound messaging impact). \
+                  The check is informational only — daemon starts either way.",
+        common_failures: "Operator expecting proactive briefings but not seeing \
+                         them; `checkin_cron.enabled` is true but `proactive` \
+                         is false so no messages are sent.",
+        fix: "Set `proactive.enabled: true` in `~/.neoth/freedom.yaml`. \
+              Configure `proactive.quiet_hours_utc` to suppress night messages. \
+              Or run `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: checkin cron",
+        purpose: "Advisory hint that fires when `checkin_cron.enabled` is \
+                  `false`. When enabled, the daemon generates a personalised \
+                  check-in message body via a provider call on a schedule and \
+                  delivers it through the active messenger. Each tick triggers \
+                  one LLM provider call — enabling this carries a recurring \
+                  LLM cost at the configured interval. The check is \
+                  informational only — daemon starts either way.",
+        common_failures: "Operator wanting periodic context-aware nudges but \
+                         not receiving them; LLM cost surprise on high-frequency \
+                         cron intervals.",
+        fix: "Set `checkin_cron.enabled: true` in `~/.neoth/freedom.yaml`. \
+              Tune the cron expression to manage LLM spend. Or run \
+              `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: skill curator",
+        purpose: "Advisory hint that fires when `skill_curator.enabled` is \
+                  `false`. When enabled, the daemon runs a weekly background \
+                  job that promotes operator-reviewed skill proposals from \
+                  `~/.neoth/proposals/` into `~/.neoth/skills/`. Only \
+                  explicitly accepted proposals are promoted — no unsupervised \
+                  changes occur. The check is informational only — daemon \
+                  starts either way.",
+        common_failures: "Fresh install — defaults to `false`. Operator finding \
+                         that accepted proposals accumulate in ~/.neoth/proposals/ \
+                         without being promoted.",
+        fix: "Set `skill_curator.enabled: true` in `~/.neoth/freedom.yaml`, \
+              or run `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: monitor",
+        purpose: "Advisory hint that fires when `monitor.enabled` is `false`. \
+                  When enabled, the daemon runs background alerting for WAL CRC \
+                  failures, crash.log growth, and channel silence anomalies. No \
+                  egress, no LLM cost — purely a local health watchdog. High \
+                  value for long-running deployments where silent failures \
+                  would otherwise go unnoticed. The check is informational \
+                  only — daemon starts either way.",
+        common_failures: "Fresh install — defaults to `false`. Long-running \
+                         deployments where WAL corruption or channel drops \
+                         are only noticed when operator manually checks.",
+        fix: "Set `monitor.enabled: true` in `~/.neoth/freedom.yaml`, or run \
+              `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: loop config",
+        purpose: "Advisory hint that fires when `loop_config.enabled` is \
+                  `false`. When enabled, the multi-round autonomous loop engine \
+                  is available, running up to `loop_config.max_rounds` dispatch \
+                  rounds with structural stop criteria. High-value for power \
+                  users running agentic workflows. Note: each activation costs \
+                  up to `max_rounds` LLM provider calls. The check is \
+                  informational only — daemon starts either way.",
+        common_failures: "Fresh install — defaults to `false`. Power users \
+                         wanting autonomous multi-round loops finding single-shot \
+                         dispatch only.",
+        fix: "Set `loop_config.enabled: true` in `~/.neoth/freedom.yaml`. \
+              Tune `loop_config.max_rounds` to manage LLM spend. Or run \
+              `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: dictation",
+        purpose: "Advisory hint that fires when `media.dictation_enabled` is \
+                  `false`. When enabled, push-to-talk mic capture for voice \
+                  dictation becomes available. A consent notice fires on first \
+                  use regardless of this setting. The feature is purely opt-in; \
+                  no audio is captured without explicit user action. The check \
+                  is informational only — daemon starts either way.",
+        common_failures: "Fresh install — defaults to `false`. Operator unaware \
+                         the push-to-talk dictation capability exists.",
+        fix: "Set `media.dictation_enabled: true` in `~/.neoth/freedom.yaml`, \
+              or apply a preset: `neoth preset apply balanced`.",
     },
 ];

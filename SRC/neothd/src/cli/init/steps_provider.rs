@@ -286,6 +286,90 @@ pub(crate) async fn step5_provider(
                 state.provider_key = Some(crate::secret::SecretString::from(k));
             }
 
+            // ZF-03 — live key verify (interactive only; CI / non-interactive skip).
+            if interactive {
+                if let Some(ref current_key) = state.provider_key {
+                    let verifiable = matches!(
+                        kind,
+                        ProviderKind::AnthropicApi
+                            | ProviderKind::OpenaiApi
+                            | ProviderKind::GeminiApi
+                    ) || (kind == ProviderKind::OpenaiCompat
+                        && state
+                            .provider_endpoint
+                            .as_deref()
+                            .map(|e| !e.contains("localhost") && !e.contains("127.0.0.1"))
+                            .unwrap_or(false));
+
+                    if verifiable {
+                        use std::io::Write;
+                        print!("  Verifying key… ");
+                        let _ = std::io::stdout().flush();
+                        let endpoint_ref = state.provider_endpoint.as_deref();
+                        match crate::providers::local_probe::ping_cloud_key(
+                            kind,
+                            current_key,
+                            endpoint_ref,
+                        )
+                        .await
+                        {
+                            Ok(()) => println!("✓ key accepted"),
+                            Err(ref msg) if msg == "timeout" => {
+                                println!("⚠ timed out (offline setup? continuing)");
+                            }
+                            Err(msg) => {
+                                println!("✗ {msg}");
+                                #[cfg(feature = "wizard")]
+                                {
+                                    let retry = dialoguer::Confirm::with_theme(
+                                        &dialoguer::theme::ColorfulTheme::default(),
+                                    )
+                                    .with_prompt(
+                                        "  Re-enter key? (no = continue with current key)",
+                                    )
+                                    .default(true)
+                                    .interact()
+                                    .context("key retry prompt")?;
+                                    if retry {
+                                        let new_key =
+                                            prompt_provider_key(args, interactive, kind)?;
+                                        if let Some(k) = new_key {
+                                            state.provider_key =
+                                                Some(crate::secret::SecretString::from(k));
+                                            // One re-verify pass — no recursion.
+                                            use std::io::Write as _;
+                                            print!("  Re-verifying… ");
+                                            let _ = std::io::stdout().flush();
+                                            match crate::providers::local_probe::ping_cloud_key(
+                                                kind,
+                                                state.provider_key.as_ref().unwrap(),
+                                                state.provider_endpoint.as_deref(),
+                                            )
+                                            .await
+                                            {
+                                                Ok(()) => println!("✓ key accepted"),
+                                                Err(m) => println!(
+                                                    "⚠ still: {m} — continuing with current key"
+                                                ),
+                                            }
+                                        }
+                                    }
+                                }
+                                #[cfg(not(feature = "wizard"))]
+                                {
+                                    // Non-interactive / wizard-less build: just warn and move on.
+                                    tracing::warn!(
+                                        provider = ?kind,
+                                        error = %msg,
+                                        "ZF-03: key verify failed (non-interactive)"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Default model per provider. K-Models-Discovery (Session 14)
             // consults the cached catalog at `~/.neoth/models_catalog.json`
             // when present; falls back to the bundled hardcoded baseline

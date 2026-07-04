@@ -128,6 +128,8 @@ pub mod recon;
 pub mod recover;
 pub mod reflect;
 pub mod refusal;
+/// ZF-04 — `neoth rmas consent` RMAS sidecar consent lifecycle.
+pub mod rmas;
 /// MAR-02 — `neoth release {keygen, sign, pubkey}` DAU-friendly release signing.
 pub mod release;
 pub mod reload;
@@ -891,6 +893,15 @@ pub enum Commands {
     /// `patterns` dumps the pattern dictionaries the classifier uses.
     Refusal(refusal::RefusalArgs),
 
+    /// ZF-04 — RecursiveMAS sidecar consent lifecycle.
+    ///
+    /// `neoth rmas consent` shows the current RMAS license status, sidecar
+    /// configuration, and consent marker state. `neoth rmas consent
+    /// --acknowledge` writes the consent marker after the operator has
+    /// reviewed the upstream RecursiveMAS repository. The wizard and
+    /// preset-apply paths NEVER create this marker automatically.
+    Rmas(rmas::RmasArgs),
+
     /// Manage first-run outbound-LLM consent (V03-08). `list` shows recorded
     /// grants, `show <provider>` reports state for one provider,
     /// `grant <provider>` records consent, `revoke <provider>` removes it.
@@ -1555,6 +1566,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Refusal(mut args) => {
             args.output = global_output;
             refusal::run_refusal(args).await?;
+        }
+        Commands::Rmas(mut args) => {
+            args.output = global_output;
+            rmas::run_rmas(args)?;
         }
         Commands::Consent(mut args) => {
             args.output = global_output;

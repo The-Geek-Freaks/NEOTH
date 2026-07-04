@@ -88,8 +88,11 @@ Reihenfolge nach DAU-Wert; Transport-Muster (ProbeView / worker +
 
 ## 4. Definition of Done (Zero-Friction v1)
 - [x] 1-Wahl-Preset statt 75 Toggles (CLI+Wizard+GUI, Consent-Diff)
-- [ ] Wizard ≤5 Fragen im Express-Pfad (ZF-02)
-- [ ] Key-Fehler sichtbar IM Wizard, nicht beim ersten Chat (ZF-03)
-- [ ] Kein manuelles Marker-/YAML-Editing für irgendein Feature nötig
-      (ZF-04 + ZF-08 decken die Reste)
-- [ ] Preset-Flip wirkt ohne Restart (ZF-06)
+- [x] Wizard ≤5 Fragen im Express-Pfad (ZF-02) — 2026-07-04
+- [x] Key-Fehler sichtbar IM Wizard, nicht beim ersten Chat (ZF-03) — 2026-07-04
+- [x] Kein manuelles Marker-/YAML-Editing für irgendein Feature nötig
+      (ZF-04 + ZF-08 decken die Reste) — 2026-07-04
+- [x] Preset-Flip wirkt ohne Restart (ZF-06) — 2026-07-04
+
+**Zero-Friction v1 = DONE (2026-07-04, session #6).** Offen nur ZF-07
+(YAGNI-Gate: erst nach Full-Auto-Feldbericht) + P3 GUI-Parity-Long-Tail.
