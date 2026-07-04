@@ -1390,17 +1390,17 @@ All of the following must be `[x]` before tagging `v1.0-gold`:
 - [x] WS-A: All GOLD-SEC-NN tasks done (35/35 — dashboard ✅ COMPLETE)
 - [x] WS-B: All GOLD-HON-NN tasks done (26/26 — dashboard ✅ COMPLETE, §WS-B line 206; the DD-09/DD-14 GOLD-HON-21 hold is resolved)
 - [x] WS-C: All GOLD-COR-NN tasks done (36/36 — dashboard ✅ COMPLETE)
-- [ ] WS-D: All GOLD-WIRE-NN tasks done
-- [ ] WS-E: GOLD-ARCH-01 through GOLD-ARCH-09 (security-critical arch debt) done; GOLD-ARCH-10 through GOLD-ARCH-22 strongly recommended
-- [ ] All HIGH findings from beta review (A-01..A-10) are `[x]`
-- [ ] All HIGH findings from Roman review (CR-007, CR-010, CR-011, CR-031, PAT-002, SR-001, SR-017) are `[x]`
-- [ ] WS-G: Gremium evaluations complete for all EVALUATE-FIRST repos; adopt-verdicts implemented
-- [ ] WS-H: All non-operator-blocked GOLD-PROG-NN tasks done; operator-blocked tasks (GOLD-PROG-13 minisign keypair, GOLD-PROG-15 PC-02 license) have operator decisions recorded
-- [ ] WS-I: All GOLD-ADAPT-* deep-read adaptations done (ODY/CLAW/GOOSE + HERMES/MEM/OH/ODY-04+/LOWKEY/CRYPTO + G-01..03); future-gated items (CRYPTO-01..04 AEAD-at-rest, HERMES-11 PTY) have operator decisions recorded
-- [ ] Full build + clippy + test green on Windows+MSVC: `cargo clippy -p neothd --tests --no-deps -- -D warnings` exits 0; `cargo test -p neothd --lib` exits 0
-- [ ] `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neothd --lib cli_commands_md_is_up_to_date` exits 0 (no CLI doc drift)
-- [ ] README/docs honesty pass merged (GOLD-HON-01..GOLD-HON-26 all done)
-- [ ] Signed release artifacts exist (cargo-dist or manual) with sha256 companion hashes
+- [x] WS-D: All GOLD-WIRE-NN tasks done — ✅ flipped 2026-07-04 (stale box): grep confirms WIRE-01..12 incl. 02b/06b/07b/10b all [x] (16/16); dashboard already said COMPLETE.
+- [x] WS-E: GOLD-ARCH-01 through GOLD-ARCH-09 (security-critical arch debt) done; GOLD-ARCH-10 through GOLD-ARCH-22 strongly recommended — ✅ flipped 2026-07-04 (stale box): ARCH-01..22 incl. 03b/07b all [x] (24/24).
+- [x] All HIGH findings from beta review (A-01..A-10) are `[x]` — ✅ flipped 2026-07-04 (stale box): A-01..A-10 map to SEC-01/HON-01/COR-01/COR-02/SEC-05+06+COR-05/SEC-02/SEC-03/SEC-04+34/WIRE-07/COR-03 — all [x].
+- [x] All HIGH findings from Roman review (CR-007, CR-010, CR-011, CR-031, PAT-002, SR-001, SR-017) are `[x]` — ✅ flipped 2026-07-04 (stale box): CR-007→SEC-28, CR-010→COR-33, CR-011→COR-34, CR-031→COR-19, PAT-002→COR-27, SR-001→HON-19, SR-017→SEC-30 — all [x].
+- [x] WS-G: Gremium evaluations complete for all EVALUATE-FIRST repos; adopt-verdicts implemented — ✅ flipped 2026-07-04: 28/28 verdicted (the rollup-agent's "ADOPT-25 open" claim was a stale dashboard count — grep shows exactly ONE ADOPT-25 entry, [x] since 2026-07-03, production caller `neoth dictate` wired 2026-07-04).
+- [x] WS-H: All non-operator-blocked GOLD-PROG-NN tasks done; operator-blocked tasks (GOLD-PROG-13 minisign keypair, GOLD-PROG-15 PC-02 license) have operator decisions recorded — ✅ flipped 2026-07-04: the only open PROG boxes ARE PROG-13/PROG-15, both carry recorded operator-park decisions in plan §9 (the gate requires the DECISION recorded, not the execution).
+- [ ] WS-I: All GOLD-ADAPT-* deep-read adaptations done (ODY/CLAW/GOOSE + HERMES/MEM/OH/ODY-04+/LOWKEY/CRYPTO + G-01..03); future-gated items (CRYPTO-01..04 AEAD-at-rest, HERMES-11 PTY) have operator decisions recorded — ⏳ 2026-07-04: exactly ONE ADAPT box open (GOLD-ADAPT-OH-01, §9 apply-scope decision pending with Alex). Flips the moment OH-01 is ratified (option A) or built (option B).
+- [x] Full build + clippy + test green on Windows+MSVC: `cargo clippy -p neothd --tests --no-deps -- -D warnings` exits 0; `cargo test -p neothd --lib` exits 0 — ✅ 2026-07-04 evidence: clippy `-D warnings` CLIPPY_EXIT=0 (5 runs this session) + full lib suite 9868 passed / 0 failed (4 full runs: 9846→9847→9863→9868); CI matrix additionally running per-push.
+- [x] `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neothd --lib cli_commands_md_is_up_to_date` exits 0 (no CLI doc drift) — ✅ 2026-07-04 evidence: regen run TEST_EXIT=0 (docs/cli-commands.md regenerated for `neoth dictate`) and the drift test passes inside every full-suite run since.
+- [x] README/docs honesty pass merged (GOLD-HON-01..GOLD-HON-26 all done) — ✅ flipped 2026-07-04 (stale box, duplicates WS-B which is [x] 26/26).
+- [ ] Signed release artifacts exist (cargo-dist or manual) with sha256 companion hashes — ⏳ blocked on GOLD-PROG-13 operator action (minisign keypair on the release machine, §9).
 
 **WS-F (Gold-TODO features):** GOLD-FEAT-01..GOLD-FEAT-04 are v1.0-WIRE and must complete before tag. GOLD-FEAT-05..GOLD-FEAT-12 are v1.1 and ship after v1.0 tag. WS-G evaluations complete.
 

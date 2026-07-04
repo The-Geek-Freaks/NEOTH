@@ -315,6 +315,17 @@ impl HysteriaSupervisor {
                         let mut guard = child
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        // Error-hunt wave s4: re-check UNDER the lock.
+                        // Drop may have won the lock between our check
+                        // above and this acquisition (killed the old
+                        // child and exited) — storing now would leak the
+                        // fresh child with nobody left to kill it.
+                        if shutdown.load(Ordering::Acquire) {
+                            drop(guard);
+                            let _ = new_child.kill();
+                            let _ = new_child.wait();
+                            return;
+                        }
                         *guard = new_child;
                         tracing::info!("hysteria child respawned");
                     }

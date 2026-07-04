@@ -22,7 +22,6 @@
 //! so enabling the flag alone can't silently execute third-party code.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -50,16 +49,15 @@ impl RecursiveMasAdapter {
     /// Gate + consent-check + spawn. Errors are operator-actionable.
     pub fn spawn(cfg: &RecursiveMasConfig) -> Result<Self> {
         let home = crate::config::FreedomConfig::default_neoth_home();
-        // Probe VRAM only when the master switch is on (probe shells out
-        // to nvidia-smi/rocm-smi — pointless for the disabled early-exit).
-        let vram = if cfg.enabled {
-            crate::daemon::hardware::probe(&home).vram
-        } else {
-            None
-        };
-        crate::providers::recursive_mas::recursive_mas_available(cfg, vram.as_ref())
-            .map_err(|reason| anyhow::anyhow!("recursive_mas unavailable: {reason}"))?;
-
+        if !cfg.enabled {
+            anyhow::bail!(
+                "recursive_mas unavailable: {}",
+                crate::providers::recursive_mas::RmasUnavailableReason::Disabled
+            );
+        }
+        // Consent BEFORE the hardware probe (error-hunt wave s4): the
+        // probe shells out to nvidia-smi/rocm-smi — no subprocess work
+        // until the operator has acknowledged running third-party code.
         let marker = home.join(CONSENT_MARKER);
         if !marker.exists() {
             anyhow::bail!(
@@ -70,6 +68,9 @@ impl RecursiveMasAdapter {
                 marker.display()
             );
         }
+        let vram = crate::daemon::hardware::probe(&home).vram;
+        crate::providers::recursive_mas::recursive_mas_available(cfg, vram.as_ref())
+            .map_err(|reason| anyhow::anyhow!("recursive_mas unavailable: {reason}"))?;
 
         // The RMAS-02 gate guarantees sidecar_repo is Some + marker file present.
         let repo = cfg
@@ -90,7 +91,10 @@ impl RecursiveMasAdapter {
             .current_dir(repo)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            // stderr inherits the daemon's stderr: a crashing sidecar
+            // (import error, CUDA OOM) must leave a visible trace —
+            // Stdio::null() made respawn-after-crash undiagnosable.
+            .stderr(std::process::Stdio::inherit())
             .spawn()
             .with_context(|| {
                 format!(
@@ -173,10 +177,26 @@ impl Provider for RecursiveMasAdapter {
             }
             Ok(buf)
         });
-        let reply = tokio::time::timeout(SIDECAR_TIMEOUT, io)
-            .await
-            .map_err(|_| anyhow::anyhow!("sidecar timed out after {SIDECAR_TIMEOUT:?}"))?
-            .context("sidecar I/O task panicked")??;
+        let reply = match tokio::time::timeout(SIDECAR_TIMEOUT, io).await {
+            Ok(joined) => joined.context("sidecar I/O task panicked")??,
+            Err(_elapsed) => {
+                // Error-hunt wave s4: the blocking thread is still stuck
+                // in read_line HOLDING the stdout lock — spawn_blocking
+                // threads can't be aborted. Kill the child so read_line
+                // unblocks (EOF) and the lock frees; otherwise every
+                // later complete() queues on the lock forever and the
+                // blocking pool fills with stuck threads.
+                {
+                    let mut child = self.child.lock().unwrap_or_else(PoisonError::into_inner);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                anyhow::bail!(
+                    "sidecar timed out after {SIDECAR_TIMEOUT:?} — child killed \
+                     (adapter is dead; council falls back to standard hemispheres)"
+                );
+            }
+        };
 
         let text = parse_response_line(&reply)?;
         Ok(Completion {
@@ -194,12 +214,6 @@ impl Drop for RecursiveMasAdapter {
         let _ = child.kill();
         let _ = child.wait();
     }
-}
-
-/// True when the marker exists — shared helper for call sites that want
-/// to pre-check without constructing the adapter.
-pub fn consent_acknowledged(home: &Path) -> bool {
-    home.join(CONSENT_MARKER).exists()
 }
 
 #[cfg(test)]
@@ -244,11 +258,4 @@ mod tests {
         assert!(parse_response_line("{}").is_err());
     }
 
-    #[test]
-    fn consent_helper_reflects_marker_presence() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(!consent_acknowledged(dir.path()));
-        std::fs::write(dir.path().join(CONSENT_MARKER), "").unwrap();
-        assert!(consent_acknowledged(dir.path()));
-    }
 }

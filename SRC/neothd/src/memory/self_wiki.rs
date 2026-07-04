@@ -245,6 +245,7 @@ static CLI_COMMANDS: &[CliCmd] = &[
     CliCmd { id: "cron", description: "Operator cron job management." },
     CliCmd { id: "demo", description: "Demo and tour launcher." },
     CliCmd { id: "deps", description: "Dependency audit." },
+    CliCmd { id: "dictate", description: "Transcribe an audio file via the local STT pipeline." },
     CliCmd { id: "distill", description: "Distil insights from memory into facts." },
     CliCmd { id: "doctor", description: "System self-diagnosis." },
     CliCmd { id: "dream", description: "Dream (offline replay + enrichment) controller." },

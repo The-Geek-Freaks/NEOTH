@@ -139,13 +139,22 @@ fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
     // disabled HF downloads must not have this path reach out either.
     // (We can't know whether ITS cache is warm, so the gate is on the path.)
     if let Some(exe) = crate::media::stt_provider::faster_whisper_exe() {
-        // unwrap_or_default (NOT unwrap_or(true)): on config-load failure
-        // the gate must track the canonical field default, matching the
-        // candle path below — never independently hardcode permissive.
-        let allow_hf = crate::config::FreedomConfig::load_from_default_path()
-            .unwrap_or_default()
-            .updater
-            .allow_huggingface_downloads;
+        // FAIL-CLOSED on config-load failure (error-hunt wave s4): the
+        // serde default for allow_huggingface_downloads is `true`, so
+        // unwrap_or_default would silently re-open the air-gap exactly
+        // when the operator's `false` couldn't be read (file locked /
+        // mid-rotation). Skipping faster-whisper here only costs a
+        // fallthrough to the candle path.
+        let allow_hf = match crate::config::FreedomConfig::load_from_default_path() {
+            Ok(c) => c.updater.allow_huggingface_downloads,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "faster-whisper gate: freedom.yaml unreadable — failing CLOSED (candle path)"
+                );
+                false
+            }
+        };
         if allow_hf {
             if let Some((text, status)) = transcribe_via_faster_whisper(&exe, samples) {
                 return (text, status);
