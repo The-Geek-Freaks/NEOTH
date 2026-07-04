@@ -20,7 +20,7 @@
 
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade, NeothLineEdit } from "components.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
@@ -33,6 +33,8 @@ export { Theme }
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
 // surfaces presets in the Config tab too) — re-exported for Rust.
 export { PresetRow, ProfilePresetRow }
+// Wave-1 toast system — ToastData exported so Rust can push toasts.
+export { ToastData }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -140,6 +142,9 @@ export component MainWindow inherits Window {
     /// the naive `!= ""` check so the copy + the gate finally agree.
     in property <bool> operator-id-valid: false;
     in-out property <string> status-line: "";
+    // Wave-1 toast system. Rust pushes via push_toast(); expires via prune_toast().
+    // The ToastStack overlay renders this model in the shell area (top-right, z=70).
+    in-out property <[ToastData]> toasts: [];
     in property <string> hardware-summary: "";
     /// GOLD-ADAPT-OH-01 — prior-AI migration card body (welcome step).
     /// Empty = no canonical stores detected → card hidden.
@@ -2038,6 +2043,20 @@ export component MainWindow inherits Window {
         x: root.width - self.width - 24px;
         y: root.height - self.height - 24px;
         clicked => { root.buddy-clicked(); }
+    }
+
+    // ── Wave-1 toast overlay ───────────────────────────────────────────
+    // Top-right of the content area (right of sidebar), 78px from top,
+    // z-above the shell layout (declared after Buddy) but below the tour.
+    // Only visible in the shell steps; pointer-events are transparent in
+    // the gap between cards (ToastStack background is transparent).
+    // Design report: z-index 70, 290px wide, 78px top offset.
+    if (root.step == WizardStep.chat || root.step == WizardStep.settings)
+            && root.toasts.length > 0: ToastStack {
+        toasts: root.toasts;
+        x: root.width - self.width - 12px;
+        y: 78px;
+        // height is driven by content; no explicit height needed.
     }
 
     // ── GOLD-ADAPT-OH-12 — first-run guided tour ───────────────────────

@@ -29,6 +29,72 @@ use buddy_activity::GuiActivity;
 
 slint::include_modules!();
 
+// ── Wave-1 toast plumbing ─────────────────────────────────────────────────────
+//
+// push_toast appends a ToastData item to the MainWindow's `toasts` model and
+// starts a 6-second one-shot timer that calls prune_toast to remove it.
+// All mutations cross into the Slint event loop via invoke_from_event_loop.
+//
+// `kind`: "info" | "success" | "warn" | "consent"  (drives the Led colour)
+fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str, body: &str) {
+    use slint::Model as _; // ModelRc::iter
+    let title = title.to_string();
+    let body  = body.to_string();
+    let weak  = window.clone();
+
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        // Read current toasts, compute a fresh id, append.
+        let mut current: Vec<(i32, String, String, String)> = w
+            .get_toasts()
+            .iter()
+            .map(|t| (t.id, t.kind.to_string(), t.title.to_string(), t.body.to_string()))
+            .collect();
+        let id = panel_logic::next_toast_id(&current);
+        current.push((id, kind.to_string(), title.clone(), body.clone()));
+
+        let model: slint::VecModel<ToastData> = slint::VecModel::from(
+            current.iter().map(|(i, k, ti, b)| ToastData {
+                id: *i,
+                kind: k.as_str().into(),
+                title: ti.as_str().into(),
+                body: b.as_str().into(),
+            }).collect::<Vec<_>>()
+        );
+        w.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model)));
+
+        // 6-second expiry timer — fires once then removes the id.
+        let weak2 = w.as_weak();
+        let expiry = slint::Timer::default();
+        expiry.start(
+            slint::TimerMode::SingleShot,
+            std::time::Duration::from_millis(6000),
+            move || {
+                let Some(w2) = weak2.upgrade() else { return };
+                let remaining: Vec<(i32, String, String, String)> = w2
+                    .get_toasts()
+                    .iter()
+                    .map(|t| (t.id, t.kind.to_string(), t.title.to_string(), t.body.to_string()))
+                    .collect();
+                let pruned = panel_logic::prune_toast(remaining, id);
+                let model2: slint::VecModel<ToastData> = slint::VecModel::from(
+                    pruned.iter().map(|(i, k, ti, b)| ToastData {
+                        id: *i,
+                        kind: k.as_str().into(),
+                        title: ti.as_str().into(),
+                        body: b.as_str().into(),
+                    }).collect::<Vec<_>>()
+                );
+                w2.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model2)));
+            },
+        );
+        // Keep the timer alive — leak it into a thread-local so it survives
+        // the enclosing closure. Slint timers must be alive to fire.
+        std::mem::forget(expiry);
+    });
+}
+
+
 // ── Code Sessions tab — subprocess JSON envelopes ─────────────────────
 // Mirror of `KanbanSession` + `KanbanTask` in `neothd::coding::types`.
 // We re-declare them here (instead of depending on the daemon crate
@@ -190,6 +256,12 @@ fn main() -> Result<()> {
             "live"
         };
         let weak = weak_hw.clone();
+        let hw_for_toast = hw_summary.clone();
+        // Wave-1 call site B: toast on daemon error so the operator gets a
+        // top-right signal even if they are looking at the chat surface.
+        if led == "error" {
+            push_toast(&weak, "warn", "Daemon unreachable", &hw_for_toast);
+        }
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
                 w.set_hardware_summary(hw_summary.into());
@@ -1062,10 +1134,22 @@ fn main() -> Result<()> {
     let weak_preset_apply = window.as_weak();
     window.on_preset_apply_clicked(move || {
         let outcome = apply_active_preset_via_subprocess();
+        // Wave-1 call site A: toast mirrors the status-line result so
+        // the operator gets feedback even when not looking at the footer.
+        let (toast_kind, toast_title, toast_body) =
+            if outcome.to_lowercase().contains("error")
+                || outcome.to_lowercase().contains("fail")
+            {
+                ("warn", "Preset apply failed", outcome.as_str())
+            } else {
+                ("success", "Preset applied", outcome.as_str())
+            };
+        push_toast(&weak_preset_apply, toast_kind, toast_title, toast_body);
         let weak = weak_preset_apply.clone();
+        let outcome2 = outcome.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
-                w.set_status_line(outcome.into());
+                w.set_status_line(outcome2.into());
                 // Force-refresh the preset summary so the active
                 // marker reflects any change without waiting for
                 // the next 5-minute tick.

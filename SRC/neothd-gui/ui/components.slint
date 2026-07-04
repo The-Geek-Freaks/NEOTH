@@ -491,6 +491,147 @@ export component SovereignFade inherits Rectangle {
     }
 }
 
+// ── EntranceFade ─────────────────────────────────────────────────────
+// Wave-1 primitive. Mirrors CSS `nh-in` keyframe intent:
+//   opacity 0→1, 500ms cubic-bezier(0.16,1,0.3,1).
+//
+// Slint 1.8 layout constraint: `x`/`y` set on a child of VerticalLayout /
+// HorizontalLayout are overridden by the layout engine — the offset part of
+// `nh-in` (translateY 10px→0) cannot be expressed on a layout child.
+// The component therefore animates opacity only when placed inside a layout.
+// For absolute overlays (not in a layout) the caller may also set `y` to
+// create the offset effect — the opacity animation still fires via `init`.
+// Exit fades are NOT possible in Slint 1.8 (unmount precedes animation).
+export component EntranceFade inherits Rectangle {
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+}
+
+// ── SideIn ───────────────────────────────────────────────────────────
+// Wave-1 primitive. Mirrors CSS `nh-side-in` keyframe intent:
+//   opacity 0→1, 440ms cubic-bezier(0.16,1,0.3,1).
+//
+// Same Slint 1.8 layout constraint as EntranceFade: the translateX(22px→0)
+// part of nh-side-in cannot fire on a layout child. The component animates
+// opacity only. For absolute-position callers, pair with a manual `x` bind.
+export component SideIn inherits Rectangle {
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-side-in; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+}
+
+// ── ToastData struct ─────────────────────────────────────────────────
+// Wire type shared between components.slint and main.slint (and Rust).
+// `kind` drives the coloured led:
+//   "info"    → audit cyan
+//   "success" → accent green
+//   "warn"    → warning amber
+//   "consent" → consent pink
+export struct ToastData {
+    id: int,
+    kind: string,      // "info" | "success" | "warn" | "consent"
+    title: string,
+    body: string,
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────
+// Single glass-card toast. Slides in from the right (x +30px→0), drains
+// a 2px progress bar over duration-toast-life.
+//
+// Rust owns lifetime: it appends via push_toast() and removes via
+// prune_toast() after 6 s (matches duration-toast-life exactly).
+// No click-to-dismiss is wired here — operator clicks the overlapping
+// area transparently unless they land on the card itself.
+component Toast inherits Rectangle {
+    in property <ToastData> data;
+
+    // led colour by kind
+    property <color> led-color:
+        root.data.kind == "success" ? Theme.accent
+        : root.data.kind == "warn"  ? Theme.warning
+        : root.data.kind == "consent" ? Theme.consent
+        : Theme.audit;                              // "info" default
+
+    width: 290px;
+    // height driven by content
+    border-radius: Theme.radius-md;           // 11px — matches "Medium card"
+    background: Theme.surface-glass;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    clip: true;
+
+    // Fade-in on mount. The CSS nh-toast-in translateX(30px→0) cannot fire
+    // because Toast is a VerticalLayout child — the layout engine owns `x`.
+    // Opacity-only fade is the correct Slint 1.8 equivalent.
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-toast-in; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+    VerticalLayout {
+        padding: 12px; spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 8px; alignment: start;
+            // Coloured led dot (4px, matching Led primitive radius).
+            Rectangle {
+                width: 6px; height: 6px; border-radius: 3px;
+                background: root.led-color;
+                y: (16px - self.height) / 2;   // vertically centred against title
+            }
+            Text {
+                text: root.data.title;
+                color: Theme.text-primary;
+                font-family: Theme.font-sans;
+                font-size: 12px;
+                font-weight: Theme.weight-semibold;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+        }
+
+        if root.data.body != "": Text {
+            text: root.data.body;
+            color: Theme.text-secondary;
+            font-family: Theme.font-sans;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+
+    // 2px progress bar: width 100%→0 over duration-toast-life, linear.
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        border-radius: 1px;
+        background: root.led-color;
+        // Drain starts at full width; animate to 0 on init.
+        property <float> _drain: 1.0;
+        width: parent.width * self._drain;
+        init => { self._drain = 0; }
+        animate _drain { duration: Theme.duration-toast-life; easing: linear; }
+    }
+}
+
+// ── ToastStack ────────────────────────────────────────────────────────
+// Top-right overlay stack of Toasts, 290px wide, fixed position.
+// Caller provides `x`, `y` (typically right edge − 290px − 12px, 78px
+// from top) and the `toasts` model. Pointer-events pass through the
+// transparent gap between cards to content below.
+export component ToastStack inherits Rectangle {
+    in property <[ToastData]> toasts;
+
+    // Transparent background so only the cards themselves catch events.
+    background: transparent;
+    width: 290px;
+
+    VerticalLayout {
+        spacing: 8px; padding: 0px;
+        for t in root.toasts: Toast { data: t; }
+    }
+}
+
 // ── NeothComboBox ────────────────────────────────────────────────────
 // G-3 fix: dark-mode-compliant dropdown. Replaces `std-widgets::ComboBox`
 // which renders a platform-native (light-mode on Windows) background

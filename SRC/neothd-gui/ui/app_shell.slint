@@ -9,6 +9,24 @@ import { Theme } from "theme.slint";
 import { Buddy } from "buddy.slint";
 import { Led } from "components.slint";
 
+// Nav group header label — mono 8px, letter-spacing 2.4px (≈.24em on 10px),
+// uppercase, text-disabled, padding 12px 10px 5px. Only renders when at
+// least one child button is visible (caller wraps in `if`).
+component NavGroup inherits Rectangle {
+    in property <string> label;
+    height: 28px;
+    HorizontalLayout {
+        padding-left: 10px; padding-top: 12px; padding-bottom: 5px;
+        Text {
+            text: root.label;
+            color: Theme.text-disabled;
+            font-family: Theme.font-mono;
+            font-size: 8px;
+            letter-spacing: 2.4px;    // ≈ .24em on ~10px base
+        }
+    }
+}
+
 // One sidebar nav entry. `tier` tints the active state by meaning
 // (memory=green, consent=pink, default=accent-green), per the mockup.
 component NavBtn inherits Rectangle {
@@ -141,26 +159,47 @@ export component Sidebar inherits Rectangle {
                     letter-spacing: 1px;
                 }
                 Text {
-                    text: "v1.0 · SOVEREIGN"; color: Theme.text-tertiary;
-                    font-family: Theme.font-mono; font-size: 9px;
-                    letter-spacing: Theme.letter-spacing-wide;
+                    // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
+                    // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
+                    text: "v1.0 · sovereign"; color: Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: 8.5px;
+                    letter-spacing: Theme.letter-spacing-mono-caps;
                 }
             }
         }
 
-        // nav (filtered by complexity)
+        // nav (filtered by complexity) — Wave-1: structured into 3 named groups.
+        // Group labels only appear when ≥1 child is visible (gated by `if`).
+        // The CORE group always has Chat, so its label always shows. WORK and
+        // SYSTEM labels use `if` because all their children may be gated off
+        // at complexity 0 (minimal).
         Flickable {
             vertical-stretch: 1;
             VerticalLayout {
                 spacing: 2px;
+
+                // ── CORE ─────────────────────────────────────────────────
+                // Always visible: Chat is the primary surface.
+                NavGroup { label: "CORE"; }
                 NavBtn { label: "Chat"; glyph: "💬"; active: root.active-tab == "chat"; clicked => { root.nav("chat"); } }
-                NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
-                NavBtn { label: "Hemispheres"; glyph: "◐"; visible: root.complexity >= 1; active: root.active-tab == "hemispheres"; clicked => { root.nav("hemispheres"); } }
-                NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
+
+                // ── WORK ─────────────────────────────────────────────────
+                // Visible at complexity ≥ 1. The label is shown when any WORK
+                // item is visible (complexity >= 1 is the minimum gate).
+                if root.complexity >= 1: NavGroup { label: "WORK"; }
                 NavBtn { label: "Coding"; glyph: "⌘"; visible: root.complexity >= 1; active: root.active-tab == "coding"; clicked => { root.nav("coding"); } }
                 NavBtn { label: "Agents"; glyph: "⚇"; visible: root.complexity >= 2; active: root.active-tab == "agents"; clicked => { root.nav("agents"); } }
                 NavBtn { label: "Automation"; glyph: "⟳"; visible: root.complexity >= 2; active: root.active-tab == "automation"; clicked => { root.nav("automation"); } }
                 NavBtn { label: "Loops"; glyph: "∞"; visible: root.complexity >= 2 && root.show-loops; active: root.active-tab == "loops"; clicked => { root.nav("loops"); } }
+
+                // ── SYSTEM ───────────────────────────────────────────────
+                // Always has Memory (≥1), Hemispheres (≥1), Channels, Privacy,
+                // Plugins (≥2), Mesh (≥2), Resources (≥2), Doctor, Config.
+                // Label shows when complexity ≥ 1 (Memory/Hemispheres gate).
+                NavGroup { label: "SYSTEM"; }
+                NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
+                NavBtn { label: "Hemispheres"; glyph: "◐"; visible: root.complexity >= 1; active: root.active-tab == "hemispheres"; clicked => { root.nav("hemispheres"); } }
+                NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
                 NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }
                 NavBtn { label: "Plugins"; glyph: "⧉"; visible: root.complexity >= 2; active: root.active-tab == "plugins"; clicked => { root.nav("plugins"); } }
                 NavBtn { label: "Mesh"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }

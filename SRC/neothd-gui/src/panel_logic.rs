@@ -1635,6 +1635,25 @@ fn ticker_frame_over(messages: &[&'static str], tick: u64) -> &'static str {
     messages[0]
 }
 
+// ── Wave-1 toast helpers ─────────────────────────────────────────────────────
+// Pure functions so they are unit-testable without a Slint display or an event
+// loop. The Slint-facing plumbing (push_toast / Timer) lives in main.rs.
+
+/// Remove the toast with the given `id` from `toasts`. Returns the new vec.
+/// Called from the event-loop callback after the 6 s lifetime expires.
+pub fn prune_toast(toasts: Vec<(i32, String, String, String)>, id: i32)
+    -> Vec<(i32, String, String, String)>
+{
+    toasts.into_iter().filter(|(tid, _, _, _)| *tid != id).collect()
+}
+
+/// Allocate a fresh toast id that does not collide with any id in `toasts`.
+/// Deterministic: starts at 1, increments until a gap is found.
+pub fn next_toast_id(toasts: &[(i32, String, String, String)]) -> i32 {
+    let max = toasts.iter().map(|(id, _, _, _)| *id).max().unwrap_or(0);
+    max + 1
+}
+
 // GAP-04 — Format the raw stdout+stderr of `neoth recall <query>` into a
 // display string for the GUI. Pure: no I/O, no allocation from caller.
 //
@@ -2840,5 +2859,55 @@ mod tests {
     fn format_recall_output_trims_trailing_whitespace_from_result() {
         let out = format_recall_output("found it  \n\n", "", "q");
         assert_eq!(out, "found it");
+    }
+
+    // ── Wave-1 toast helpers ─────────────────────────────────────────────
+    type Toasts = Vec<(i32, String, String, String)>;
+
+    fn make_toast(id: i32, kind: &str, title: &str, body: &str) -> (i32, String, String, String) {
+        (id, kind.to_string(), title.to_string(), body.to_string())
+    }
+
+    #[test]
+    fn prune_toast_removes_matching_id() {
+        let toasts: Toasts = vec![
+            make_toast(1, "info", "A", ""),
+            make_toast(2, "success", "B", ""),
+            make_toast(3, "warn", "C", ""),
+        ];
+        let result = prune_toast(toasts, 2);
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|(id, _, _, _)| *id != 2));
+    }
+
+    #[test]
+    fn prune_toast_noop_when_id_absent() {
+        let toasts: Toasts = vec![make_toast(1, "info", "A", "")];
+        let result = prune_toast(toasts.clone(), 99);
+        assert_eq!(result, toasts);
+    }
+
+    #[test]
+    fn prune_toast_empty_input_stays_empty() {
+        let result = prune_toast(vec![], 1);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn next_toast_id_returns_one_on_empty() {
+        let result = next_toast_id(&[]);
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn next_toast_id_increments_past_max() {
+        let toasts = vec![make_toast(3, "info", "A", ""), make_toast(7, "warn", "B", "")];
+        assert_eq!(next_toast_id(&toasts), 8);
+    }
+
+    #[test]
+    fn next_toast_id_no_collision_single_item() {
+        let toasts = vec![make_toast(1, "info", "X", "")];
+        assert_eq!(next_toast_id(&toasts), 2);
     }
 }

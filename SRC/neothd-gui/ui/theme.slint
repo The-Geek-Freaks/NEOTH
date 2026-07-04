@@ -6,6 +6,12 @@
 // canonical (green=memory #00ff80, pink=consent #ff2a6d, cyan=audit #05d5ff) —
 // it supersedes the earlier desaturated emerald (#3ecf8e) experiment.
 //
+// Design Wave 1 additions (2026-07-04): full ds_colors.css semantic set
+// (bg-void/base/sunken, surface-1/2/3/glass, border subtle/default/strong/
+// accent, text hierarchy, accent/memory/audit/consent/warning tokens),
+// plus motion tokens (duration-toast-in, duration-toast-life,
+// duration-entrance, duration-side-in).
+//
 // Design language: neon-on-near-black. Three signal colours carry MEANING
 // everywhere — green = memory (primary/live), pink = consent (boundaries/alert),
 // cyan = audit (proof/info). Type: Space Grotesk (UI + display), Bodoni Moda
@@ -234,4 +240,11 @@ export global Theme {
     out property <duration> duration-slow:       380ms;
     out property <duration> duration-screen-min: 600ms;
     out property <duration> duration-slower:     640ms;
+    // Wave-1 motion primitives (nh-in / nh-side-in / nh-toast-in / nh-toast-bar).
+    // Names mirror the CSS keyframe names in the design report so cross-medium
+    // search yields the same intent.
+    out property <duration> duration-entrance:  500ms;  // nh-in: y-offset + opacity
+    out property <duration> duration-side-in:   440ms;  // nh-side-in: x-offset + opacity
+    out property <duration> duration-toast-in:  400ms;  // nh-toast-in: x-offset + opacity
+    out property <duration> duration-toast-life: 6000ms; // nh-toast-bar: progress drain
 }
