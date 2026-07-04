@@ -1,0 +1,371 @@
+// NEOTH — Babel Observer panel (Design Wave 4a).
+//
+// Displays the Babel temporal-fusion observer: enabled state, configuration,
+// granularity window counts, and recent windows with b_bottleneck + collapse info.
+//
+// Enable/Disable via NeothButton → callbacks back to Rust (shell neoth babel enable/disable).
+// Layout: EntranceFade > ScrollView > OBSERVER card + WINDOWS card.
+
+import { Theme } from "theme.slint";
+import { Card, Led, SegBar, EntranceFade, NeothButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire structs ──────────────────────────────────────────────────────────────
+
+/// One granularity-bucket row (from status.windows_by_granularity).
+export struct BabelGranRow {
+    window-secs: int,
+    count: int,
+    last-ts-end: string,
+}
+
+/// One recent window row (from `babel windows --n 12`).
+export struct BabelWindowRow {
+    id: string,
+    window-secs: int,
+    ts-start: string,
+    ts-end: string,
+    b-log: float,
+    b-mult: float,
+    b-bottleneck: float,   // 0.0 – 1.0, drives SegBar
+    collapse-kind: string, // "" when none
+}
+
+// ── Internal micro-components ─────────────────────────────────────────────────
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; spacing: 8px;
+        Text {
+            text: root.label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        Text {
+            text: root.value;
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    horizontal-alignment: right;
+}
+
+// Granularity row: window_secs label + count chip + last-ts-end.
+component GranRow inherits Rectangle {
+    in property <int>    window-secs;
+    in property <int>    count;
+    in property <string> last-ts-end;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; spacing: 8px;
+        Text {
+            text: root.window-secs >= 3600
+                ? "\{root.window-secs / 3600}h"
+                : root.window-secs >= 60
+                ? "\{root.window-secs / 60}m"
+                : "\{root.window-secs}s";
+            color: Theme.accent;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        Text {
+            text: "\{root.count} windows";
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.last-ts-end;
+            color: Theme.text-disabled;
+            font-family: Theme.font-mono;
+            font-size: 10px;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+}
+
+// Recent window row: id + bottleneck SegBar + collapse chip.
+component WindowRow inherits Rectangle {
+    in property <string> id;
+    in property <int>    window-secs;
+    in property <string> ts-start;
+    in property <string> ts-end;
+    in property <float>  b-bottleneck;  // 0.0 – 1.0
+    in property <string> collapse-kind; // "" = none
+
+    height: 52px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; spacing: 10px;
+        // Window id (mono, truncated display)
+        VerticalLayout {
+            width: 90px;
+            alignment: center;
+            Text {
+                text: root.id;
+                color: Theme.text-disabled;
+                font-family: Theme.font-mono;
+                font-size: 9px;
+                overflow: elide;
+            }
+            Text {
+                text: root.window-secs >= 3600
+                    ? "\{root.window-secs / 3600}h"
+                    : root.window-secs >= 60
+                    ? "\{root.window-secs / 60}m"
+                    : "\{root.window-secs}s";
+                color: Theme.text-secondary;
+                font-family: Theme.font-mono;
+                font-size: 10px;
+            }
+        }
+        // Bottleneck bar
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: "bottleneck";
+                color: Theme.text-disabled;
+                font-size: 9px;
+            }
+            SegBar {
+                fraction: root.b-bottleneck;
+                height: 6px;
+            }
+        }
+        // Collapse chip — only shown when collapse-kind is set
+        if root.collapse-kind != "": Rectangle {
+            width: 72px; height: 22px;
+            border-radius: Theme.radius-sm;
+            background: Theme.consent;
+            y: (parent.height - self.height) / 2;
+            Text {
+                text: root.collapse-kind;
+                color: #ffffff;
+                font-family: Theme.font-mono;
+                font-size: 9px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// ── Public component ──────────────────────────────────────────────────────────
+
+export component BabelView inherits Rectangle {
+    // OBSERVER status
+    in property <bool>   babel-enabled: false;
+    in property <string> babel-threshold: "";
+    in property <string> babel-epsilon: "";
+    in property <bool>   babel-federate: false;
+    in property <int>    babel-total-windows: 0;
+    in property <int>    babel-collapse-flagged: 0;
+
+    // Granularity breakdown
+    in property <[BabelGranRow]> babel-gran-rows: [];
+
+    // Recent windows
+    in property <[BabelWindowRow]> babel-window-rows: [];
+
+    // Refresh / control
+    in property <string> babel-refreshed-at: "";
+    callback babel-refresh-clicked();
+    callback babel-enable-clicked();
+    callback babel-disable-clicked();
+
+    background: transparent;
+
+    EntranceFade {
+        ScrollView {
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                min-height: 900px;
+
+                // ── HEADER ────────────────────────────────────────────────
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "◬  Babel Observer";
+                        color: Theme.text-primary;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 110px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.surface-2;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        TouchArea {
+                            clicked => { root.babel-refresh-clicked(); }
+                        }
+                        Text {
+                            text: "↻  Refresh";
+                            color: Theme.accent;
+                            font-size: Theme.font-size-sm;
+                            font-family: Theme.font-mono;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // ── OBSERVER CARD ─────────────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "OBSERVER"; }
+
+                        // Enabled LED + control buttons
+                        HorizontalLayout {
+                            height: 36px; spacing: 8px;
+                            Text {
+                                text: "enabled";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Led {
+                                state: root.babel-enabled ? "live" : "off";
+                            }
+                            NeothButton {
+                                label: "Enable";
+                                width: 72px; height: 28px;
+                                clicked => { root.babel-enable-clicked(); }
+                            }
+                            NeothButton {
+                                label: "Disable";
+                                width: 72px; height: 28px;
+                                clicked => { root.babel-disable-clicked(); }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        if root.babel-threshold != "": InfoRow {
+                            label: "threshold";
+                            value: root.babel-threshold;
+                        }
+                        if root.babel-epsilon != "": InfoRow {
+                            label: "epsilon calibrated";
+                            value: root.babel-epsilon;
+                        }
+                        InfoRow {
+                            label: "total windows";
+                            value: "\{root.babel-total-windows}";
+                        }
+                        InfoRow {
+                            label: "collapse flagged";
+                            value: "\{root.babel-collapse-flagged}";
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        // Federate state — pink-tinted note when off
+                        HorizontalLayout {
+                            height: 28px; spacing: 6px;
+                            Text {
+                                text: "federate";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: root.babel-federate ? "enabled" : "stays local";
+                                color: root.babel-federate ? Theme.text-primary : Theme.consent;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        if root.babel-gran-rows.length > 0: Rectangle {
+                            height: 1px; background: Theme.border-subtle;
+                        }
+
+                        if root.babel-gran-rows.length > 0: Kicker { label: "WINDOWS BY GRANULARITY"; }
+
+                        for gr in root.babel-gran-rows: GranRow {
+                            window-secs: gr.window-secs;
+                            count: gr.count;
+                            last-ts-end: gr.last-ts-end;
+                        }
+
+                        RefreshFooter { ts: root.babel-refreshed-at; }
+                    }
+                }
+
+                // ── RECENT WINDOWS CARD ───────────────────────────────────
+                if root.babel-window-rows.length > 0: Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "RECENT WINDOWS"; }
+
+                        for wr in root.babel-window-rows: WindowRow {
+                            id: wr.id;
+                            window-secs: wr.window-secs;
+                            ts-start: wr.ts-start;
+                            ts-end: wr.ts-end;
+                            b-bottleneck: wr.b-bottleneck;
+                            collapse-kind: wr.collapse-kind;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

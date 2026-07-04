@@ -1820,6 +1820,193 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── Design Wave 4a — n8n panel callbacks ─────────────────────────────────
+    {
+        let weak_n8n = window.as_weak();
+        window.on_n8n_refresh_clicked(move || {
+            let weak = weak_n8n.clone();
+            std::thread::spawn(move || {
+                refresh_n8n(weak);
+            });
+        });
+        // Fire once at startup so the panel is pre-populated.
+        let weak_n8n_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_n8n(weak_n8n_init);
+        });
+    }
+
+    // ── Design Wave 4a — Babel panel callbacks ────────────────────────────────
+    {
+        let weak_babel = window.as_weak();
+        window.on_babel_refresh_clicked(move || {
+            let weak = weak_babel.clone();
+            std::thread::spawn(move || {
+                refresh_babel(weak);
+            });
+        });
+
+        let weak_babel_en = window.as_weak();
+        window.on_babel_enable_clicked(move || {
+            let weak = weak_babel_en.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["babel", "enable"]);
+                let msg = if out.trim().is_empty() { "enabled".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "success", "Babel", &msg);
+                std::thread::spawn(move || refresh_babel(weak2));
+            });
+        });
+
+        let weak_babel_dis = window.as_weak();
+        window.on_babel_disable_clicked(move || {
+            let weak = weak_babel_dis.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["babel", "disable"]);
+                let msg = if out.trim().is_empty() { "disabled".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "info", "Babel", &msg);
+                std::thread::spawn(move || refresh_babel(weak2));
+            });
+        });
+    }
+
+    // ── Design Wave 4a — Calendar panel callbacks ─────────────────────────────
+    {
+        let weak_cal = window.as_weak();
+        window.on_cal_refresh_clicked(move || {
+            let weak = weak_cal.clone();
+            std::thread::spawn(move || {
+                refresh_calendar(weak);
+            });
+        });
+
+        let weak_cal_add = window.as_weak();
+        window.on_cal_add_clicked(move || {
+            let Some(w0) = weak_cal_add.upgrade() else { return };
+            let summary = w0.get_cal_add_summary().to_string();
+            let start   = w0.get_cal_add_start().to_string();
+            let end     = w0.get_cal_add_end().to_string();
+            if summary.trim().is_empty() || start.trim().is_empty() {
+                let _ = slint::invoke_from_event_loop({
+                    let weak = weak_cal_add.clone();
+                    move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_cal_add_result("summary and start are required".into());
+                        }
+                    }
+                });
+                return;
+            }
+            let weak = weak_cal_add.clone();
+            std::thread::spawn(move || {
+                let probe_args: Vec<String> = if end.trim().is_empty() {
+                    vec!["calendar".into(), "add".into(), summary.trim().to_string(),
+                         "--start".into(), start.trim().to_string()]
+                } else {
+                    vec!["calendar".into(), "add".into(), summary.trim().to_string(),
+                         "--start".into(), start.trim().to_string(),
+                         "--end".into(), end.trim().to_string()]
+                };
+                let probe_refs: Vec<&str> = probe_args.iter().map(String::as_str).collect();
+                let out = run_neothd_probe(&probe_refs);
+                let result = if out.trim().is_empty() { "Event added.".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_cal_add_result(result.as_str().into());
+                        w.set_cal_add_summary("".into());
+                        w.set_cal_add_start("".into());
+                        w.set_cal_add_end("".into());
+                    }
+                });
+                std::thread::spawn(move || refresh_calendar(weak2));
+            });
+        });
+
+        // Fire once at startup.
+        let weak_cal_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_calendar(weak_cal_init);
+        });
+    }
+
+    // ── Design Wave 4a — Self-Improve panel callbacks ─────────────────────────
+    {
+        let weak_si = window.as_weak();
+        window.on_si_refresh_clicked(move || {
+            let weak = weak_si.clone();
+            std::thread::spawn(move || {
+                refresh_selfimprove(weak);
+            });
+        });
+
+        let weak_si_en = window.as_weak();
+        window.on_si_enable_clicked(move || {
+            let weak = weak_si_en.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["self-improve", "enable"]);
+                let msg = if out.trim().is_empty() { "enabled".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "success", "Self-Improve", &msg);
+                std::thread::spawn(move || refresh_selfimprove(weak2));
+            });
+        });
+
+        let weak_si_dis = window.as_weak();
+        window.on_si_disable_clicked(move || {
+            let weak = weak_si_dis.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["self-improve", "disable"]);
+                let msg = if out.trim().is_empty() { "disabled".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "info", "Self-Improve", &msg);
+                std::thread::spawn(move || refresh_selfimprove(weak2));
+            });
+        });
+
+        let weak_si_dry = window.as_weak();
+        window.on_si_run_dry_clicked(move || {
+            let weak = weak_si_dry.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["self-improve", "run", "--dry-run"]);
+                push_toast(&weak, "info", "Self-Improve dry-run", out.trim());
+            });
+        });
+
+        let weak_si_acc = window.as_weak();
+        window.on_si_accept_clicked(move |id| {
+            let id = id.to_string();
+            let weak = weak_si_acc.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["self-improve", "accept", id.trim()]);
+                let msg = if out.trim().is_empty() { id.clone() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "consent", "Accepted", &msg);
+                std::thread::spawn(move || refresh_selfimprove(weak2));
+            });
+        });
+
+        let weak_si_rb = window.as_weak();
+        window.on_si_rollback_clicked(move |id| {
+            let id = id.to_string();
+            let weak = weak_si_rb.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["self-improve", "rollback", id.trim()]);
+                let msg = if out.trim().is_empty() { id.clone() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "warn", "Rolled back", &msg);
+                std::thread::spawn(move || refresh_selfimprove(weak2));
+            });
+        });
+
+        // Fire once at startup.
+        let weak_si_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_selfimprove(weak_si_init);
+        });
+    }
+
     // ── GOLD-LOOP-03 — Loop panel wiring (display-gated `gui-loop`) ────
     // The GUI never links the loop engine: runs go through a
     // `neothd loop run` subprocess (the CLI's daemon-owns-WAL guard fires
@@ -5223,7 +5410,7 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
 /// ODY-12 UI-control targets — must match `main.slint`'s nav values.
 /// A `nav` chip whose id is not in this list is ignored (prompt drift
 /// must not navigate somewhere undefined).
-pub const NAV_PANELS: [&str; 15] = [
+pub const NAV_PANELS: [&str; 19] = [
     "chat",
     "overview",
     "memory",
@@ -5239,6 +5426,11 @@ pub const NAV_PANELS: [&str; 15] = [
     "doctor",
     "loops",
     "config",
+    // Wave 4a
+    "n8n",
+    "babel",
+    "calendar",
+    "evolve",
 ];
 
 /// GOLD-ADAPT-ODY-12/14 — deep-link chips from the done-sentinel's
@@ -5858,6 +6050,161 @@ mod chat_subprocess_tests {
             "empty send must not clobber recall buffer"
         );
     }
+}
+
+// ── Design Wave 4a — n8n panel probe ─────────────────────────────────────────
+fn refresh_n8n(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let status_json    = run_neothd_probe(&["n8n", "status",    "--output", "json"]);
+    let workflows_json = run_neothd_probe(&["n8n", "workflows", "--output", "json"]);
+
+    let (installed, webhook_base, n8n_path) =
+        panel_logic::parse_n8n_status(&status_json);
+    let workflows = panel_logic::parse_n8n_workflows(&workflows_json);
+
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_n8n_installed(installed);
+        w.set_n8n_webhook_base(webhook_base.as_str().into());
+        w.set_n8n_path(n8n_path.as_str().into());
+        {
+            let rows: Vec<N8nWorkflow> = workflows
+                .into_iter()
+                .map(|(name, description)| N8nWorkflow {
+                    name: name.into(),
+                    description: description.into(),
+                })
+                .collect();
+            w.set_n8n_workflows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        }
+        w.set_n8n_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Design Wave 4a — Babel panel probe ───────────────────────────────────────
+fn refresh_babel(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let status_json  = run_neothd_probe(&["babel", "status",  "--output", "json"]);
+    let windows_json = run_neothd_probe(&["babel", "windows", "--n", "12", "--output", "json"]);
+
+    let (enabled, threshold, epsilon, federate, total_windows, collapse_flagged, gran_rows) =
+        panel_logic::parse_babel_status(&status_json);
+    let window_rows = panel_logic::parse_babel_windows(&windows_json);
+
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_babel_enabled(enabled);
+        w.set_babel_threshold(threshold.as_str().into());
+        w.set_babel_epsilon(epsilon.as_str().into());
+        w.set_babel_federate(federate);
+        w.set_babel_total_windows(total_windows);
+        w.set_babel_collapse_flagged(collapse_flagged);
+        {
+            let rows: Vec<BabelGranRow> = gran_rows
+                .into_iter()
+                .map(|(window_secs, count, last_ts_end)| BabelGranRow {
+                    window_secs,
+                    count,
+                    last_ts_end: last_ts_end.into(),
+                })
+                .collect();
+            w.set_babel_gran_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        }
+        {
+            let rows: Vec<BabelWindowRow> = window_rows
+                .into_iter()
+                .map(|(id, window_secs, ts_start, ts_end, b_log, b_mult, b_bottleneck, collapse_kind)| {
+                    BabelWindowRow {
+                        id: id.into(),
+                        window_secs,
+                        ts_start: ts_start.into(),
+                        ts_end: ts_end.into(),
+                        b_log,
+                        b_mult,
+                        b_bottleneck,
+                        collapse_kind: collapse_kind.into(),
+                    }
+                })
+                .collect();
+            w.set_babel_window_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        }
+        w.set_babel_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Design Wave 4a — Calendar panel probe ────────────────────────────────────
+fn refresh_calendar(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let cal_json = run_neothd_probe(&["calendar", "list", "--output", "json"]);
+
+    let (configured, events) = panel_logic::parse_calendar_events(&cal_json);
+
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_cal_configured(configured);
+        {
+            let rows: Vec<CalEventRow> = events
+                .into_iter()
+                .map(|(datetime, summary, location)| CalEventRow {
+                    datetime: datetime.into(),
+                    summary: summary.into(),
+                    location: location.into(),
+                })
+                .collect();
+            w.set_cal_events(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        }
+        w.set_cal_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Design Wave 4a — Self-Improve panel probe ─────────────────────────────────
+fn refresh_selfimprove(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let status_json  = run_neothd_probe(&["self-improve", "status", "--output", "json"]);
+    let review_json  = run_neothd_probe(&["self-improve", "review", "--output", "json"]);
+    let log_json     = run_neothd_probe(&["self-improve", "log",    "--output", "json"]);
+
+    let (si_enabled, si_auto, si_skillopt, si_last, si_autonomy) =
+        panel_logic::parse_selfimprove_status(&status_json);
+    let proposals = panel_logic::parse_selfimprove_proposals(&review_json);
+    let log_rows  = panel_logic::parse_selfimprove_log(&log_json);
+
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_si_enabled(si_enabled);
+        w.set_si_auto(si_auto);
+        w.set_si_skillopt_installed(si_skillopt);
+        w.set_si_last_run(si_last.as_str().into());
+        w.set_si_autonomy(si_autonomy.as_str().into());
+        {
+            let rows: Vec<SiProposalRow> = proposals
+                .into_iter()
+                .map(|(id, title, description)| SiProposalRow {
+                    id: id.into(),
+                    title: title.into(),
+                    description: description.into(),
+                })
+                .collect();
+            w.set_si_proposals(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        }
+        {
+            let rows: Vec<SiLogRow> = log_rows
+                .into_iter()
+                .map(|(id, title, status, ts_entry)| SiLogRow {
+                    id: id.into(),
+                    title: title.into(),
+                    status: status.into(),
+                    ts: ts_entry.into(),
+                })
+                .collect();
+            w.set_si_log(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        }
+        w.set_si_refreshed_at(ts.as_str().into());
+    });
 }
 
 // ── Overview / Mission Control probe (Design Wave 3) ─────────────────────────
@@ -7022,8 +7369,9 @@ mod deep_link_tests {
     fn nav_panels_list_matches_slint_nav_values() {
         // Drift guard: main.slint's nav-active values. A chip id outside
         // this list is ignored by the click handler.
-        assert_eq!(NAV_PANELS.len(), 15);
-        for p in ["chat", "overview", "coding", "memory", "config", "loops"] {
+        assert_eq!(NAV_PANELS.len(), 19);
+        for p in ["chat", "overview", "coding", "memory", "config", "loops",
+                  "n8n", "babel", "calendar", "evolve"] {
             assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
         }
     }

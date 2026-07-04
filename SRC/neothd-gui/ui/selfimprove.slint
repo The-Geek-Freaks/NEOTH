@@ -1,0 +1,390 @@
+// NEOTH — Self-Improvement panel (Design Wave 4a).
+//
+// Displays self-improve status, pending proposals (with per-row Accept/Rollback),
+// history log (capped 10), and top-level Enable/Disable/Run dry-run controls.
+//
+// Consent-pink accents on accept actions (operator authorization theme).
+// Layout: EntranceFade > ScrollView > STATUS card + PENDING card + HISTORY card.
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire structs ──────────────────────────────────────────────────────────────
+
+/// One pending proposal row (from `self-improve review --output json`).
+export struct SiProposalRow {
+    id: string,
+    title: string,
+    description: string,
+}
+
+/// One history log row (from `self-improve log --output json`).
+export struct SiLogRow {
+    id: string,
+    title: string,
+    status: string,   // "accepted" | "rolled-back" | "pending" | …
+    ts: string,
+}
+
+// ── Internal micro-components ─────────────────────────────────────────────────
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; spacing: 8px;
+        Text {
+            text: root.label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        Text {
+            text: root.value;
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    horizontal-alignment: right;
+}
+
+// One proposal card: id + title + description + Accept + Rollback buttons.
+// Accept uses consent-pink accent (operator authorization action).
+component ProposalCard inherits Rectangle {
+    in property <string> proposal-id;
+    in property <string> title;
+    in property <string> description;
+    callback accept-clicked();
+    callback rollback-clicked();
+
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding: 12px; spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                Text {
+                    text: root.title;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-sm;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                if root.description != "": Text {
+                    text: root.description;
+                    color: Theme.text-secondary;
+                    font-size: 10px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.proposal-id;
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: 9px;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: end; spacing: 8px;
+            // Accept — consent-pink backing (authorization action)
+            Rectangle {
+                width: 80px; height: 28px;
+                border-radius: Theme.radius-md;
+                background: Theme.consent;
+                TouchArea {
+                    clicked => { root.accept-clicked(); }
+                }
+                Text {
+                    text: "Accept";
+                    color: #ffffff;
+                    font-size: Theme.font-size-sm;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            NeothButton {
+                label: "Rollback";
+                width: 84px; height: 28px;
+                clicked => { root.rollback-clicked(); }
+            }
+        }
+    }
+}
+
+// One history log row: id chip + title + status + ts.
+component LogRow inherits Rectangle {
+    in property <string> log-id;
+    in property <string> title;
+    in property <string> status;
+    in property <string> ts;
+
+    height: 40px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; spacing: 8px;
+        Text {
+            text: root.title;
+            color: Theme.text-primary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.status;
+            color: root.status == "accepted" ? Theme.accent
+                : root.status == "rolled-back" ? Theme.consent
+                : Theme.text-secondary;
+            font-family: Theme.font-mono;
+            font-size: 10px;
+            vertical-alignment: center;
+            width: 90px;
+            horizontal-alignment: right;
+        }
+        Text {
+            text: root.ts;
+            color: Theme.text-disabled;
+            font-family: Theme.font-mono;
+            font-size: 9px;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+}
+
+// ── Public component ──────────────────────────────────────────────────────────
+
+export component SelfImproveView inherits Rectangle {
+    // STATUS props
+    in property <bool>   si-enabled: false;
+    in property <bool>   si-auto: false;
+    in property <bool>   si-skillopt-installed: false;
+    in property <string> si-last-run: "";
+    in property <string> si-autonomy: "";
+
+    // PENDING proposals
+    in property <[SiProposalRow]> si-proposals: [];
+
+    // HISTORY log (capped 10 by Rust)
+    in property <[SiLogRow]> si-log: [];
+
+    // Refresh + control callbacks
+    in property <string> si-refreshed-at: "";
+    callback si-refresh-clicked();
+    callback si-enable-clicked();
+    callback si-disable-clicked();
+    callback si-run-dry-clicked();
+    callback si-accept-clicked(string);    // proposal id
+    callback si-rollback-clicked(string);  // proposal id
+
+    background: transparent;
+
+    EntranceFade {
+        ScrollView {
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                min-height: 1000px;
+
+                // ── HEADER ────────────────────────────────────────────────
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "✦  Self-Improvement";
+                        color: Theme.text-primary;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 110px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.surface-2;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        TouchArea {
+                            clicked => { root.si-refresh-clicked(); }
+                        }
+                        Text {
+                            text: "↻  Refresh";
+                            color: Theme.accent;
+                            font-size: Theme.font-size-sm;
+                            font-family: Theme.font-mono;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // ── STATUS CARD ───────────────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "STATUS"; }
+
+                        HorizontalLayout {
+                            height: 36px; spacing: 8px;
+                            Text {
+                                text: "enabled";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Led { state: root.si-enabled ? "live" : "off"; }
+                            NeothButton {
+                                label: "Enable";
+                                width: 72px; height: 28px;
+                                clicked => { root.si-enable-clicked(); }
+                            }
+                            NeothButton {
+                                label: "Disable";
+                                width: 72px; height: 28px;
+                                clicked => { root.si-disable-clicked(); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            height: 36px; spacing: 8px;
+                            Text {
+                                text: "auto";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Led { state: root.si-auto ? "live" : "off"; }
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        HorizontalLayout {
+                            height: 36px; spacing: 8px;
+                            Text {
+                                text: "skillopt installed";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Led { state: root.si-skillopt-installed ? "live" : "off"; }
+                        }
+
+                        if root.si-autonomy != "": InfoRow {
+                            label: "autonomy level";
+                            value: root.si-autonomy;
+                        }
+                        if root.si-last-run != "": InfoRow {
+                            label: "last run";
+                            value: root.si-last-run;
+                            value-color: Theme.text-secondary;
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        // Run dry-run button row
+                        HorizontalLayout {
+                            alignment: end;
+                            NeothButton {
+                                label: "Run (dry-run)";
+                                width: 130px; height: 32px;
+                                clicked => { root.si-run-dry-clicked(); }
+                            }
+                        }
+
+                        RefreshFooter { ts: root.si-refreshed-at; }
+                    }
+                }
+
+                // ── PENDING PROPOSALS CARD ────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "PENDING PROPOSALS"; }
+
+                        if root.si-proposals.length == 0: Rectangle {
+                            height: 48px;
+                            Text {
+                                text: "no pending proposals";
+                                color: Theme.text-disabled;
+                                font-size: Theme.font-size-sm;
+                                font-family: Theme.font-mono;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        for p in root.si-proposals: ProposalCard {
+                            proposal-id: p.id;
+                            title: p.title;
+                            description: p.description;
+                            accept-clicked => { root.si-accept-clicked(p.id); }
+                            rollback-clicked => { root.si-rollback-clicked(p.id); }
+                        }
+                    }
+                }
+
+                // ── HISTORY CARD ──────────────────────────────────────────
+                if root.si-log.length > 0: Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "HISTORY (last 10)"; }
+
+                        for entry in root.si-log: LogRow {
+                            log-id: entry.id;
+                            title: entry.title;
+                            status: entry.status;
+                            ts: entry.ts;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

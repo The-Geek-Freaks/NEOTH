@@ -1,0 +1,234 @@
+// NEOTH — n8n Automation Bridge panel (Design Wave 4a).
+//
+// Displays n8n installation status and bundled workflow list.
+// Read-only: no live n8n REST calls from this panel; trigger via n8n UI.
+//
+// Layout: EntranceFade > ScrollView > two Cards (STATUS, WORKFLOWS).
+// Visual language: Wave-3 idioms — Kicker, InfoRow, Led, Card, RefreshFooter.
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire structs ──────────────────────────────────────────────────────────────
+
+export struct N8nWorkflow {
+    name: string,
+    description: string,
+}
+
+// ── Internal micro-components (Wave-3 idioms) ─────────────────────────────────
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; spacing: 8px;
+        Text {
+            text: root.label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        Text {
+            text: root.value;
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    horizontal-alignment: right;
+}
+
+// One workflow row: name (primary) + description (tertiary).
+component WorkflowRow inherits Rectangle {
+    in property <string> name;
+    in property <string> description;
+
+    height: description != "" ? 52px : 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding-left: 12px; padding-right: 12px;
+        padding-top: 6px; padding-bottom: 6px;
+        spacing: 2px;
+        Text {
+            text: root.name;
+            color: Theme.text-primary;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+        }
+        if root.description != "": Text {
+            text: root.description;
+            color: Theme.text-disabled;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// ── Public component ──────────────────────────────────────────────────────────
+
+export component N8nView inherits Rectangle {
+    // STATUS props
+    in property <bool>   n8n-installed: false;
+    in property <string> n8n-webhook-base: "";
+    in property <string> n8n-path: "";
+
+    // WORKFLOWS props
+    in property <[N8nWorkflow]> n8n-workflows: [];
+
+    // Refresh timestamp + callback
+    in property <string> n8n-refreshed-at: "";
+    callback n8n-refresh-clicked();
+
+    background: transparent;
+
+    EntranceFade {
+        ScrollView {
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                // Explicit height required inside a stretched ScrollView
+                // (Slint 1.8 layout rule).
+                min-height: 700px;
+
+                // ── HEADER ────────────────────────────────────────────────
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "⧉  Automation Bridge";
+                        color: Theme.text-primary;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 110px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.surface-2;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        TouchArea {
+                            clicked => { root.n8n-refresh-clicked(); }
+                        }
+                        Text {
+                            text: "↻  Refresh";
+                            color: Theme.accent;
+                            font-size: Theme.font-size-sm;
+                            font-family: Theme.font-mono;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // ── STATUS CARD ───────────────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "N8N STATUS"; }
+
+                        // Installed LED row
+                        HorizontalLayout {
+                            height: 36px; spacing: 8px;
+                            Text {
+                                text: "installed";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Led {
+                                state: root.n8n-installed ? "live" : "error";
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        if root.n8n-webhook-base != "": InfoRow {
+                            label: "webhook base";
+                            value: root.n8n-webhook-base;
+                            value-color: Theme.text-primary;
+                        }
+                        if root.n8n-path != "": InfoRow {
+                            label: "binary path";
+                            value: root.n8n-path;
+                            value-color: Theme.text-secondary;
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        Text {
+                            text: "Trigger workflows from the n8n UI — this panel is read-only.";
+                            color: Theme.text-disabled;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+
+                        RefreshFooter { ts: root.n8n-refreshed-at; }
+                    }
+                }
+
+                // ── WORKFLOWS CARD ────────────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "BUNDLED WORKFLOWS"; }
+
+                        if root.n8n-workflows.length == 0: Rectangle {
+                            height: 48px;
+                            Text {
+                                text: "no bundled workflows";
+                                color: Theme.text-disabled;
+                                font-size: Theme.font-size-sm;
+                                font-family: Theme.font-mono;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        for wf in root.n8n-workflows: WorkflowRow {
+                            name: wf.name;
+                            description: wf.description;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

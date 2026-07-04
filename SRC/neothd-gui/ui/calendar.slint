@@ -1,0 +1,229 @@
+// NEOTH — Calendar panel (Design Wave 4a).
+//
+// Shows upcoming events from `neoth calendar list --output json` and provides
+// a minimal ADD EVENT form (summary + ISO start/end). CalDAV unconfigured →
+// degraded hint card instead of empty state.
+//
+// Layout: EntranceFade > ScrollView > NEXT EVENTS card + ADD EVENT card.
+
+import { Theme } from "theme.slint";
+import { Card, EntranceFade, NeothButton, NeothLineEdit } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire structs ──────────────────────────────────────────────────────────────
+
+export struct CalEventRow {
+    datetime: string,   // formatted date/time mono string
+    summary: string,
+    location: string,   // "" when absent
+}
+
+// ── Internal micro-components ─────────────────────────────────────────────────
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    horizontal-alignment: right;
+}
+
+// One event row: date-mono + summary + optional location.
+component EventRow inherits Rectangle {
+    in property <string> datetime;
+    in property <string> summary;
+    in property <string> location;
+
+    height: root.location != "" ? 58px : 40px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; spacing: 10px;
+        // Date/time badge
+        Text {
+            text: root.datetime;
+            color: Theme.accent;
+            font-family: Theme.font-mono;
+            font-size: 10px;
+            vertical-alignment: center;
+            width: 110px;
+        }
+        VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            Text {
+                text: root.summary;
+                color: Theme.text-primary;
+                font-size: Theme.font-size-sm;
+                overflow: elide;
+            }
+            if root.location != "": Text {
+                text: root.location;
+                color: Theme.text-disabled;
+                font-size: 10px;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+// ── Public component ──────────────────────────────────────────────────────────
+
+export component CalendarView inherits Rectangle {
+    // NEXT EVENTS props
+    in property <bool>           cal-configured: true;
+    in property <[CalEventRow]>  cal-events: [];
+
+    // ADD EVENT form
+    in-out property <string> cal-add-summary: "";
+    in-out property <string> cal-add-start: "";
+    in-out property <string> cal-add-end: "";
+    in property  <string>    cal-add-result: "";   // "" | success msg | error msg
+
+    // Refresh
+    in property <string> cal-refreshed-at: "";
+    callback cal-refresh-clicked();
+    callback cal-add-clicked();
+
+    background: transparent;
+
+    EntranceFade {
+        ScrollView {
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                min-height: 700px;
+
+                // ── HEADER ────────────────────────────────────────────────
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "▦  Calendar";
+                        color: Theme.text-primary;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 110px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.surface-2;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        TouchArea {
+                            clicked => { root.cal-refresh-clicked(); }
+                        }
+                        Text {
+                            text: "↻  Refresh";
+                            color: Theme.accent;
+                            font-size: Theme.font-size-sm;
+                            font-family: Theme.font-mono;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // ── NOT CONFIGURED hint card ──────────────────────────────
+                if !root.cal-configured: Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 6px;
+                        Text {
+                            text: "CalDAV not configured";
+                            color: Theme.consent;
+                            font-size: Theme.font-size-sm;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "Set calendar.caldav_url + credentials in freedom.yaml to enable calendar sync.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-size-sm;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // ── NEXT EVENTS CARD ──────────────────────────────────────
+                if root.cal-configured: Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "NEXT EVENTS"; }
+
+                        if root.cal-events.length == 0: Rectangle {
+                            height: 48px;
+                            Text {
+                                text: "no upcoming events";
+                                color: Theme.text-disabled;
+                                font-size: Theme.font-size-sm;
+                                font-family: Theme.font-mono;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        for ev in root.cal-events: EventRow {
+                            datetime: ev.datetime;
+                            summary: ev.summary;
+                            location: ev.location;
+                        }
+
+                        RefreshFooter { ts: root.cal-refreshed-at; }
+                    }
+                }
+
+                // ── ADD EVENT CARD ────────────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 10px;
+
+                        Kicker { label: "ADD EVENT"; }
+
+                        NeothLineEdit {
+                            placeholder-text: "Summary";
+                            text <=> root.cal-add-summary;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "Start (ISO 8601 — 2026-07-04T09:00:00)";
+                            text <=> root.cal-add-start;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "End (ISO 8601 — 2026-07-04T10:00:00)";
+                            text <=> root.cal-add-end;
+                        }
+
+                        HorizontalLayout {
+                            alignment: end;
+                            NeothButton {
+                                label: "Add Event";
+                                width: 110px; height: 32px;
+                                clicked => { root.cal-add-clicked(); }
+                            }
+                        }
+
+                        if root.cal-add-result != "": Text {
+                            text: root.cal-add-result;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-size-sm;
+                            font-family: Theme.font-mono;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

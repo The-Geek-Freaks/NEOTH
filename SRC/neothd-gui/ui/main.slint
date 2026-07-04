@@ -28,6 +28,11 @@ import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
 import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
+// Design Wave 4a — new real-data panels.
+import { N8nView, N8nWorkflow } from "n8n.slint";
+import { BabelView, BabelGranRow, BabelWindowRow } from "babel.slint";
+import { CalendarView, CalEventRow } from "calendar.slint";
+import { SelfImproveView, SiProposalRow, SiLogRow } from "selfimprove.slint";
 import { ActivitySidecar, ActivityRow } from "activity.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 export { Theme }
@@ -380,6 +385,55 @@ export component MainWindow inherits Window {
     in property <string> ov-refreshed-at: "";
     callback overview-refresh-clicked();
 
+    // ── Wave 4a — n8n panel ────────────────────────────────────────────────────
+    in property <bool>   n8n-installed: false;
+    in property <string> n8n-webhook-base: "";
+    in property <string> n8n-path: "";
+    in property <[N8nWorkflow]> n8n-workflows: [];
+    in property <string> n8n-refreshed-at: "";
+    callback n8n-refresh-clicked();
+
+    // ── Wave 4a — Babel panel ─────────────────────────────────────────────────
+    in property <bool>   babel-enabled: false;
+    in property <string> babel-threshold: "";
+    in property <string> babel-epsilon: "";
+    in property <bool>   babel-federate: false;
+    in property <int>    babel-total-windows: 0;
+    in property <int>    babel-collapse-flagged: 0;
+    in property <[BabelGranRow]>    babel-gran-rows: [];
+    in property <[BabelWindowRow]>  babel-window-rows: [];
+    in property <string> babel-refreshed-at: "";
+    callback babel-refresh-clicked();
+    callback babel-enable-clicked();
+    callback babel-disable-clicked();
+
+    // ── Wave 4a — Calendar panel ──────────────────────────────────────────────
+    in property <bool>            cal-configured: true;
+    in property <[CalEventRow]>   cal-events: [];
+    in-out property <string>      cal-add-summary: "";
+    in-out property <string>      cal-add-start: "";
+    in-out property <string>      cal-add-end: "";
+    in property <string>          cal-add-result: "";
+    in property <string>          cal-refreshed-at: "";
+    callback cal-refresh-clicked();
+    callback cal-add-clicked();
+
+    // ── Wave 4a — Self-Improve panel ──────────────────────────────────────────
+    in property <bool>   si-enabled: false;
+    in property <bool>   si-auto: false;
+    in property <bool>   si-skillopt-installed: false;
+    in property <string> si-last-run: "";
+    in property <string> si-autonomy: "";
+    in property <[SiProposalRow]> si-proposals: [];
+    in property <[SiLogRow]>      si-log: [];
+    in property <string>          si-refreshed-at: "";
+    callback si-refresh-clicked();
+    callback si-enable-clicked();
+    callback si-disable-clicked();
+    callback si-run-dry-clicked();
+    callback si-accept-clicked(string);
+    callback si-rollback-clicked(string);
+
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
     property <string> shell-title:
@@ -397,6 +451,10 @@ export component MainWindow inherits Window {
         : root.nav-active == "resources"   ? "Resources"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
+        : root.nav-active == "n8n"         ? "Automation Bridge"
+        : root.nav-active == "babel"       ? "Babel Observer"
+        : root.nav-active == "calendar"    ? "Calendar"
+        : root.nav-active == "evolve"      ? "Self-Improvement"
         : "Config";
 
     /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
@@ -1818,7 +1876,9 @@ export component MainWindow inherits Window {
                         && root.nav-active != "overview"
                         && root.nav-active != "agents" && root.nav-active != "automation"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
-                        && root.nav-active != "loops"): SettingsView {
+                        && root.nav-active != "loops"
+                        && root.nav-active != "n8n" && root.nav-active != "babel"
+                        && root.nav-active != "calendar" && root.nav-active != "evolve"): SettingsView {
                     active: root.nav-active == "memory" ? SettingsTab.memory
                         : root.nav-active == "hemispheres" ? SettingsTab.hemispheres
                         : root.nav-active == "channels" ? SettingsTab.channels
@@ -2096,6 +2156,63 @@ export component MainWindow inherits Window {
                     kill-clicked => { root.loop-kill-clicked(); }
                     refresh-clicked => { root.loop-refresh-clicked(); }
                     run-selected(id) => { root.loop-run-selected(id); }
+                }
+
+                // Design Wave 4a — n8n Automation Bridge.
+                if root.nav-active == "n8n": N8nView {
+                    n8n-installed: root.n8n-installed;
+                    n8n-webhook-base: root.n8n-webhook-base;
+                    n8n-path: root.n8n-path;
+                    n8n-workflows: root.n8n-workflows;
+                    n8n-refreshed-at: root.n8n-refreshed-at;
+                    n8n-refresh-clicked => { root.n8n-refresh-clicked(); }
+                }
+
+                // Design Wave 4a — Babel Observer.
+                if root.nav-active == "babel": BabelView {
+                    babel-enabled: root.babel-enabled;
+                    babel-threshold: root.babel-threshold;
+                    babel-epsilon: root.babel-epsilon;
+                    babel-federate: root.babel-federate;
+                    babel-total-windows: root.babel-total-windows;
+                    babel-collapse-flagged: root.babel-collapse-flagged;
+                    babel-gran-rows: root.babel-gran-rows;
+                    babel-window-rows: root.babel-window-rows;
+                    babel-refreshed-at: root.babel-refreshed-at;
+                    babel-refresh-clicked => { root.babel-refresh-clicked(); }
+                    babel-enable-clicked => { root.babel-enable-clicked(); }
+                    babel-disable-clicked => { root.babel-disable-clicked(); }
+                }
+
+                // Design Wave 4a — Calendar.
+                if root.nav-active == "calendar": CalendarView {
+                    cal-configured: root.cal-configured;
+                    cal-events: root.cal-events;
+                    cal-add-summary <=> root.cal-add-summary;
+                    cal-add-start <=> root.cal-add-start;
+                    cal-add-end <=> root.cal-add-end;
+                    cal-add-result: root.cal-add-result;
+                    cal-refreshed-at: root.cal-refreshed-at;
+                    cal-refresh-clicked => { root.cal-refresh-clicked(); }
+                    cal-add-clicked => { root.cal-add-clicked(); }
+                }
+
+                // Design Wave 4a — Self-Improvement.
+                if root.nav-active == "evolve": SelfImproveView {
+                    si-enabled: root.si-enabled;
+                    si-auto: root.si-auto;
+                    si-skillopt-installed: root.si-skillopt-installed;
+                    si-last-run: root.si-last-run;
+                    si-autonomy: root.si-autonomy;
+                    si-proposals: root.si-proposals;
+                    si-log: root.si-log;
+                    si-refreshed-at: root.si-refreshed-at;
+                    si-refresh-clicked => { root.si-refresh-clicked(); }
+                    si-enable-clicked => { root.si-enable-clicked(); }
+                    si-disable-clicked => { root.si-disable-clicked(); }
+                    si-run-dry-clicked => { root.si-run-dry-clicked(); }
+                    si-accept-clicked(id) => { root.si-accept-clicked(id); }
+                    si-rollback-clicked(id) => { root.si-rollback-clicked(id); }
                 }
 
                 StatusFooter {

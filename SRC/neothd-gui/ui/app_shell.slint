@@ -192,10 +192,15 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Agents"; glyph: "⚇"; visible: root.complexity >= 2; active: root.active-tab == "agents"; clicked => { root.nav("agents"); } }
                 NavBtn { label: "Automation"; glyph: "⟳"; visible: root.complexity >= 2; active: root.active-tab == "automation"; clicked => { root.nav("automation"); } }
                 NavBtn { label: "Loops"; glyph: "∞"; visible: root.complexity >= 2 && root.show-loops; active: root.active-tab == "loops"; clicked => { root.nav("loops"); } }
+                // Wave 4a — WORK additions (≥1 gate matches Automation).
+                NavBtn { label: "n8n"; glyph: "⧉"; visible: root.complexity >= 1; active: root.active-tab == "n8n"; clicked => { root.nav("n8n"); } }
+                NavBtn { label: "Calendar"; glyph: "▦"; visible: root.complexity >= 1; active: root.active-tab == "calendar"; clicked => { root.nav("calendar"); } }
+                NavBtn { label: "Evolve"; glyph: "✦"; visible: root.complexity >= 1; active: root.active-tab == "evolve"; clicked => { root.nav("evolve"); } }
 
                 // ── SYSTEM ───────────────────────────────────────────────
                 // Always has Memory (≥1), Hemispheres (≥1), Channels, Privacy,
                 // Plugins (≥2), Mesh (≥2), Resources (≥2), Doctor, Config.
+                // Wave 4a adds Babel (≥2, observer).
                 // Label shows when complexity ≥ 1 (Memory/Hemispheres gate).
                 NavGroup { label: "SYSTEM"; }
                 NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
@@ -205,6 +210,8 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Plugins"; glyph: "⧉"; visible: root.complexity >= 2; active: root.active-tab == "plugins"; clicked => { root.nav("plugins"); } }
                 NavBtn { label: "Mesh"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }
                 NavBtn { label: "Resources"; glyph: "▦"; visible: root.complexity >= 2; active: root.active-tab == "resources"; clicked => { root.nav("resources"); } }
+                // Wave 4a — Babel observer in SYSTEM (≥2, technical observer).
+                NavBtn { label: "Babel"; glyph: "◬"; visible: root.complexity >= 2; active: root.active-tab == "babel"; clicked => { root.nav("babel"); } }
                 NavBtn { label: "Doctor"; glyph: "✚"; active: root.active-tab == "doctor"; clicked => { root.nav("doctor"); } }
                 NavBtn { label: "Config"; glyph: "⚙"; active: root.active-tab == "config"; clicked => { root.nav("config"); } }
             }

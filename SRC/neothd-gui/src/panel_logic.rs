@@ -2039,6 +2039,251 @@ pub fn parse_consent(json: &str) -> (Vec<(String, bool)>, String) {
     (entries, smart_approve)
 }
 
+// ── Design Wave 4a helpers ────────────────────────────────────────────────────
+
+/// UTC HH:MM:SS timestamp for refresh footers.
+pub fn now_hhmm() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let hh = (secs / 3600) % 24;
+    let mm = (secs / 60) % 60;
+    let ss = secs % 60;
+    format!("{hh:02}:{mm:02}:{ss:02} UTC")
+}
+
+// ── n8n parse fns ─────────────────────────────────────────────────────────────
+
+/// Parse `neoth n8n status --output json` → (installed, webhook_base, path).
+///
+/// Expected shape: `{"n8n_installed":true,"webhook_base":"http://localhost:5678",
+///   "n8n_path":"/usr/local/bin/n8n","bundled_workflows":[]}`
+pub fn parse_n8n_status(json: &str) -> (bool, String, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let installed    = v.get("n8n_installed").and_then(|x| x.as_bool()).unwrap_or(false);
+    let webhook_base = v.get("webhook_base").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let path         = v.get("n8n_path").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    (installed, webhook_base, path)
+}
+
+/// Parse `neoth n8n workflows --output json` → Vec<(name, description)>.
+///
+/// Expected shape: `{"workflows":[{"name":"...", "description":"..."},...]}`
+/// Also tolerates a top-level array `[{...},...]`.
+pub fn parse_n8n_workflows(json: &str) -> Vec<(String, String)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .get("workflows")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .or_else(|| v.as_array().cloned())
+        .unwrap_or_default();
+    arr.iter()
+        .filter_map(|item| {
+            let name = item.get("name").and_then(|x| x.as_str())?.to_string();
+            let desc = item
+                .get("description")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((name, desc))
+        })
+        .collect()
+}
+
+// ── Babel parse fns ───────────────────────────────────────────────────────────
+
+/// Parse `neoth babel status --output json`.
+///
+/// Returns `(enabled, threshold, epsilon, federate, total_windows,
+///           collapse_flagged, gran_rows)` where `gran_rows` is
+/// `Vec<(window_secs_i32, count_i32, last_ts_end)>`.
+pub fn parse_babel_status(
+    json: &str,
+) -> (bool, String, String, bool, i32, i32, Vec<(i32, i32, String)>) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let enabled   = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
+    let threshold = v.get("threshold").map(|x| x.to_string()).unwrap_or_default();
+    let epsilon   = v
+        .get("epsilon_calibrated")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let federate  = v.get("federate").and_then(|x| x.as_bool()).unwrap_or(false);
+    let total     = v.get("total_windows").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+    let collapse  = v.get("collapse_flagged").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+
+    let gran_rows: Vec<(i32, i32, String)> = v
+        .get("windows_by_granularity")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|item| {
+            let ws  = item.get("window_secs").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+            let cnt = item.get("count").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+            let last = item
+                .get("last_ts_end")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            (ws, cnt, last)
+        })
+        .collect();
+
+    (enabled, threshold, epsilon, federate, total, collapse, gran_rows)
+}
+
+/// Parse `neoth babel windows --n 12 --output json`.
+///
+/// Returns `Vec<(id, window_secs, ts_start, ts_end, b_log, b_mult,
+///               b_bottleneck, collapse_kind)>`.
+pub fn parse_babel_windows(
+    json: &str,
+) -> Vec<(String, i32, String, String, f32, f32, f32, String)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .get("windows")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .or_else(|| v.as_array().cloned())
+        .unwrap_or_default();
+    arr.iter()
+        .filter_map(|item| {
+            let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let ws = item.get("window_secs").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+            let ts_start = item.get("ts_start").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let ts_end   = item.get("ts_end").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let b_log    = item.get("b_log").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            let b_mult   = item.get("b_mult").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            let b_bottleneck = item
+                .get("b_bottleneck")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0) as f32;
+            let collapse_kind = item
+                .get("collapse_kind")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((id, ws, ts_start, ts_end, b_log, b_mult, b_bottleneck, collapse_kind))
+        })
+        .collect()
+}
+
+// ── Calendar parse fns ────────────────────────────────────────────────────────
+
+/// Parse `neoth calendar list --output json` for the calendar panel.
+///
+/// Returns `(configured, Vec<(datetime_str, summary, location)>)`.
+/// `datetime_str` is formatted from the `start` field for display.
+/// Non-JSON output (e.g. CalDAV error message) → `(false, [])`.
+pub fn parse_calendar_events(json: &str) -> (bool, Vec<(String, String, String)>) {
+    let v = match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(v) => v,
+        Err(_) => return (false, vec![]),
+    };
+    if v.get("error").is_some() {
+        return (false, vec![]);
+    }
+    let events = v
+        .get("events")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let rows: Vec<(String, String, String)> = events
+        .iter()
+        .filter_map(|item| {
+            let summary  = item.get("summary").and_then(|x| x.as_str())?.to_string();
+            let start_raw = item.get("start").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            // Display: keep first 16 chars of ISO timestamp (YYYY-MM-DDTHH:MM).
+            let datetime = if start_raw.len() >= 16 {
+                start_raw[..16].replace('T', " ")
+            } else {
+                start_raw.clone()
+            };
+            let location = item
+                .get("location")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((datetime, summary, location))
+        })
+        .collect();
+    (true, rows)
+}
+
+// ── Self-Improve parse fns ────────────────────────────────────────────────────
+
+/// Parse `neoth self-improve status --output json`.
+///
+/// Returns `(enabled, auto, skillopt_installed, last_run, autonomy)`.
+pub fn parse_selfimprove_status(json: &str) -> (bool, bool, bool, String, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let enabled  = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
+    let auto     = v.get("auto")
+        .and_then(|x| x.as_bool())
+        .or_else(|| v.get("implied_by_full_auto").and_then(|x| x.as_bool()))
+        .unwrap_or(false);
+    let skillopt = v.get("skillopt_installed").and_then(|x| x.as_bool()).unwrap_or(false);
+    let last     = v.get("last").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let autonomy = v.get("autonomy").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    (enabled, auto, skillopt, last, autonomy)
+}
+
+/// Parse `neoth self-improve review --output json` → Vec<(id, title, description)>.
+///
+/// Tolerates `{"proposals":[...]}` or top-level array.
+pub fn parse_selfimprove_proposals(json: &str) -> Vec<(String, String, String)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .get("proposals")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .or_else(|| v.as_array().cloned())
+        .unwrap_or_default();
+    arr.iter()
+        .filter_map(|item| {
+            let id    = item.get("id").and_then(|x| x.as_str())?.to_string();
+            let title = item.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let desc  = item
+                .get("description")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((id, title, desc))
+        })
+        .collect()
+}
+
+/// Parse `neoth self-improve log --output json` → Vec<(id, title, status, ts)>,
+/// capped at 10 entries.
+pub fn parse_selfimprove_log(json: &str) -> Vec<(String, String, String, String)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .get("log")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .or_else(|| v.as_array().cloned())
+        .unwrap_or_default();
+    arr.iter()
+        .take(10)
+        .filter_map(|item| {
+            let id     = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let title  = item.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let status = item.get("status").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let ts     = item.get("ts")
+                .or_else(|| item.get("timestamp"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((id, title, status, ts))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3444,5 +3689,190 @@ mod tests {
         let (entries, sa) = super::parse_consent("{}");
         assert!(entries.is_empty());
         assert!(sa.is_empty());
+    }
+
+    // ── Wave 4a: parse_n8n_status ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_n8n_status_happy_path() {
+        let json = r#"{"n8n_installed":true,"webhook_base":"http://localhost:5678","n8n_path":"/usr/bin/n8n","bundled_workflows":[]}"#;
+        let (installed, webhook, path) = super::parse_n8n_status(json);
+        assert!(installed);
+        assert_eq!(webhook, "http://localhost:5678");
+        assert_eq!(path, "/usr/bin/n8n");
+    }
+
+    #[test]
+    fn parse_n8n_status_not_installed_empty_fields() {
+        let (installed, webhook, path) = super::parse_n8n_status(r#"{"n8n_installed":false}"#);
+        assert!(!installed);
+        assert!(webhook.is_empty());
+        assert!(path.is_empty());
+    }
+
+    #[test]
+    fn parse_n8n_status_malformed_returns_defaults() {
+        let (installed, _, _) = super::parse_n8n_status("not json");
+        assert!(!installed);
+    }
+
+    // ── Wave 4a: parse_n8n_workflows ──────────────────────────────────────────
+
+    #[test]
+    fn parse_n8n_workflows_wrapped_array() {
+        let json = r#"{"workflows":[{"name":"daily-digest","description":"Sends a summary"},{"name":"alert-hook","description":""}]}"#;
+        let wfs = super::parse_n8n_workflows(json);
+        assert_eq!(wfs.len(), 2);
+        assert_eq!(wfs[0].0, "daily-digest");
+        assert_eq!(wfs[0].1, "Sends a summary");
+        assert_eq!(wfs[1].1, "");
+    }
+
+    #[test]
+    fn parse_n8n_workflows_empty_and_malformed() {
+        assert!(super::parse_n8n_workflows("{}").is_empty());
+        assert!(super::parse_n8n_workflows("not json").is_empty());
+        assert!(super::parse_n8n_workflows(r#"{"workflows":[]}"#).is_empty());
+    }
+
+    // ── Wave 4a: parse_babel_status ───────────────────────────────────────────
+
+    #[test]
+    fn parse_babel_status_happy_path() {
+        let json = r#"{"enabled":true,"threshold":0.42,"epsilon_calibrated":"calibrated","federate":false,"total_windows":120,"collapse_flagged":3,"windows_by_granularity":[{"window_secs":300,"count":60,"last_ts_end":"2026-07-04T10:00:00Z"}]}"#;
+        let (enabled, threshold, epsilon, federate, total, collapse, gran) =
+            super::parse_babel_status(json);
+        assert!(enabled);
+        assert!(!threshold.is_empty());
+        assert_eq!(epsilon, "calibrated");
+        assert!(!federate);
+        assert_eq!(total, 120);
+        assert_eq!(collapse, 3);
+        assert_eq!(gran.len(), 1);
+        assert_eq!(gran[0].0, 300);
+        assert_eq!(gran[0].1, 60);
+    }
+
+    #[test]
+    fn parse_babel_status_malformed_returns_defaults() {
+        let (enabled, _, _, _, total, _, gran) = super::parse_babel_status("not json");
+        assert!(!enabled);
+        assert_eq!(total, 0);
+        assert!(gran.is_empty());
+    }
+
+    // ── Wave 4a: parse_babel_windows ──────────────────────────────────────────
+
+    #[test]
+    fn parse_babel_windows_happy_path() {
+        let json = r#"{"windows":[{"id":"w1","window_secs":300,"ts_start":"T1","ts_end":"T2","b_log":0.5,"b_mult":1.2,"b_bottleneck":0.8,"collapse_kind":"5m"},{"id":"w2","window_secs":1800,"ts_start":"T3","ts_end":"T4","b_log":0.1,"b_mult":1.0,"b_bottleneck":0.2,"collapse_kind":""}]}"#;
+        let rows = super::parse_babel_windows(json);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, "w1");
+        assert!((rows[0].6 - 0.8).abs() < 0.01);
+        assert_eq!(rows[0].7, "5m");
+        assert_eq!(rows[1].7, "");
+    }
+
+    #[test]
+    fn parse_babel_windows_bottleneck_clamped() {
+        let json = r#"{"windows":[{"id":"x","window_secs":60,"ts_start":"","ts_end":"","b_log":0.0,"b_mult":1.0,"b_bottleneck":1.5,"collapse_kind":""}]}"#;
+        let rows = super::parse_babel_windows(json);
+        assert!((rows[0].6 - 1.0).abs() < 0.01, "bottleneck must clamp to 1.0");
+    }
+
+    #[test]
+    fn parse_babel_windows_empty_and_malformed() {
+        assert!(super::parse_babel_windows("not json").is_empty());
+        assert!(super::parse_babel_windows(r#"{"windows":[]}"#).is_empty());
+    }
+
+    // ── Wave 4a: parse_calendar_events ────────────────────────────────────────
+
+    #[test]
+    fn parse_calendar_events_happy_path() {
+        let json = r#"{"events":[{"start":"2026-07-04T09:00:00Z","summary":"Standup","location":"Zoom"},{"start":"2026-07-04T14:00:00Z","summary":"Review"}]}"#;
+        let (configured, evs) = super::parse_calendar_events(json);
+        assert!(configured);
+        assert_eq!(evs.len(), 2);
+        assert_eq!(evs[0].0, "2026-07-04 09:00");
+        assert_eq!(evs[0].1, "Standup");
+        assert_eq!(evs[0].2, "Zoom");
+        assert_eq!(evs[1].2, "");
+    }
+
+    #[test]
+    fn parse_calendar_events_not_configured_on_error_key() {
+        let json = r#"{"error":"CalDAV not configured"}"#;
+        let (configured, evs) = super::parse_calendar_events(json);
+        assert!(!configured);
+        assert!(evs.is_empty());
+    }
+
+    #[test]
+    fn parse_calendar_events_not_configured_on_non_json() {
+        let (configured, _) = super::parse_calendar_events("unavailable — binary not found");
+        assert!(!configured);
+    }
+
+    // ── Wave 4a: parse_selfimprove_status ─────────────────────────────────────
+
+    #[test]
+    fn parse_selfimprove_status_happy_path() {
+        let json = r#"{"enabled":true,"auto":false,"skillopt_installed":true,"last":"2026-07-04T08:00:00Z","autonomy":"elevated"}"#;
+        let (enabled, auto, skillopt, last, autonomy) = super::parse_selfimprove_status(json);
+        assert!(enabled);
+        assert!(!auto);
+        assert!(skillopt);
+        assert_eq!(last, "2026-07-04T08:00:00Z");
+        assert_eq!(autonomy, "elevated");
+    }
+
+    #[test]
+    fn parse_selfimprove_status_malformed_returns_defaults() {
+        let (enabled, auto, skillopt, last, autonomy) = super::parse_selfimprove_status("{}");
+        assert!(!enabled);
+        assert!(!auto);
+        assert!(!skillopt);
+        assert!(last.is_empty());
+        assert!(autonomy.is_empty());
+    }
+
+    // ── Wave 4a: parse_selfimprove_proposals ──────────────────────────────────
+
+    #[test]
+    fn parse_selfimprove_proposals_happy_path() {
+        let json = r#"{"proposals":[{"id":"p1","title":"Add retry logic","description":"Retries failed ops"},{"id":"p2","title":"Cache headers","description":""}]}"#;
+        let props = super::parse_selfimprove_proposals(json);
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].0, "p1");
+        assert_eq!(props[0].1, "Add retry logic");
+        assert_eq!(props[1].2, "");
+    }
+
+    #[test]
+    fn parse_selfimprove_proposals_empty_and_malformed() {
+        assert!(super::parse_selfimprove_proposals("not json").is_empty());
+        assert!(super::parse_selfimprove_proposals(r#"{"proposals":[]}"#).is_empty());
+    }
+
+    // ── Wave 4a: parse_selfimprove_log ────────────────────────────────────────
+
+    #[test]
+    fn parse_selfimprove_log_happy_path_capped_10() {
+        // Build 12 entries; only 10 should survive.
+        let entries: Vec<String> = (0..12)
+            .map(|i| format!(r#"{{"id":"e{i}","title":"item {i}","status":"accepted","ts":"2026-07-0{n}T00:00:00Z"}}"#, n = i % 9 + 1))
+            .collect();
+        let json = format!(r#"{{"log":[{}]}}"#, entries.join(","));
+        let rows = super::parse_selfimprove_log(&json);
+        assert_eq!(rows.len(), 10, "log must be capped at 10");
+        assert_eq!(rows[0].2, "accepted");
+    }
+
+    #[test]
+    fn parse_selfimprove_log_malformed_returns_empty() {
+        assert!(super::parse_selfimprove_log("not json").is_empty());
+        assert!(super::parse_selfimprove_log("{}").is_empty());
     }
 }
