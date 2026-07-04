@@ -60,6 +60,12 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "academic_research",
         include_str!("../../assets/skills/academic_research/skill.yaml"),
     ),
+    // GOLD-ADAPT-JV-MISC-05 (2026-07-04) — skill-authoring guide on top of
+    // the live skills/creator.rs wizard (Jarvis advanced-skill-creator port).
+    (
+        "advanced_skill_creator",
+        include_str!("../../assets/skills/advanced_skill_creator/skill.yaml"),
+    ),
     (
         "agent_engineering_patterns",
         include_str!("../../assets/skills/agent_engineering_patterns/skill.yaml"),
@@ -335,6 +341,12 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "neoth_debt",
         include_str!("../../assets/skills/neoth_debt/skill.yaml"),
+    ),
+    // GOLD-ADAPT-JV-MISC-11 (2026-07-04) — news briefing layer over the
+    // native rss_feed_task ingest (Jarvis news-aggregator port).
+    (
+        "news_aggregator",
+        include_str!("../../assets/skills/news_aggregator/skill.yaml"),
     ),
     // GOLD-ADAPT-JV-SEC-REST (2026-07-03) — nmap tactical recon skill (Jarvis nmap-recon port).
     (
@@ -1633,6 +1645,115 @@ mod tests {
         ] {
             let m = route(prompt, &skills).unwrap_or_else(|| {
                 panic!("JV-MISC-01: `{id}` prompt `{prompt}` routed to nothing")
+            });
+            assert_eq!(
+                m.skill.id(),
+                id,
+                "prompt `{prompt}` should route to `{id}`, got `{}`",
+                m.skill.id()
+            );
+        }
+    }
+
+    /// GOLD-ADAPT-JV-MISC-11 (2026-07-04) — `news_aggregator` must be
+    /// bundled, parse cleanly, ship enabled, and route from its distinctive
+    /// multi-word triggers.
+    #[test]
+    fn gold_adapt_jv_misc_11_news_aggregator_bundled_enabled_and_routes() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+
+        let id = "news_aggregator";
+        let (_, body) = BUNDLED_SKILLS
+            .iter()
+            .find(|(bid, _)| *bid == id)
+            .unwrap_or_else(|| panic!("JV-MISC-11: `{id}` must be in BUNDLED_SKILLS"));
+
+        let manifest: SkillManifest = serde_yaml::from_str(body)
+            .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+        assert_eq!(manifest.id, id, "`{id}` manifest id mismatch");
+        assert!(manifest.enabled, "`{id}` must ship enabled");
+        assert!(
+            !manifest.trigger_keywords.is_empty(),
+            "`{id}` must have trigger_keywords"
+        );
+        assert!(
+            !manifest.system_prompt.trim().is_empty(),
+            "`{id}` must have a non-empty system_prompt"
+        );
+
+        let skill = Skill {
+            manifest: manifest.clone(),
+            path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+            content_hash: String::new(),
+        };
+        let skills = vec![skill];
+
+        for prompt in [
+            "news briefing",
+            "daily news",
+            "tech news today",
+            "what happened today",
+            "morning briefing",
+            "news digest",
+            "nachrichten briefing",
+        ] {
+            let m = route(prompt, &skills).unwrap_or_else(|| {
+                panic!("JV-MISC-11: `{id}` prompt `{prompt}` routed to nothing")
+            });
+            assert_eq!(
+                m.skill.id(),
+                id,
+                "prompt `{prompt}` should route to `{id}`, got `{}`",
+                m.skill.id()
+            );
+        }
+    }
+
+    /// GOLD-ADAPT-JV-MISC-05 (2026-07-04) — `advanced_skill_creator` must be
+    /// bundled, parse cleanly, ship enabled, and route from its distinctive
+    /// authoring triggers.
+    #[test]
+    fn gold_adapt_jv_misc_05_advanced_skill_creator_bundled_enabled_and_routes() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+
+        let id = "advanced_skill_creator";
+        let (_, body) = BUNDLED_SKILLS
+            .iter()
+            .find(|(bid, _)| *bid == id)
+            .unwrap_or_else(|| panic!("JV-MISC-05: `{id}` must be in BUNDLED_SKILLS"));
+
+        let manifest: SkillManifest = serde_yaml::from_str(body)
+            .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+        assert_eq!(manifest.id, id, "`{id}` manifest id mismatch");
+        assert!(manifest.enabled, "`{id}` must ship enabled");
+        assert!(
+            !manifest.trigger_keywords.is_empty(),
+            "`{id}` must have trigger_keywords"
+        );
+        assert!(
+            !manifest.system_prompt.trim().is_empty(),
+            "`{id}` must have a non-empty system_prompt"
+        );
+
+        let skill = Skill {
+            manifest: manifest.clone(),
+            path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+            content_hash: String::new(),
+        };
+        let skills = vec![skill];
+
+        for prompt in [
+            "create a skill",
+            "make a new skill",
+            "write a skill",
+            "skill authoring",
+            "how to write a skill",
+            "skill erstellen",
+        ] {
+            let m = route(prompt, &skills).unwrap_or_else(|| {
+                panic!("JV-MISC-05: `{id}` prompt `{prompt}` routed to nothing")
             });
             assert_eq!(
                 m.skill.id(),

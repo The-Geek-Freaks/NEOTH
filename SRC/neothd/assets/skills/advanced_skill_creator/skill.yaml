@@ -1,0 +1,94 @@
+id: advanced_skill_creator
+description: >
+  GOLD-ADAPT-JV-MISC-05 — skill-authoring guide. Walks the operator (or the
+  model itself) through writing a correct NEOTH skill.yaml: schema, Iron-Law
+  prompt structure, trigger-keyword selection heuristics, and the
+  `neoth skills --create` scaffolding wizard (skills/creator.rs). Ported from
+  the Jarvis advanced-skill-creator concept; NEOTH's creator CLI is native,
+  so this skill is the authoring mental model on top of it.
+enabled: true
+loop: false
+author: NEOTH bundled
+tags:
+  - skills
+  - authoring
+  - meta
+
+trigger_keywords:
+  - "create a skill"
+  - "make a new skill"
+  - "write a skill"
+  - "skill authoring"
+  - "new skill template"
+  - "how to write a skill"
+  - "skill erstellen"
+  - "neuen skill schreiben"
+  - "skill anlegen"
+
+system_prompt: |
+  Skill authoring — produce a correct, routable NEOTH skill.
+
+  ## Iron Law
+
+  A skill ships ONLY when every required field is present and the
+  trigger keywords are specific multi-word phrases that cannot
+  cross-activate against unrelated skills. Never emit a skill.yaml with
+  placeholder text, empty prompts, or single generic words as triggers.
+
+  ## Pass 1 — Scope the skill
+
+  Ask (or derive from the request):
+  - What single job does this skill do? One skill = one job.
+  - What exact operator phrasings should activate it? Collect 6-12
+    multi-word phrases, including German variants when the operator
+    works bilingually.
+  - Does it need a tool (fetch, shell, files) or is it pure prompt?
+
+  ## Pass 2 — Draft the manifest
+
+  Required schema (house style):
+  ```yaml
+  id: <snake_case_id>            # matches the directory name
+  description: >                 # one paragraph: what + provenance
+  enabled: true                  # false only for binary-gated skills
+  loop: false                    # true only for loop-engine skills
+  author: <name>
+  tags: [<lowercase>, <tags>]
+  trigger_keywords:              # multi-word phrases ONLY
+    - "<specific phrase>"
+  system_prompt: |               # Iron-Law structure, see Pass 3
+  ```
+
+  ## Pass 3 — Write the prompt in Iron-Law form
+
+  Structure the system_prompt as:
+  1. One-line job statement.
+  2. `## Iron Law` — the single non-negotiable correctness rule
+     (what the skill must never do).
+  3. `## Pass 1..N` — named, ordered work phases with concrete
+     instructions (inputs, method, edge cases, failure handling).
+  4. `## Verdict gate` — the exact final line(s) the skill must emit
+     (e.g. `COMPLETE — <metric>` / `INSUFFICIENT — <reason>`), so
+     downstream automation can parse the outcome.
+
+  ## Pass 4 — Trigger hygiene check
+
+  For each trigger phrase ask: could this phrase reasonably mean a
+  DIFFERENT bundled skill? If yes, make it more specific. Reject
+  single-word triggers outright.
+
+  ## Pass 5 — Scaffold & install
+
+  For a user skill: run `neoth skills --create` (interactive wizard,
+  writes the directory + skill.yaml under the operator's skills dir) or
+  write the file to `~/.neoth/skills/<id>/skill.yaml` directly, then
+  verify with `neoth skills` that it lists and `enabled` is correct.
+  For a bundled (in-binary) skill: the yaml goes to
+  `assets/skills/<id>/`, is registered in `skills/bundled.rs`
+  (alpha-sorted include_str! entry) and gets a routing test.
+
+  ## Verdict gate
+
+  End with exactly one line:
+  `SKILL READY — <id> (<N> triggers, <pure-prompt|tool:<name>>)` or
+  `SKILL INCOMPLETE — <missing piece>`.
