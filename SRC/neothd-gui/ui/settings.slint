@@ -100,9 +100,16 @@ export struct SkillRow {
 
 // SPEC-05 — one saved preset for the selector (moved here from main.slint
 // so the Config tab (AOS-02) and the chat tile share one definition).
+// builtin: true for the four built-ins (full-auto/balanced/essentials/local-sovereign).
+// description: short human-readable summary (empty on old daemons).
+// is-header: true for sentinel section-header rows injected by Rust
+//   ("BUILT-IN" / "YOURS") — same flat-row pattern as skills.
 export struct PresetRow {
     name: string,
     active: bool,
+    builtin: bool,
+    description: string,
+    is-header: bool,
 }
 
 // SPEC-05 step5c — one behavioural profile preset (LOWKEY/Formal/Deepdive/…)
@@ -487,6 +494,26 @@ export component SettingsView inherits Rectangle {
     in property <string> preset-summary: "";
     callback preset-activate-clicked(string);
     callback preset-apply-clicked();
+    // New preset system: dry-run consent + apply-by-name + delete.
+    // preset-apply-named: operator clicked Apply on a named preset row →
+    //   Rust runs dry-run, may show consent, then applies.
+    callback preset-apply-named-clicked(string);
+    // preset-delete-clicked: operator confirmed Delete on an operator preset.
+    callback preset-delete-clicked(string);
+    // Consent modal state — Rust sets these before showing the modal row.
+    // consent-preset-name: the preset being reviewed.
+    in-out property <string> consent-preset-name: "";
+    // consent-warn-text: formatted warning lines ("path: old → new\n…").
+    in-out property <string> consent-warn-text: "";
+    // consent-needs-fullauto: true when autonomy_requested == "full".
+    in-out property <bool> consent-needs-fullauto: false;
+    // consent-fields-count: number of fields that will change.
+    in-out property <int> consent-fields-count: 0;
+    // consent-visible: Rust sets true to show the consent row.
+    in-out property <bool> consent-visible: false;
+    // Operator confirmed or cancelled the consent modal.
+    callback preset-consent-confirmed();
+    callback preset-consent-cancelled();
     // PF-01-GUI — skills.always_embed_route toggle (freedom.yaml write-back).
     in-out property <bool> skills-always-embed-route: true;
     callback skills-always-embed-route-changed(bool);
@@ -630,6 +657,30 @@ export component SettingsView inherits Rectangle {
     /// GUI-overhaul feature parity — operator picked an autonomy level from the
     /// Privacy combo. Arg: level string. Rust shells `neoth autonomy set <level>`.
     callback autonomy-set-clicked(string);
+
+    // GAP-04 — Memory search. Operator types a query + clicks Search →
+    // Rust shells `neoth recall <query>` and renders plain-text output.
+    // Empty query is a no-op (button disabled). Output is shown in a
+    // ProbeView-style text area below the search row.
+    in-out property <string> memory-search-query: "";
+    in property <string> memory-search-output: "";
+    in property <bool> memory-search-running: false;
+    callback memory-search-clicked(string);
+
+    // GAP-05 — Status probe. Rust shells `neoth status` and renders output.
+    in property <string> status-probe-output: "";
+    in property <bool> status-probe-running: false;
+    callback status-probe-clicked;
+
+    // GAP-13 — Security audit probe. Rust shells `neoth security audit`.
+    in property <string> security-audit-output: "";
+    in property <bool> security-audit-running: false;
+    callback security-audit-clicked;
+
+    // GAP-07 — Backup / rollback preview. Rust shells `neoth backup` or
+    // `neoth rollback list` (read-only) and appends result to status-line.
+    callback backup-now-clicked;
+    callback rollback-preview-clicked;
 
     background: Theme.bg-base;
 
@@ -1345,6 +1396,68 @@ export component SettingsView inherits Rectangle {
                                 label: "Cancel";
                                 primary: false;
                                 clicked => { forget-confirming = false; }
+                            }
+                        }
+                    }
+                }
+                // GAP-04 — Memory search: full-text recall across hot/warm/cold tiers.
+                // Empty query → no-op (Search button disabled). Output is plain text
+                // from `neoth recall <query>` (same as CLI), rendered in a mono area.
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "SEARCH MEMORY";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: "Recall across hot / warm / cold memory tiers. Results mirror `neoth recall <query>`.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            mem_search_input := NeothLineEdit {
+                                placeholder-text: "search query";
+                                text: root.memory-search-query;
+                                horizontal-stretch: 1;
+                                edited(t) => { root.memory-search-query = t; }
+                            }
+                            NeothButton {
+                                label: root.memory-search-running ? "searching…" : "Search";
+                                primary: true;
+                                clicked => {
+                                    if (mem_search_input.text != "" && !root.memory-search-running) {
+                                        root.memory-search-clicked(mem_search_input.text);
+                                    }
+                                }
+                            }
+                        }
+                        if root.memory-search-output != "": Rectangle {
+                            height: 180px;
+                            border-radius: Theme.radius-lg;
+                            background: Theme.bg-void;
+                            border-width: 1px;
+                            border-color: Theme.border-subtle;
+                            Flickable {
+                                viewport-width: self.width;
+                                Text {
+                                    x: 14px; y: 12px;
+                                    width: parent.width - 28px;
+                                    text: root.memory-search-output;
+                                    color: Theme.text-secondary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }
@@ -2439,21 +2552,77 @@ export component SettingsView inherits Rectangle {
                 }
 
                 // ── PRESETS (AOS-02 — surfaces config/presets.rs here) ──
+                // ── PRESETS (AOS-02 — builtin + operator sections) ───────
+                // Rust injects two sentinel header rows (is-header=true):
+                //   name="BUILT-IN" before the four built-ins,
+                //   name="YOURS"    before operator presets (omitted when none).
+                // This is the same flat-row pattern as the Skills expander.
                 Expander {
                     title: "PRESETS";
                     hint: "saved config bundles";
+
+                    // Empty state (daemon not running or no presets yet).
                     if root.preset-list.length == 0: Text {
-                        text: root.preset-summary != "" ? root.preset-summary : "(no presets saved — `neoth preset save <name>`)";
+                        text: root.preset-summary != "" ? root.preset-summary : "(no presets — `neoth preset save <name>`)";
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;
                         wrap: word-wrap;
                     }
-                    for p in root.preset-list: TouchArea {
-                        height: 24px;
-                        clicked => { root.preset-activate-clicked(p.name); }
-                        HorizontalLayout {
-                            spacing: Theme.space-base;
+
+                    // ── Consent panel (inline flat layout — no popup) ─────────
+                    // Shown when Rust sets consent-visible=true after dry-run.
+                    if root.consent-visible: Text {
+                        text: "Apply " + root.consent-preset-name + " — review changes:";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                    if root.consent-visible && root.consent-warn-text != "": Text {
+                        text: root.consent-warn-text;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.accent-amber;
+                        wrap: word-wrap;
+                    }
+                    if root.consent-visible && root.consent-needs-fullauto: Text {
+                        text: "Full autonomy: NEOTH acts without asking (audited)";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.accent-pink;
+                        wrap: word-wrap;
+                    }
+                    if root.consent-visible: HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        NeothButton {
+                            label: "Apply";
+                            size: "sm";
+                            clicked => { root.preset-consent-confirmed(); }
+                        }
+                        NeothButton {
+                            label: "Cancel";
+                            size: "sm";
+                            primary: false;
+                            clicked => { root.preset-consent-cancelled(); }
+                        }
+                    }
+
+                    // ── Flat preset rows (header sentinels + data rows) ───────
+                    for p in root.preset-list: VerticalLayout {
+                        spacing: 2px;
+                        // Section header sentinel row (is-header=true injected by Rust).
+                        if p.is-header: Text {
+                            text: p.name;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            color: Theme.text-muted;
+                        }
+                        // Data row.
+                        if !p.is-header: HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            // Active marker.
                             Text {
                                 text: p.active ? "●" : "○";
                                 font-family: Theme.font-mono;
@@ -2461,16 +2630,41 @@ export component SettingsView inherits Rectangle {
                                 color: p.active ? Theme.accent-green : Theme.text-muted;
                                 vertical-alignment: center;
                             }
-                            Text {
-                                text: p.name;
-                                font-family: Theme.font-mono;
-                                font-size: Theme.font-size-caption;
-                                color: Theme.text-primary;
-                                vertical-alignment: center;
+                            // Name + optional description.
+                            VerticalLayout {
                                 horizontal-stretch: 1;
+                                Text {
+                                    text: p.name;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                    vertical-alignment: center;
+                                }
+                                if p.description != "": Text {
+                                    text: p.description;
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-muted;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            // Apply button for every data row.
+                            NeothButton {
+                                label: "Apply";
+                                size: "sm";
+                                clicked => { root.preset-apply-named-clicked(p.name); }
+                            }
+                            // Delete only for non-builtin operator presets.
+                            if !p.builtin: NeothButton {
+                                label: "Delete";
+                                size: "sm";
+                                primary: false;
+                                clicked => { root.preset-delete-clicked(p.name); }
                             }
                         }
                     }
+
+                    // Legacy "Apply active preset" (activate + apply path).
                     if root.preset-list.length > 0: NeothButton {
                         label: "Apply active preset";
                         size: "sm";
@@ -2538,7 +2732,7 @@ export component SettingsView inherits Rectangle {
                 // ── MAINTENANCE ──────────────────────────────────────
                 Expander {
                     title: "MAINTENANCE";
-                    hint: "reload · wizard";
+                    hint: "reload · wizard · backup";
                     Text {
                         text: "Reload pushes freedom.yaml changes to the running daemon within ~2s (the ~/.neoth/.reload-requested sentinel). Re-run wizard restarts first-run setup without wiping your config.";
                         font-family: Theme.font-display;
@@ -2556,6 +2750,30 @@ export component SettingsView inherits Rectangle {
                             label: "Re-run wizard";
                             primary: false;
                             clicked => { root.wizard-rerun-clicked(); }
+                        }
+                    }
+                    // GAP-07 — Backup + rollback preview (read-only).
+                    // "Backup now" shells `neoth backup`; output shown in status-line.
+                    // "Preview rollback" shells `neoth rollback list` (dry-run,
+                    // no --confirm) and shows available snapshots in status-line.
+                    Text {
+                        text: "Backup exports a snapshot of config + memory to ~/.neoth/backups/. Preview rollback lists available WAL snapshots (read-only — no restore from the GUI).";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        NeothButton {
+                            label: "Backup now";
+                            primary: false;
+                            clicked => { root.backup-now-clicked(); }
+                        }
+                        NeothButton {
+                            label: "Preview rollback";
+                            primary: false;
+                            clicked => { root.rollback-preview-clicked(); }
                         }
                     }
                 }

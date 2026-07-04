@@ -307,6 +307,14 @@ export component MainWindow inherits Window {
     in property <string> doctor-output: "";
     in property <bool> doctor-running: false;
     callback doctor-run-clicked();
+    // GAP-05 — Status probe (`neoth status`).
+    in property <string> doctor-status-output: "";
+    in property <bool> doctor-status-running: false;
+    callback doctor-status-run-clicked();
+    // GAP-13 — Security audit probe (`neoth security audit`).
+    in property <string> doctor-security-output: "";
+    in property <bool> doctor-security-running: false;
+    callback doctor-security-run-clicked();
     // Agents tab — `neoth cluster status` (the agent/worker topology).
     in property <string> agents-output: "";
     in property <bool> agents-running: false;
@@ -362,6 +370,19 @@ export component MainWindow inherits Window {
     /// `neoth preset activate <name>` (sets the active marker) + refreshes the
     /// list. `apply-active` then merges the active preset into freedom.yaml.
     callback preset-activate-clicked(string);
+    // ZF-01 — per-row Apply on a built-in/operator preset (dry-run first).
+    callback preset-apply-named-clicked(string);
+    // ZF-01 — Delete on an operator preset row.
+    callback preset-delete-clicked(string);
+    // ZF-01 — consent modal state, populated by Rust from `preset apply
+    // --dry-run`; confirmed/cancelled route back to Rust.
+    in-out property <string> consent-preset-name: "";
+    in-out property <string> consent-warn-text: "";
+    in-out property <bool> consent-needs-fullauto: false;
+    in-out property <int> consent-fields-count: 0;
+    in-out property <bool> consent-visible: false;
+    callback preset-consent-confirmed();
+    callback preset-consent-cancelled();
     // SPEC-05 step5c: operator picked a behavioural profile — Rust runs
     // `neoth profile preset apply <name>` + refreshes the list.
     callback profile-preset-apply-clicked(string);
@@ -494,6 +515,13 @@ export component MainWindow inherits Window {
     callback channel-remove(string);
     callback memory-forget-preview(string);
     callback memory-forget-confirm(string);
+    // GAP-04 — Memory search forwarding.
+    in property <string> settings-memory-search-output: "";
+    in property <bool> settings-memory-search-running: false;
+    callback settings-memory-search-clicked(string);
+    // GAP-07 — Backup / rollback preview forwarding.
+    callback settings-backup-now-clicked;
+    callback settings-rollback-preview-clicked;
     callback skill-toggle(string, bool);
     callback plugin-toggle(string, bool);
     callback autonomy-set(string);
@@ -607,7 +635,7 @@ export component MainWindow inherits Window {
                 }
                 ModeCard {
                     title: "Command-line setup";
-                    subtitle: "Drop to a terminal. Runs `neoth init`. Fast if you live in tmux.";
+                    subtitle: "Drop to a terminal. Runs `neoth init`. Claude CLI session management is handled automatically; on Linux/macOS tmux is used when available.";
                     recommended: false;
                     selected: root.mode-cli-chosen;
                     glyph: @image-url("assets/glyph_cli.svg");
@@ -1780,6 +1808,15 @@ export component MainWindow inherits Window {
             preset-summary: root.preset-summary;
             preset-activate-clicked(name) => { root.preset-activate-clicked(name); }
             preset-apply-clicked => { root.preset-apply-clicked(); }
+            preset-apply-named-clicked(name) => { root.preset-apply-named-clicked(name); }
+            preset-delete-clicked(name) => { root.preset-delete-clicked(name); }
+            preset-consent-confirmed => { root.preset-consent-confirmed(); }
+            preset-consent-cancelled => { root.preset-consent-cancelled(); }
+            consent-preset-name <=> root.consent-preset-name;
+            consent-warn-text <=> root.consent-warn-text;
+            consent-needs-fullauto <=> root.consent-needs-fullauto;
+            consent-fields-count <=> root.consent-fields-count;
+            consent-visible <=> root.consent-visible;
             skills-always-embed-route: root.skills-always-embed-route;
             skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
             skill-toggle-clicked(id, en) => { root.skill-toggle(id, en); }
@@ -1814,6 +1851,13 @@ export component MainWindow inherits Window {
             channel-remove-clicked(name) => { root.channel-remove(name); }
             memory-forget-preview-clicked(t) => { root.memory-forget-preview(t); }
             memory-forget-confirm-clicked(t) => { root.memory-forget-confirm(t); }
+            // GAP-04 — Memory search.
+            memory-search-output: root.settings-memory-search-output;
+            memory-search-running: root.settings-memory-search-running;
+            memory-search-clicked(q) => { root.settings-memory-search-clicked(q); }
+            // GAP-07 — Backup / rollback.
+            backup-now-clicked => { root.settings-backup-now-clicked(); }
+            rollback-preview-clicked => { root.settings-rollback-preview-clicked(); }
             // Step 5 (2026-05-20): selected-task + detail-pane wiring.
             kanban-selected-task-id <=> root.kanban-selected-task-id;
             kanban-selected-title: root.kanban-selected-title;
@@ -1909,6 +1953,14 @@ export component MainWindow inherits Window {
                     output: root.doctor-output;
                     running: root.doctor-running;
                     run-clicked => { root.doctor-run-clicked(); }
+                    // GAP-05
+                    status-output: root.doctor-status-output;
+                    status-running: root.doctor-status-running;
+                    status-run-clicked => { root.doctor-status-run-clicked(); }
+                    // GAP-13
+                    security-output: root.doctor-security-output;
+                    security-running: root.doctor-security-running;
+                    security-run-clicked => { root.doctor-security-run-clicked(); }
                 }
                 // Agents — the cluster/agent topology (`neoth cluster status`).
                 if root.nav-active == "agents": ProbeView {

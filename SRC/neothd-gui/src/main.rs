@@ -1092,6 +1092,133 @@ fn main() -> Result<()> {
         });
     });
 
+    // SPEC-05 builtin-presets — operator clicked Apply on a named preset row.
+    // Flow: dry-run in worker thread → if warn_changes OR autonomy_requested==full,
+    // populate consent state and show the modal; otherwise apply directly with --yes.
+    let weak_named_apply = window.as_weak();
+    window.on_preset_apply_named_clicked(move |name| {
+        let weak = weak_named_apply.clone();
+        let name_s = name.to_string();
+        std::thread::spawn(move || {
+            // All subprocess work stays in the worker thread; only UI mutations
+            // cross back to the event loop (matching the existing preset patterns).
+            let plan = dry_run_preset_via_subprocess(&name_s);
+            match plan {
+                None => {
+                    // dry-run unavailable (old daemon / missing binary) →
+                    // fall back: apply directly then refresh.
+                    let status = apply_preset_direct(&name_s);
+                    let presets = fetch_presets();
+                    let summary = probe_preset_summary_via_subprocess();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_status_line(status.into());
+                            w.set_preset_summary(summary.into());
+                            apply_presets(&w, presets);
+                        }
+                    });
+                }
+                Some(plan) => {
+                    let needs_consent = !plan.warn_changes.is_empty()
+                        || plan.autonomy_requested.as_deref() == Some("full");
+                    if needs_consent {
+                        // Build the warn text for the consent panel.
+                        let warn_text: String = plan
+                            .warn_changes
+                            .iter()
+                            .map(|c| format!("{}: {} → {}", c.path, c.old, c.new))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let needs_fa =
+                            plan.autonomy_requested.as_deref() == Some("full");
+                        let field_count = plan.fields_changed_count as i32;
+                        let preset_name = plan.name;
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak.upgrade() {
+                                w.set_consent_preset_name(preset_name.into());
+                                w.set_consent_warn_text(warn_text.into());
+                                w.set_consent_needs_fullauto(needs_fa);
+                                w.set_consent_fields_count(field_count);
+                                w.set_consent_visible(true);
+                            }
+                        });
+                    } else {
+                        // No concerns — apply in the worker thread then refresh.
+                        let status = apply_preset_direct(&name_s);
+                        let presets = fetch_presets();
+                        let summary = probe_preset_summary_via_subprocess();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak.upgrade() {
+                                w.set_status_line(status.into());
+                                w.set_preset_summary(summary.into());
+                                apply_presets(&w, presets);
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    });
+
+    // SPEC-05 builtin-presets — operator confirmed the consent modal.
+    let weak_consent_ok = window.as_weak();
+    window.on_preset_consent_confirmed(move || {
+        let weak = weak_consent_ok.clone();
+        // Read name and autonomy flag before clearing the modal.
+        let (name_s, needs_fa) = {
+            if let Some(w) = weak.upgrade() {
+                let n = w.get_consent_preset_name().to_string();
+                let fa = w.get_consent_needs_fullauto();
+                // Hide modal immediately so the UI feels responsive.
+                w.set_consent_visible(false);
+                (n, fa)
+            } else {
+                return;
+            }
+        };
+        std::thread::spawn(move || {
+            let status = if needs_fa {
+                apply_preset_with_fullauto_token(&name_s)
+            } else {
+                apply_preset_direct(&name_s)
+            };
+            let presets = fetch_presets();
+            let summary = probe_preset_summary_via_subprocess();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(status.into());
+                    w.set_preset_summary(summary.into());
+                    apply_presets(&w, presets);
+                }
+            });
+        });
+    });
+
+    // SPEC-05 builtin-presets — operator cancelled the consent modal.
+    let weak_consent_cancel = window.as_weak();
+    window.on_preset_consent_cancelled(move || {
+        if let Some(w) = weak_consent_cancel.upgrade() {
+            w.set_consent_visible(false);
+            w.set_status_line("Preset apply cancelled.".into());
+        }
+    });
+
+    // SPEC-05 builtin-presets — operator clicked Delete on an operator preset.
+    let weak_preset_delete = window.as_weak();
+    window.on_preset_delete_clicked(move |name| {
+        let status = delete_preset_via_subprocess(&name);
+        let presets = fetch_presets();
+        let summary = probe_preset_summary_via_subprocess();
+        let weak = weak_preset_delete.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_status_line(status.into());
+                w.set_preset_summary(summary.into());
+                apply_presets(&w, presets);
+            }
+        });
+    });
+
     // SPEC-05 step5c — operator picked a response style: apply it + refresh so
     // the active marker moves immediately.
     let weak_profile_apply = window.as_weak();
@@ -1329,6 +1456,80 @@ fn main() -> Result<()> {
                     w.set_doctor_output(output.into());
                     w.set_doctor_running(false);
                     buddy(&w, GuiActivity::AuditVerify);
+                }
+            });
+        });
+    });
+
+    // GAP-05 — Status probe: `neoth status` → DoctorView status panel.
+    let weak_status = window.as_weak();
+    window.on_doctor_status_run_clicked(move || {
+        let Some(w0) = weak_status.upgrade() else { return; };
+        w0.set_doctor_status_running(true);
+        let weak = weak_status.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd()
+                .and_then(|bin| spawn_neothd_plain(&bin).arg("status").output().ok())
+            {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "neoth status produced no output.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot run status.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_doctor_status_output(output.into());
+                    w.set_doctor_status_running(false);
+                }
+            });
+        });
+    });
+
+    // GAP-13 — Security audit probe: `neoth security audit` → DoctorView audit panel.
+    let weak_secaudit = window.as_weak();
+    window.on_doctor_security_run_clicked(move || {
+        let Some(w0) = weak_secaudit.upgrade() else { return; };
+        w0.set_doctor_security_running(true);
+        let weak = weak_secaudit.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("security")
+                        .arg("audit")
+                        .output()
+                        .ok()
+                })
+            {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "neoth security audit produced no output.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot run security audit.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_doctor_security_output(output.into());
+                    w.set_doctor_security_running(false);
                 }
             });
         });
@@ -1854,6 +2055,13 @@ fn main() -> Result<()> {
     // Shells `neoth autonomy set <level>` (mutates freedom.yaml::autonomy + emits
     // a WAL audit frame). On success, mirror the new level into autonomy-choice so
     // the combo + every autonomy-derived display update without a reload.
+    //
+    // GAP-09 — Sudomode route: if level == "full", the GUI MUST NOT call
+    // `autonomy set full` directly (that path is TTY-fail-closed). Instead mint
+    // a single-use token via `neoth autonomy mint-fullauto-token --output json`
+    // and then call `neoth autonomy full-auto --gui-confirmed --gui-token <t>`.
+    // Any mint failure is surfaced in status-line and the level is NOT changed.
+    // All other levels use the normal `autonomy set <level>` path unchanged.
     let weak_autonomy_set = window.as_weak();
     window.on_autonomy_set(move |level| {
         if let Some(w) = weak_autonomy_set.upgrade() {
@@ -1863,6 +2071,80 @@ fn main() -> Result<()> {
         let weak = weak_autonomy_set.clone();
         let level = level.to_string();
         std::thread::spawn(move || {
+            // GAP-09: intercept "full" → token-mint path.
+            if level == "full" {
+                let result: Result<(), String> = (|| {
+                    let bin = which_neothd()
+                        .ok_or_else(|| "neothd binary not on PATH".to_string())?;
+                    let tok_out = spawn_neothd_plain(&bin)
+                        .arg("autonomy")
+                        .arg("mint-fullauto-token")
+                        .arg("--output")
+                        .arg("json")
+                        .output()
+                        .map_err(|e| format!("mint-fullauto-token spawn failed: {e}"))?;
+                    if !tok_out.status.success() {
+                        let err =
+                            String::from_utf8_lossy(&tok_out.stderr).trim().to_string();
+                        return Err(format!("mint-fullauto-token failed: {err}"));
+                    }
+                    let raw = String::from_utf8_lossy(&tok_out.stdout).trim().to_string();
+                    // Output may be `{"token":"…"}` or a bare token string.
+                    let token = if let Ok(v) =
+                        serde_json::from_str::<serde_json::Value>(&raw)
+                    {
+                        v.get("token")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or(&raw)
+                            .to_string()
+                    } else {
+                        raw
+                    };
+                    if token.is_empty() {
+                        return Err(
+                            "mint-fullauto-token returned an empty token".to_string()
+                        );
+                    }
+                    let apply_out = spawn_neothd_plain(&bin)
+                        .arg("autonomy")
+                        .arg("full-auto")
+                        .arg("--gui-confirmed")
+                        .arg("--gui-token")
+                        .arg(&token)
+                        .output()
+                        .map_err(|e| format!("autonomy full-auto spawn failed: {e}"))?;
+                    if !apply_out.status.success() {
+                        let err =
+                            String::from_utf8_lossy(&apply_out.stderr).trim().to_string();
+                        return Err(format!("autonomy full-auto failed: {err}"));
+                    }
+                    Ok(())
+                })();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        match result {
+                            Ok(()) => {
+                                w.set_autonomy_choice("full".into());
+                                w.set_status_line(
+                                    "Autonomy set to full (sudomode) via GUI token.".into(),
+                                );
+                            }
+                            Err(msg) => {
+                                w.set_status_line(
+                                    format!(
+                                        "Full-auto gate: {msg} — level NOT changed. \
+                                         Daemon must be running to mint the confirm token."
+                                    )
+                                    .into(),
+                                );
+                            }
+                        }
+                    }
+                });
+                return;
+            }
+
+            // Normal path for strict / standard / elevated / custom.
             let ok = which_neothd()
                 .and_then(|bin| {
                     spawn_neothd_plain(&bin)
@@ -2432,6 +2714,110 @@ fn main() -> Result<()> {
                     .into(),
             );
         }
+    });
+
+    // GAP-04 — Memory search: `neoth recall <query>` → settings memory panel.
+    let weak_memsearch = window.as_weak();
+    window.on_settings_memory_search_clicked(move |query| {
+        let Some(w0) = weak_memsearch.upgrade() else { return; };
+        let q = query.to_string();
+        if q.trim().is_empty() {
+            return; // no-op for empty query
+        }
+        w0.set_settings_memory_search_running(true);
+        let weak = weak_memsearch.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("recall")
+                        .arg(&q)
+                        .output()
+                        .ok()
+                })
+            {
+                Some(o) => panel_logic::format_recall_output(
+                    &String::from_utf8_lossy(&o.stdout),
+                    &String::from_utf8_lossy(&o.stderr),
+                    &q,
+                ),
+                None => "neothd binary not on PATH — cannot run recall.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_settings_memory_search_output(output.into());
+                    w.set_settings_memory_search_running(false);
+                }
+            });
+        });
+    });
+
+    // GAP-07 — Backup now: `neoth backup` → status-line.
+    let weak_backup = window.as_weak();
+    window.on_settings_backup_now_clicked(move || {
+        let Some(w0) = weak_backup.upgrade() else { return; };
+        w0.set_status_line("Running neoth backup…".into());
+        let weak = weak_backup.clone();
+        std::thread::spawn(move || {
+            let result = match which_neothd()
+                .and_then(|bin| spawn_neothd_plain(&bin).arg("backup").output().ok())
+            {
+                Some(o) => {
+                    let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                    if o.status.success() {
+                        if out.is_empty() { "Backup complete.".to_string() } else { out }
+                    } else {
+                        format!("Backup failed: {}", if err.is_empty() { out } else { err })
+                    }
+                }
+                None => "neothd binary not on PATH — cannot run backup.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(result.into());
+                }
+            });
+        });
+    });
+
+    // GAP-07 — Preview rollback: `neoth rollback list` (read-only, no --confirm)
+    // → status-line. The "list" subcommand shows available WAL snapshots without
+    // restoring anything. Destructive `apply --confirm` is CLI-only by design.
+    let weak_rollback = window.as_weak();
+    window.on_settings_rollback_preview_clicked(move || {
+        let Some(w0) = weak_rollback.upgrade() else { return; };
+        w0.set_status_line("Listing rollback snapshots…".into());
+        let weak = weak_rollback.clone();
+        std::thread::spawn(move || {
+            let result = match which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("rollback")
+                        .arg("list")
+                        .output()
+                        .ok()
+                })
+            {
+                Some(o) => {
+                    let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                    if out.is_empty() && err.is_empty() {
+                        "No WAL snapshots found. Run some operations first.".to_string()
+                    } else if !out.is_empty() {
+                        out
+                    } else {
+                        err
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list rollback snapshots.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(result.into());
+                }
+            });
+        });
     });
 
     let weak = window.as_weak();
@@ -3487,15 +3873,47 @@ fn fetch_presets() -> Vec<panel_logic::PresetEntry> {
 }
 
 /// SPEC-05 — push the preset selector list onto the MainWindow. UI-thread only.
+///
+/// Injects flat sentinel header rows (is-header=true) so the Slint `for` loop
+/// can use the same `if p.is-header:` / `if !p.is-header:` pattern as the
+/// Skills expander — no nested conditionals inside the loop body.
+///
+/// Layout injected:
+///   PresetRow { name="BUILT-IN", is_header=true }
+///   … built-in rows …
+///   PresetRow { name="YOURS",    is_header=true }   ← only when operator presets exist
+///   … operator rows …
 fn apply_presets(window: &MainWindow, presets: Vec<panel_logic::PresetEntry>) {
     use slint::{ModelRc, VecModel};
-    let rows: Vec<PresetRow> = presets
-        .into_iter()
-        .map(|p| PresetRow {
-            name: p.name.into(),
-            active: p.active,
-        })
-        .collect();
+    let header = |label: &str| PresetRow {
+        name: label.into(),
+        active: false,
+        builtin: false,
+        description: "".into(),
+        is_header: true,
+    };
+    let data_row = |p: panel_logic::PresetEntry| PresetRow {
+        name: p.name.into(),
+        active: p.active,
+        builtin: p.builtin,
+        description: p.description.into(),
+        is_header: false,
+    };
+
+    // Split into builtin / operator so the YOURS header only appears once.
+    let (builtins, operators): (Vec<_>, Vec<_>) = presets.into_iter().partition(|p| p.builtin);
+    let mut rows: Vec<PresetRow> = Vec::with_capacity(builtins.len() + operators.len() + 2);
+
+    rows.push(header("BUILT-IN"));
+    for p in builtins {
+        rows.push(data_row(p));
+    }
+    if !operators.is_empty() {
+        rows.push(header("YOURS"));
+        for p in operators {
+            rows.push(data_row(p));
+        }
+    }
     window.set_preset_list(ModelRc::new(VecModel::from(rows)));
 }
 
@@ -3698,6 +4116,136 @@ fn activate_preset_via_subprocess(name: &str) -> String {
             String::from_utf8_lossy(&o.stderr).trim()
         ),
         Err(e) => format!("preset activate could not start: {e}"),
+    }
+}
+
+/// SPEC-05 builtin-presets — run `neoth preset apply <name> --dry-run`
+/// and parse the JSON plan. Returns the plan on success; None when the
+/// binary is missing, the command fails, or the output is unparseable.
+fn dry_run_preset_via_subprocess(name: &str) -> Option<panel_logic::ApplyPlan> {
+    let bin = which_neothd()?;
+    let out = spawn_neothd_plain(&bin)
+        .arg("preset")
+        .arg("apply")
+        .arg(name)
+        .arg("--dry-run")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    panel_logic::parse_apply_plan(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// SPEC-05 builtin-presets — mint a full-auto token then apply <name> with
+/// `--yes --gui-confirmed --gui-token <token>`.
+/// Returns a human-readable status string.
+fn apply_preset_with_fullauto_token(name: &str) -> String {
+    let Some(bin) = which_neothd() else {
+        return "preset apply: neothd binary not found".to_string();
+    };
+    // Mint the single-use token (same pattern as on_full_auto_confirmed).
+    let token = spawn_neothd_plain(&bin)
+        .arg("autonomy")
+        .arg("mint-fullauto-token")
+        .arg("--output")
+        .arg("json")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            // Output may be `{"token":"…"}` or bare token — extract either way.
+            let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                v.get("token")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or(&raw)
+                    .to_string()
+            } else {
+                raw
+            }
+        })
+        .filter(|t| !t.is_empty());
+    let Some(tok) = token else {
+        return format!(
+            "Full-auto token mint failed for preset `{name}` — daemon must be running."
+        );
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("preset")
+        .arg("apply")
+        .arg(name)
+        .arg("--yes")
+        .arg("--gui-confirmed")
+        .arg("--gui-token")
+        .arg(&tok)
+        .output()
+    {
+        Ok(o) if o.status.success() => format!("Applied preset `{name}` (full-auto)."),
+        Ok(o) => format!(
+            "preset apply `{name}` failed (exit {}): {}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => format!("preset apply could not start: {e}"),
+    }
+}
+
+/// SPEC-05 builtin-presets — apply <name> non-interactively with `--yes`
+/// (no autonomy token needed — not a full-auto preset).
+fn apply_preset_direct(name: &str) -> String {
+    let Some(bin) = which_neothd() else {
+        return "preset apply: neothd binary not found".to_string();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("preset")
+        .arg("apply")
+        .arg(name)
+        .arg("--yes")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            // Try to extract fields_changed count from JSON output.
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                if let Some(n) = v
+                    .get("fields_changed")
+                    .and_then(|f| f.as_array())
+                    .map(|a| a.len())
+                {
+                    return format!("Applied preset `{name}` ({n} fields changed).");
+                }
+            }
+            format!("Applied preset `{name}`.")
+        }
+        Ok(o) => format!(
+            "preset apply `{name}` failed (exit {}): {}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => format!("preset apply could not start: {e}"),
+    }
+}
+
+/// SPEC-05 builtin-presets — delete an operator preset via
+/// `neoth preset delete <name>`.
+fn delete_preset_via_subprocess(name: &str) -> String {
+    let Some(bin) = which_neothd() else {
+        return "preset delete: neothd binary not found".to_string();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("preset")
+        .arg("delete")
+        .arg(name)
+        .output()
+    {
+        Ok(o) if o.status.success() => format!("Deleted preset `{name}`."),
+        Ok(o) => format!(
+            "preset delete `{name}` failed (exit {}): {}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => format!("preset delete could not start: {e}"),
     }
 }
 

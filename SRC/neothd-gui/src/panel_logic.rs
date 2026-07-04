@@ -1019,10 +1019,19 @@ pub fn read_channel_status(neoth_home: &std::path::Path) -> Vec<ChannelStatus> {
 pub struct PresetEntry {
     pub name: String,
     pub active: bool,
+    /// True for the four built-ins (full-auto / balanced / essentials / local-sovereign).
+    /// Old daemons that omit the field produce false (manual parse default).
+    pub builtin: bool,
+    /// Human-readable summary shown under the preset name.
+    /// Old daemons that omit the field produce an empty string.
+    pub description: String,
 }
 
-/// Parse `neoth preset list --json` (`{presets:[{name,active}], active}`).
-/// PURE + robust (malformed → empty; name-less entries skipped).
+/// Parse `neoth preset list --json`
+/// (`{presets:[{name,active,builtin?,description?}], active}`).
+/// PURE + robust: malformed → empty; name-less entries skipped.
+/// New `builtin` and `description` fields have serde defaults so old daemons
+/// that omit them still parse correctly.
 pub fn parse_presets(json: &str) -> Vec<PresetEntry> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
@@ -1034,11 +1043,81 @@ pub fn parse_presets(json: &str) -> Vec<PresetEntry> {
                 .filter_map(|p| {
                     let name = p.get("name")?.as_str()?.to_string();
                     let active = p.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
-                    Some(PresetEntry { name, active })
+                    let builtin = p.get("builtin").and_then(|b| b.as_bool()).unwrap_or(false);
+                    let description = p
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(PresetEntry { name, active, builtin, description })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ── SPEC-05 preset apply plan (parse `neoth preset apply <name> --dry-run`) ──
+
+/// A single changed field reported by the dry-run.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WarnChange {
+    pub path: String,
+    pub old: String,
+    pub new: String,
+}
+
+/// Parsed result of `neoth preset apply <name> --dry-run --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ApplyPlan {
+    pub name: String,
+    /// "full" when the preset requests operator-autonomy=full; None otherwise.
+    pub autonomy_requested: Option<String>,
+    pub warn_changes: Vec<WarnChange>,
+    pub fields_changed_count: usize,
+}
+
+/// Parse `neoth preset apply <name> --dry-run` JSON output.
+///
+/// Expected shape:
+/// ```json
+/// {
+///   "name": "full-auto",
+///   "fields_changed": ["autonomy", "provider"],
+///   "autonomy_requested": "full",        // omitted when not full
+///   "warn_changes": [
+///     {"path": "autonomy.level", "old": "standard", "new": "full"}
+///   ]
+/// }
+/// ```
+/// PURE + robust: malformed or missing JSON → `None`.
+pub fn parse_apply_plan(json: &str) -> Option<ApplyPlan> {
+    let v = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let name = v.get("name")?.as_str()?.to_string();
+    let fields_changed_count = v
+        .get("fields_changed")
+        .and_then(|f| f.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let autonomy_requested = v
+        .get("autonomy_requested")
+        .and_then(|a| a.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let warn_changes = v
+        .get("warn_changes")
+        .and_then(|w| w.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    let path = c.get("path")?.as_str()?.to_string();
+                    let old = c.get("old").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let new = c.get("new").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    Some(WarnChange { path, old, new })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ApplyPlan { name, autonomy_requested, warn_changes, fields_changed_count })
 }
 
 // ── SPEC-05 step5c behavioural-profile selector ──────────────────────────────
@@ -1554,6 +1633,33 @@ fn ticker_frame_over(messages: &[&'static str], tick: u64) -> &'static str {
         pos -= cycle;
     }
     messages[0]
+}
+
+// GAP-04 — Format the raw stdout+stderr of `neoth recall <query>` into a
+// display string for the GUI. Pure: no I/O, no allocation from caller.
+//
+// Rules:
+//   - Concatenate stdout + stderr (stderr appended with a newline separator
+//     when non-empty); this mirrors the pattern used in the doctor/status
+//     probe workers in main.rs.
+//   - Trim the final result; if empty, substitute a "no results" sentinel so
+//     the text area never shows a blank rectangle.
+//   - Never panics: all inputs are `&str`.
+pub fn format_recall_output(stdout: &str, stderr: &str, query: &str) -> String {
+    let mut s = stdout.to_owned();
+    let err = stderr.trim();
+    if !err.is_empty() {
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s.push_str(err);
+    }
+    let trimmed = s.trim().to_owned();
+    if trimmed.is_empty() {
+        format!("No results for \"{query}\".")
+    } else {
+        trimmed
+    }
 }
 
 #[cfg(test)]
@@ -2388,6 +2494,76 @@ mod tests {
         assert_eq!(rows[0].name, "ok");
     }
 
+    #[test]
+    fn parse_presets_reads_builtin_and_description_fields() {
+        let json = r#"{
+            "presets":[
+                {"name":"full-auto","active":false,"builtin":true,"description":"Acts without asking"},
+                {"name":"balanced","active":true,"builtin":true,"description":"Balanced defaults"},
+                {"name":"my-custom","active":false,"builtin":false,"description":""}
+            ],
+            "active":"balanced"
+        }"#;
+        let rows = parse_presets(json);
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].builtin);
+        assert_eq!(rows[0].description, "Acts without asking");
+        assert!(rows[1].builtin);
+        assert!(rows[1].active);
+        assert!(!rows[2].builtin);
+        assert_eq!(rows[2].description, "");
+    }
+
+    #[test]
+    fn parse_presets_builtin_description_default_when_absent() {
+        // Old daemon: fields absent — must not panic, defaults to false/"".
+        let json = r#"{"presets":[{"name":"frugal","active":false}],"active":null}"#;
+        let rows = parse_presets(json);
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].builtin, "absent builtin defaults false");
+        assert_eq!(rows[0].description, "", "absent description defaults empty");
+    }
+
+    // ── SPEC-05 parse_apply_plan ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_apply_plan_happy_path_with_warns() {
+        let json = r#"{
+            "name": "full-auto",
+            "fields_changed": ["autonomy", "provider"],
+            "autonomy_requested": "full",
+            "warn_changes": [
+                {"path": "autonomy.level", "old": "standard", "new": "full"},
+                {"path": "council.enabled", "old": "false", "new": "true"}
+            ]
+        }"#;
+        let plan = parse_apply_plan(json).expect("valid JSON must parse");
+        assert_eq!(plan.name, "full-auto");
+        assert_eq!(plan.autonomy_requested, Some("full".to_string()));
+        assert_eq!(plan.fields_changed_count, 2);
+        assert_eq!(plan.warn_changes.len(), 2);
+        assert_eq!(plan.warn_changes[0].path, "autonomy.level");
+        assert_eq!(plan.warn_changes[0].old, "standard");
+        assert_eq!(plan.warn_changes[0].new, "full");
+    }
+
+    #[test]
+    fn parse_apply_plan_no_warns_no_autonomy() {
+        let json = r#"{"name":"essentials","fields_changed":["provider"],"warn_changes":[]}"#;
+        let plan = parse_apply_plan(json).expect("valid JSON must parse");
+        assert_eq!(plan.name, "essentials");
+        assert_eq!(plan.autonomy_requested, None);
+        assert_eq!(plan.fields_changed_count, 1);
+        assert!(plan.warn_changes.is_empty());
+    }
+
+    #[test]
+    fn parse_apply_plan_malformed_json_returns_none() {
+        assert!(parse_apply_plan("not json").is_none());
+        assert!(parse_apply_plan("{}").is_none(), "missing name field → None");
+        assert!(parse_apply_plan("").is_none());
+    }
+
     // ── SPEC-06 parse_provider_ids ────────────────────────────────────────────
 
     #[test]
@@ -2626,5 +2802,43 @@ mod tests {
         for t in 0..(total * 2) {
             let _ = ticker_frame(t);
         }
+    }
+
+    // ── GAP-04 format_recall_output ───────────────────────────────────────
+    #[test]
+    fn format_recall_output_returns_stdout_when_no_stderr() {
+        let out = format_recall_output("episode 1\nepisode 2", "", "topic");
+        assert_eq!(out, "episode 1\nepisode 2");
+    }
+
+    #[test]
+    fn format_recall_output_appends_stderr_when_present() {
+        let out = format_recall_output("result line", "  warn: tier miss  ", "q");
+        assert_eq!(out, "result line\nwarn: tier miss");
+    }
+
+    #[test]
+    fn format_recall_output_uses_sentinel_when_both_empty() {
+        let out = format_recall_output("", "", "my query");
+        assert_eq!(out, "No results for \"my query\".");
+    }
+
+    #[test]
+    fn format_recall_output_uses_sentinel_when_only_whitespace() {
+        let out = format_recall_output("  \n  ", "   ", "blank");
+        assert_eq!(out, "No results for \"blank\".");
+    }
+
+    #[test]
+    fn format_recall_output_stderr_only_shows_without_leading_newline() {
+        // stdout empty → no leading \n before stderr content
+        let out = format_recall_output("", "daemon not running", "x");
+        assert_eq!(out, "daemon not running");
+    }
+
+    #[test]
+    fn format_recall_output_trims_trailing_whitespace_from_result() {
+        let out = format_recall_output("found it  \n\n", "", "q");
+        assert_eq!(out, "found it");
     }
 }

@@ -133,15 +133,28 @@ export component ProbeView inherits Rectangle {
 
 // Doctor — runs `neoth doctor` and renders the check output. min:0 in the
 // mockup nav (always available); a one-click health probe.
+// GAP-05: second probe section "Status" → `neoth status`.
+// GAP-13: third probe section "Security audit" → `neoth security audit`.
 export component DoctorView inherits Rectangle {
     in property <string> output: "";
     in property <bool> running: false;
     callback run-clicked();
 
+    // GAP-05 — Status probe.
+    in property <string> status-output: "";
+    in property <bool> status-running: false;
+    callback status-run-clicked();
+
+    // GAP-13 — Security audit probe.
+    in property <string> security-output: "";
+    in property <bool> security-running: false;
+    callback security-run-clicked();
+
     background: Theme.bg-base;
     VerticalLayout {
         padding: 28px; spacing: 14px;
 
+        // ── Doctor ────────────────────────────────────────────────────
         HorizontalLayout {
             alignment: space-between;
             VerticalLayout {
@@ -166,7 +179,7 @@ export component DoctorView inherits Rectangle {
         }
 
         Rectangle {
-            vertical-stretch: 1;
+            height: 220px;
             border-radius: Theme.radius-lg;
             background: Theme.bg-void;
             border-width: 1px; border-color: Theme.border-subtle;
@@ -176,6 +189,88 @@ export component DoctorView inherits Rectangle {
                     x: 18px; y: 16px; width: parent.width - 36px;
                     text: root.output != "" ? root.output : "Click \"Run neoth doctor\" to probe the system.";
                     color: root.output != "" ? Theme.text-secondary : Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-sm;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // ── GAP-05: Status ────────────────────────────────────────────
+        HorizontalLayout {
+            alignment: space-between;
+            VerticalLayout {
+                alignment: center; spacing: 3px;
+                Text {
+                    text: "Status — daemon, providers, channels, cluster (neoth status).";
+                    color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-md;
+                }
+            }
+            Rectangle {
+                width: sbtn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
+                background: root.status-running ? Theme.surface-2 : Theme.accent-tint;
+                border-width: 1px; border-color: Theme.border-accent;
+                sbtn := Text {
+                    text: root.status-running ? "running…" : "Run";
+                    color: root.status-running ? Theme.text-tertiary : Theme.accent;
+                    font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                }
+                TouchArea { clicked => { if (!root.status-running) { root.status-run-clicked(); } } }
+            }
+        }
+
+        Rectangle {
+            height: 160px;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-void;
+            border-width: 1px; border-color: Theme.border-subtle;
+            Flickable {
+                viewport-width: self.width;
+                Text {
+                    x: 18px; y: 16px; width: parent.width - 36px;
+                    text: root.status-output != "" ? root.status-output : "Click \"Run\" to fetch status.";
+                    color: root.status-output != "" ? Theme.text-secondary : Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-sm;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // ── GAP-13: Security audit ────────────────────────────────────
+        HorizontalLayout {
+            alignment: space-between;
+            VerticalLayout {
+                alignment: center; spacing: 3px;
+                Text {
+                    text: "Security audit — OWASP checks, WAL integrity, credential hygiene (neoth security audit).";
+                    color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-md;
+                }
+            }
+            Rectangle {
+                width: abtn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
+                background: root.security-running ? Theme.surface-2 : Theme.accent-tint;
+                border-width: 1px; border-color: Theme.border-accent;
+                abtn := Text {
+                    text: root.security-running ? "running…" : "Run audit";
+                    color: root.security-running ? Theme.text-tertiary : Theme.accent;
+                    font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                }
+                TouchArea { clicked => { if (!root.security-running) { root.security-run-clicked(); } } }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-void;
+            border-width: 1px; border-color: Theme.border-subtle;
+            Flickable {
+                viewport-width: self.width;
+                Text {
+                    x: 18px; y: 16px; width: parent.width - 36px;
+                    text: root.security-output != "" ? root.security-output : "Click \"Run audit\" to check security posture.";
+                    color: root.security-output != "" ? Theme.text-secondary : Theme.text-tertiary;
                     font-family: Theme.font-mono; font-size: Theme.font-size-sm;
                     wrap: word-wrap;
                 }
