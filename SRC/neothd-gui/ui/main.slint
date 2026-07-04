@@ -141,6 +141,9 @@ export component MainWindow inherits Window {
     in property <bool> operator-id-valid: false;
     in-out property <string> status-line: "";
     in property <string> hardware-summary: "";
+    /// GOLD-ADAPT-OH-01 — prior-AI migration card body (welcome step).
+    /// Empty = no canonical stores detected → card hidden.
+    in property <string> migrate-summary: "";
     // GOLD-ADAPT-GUI-04 — daemon live-state for the footer Led:
     // "live" | "connecting" | "error" (derived from probe outcomes).
     in property <string> daemon-state: "connecting";
@@ -746,6 +749,39 @@ export component MainWindow inherits Window {
                     }
                     Text {
                         text: root.budget-summary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            // GOLD-ADAPT-OH-01 — migration-first onboarding, GUI mirror
+            // of the CLI step-0 branch. Shown only when `neoth-migrate
+            // detect` found canonical prior-AI stores; informational —
+            // the import itself runs in a terminal (consent-gated CLI).
+            if root.migrate-summary != "": Card {
+                min-height: 110px;
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "Prior AI detected — migration available";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        color: Theme.accent-green;
+                    }
+                    Text {
+                        text: root.migrate-summary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "Terminal: neoth-migrate detect --output manifest.yaml → review → neoth-migrate apply --manifest manifest.yaml --confirm";
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;

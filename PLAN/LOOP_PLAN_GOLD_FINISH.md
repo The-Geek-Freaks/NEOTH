@@ -261,7 +261,7 @@ Optional cross-model second opinion when available: Chorus template `codex-gemin
 | `GOLD-PROG-15` | PC-02 Chrome-DevTools-MCP license/telemetry acceptance — config shipped; operator go/no-go for default recommendation. |
 | `GOLD-HR-00` | Host-level tooling install (`uv tool install headroom-ai[proxy]` + CC plugin hooks) — outside repo; operator's Claude-Code setup. |
 | `GOLD-ADAPT-JV-MODE-02` consent ceremony | Sovereign-mode default wording/level — propose, Alex ratifies. |
-| `GOLD-ADAPT-OH-01` apply-scope | Tracker contradiction found 2026-07-04: item demands "close the apply bail" for v1.0, but neoth-migrate/src/main.rs:7-8 records apply as post-v1.0 by design (dry-run + manifest + readers ARE shipped). Ratify: (A) dry-run scope = v1.0-GOLD, apply post-tag; or (B) apply blocks the tag (multi-day L build). |
+| ~~`GOLD-ADAPT-OH-01` apply-scope~~ | ✅ RESOLVED 2026-07-04 without a decision: second verify-first pass read BEHIND the bail — the full apply pipeline was implemented all along (`--confirm` is a consent gate, the "post-v1.0" module-doc was stale prose). detect subcommand + GUI mirror shipped; OH-01 [x], WS-I gate flipped. Nothing left to ratify. |
 | Release tag timing | `v1.0-gold` tag + GitHub release publish = operator confirms. |
 
 Record each decision as a dated line in the tracker item, then the release-gate box can close.

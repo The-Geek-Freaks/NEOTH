@@ -198,6 +198,35 @@ fn main() -> Result<()> {
         });
     });
 
+    // GOLD-ADAPT-OH-01 — prior-AI detection for the welcome migrate
+    // card. Worker thread (subprocess must never block the window);
+    // the card only appears when detect finds canonical stores, so a
+    // missing neoth-migrate binary or empty result is silent.
+    let weak_migrate = window.as_weak();
+    std::thread::spawn(move || {
+        let summary = which_neoth_migrate()
+            .and_then(|bin| {
+                std::process::Command::new(bin)
+                    .arg("detect")
+                    .arg("--json")
+                    .env("NO_COLOR", "1")
+                    .env("NEOTH_LOG", "error")
+                    .output()
+                    .ok()
+            })
+            .filter(|out| out.status.success())
+            .map(|out| format_migrate_summary(&String::from_utf8_lossy(&out.stdout)))
+            .unwrap_or_default();
+        if summary.is_empty() {
+            return;
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak_migrate.upgrade() {
+                w.set_migrate_summary(summary.into());
+            }
+        });
+    });
+
     // QM-9 Phase 2/3+: usage rollup probe runs in its own worker so a
     // slow `neoth usage` subprocess can't block the window. Phase 3+
     // re-fires the probe every USAGE_REFRESH_INTERVAL so the dashboard
@@ -5292,6 +5321,52 @@ fn which_neothd() -> Option<PathBuf> {
     sibling.exists().then_some(sibling)
 }
 
+/// GOLD-ADAPT-OH-01 — locate the `neoth-migrate` helper binary (PATH
+/// scan, then sibling-to-exe) for the welcome-step migration card.
+fn which_neoth_migrate() -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        "neoth-migrate.exe"
+    } else {
+        "neoth-migrate"
+    };
+    if let Some(path_env) = std::env::var_os("PATH") {
+        for entry in std::env::split_paths(&path_env) {
+            let candidate = entry.join(exe);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    let exe_path = std::env::current_exe().ok()?;
+    let dir = exe_path.parent()?;
+    let sibling = dir.join(exe);
+    sibling.exists().then_some(sibling)
+}
+
+/// GOLD-ADAPT-OH-01 — shape `neoth-migrate detect --json` output into
+/// the welcome-card body. Empty string = hide the card (no sources /
+/// unparseable output / detect unavailable). Pure — unit-tested.
+pub fn format_migrate_summary(detect_json: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(detect_json) else {
+        return String::new();
+    };
+    let Some(sources) = v.get("sources").and_then(|s| s.as_array()) else {
+        return String::new();
+    };
+    let names: Vec<&str> = sources
+        .iter()
+        .filter_map(|s| s.get("name").and_then(|n| n.as_str()))
+        .collect();
+    if names.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{} prior-AI store(s) found: {}",
+        names.len(),
+        names.join(", ")
+    )
+}
+
 fn default_neoth_home() -> PathBuf {
     let home = std::env::var("HOME")
         .map(PathBuf::from)
@@ -5985,5 +6060,27 @@ mod deep_link_tests {
         for p in ["chat", "coding", "memory", "config", "loops"] {
             assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
         }
+    }
+}
+
+/// GOLD-ADAPT-OH-01 — welcome migrate-card summary shaping.
+#[cfg(test)]
+mod migrate_card_tests {
+    use super::format_migrate_summary;
+
+    #[test]
+    fn shapes_detected_sources_into_one_line() {
+        let json = "{\"sources\":[{\"name\":\"hermes-memory\"},{\"name\":\"openclaw-layers\"}],\"scans\":[]}";
+        assert_eq!(
+            format_migrate_summary(json),
+            "2 prior-AI store(s) found: hermes-memory, openclaw-layers"
+        );
+    }
+
+    #[test]
+    fn empty_or_malformed_hides_the_card() {
+        assert_eq!(format_migrate_summary("{\"sources\":[],\"scans\":[]}"), "");
+        assert_eq!(format_migrate_summary("not json"), "");
+        assert_eq!(format_migrate_summary("{}"), "");
     }
 }

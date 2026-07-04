@@ -2,11 +2,15 @@
 //!
 //! Imports memory from a previous AI assistant into the NEOTH WAL +
 //! tier views. The operator declares THEIR OWN stores in an
-//! `import-manifest.yaml` (see `examples/import-manifest.example.yaml`);
-//! nothing is hardcoded to any one machine. Emits a `dry-run` report;
-//! the `apply` migration is **post-v1.0** — not yet implemented, so
-//! `apply` validates the manifest then refuses and points back to
-//! `dry-run`. This release is dry-run / preview only.
+//! `import-manifest.yaml` (see `examples/import-manifest.example.yaml`)
+//! or bootstraps one with `detect` (canonical OpenClaw/Hermes/OpenHuman/
+//! Veronica locations); nothing is hardcoded to any one machine.
+//! `dry-run` previews; `apply --confirm` performs the real import
+//! (claims → idx_groundtruth in one transaction, JSONL-sidecar
+//! audited). Without `--confirm`, `apply` validates then refuses —
+//! that is the consent gate, not a stub. (GOLD-ADAPT-OH-01 doc fix
+//! 2026-07-04: earlier prose called apply "post-v1.0 / not yet
+//! implemented" long after the import path landed below.)
 //!
 //! Lives outside `neothd` so a daemon release doesn't carry the
 //! migration-only deps (pulldown-cmark today; future lance + git2).
@@ -15,16 +19,21 @@
 //! ## CLI
 //!
 //! ```text
+//! neoth-migrate detect [--root <PATH>] [--output <PATH>] [--json]
+//!     Scan the canonical prior-AI locations and generate a
+//!     ready-to-review import-manifest.yaml (stdout or --output).
+//!     --json emits sources + row-count estimates for the GUI card.
+//!
 //! neoth-migrate dry-run --manifest <PATH> [--root <PATH>]
 //!     Scan-only. No WAL writes. Reads the operator's import manifest
 //!     and prints a JSON report of every declared source: path, kind,
 //!     row-count estimate, sample entries (first 3 rows / files).
 //!
 //! neoth-migrate apply --manifest <PATH> --confirm [--root <PATH>]
-//!     POST-v1.0 / preview only: the real import path is not yet
-//!     implemented. Today `apply` validates the manifest then refuses
-//!     and points back to `dry-run`. (When it ships it will append
-//!     frames to the WAL and be replay-only undoable, hence `--confirm`.)
+//!     The real import: claims from every declared source are
+//!     INSERT OR IGNOREd into idx_groundtruth in one transaction,
+//!     audited to the JSONL sidecar. `--confirm` is the consent gate
+//!     (without it: validate + refuse); `--dry-run` previews.
 //!
 //! neoth-migrate import-config [--auth-profiles <PATH>] [--models-providers <PATH>] [--json]
 //!     Convert OpenClaw `auth.profiles` + `models.providers` JSON files
@@ -43,6 +52,7 @@ use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+mod detect;
 mod import_config;
 mod import_crons;
 mod readers;
@@ -62,14 +72,21 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// GOLD-ADAPT-OH-01 — scan the canonical prior-AI install locations
+    /// (OpenClaw layers, Hermes memory.db, OpenHuman profiles.sqlite,
+    /// Veronica memory.jsonl) and generate a ready-to-review
+    /// import-manifest.yaml. Read-only; the operator edits the manifest,
+    /// then runs `dry-run` and `apply --confirm` against it.
+    Detect(DetectArgs),
     /// Scan-only. Walks every known store, reports rows + sample
     /// entries. Never writes to the WAL.
     DryRun(DryRunArgs),
-    /// Preview only in this release — `apply` is post-v1.0. The real
-    /// import path (WAL writer + per-reader emitters) is not yet
-    /// implemented, so this subcommand validates the manifest then
-    /// refuses and points you back at `dry-run`. `--confirm` is reserved
-    /// for when apply ships.
+    /// Import the declared stores into ground-truth. `--confirm` is the
+    /// consent gate: without it this subcommand validates the manifest
+    /// then refuses (use `--dry-run` to preview). With it, claims are
+    /// extracted per source and INSERT OR IGNOREd into idx_groundtruth
+    /// in one transaction, audited to the JSONL sidecar
+    /// (`~/.neoth/neoth-migrate-audit.jsonl`).
     Apply(ApplyArgs),
     /// Convert OpenClaw auth.profiles + models.providers JSON files into
     /// NEOTH freedom.yaml provider stanzas. Keys are NEVER extracted
@@ -83,6 +100,20 @@ enum Command {
     /// Emits YAML ready to paste into jobs.yaml. At least one of --timer
     /// or --crontab is required.
     ImportCrons(ImportCronsArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct DetectArgs {
+    /// Operator home override (tests / unusual layouts). Default: `$HOME`.
+    #[arg(long, value_name = "PATH")]
+    root: Option<std::path::PathBuf>,
+    /// Write the generated manifest here instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<std::path::PathBuf>,
+    /// Emit a machine-readable JSON report (sources + scan estimates)
+    /// instead of the YAML manifest. Used by the GUI onboarding card.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -155,11 +186,47 @@ fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
     match cli.command {
+        Command::Detect(args) => run_detect(args),
         Command::DryRun(args) => run_dry_run(args),
         Command::Apply(args) => run_apply(args),
         Command::ImportConfig(args) => run_import_config(args),
         Command::ImportCrons(args) => run_import_crons(args),
     }
+}
+
+/// GOLD-ADAPT-OH-01 — canonical-source detection → generated manifest.
+fn run_detect(args: DetectArgs) -> Result<()> {
+    let home = args.root.clone().unwrap_or_else(default_home);
+    let detection = detect::detect_sources(&home);
+    if args.json {
+        let report = serde_json::json!({
+            "sources": detection.manifest.sources,
+            "scans": detection.scans,
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    let yaml = detect::render_manifest_yaml(&detection)?;
+    match &args.output {
+        Some(path) => {
+            std::fs::write(path, &yaml)
+                .with_context(|| format!("write manifest to {}", path.display()))?;
+            eprintln!(
+                "manifest written to {} ({} source(s) detected)",
+                path.display(),
+                detection.manifest.sources.len()
+            );
+        }
+        None => print!("{yaml}"),
+    }
+    if detection.manifest.sources.is_empty() {
+        eprintln!(
+            "no canonical prior-AI stores found under {} — declare custom \
+             stores by hand (examples/import-manifest.example.yaml)",
+            home.display()
+        );
+    }
+    Ok(())
 }
 
 fn run_dry_run(args: DryRunArgs) -> Result<()> {
