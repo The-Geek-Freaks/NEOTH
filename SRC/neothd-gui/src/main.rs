@@ -1245,33 +1245,35 @@ fn main() -> Result<()> {
     // its values into freedom.yaml.
     let weak_preset_apply = window.as_weak();
     window.on_preset_apply_clicked(move || {
-        let outcome = apply_active_preset_via_subprocess();
-        // Wave-1 call site A: toast mirrors the status-line result so
-        // the operator gets feedback even when not looking at the footer.
-        let (toast_kind, toast_title, toast_body) =
-            if outcome.to_lowercase().contains("error")
+        let weak = weak_preset_apply.clone();
+        std::thread::spawn(move || {
+            let outcome = apply_active_preset_via_subprocess();
+            // Wave-1 call site A: toast mirrors the status-line result so
+            // the operator gets feedback even when not looking at the footer.
+            // (push_toast/push_activity marshal to the event loop internally,
+            // so they are safe to call from this worker thread.)
+            let (toast_kind, toast_title) = if outcome.to_lowercase().contains("error")
                 || outcome.to_lowercase().contains("fail")
             {
-                ("warn", "Preset apply failed", outcome.as_str())
+                ("warn", "Preset apply failed")
             } else {
-                ("success", "Preset applied", outcome.as_str())
+                ("success", "Preset applied")
             };
-        push_toast(&weak_preset_apply, toast_kind, toast_title, toast_body);
-        // Wave-2 feed E: consent row when preset actually applied.
-        if toast_kind == "success" {
-            push_activity(&weak_preset_apply, "consent", "Preset applied", toast_body);
-        }
-        let weak = weak_preset_apply.clone();
-        let outcome2 = outcome.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_status_line(outcome2.into());
-                // Force-refresh the preset summary so the active
-                // marker reflects any change without waiting for
-                // the next 5-minute tick.
-                let summary = probe_preset_summary_via_subprocess();
-                w.set_preset_summary(summary.into());
+            push_toast(&weak, toast_kind, toast_title, &outcome);
+            // Wave-2 feed E: consent row when preset actually applied.
+            if toast_kind == "success" {
+                push_activity(&weak, "consent", "Preset applied", &outcome);
             }
+            // Force-refresh the preset summary so the active
+            // marker reflects any change without waiting for
+            // the next 5-minute tick.
+            let summary = probe_preset_summary_via_subprocess();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(outcome.into());
+                    w.set_preset_summary(summary.into());
+                }
+            });
         });
     });
 
@@ -1279,16 +1281,19 @@ fn main() -> Result<()> {
     // the active marker moves immediately (no wait for the 5-min tick).
     let weak_preset_activate = window.as_weak();
     window.on_preset_activate_clicked(move |name| {
-        let status = activate_preset_via_subprocess(&name);
-        let presets = fetch_presets();
-        let summary = probe_preset_summary_via_subprocess();
         let weak = weak_preset_activate.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_status_line(status.into());
-                w.set_preset_summary(summary.into());
-                apply_presets(&w, presets);
-            }
+        let name = name.to_string();
+        std::thread::spawn(move || {
+            let status = activate_preset_via_subprocess(&name);
+            let presets = fetch_presets();
+            let summary = probe_preset_summary_via_subprocess();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(status.into());
+                    w.set_preset_summary(summary.into());
+                    apply_presets(&w, presets);
+                }
+            });
         });
     });
 
@@ -1440,14 +1445,17 @@ fn main() -> Result<()> {
     // the active marker moves immediately.
     let weak_profile_apply = window.as_weak();
     window.on_profile_preset_apply_clicked(move |name| {
-        let status = apply_profile_preset_via_subprocess(&name);
-        let presets = fetch_profile_presets();
         let weak = weak_profile_apply.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_status_line(status.into());
-                apply_profile_presets(&w, presets);
-            }
+        let name = name.to_string();
+        std::thread::spawn(move || {
+            let status = apply_profile_preset_via_subprocess(&name);
+            let presets = fetch_profile_presets();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(status.into());
+                    apply_profile_presets(&w, presets);
+                }
+            });
         });
     });
 
@@ -1573,14 +1581,18 @@ fn main() -> Result<()> {
         } else {
             model.to_string()
         };
-        let status = set_hemisphere_via_subprocess(&role, &provider, &model);
-        let hemis = fetch_hemispheres_snapshot();
+        let role = role.to_string();
+        let provider = provider.to_string();
         let weak = weak_hemi_set.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_status_line(status.into());
-                apply_hemispheres(&w, hemis);
-            }
+        std::thread::spawn(move || {
+            let status = set_hemisphere_via_subprocess(&role, &provider, &model);
+            let hemis = fetch_hemispheres_snapshot();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(status.into());
+                    apply_hemispheres(&w, hemis);
+                }
+            });
         });
     });
 
