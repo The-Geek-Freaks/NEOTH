@@ -140,6 +140,28 @@ Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
 - `--no-credentials` — Exclude `credentials.yaml` (API keys, channel tokens) from the tarball. By default it IS bundled — otherwise a restore is missing every key — but the archive is plaintext, so backup prints a warning and `--no-credentials` lets you opt out (e.g. when the archive will live on untrusted storage)
 - `--home <DIR>` — Override the ~/.neoth source dir (mostly for tests)
 
+## `neoth buddy`
+
+GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + two safe toggles. `status` reads six buddy-config fields from freedom.yaml; `self-activation --enable/--disable` toggles `self_activation.enabled`; `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign and smart-approve are read-only here — they have their own gated paths
+
+### `neoth buddy proactive`
+
+Toggle `proactive.enabled` in freedom.yaml
+
+- `--enable` — Enable proactive messaging
+- `--disable` — Disable proactive messaging
+
+### `neoth buddy self-activation`
+
+Toggle `self_activation.enabled` in freedom.yaml
+
+- `--enable` — Enable self-activation
+- `--disable` — Disable self-activation
+
+### `neoth buddy status`
+
+Print a snapshot of the six GUI Buddy-Config fields
+
 ## `neoth calendar`
 
 EM-02b — CalDAV calendar. `list` reports VEVENTs in the configured collection; `add` PUTs a new event (gated + audited like every external write). Uses the same `caldav_{url,username,password}` as `neoth todo`
@@ -697,12 +719,22 @@ Run operator health checks (freedom/credentials/db/wal/hmac/quota/...). Exit cod
 
 Compose dreams now (SPEC-12 / R-02): `dream now` runs one dreaming pass over the recent window on-demand — embed + cosine-cluster the window's episodes into themed Dream records under `~/.neoth/dreams/` — instead of waiting for the nightly cron. Emits `0xF4 DREAM_COMPOSED`
 
+### `neoth dream list`
+
+List days that have a dream JSONL file in `~/.neoth/dreams/`. Output is sorted newest-first
+
 ### `neoth dream now`
 
 Compose dreams over the recent window right now (default: last 24h)
 
 - `--window-secs <WINDOW_SECS>` — Look-back window in seconds. Default 86400 (24h)
 - `--max-events <MAX_EVENTS>` — Max events to embed + cluster this pass. Default 500
+
+### `neoth dream show`
+
+Show the dreams recorded on a specific day
+
+- `<DAY>` — Day to show (e.g. `2026-06-03`)
 
 ## `neoth ecology`
 
@@ -1704,6 +1736,10 @@ List archive days that have at least one session MD file
 Scaffold a fresh NEOTH-Vault: creates the directory, drops a minimal `.obsidian/` config + a README, and pre-creates the `NEOTH-sessions/` subdir so `sync` lands without operator configuration. Safe to re-run — existing files are left alone
 
 - `--vault <PATH>` — Vault path to create. Defaults to `~/Documents/NEOTH-Vault/` on every platform (the path Obsidian itself uses by default when the operator clicks "Create new vault")
+
+### `neoth obsidian status`
+
+Report the Obsidian integration config from `freedom.yaml`. Pure read, no side effects. Shows whether a vault is configured and the key automation settings (auto-sync, wiki-rebuild, vault-reader)
 
 ### `neoth obsidian sync`
 
