@@ -438,22 +438,27 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     {
         Some(hcfg) if !hcfg.server.is_empty() => {
             match crate::transport::hysteria::HysteriaSupervisor::spawn(hcfg) {
-                Ok(sup) => {
+                Ok(mut sup) => {
                     let port = sup.socks_port;
                     // Give the subprocess a beat to bind.
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                     match crate::transport::hysteria::probe_socks_port(port).await {
                         Ok(()) => {
                             // R-3 Phase 3b helper — single source of truth
-                            // for the SOCKS5 URL + NEOTH_HTTP_PROXY env
-                            // write. No provider client built yet (next
-                            // block constructs them) so the env-write
-                            // beats every reqwest::Client::builder call.
+                            // for the SOCKS5 URL. Installs the process-proxy
+                            // slot in providers::http_client (OnceLock, no
+                            // env write). No provider client built yet (next
+                            // block constructs them) so the install beats
+                            // every reqwest::Client::builder call.
                             let proxy_url = sup.install_as_process_proxy();
                             info!(
                                 proxy = %proxy_url,
                                 "Hysteria SOCKS5 up; routing provider HTTP through it",
                             );
+                            // Respawn-with-backoff watchdog: a crashed
+                            // child must not silently drop egress to
+                            // direct.
+                            sup.start_watchdog();
                             Some(sup)
                         }
                         Err(e) if strict_egress => {

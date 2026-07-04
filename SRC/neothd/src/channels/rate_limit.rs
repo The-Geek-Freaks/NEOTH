@@ -23,6 +23,17 @@
 //! The caller is expected to record the drop as a WAL audit event (we
 //! don't write WAL from inside the rate limiter to keep it lock-free
 //! pure-Rust).
+//!
+//! ## Restart behaviour (deliberate, ULTRA-review 2026-07-03 verdict)
+//!
+//! Buckets are in-memory only: a daemon restart refills every sender to
+//! full burst. With burst = 30 and refill = 0.5 tok/s the full window is
+//! exactly 60 s, so the worst case is ONE extra 30-message burst right
+//! after a restart — the same allowance an idle-evicted sender already
+//! gets by design (see `evict_if_needed`: recreation at full capacity is
+//! documented behaviour-neutral). Persistence would buy nothing against
+//! the abuse model (sustained spam is re-throttled within a minute) and
+//! WAL event bytes are exhausted, so this is ACCEPTED, not deferred.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

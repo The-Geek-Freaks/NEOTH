@@ -24,10 +24,12 @@ than reported) · 🕰️ MULTI-WEEK (real gap, large refactor).
 
 ## Genuine, fix-worth (verified real, small-to-moderate)
 
-- 🔧 **Rate-limiter state lost on restart** (`channels/rate_limit.rs`). Buckets
-  are in-memory only; a restart refills a throttled sender to full burst. Fix:
-  persist non-idle buckets + TTL-decay on load. (Genuine; moderate — needs a
-  persistence layer; deferred pending test verification.)
+- 🔧 **Rate-limiter state lost on restart** (`channels/rate_limit.rs`).
+  **✅ CLOSED 2026-07-04 as ACCEPT-BY-DESIGN:** burst=30 / refill=0.5 tok/s →
+  full window is exactly 60 s; worst case after restart = one extra 30-msg
+  burst, identical to the documented idle-eviction recreation behaviour.
+  Persistence buys nothing vs the abuse model; WAL bytes exhausted. Verdict
+  recorded in the module doc (`rate_limit.rs` "Restart behaviour").
 
 ### Re-verified as OVERSTATED on second pass (moved down from fix-worth)
 
@@ -114,6 +116,12 @@ than reported) · 🕰️ MULTI-WEEK (real gap, large refactor).
   watchdog** — each a real robustness gap; see GR-011/GR-012 history for the
   webhook ACK tradeoff (intentional to avoid Meta retry storms; durable inbound
   spool is the real closure).
+  **✅ set_var + watchdog FIXED 2026-07-04:** proxy install now goes through
+  `providers::http_client::set_process_proxy` (OnceLock; env var stays the
+  operator fallback — no more `set_var` in the running Tokio runtime), and
+  `HysteriaSupervisor::start_watchdog` respawns a crashed child with 1→60 s
+  exponential backoff (Drop aborts watchdog before kill). Webhook spool
+  remains OPEN.
 
 ## Wave 2 — un-reviewed subsystems (coding/dispatch, media/ingest, skills/config)
 
@@ -158,8 +166,13 @@ Genuine-but-moderate, NOT rushed (documented for focused follow-up):
 - 🔧 **faster-whisper bypasses `allow_huggingface_downloads`** (media-agent #6/
   #7) — air-gapped policy silently violated by a PATH binary. Fix: gate the
   faster-whisper path on the same flag as the candle path.
+  **✅ FIXED 2026-07-04:** `audio::transcribe_if_cached` Path 1 now checks the
+  flag before invoking faster-whisper (falls through to candle when false).
 - 🔧 **Dispatcher counter skew on DB-write failure** (coding #4/#5) —
   `tasks_blocked` incremented before the confirming write; inflated on failure.
+  **✅ FIXED 2026-07-04:** all 5 early-stop/ceiling sites in
+  `coding/dispatcher.rs` reordered to patch-first-count-on-Ok (the
+  worker-timeout arm already had the correct order).
 
 Verified INTENTIONAL/OVERSTATED (not bugs): loop_engine round-1 budget skip,
 plan-review APPROVED-injection guard, zero-test all_green guard, evolver/accept

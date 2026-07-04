@@ -1203,8 +1203,17 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "worker greeting-regression detected; bypassing retry rotation + marking Blocked"
         );
-        outcome.tasks_blocked += 1;
-        let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+        // Count only what the DB confirms — incrementing before the write
+        // inflates tasks_blocked when the patch fails (counter skew).
+        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
+            warn!(
+                task_id = task.task_id.raw(),
+                error = %e,
+                "patch_task_status(Blocked) failed — tasks_blocked not counted"
+            );
+        } else {
+            outcome.tasks_blocked += 1;
+        }
         return Ok(());
     }
     if patch_spiral.is_spiraling(task.task_id) {
@@ -1217,8 +1226,17 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "patch-spiral ceiling hit ({failure_count} consecutive failures); marking Blocked"
         );
-        outcome.tasks_blocked += 1;
-        let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+        // Count only what the DB confirms — incrementing before the write
+        // inflates tasks_blocked when the patch fails (counter skew).
+        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
+            warn!(
+                task_id = task.task_id.raw(),
+                error = %e,
+                "patch_task_status(Blocked) failed — tasks_blocked not counted"
+            );
+        } else {
+            outcome.tasks_blocked += 1;
+        }
         return Ok(());
     }
     // 3. Repetition-loop (QU-01 Phase 3) — the worker re-emitted the
@@ -1236,8 +1254,17 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "repetition-loop detected (identical worker output tail); marking Blocked"
         );
-        outcome.tasks_blocked += 1;
-        let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+        // Count only what the DB confirms — incrementing before the write
+        // inflates tasks_blocked when the patch fails (counter skew).
+        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
+            warn!(
+                task_id = task.task_id.raw(),
+                error = %e,
+                "patch_task_status(Blocked) failed — tasks_blocked not counted"
+            );
+        } else {
+            outcome.tasks_blocked += 1;
+        }
         return Ok(());
     }
 
@@ -1343,8 +1370,17 @@ fn handle_retryable_failure(
                     error = %e,
                     "escalate hemisphere reassign failed; blocking task"
                 );
-                outcome.tasks_blocked += 1;
-                let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+                if let Err(e) =
+                    store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+                {
+                    warn!(
+                        task_id = task.task_id.raw(),
+                        error = %e,
+                        "patch_task_status(Blocked) failed — tasks_blocked not counted"
+                    );
+                } else {
+                    outcome.tasks_blocked += 1;
+                }
             }
         }
     } else {
@@ -1358,8 +1394,17 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "worker retry ceiling hit (no deeper hemisphere); task transitioned to Blocked"
         );
-        outcome.tasks_blocked += 1;
-        let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+        // Count only what the DB confirms — incrementing before the write
+        // inflates tasks_blocked when the patch fails (counter skew).
+        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
+            warn!(
+                task_id = task.task_id.raw(),
+                error = %e,
+                "patch_task_status(Blocked) failed — tasks_blocked not counted"
+            );
+        } else {
+            outcome.tasks_blocked += 1;
+        }
     }
     Ok(())
 }

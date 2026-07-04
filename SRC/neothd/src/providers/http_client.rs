@@ -12,9 +12,29 @@
 //! listener); routing the final hop to the operator's upstream server is
 //! Hysteria's concern, not ours.
 
+use std::sync::RwLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+
+/// Process-wide proxy override installed at daemon startup by the Hysteria
+/// supervisor (`transport::hysteria::install_as_process_proxy`). Consulted
+/// BEFORE the `NEOTH_HTTP_PROXY` env var so the daemon can wire the proxy
+/// at runtime without `std::env::set_var` — which is unsound once the
+/// multi-threaded Tokio runtime is up (daemon startup runs inside it).
+/// RwLock (not OnceLock): a re-provisioned supervisor on a new SOCKS5
+/// port must be able to re-install — last-write-wins, matching the old
+/// env-write semantics. Never written from tests (would leak a proxy
+/// into every parallel `build_client` test in the process).
+static PROCESS_PROXY: RwLock<Option<String>> = RwLock::new(None);
+
+/// Install (or replace) the process-wide proxy URL for every subsequent
+/// `build_client*` call. Last write wins.
+pub(crate) fn set_process_proxy(url: &str) {
+    *PROCESS_PROXY
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url.to_string());
+}
 
 /// Parse a candidate proxy URL — pure function so the parser can be
 /// unit-tested without setting the process-global `NEOTH_HTTP_PROXY`
@@ -49,7 +69,11 @@ fn build_client_with(redirect_policy: reqwest::redirect::Policy) -> Result<reqwe
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .redirect(redirect_policy);
-    let raw = std::env::var("NEOTH_HTTP_PROXY").ok();
+    let raw = PROCESS_PROXY
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .or_else(|| std::env::var("NEOTH_HTTP_PROXY").ok());
     if let Some(proxy) = parse_proxy_setting(raw.as_deref())? {
         builder = builder.proxy(proxy);
         if let Some(url) = raw.as_deref() {

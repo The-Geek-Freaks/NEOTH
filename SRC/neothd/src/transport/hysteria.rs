@@ -17,7 +17,7 @@
 //!   - **Subprocess** management is owned by `HysteriaSupervisor`. Drop
 //!     kills the child cleanly via SIGTERM (unix) / `kill` (windows).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -207,16 +207,31 @@ pub async fn probe_socks_port(port: u16) -> Result<()> {
     Ok(())
 }
 
-/// Supervisor wraps the Hysteria subprocess. Drop kills the child.
-/// Phase 3b will move this onto an async task that restarts the
-/// subprocess on crash; v0.1.x leaves restart to the operator.
+/// Supervisor wraps the Hysteria subprocess. Drop kills the child and
+/// aborts the watchdog. The daemon calls [`Self::start_watchdog`] after
+/// the SOCKS5 probe succeeds so a crashed child is respawned with
+/// exponential backoff instead of silently leaving egress direct.
 pub struct HysteriaSupervisor {
-    child: std::process::Child,
+    /// Shared with the watchdog task so a respawn can swap the child in.
+    child: std::sync::Arc<std::sync::Mutex<std::process::Child>>,
+    /// Respawn loop handle; `None` until `start_watchdog` runs (CLI
+    /// one-shots and tests never start it).
+    watchdog: Option<tokio::task::JoinHandle<()>>,
+    /// Shutdown latch: set by Drop BEFORE aborting the watchdog.
+    /// `JoinHandle::abort()` is cooperative — the task keeps running
+    /// until its next `.await` — so without this flag the watchdog can
+    /// respawn a child AFTER Drop killed the old one, leaking the new
+    /// process. The watchdog checks the flag before spawning and again
+    /// after storing (killing the fresh child if shutdown raced in).
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Local SOCKS5 port the supervisor told Hysteria to listen on.
     pub socks_port: u16,
     /// Path to the rendered config file. Deleted on drop so secrets
-    /// don't linger.
+    /// don't linger. The watchdog re-uses it for respawns.
     config_path: PathBuf,
+    /// Resolved hysteria binary, kept so the watchdog can respawn
+    /// without re-probing PATH.
+    binary: PathBuf,
 }
 
 impl HysteriaSupervisor {
@@ -229,22 +244,86 @@ impl HysteriaSupervisor {
         format!("socks5://127.0.0.1:{}", self.socks_port)
     }
 
-    /// R-3 Phase 3b: process-wide opt-in wire-through. Sets
-    /// `NEOTH_HTTP_PROXY` for the current process so subsequent
-    /// `build_client()` calls pick up the SOCKS5 endpoint
-    /// automatically. Returns the URL that was set so callers
-    /// can log it. Idempotent — setting the same value twice
-    /// is a no-op.
+    /// R-3 Phase 3b: process-wide opt-in wire-through. Installs the
+    /// SOCKS5 URL into `providers::http_client`'s process-proxy slot so
+    /// subsequent `build_client()` calls pick it up automatically.
+    /// Returns the URL so callers can log it. Last-write-wins (matches
+    /// the old env-write semantics — a re-provisioned supervisor on a
+    /// new port must be able to re-install). Replaces the old
+    /// `std::env::set_var` write, which is unsound inside the
+    /// multi-threaded Tokio runtime the daemon startup already runs on;
+    /// the `NEOTH_HTTP_PROXY` env var remains a supported operator-set
+    /// fallback read by `build_client`.
     pub fn install_as_process_proxy(&self) -> String {
         let url = self.socks_proxy_url();
-        // SAFETY: setting an env var is safe before the multi-
-        // threaded HTTP client builder consults it; the daemon
-        // calls this once at startup before the first provider
-        // dispatch.
-        unsafe {
-            std::env::set_var("NEOTH_HTTP_PROXY", &url);
-        }
+        crate::providers::http_client::set_process_proxy(&url);
         url
+    }
+
+    /// Spawn the respawn watchdog: polls the child every 5 s; on exit,
+    /// respawns via the stored binary + rendered config with exponential
+    /// backoff (1 s → 60 s cap, reset after a healthy poll). Idempotent.
+    /// Must run inside a Tokio runtime — `serve` calls it after the
+    /// SOCKS5 probe succeeds.
+    pub fn start_watchdog(&mut self) {
+        if self.watchdog.is_some() {
+            return;
+        }
+        let child = std::sync::Arc::clone(&self.child);
+        let shutdown = std::sync::Arc::clone(&self.shutdown);
+        let binary = self.binary.clone();
+        let config_path = self.config_path.clone();
+        self.watchdog = Some(tokio::spawn(async move {
+            use std::sync::atomic::Ordering;
+            let mut backoff_secs: u64 = 1;
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                if shutdown.load(Ordering::Acquire) {
+                    return;
+                }
+                // Lock scope kept await-free (no guard across .await).
+                // Poisoned mutex = a panic elsewhere; recover the child
+                // rather than silently disabling respawn forever.
+                let exited = {
+                    let mut guard = child
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    matches!(guard.try_wait(), Ok(Some(_)))
+                };
+                if !exited {
+                    backoff_secs = 1;
+                    continue;
+                }
+                tracing::warn!(
+                    backoff_secs,
+                    "hysteria child exited — respawning after backoff"
+                );
+                tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                backoff_secs = (backoff_secs * 2).min(60);
+                if shutdown.load(Ordering::Acquire) {
+                    return;
+                }
+                match spawn_child(&binary, &config_path) {
+                    Ok(mut new_child) => {
+                        if shutdown.load(Ordering::Acquire) {
+                            // Drop raced in between our check and the
+                            // spawn — reap the fresh child, don't leak it.
+                            let _ = new_child.kill();
+                            let _ = new_child.wait();
+                            return;
+                        }
+                        let mut guard = child
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        *guard = new_child;
+                        tracing::info!("hysteria child respawned");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "hysteria respawn failed — will retry");
+                    }
+                }
+            }
+        }));
     }
 
     /// Spawn the Hysteria subprocess against `config`. Returns once the
@@ -260,28 +339,51 @@ impl HysteriaSupervisor {
         std::fs::write(&config_path, render_yaml_config(config))
             .with_context(|| format!("write {}", config_path.display()))?;
 
-        let child = std::process::Command::new(&binary)
-            .arg("client")
-            .arg("--config")
-            .arg(&config_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .with_context(|| format!("spawn hysteria client via {}", binary.display()))?;
+        let child = spawn_child(&binary, &config_path)?;
 
         Ok(Self {
-            child,
+            child: std::sync::Arc::new(std::sync::Mutex::new(child)),
+            watchdog: None,
+            shutdown: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             socks_port: config.local_socks_port,
             config_path,
+            binary,
         })
     }
 }
 
+/// Launch the hysteria client subprocess — shared by the initial spawn
+/// and the watchdog respawn path.
+fn spawn_child(binary: &Path, config_path: &Path) -> Result<std::process::Child> {
+    std::process::Command::new(binary)
+        .arg("client")
+        .arg("--config")
+        .arg(config_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("spawn hysteria client via {}", binary.display()))
+}
+
 impl Drop for HysteriaSupervisor {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Latch shutdown BEFORE abort: abort() is cooperative and the
+        // watchdog may be mid-respawn — the flag makes it reap (not
+        // store) any child it spawns after this point.
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(handle) = self.watchdog.take() {
+            handle.abort();
+        }
+        // Poison-recover: a panicked watchdog must not leak the child.
+        let mut child = self
+            .child
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(child);
         let _ = std::fs::remove_file(&self.config_path);
     }
 }
