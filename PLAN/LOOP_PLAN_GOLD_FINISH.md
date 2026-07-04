@@ -322,6 +322,22 @@ session4_final: >
   ULTRA still OPEN (real, tracked): webhook durable inbound spool,
   gossip-WAL ingest (=G02-CLUSTER-02), smart-loader plan_loader unwire,
   doctor advisable-config hints, GUI-parity long-tail.
+session4_part3: >
+  +2 commits: 367e68c9 (RMAS-01+02) already noted; f52d3c86 =
+  GOLD-FEAT-03b SHIPPED (spec-corrected: NO WAL byte possible — 256/256
+  assigned, tracing-audit; in-binary corpus = LIVE capability map via
+  new wiki/capabilities.rs rendering memory::self_wiki, NOT static
+  include_str; SelfWikiConfig + daemon/wiki_build_cron.rs +
+  reload-aware spawn in serve_tasks + shutdown abort; wiki:: 39/39).
+  obsidian.rs validate_subdir/default_vault_path now pub(crate).
+  REMAINING BUILDABLE after f52d3c86 — exactly 4 items:
+  RMAS-03 (L), OH-01 rest (M — but neoth-migrate apply is stubbed
+  post-v1.0 per its own module doc; verify what the honest v1.0 rest
+  is from wf_4c409a18 b14 findings), ODY-12 + ODY-14 (GUI pair,
+  panel_logic + UiControl + deep links — fresh-session GUI-wave
+  material per B7/B8 precedent). Plus 11 B17 gates (need CI-green
+  streak + error-hunt waves) + 3 operator-blocked (§9: HR-00, PROG-13,
+  PROG-15 — need ALEX).
 session4_part2: >
   CONTINUED under /goal hook (neoth fertig bauen). Additional commits:
   cb27cdf4 (B12 slice-3), e88e65c0 (G02-CLUSTER-02 persist-then-dedup:
