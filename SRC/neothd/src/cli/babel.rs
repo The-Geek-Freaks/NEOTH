@@ -115,37 +115,69 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
             let conn = open_views()?;
             let total: i64 = conn
                 .query_row("SELECT COUNT(*) FROM idx_babel_windows", [], |r| r.get(0))?;
-            println!("babel observer: {}", if cfg.enabled { "enabled" } else { "disabled" });
-            println!("threshold (15-min b_mult): {}", cfg.threshold);
-            match cfg.epsilon_calibrated {
-                Some(e) => println!("epsilon: {e} (frozen)"),
-                None => println!("epsilon: not yet calibrated (b_mult inactive)"),
-            }
-            println!(
-                "federation: {}",
-                if cfg.federate { "ENABLED (consent-gated at runtime)" } else { "disabled" }
-            );
-            if total == 0 {
-                println!("no windows recorded yet");
-                return Ok(());
-            }
-            println!("windows: {total}");
+
+            // Per-granularity summary: (window_secs, count, last_ts_end)
             let mut stmt = conn.prepare(
                 "SELECT window_secs, COUNT(*), MAX(ts_end) FROM idx_babel_windows
                  GROUP BY window_secs ORDER BY window_secs",
             )?;
-            let rows: Vec<(i64, i64, i64)> = stmt
+            let gran_rows: Vec<(i64, i64, i64)> = stmt
                 .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            for (secs, count, last) in rows {
-                println!("  {secs:>5}s: {count} windows, last ts_end {last}");
-            }
+
             let collapses: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM idx_babel_windows WHERE collapse_5m = 1",
                 [],
                 |r| r.get(0),
             )?;
-            println!("collapse-flagged windows: {collapses}");
+
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    let windows_by_granularity: Vec<serde_json::Value> = gran_rows
+                        .iter()
+                        .map(|(secs, count, last)| {
+                            serde_json::json!({
+                                "window_secs": secs,
+                                "count": count,
+                                "last_ts_end": last,
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "enabled": cfg.enabled,
+                            "threshold": cfg.threshold,
+                            "epsilon_calibrated": cfg.epsilon_calibrated,
+                            "federate": cfg.federate,
+                            "total_windows": total,
+                            "collapse_flagged": collapses,
+                            "windows_by_granularity": windows_by_granularity,
+                        })
+                    );
+                }
+                OutputFormat::Table => {
+                    println!("babel observer: {}", if cfg.enabled { "enabled" } else { "disabled" });
+                    println!("threshold (15-min b_mult): {}", cfg.threshold);
+                    match cfg.epsilon_calibrated {
+                        Some(e) => println!("epsilon: {e} (frozen)"),
+                        None => println!("epsilon: not yet calibrated (b_mult inactive)"),
+                    }
+                    println!(
+                        "federation: {}",
+                        if cfg.federate { "ENABLED (consent-gated at runtime)" } else { "disabled" }
+                    );
+                    if total == 0 {
+                        println!("no windows recorded yet");
+                        return Ok(());
+                    }
+                    println!("windows: {total}");
+                    for (secs, count, last) in &gran_rows {
+                        println!("  {secs:>5}s: {count} windows, last ts_end {last}");
+                    }
+                    println!("collapse-flagged windows: {collapses}");
+                }
+            }
         }
         BabelAction::Windows { n } => {
             let conn = open_views()?;
@@ -182,28 +214,53 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                     ))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            if rows.is_empty() {
-                println!("no windows");
-                return Ok(());
-            }
-            for (id, secs, ts_start, ts_end, b_log, b_mult, b_bot, c5, c30, kind) in rows {
-                let fmt_opt = |v: Option<f64>| {
-                    v.map(|x| format!("{x:.4}")).unwrap_or_else(|| "-".to_string())
-                };
-                let fmt_flag = |v: Option<i64>| match v {
-                    Some(1) => "1",
-                    Some(_) => "0",
-                    None => "?",
-                };
-                println!(
-                    "{id}  {secs:>5}s  [{ts_start}..{ts_end}]  b_log={} b_mult={} b_bneck={:.4}  c5={} c30={} kind={}",
-                    fmt_opt(b_log),
-                    fmt_opt(b_mult),
-                    b_bot,
-                    fmt_flag(c5),
-                    fmt_flag(c30),
-                    kind.as_deref().unwrap_or("-"),
-                );
+
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    let windows: Vec<serde_json::Value> = rows
+                        .iter()
+                        .map(|(id, secs, ts_start, ts_end, b_log, b_mult, b_bot, c5, c30, kind)| {
+                            serde_json::json!({
+                                "id": id,
+                                "window_secs": secs,
+                                "ts_start": ts_start,
+                                "ts_end": ts_end,
+                                "b_log": b_log,
+                                "b_mult": b_mult,
+                                "b_bottleneck": b_bot,
+                                "collapse_5m": c5,
+                                "collapse_30m": c30,
+                                "collapse_kind": kind,
+                            })
+                        })
+                        .collect();
+                    println!("{}", serde_json::json!({"windows": windows}));
+                }
+                OutputFormat::Table => {
+                    if rows.is_empty() {
+                        println!("no windows");
+                        return Ok(());
+                    }
+                    for (id, secs, ts_start, ts_end, b_log, b_mult, b_bot, c5, c30, kind) in &rows {
+                        let fmt_opt = |v: Option<f64>| {
+                            v.map(|x| format!("{x:.4}")).unwrap_or_else(|| "-".to_string())
+                        };
+                        let fmt_flag = |v: Option<i64>| match v {
+                            Some(1) => "1",
+                            Some(_) => "0",
+                            None => "?",
+                        };
+                        println!(
+                            "{id}  {secs:>5}s  [{ts_start}..{ts_end}]  b_log={} b_mult={} b_bneck={:.4}  c5={} c30={} kind={}",
+                            fmt_opt(*b_log),
+                            fmt_opt(*b_mult),
+                            b_bot,
+                            fmt_flag(*c5),
+                            fmt_flag(*c30),
+                            kind.as_deref().unwrap_or("-"),
+                        );
+                    }
+                }
             }
         }
         BabelAction::Label { window_id, label } => {
@@ -274,4 +331,49 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+
+    /// JSON shape for `status` must contain the expected top-level keys.
+    #[test]
+    fn status_json_shape() {
+        let v = serde_json::json!({
+            "enabled": true,
+            "threshold": 1.5_f64,
+            "epsilon_calibrated": null,
+            "federate": false,
+            "total_windows": 42_i64,
+            "collapse_flagged": 3_i64,
+            "windows_by_granularity": [
+                {"window_secs": 900_i64, "count": 42_i64, "last_ts_end": 1_700_000_000_i64}
+            ],
+        });
+        assert_eq!(v["enabled"], true);
+        assert_eq!(v["total_windows"], 42);
+        assert_eq!(v["windows_by_granularity"][0]["window_secs"], 900);
+        assert_eq!(v["windows_by_granularity"][0]["count"], 42);
+    }
+
+    /// JSON shape for `windows` must wrap rows under a `windows` array.
+    #[test]
+    fn windows_json_shape() {
+        let row = serde_json::json!({
+            "id": "abc-123",
+            "window_secs": 900_i64,
+            "ts_start": 1_700_000_000_i64,
+            "ts_end": 1_700_000_900_i64,
+            "b_log": 0.1234_f64,
+            "b_mult": null,
+            "b_bottleneck": 0.5678_f64,
+            "collapse_5m": null,
+            "collapse_30m": 1_i64,
+            "collapse_kind": "agent_loop",
+        });
+        let envelope = serde_json::json!({"windows": [row]});
+        assert!(envelope["windows"].is_array());
+        assert_eq!(envelope["windows"][0]["id"], "abc-123");
+        assert_eq!(envelope["windows"][0]["collapse_kind"], "agent_loop");
+    }
 }

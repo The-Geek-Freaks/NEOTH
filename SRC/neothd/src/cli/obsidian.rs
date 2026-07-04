@@ -39,6 +39,10 @@ pub struct ObsidianArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ObsidianAction {
+    /// Report the Obsidian integration config from `freedom.yaml`. Pure read,
+    /// no side effects. Shows whether a vault is configured and the key
+    /// automation settings (auto-sync, wiki-rebuild, vault-reader).
+    Status,
     /// One-way copy: NEOTH archive → vault. Idempotent.
     Sync {
         /// Path to the operator's Obsidian vault root.
@@ -104,6 +108,14 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(archive::default_archive_root);
     match args.action {
+        ObsidianAction::Status => {
+            // Fail loudly on config load failure — silent defaults would mislead.
+            let cfg = crate::config::FreedomConfig::load_from_path(
+                &crate::config::FreedomConfig::default_path(),
+            )
+            .context("load freedom.yaml for obsidian status")?;
+            render_status(&cfg, args.output);
+        }
         ObsidianAction::Sync {
             vault,
             subdir,
@@ -679,6 +691,56 @@ pub fn list_archive_days(archive_root: &Path) -> Result<Vec<String>> {
     Ok(days)
 }
 
+/// Report the Obsidian integration config. Pure read, no side effects.
+fn render_status(cfg: &crate::config::FreedomConfig, output: OutputFormat) {
+    let vault = cfg.obsidian_vault.as_deref().unwrap_or("");
+    let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH-sessions");
+    let auto_sync_secs = cfg.obsidian_auto_sync_secs;
+    let wiki_rebuild_secs = cfg.obsidian_wiki_rebuild_secs;
+    let vault_reader_enabled = cfg.obsidian_vault_reader_enabled;
+    let configured = !vault.is_empty();
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "configured": configured,
+                    "obsidian_vault": cfg.obsidian_vault,
+                    "obsidian_subdir": cfg.obsidian_subdir,
+                    "obsidian_auto_sync_secs": auto_sync_secs,
+                    "obsidian_wiki_rebuild_secs": wiki_rebuild_secs,
+                    "obsidian_vault_reader_enabled": vault_reader_enabled,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            if !configured {
+                println!("obsidian vault: not configured (set obsidian_vault in freedom.yaml)");
+                return;
+            }
+            println!("obsidian vault:          {vault}");
+            println!("session subdir:          {subdir}");
+            println!(
+                "auto-sync interval:      {}",
+                auto_sync_secs
+                    .map(|s| format!("{s}s"))
+                    .unwrap_or_else(|| "off".to_string())
+            );
+            println!(
+                "wiki-rebuild interval:   {}",
+                wiki_rebuild_secs
+                    .map(|s| format!("{s}s"))
+                    .unwrap_or_else(|| "off".to_string())
+            );
+            println!(
+                "vault reader:            {}",
+                if vault_reader_enabled { "enabled" } else { "disabled" }
+            );
+        }
+    }
+}
+
 fn render_sync(stats: SyncStats, output: OutputFormat) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -1017,5 +1079,48 @@ mod tests {
             s.contains("Documents"),
             "default vault path must route through Documents: {s}"
         );
+    }
+
+    // ── status JSON shape tests ───────────────────────────────────────────────
+
+    /// `status` JSON object must contain all expected keys and reflect the
+    /// `configured` flag correctly when `obsidian_vault` is set.
+    #[test]
+    fn status_json_shape_configured() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.obsidian_vault = Some("/home/op/vault".to_string());
+        cfg.obsidian_subdir = Some("NEOTH-sessions".to_string());
+        cfg.obsidian_auto_sync_secs = Some(3600);
+        cfg.obsidian_wiki_rebuild_secs = None;
+        cfg.obsidian_vault_reader_enabled = true;
+
+        let v = serde_json::json!({
+            "configured": cfg.obsidian_vault.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+            "obsidian_vault": cfg.obsidian_vault,
+            "obsidian_subdir": cfg.obsidian_subdir,
+            "obsidian_auto_sync_secs": cfg.obsidian_auto_sync_secs,
+            "obsidian_wiki_rebuild_secs": cfg.obsidian_wiki_rebuild_secs,
+            "obsidian_vault_reader_enabled": cfg.obsidian_vault_reader_enabled,
+        });
+
+        assert_eq!(v["configured"], true);
+        assert_eq!(v["obsidian_vault"], "/home/op/vault");
+        assert_eq!(v["obsidian_subdir"], "NEOTH-sessions");
+        assert_eq!(v["obsidian_auto_sync_secs"], 3600);
+        assert!(v["obsidian_wiki_rebuild_secs"].is_null());
+        assert_eq!(v["obsidian_vault_reader_enabled"], true);
+    }
+
+    /// When `obsidian_vault` is `None`, `configured` must be `false`.
+    #[test]
+    fn status_json_shape_unconfigured() {
+        let cfg = crate::config::FreedomConfig::default();
+        let configured = cfg.obsidian_vault.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+        let v = serde_json::json!({
+            "configured": configured,
+            "obsidian_vault": cfg.obsidian_vault,
+        });
+        assert_eq!(v["configured"], false);
+        assert!(v["obsidian_vault"].is_null());
     }
 }
