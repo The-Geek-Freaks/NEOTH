@@ -424,6 +424,27 @@ fn main() -> Result<()> {
     let chat_auto_flag_for_send = chat_auto_in_progress.clone();
     let chat_attach_for_send = chat_attachments.clone();
 
+    // GOLD-ADAPT-ODY-12/14 — deep-link chip routing. `nav` chips ARE the
+    // UI-control events (panel navigation); `kanban` chips navigate to the
+    // board AND fire its own selection callback so the detail pane loads
+    // through the existing Rust handler. Unknown kinds = prompt drift →
+    // ignored rather than navigating somewhere wrong.
+    {
+        let weak_chips = window.as_weak();
+        window.on_chat_link_chip_clicked(move |kind, id| {
+            if let Some(w) = weak_chips.upgrade() {
+                match kind.as_str() {
+                    "nav" if NAV_PANELS.contains(&id.as_str()) => w.set_nav_active(id),
+                    "kanban" => {
+                        w.set_nav_active("coding".into());
+                        w.invoke_kanban_task_selected(id);
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
     let weak_chat_send = window.as_weak();
     window.on_chat_send_clicked(move |text| {
         let body = text.trim().to_string();
@@ -498,7 +519,13 @@ fn main() -> Result<()> {
             // On a missing binary / spawn failure / truncated stream
             // (EOF with no sentinel) we surface an error bubble.
             use std::io::Read as _;
-            let outcome: std::result::Result<(String, StreamStats), String> = (|| {
+            // ODY-12/14 — third tuple element carries the deep-link chips
+            // ((label, kind, id) triples) parsed off the done-sentinel.
+            #[allow(clippy::type_complexity)]
+            let outcome: std::result::Result<
+                (String, StreamStats, Vec<(String, String, String)>),
+                String,
+            > = (|| {
                 let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                 let mut cmd = spawn_neothd_plain(&bin);
                 cmd.arg("chat").arg("--stream");
@@ -569,8 +596,8 @@ fn main() -> Result<()> {
                     .ok()
                     .and_then(|mut slot| slot.take())
                     .and_then(|mut c| c.wait().ok());
-                let (reply, done, stats) =
-                    parse_stream_sentinel(&String::from_utf8_lossy(&acc));
+                let raw = String::from_utf8_lossy(&acc);
+                let (reply, done, stats) = parse_stream_sentinel(&raw);
                 if reply.is_empty() {
                     return Err("Provider returned an empty reply. Check `neoth doctor` + \
                                 `~/.neoth/freedom.yaml` provider settings."
@@ -585,7 +612,9 @@ fn main() -> Result<()> {
                         "Stream ended before completion (exit {code}). Partial reply:\n\n{reply}"
                     ));
                 }
-                Ok((reply, stats))
+                // ODY-12/14 — deep-link chips ride the same sentinel line.
+                let links = parse_stream_links(&raw);
+                Ok((reply, stats, links))
             })();
             // Stream over (either way) — disarm the watchdog clock.
             last_chunk.store(-1, std::sync::atomic::Ordering::Relaxed);
@@ -596,6 +625,20 @@ fn main() -> Result<()> {
                     // GUI-07: the stream settled (reply or error) — unspin Send.
                     w.set_chat_send_in_flight(false);
                     w.set_chat_stall_active(false);
+                    // ODY-12/14 — swap the deep-link chip row for this turn
+                    // (cleared on error so stale chips can't dangle).
+                    let chips: Vec<LinkChip> = match &outcome {
+                        Ok((_, _, links)) => links
+                            .iter()
+                            .map(|(label, kind, id)| LinkChip {
+                                label: label.as_str().into(),
+                                kind: kind.as_str().into(),
+                                id: id.as_str().into(),
+                            })
+                            .collect(),
+                        Err(_) => Vec::new(),
+                    };
+                    w.set_chat_link_chips(slint::ModelRc::new(slint::VecModel::from(chips)));
                     use slint::{Model, ModelRc, VecModel};
                     let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
                     let ts = format_now_hms();
@@ -617,7 +660,7 @@ fn main() -> Result<()> {
                     // one bubble per paragraph (openhuman cluster feel); an
                     // error stays a single `error`-role bubble.
                     let replacements: Vec<ChatMessage> = match outcome {
-                        Ok((reply, stats)) => {
+                        Ok((reply, stats, _links)) => {
                             // ODY-02/05 — the LAST segment carries the
                             // context/throughput chip (chip on the tail
                             // reads as "turn summary", not per-paragraph).
@@ -4341,6 +4384,53 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
     (raw[..pos].trim_end().to_string(), true, stats)
 }
 
+/// ODY-12 UI-control targets — must match `main.slint`'s nav values.
+/// A `nav` chip whose id is not in this list is ignored (prompt drift
+/// must not navigate somewhere undefined).
+pub const NAV_PANELS: [&str; 14] = [
+    "chat",
+    "memory",
+    "hemispheres",
+    "channels",
+    "coding",
+    "agents",
+    "automation",
+    "privacy",
+    "plugins",
+    "cluster",
+    "resources",
+    "doctor",
+    "loops",
+    "config",
+];
+
+/// GOLD-ADAPT-ODY-12/14 — deep-link chips from the done-sentinel's
+/// additive `links` array (`[{label, kind, id}, ..]`). Empty when the
+/// field is absent (older daemons), mid-stream, or malformed — the
+/// chips row simply doesn't render. Returns (label, kind, id) tuples.
+pub fn parse_stream_links(raw: &str) -> Vec<(String, String, String)> {
+    let Some(pos) = raw.rfind("{\"neoth_stream\":\"done\"") else {
+        return Vec::new();
+    };
+    let sentinel_line = raw[pos..].lines().next().unwrap_or("");
+    serde_json::from_str::<serde_json::Value>(sentinel_line.trim())
+        .ok()
+        .and_then(|v| v.get("links").cloned())
+        .and_then(|l| l.as_array().cloned())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| {
+                    Some((
+                        e.get("label")?.as_str()?.to_string(),
+                        e.get("kind")?.as_str()?.to_string(),
+                        e.get("id")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Non-streaming chat round-trip (waits for full stdout). The live chat
 /// path now uses `neoth chat --stream` (see the send-worker), so this is
 /// retained as the test-injection seam for [`shape_chat_output`]: the
@@ -5850,5 +5940,50 @@ mod tests {
         write_gui_density(&path, 99);
         assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "normal");
         assert_eq!(read_gui_density(dir.path()), 1);
+    }
+}
+
+/// GOLD-ADAPT-ODY-12/14 — deep-link chip parsing + nav routing contract.
+#[cfg(test)]
+mod deep_link_tests {
+    use super::{parse_stream_links, NAV_PANELS};
+
+    #[test]
+    fn parses_links_array_from_extended_sentinel() {
+        let raw = "reply text\n\n{\"neoth_stream\":\"done\",\"count\":2,\
+                   \"links\":[{\"label\":\"task 42\",\"kind\":\"kanban\",\"id\":\"42\"},\
+                   {\"label\":\"board\",\"kind\":\"nav\",\"id\":\"coding\"}]}\n";
+        let links = parse_stream_links(raw);
+        assert_eq!(links.len(), 2);
+        assert_eq!(
+            links[0],
+            ("task 42".to_string(), "kanban".to_string(), "42".to_string())
+        );
+        assert_eq!(links[1].1, "nav");
+        assert_eq!(links[1].2, "coding");
+    }
+
+    #[test]
+    fn absent_links_field_and_old_daemons_yield_empty() {
+        // Old minimal sentinel (recall early-return) has no links field.
+        assert!(parse_stream_links("x\n{\"neoth_stream\":\"done\",\"count\":1}\n").is_empty());
+        // Mid-stream: no sentinel at all.
+        assert!(parse_stream_links("still streaming...").is_empty());
+        // Malformed entries are skipped, not fatal.
+        let raw = "r\n{\"neoth_stream\":\"done\",\"links\":[{\"label\":\"x\"},\
+                   {\"label\":\"ok\",\"kind\":\"nav\",\"id\":\"memory\"}]}\n";
+        let links = parse_stream_links(raw);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].2, "memory");
+    }
+
+    #[test]
+    fn nav_panels_list_matches_slint_nav_values() {
+        // Drift guard: main.slint's nav-active values. A chip id outside
+        // this list is ignored by the click handler.
+        assert_eq!(NAV_PANELS.len(), 14);
+        for p in ["chat", "coding", "memory", "config", "loops"] {
+            assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
+        }
     }
 }

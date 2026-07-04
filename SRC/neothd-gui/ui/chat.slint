@@ -46,6 +46,16 @@ export struct SessionRow {
     meta: string,
 }
 
+/// GOLD-ADAPT-ODY-12/14 — one clickable deep-link chip extracted from
+/// the last reply's `[label](#kind-id)` anchors (done-sentinel `links`
+/// field). `nav-<panel>` chips are the UI-control events; entity chips
+/// (e.g. `kanban-<task_id>`) navigate + focus.
+export struct LinkChip {
+    label: string,
+    kind: string,
+    id: string,
+}
+
 // ── ChatBubble ───────────────────────────────────────────────────────
 // One message. Operator messages right-align with accent-green tint;
 // NEOTH messages left-align with card surface; system messages
@@ -493,6 +503,9 @@ export component ChatView inherits Rectangle {
     in property <bool> stall-active: false;
     /// GOLD-ADAPT-ODY-03 — pending attachment display names.
     in property <[string]> pending-attachments: [];
+    /// GOLD-ADAPT-ODY-12/14 — deep-link chips for the LAST reply.
+    /// Rendered above the composer; replaced on every completed turn.
+    in property <[LinkChip]> link-chips: [];
 
     callback send-clicked(string);
     callback channel-switched(int);
@@ -504,6 +517,8 @@ export component ChatView inherits Rectangle {
     /// stop (kill the chat subprocess).
     callback stall-continue-clicked();
     callback stall-stop-clicked();
+    /// ODY-12/14 — a deep-link chip was clicked: (kind, id).
+    callback link-chip-clicked(string, string);
     /// Operator pressed ArrowUp with an empty composer — bubbles up to
     /// Rust so it can write the last sent input back into `composer-draft`.
     callback recall-requested();
@@ -752,6 +767,37 @@ export component ChatView inherits Rectangle {
                         danger: true;
                         size: "sm";
                         clicked => { root.stall-stop-clicked(); }
+                    }
+                }
+            }
+
+            // GOLD-ADAPT-ODY-12/14 — deep-link chips from the last reply,
+            // above the composer (survives scrollback without per-bubble
+            // model plumbing). Same visual language as the metrics chip.
+            if root.link-chips.length > 0: HorizontalLayout {
+                padding-left: Theme.space-base;
+                padding-right: Theme.space-base;
+                spacing: Theme.space-base / 2;
+                alignment: start;
+                for chip in root.link-chips: Rectangle {
+                    width: link-chip-txt.preferred-width + 14px;
+                    height: 18px;
+                    border-radius: Theme.radius-pill;
+                    background: Theme.audit-tint;
+                    border-width: 1px;
+                    border-color: link-chip-ta.has-hover ? Theme.audit : Theme.border-subtle;
+                    animate border-color { duration: Theme.duration-micro; easing: ease-out; }
+                    link-chip-txt := Text {
+                        text: chip.label;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        color: Theme.audit;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                    }
+                    link-chip-ta := TouchArea {
+                        clicked => { root.link-chip-clicked(chip.kind, chip.id); }
                     }
                 }
             }

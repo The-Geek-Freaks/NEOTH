@@ -893,7 +893,13 @@ async fn build_prompt_bundle(
     // selective agent-enrichment rebuild.
     let guidance_block_raw = guidance_block.clone();
     let recall_block_raw = recall_block.clone();
-    let combined_system = [enriched.system, guidance_block, recall_block]
+    // GOLD-ADAPT-ODY-12/14 — deep-link instruction rides ONLY the GUI
+    // stream path; terminal/channel surfaces never render chips, so the
+    // model shouldn't emit anchors there.
+    let deep_link_block = args
+        .stream
+        .then(|| crate::cli::deep_links::DEEP_LINK_PROMPT.to_string());
+    let combined_system = [enriched.system, guidance_block, recall_block, deep_link_block]
         .into_iter()
         .flatten()
         .reduce(|acc, next| format!("{acc}\n\n{next}"));
@@ -1948,6 +1954,8 @@ async fn dispatch_provider(
                 "input_tokens": input_tokens.unwrap_or(0),
                 "output_tokens": output_tokens.unwrap_or(0),
                 "elapsed_ms": stream_call_started.elapsed().as_millis() as u64,
+                // ODY-12/14 — additive field; old consumers ignore it.
+                "links": crate::cli::deep_links::extract_deep_links(&acc),
             })
         );
         (acc, input_tokens, output_tokens, model_used)

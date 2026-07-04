@@ -35,6 +35,7 @@ pub mod cluster;
 pub mod code;
 pub mod code_intel;
 pub mod code_map;
+pub mod deep_links;
 pub mod deps;
 pub mod dictate;
 pub mod distill;
