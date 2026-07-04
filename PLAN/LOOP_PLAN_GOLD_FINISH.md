@@ -297,7 +297,42 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-03 (Fable 5 session #3 — B9 CHANNEL-PARITY COMPLETE incl. review-fix wave)
+updated: 2026-07-04 (Fable 5 session #4 — dead-code salvage + ULTRA closure + B10 rest + B11 verified-done)
+session4_final: >
+  3 commits e302373a/5a4e7ffc/cfcb9b8c, all pushed. (1) SALVAGE: prior
+  session's crate-wide #![allow(dead_code)] removal was dirty-tree —
+  fixed the 7 remaining dead_code errors (6 orphaned test helpers
+  deleted, resolve_auth_for_cron gate narrowed to imap_fetch-only),
+  -316 lines. (2) ChatGPT external feedback verified: 5/6 "Restluecken"
+  were ALREADY fixed by the 5 then-UNPUSHED commits 772552fe..e641eb0b
+  (now on origin); warm-HNSW = SKIP_BY_DESIGN (WIRE-07b snapshot-refresh
+  cron serve_tasks.rs:2665; in-memory warm index would miss CLI-ingested
+  vectors, serve.rs:1285). (3) ULTRA quick-wins shipped: hysteria unsafe
+  set_var -> http_client::set_process_proxy RwLock slot (env stays
+  fallback) + respawn watchdog w/ shutdown-latch (review caught
+  abort-race child leak — fixed), dispatcher tasks_blocked 5-site
+  reorder, faster-whisper gated on allow_huggingface_downloads
+  (unwrap_or_default), rate-limit restart-refill ACCEPTED-by-design
+  (module doc). (4) B10 rest closed: neoth dictate CLI (cli/dictate.rs,
+  symphonia decode seam audio::decode_file_to_pcm) = production caller
+  for transcribe_utterance; feed_with_vad DELETED (0 callers); tracker
+  spec-corrections (media.dictation_enabled, hf_hub not model_manager).
+  (5) B11 verified COMPLETE by agent sweep (ODY-31, JV-SEC-01..09,
+  PAPERLESS-01 all shipped/skip-recorded). Full suite 9847 green x2.
+  ULTRA still OPEN (real, tracked): webhook durable inbound spool,
+  gossip-WAL ingest (=G02-CLUSTER-02), smart-loader plan_loader unwire,
+  doctor advisable-config hints, GUI-parity long-tail.
+next_b12: >
+  B12 skills rest (research DONE, in wf_9d29bc0b result file): remaining
+  of JV-MISC-01..15 = news-aggregator (pure-prompt, rss_feed_task lives,
+  LLM-summary layer IS the skill), advanced-skill-creator delta (bundled
+  skill.yaml surfacing the live creator.rs wizard), omniparser (needs
+  media/vision.rs expansion beyond CLIP), home-assistant+entity-index
+  (needs new tools/home_assistant.rs REST shim; JV-IOT-01/02). Register
+  via bundled.rs BUNDLED_SKILLS + router test (pattern bundled.rs:1590).
+  Then B13 RMAS (gated sidecar), B14 big features (FEAT-03b/05/06,
+  OH-01, ODY-12/14, TASK-01, MODE-02/04), B16 Jarvis re-sync, B17 gates.
+  27 tracker-open @ cfcb9b8c (11 = B17 rollups, 3 operator-blocked).
 b9_final: >
   B9 FULLY SHIPPED (7 commits 40752049/4b68524c/fd897d1b/bb2fe22e/ad6a5490/
   934bbeb8/4fdfac9e). VERIFY-FIRST: the B9 prose (Signal/LINE/iMessage/IRC
