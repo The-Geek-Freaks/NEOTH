@@ -1794,6 +1794,32 @@ fn main() -> Result<()> {
         });
     });
 
+    // ── Overview / Mission Control — refresh callback ───────────────────────
+    // One worker thread per click; all subprocess work stays off the event loop.
+    // The initial probe fires immediately on first entry (triggered below by
+    // the on_overview_refresh_clicked callback — also called from Rust on startup).
+    let weak_ov = window.as_weak();
+    window.on_overview_refresh_clicked(move || {
+        let Some(w0) = weak_ov.upgrade() else {
+            return;
+        };
+        // Clear stale timestamp while loading.
+        w0.set_ov_refreshed_at("loading…".into());
+        let weak = weak_ov.clone();
+        std::thread::spawn(move || {
+            refresh_overview(weak);
+        });
+    });
+
+    // Fire the overview probe once at startup so the panel is populated
+    // the first time the operator switches to it.
+    {
+        let weak_ov_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_overview(weak_ov_init);
+        });
+    }
+
     // ── GOLD-LOOP-03 — Loop panel wiring (display-gated `gui-loop`) ────
     // The GUI never links the loop engine: runs go through a
     // `neothd loop run` subprocess (the CLI's daemon-owns-WAL guard fires
@@ -5197,8 +5223,9 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
 /// ODY-12 UI-control targets — must match `main.slint`'s nav values.
 /// A `nav` chip whose id is not in this list is ignored (prompt drift
 /// must not navigate somewhere undefined).
-pub const NAV_PANELS: [&str; 14] = [
+pub const NAV_PANELS: [&str; 15] = [
     "chat",
+    "overview",
     "memory",
     "hemispheres",
     "channels",
@@ -5831,6 +5858,164 @@ mod chat_subprocess_tests {
             "empty send must not clobber recall buffer"
         );
     }
+}
+
+// ── Overview / Mission Control probe (Design Wave 3) ─────────────────────────
+//
+// Shells the JSON daemon commands sequentially (tolerate individual failures),
+// parses via panel_logic pure-fns, then mutates the MainWindow in one
+// invoke_from_event_loop call.  Must be called from a worker thread — never
+// from the Slint event loop.
+fn refresh_overview(weak: slint::Weak<MainWindow>) {
+    let bin = match which_neothd() {
+        Some(b) => b,
+        None => {
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_ov_operating_mode("neothd not found".into());
+                    w.set_ov_daemon_state("error".into());
+                    w.set_ov_refreshed_at("binary missing".into());
+                }
+            });
+            return;
+        }
+    };
+
+    // Helper: run a neothd subcommand, return stdout or an empty string on
+    // failure. Individual failures degrade a card to "unavailable" rather than
+    // aborting the whole refresh.
+    let run = |args: &[&str]| -> String {
+        spawn_neothd_plain(&bin)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default()
+    };
+
+    // Fire all JSON probes.
+    let status_json  = run(&["status",     "--output",  "json"]);
+    let meter_json   = run(&["meter",      "--format",  "json"]);
+    let hemi_json    = run(&["hemispheres","show",      "--output", "json"]);
+    let agents_json  = run(&["agents",     "list",      "--output", "json"]);
+    let skills_json  = run(&["skills",     "list",      "--output", "json"]);
+    let plugin_json  = run(&["plugin",     "list",      "--output", "json"]);
+    let cal_json     = run(&["calendar",   "list",      "--output", "json"]);
+    let consent_json = run(&["consent",    "list",      "--output", "json"]);
+
+    // Parse — all pure fns in panel_logic.
+    let (mode, autonomy, ch_health, wal_bytes, tier_counts, daemon_state) =
+        panel_logic::parse_overview_status(&status_json);
+    let (tok_in, tok_out, responses, cost, tok_fraction) =
+        panel_logic::parse_meter(&meter_json);
+    let hemis       = panel_logic::parse_overview_hemispheres(&hemi_json);
+    let (agents_count, agent_names) = panel_logic::parse_agents(&agents_json);
+    let (skills_count, skill_names) = panel_logic::parse_overview_skills(&skills_json);
+    let (plugins_count, plugin_names) = panel_logic::parse_overview_skills(&plugin_json);
+    let (cal_configured, cal_events) = panel_logic::parse_calendar_next(&cal_json, 3);
+    let (consent_entries, smart_approve) = panel_logic::parse_consent(&consent_json);
+
+    // Timestamp.
+    let ts = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let hh = (secs / 3600) % 24;
+        let mm = (secs / 60) % 60;
+        let ss = secs % 60;
+        format!("{hh:02}:{mm:02}:{ss:02} UTC")
+    };
+
+    // Push everything to the UI in one event-loop hop.
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+
+        // STATUS
+        w.set_ov_operating_mode(mode.into());
+        w.set_ov_autonomy(autonomy.into());
+        w.set_ov_daemon_state(daemon_state.into());
+        w.set_ov_channel_health(ch_health.into());
+        w.set_ov_wal_bytes(wal_bytes.into());
+        w.set_ov_tier_counts(tier_counts.into());
+
+        // TOKENS
+        w.set_ov_tokens_in(tok_in.into());
+        w.set_ov_tokens_out(tok_out.into());
+        w.set_ov_responses(responses.into());
+        w.set_ov_cost(cost.into());
+        w.set_ov_token_fraction(tok_fraction);
+
+        // HEMISPHERES — build the [HemiCard] model
+        {
+            use slint::VecModel;
+            let rows: Vec<HemiCard> = hemis
+                .into_iter()
+                .map(|(role, provider, model, ok)| HemiCard {
+                    role: role.into(),
+                    provider: provider.into(),
+                    model: model.into(),
+                    ok,
+                })
+                .collect();
+            w.set_ov_hemispheres(std::rc::Rc::new(VecModel::from(rows)).into());
+        }
+
+        // AGENTS
+        w.set_ov_agents_count(agents_count.into());
+        {
+            use slint::VecModel;
+            let rows: Vec<slint::SharedString> =
+                agent_names.into_iter().map(Into::into).collect();
+            w.set_ov_agent_names(std::rc::Rc::new(VecModel::from(rows)).into());
+        }
+
+        // SKILLS & PLUGINS
+        w.set_ov_skills_active(skills_count.into());
+        w.set_ov_plugins_active(plugins_count.into());
+        {
+            use slint::VecModel;
+            let srows: Vec<slint::SharedString> =
+                skill_names.into_iter().map(Into::into).collect();
+            w.set_ov_skill_names(std::rc::Rc::new(VecModel::from(srows)).into());
+            let prows: Vec<slint::SharedString> =
+                plugin_names.into_iter().map(Into::into).collect();
+            w.set_ov_plugin_names(std::rc::Rc::new(VecModel::from(prows)).into());
+        }
+
+        // CALENDAR
+        w.set_ov_calendar_configured(cal_configured);
+        {
+            use slint::VecModel;
+            let rows: Vec<CalEvent> = cal_events
+                .into_iter()
+                .map(|(time, summary)| CalEvent {
+                    time: time.into(),
+                    summary: summary.into(),
+                })
+                .collect();
+            w.set_ov_calendar_events(std::rc::Rc::new(VecModel::from(rows)).into());
+        }
+
+        // CONSENT
+        {
+            use slint::VecModel;
+            let rows: Vec<ConsentEntry> = consent_entries
+                .into_iter()
+                .map(|(provider, granted)| ConsentEntry {
+                    provider: provider.into(),
+                    granted,
+                })
+                .collect();
+            w.set_ov_consent_entries(std::rc::Rc::new(VecModel::from(rows)).into());
+        }
+        w.set_ov_smart_approve(smart_approve.into());
+
+        // Timestamp
+        w.set_ov_refreshed_at(ts.into());
+    });
 }
 
 fn probe_hardware_via_subprocess() -> String {
@@ -6837,8 +7022,8 @@ mod deep_link_tests {
     fn nav_panels_list_matches_slint_nav_values() {
         // Drift guard: main.slint's nav-active values. A chip id outside
         // this list is ignored by the click handler.
-        assert_eq!(NAV_PANELS.len(), 14);
-        for p in ["chat", "coding", "memory", "config", "loops"] {
+        assert_eq!(NAV_PANELS.len(), 15);
+        for p in ["chat", "overview", "coding", "memory", "config", "loops"] {
             assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
         }
     }

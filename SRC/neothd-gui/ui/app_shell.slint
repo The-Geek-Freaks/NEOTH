@@ -182,6 +182,7 @@ export component Sidebar inherits Rectangle {
                 // Always visible: Chat is the primary surface.
                 NavGroup { label: "CORE"; }
                 NavBtn { label: "Chat"; glyph: "💬"; active: root.active-tab == "chat"; clicked => { root.nav("chat"); } }
+                NavBtn { label: "Overview"; glyph: "◎"; active: root.active-tab == "overview"; clicked => { root.nav("overview"); } }
 
                 // ── WORK ─────────────────────────────────────────────────
                 // Visible at complexity ≥ 1. The label is shown when any WORK

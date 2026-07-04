@@ -1712,6 +1712,333 @@ pub fn format_recall_output(stdout: &str, stderr: &str, query: &str) -> String {
     }
 }
 
+// ── Overview / Mission Control parse helpers (Design Wave 3) ──────────────────
+//
+// Each function is PURE: takes raw JSON &str, returns a typed result. Tolerant
+// of missing keys / malformed payloads — always returns a degraded-but-valid
+// value so the GUI renders a "unavailable" state instead of panicking.
+
+/// Parse `neoth status --output json` into (mode, autonomy, channel_health,
+/// wal_bytes, tier_counts, daemon_state).
+/// `daemon_state` is "live" | "connecting" | "error" for the Led widget.
+pub fn parse_overview_status(
+    json: &str,
+) -> (String, String, String, String, String, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+
+    let mode = v
+        .get("operating_mode")
+        .or_else(|| v.get("mode"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let autonomy = v
+        .get("autonomy")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Channel health: try "channel_health" string, fall back to counting active channels.
+    let channel_health = if let Some(s) = v.get("channel_health").and_then(|x| x.as_str()) {
+        s.to_string()
+    } else if let Some(arr) = v.get("channels").and_then(|x| x.as_array()) {
+        let active = arr
+            .iter()
+            .filter(|c| {
+                c.get("status")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s == "active" || s == "connected")
+                    .unwrap_or(false)
+            })
+            .count();
+        format!("{active}/{} active", arr.len())
+    } else {
+        String::new()
+    };
+
+    let wal_bytes = v
+        .get("wal")
+        .and_then(|w| w.get("bytes"))
+        .or_else(|| v.get("wal_bytes"))
+        .and_then(|x| x.as_u64())
+        .map(|b| format!("{b} B"))
+        .unwrap_or_default();
+
+    let tier_counts = if let Some(tiers) = v.get("tier_counts").and_then(|x| x.as_object()) {
+        tiers
+            .iter()
+            .map(|(k, val)| {
+                let n = val.as_u64().unwrap_or(0);
+                format!("{k}={n}")
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        String::new()
+    };
+
+    // Daemon liveness: a valid JSON reply means the daemon responded → "live".
+    // Callers set "error" when the subprocess exits non-zero.
+    let daemon_state = if json.trim().is_empty() || json.starts_with("unavailable") {
+        "error".to_string()
+    } else {
+        "live".to_string()
+    };
+
+    (mode, autonomy, channel_health, wal_bytes, tier_counts, daemon_state)
+}
+
+/// Parse `neoth meter --format json` into (tokens_in, tokens_out, responses, cost, fraction).
+/// `fraction` is 0.0..1.0 — tokens_in / daily_cap if the cap is known, else 0.0.
+pub fn parse_meter(json: &str) -> (String, String, String, String, f32) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+
+    let fmt_count = |key: &str| -> String {
+        v.get(key)
+            .and_then(|x| x.as_u64())
+            .map(|n| {
+                if n >= 1_000_000 {
+                    format!("{:.1}M", n as f64 / 1_000_000.0)
+                } else if n >= 1_000 {
+                    format!("{:.1}K", n as f64 / 1_000.0)
+                } else {
+                    n.to_string()
+                }
+            })
+            .unwrap_or_default()
+    };
+
+    let tokens_in = fmt_count("input_tokens_total");
+    let tokens_out = fmt_count("output_tokens_total");
+    let responses = v
+        .get("provider_responses")
+        .and_then(|x| x.as_u64())
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+
+    let cost = v
+        .get("cost_usd")
+        .and_then(|x| x.as_f64())
+        .map(|c| format!("${c:.4}"))
+        .unwrap_or_default();
+
+    // fraction vs daily cap
+    let fraction = if let (Some(used), Some(cap)) = (
+        v.get("input_tokens_total").and_then(|x| x.as_u64()),
+        v.get("daily_cap_tokens").and_then(|x| x.as_u64()),
+    ) {
+        if cap > 0 {
+            (used as f32 / cap as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    (tokens_in, tokens_out, responses, cost, fraction)
+}
+
+/// Parse `neoth hemispheres show --output json` into a Vec of (role, provider, model, ok).
+pub fn parse_overview_hemispheres(json: &str) -> Vec<(String, String, String, bool)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+
+    // Expected shape: [ { "role": "left", "provider": "claude_cli", "model": "claude-opus-4-7", "status": "active" }, … ]
+    // Also tolerate { "hemispheres": [ … ] }.
+    let arr = v
+        .as_array()
+        .or_else(|| v.get("hemispheres").and_then(|x| x.as_array()))
+        .cloned()
+        .unwrap_or_default();
+
+    arr.iter()
+        .filter_map(|item| {
+            let role = item.get("role").and_then(|x| x.as_str())?.to_string();
+            let provider = item
+                .get("provider")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model = item
+                .get("model")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ok = item
+                .get("status")
+                .and_then(|x| x.as_str())
+                .map(|s| s == "active" || s == "ok")
+                .unwrap_or(!provider.is_empty());
+            Some((role, provider, model, ok))
+        })
+        .collect()
+}
+
+/// Parse `neoth agents list --output json` into (count_str, names).
+pub fn parse_agents(json: &str) -> (String, Vec<String>) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+
+    let arr = v
+        .as_array()
+        .or_else(|| v.get("agents").and_then(|x| x.as_array()))
+        .cloned()
+        .unwrap_or_default();
+
+    let names: Vec<String> = arr
+        .iter()
+        .filter_map(|item| {
+            item.get("name")
+                .or_else(|| item.get("id"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
+        .take(8)
+        .collect();
+
+    let count = if arr.is_empty() {
+        String::new()
+    } else {
+        arr.len().to_string()
+    };
+
+    (count, names)
+}
+
+/// Parse `neoth skills list --output json` into (active_count_str, top_names).
+pub fn parse_overview_skills(json: &str) -> (String, Vec<String>) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+
+    let arr = v
+        .as_array()
+        .or_else(|| v.get("skills").and_then(|x| x.as_array()))
+        .cloned()
+        .unwrap_or_default();
+
+    let active: Vec<_> = arr
+        .iter()
+        .filter(|item| {
+            item.get("enabled")
+                .or_else(|| item.get("active"))
+                .and_then(|x| x.as_bool())
+                .unwrap_or(true)
+        })
+        .collect();
+
+    let names: Vec<String> = active
+        .iter()
+        .filter_map(|item| {
+            item.get("name")
+                .or_else(|| item.get("id"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
+        .take(4)
+        .collect();
+
+    let count = if active.is_empty() {
+        String::new()
+    } else {
+        active.len().to_string()
+    };
+
+    (count, names)
+}
+
+/// Parse `neoth calendar list --output json` into (configured, events).
+/// Events are (time_str, summary). Returns (false, []) when the payload
+/// indicates CalDAV is not configured (error field present / count == 0 with
+/// empty events).
+pub fn parse_calendar_next(json: &str, n: usize) -> (bool, Vec<(String, String)>) {
+    // A subprocess error string (not JSON) means "not configured".
+    let v = match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(v) => v,
+        Err(_) => return (false, vec![]),
+    };
+
+    // Error key → not configured.
+    if v.get("error").is_some() {
+        return (false, vec![]);
+    }
+
+    let events = v
+        .get("events")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let parsed: Vec<(String, String)> = events
+        .iter()
+        .take(n)
+        .filter_map(|ev| {
+            let summary = ev
+                .get("summary")
+                .or_else(|| ev.get("title"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("(no title)")
+                .to_string();
+            // Try ISO time, fall back to "start" field.
+            let time = ev
+                .get("start")
+                .and_then(|x| x.as_str())
+                .or_else(|| ev.get("time").and_then(|x| x.as_str()))
+                .map(|s| {
+                    // Abbreviate ISO datetime to HH:MM if possible.
+                    if s.len() >= 16 && s.contains('T') {
+                        s[11..16].to_string()
+                    } else {
+                        s[..s.len().min(10)].to_string()
+                    }
+                })
+                .unwrap_or_else(|| "—".to_string());
+            Some((time, summary))
+        })
+        .collect();
+
+    (true, parsed)
+}
+
+/// Parse `neoth consent list --output json` into Vec<(provider, granted)>.
+/// Also returns a smart-approve hint string (empty if not set).
+pub fn parse_consent(json: &str) -> (Vec<(String, bool)>, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+
+    let arr = v
+        .as_array()
+        .or_else(|| v.get("consents").and_then(|x| x.as_array()))
+        .cloned()
+        .unwrap_or_default();
+
+    let entries: Vec<(String, bool)> = arr
+        .iter()
+        .filter_map(|item| {
+            let provider = item
+                .get("provider")
+                .or_else(|| item.get("name"))
+                .and_then(|x| x.as_str())?
+                .to_string();
+            // Try "granted" bool field first; fall back to "status" == "granted".
+            let granted = if let Some(b) = item.get("granted").and_then(|x| x.as_bool()) {
+                b
+            } else {
+                item.get("status")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s == "granted")
+                    .unwrap_or(false)
+            };
+            Some((provider, granted))
+        })
+        .collect();
+
+    let smart_approve = v
+        .get("smart_approve")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    (entries, smart_approve)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2986,5 +3313,136 @@ mod tests {
     fn next_toast_id_no_collision_single_item() {
         let toasts = vec![make_toast(1, "info", "X", "")];
         assert_eq!(next_toast_id(&toasts), 2);
+    }
+
+    // ── Overview parse helper tests ───────────────────────────────────────────
+
+    #[test]
+    fn parse_overview_status_full_payload() {
+        let json = r#"{"operating_mode":"chat","autonomy":"standard","wal":{"bytes":1024},"tier_counts":{"hot":3,"warm":12},"channels":[{"status":"active"},{"status":"active"},{"status":"idle"}]}"#;
+        let (mode, autonomy, ch, wal, tiers, state) = super::parse_overview_status(json);
+        assert_eq!(mode, "chat");
+        assert_eq!(autonomy, "standard");
+        assert!(ch.contains("2/3"), "channel health: {ch}");
+        assert_eq!(wal, "1024 B");
+        assert!(tiers.contains("hot=3"), "tiers: {tiers}");
+        assert_eq!(state, "live");
+    }
+
+    #[test]
+    fn parse_overview_status_empty_yields_defaults() {
+        let (mode, autonomy, ch, wal, tiers, state) = super::parse_overview_status("{}");
+        assert!(mode.is_empty());
+        assert!(autonomy.is_empty());
+        assert!(ch.is_empty());
+        assert!(wal.is_empty());
+        assert!(tiers.is_empty());
+        assert_eq!(state, "live"); // valid JSON → live
+    }
+
+    #[test]
+    fn parse_overview_status_malformed_returns_error_state() {
+        let (_, _, _, _, _, state) = super::parse_overview_status("unavailable — binary not found");
+        assert_eq!(state, "error");
+    }
+
+    #[test]
+    fn parse_meter_formats_large_counts() {
+        let json = r#"{"input_tokens_total":1500000,"output_tokens_total":250000,"provider_responses":42,"cost_usd":0.1234}"#;
+        let (tin, tout, resp, cost, fraction) = super::parse_meter(json);
+        assert_eq!(tin, "1.5M");
+        assert_eq!(tout, "250.0K");
+        assert_eq!(resp, "42");
+        assert_eq!(cost, "$0.1234");
+        assert_eq!(fraction, 0.0); // no daily cap → 0
+    }
+
+    #[test]
+    fn parse_meter_fraction_computed_when_cap_present() {
+        let json = r#"{"input_tokens_total":500,"output_tokens_total":100,"provider_responses":1,"daily_cap_tokens":1000}"#;
+        let (_, _, _, _, fraction) = super::parse_meter(json);
+        assert!((fraction - 0.5).abs() < 0.01, "fraction={fraction}");
+    }
+
+    #[test]
+    fn parse_hemispheres_three_roles() {
+        let json = r#"[{"role":"left","provider":"claude_cli","model":"claude-opus-4-7","status":"active"},{"role":"right","provider":"gemini","model":"gemini-2-5","status":"active"},{"role":"cerebellum","provider":"codex","model":"o3","status":"idle"}]"#;
+        let hemis = super::parse_overview_hemispheres(json);
+        assert_eq!(hemis.len(), 3);
+        assert_eq!(hemis[0].0, "left");
+        assert!(hemis[0].3, "left should be ok");
+        assert_eq!(hemis[2].0, "cerebellum");
+        assert!(!hemis[2].3, "idle should be not-ok");
+    }
+
+    #[test]
+    fn parse_hemispheres_empty_json() {
+        assert!(super::parse_overview_hemispheres("[]").is_empty());
+        assert!(super::parse_overview_hemispheres("not json").is_empty());
+    }
+
+    #[test]
+    fn parse_agents_counts_and_names() {
+        let json = r#"[{"name":"archon"},{"name":"worker-1"},{"name":"worker-2"}]"#;
+        let (count, names) = super::parse_agents(json);
+        assert_eq!(count, "3");
+        assert_eq!(names, vec!["archon", "worker-1", "worker-2"]);
+    }
+
+    #[test]
+    fn parse_agents_empty_array() {
+        let (count, names) = super::parse_agents("[]");
+        assert!(count.is_empty());
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn parse_skills_counts_active_only() {
+        let json = r#"[{"name":"ponytail","enabled":true},{"name":"caveman","enabled":true},{"name":"stale","enabled":false}]"#;
+        let (count, names) = super::parse_overview_skills(json);
+        assert_eq!(count, "2");
+        assert!(names.contains(&"ponytail".to_string()));
+        assert!(!names.contains(&"stale".to_string()));
+    }
+
+    #[test]
+    fn parse_calendar_next_three_events() {
+        let json = r#"{"events":[{"start":"2026-07-04T09:00:00Z","summary":"Standup"},{"start":"2026-07-04T14:30:00Z","summary":"Review"},{"start":"2026-07-04T17:00:00Z","summary":"Ship"}]}"#;
+        let (configured, evs) = super::parse_calendar_next(json, 3);
+        assert!(configured);
+        assert_eq!(evs.len(), 3);
+        assert_eq!(evs[0].0, "09:00");
+        assert_eq!(evs[0].1, "Standup");
+    }
+
+    #[test]
+    fn parse_calendar_next_not_configured_on_error_key() {
+        let json = r#"{"error":"CalDAV not configured"}"#;
+        let (configured, evs) = super::parse_calendar_next(json, 3);
+        assert!(!configured);
+        assert!(evs.is_empty());
+    }
+
+    #[test]
+    fn parse_calendar_next_not_configured_on_non_json() {
+        let (configured, _) = super::parse_calendar_next("unavailable", 3);
+        assert!(!configured);
+    }
+
+    #[test]
+    fn parse_consent_entries_and_smart_approve() {
+        let json = r#"{"consents":[{"provider":"claude_cli","granted":true},{"provider":"gemini","granted":false}],"smart_approve":"standard"}"#;
+        let (entries, sa) = super::parse_consent(json);
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].1, "claude_cli should be granted");
+        assert!(!entries[1].1, "gemini should be pending");
+        assert_eq!(sa, "standard");
+    }
+
+    #[test]
+    fn parse_consent_empty() {
+        let (entries, sa) = super::parse_consent("{}");
+        assert!(entries.is_empty());
+        assert!(sa.is_empty());
     }
 }

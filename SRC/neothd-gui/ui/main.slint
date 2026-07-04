@@ -26,6 +26,7 @@ import { ChatView, ChatMessage, SessionRow, LinkChip } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
+import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
 import { ActivitySidecar, ActivityRow } from "activity.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
@@ -38,6 +39,8 @@ export { PresetRow, ProfilePresetRow }
 export { ToastData }
 // Wave-2 activity sidecar — ActivityRow exported so Rust can push rows.
 export { ActivityRow }
+// Wave-3 overview dashboard — structs Rust constructs in refresh_overview().
+export { HemiCard, CalEvent, ConsentEntry }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -350,10 +353,38 @@ export component MainWindow inherits Window {
     callback loop-kill-clicked();
     callback loop-refresh-clicked();
     callback loop-run-selected(string);
+    // ── Overview / Mission Control ─────────────────────────────────────────────
+    // Design Wave 3 — all set by refresh_overview() via invoke_from_event_loop.
+    in property <string> ov-operating-mode: "";
+    in property <string> ov-autonomy: "";
+    in property <string> ov-daemon-state: "connecting";
+    in property <string> ov-channel-health: "";
+    in property <string> ov-wal-bytes: "";
+    in property <string> ov-tier-counts: "";
+    in property <string> ov-tokens-in: "";
+    in property <string> ov-tokens-out: "";
+    in property <string> ov-responses: "";
+    in property <string> ov-cost: "";
+    in property <float>  ov-token-fraction: 0.0;
+    in property <[HemiCard]> ov-hemispheres: [];
+    in property <string> ov-agents-count: "";
+    in property <[string]> ov-agent-names: [];
+    in property <string> ov-skills-active: "";
+    in property <string> ov-plugins-active: "";
+    in property <[string]> ov-skill-names: [];
+    in property <[string]> ov-plugin-names: [];
+    in property <[CalEvent]> ov-calendar-events: [];
+    in property <bool>   ov-calendar-configured: true;
+    in property <[ConsentEntry]> ov-consent-entries: [];
+    in property <string> ov-smart-approve: "";
+    in property <string> ov-refreshed-at: "";
+    callback overview-refresh-clicked();
+
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
     property <string> shell-title:
         root.nav-active == "chat"        ? "Chat"
+        : root.nav-active == "overview"    ? "Mission Control"
         : root.nav-active == "memory"      ? "Memory"
         : root.nav-active == "hemispheres" ? "Hemispheres"
         : root.nav-active == "channels"    ? "Channels"
@@ -1784,6 +1815,7 @@ export component MainWindow inherits Window {
                 // the layout tree entirely — a `visible:false` element still
                 // reserves its stretch space and would squash the active tab.
                 if (root.nav-active != "chat"
+                        && root.nav-active != "overview"
                         && root.nav-active != "agents" && root.nav-active != "automation"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"): SettingsView {
@@ -1976,6 +2008,34 @@ export component MainWindow inherits Window {
                     stall-stop-clicked => { root.chat-stall-stop(); }
                     open-settings => { root.nav-active = "config"; }
                 } }  // close ChatView + SovereignFade
+
+                // Design Wave 3 — Overview / Mission Control dashboard.
+                if root.nav-active == "overview": OverviewView {
+                    ov-operating-mode: root.ov-operating-mode;
+                    ov-autonomy: root.ov-autonomy;
+                    ov-daemon-state: root.ov-daemon-state;
+                    ov-channel-health: root.ov-channel-health;
+                    ov-wal-bytes: root.ov-wal-bytes;
+                    ov-tier-counts: root.ov-tier-counts;
+                    ov-tokens-in: root.ov-tokens-in;
+                    ov-tokens-out: root.ov-tokens-out;
+                    ov-responses: root.ov-responses;
+                    ov-cost: root.ov-cost;
+                    ov-token-fraction: root.ov-token-fraction;
+                    ov-hemispheres: root.ov-hemispheres;
+                    ov-agents-count: root.ov-agents-count;
+                    ov-agent-names: root.ov-agent-names;
+                    ov-skills-active: root.ov-skills-active;
+                    ov-plugins-active: root.ov-plugins-active;
+                    ov-skill-names: root.ov-skill-names;
+                    ov-plugin-names: root.ov-plugin-names;
+                    ov-calendar-events: root.ov-calendar-events;
+                    ov-calendar-configured: root.ov-calendar-configured;
+                    ov-consent-entries: root.ov-consent-entries;
+                    ov-smart-approve: root.ov-smart-approve;
+                    ov-refreshed-at: root.ov-refreshed-at;
+                    overview-refresh-clicked => { root.overview-refresh-clicked(); }
+                }
 
                 // Net-new mockup tab — Resources (live hardware probe, wired).
                 if root.nav-active == "resources": ResourcesView {

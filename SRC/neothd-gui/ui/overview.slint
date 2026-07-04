@@ -1,0 +1,769 @@
+// NEOTH — Overview / Mission Control dashboard.
+// "everything, at a glance" — single surface for status, tokens, hemispheres,
+// agents, skills/plugins, calendar, and consent. Design Wave 3.
+//
+// Layout: EntranceFade-wrapped scroll area; two-column grid emulated via
+// HorizontalLayout of two VerticalLayouts (Slint 1.8 has no CSS grid).
+// Left column: STATUS + TOKENS + AGENTS.
+// Right column: HEMISPHERES + SKILLS & PLUGINS + CALENDAR + CONSENT.
+// All cards use the existing Card + Theme tokens. No inline hex codes.
+//
+// Slint 1.8 rules observed:
+//   - `if` used instead of `visible` for removed-from-layout semantics
+//     (visible still reserves space in layouts).
+//   - No `starts-with` / `ends-with` — use equality checks instead.
+//   - @children inside `if` blocks is unsupported — avoided entirely.
+//   - ScrollView requires the inner element to have an explicit height when
+//     used inside a stretched container.
+
+import { Theme } from "theme.slint";
+import { Card, Led, SegBar, EntranceFade } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire structs (exported so main.rs can construct them) ─────────────────────
+
+/// One hemisphere row: role kicker + provider name + model id.
+export struct HemiCard {
+    role: string,       // "left" | "right" | "cerebellum"
+    provider: string,
+    model: string,
+    ok: bool,           // live tick led
+}
+
+/// A generic key-value stat for the header band.
+export struct OverviewStat {
+    label: string,
+    value: string,
+    tone: string,       // "" | "accent" | "memory" | "audit" | "consent" | "warning"
+}
+
+/// One calendar event row.
+export struct CalEvent {
+    time: string,
+    summary: string,
+}
+
+/// One consent entry row.
+export struct ConsentEntry {
+    provider: string,
+    granted: bool,
+}
+
+// ── Internal micro-components ──────────────────────────────────────────────────
+
+// Kicker label — 8px mono, wide-tracked uppercase, text-disabled.
+// Used as card section heading.
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+// One-line value row inside a card: small label + value side by side.
+// Mirrors the StatRow shape from tabs.slint but inline and slimmer (36px).
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: start;
+        spacing: 12px;
+        Text {
+            text: root.label;
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: 8px;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: 72px;
+        }
+        Text {
+            text: root.value != "" ? root.value : "—";
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Timestamp footer — 8.5px mono, text-disabled.
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    letter-spacing: Theme.letter-spacing-tight;
+}
+
+// ── OverviewView ───────────────────────────────────────────────────────────────
+
+export component OverviewView inherits Rectangle {
+    // ── Data properties — set by Rust via invoke_from_event_loop ──────────────
+
+    // STATUS card
+    in property <string> ov-operating-mode: "";
+    in property <string> ov-autonomy: "";
+    in property <string> ov-daemon-state: "connecting";  // "live"|"connecting"|"error"
+    in property <string> ov-channel-health: "";          // free-form summary line
+    in property <string> ov-wal-bytes: "";
+    in property <string> ov-tier-counts: "";
+
+    // TOKENS card
+    in property <string> ov-tokens-in: "";
+    in property <string> ov-tokens-out: "";
+    in property <string> ov-responses: "";
+    in property <string> ov-cost: "";
+    in property <float>  ov-token-fraction: 0.0;  // 0.0..1.0 vs daily cap
+
+    // HEMISPHERES card
+    in property <[HemiCard]> ov-hemispheres: [];
+
+    // AGENTS card
+    in property <string> ov-agents-count: "";
+    in property <[string]> ov-agent-names: [];
+
+    // SKILLS & PLUGINS card
+    in property <string> ov-skills-active: "";
+    in property <string> ov-plugins-active: "";
+    in property <[string]> ov-skill-names: [];
+    in property <[string]> ov-plugin-names: [];
+
+    // CALENDAR card
+    in property <[CalEvent]> ov-calendar-events: [];
+    in property <bool> ov-calendar-configured: true;
+
+    // CONSENT card
+    in property <[ConsentEntry]> ov-consent-entries: [];
+    in property <string> ov-smart-approve: "";
+
+    // shared refresh timestamp & refresh trigger
+    in property <string> ov-refreshed-at: "";
+    callback overview-refresh-clicked();
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+    background: Theme.bg-base;
+
+    EntranceFade {
+        width: parent.width;
+        height: parent.height;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            // ── View header ──────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                height: 44px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Mission Control";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-md;
+                        letter-spacing: Theme.letter-spacing-tight;
+                    }
+                    Text {
+                        text: "everything, at a glance";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: 8.5px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                    }
+                }
+
+                // spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button
+                Rectangle {
+                    height: 30px;
+                    width: 90px;
+                    border-radius: Theme.radius-button;
+                    background: Theme.accent-tint;
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "⟳ Refresh";
+                            color: Theme.accent;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-xs;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.overview-refresh-clicked(); }
+                    }
+                }
+            }
+
+            // hairline separator — spacing via padding on parent VerticalLayout
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── Scrollable two-column grid ───────────────────────────────────
+            ScrollView {
+                // Give scroll view an explicit height so Slint can compute
+                // the viewport height (required when placed inside a layout).
+                height: parent.height - 80px;
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+                    padding: 0px;
+
+                    // ── LEFT COLUMN ─────────────────────────────────────────
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 14px;
+                        alignment: start;
+
+                        // ── STATUS card ──────────────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                // Card header: kicker + led
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "STATUS"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Led {
+                                        state: root.ov-daemon-state;
+                                        dot-size: 7px;
+                                    }
+                                }
+
+                                InfoRow {
+                                    label: "MODE";
+                                    value: root.ov-operating-mode;
+                                }
+                                InfoRow {
+                                    label: "AUTONOMY";
+                                    value: root.ov-autonomy;
+                                }
+                                InfoRow {
+                                    label: "CHANNELS";
+                                    value: root.ov-channel-health;
+                                }
+                                if root.ov-wal-bytes != "": InfoRow {
+                                    label: "WAL";
+                                    value: root.ov-wal-bytes;
+                                }
+                                if root.ov-tier-counts != "": InfoRow {
+                                    label: "TIERS";
+                                    value: root.ov-tier-counts;
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+
+                        // ── TOKENS card ──────────────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                Kicker { label: "TOKENS"; }
+
+                                // Big token numbers
+                                HorizontalLayout {
+                                    spacing: 18px;
+                                    alignment: start;
+                                    height: 44px;
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text {
+                                            text: root.ov-tokens-in != "" ? root.ov-tokens-in : "—";
+                                            color: Theme.audit;
+                                            font-family: Theme.font-mono;
+                                            font-size: 25px;
+                                            letter-spacing: Theme.letter-spacing-tight;
+                                        }
+                                        Text {
+                                            text: "INPUT";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: 8px;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 1px;
+                                        background: Theme.border-default;
+                                        height: 32px;
+                                        y: 6px;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text {
+                                            text: root.ov-tokens-out != "" ? root.ov-tokens-out : "—";
+                                            color: Theme.memory;
+                                            font-family: Theme.font-mono;
+                                            font-size: 25px;
+                                            letter-spacing: Theme.letter-spacing-tight;
+                                        }
+                                        Text {
+                                            text: "OUTPUT";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: 8px;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                        }
+                                    }
+                                }
+
+                                // SegBar vs daily cap
+                                if root.ov-token-fraction > 0.0: SegBar {
+                                    segments: 16;
+                                    fraction: root.ov-token-fraction;
+                                    fill: Theme.audit;
+                                }
+
+                                InfoRow { label: "CALLS"; value: root.ov-responses; }
+                                InfoRow {
+                                    label: "COST";
+                                    value: root.ov-cost;
+                                    value-color: root.ov-cost != "" ? Theme.warning : Theme.text-primary;
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+
+                        // ── AGENTS card ──────────────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "AGENTS"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if root.ov-agents-count != "": Text {
+                                        text: root.ov-agents-count;
+                                        color: Theme.memory;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        letter-spacing: Theme.letter-spacing-tight;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                // Agent name list — up to 5 entries
+                                for name[i] in root.ov-agent-names: Rectangle {
+                                    height: 28px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: Theme.border-subtle;
+                                    visible: i < 5;
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        alignment: start;
+                                        spacing: 8px;
+                                        Text {
+                                            text: "⚇";
+                                            color: Theme.text-disabled;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: name;
+                                            color: Theme.text-secondary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                if root.ov-agent-names.length == 0: Text {
+                                    text: "No agents running.";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-xs;
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+                    }
+
+                    // ── RIGHT COLUMN ─────────────────────────────────────────
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 14px;
+                        alignment: start;
+
+                        // ── HEMISPHERES card ─────────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                Kicker { label: "HEMISPHERES"; }
+
+                                for hemi in root.ov-hemispheres: Rectangle {
+                                    height: 52px;
+                                    border-radius: Theme.radius-md;
+                                    background: Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: Theme.border-subtle;
+
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        alignment: start;
+                                        spacing: 10px;
+
+                                        // tick led
+                                        Led {
+                                            state: hemi.ok ? "live" : "connecting";
+                                            dot-size: 6px;
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 2px;
+                                            // role kicker
+                                            Text {
+                                                text: hemi.role;
+                                                color: Theme.text-disabled;
+                                                font-family: Theme.font-mono;
+                                                font-size: 8px;
+                                                letter-spacing: Theme.letter-spacing-extra-wide;
+                                            }
+                                            // provider + model
+                                            Text {
+                                                text: hemi.provider != "" ? "\{hemi.provider} · \{hemi.model}" : "not configured";
+                                                color: hemi.ok ? Theme.audit : Theme.text-tertiary;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-xs;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if root.ov-hemispheres.length == 0: Text {
+                                    text: "Hemisphere data unavailable.";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-xs;
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+
+                        // ── SKILLS & PLUGINS card ────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                Kicker { label: "SKILLS & PLUGINS"; }
+
+                                HorizontalLayout {
+                                    spacing: 18px;
+                                    alignment: start;
+                                    height: 36px;
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text {
+                                            text: root.ov-skills-active != "" ? root.ov-skills-active : "—";
+                                            color: Theme.memory;
+                                            font-family: Theme.font-mono;
+                                            font-size: 22px;
+                                        }
+                                        Text {
+                                            text: "SKILLS";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: 8px;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 1px;
+                                        background: Theme.border-default;
+                                        height: 28px;
+                                        y: 4px;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text {
+                                            text: root.ov-plugins-active != "" ? root.ov-plugins-active : "—";
+                                            color: Theme.audit;
+                                            font-family: Theme.font-mono;
+                                            font-size: 22px;
+                                        }
+                                        Text {
+                                            text: "PLUGINS";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: 8px;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                        }
+                                    }
+                                }
+
+                                // Top skill names
+                                for name[i] in root.ov-skill-names: Rectangle {
+                                    height: 26px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.memory-tint;
+                                    border-width: 1px;
+                                    border-color: Theme.border-subtle;
+                                    visible: i < 3;
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        alignment: start;
+                                        Text {
+                                            text: name;
+                                            color: Theme.memory;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // Top plugin names
+                                for name[i] in root.ov-plugin-names: Rectangle {
+                                    height: 26px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.audit-tint;
+                                    border-width: 1px;
+                                    border-color: Theme.border-subtle;
+                                    visible: i < 3;
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        alignment: start;
+                                        Text {
+                                            text: name;
+                                            color: Theme.audit;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+
+                        // ── CALENDAR card ─────────────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "CALENDAR"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if !root.ov-calendar-configured: Text {
+                                        text: "not configured";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: 8px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                if root.ov-calendar-configured: VerticalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    for ev[i] in root.ov-calendar-events: Rectangle {
+                                        height: 36px;
+                                        border-radius: Theme.radius-sm;
+                                        background: Theme.surface-1;
+                                        border-width: 1px;
+                                        border-color: Theme.border-subtle;
+                                        visible: i < 3;
+                                        HorizontalLayout {
+                                            padding-left: 10px;
+                                            padding-right: 10px;
+                                            alignment: start;
+                                            spacing: 10px;
+                                            Text {
+                                                text: ev.time;
+                                                color: Theme.memory;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                                letter-spacing: Theme.letter-spacing-tight;
+                                                vertical-alignment: center;
+                                                width: 54px;
+                                            }
+                                            Text {
+                                                text: ev.summary;
+                                                color: Theme.text-secondary;
+                                                font-family: Theme.font-sans;
+                                                font-size: Theme.font-size-sm;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                        }
+                                    }
+                                    if root.ov-calendar-events.length == 0: Text {
+                                        text: "No upcoming events.";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                    }
+                                }
+
+                                if !root.ov-calendar-configured: Text {
+                                    text: "Configure CalDAV in Settings → Channels to enable.";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-xs;
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+
+                        // ── CONSENT card ──────────────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                Kicker { label: "CONSENT"; }
+
+                                for entry in root.ov-consent-entries: Rectangle {
+                                    height: 30px;
+                                    border-radius: Theme.radius-sm;
+                                    background: entry.granted ? Theme.consent-tint : Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: entry.granted ? Theme.consent : Theme.border-subtle;
+
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        alignment: start;
+                                        spacing: 8px;
+                                        Led {
+                                            state: entry.granted ? "live" : "off";
+                                            dot-size: 6px;
+                                            // Led color: "live"=memory-green, "off"=text-disabled.
+                                            // Consent semantics (pink) expressed via parent bg-tint above.
+                                        }
+                                        Text {
+                                            text: entry.provider;
+                                            color: entry.granted ? Theme.consent : Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                        }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Text {
+                                            text: entry.granted ? "GRANTED" : "PENDING";
+                                            color: entry.granted ? Theme.consent : Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: 8px;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                if root.ov-consent-entries.length == 0: Text {
+                                    text: "No consent records found.";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-xs;
+                                }
+
+                                if root.ov-smart-approve != "": Rectangle {
+                                    height: 30px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: Theme.border-default;
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        alignment: start;
+                                        spacing: 6px;
+                                        Text {
+                                            text: "★";
+                                            color: Theme.consent;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: "smart-approve: \{root.ov-smart-approve}";
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
