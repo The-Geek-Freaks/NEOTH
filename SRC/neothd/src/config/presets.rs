@@ -66,7 +66,54 @@ pub struct Preset {
     /// ODY-27 — text appended to every USER message while this preset is
     /// active. `None`/empty = no suffix.
     pub inject_suffix: Option<String>,
+    /// ZF-01 — generic dotted-path overrides merged into `freedom.yaml`
+    /// (e.g. `"checkin_cron.enabled" → true`). Lets a preset flip ANY
+    /// config flag without per-field plumbing. Guard rails:
+    ///   - [`PRESET_DENYLIST_ROOTS`] paths are refused at apply time
+    ///     (autonomy/sovereign/self-activation/security/secrets).
+    ///   - Unknown paths fail LOUD via a round-trip parse check —
+    ///     `FreedomConfig` ignores unknown keys, so a typo'd path would
+    ///     otherwise be a stealth no-op.
+    ///   - `Value::Null` removes the key.
+    pub overrides: BTreeMap<String, serde_yaml::Value>,
 }
+
+/// ZF-01 — top-level `freedom.yaml` keys a preset override may NEVER
+/// touch. Escalation paths (autonomy/sovereign/self-activation) have
+/// their own consent ceremonies; `security` is the policy gate itself;
+/// the rest are secrets, identity, or code-execution vectors
+/// (provider_binary/endpoint redirect, hook_chain shell commands).
+pub const PRESET_DENYLIST_ROOTS: &[&str] = &[
+    "autonomy",
+    "sovereign_buddy",
+    "self_activation",
+    "security",
+    "operator_id",
+    "provider_kind",
+    "provider_key",
+    "provider_binary",
+    "provider_endpoint",
+    "telegram_token",
+    "telegram_user_id",
+    "hook_chain",
+];
+
+/// ZF-01 — paths whose change is security/cost/privacy-relevant: the
+/// apply surface shows an explicit old→new consent diff before writing.
+pub const PRESET_WARN_PATHS: &[&str] = &[
+    "media.cloud_stt_enabled",
+    "media.cloud_tts_enabled",
+    "media.cloud_vision_enabled",
+    "media.video_frame_upload_enabled",
+    "recursive_mas.enabled",
+    "proactive.enabled",
+    "updater.allow_huggingface_downloads",
+    "council.daily_usd_cap",
+];
+
+/// ZF-01 — `inject_prefix`/`inject_suffix` ceiling. An unbounded prefix
+/// rides every user turn (token bloat + injection surface).
+pub const MAX_INJECT_LEN: usize = 2000;
 
 /// Top-level `presets.yaml` shape. Multiple named presets + one
 /// optional `active` pointer.
@@ -206,13 +253,38 @@ pub fn clear_active(home: &Path) -> Result<bool> {
 /// a new preset knob in `Preset` doesn't require updating apply
 /// logic, just round-trips through YAML.
 pub fn apply(home: &Path, name: &str) -> Result<ApplyReport> {
-    let file = load(home)?;
-    let preset = file
-        .presets
-        .get(name)
-        .ok_or_else(|| anyhow::anyhow!("preset `{}` not found", name))?
-        .clone();
+    let preset = resolve(home, name)?;
     apply_preset_to_freedom_yaml(home, &preset)
+}
+
+/// ZF-01 — resolve a preset name: operator presets in `presets.yaml`
+/// SHADOW built-ins of the same name (explicit wins); unknown names
+/// fall back to the compiled-in set.
+pub fn resolve(home: &Path, name: &str) -> Result<Preset> {
+    let file = load(home)?;
+    if let Some(p) = file.presets.get(name) {
+        return Ok(p.clone());
+    }
+    super::preset_builtins::builtin_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("preset `{}` not found", name))
+}
+
+/// ZF-01 — plan an apply WITHOUT writing: returns the report + the
+/// merged YAML body. Callers show the consent diff, then hand the body
+/// to [`commit_planned`]. `apply_preset_to_freedom_yaml` = plan+commit
+/// in one step for non-interactive callers.
+pub fn plan_apply(home: &Path, preset: &Preset) -> Result<(ApplyReport, String)> {
+    plan_apply_inner(home, preset)
+}
+
+/// ZF-01 — atomically write a body produced by [`plan_apply`].
+pub fn commit_planned(home: &Path, body: &str) -> Result<()> {
+    let freedom_path = home.join("freedom.yaml");
+    let tmp = freedom_path.with_extension("yaml.tmp");
+    std::fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &freedom_path)
+        .with_context(|| format!("rename {} → {}", tmp.display(), freedom_path.display()))?;
+    Ok(())
 }
 
 /// Same as `apply` but takes an already-resolved `Preset` value.
@@ -220,6 +292,37 @@ pub fn apply(home: &Path, name: &str) -> Result<ApplyReport> {
 /// + apply", scripted apply paths) that work with a Preset they
 /// constructed in-process.
 pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<ApplyReport> {
+    let (report, body) = plan_apply_inner(home, preset)?;
+    commit_planned(home, &body)?;
+    Ok(report)
+}
+
+fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String)> {
+    // Guard rails BEFORE any merge work: denylist + inject ceilings.
+    for key in preset.overrides.keys() {
+        let root = key.split('.').next().unwrap_or(key);
+        if PRESET_DENYLIST_ROOTS.contains(&root) {
+            anyhow::bail!(
+                "preset override `{key}` is security-critical and cannot be set via a \
+                 preset — use the dedicated CLI command (e.g. `neoth autonomy`, \
+                 `neoth self-activate`) instead"
+            );
+        }
+    }
+    for (label, v) in [
+        ("inject_prefix", &preset.inject_prefix),
+        ("inject_suffix", &preset.inject_suffix),
+    ] {
+        if let Some(s) = v {
+            if s.len() > MAX_INJECT_LEN {
+                anyhow::bail!(
+                    "preset {label} is {} bytes — max {MAX_INJECT_LEN} (rides every user turn)",
+                    s.len()
+                );
+            }
+        }
+    }
+
     let freedom_path = home.join("freedom.yaml");
     let original = if freedom_path.exists() {
         std::fs::read_to_string(&freedom_path)
@@ -284,12 +387,20 @@ pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<Appl
         });
     }
     if let Some(level) = preset.autonomy.as_ref() {
-        let was = mapping.insert(
-            serde_yaml::Value::from("autonomy"),
-            serde_yaml::Value::from(level.clone()),
-        );
-        if was != Some(serde_yaml::Value::from(level.clone())) {
-            report.fields_changed.push("autonomy".into());
+        if level == "full" {
+            // ZF-01 — `full` is NEVER written directly: it must route
+            // through the full-auto consent ceremony (`neoth autonomy
+            // full-auto`, TTY confirm or GUI token). The caller reads
+            // `autonomy_requested` and runs the ceremony after commit.
+            report.autonomy_requested = Some(level.clone());
+        } else {
+            let was = mapping.insert(
+                serde_yaml::Value::from("autonomy"),
+                serde_yaml::Value::from(level.clone()),
+            );
+            if was != Some(serde_yaml::Value::from(level.clone())) {
+                report.fields_changed.push("autonomy".into());
+            }
         }
     }
     if !preset.hemispheres.is_empty() || !preset.models.is_empty() {
@@ -325,13 +436,137 @@ pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<Appl
             serde_yaml::Value::Mapping(inference_mapping),
         );
     }
-    // Atomic write — same .tmp + rename pattern as save().
-    let tmp = freedom_path.with_extension("yaml.tmp");
+    // ZF-01 — snapshot warn-path values BEFORE the override merge so the
+    // consent diff can show old→new.
+    let before: Vec<Option<serde_yaml::Value>> = PRESET_WARN_PATHS
+        .iter()
+        .map(|p| lookup_dotted(mapping, p))
+        .collect();
+
+    merge_overrides(mapping, &preset.overrides, &mut report)?;
+
+    for (path, old) in PRESET_WARN_PATHS.iter().zip(before) {
+        let new = lookup_dotted(mapping, path);
+        if new != old && preset_touches(preset, path) {
+            report.warn_changes.push((
+                (*path).to_string(),
+                yaml_scalar_display(old.as_ref()),
+                yaml_scalar_display(new.as_ref()),
+            ));
+        }
+    }
+
     let body = serde_yaml::to_string(&root)?;
-    std::fs::write(&tmp, body)?;
-    std::fs::rename(&tmp, &freedom_path)?;
+    // ZF-01 — fail LOUD on typo'd override paths: FreedomConfig ignores
+    // unknown keys on load, so without this check a misspelled path is a
+    // stealth no-op. Round-trip the merged body through FreedomConfig and
+    // assert every override path survived.
+    if !preset.overrides.is_empty() {
+        validate_overrides_known(&body, &preset.overrides)?;
+    }
     report.preset_applied = true;
-    Ok(report)
+    Ok((report, body))
+}
+
+/// ZF-01 — merge dotted-path overrides into the YAML mapping.
+/// Intermediate mappings are created on demand; an existing NON-mapping
+/// node on the path is a hard error (silent clobber would destroy
+/// operator data); `Value::Null` removes the leaf key.
+fn merge_overrides(
+    mapping: &mut serde_yaml::Mapping,
+    overrides: &BTreeMap<String, serde_yaml::Value>,
+    report: &mut ApplyReport,
+) -> Result<()> {
+    for (path, value) in overrides {
+        let segments: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
+        let Some((leaf, parents)) = segments.split_last() else {
+            anyhow::bail!("override path `{path}` is empty");
+        };
+        let mut cur = &mut *mapping;
+        for seg in parents {
+            let key = serde_yaml::Value::from(*seg);
+            if !cur.contains_key(&key) {
+                cur.insert(key.clone(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+            }
+            cur = match cur.get_mut(&key) {
+                Some(serde_yaml::Value::Mapping(m)) => m,
+                Some(_) => anyhow::bail!(
+                    "override path `{path}`: existing value at `{seg}` is not a mapping — \
+                     refusing to overwrite"
+                ),
+                None => unreachable!("inserted above"),
+            };
+        }
+        let leaf_key = serde_yaml::Value::from(*leaf);
+        let changed = if value.is_null() {
+            cur.remove(&leaf_key).is_some()
+        } else {
+            cur.insert(leaf_key, value.clone()) != Some(value.clone())
+        };
+        if changed {
+            report.fields_changed.push(path.clone());
+        }
+    }
+    Ok(())
+}
+
+/// Walk a dotted path through nested mappings; `None` when absent.
+fn lookup_dotted(mapping: &serde_yaml::Mapping, path: &str) -> Option<serde_yaml::Value> {
+    let mut cur = mapping;
+    let segments: Vec<&str> = path.split('.').collect();
+    let (leaf, parents) = segments.split_last()?;
+    for seg in parents {
+        cur = cur.get(serde_yaml::Value::from(*seg))?.as_mapping()?;
+    }
+    cur.get(serde_yaml::Value::from(*leaf)).cloned()
+}
+
+/// Whether this preset explicitly sets the given warn path (via the
+/// overrides map or the typed `daily_usd_cap` field). Warn diffs only
+/// fire for values the PRESET changed, not pre-existing operator state.
+fn preset_touches(preset: &Preset, path: &str) -> bool {
+    if preset.overrides.contains_key(path) {
+        return true;
+    }
+    path == "council.daily_usd_cap" && preset.daily_usd_cap.is_some()
+}
+
+fn yaml_scalar_display(v: Option<&serde_yaml::Value>) -> String {
+    match v {
+        None => "(unset)".to_string(),
+        Some(v) => serde_yaml::to_string(v)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| "?".into()),
+    }
+}
+
+/// ZF-01 — assert every override path survives a FreedomConfig
+/// round-trip. Unknown keys are dropped by serde on load; a dropped
+/// path means the preset author misspelled it.
+fn validate_overrides_known(
+    merged_yaml: &str,
+    overrides: &BTreeMap<String, serde_yaml::Value>,
+) -> Result<()> {
+    let parsed: crate::config::FreedomConfig = serde_yaml::from_str(merged_yaml)
+        .context("merged freedom.yaml no longer parses as FreedomConfig")?;
+    let round_tripped =
+        serde_yaml::to_value(&parsed).context("re-serialize FreedomConfig for path check")?;
+    let rt_map = round_tripped
+        .as_mapping()
+        .context("round-tripped FreedomConfig is not a mapping")?;
+    for (path, value) in overrides {
+        // Removed keys can't be presence-checked after the round-trip.
+        if value.is_null() {
+            continue;
+        }
+        if lookup_dotted(rt_map, path).is_none() {
+            anyhow::bail!(
+                "override path `{path}` is not a known freedom.yaml field \
+                 (check spelling) — refusing to write a stealth no-op"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Diff report from `apply()`. Surfaces what changed so the
@@ -340,14 +575,20 @@ pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<Appl
 pub struct ApplyReport {
     pub preset_applied: bool,
     pub fields_changed: Vec<String>,
+    /// ZF-01 — set when the preset asked for `autonomy: full`; the value
+    /// is NOT written by apply — the caller runs the full-auto consent
+    /// ceremony (`neoth autonomy full-auto`) after commit.
+    pub autonomy_requested: Option<String>,
+    /// ZF-01 — `(path, old, new)` for [`PRESET_WARN_PATHS`] this preset
+    /// changed; surfaced as a consent diff before commit.
+    pub warn_changes: Vec<(String, String, String)>,
 }
 
 fn ensure_council_block(mapping: &mut serde_yaml::Mapping) {
-    if mapping
-        .get(serde_yaml::Value::from("council"))
-        .and_then(|v| v.as_mapping())
-        .is_none()
-    {
+    // ZF-01 — only create the block when ABSENT; an existing non-mapping
+    // value is left untouched (set_nested records the skip) instead of
+    // being silently clobbered by an empty mapping.
+    if !mapping.contains_key(serde_yaml::Value::from("council")) {
         mapping.insert(
             serde_yaml::Value::from("council"),
             serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
@@ -363,6 +604,17 @@ fn set_nested<F: FnOnce(&mut serde_yaml::Mapping, &str)>(
     mutate: F,
 ) {
     let block_key = serde_yaml::Value::from(block);
+    // ZF-01 — a non-mapping value under `block` (malformed manual edit)
+    // must not be silently replaced: preserve it and record the skip so
+    // the operator sees WHY the field didn't change.
+    if let Some(existing) = mapping.get(&block_key) {
+        if !existing.is_mapping() {
+            report
+                .fields_changed
+                .push(format!("{block}.{key} (SKIPPED: `{block}` is not a mapping)"));
+            return;
+        }
+    }
     let mut inner = mapping
         .get(&block_key)
         .and_then(|v| v.as_mapping())

@@ -35,7 +35,26 @@ pub enum PresetAction {
     /// Atomic write — survives a mid-write crash via `.tmp` + rename.
     /// Fields the preset doesn't set are left untouched in
     /// `freedom.yaml`, so manual edits between switches survive.
-    Apply { name: String },
+    /// Built-in bundles (full-auto / balanced / essentials /
+    /// local-sovereign) apply the same way; security-relevant changes
+    /// show a consent diff first.
+    Apply {
+        name: String,
+        /// Skip the consent-diff confirmation (scripted applies).
+        #[arg(long)]
+        yes: bool,
+        /// Print the apply plan as JSON WITHOUT writing anything —
+        /// the GUI renders its consent modal from this.
+        #[arg(long)]
+        dry_run: bool,
+        /// GUI ceremony pass-through for presets that request
+        /// `autonomy: full` (see `neoth autonomy full-auto`).
+        #[arg(long, hide = true)]
+        gui_confirmed: bool,
+        /// Daemon-minted single-use token accompanying --gui-confirmed.
+        #[arg(long, hide = true)]
+        gui_token: Option<String>,
+    },
 }
 
 pub async fn run(home: &Path, args: PresetArgs) -> Result<()> {
@@ -45,11 +64,60 @@ pub async fn run(home: &Path, args: PresetArgs) -> Result<()> {
         PresetAction::Delete { name } => run_delete(home, &name),
         PresetAction::Activate { name } => run_activate(home, &name),
         PresetAction::Deactivate => run_deactivate(home),
-        PresetAction::Apply { name } => run_apply(home, &name).await,
+        PresetAction::Apply {
+            name,
+            yes,
+            dry_run,
+            gui_confirmed,
+            gui_token,
+        } => run_apply(home, &name, yes, dry_run, gui_confirmed, gui_token).await,
     }
 }
 
-async fn run_apply(home: &Path, name: &str) -> Result<()> {
+async fn run_apply(
+    home: &Path,
+    name: &str,
+    yes: bool,
+    dry_run: bool,
+    gui_confirmed: bool,
+    gui_token: Option<String>,
+) -> Result<()> {
+    let preset = presets::resolve(home, name)?;
+    let (report, body) = presets::plan_apply(home, &preset)?;
+
+    if dry_run {
+        // GUI consent-modal feed: full plan, nothing written.
+        println!("{}", apply_report_json(name, &report));
+        return Ok(());
+    }
+
+    // ZF-01 — consent diff BEFORE anything is written. `--yes` skips;
+    // non-TTY without --yes fails closed (a cron must not silently flip
+    // cloud-media/cost flags).
+    if !report.warn_changes.is_empty() && !yes && !gui_confirmed {
+        use std::io::{IsTerminal, Write};
+        eprintln!("preset `{name}` changes security/cost-relevant settings:");
+        for (path, old, new) in &report.warn_changes {
+            eprintln!("  • {path}: {old} → {new}");
+        }
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "refusing to apply without confirmation (stdin is not a terminal) — \
+                 re-run with --yes to accept the changes above"
+            );
+        }
+        eprint!("Apply? [y/N]: ");
+        std::io::stderr().flush().ok();
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .context("read apply confirmation")?;
+        let ans = line.trim().to_ascii_lowercase();
+        if ans != "y" && ans != "yes" {
+            anyhow::bail!("aborted: preset `{name}` not applied");
+        }
+    }
+
     // P1 — fail-closed: a preset can change provider / cloud-fallback / rail /
     // autonomy-adjacent fields, so under `required_for_oneshot_permission_events`
     // the apply REFUSES if the `0xDA PRESET_APPLIED` audit cannot be written
@@ -68,7 +136,7 @@ async fn run_apply(home: &Path, name: &str) -> Result<()> {
     )
     .context("preset apply refused: required audit cannot be written")?;
 
-    let report = presets::apply(home, name)?;
+    presets::commit_planned(home, &body)?;
 
     // P1 — durable record: WHICH preset, WHICH field NAMES changed (never the
     // values), from WHICH surface. One-shot-writer-or-audit-RPC path.
@@ -87,7 +155,7 @@ async fn run_apply(home: &Path, name: &str) -> Result<()> {
     )
     .await;
 
-    if report.fields_changed.is_empty() {
+    if report.fields_changed.is_empty() && report.autonomy_requested.is_none() {
         println!("applied preset `{name}` (no changes — preset was empty)");
     } else {
         println!(
@@ -98,39 +166,93 @@ async fn run_apply(home: &Path, name: &str) -> Result<()> {
             println!("  • {f}");
         }
     }
+
+    // ZF-01 — nudge the running daemon's reload poller (best-effort; the
+    // daemon may not be running).
+    let sentinel = audit_home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
+    let _ = std::fs::write(&sentinel, b"preset-apply");
+    let cron_flips = report
+        .fields_changed
+        .iter()
+        .filter(|f| f.ends_with(".enabled"))
+        .count();
+    if cron_flips > 0 {
+        println!(
+            "note: {cron_flips} background task(s) start on the next daemon (re)start — \
+             live settings apply within ~2s via the reload poller."
+        );
+    }
+
+    // ZF-01 — `autonomy: full` was NOT written by apply: route through the
+    // full-auto consent ceremony (TTY y/N, or GUI token pass-through). The
+    // ceremony also enables the full bundled skill library + emits the
+    // 0xDD sudomode audit anchor.
+    if report.autonomy_requested.as_deref() == Some("full") {
+        crate::cli::autonomy::run_autonomy(
+            crate::cli::autonomy::AutonomyArgs {
+                action: crate::cli::autonomy::AutonomyAction::FullAuto {
+                    gui_confirmed,
+                    gui_token,
+                },
+            },
+            crate::cli::OutputFormat::Table,
+        )
+        .await
+        .context("preset applied, but FULL-AUTO was not enabled")?;
+    }
     Ok(())
+}
+
+/// JSON plan for `--dry-run` (GUI consent modal). PURE.
+fn apply_report_json(name: &str, report: &crate::config::presets::ApplyReport) -> String {
+    serde_json::json!({
+        "name": name,
+        "fields_changed": report.fields_changed,
+        "autonomy_requested": report.autonomy_requested,
+        "warn_changes": report
+            .warn_changes
+            .iter()
+            .map(|(p, old, new)| serde_json::json!({"path": p, "old": old, "new": new}))
+            .collect::<Vec<_>>(),
+    })
+    .to_string()
 }
 
 fn run_list(home: &Path, json: bool) -> Result<()> {
-    let (names, active) = presets::list(home)?;
+    let (rows, active) = crate::config::preset_builtins::list_all(home)?;
     if json {
-        println!("{}", preset_list_json(&names, active.as_deref()));
+        println!("{}", preset_list_json(&rows, active.as_deref()));
         return Ok(());
     }
-    if names.is_empty() {
-        println!("(no presets — run `neoth preset --help` to see how to save one)");
-        return Ok(());
-    }
-    for name in &names {
-        let marker = if active.as_deref() == Some(name) {
-            " *"
+    for row in &rows {
+        let marker = if active.as_deref() == Some(row.name.as_str()) {
+            "*"
         } else {
-            "  "
+            " "
         };
-        println!("{marker} {name}");
+        let tag = if row.builtin { "[built-in]" } else { "[yours]   " };
+        println!("{marker} {:<16} {tag}  {}", row.name, row.description);
     }
     Ok(())
 }
 
-/// Build the `neoth preset list --json` body: `{presets:[{name,active}], active}`.
-/// PURE — consumed by the GUI preset selector (SPEC-05).
-fn preset_list_json(names: &[String], active: Option<&str>) -> String {
-    let presets: Vec<serde_json::Value> = names
+/// Build the `neoth preset list --json` body:
+/// `{presets:[{name,active,builtin,description}], active}`. PURE —
+/// consumed by the GUI preset selector (SPEC-05). `builtin` and
+/// `description` are additive fields; existing consumers keyed on
+/// `name`/`active` keep working.
+fn preset_list_json(
+    rows: &[crate::config::preset_builtins::PresetRow],
+    active: Option<&str>,
+) -> String {
+    let presets: Vec<serde_json::Value> = rows
         .iter()
-        .map(|n| {
+        .map(|row| {
             serde_json::json!({
-                "name": n,
-                "active": active == Some(n.as_str()),
+                "name": row.name,
+                "active": active == Some(row.name.as_str()),
+                "builtin": row.builtin,
+                "description": row.description,
             })
         })
         .collect();
@@ -142,12 +264,8 @@ fn preset_list_json(names: &[String], active: Option<&str>) -> String {
 }
 
 fn run_show(home: &Path, name: &str) -> Result<()> {
-    let file = presets::load(home)?;
-    let preset = file
-        .presets
-        .get(name)
-        .ok_or_else(|| anyhow::anyhow!("preset `{}` not found", name))?;
-    let yaml = serde_yaml::to_string(preset)?;
+    let preset = presets::resolve(home, name)?;
+    let yaml = serde_yaml::to_string(&preset)?;
     println!("{yaml}");
     Ok(())
 }
@@ -201,17 +319,32 @@ mod tests {
     }
 
     #[test]
-    fn preset_list_json_marks_active() {
-        let names = vec!["frugal".to_string(), "weekend".to_string()];
-        let out = preset_list_json(&names, Some("weekend"));
+    fn preset_list_json_marks_active_and_tags_builtins() {
+        use crate::config::preset_builtins::PresetRow;
+        let rows = vec![
+            PresetRow {
+                name: "full-auto".into(),
+                builtin: true,
+                description: "Everything on.".into(),
+            },
+            PresetRow {
+                name: "weekend".into(),
+                builtin: false,
+                description: String::new(),
+            },
+        ];
+        let out = preset_list_json(&rows, Some("weekend"));
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["active"], "weekend");
         let arr = v["presets"].as_array().unwrap();
         assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0]["name"], "frugal");
+        assert_eq!(arr[0]["name"], "full-auto");
         assert_eq!(arr[0]["active"], false);
+        assert_eq!(arr[0]["builtin"], true);
+        assert_eq!(arr[0]["description"], "Everything on.");
         assert_eq!(arr[1]["name"], "weekend");
         assert_eq!(arr[1]["active"], true);
+        assert_eq!(arr[1]["builtin"], false);
     }
 
     #[test]
@@ -220,6 +353,32 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert!(v["active"].is_null());
         assert_eq!(v["presets"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn apply_report_json_carries_plan() {
+        let report = crate::config::presets::ApplyReport {
+            preset_applied: true,
+            fields_changed: vec!["proactive.enabled".into()],
+            autonomy_requested: Some("full".into()),
+            warn_changes: vec![(
+                "media.cloud_stt_enabled".into(),
+                "(unset)".into(),
+                "true".into(),
+            )],
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&apply_report_json("full-auto", &report)).unwrap();
+        assert_eq!(v["name"], "full-auto");
+        assert_eq!(v["autonomy_requested"], "full");
+        assert_eq!(v["warn_changes"][0]["path"], "media.cloud_stt_enabled");
+        assert_eq!(v["warn_changes"][0]["new"], "true");
+    }
+
+    #[test]
+    fn run_show_resolves_builtins() {
+        let dir = tempdir().unwrap();
+        run_show(dir.path(), "full-auto").unwrap();
     }
 
     #[test]

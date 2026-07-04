@@ -52,6 +52,7 @@ use serde::{Deserialize, Serialize};
 pub mod credentials;
 // GOLD-ADAPT-DOC-01 (2026-06-23) — Python pip-gate helpers (ppt_master → python-pptx).
 pub mod installer;
+pub mod preset_builtins;
 pub mod presets;
 
 use crate::cli::init::{OperatorRole, ProviderKind};

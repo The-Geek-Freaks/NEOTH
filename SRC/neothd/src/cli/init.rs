@@ -132,16 +132,47 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step7d_supervisor(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
-    // GOLD-FEAT-01b — the zero-friction one-click preset is the FINAL word:
-    // applied after every per-step pick so `--zero-friction` (or the y/n
-    // confirm) cleanly overrides autonomy + topology before the summary.
-    step_zero_friction(&args, interactive, &mut state)?;
+    // GOLD-FEAT-01b + ZF-01 — the operating-style preset picker is the FINAL
+    // word: applied after every per-step pick so the chosen built-in
+    // (full-auto / balanced / essentials / local-sovereign) cleanly overrides
+    // autonomy + topology before the summary. `custom` keeps the per-step picks.
+    let chosen_preset = step_zero_friction(&args, interactive, &mut state)?;
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {
         println!("[dry-run] No files written.");
     } else {
         write_config(&neoth_dir, &state).await?;
+        // ZF-01 — merge the chosen built-in's feature-flag overrides into the
+        // freshly written freedom.yaml. Autonomy is stripped: the wizard's
+        // explicit selection already wrote it into the config (the selection
+        // IS the ceremony on a fresh install — no daemon, no WAL yet).
+        if let Some(name) = &chosen_preset {
+            if let Some(mut preset) = crate::config::preset_builtins::builtin_by_name(name) {
+                preset.autonomy = None;
+                match crate::config::presets::apply_preset_to_freedom_yaml(&neoth_dir, &preset) {
+                    Ok(report) => {
+                        println!(
+                            "  ⚡ preset `{name}` applied ({} feature toggles set).",
+                            report.fields_changed.len()
+                        );
+                        if !report.warn_changes.is_empty() {
+                            println!("     cost/privacy-relevant toggles included:");
+                            for (path, _, new) in &report.warn_changes {
+                                println!("       • {path} → {new}");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, preset = %name, "preset overlay failed");
+                        println!(
+                            "  ⚠ preset `{name}` overlay failed ({e}) — base config written; \
+                             run `neoth preset apply {name}` to retry."
+                        );
+                    }
+                }
+            }
+        }
         write_initialized_marker(&neoth_dir, &state)?;
         // R-04: wizard reached the `.initialized` marker — the
         // checkpoint is no longer needed. Clear it so the next

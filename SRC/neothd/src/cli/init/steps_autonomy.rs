@@ -511,71 +511,83 @@ pub(crate) fn try_inline_consent_grant(
     false
 }
 
-/// GOLD-FEAT-01b — offer + apply the zero-friction onboarding preset.
+/// GOLD-FEAT-01b + ZF-01 — the operating-style picker (built-in presets).
 ///
-/// The maximally-permissive one-click set: **Full autonomy**, **single-provider
-/// inference** (one provider drives all three hemispheres), and **every bundled
-/// skill active**. Opt-in via `--zero-friction` (non-interactive) or a y/n
-/// confirm (interactive). Applied LAST in the wizard so it deliberately
-/// overrides the per-step autonomy/topology picks — the "give me everything"
-/// escape hatch for non-technical operators.
+/// Collapses NEOTH's ~75 default-OFF feature flags into one choice:
+/// full-auto / balanced / essentials / local-sovereign / custom. Applied
+/// LAST in the wizard so it deliberately overrides the per-step
+/// autonomy/topology picks — the "just make it work" path for
+/// non-technical operators; `custom` keeps every per-step pick.
 ///
-/// The two fields written here are the `WizardState` twins of what
-/// [`crate::wizard::zero_friction::apply_zero_friction`] sets on a
-/// `FreedomConfig`; the third (skills eval-suppression OFF) needs no write
-/// because `WizardState` serializes no `skills:` block, so the daemon's
-/// `SkillsConfig::default()` already yields the all-skills-active state. The
-/// `zero_friction_state_matches_freedom_preset` test pins this twin against the
-/// canonical fn so the two cannot drift.
+/// The autonomy/topology twins are written into `WizardState` here (the
+/// wizard's explicit selection IS the consent ceremony on a fresh
+/// install — precedent: the original `--zero-friction` flag). The
+/// preset's feature-flag `overrides` can't merge into `freedom.yaml`
+/// before it exists, so the chosen name is returned and `run()` applies
+/// the overrides right after `write_config`.
+///
+/// `--zero-friction` maps to `full-auto` (back-compat).
 pub(crate) fn step_zero_friction(
     args: &InitArgs,
     interactive: bool,
     state: &mut WizardState,
-) -> Result<()> {
+) -> Result<Option<String>> {
     use crate::config::inference::TopologyMode;
     use crate::permissions::AutonomyLevel;
 
-    debug!("wizard step 0b: zero-friction preset");
+    debug!("wizard step 0b: operating-style preset picker");
 
-    let want = if args.zero_friction {
-        true
+    let chosen: Option<&str> = if args.zero_friction {
+        Some("full-auto")
     } else if interactive {
-        offer_zero_friction_interactive()?
+        offer_preset_interactive()?
     } else {
-        false
+        None
     };
 
-    if want {
-        state.autonomy = AutonomyLevel::Full;
+    if let Some(name) = chosen {
+        // Autonomy/topology twins of the built-in preset (see
+        // `preset_state_matches_builtin` drift guard below).
+        state.autonomy = match name {
+            "full-auto" => AutonomyLevel::Full,
+            "local-sovereign" => AutonomyLevel::Elevated,
+            _ => AutonomyLevel::Standard,
+        };
         state.inference.mode = TopologyMode::Single;
-        info!(
-            "GOLD-FEAT-01b zero-friction preset applied: Full autonomy + single-provider + all-skills-active"
-        );
+        info!(preset = name, "ZF-01 operating-style preset selected");
         if interactive {
-            println!(
-                "  ⚡ Zero-friction preset applied: Full autonomy, single provider, all skills active."
-            );
+            let desc = crate::config::preset_builtins::builtin_by_name(name)
+                .and_then(|p| p.description)
+                .unwrap_or_default();
+            println!("  ⚡ `{name}` selected: {desc}");
         }
     }
-    Ok(())
+    Ok(chosen.map(str::to_string))
 }
 
 #[cfg(feature = "wizard")]
-fn offer_zero_friction_interactive() -> Result<bool> {
-    dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-        .with_prompt(
-            "One-click zero-friction setup? Full autonomy (NEOTH acts without asking), one \
-             provider for everything, and all skills active. You can change any of this later \
-             via `neoth autonomy` / `neoth hemispheres`.",
-        )
-        .default(false)
+fn offer_preset_interactive() -> Result<Option<&'static str>> {
+    use crate::config::preset_builtins::{BUILTIN_NAMES, builtin_by_name};
+    let mut items: Vec<String> = BUILTIN_NAMES
+        .iter()
+        .map(|n| {
+            let desc = builtin_by_name(n).and_then(|p| p.description).unwrap_or_default();
+            format!("{n} — {desc}")
+        })
+        .collect();
+    items.push("custom — keep every choice I just made".to_string());
+    let pick = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("How should NEOTH work? (one choice sets all feature toggles; change anytime via `neoth preset`)")
+        .items(&items)
+        .default(1) // balanced — the no-surprises middle
         .interact()
-        .context("zero-friction confirm")
+        .context("operating-style pick")?;
+    Ok(BUILTIN_NAMES.get(pick).copied())
 }
 
 #[cfg(not(feature = "wizard"))]
-fn offer_zero_friction_interactive() -> Result<bool> {
-    Ok(false)
+fn offer_preset_interactive() -> Result<Option<&'static str>> {
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -594,8 +606,11 @@ mod zero_friction_tests {
         state.autonomy = crate::permissions::AutonomyLevel::Strict;
         state.inference.mode = crate::config::inference::TopologyMode::Triplet;
 
-        step_zero_friction(&args_with_zero_friction(true), false, &mut state).expect("applies");
+        let chosen = step_zero_friction(&args_with_zero_friction(true), false, &mut state)
+            .expect("applies");
 
+        // Back-compat: --zero-friction maps to the full-auto built-in.
+        assert_eq!(chosen.as_deref(), Some("full-auto"));
         assert_eq!(state.autonomy, crate::permissions::AutonomyLevel::Full);
         assert!(matches!(
             state.inference.mode,
@@ -609,10 +624,32 @@ mod zero_friction_tests {
         state.autonomy = crate::permissions::AutonomyLevel::Standard;
         let before = state.autonomy;
 
-        // Flag off + non-interactive → no change.
-        step_zero_friction(&args_with_zero_friction(false), false, &mut state).expect("noop");
+        // Flag off + non-interactive → no change, no preset.
+        let chosen = step_zero_friction(&args_with_zero_friction(false), false, &mut state)
+            .expect("noop");
 
+        assert!(chosen.is_none());
         assert_eq!(state.autonomy, before);
+    }
+
+    #[test]
+    fn preset_autonomy_twins_match_builtins() {
+        // Drift guard: the WizardState autonomy twin written by the picker
+        // must agree with each built-in preset's `autonomy` field.
+        use crate::config::preset_builtins::{BUILTIN_NAMES, builtin_by_name};
+        for name in BUILTIN_NAMES {
+            let preset = builtin_by_name(name).unwrap();
+            let twin = match *name {
+                "full-auto" => "full",
+                "local-sovereign" => "elevated",
+                _ => "standard",
+            };
+            assert_eq!(
+                preset.autonomy.as_deref(),
+                Some(twin),
+                "builtin `{name}` autonomy drifted from the wizard twin"
+            );
+        }
     }
 
     #[test]
