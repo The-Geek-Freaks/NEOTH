@@ -1,0 +1,573 @@
+// NEOTH — Mesh / Cluster failover panel (Design Wave 4).
+//
+// Displays: NODE card (this node id, listen port, mDNS Led),
+//           PEERS card (peer rows: id + last-seen + Led; empty state),
+//           REDUNDANCY card (honest partial-replication warning — amber, not green).
+//
+// Daemon: `neoth cluster status --output json`  (read-only).
+// Refresh button triggers the callback; Rust re-shells the command and pushes props.
+//
+// Slint 1.8 rules observed:
+//   - `if` instead of `visible` for layout removal.
+//   - @children never inside `if`.
+//   - ScrollView needs min-height on the inner VerticalLayout.
+//   - Led state: "live" | "connecting" | "error" | "off" only.
+//   - No inline hex — Theme tokens only.
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Exported structs (Rust must re-export from main.slint) ────────────────────
+
+/// One peer entry from cluster status peers[].
+export struct MeshPeerRow {
+    id: string,          // peer node id (mono display, truncated)
+    last-seen: string,   // human-readable relative time e.g. "3 s ago"
+    reachable: bool,     // true → Led "live", false → Led "error"
+}
+
+// ── Internal micro-components ─────────────────────────────────────────────────
+
+// Kicker — 8px mono eyebrow, wide-tracked, text-disabled.
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+// InfoRow — 36px labeled value row with left-rail mono label + right value.
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: start;
+        spacing: 12px;
+        Text {
+            text: root.label;
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: 8px;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: 80px;
+        }
+        Text {
+            text: root.value != "" ? root.value : "—";
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// RefreshFooter — 8.5px mono timestamp, right-aligned, text-disabled.
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    letter-spacing: Theme.letter-spacing-tight;
+    horizontal-alignment: right;
+}
+
+// PeerRow — one discovered peer: Led + id (mono, elide) + last-seen badge.
+component PeerRow inherits Rectangle {
+    in property <string> peer-id;
+    in property <string> last-seen;
+    in property <bool>   reachable;
+
+    height: 44px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: start;
+        spacing: 10px;
+
+        // reachability LED — centered vertically via y offset on the Rectangle
+        Led {
+            state: root.reachable ? "live" : "error";
+            dot-size: 6px;
+        }
+
+        // peer id — mono, elides if long
+        Text {
+            text: root.peer-id;
+            color: root.reachable ? Theme.audit : Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-xs;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        // last-seen badge
+        Rectangle {
+            height: 22px;
+            width: 88px;
+            border-radius: Theme.radius-sm;
+            background: Theme.surface-2;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            Text {
+                text: root.last-seen;
+                color: Theme.text-disabled;
+                font-family: Theme.font-mono;
+                font-size: 9px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// ── MeshView ──────────────────────────────────────────────────────────────────
+
+export component MeshView inherits Rectangle {
+    // ── NODE card properties ──────────────────────────────────────────────────
+    /// This node's unique id (from cluster.yaml node_id or `neoth cluster status`).
+    in property <string> mesh-node-id: "";
+    /// TCP listen port for cluster gossip.
+    in property <string> mesh-listen-port: "";
+    /// Whether mDNS peer discovery is enabled.
+    in property <bool>   mesh-mdns-enabled: false;
+    /// Comma-separated trusted SSID list (empty = any).
+    in property <string> mesh-trusted-ssids: "";
+
+    // ── PEERS card properties ─────────────────────────────────────────────────
+    /// Discovered peers from `neoth cluster status .peers[]`.
+    in property <[MeshPeerRow]> mesh-peers: [];
+
+    // ── REDUNDANCY card properties ────────────────────────────────────────────
+    /// Number of reachable peers (drives the redundancy note).
+    in property <int>    mesh-peer-count: 0;
+    /// Free-form gossip convergence note from daemon (e.g. "vector clocks synced").
+    in property <string> mesh-gossip-note: "";
+
+    // ── Shared ────────────────────────────────────────────────────────────────
+    in property <string> mesh-refreshed-at: "";
+    callback mesh-refresh-clicked();
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+    background: Theme.bg-base;
+
+    EntranceFade {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            // ── View header ──────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                height: 44px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Mesh & Cluster";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-md;
+                        letter-spacing: Theme.letter-spacing-tight;
+                    }
+                    Text {
+                        text: "node identity · peers · failover status";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: 8.5px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                    }
+                }
+
+                // spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button
+                Rectangle {
+                    height: 30px;
+                    width: 90px;
+                    border-radius: Theme.radius-button;
+                    background: Theme.audit-tint;
+                    border-width: 1px;
+                    border-color: Theme.audit;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "⟳ Refresh";
+                            color: Theme.audit;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-xs;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.mesh-refresh-clicked(); }
+                    }
+                }
+            }
+
+            // hairline separator
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── Scrollable content ───────────────────────────────────────────
+            ScrollView {
+
+                VerticalLayout {
+                    padding: 0px;
+                    spacing: 14px;
+                    alignment: start;
+                    min-height: 800px;
+
+                    // ── NODE CARD ────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            // Kicker + mDNS LED
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "NODE"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text {
+                                    text: "mDNS";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: 8px;
+                                    letter-spacing: Theme.letter-spacing-wide;
+                                    vertical-alignment: center;
+                                }
+                                Led {
+                                    state: root.mesh-mdns-enabled ? "live" : "off";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            // Node id — full-width mono row, larger font
+                            Rectangle {
+                                height: 44px;
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: root.mesh-node-id != "" ? Theme.border-accent : Theme.border-subtle;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    alignment: start;
+                                    spacing: 10px;
+                                    Text {
+                                        text: "NODE ID";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: 8px;
+                                        letter-spacing: Theme.letter-spacing-wide;
+                                        vertical-alignment: center;
+                                        width: 58px;
+                                    }
+                                    Text {
+                                        text: root.mesh-node-id != "" ? root.mesh-node-id : "—";
+                                        color: root.mesh-node-id != "" ? Theme.audit : Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-sm;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+
+                            InfoRow {
+                                label: "LISTEN PORT";
+                                value: root.mesh-listen-port;
+                                value-color: Theme.text-primary;
+                            }
+
+                            if root.mesh-trusted-ssids != "": InfoRow {
+                                label: "TRUST SSIDS";
+                                value: root.mesh-trusted-ssids;
+                                value-color: Theme.memory;
+                            }
+
+                            if root.mesh-trusted-ssids == "": InfoRow {
+                                label: "TRUST SSIDS";
+                                value: "any (no filter)";
+                                value-color: Theme.text-disabled;
+                            }
+
+                            RefreshFooter { ts: root.mesh-refreshed-at; }
+                        }
+                    }
+
+                    // ── PEERS CARD ───────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            // Kicker + peer count badge
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "PEERS"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                if root.mesh-peers.length > 0: Rectangle {
+                                    height: 18px;
+                                    width: 36px;
+                                    border-radius: Theme.radius-pill;
+                                    background: Theme.audit-tint;
+                                    border-width: 1px;
+                                    border-color: Theme.audit;
+                                    Text {
+                                        text: "\{root.mesh-peers.length}";
+                                        color: Theme.audit;
+                                        font-family: Theme.font-mono;
+                                        font-size: 9px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            // Peer rows
+                            for peer in root.mesh-peers: PeerRow {
+                                peer-id: peer.id;
+                                last-seen: peer.last-seen;
+                                reachable: peer.reachable;
+                            }
+
+                            // Empty state
+                            if root.mesh-peers.length == 0: Rectangle {
+                                height: 60px;
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 4px;
+                                    Text {
+                                        text: "no peers discovered";
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "NEOTH runs standalone";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: 9px;
+                                        horizontal-alignment: center;
+                                        letter-spacing: Theme.letter-spacing-wide;
+                                    }
+                                }
+                            }
+
+                            if root.mesh-gossip-note != "": Rectangle {
+                                height: 28px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.memory-tint;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    alignment: start;
+                                    spacing: 6px;
+                                    Text {
+                                        text: "✓";
+                                        color: Theme.memory;
+                                        font-size: Theme.font-size-xs;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: root.mesh-gossip-note;
+                                        color: Theme.memory;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+
+                            RefreshFooter { ts: root.mesh-refreshed-at; }
+                        }
+                    }
+
+                    // ── REDUNDANCY CARD — HONEST partial-replication warning ──
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            // Kicker + amber warning LED
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "REDUNDANCY"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    // amber = warning; Led has no amber state — "connecting"
+                                    // is visually amber/yellow in the existing Led impl.
+                                    state: "connecting";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            // Warning banner — amber-tinted background
+                            Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.warning-tint;
+                                border-width: 1px;
+                                border-color: Theme.warning;
+
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 8px;
+                                    alignment: start;
+
+                                    // Title line
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Text {
+                                            text: "⚠";
+                                            color: Theme.warning;
+                                            font-size: Theme.font-size-sm;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: "Failover replication is PARTIAL";
+                                            color: Theme.warning;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-sm;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                            letter-spacing: Theme.letter-spacing-tight;
+                                        }
+                                    }
+
+                                    // Body — honest description
+                                    Text {
+                                        text: "Peers gossip and converge vector clocks, but full memory redundancy — a peer holding all your data if this node's disk dies — is not yet complete.";
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-sans;
+                                        font-size: Theme.font-size-sm;
+                                        wrap: word-wrap;
+                                    }
+
+                                    // Hard warning line
+                                    Text {
+                                        text: "Do not rely on the mesh as your only backup.";
+                                        color: Theme.warning;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-sm;
+                                        font-weight: 600;
+                                        wrap: word-wrap;
+                                    }
+
+                                    // Link note to Backup tab
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        alignment: start;
+                                        Text {
+                                            text: "→";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: "Use the Backup tab for reliable data protection.";
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Peer count context line
+                            Rectangle {
+                                height: 36px;
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    alignment: start;
+                                    spacing: 10px;
+                                    Text {
+                                        text: "REACHABLE PEERS";
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: 8px;
+                                        letter-spacing: Theme.letter-spacing-wide;
+                                        vertical-alignment: center;
+                                        width: 110px;
+                                    }
+                                    Text {
+                                        text: root.mesh-peer-count > 0
+                                            ? "\{root.mesh-peer-count} peer(s) — gossip only"
+                                            : "0 — fully standalone";
+                                        color: root.mesh-peer-count > 0 ? Theme.audit : Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-sm;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+
+                            RefreshFooter { ts: root.mesh-refreshed-at; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

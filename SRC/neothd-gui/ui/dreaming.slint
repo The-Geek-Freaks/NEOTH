@@ -1,0 +1,638 @@
+// NEOTH — Dreaming / Self-Awareness panel (Design Wave 4b).
+//
+// Surface for memory-consolidation dreams and self-reflection.
+// Left card: DREAMS — day list + detail pane (shown when a day is selected).
+// Right card: SELF-REFLECT — one-shot reflect button + last-result text.
+// Accents: memory-green (Theme.memory) + audit-cyan (Theme.audit).
+//
+// Slint 1.8 rules observed:
+//   - `@children` never inside `if` blocks.
+//   - `visible` still reserves layout space → `if` for add/remove semantics.
+//   - ScrollView requires an explicit height when inside a stretched container.
+//   - No starts-with / regex in expressions — booleans pushed from Rust.
+//   - `transform-rotation` not used here (no bare Rectangle/Image target).
+//   - Structs exported from this file must be re-exported from main.slint.
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire structs ──────────────────────────────────────────────────────────────
+
+/// One row in the dream-day list (from `neoth dream list --output json`).
+export struct DreamDayRow {
+    day: string,      // ISO date string, e.g. "2026-07-04"
+    entries: int,     // number of dream objects in that day's file
+    path: string,     // filesystem path (informational, not rendered)
+}
+
+/// One detail entry inside a selected day (Rust maps arbitrary dream JSON here).
+export struct DreamEntryRow {
+    day: string,      // ISO date — same as the selected day
+    title: string,    // best-effort title extracted from the dream object
+    body: string,     // best-effort body / summary text
+}
+
+// ── Internal micro-components ─────────────────────────────────────────────────
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: start;
+        spacing: 12px;
+        Text {
+            text: root.label;
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: 8px;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: 72px;
+        }
+        Text {
+            text: root.value != "" ? root.value : "—";
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+}
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    letter-spacing: Theme.letter-spacing-tight;
+    horizontal-alignment: right;
+}
+
+// ── DreamingView ──────────────────────────────────────────────────────────────
+
+export component DreamingView inherits Rectangle {
+    // ── DREAMS card data ──────────────────────────────────────────────────────
+
+    /// Day rows populated from `neoth dream list --output json`.
+    in property <[DreamDayRow]> dr-days: [];
+
+    /// Detail rows populated from `neoth dream show <day> --output json`.
+    /// Empty until a day is selected and the Rust refresh worker fills it.
+    in property <[DreamEntryRow]> dr-entries: [];
+
+    /// The currently selected day (ISO date string), or "" when nothing is selected.
+    in-out property <string> dr-selected-day: "";
+
+    /// True while `neoth dream now` is in-flight.
+    in property <bool> dr-dream-now-loading: false;
+
+    /// Result line shown after `neoth dream now` completes (success or error).
+    in property <string> dr-dream-now-result: "";
+
+    // ── SELF-REFLECT card data ─────────────────────────────────────────────────
+
+    /// True while `neoth reflect` is in-flight.
+    in property <bool> dr-reflect-loading: false;
+
+    /// Result text from the last `neoth reflect` call.
+    in property <string> dr-reflect-result: "";
+
+    // ── Shared refresh ─────────────────────────────────────────────────────────
+
+    in property <string> dr-refreshed-at: "";
+
+    // ── Callbacks — integrator wires these to daemon commands ─────────────────
+
+    /// Fired when the user clicks a day row. Rust runs `neoth dream show <day>`.
+    callback dr-show-day(string /* day */);
+
+    /// Fired when the user clicks "Dream now". Rust runs `neoth dream now`.
+    callback dr-dream-now-clicked();
+
+    /// Fired when the user clicks "Reflect". Rust runs `neoth reflect`.
+    callback dr-reflect-clicked();
+
+    /// Fired when the user clicks the Refresh button.
+    callback dr-refresh-clicked();
+
+    // ── Root layout ───────────────────────────────────────────────────────────
+    background: Theme.bg-base;
+
+    EntranceFade {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            // ── View header ──────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                height: 44px;
+
+                // Memory-green glyph + title
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Text {
+                        text: "◉";
+                        color: Theme.memory;
+                        font-size: 20px;
+                        vertical-alignment: center;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "Dreaming";
+                            color: Theme.text-primary;
+                            font-family: Theme.font-sans;
+                            font-size: Theme.font-size-md;
+                            letter-spacing: Theme.letter-spacing-tight;
+                        }
+                        Text {
+                            text: "memory consolidation · self-awareness";
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-mono;
+                            font-size: 8.5px;
+                            letter-spacing: Theme.letter-spacing-wide;
+                        }
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button
+                Rectangle {
+                    height: 30px;
+                    width: 90px;
+                    border-radius: Theme.radius-button;
+                    background: Theme.memory-tint;
+                    border-width: 1px;
+                    border-color: Theme.memory;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: center;
+                        Text {
+                            text: "⟳  Refresh";
+                            color: Theme.memory;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-xs;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.dr-refresh-clicked(); }
+                    }
+                }
+            }
+
+            // hairline separator
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── Two-column scrollable body ───────────────────────────────────
+            ScrollView {
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+                    padding: 0px;
+
+                    // ── LEFT COLUMN — DREAMS ─────────────────────────────────
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 14px;
+                        alignment: start;
+
+                        // DREAMS card
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                // Card header
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "DREAMS"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    // entry count chip
+                                    if root.dr-days.length > 0: Text {
+                                        text: "\{root.dr-days.length} days";
+                                        color: Theme.memory;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        letter-spacing: Theme.letter-spacing-tight;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                // Day list — each row is clickable
+                                for row in root.dr-days: Rectangle {
+                                    height: 40px;
+                                    border-radius: Theme.radius-md;
+                                    // highlight selected day with memory-tint bg + memory border
+                                    background: row.day == root.dr-selected-day
+                                        ? Theme.memory-tint
+                                        : Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: row.day == root.dr-selected-day
+                                        ? Theme.memory
+                                        : Theme.border-subtle;
+
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        alignment: start;
+                                        spacing: 10px;
+
+                                        // Date — mono, memory-green when selected
+                                        Text {
+                                            text: row.day;
+                                            color: row.day == root.dr-selected-day
+                                                ? Theme.memory
+                                                : Theme.text-primary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-sm;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                        }
+
+                                        // Entry count chip
+                                        Rectangle {
+                                            width: 40px;
+                                            height: 20px;
+                                            border-radius: Theme.radius-sm;
+                                            background: row.day == root.dr-selected-day
+                                                ? Theme.memory
+                                                : Theme.surface-2;
+                                            border-width: 1px;
+                                            border-color: row.day == root.dr-selected-day
+                                                ? Theme.memory
+                                                : Theme.border-default;
+                                            y: (parent.height - self.height) / 2;
+                                            Text {
+                                                text: "\{row.entries}";
+                                                color: row.day == root.dr-selected-day
+                                                    ? Theme.text-inverse
+                                                    : Theme.text-secondary;
+                                                font-family: Theme.font-mono;
+                                                font-size: 10px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    // Capture row.day for the closure before layout-owned x/y
+                                    TouchArea {
+                                        clicked => {
+                                            root.dr-selected-day = row.day;
+                                            root.dr-show-day(row.day);
+                                        }
+                                    }
+                                }
+
+                                // Empty state
+                                if root.dr-days.length == 0: VerticalLayout {
+                                    spacing: 6px;
+                                    alignment: center;
+                                    Text {
+                                        text: "no dreams yet";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-sm;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "NEOTH dreams during idle windows";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: 10px;
+                                        letter-spacing: Theme.letter-spacing-tight;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+
+                                // Hairline separator before detail pane
+                                if root.dr-selected-day != "": Rectangle {
+                                    height: 1px;
+                                    background: Theme.border-default;
+                                }
+
+                                // Detail pane — shown when a day is selected
+                                if root.dr-selected-day != "": VerticalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+
+                                    // Detail header
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        height: 18px;
+                                        Kicker { label: "DETAIL"; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Text {
+                                            text: root.dr-selected-day;
+                                            color: Theme.audit;
+                                            font-family: Theme.font-mono;
+                                            font-size: 8px;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    // Entry rows
+                                    for entry in root.dr-entries: Rectangle {
+                                        height: 72px;
+                                        border-radius: Theme.radius-md;
+                                        background: Theme.surface-1;
+                                        border-width: 1px;
+                                        border-color: Theme.border-subtle;
+
+                                        VerticalLayout {
+                                            padding-left: 14px;
+                                            padding-right: 14px;
+                                            padding-top: 10px;
+                                            padding-bottom: 10px;
+                                            spacing: 4px;
+                                            alignment: start;
+
+                                            // Audit-cyan accent bar — top-left via border on text container
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                alignment: start;
+                                                // Cyan glyph
+                                                Text {
+                                                    text: "◈";
+                                                    color: Theme.audit;
+                                                    font-size: Theme.font-size-xs;
+                                                    vertical-alignment: center;
+                                                }
+                                                Text {
+                                                    text: entry.title != "" ? entry.title : "(untitled)";
+                                                    color: Theme.text-primary;
+                                                    font-family: Theme.font-sans;
+                                                    font-size: Theme.font-size-sm;
+                                                    font-weight: 600;
+                                                    vertical-alignment: center;
+                                                    horizontal-stretch: 1;
+                                                    overflow: elide;
+                                                }
+                                            }
+
+                                            Text {
+                                                text: entry.body != "" ? entry.body : "—";
+                                                color: Theme.text-tertiary;
+                                                font-family: Theme.font-sans;
+                                                font-size: Theme.font-size-xs;
+                                                horizontal-stretch: 1;
+                                                overflow: elide;
+                                                wrap: no-wrap;
+                                            }
+                                        }
+                                    }
+
+                                    // Empty detail state (day selected but no entries yet / loading)
+                                    if root.dr-entries.length == 0: Text {
+                                        text: "loading dream entries…";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                    }
+                                }
+
+                                RefreshFooter { ts: root.dr-refreshed-at; }
+                            }
+                        }
+
+                        // DREAM NOW action card
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                Kicker { label: "TRIGGER DREAM"; }
+
+                                Text {
+                                    text: "Force a memory-consolidation pass right now.\nNormally NEOTH dreams during idle windows.";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: 10px;
+                                    letter-spacing: Theme.letter-spacing-tight;
+                                    wrap: word-wrap;
+                                }
+
+                                NeothButton {
+                                    label: "Dream now";
+                                    primary: true;
+                                    loading: root.dr-dream-now-loading;
+                                    enabled: !root.dr-dream-now-loading;
+                                    size: "md";
+                                    clicked => { root.dr-dream-now-clicked(); }
+                                }
+
+                                // Result line — shown only when non-empty
+                                if root.dr-dream-now-result != "": Rectangle {
+                                    height: 36px;
+                                    border-radius: Theme.radius-md;
+                                    background: Theme.memory-tint;
+                                    border-width: 1px;
+                                    border-color: Theme.memory;
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        alignment: start;
+                                        spacing: 8px;
+                                        Text {
+                                            text: "◉";
+                                            color: Theme.memory;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: root.dr-dream-now-result;
+                                            color: Theme.memory;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── RIGHT COLUMN — SELF-REFLECT ──────────────────────────
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 14px;
+                        alignment: start;
+
+                        // SELF-REFLECT card
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                // Card header with audit-cyan Led
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "SELF-REFLECT"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Led {
+                                        state: root.dr-reflect-loading ? "connecting" : "off";
+                                        dot-size: 7px;
+                                    }
+                                }
+
+                                Text {
+                                    text: "Run the HN tech-currency digest and self-reflection\ncycle. Result is written to memory and shown below.";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: 10px;
+                                    letter-spacing: Theme.letter-spacing-tight;
+                                    wrap: word-wrap;
+                                }
+
+                                NeothButton {
+                                    label: "Reflect";
+                                    primary: false;
+                                    loading: root.dr-reflect-loading;
+                                    enabled: !root.dr-reflect-loading;
+                                    size: "md";
+                                    clicked => { root.dr-reflect-clicked(); }
+                                }
+
+                                // Hairline separator before result area
+                                if root.dr-reflect-result != "": Rectangle {
+                                    height: 1px;
+                                    background: Theme.border-default;
+                                }
+
+                                // Last reflect result (audit-cyan tint)
+                                if root.dr-reflect-result != "": Rectangle {
+                                    border-radius: Theme.radius-md;
+                                    background: Theme.audit-tint;
+                                    border-width: 1px;
+                                    border-color: Theme.audit;
+                                    // Let height grow with content via padding
+                                    height: reflect-result-inner.preferred-height + 24px;
+
+                                    reflect-result-inner := VerticalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        padding-top: 10px;
+                                        padding-bottom: 10px;
+                                        spacing: 6px;
+                                        alignment: start;
+
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            Text {
+                                                text: "◈";
+                                                color: Theme.audit;
+                                                font-size: Theme.font-size-xs;
+                                                vertical-alignment: center;
+                                            }
+                                            Kicker { label: "LAST RESULT"; }
+                                        }
+
+                                        Text {
+                                            text: root.dr-reflect-result;
+                                            color: Theme.text-secondary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            horizontal-stretch: 1;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                }
+
+                                // Hint when no reflection has been run yet
+                                if root.dr-reflect-result == "": Text {
+                                    text: "No reflection on record yet.\nPress Reflect to run the digest.";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-xs;
+                                    wrap: word-wrap;
+                                }
+
+                                RefreshFooter { ts: root.dr-refreshed-at; }
+                            }
+                        }
+
+                        // Legend / hint card — always visible, small
+                        Card {
+                            VerticalLayout {
+                                padding: 14px;
+                                spacing: 8px;
+                                alignment: start;
+
+                                Kicker { label: "HOW DREAMING WORKS"; }
+
+                                InfoRow {
+                                    label: "TRIGGER";
+                                    value: "idle window (auto) or manual";
+                                    value-color: Theme.text-tertiary;
+                                }
+                                InfoRow {
+                                    label: "OUTPUT";
+                                    value: "~/.neoth/dreams/<date>.json";
+                                    value-color: Theme.text-tertiary;
+                                }
+                                InfoRow {
+                                    label: "PURPOSE";
+                                    value: "Hebbian decay + consolidation";
+                                    value-color: Theme.memory;
+                                }
+                                InfoRow {
+                                    label: "REFLECT";
+                                    value: "HN digest → memory update";
+                                    value-color: Theme.audit;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

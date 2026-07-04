@@ -1,0 +1,410 @@
+// NEOTH — Obsidian Vault panel (Design Wave 4b).
+//
+// Displays obsidian vault configuration status, sync settings, and provides
+// one-click "Sync now" and "Rebuild wiki" actions.
+//
+// When unconfigured (configured == false): shows a hint Card only.
+// When configured: shows a VAULT Card with all settings + action buttons,
+// and a RESULT Card that surfaces the last sync / wiki-build outcome.
+//
+// Slint 1.8 rules observed:
+//   - @children cannot sit inside `if` blocks → guarded content uses VerticalLayout
+//     behind an `if` at the call-site, not inside named child slots.
+//   - `visible: false` reserves layout space → use `if` to remove from layout.
+//   - Led: state is "live" | "connecting" | "error" | "off" — never "active".
+//   - NeothButton: prop is `label`, NOT `text`. `clicked()` callback.
+//   - No inline hex — Theme tokens only.
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Kicker, InfoRow, RefreshFooter — local micro-components ──────────────────
+// (Intentionally redeclared per-file; each tab is self-contained.)
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 8px;
+        Text {
+            text: root.label;
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: 8px;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: 96px;
+        }
+        Text {
+            text: root.value != "" ? root.value : "—";
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+}
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    letter-spacing: Theme.letter-spacing-tight;
+    horizontal-alignment: right;
+}
+
+// ── Public component ──────────────────────────────────────────────────────────
+
+export component ObsidianView inherits Rectangle {
+    // ── Data properties set by Rust ─────────────────────────────────────────
+
+    // From `neoth obsidian status --output json`
+    in property <bool>   obs-configured: false;
+    in property <string> obs-vault-path: "";          // obsidian_vault
+    in property <string> obs-subdir: "";              // obsidian_subdir (may be "")
+    in property <int>    obs-auto-sync-secs: 0;       // obsidian_auto_sync_secs
+    in property <int>    obs-wiki-rebuild-secs: 0;    // obsidian_wiki_rebuild_secs
+    in property <bool>   obs-reader-enabled: false;   // obsidian_vault_reader_enabled
+
+    // Button loading states (Rust sets true while the command runs)
+    in property <bool>   obs-sync-loading: false;
+    in property <bool>   obs-wiki-loading: false;
+
+    // Result line — updated by Rust after sync / wiki-build completes
+    in property <string> obs-result-text: "";         // "" = no result yet
+    in property <bool>   obs-result-ok: true;         // true = success colour, false = error
+
+    // Shared refresh timestamp
+    in property <string> obs-refreshed-at: "";
+
+    // ── Callbacks fired to Rust ─────────────────────────────────────────────
+
+    callback obs-refresh-clicked();
+    // Shell: neoth obsidian status --output json  (re-populates all obs-* props)
+
+    callback obs-sync-clicked();
+    // Shell: neoth obsidian sync <vault>  where vault = obs-vault-path
+    // On completion Rust sets obs-result-text / obs-result-ok and clears obs-sync-loading.
+
+    callback obs-wiki-clicked();
+    // Shell: neoth obsidian wiki-build <vault>
+    // On completion Rust sets obs-result-text / obs-result-ok and clears obs-wiki-loading.
+
+    // ── Layout ────────────────────────────────────────────────────────────
+    background: Theme.bg-base;
+
+    EntranceFade {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            // ── View header ───────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                height: 44px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Obsidian Vault";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-md;
+                        letter-spacing: Theme.letter-spacing-tight;
+                    }
+                    Text {
+                        text: "sync · wiki-build · vault reader";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: 8.5px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                    }
+                }
+
+                // spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button
+                Rectangle {
+                    height: 30px;
+                    width: 96px;
+                    border-radius: Theme.radius-button;
+                    background: Theme.accent-tint;
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "↻ Refresh";
+                            color: Theme.accent;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-xs;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.obs-refresh-clicked(); }
+                    }
+                }
+            }
+
+            // hairline divider
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── Scrollable body ───────────────────────────────────────────
+            ScrollView {
+
+                VerticalLayout {
+                    padding: 0px;
+                    spacing: 14px;
+                    alignment: start;
+                    min-height: 600px;
+
+                    // ── UNCONFIGURED hint ─────────────────────────────────
+                    if !root.obs-configured: Card {
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 12px;
+                            alignment: center;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: center;
+                                Led {
+                                    state: "off";
+                                    dot-size: 8px;
+                                }
+                                Text {
+                                    text: "Obsidian vault not set";
+                                    color: Theme.text-primary;
+                                    font-family: Theme.font-sans;
+                                    font-size: Theme.font-size-md;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: "Configure obsidian_vault in freedom.yaml or the Config tab to enable sync, wiki-build, and vault reader.";
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
+                    // ── VAULT card (configured only) ──────────────────────
+                    if root.obs-configured: Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            // Card header: kicker + live LED
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "VAULT"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: "live";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            // Vault path (full mono path may be long)
+                            InfoRow {
+                                label: "PATH";
+                                value: root.obs-vault-path;
+                                value-color: Theme.memory;
+                            }
+
+                            // Subdir (shown only when non-empty)
+                            if root.obs-subdir != "": InfoRow {
+                                label: "SUBDIR";
+                                value: root.obs-subdir;
+                            }
+
+                            // Auto-sync interval
+                            InfoRow {
+                                label: "AUTO-SYNC";
+                                value: root.obs-auto-sync-secs > 0
+                                    ? "\{root.obs-auto-sync-secs}s"
+                                    : "disabled";
+                                value-color: root.obs-auto-sync-secs > 0
+                                    ? Theme.text-primary
+                                    : Theme.text-disabled;
+                            }
+
+                            // Wiki-rebuild interval
+                            InfoRow {
+                                label: "WIKI-REBUILD";
+                                value: root.obs-wiki-rebuild-secs > 0
+                                    ? "\{root.obs-wiki-rebuild-secs}s"
+                                    : "disabled";
+                                value-color: root.obs-wiki-rebuild-secs > 0
+                                    ? Theme.text-primary
+                                    : Theme.text-disabled;
+                            }
+
+                            // Reader enabled state
+                            HorizontalLayout {
+                                height: 36px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                Rectangle {
+                                    height: 36px;
+                                    horizontal-stretch: 1;
+                                    border-radius: Theme.radius-md;
+                                    background: Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: Theme.border-subtle;
+
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        spacing: 8px;
+                                        Text {
+                                            text: "READER";
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: 8px;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                            vertical-alignment: center;
+                                            width: 96px;
+                                        }
+                                        Text {
+                                            text: root.obs-reader-enabled ? "enabled" : "disabled";
+                                            color: root.obs-reader-enabled ? Theme.memory : Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-sm;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                        }
+                                        Led {
+                                            state: root.obs-reader-enabled ? "live" : "off";
+                                            dot-size: 6px;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Divider before action buttons
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.border-subtle;
+                            }
+
+                            // Action buttons row
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: start;
+                                height: 36px;
+
+                                NeothButton {
+                                    label: "Sync now";
+                                    primary: true;
+                                    size: "md";
+                                    loading: root.obs-sync-loading;
+                                    enabled: !root.obs-sync-loading && !root.obs-wiki-loading;
+                                    clicked => { root.obs-sync-clicked(); }
+                                }
+
+                                NeothButton {
+                                    label: "Rebuild wiki";
+                                    primary: false;
+                                    size: "md";
+                                    loading: root.obs-wiki-loading;
+                                    enabled: !root.obs-sync-loading && !root.obs-wiki-loading;
+                                    clicked => { root.obs-wiki-clicked(); }
+                                }
+
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+
+                            RefreshFooter { ts: root.obs-refreshed-at; }
+                        }
+                    }
+
+                    // ── RESULT card (appears once a sync/wiki command has run) ──
+                    if root.obs-result-text != "": Card {
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            Kicker { label: "LAST RESULT"; }
+
+                            Rectangle {
+                                height: 40px;
+                                border-radius: Theme.radius-md;
+                                background: root.obs-result-ok ? Theme.memory-tint : Theme.audit-tint;
+                                border-width: 1px;
+                                border-color: root.obs-result-ok ? Theme.memory : Theme.audit;
+
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 10px;
+                                    alignment: start;
+
+                                    Led {
+                                        state: root.obs-result-ok ? "live" : "error";
+                                        dot-size: 7px;
+                                    }
+
+                                    Text {
+                                        text: root.obs-result-text;
+                                        color: root.obs-result-ok ? Theme.memory : Theme.audit;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-sm;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

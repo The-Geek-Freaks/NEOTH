@@ -2284,6 +2284,196 @@ pub fn parse_selfimprove_log(json: &str) -> Vec<(String, String, String, String)
         .collect()
 }
 
+// ── Wave 4b parse types ───────────────────────────────────────────────────────
+
+/// One row in the wiki / capability map.
+#[derive(Debug, Default)]
+pub struct WikiRowData {
+    pub id: String,
+    pub kind: String,
+    pub description: String,
+    pub gate: String,
+}
+
+/// Snapshot from `neoth buddy status --output json`.
+#[derive(Debug, Default)]
+pub struct BuddyStatusSnap {
+    pub self_activation_skills: Vec<String>,
+    pub autonomy: String,
+}
+
+/// One peer from `neoth cluster status --output json`.
+#[derive(Debug, Default)]
+pub struct MeshPeerData {
+    pub id: String,
+    pub last_seen: String,
+    pub reachable: bool,
+}
+
+/// Snapshot from `neoth cluster status --output json`.
+#[derive(Debug, Default)]
+pub struct MeshStatusSnap {
+    pub node_id: String,
+    pub listen_port: String,
+    pub trusted_ssids: String,
+    pub peers: Vec<MeshPeerData>,
+    pub gossip_note: String,
+}
+
+// ── Wave 4b parse fns ─────────────────────────────────────────────────────────
+
+/// Parse `neoth obsidian status --output json`.
+///
+/// Expected shape: `{"vault_path":"...", "subdir":"...", "status":"..."}`
+/// Returns `(vault_path, subdir, result_text)`.
+pub fn parse_obsidian_status(json: &str) -> (String, String, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let vault_path  = v.get("vault_path").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let subdir      = v.get("subdir").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let result_text = v.get("status").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    (vault_path, subdir, result_text)
+}
+
+/// Parse `neoth dream list --output json`.
+///
+/// Expected shape: `{"days":[{"day":"2026-07-04","entries":3,"path":"..."},...]}`
+/// Returns `(Vec<(day, path, entries_i32)>, refreshed_at)`.
+pub fn parse_dream_days(json: &str) -> (Vec<(String, String, i32)>, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let refreshed_at = v.get("refreshed_at").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let arr = v
+        .get("days")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let days = arr
+        .iter()
+        .filter_map(|item| {
+            let day     = item.get("day").and_then(|x| x.as_str())?.to_string();
+            let path    = item.get("path").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let entries = item.get("entries").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+            Some((day, path, entries))
+        })
+        .collect();
+    (days, refreshed_at)
+}
+
+/// Parse `neoth dream show <day> --output json`.
+///
+/// Expected shape: `{"entries":[{"day":"...","title":"...","body":"..."},...]}`
+/// Returns `Vec<(day, title, body)>`.
+pub fn parse_dream_entries(json: &str) -> Vec<(String, String, String)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .get("entries")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    arr.iter()
+        .filter_map(|item| {
+            let day   = item.get("day").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let title = item.get("title").and_then(|x| x.as_str())?.to_string();
+            let body  = item.get("body").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Some((day, title, body))
+        })
+        .collect()
+}
+
+/// Parse `neoth capabilities --output json` into a list of `WikiRowData`.
+///
+/// Expected shape: `{"capabilities":[{"id":"...","kind":"...","description":"...","gate":"..."},...]}`
+pub fn parse_wiki_rows(json: &str) -> Vec<WikiRowData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .get("capabilities")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .or_else(|| v.as_array().cloned())
+        .unwrap_or_default();
+    arr.iter()
+        .map(|item| WikiRowData {
+            id:          item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            kind:        item.get("kind").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            description: item.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            gate:        item.get("gate").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        })
+        .collect()
+}
+
+/// Filter wiki rows by search text and/or kind — pure, client-side.
+pub fn filter_wiki_rows(rows: Vec<WikiRowData>, search: &str, kind: &str) -> Vec<WikiRowData> {
+    let search = search.to_lowercase();
+    let kind_lc = kind.to_lowercase();
+    rows.into_iter()
+        .filter(|r| {
+            let kind_ok = kind_lc.is_empty() || r.kind.to_lowercase() == kind_lc;
+            let search_ok = search.is_empty()
+                || r.id.to_lowercase().contains(&search)
+                || r.description.to_lowercase().contains(&search)
+                || r.kind.to_lowercase().contains(&search);
+            kind_ok && search_ok
+        })
+        .collect()
+}
+
+/// Parse `neoth buddy status --output json` → `BuddyStatusSnap`.
+///
+/// Expected shape: `{"sovereign_buddy":"...","self_activation_enabled":true,
+///   "self_activation_skills":["sk1","sk2"],"smart_approve_any":false,
+///   "autonomy":"standard","proactive_enabled":true}`
+pub fn parse_buddy_status(json: &str) -> BuddyStatusSnap {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let skills = v
+        .get("self_activation_skills")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let autonomy = v.get("autonomy").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    BuddyStatusSnap { self_activation_skills: skills, autonomy }
+}
+
+/// Parse `neoth cluster status --output json` → `MeshStatusSnap`.
+///
+/// Expected shape: `{"node_id":"...","listen_port":7700,"mdns_enabled":true,
+///   "trusted_ssids":["HomeNet"],"peers":[{"id":"...","last_seen":"3s ago","reachable":true}]}`
+/// On parse failure all fields are empty / defaults (the cluster feature may not be built).
+pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let node_id = v.get("node_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let listen_port = v
+        .get("listen_port")
+        .map(|x| x.to_string().replace('"', ""))
+        .unwrap_or_default();
+    let trusted_ssids = v
+        .get("trusted_ssids")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let peers = v
+        .get("peers")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|p| MeshPeerData {
+                    id:        p.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    last_seen: p.get("last_seen").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    reachable: p.get("reachable").and_then(|x| x.as_bool()).unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    MeshStatusSnap { node_id, listen_port, trusted_ssids, peers, gossip_note: String::new() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3874,5 +4064,136 @@ mod tests {
     fn parse_selfimprove_log_malformed_returns_empty() {
         assert!(super::parse_selfimprove_log("not json").is_empty());
         assert!(super::parse_selfimprove_log("{}").is_empty());
+    }
+
+    // ── Wave 4b: parse_obsidian_status ────────────────────────────────────────
+
+    #[test]
+    fn parse_obsidian_status_happy_path() {
+        let json = r#"{"vault_path":"/home/alex/vault","subdir":"notes","status":"synced"}"#;
+        let (vp, sub, st) = super::parse_obsidian_status(json);
+        assert_eq!(vp, "/home/alex/vault");
+        assert_eq!(sub, "notes");
+        assert_eq!(st, "synced");
+    }
+
+    #[test]
+    fn parse_obsidian_status_malformed_returns_empty() {
+        let (vp, sub, st) = super::parse_obsidian_status("not json");
+        assert!(vp.is_empty());
+        assert!(sub.is_empty());
+        assert!(st.is_empty());
+    }
+
+    // ── Wave 4b: parse_dream_days ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_dream_days_happy_path() {
+        let json = r#"{"days":[{"day":"2026-07-04","path":"/dreams/2026-07-04.md","entries":3}],"refreshed_at":"10:00"}"#;
+        let (days, ts) = super::parse_dream_days(json);
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].0, "2026-07-04");
+        assert_eq!(days[0].2, 3);
+        assert_eq!(ts, "10:00");
+    }
+
+    #[test]
+    fn parse_dream_days_malformed_returns_empty() {
+        let (days, _) = super::parse_dream_days("not json");
+        assert!(days.is_empty());
+    }
+
+    // ── Wave 4b: parse_dream_entries ─────────────────────────────────────────
+
+    #[test]
+    fn parse_dream_entries_happy_path() {
+        let json = r#"{"entries":[{"day":"2026-07-04","title":"Dream of code","body":"I wrote Rust all night"}]}"#;
+        let entries = super::parse_dream_entries(json);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, "Dream of code");
+        assert_eq!(entries[0].2, "I wrote Rust all night");
+    }
+
+    #[test]
+    fn parse_dream_entries_malformed_returns_empty() {
+        assert!(super::parse_dream_entries("not json").is_empty());
+        assert!(super::parse_dream_entries(r#"{"entries":[]}"#).is_empty());
+    }
+
+    // ── Wave 4b: parse_wiki_rows + filter_wiki_rows ───────────────────────────
+
+    #[test]
+    fn parse_wiki_rows_happy_path() {
+        let json = r#"{"capabilities":[{"id":"CAP-01","kind":"tool","description":"A tool","gate":""}]}"#;
+        let rows = super::parse_wiki_rows(json);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "CAP-01");
+        assert_eq!(rows[0].kind, "tool");
+    }
+
+    #[test]
+    fn parse_wiki_rows_malformed_returns_empty() {
+        assert!(super::parse_wiki_rows("not json").is_empty());
+        assert!(super::parse_wiki_rows("{}").is_empty());
+    }
+
+    #[test]
+    fn filter_wiki_rows_by_kind() {
+        let rows = vec![
+            super::WikiRowData { id: "A".into(), kind: "tool".into(), description: "desc".into(), gate: "".into() },
+            super::WikiRowData { id: "B".into(), kind: "skill".into(), description: "desc".into(), gate: "".into() },
+        ];
+        let filtered = super::filter_wiki_rows(rows, "", "tool");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "A");
+    }
+
+    #[test]
+    fn filter_wiki_rows_by_search() {
+        let rows = vec![
+            super::WikiRowData { id: "CAP-01".into(), kind: "tool".into(), description: "compiler".into(), gate: "".into() },
+            super::WikiRowData { id: "CAP-02".into(), kind: "tool".into(), description: "debugger".into(), gate: "".into() },
+        ];
+        let filtered = super::filter_wiki_rows(rows, "comp", "");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "CAP-01");
+    }
+
+    // ── Wave 4b: parse_buddy_status ───────────────────────────────────────────
+
+    #[test]
+    fn parse_buddy_status_happy_path() {
+        let json = r#"{"sovereign_buddy":"claude","self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":true}"#;
+        let snap = super::parse_buddy_status(json);
+        assert_eq!(snap.self_activation_skills.len(), 2);
+        assert_eq!(snap.self_activation_skills[0], "code");
+        assert_eq!(snap.autonomy, "standard");
+    }
+
+    #[test]
+    fn parse_buddy_status_malformed_returns_defaults() {
+        let snap = super::parse_buddy_status("not json");
+        assert!(snap.self_activation_skills.is_empty());
+        assert!(snap.autonomy.is_empty());
+    }
+
+    // ── Wave 4b: parse_mesh_status ────────────────────────────────────────────
+
+    #[test]
+    fn parse_mesh_status_happy_path() {
+        let json = r#"{"node_id":"node-abc","listen_port":7700,"mdns_enabled":true,"trusted_ssids":["HomeNet"],"peers":[{"id":"peer-1","last_seen":"3s ago","reachable":true}]}"#;
+        let snap = super::parse_mesh_status(json);
+        assert_eq!(snap.node_id, "node-abc");
+        assert!(snap.listen_port.contains("7700"));
+        assert!(snap.trusted_ssids.contains("HomeNet"));
+        assert_eq!(snap.peers.len(), 1);
+        assert!(snap.peers[0].reachable);
+    }
+
+    #[test]
+    fn parse_mesh_status_malformed_returns_empty() {
+        let snap = super::parse_mesh_status("not json");
+        assert!(snap.node_id.is_empty());
+        assert!(snap.peers.is_empty());
     }
 }

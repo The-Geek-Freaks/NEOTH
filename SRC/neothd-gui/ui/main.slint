@@ -34,6 +34,13 @@ import { BabelView, BabelGranRow, BabelWindowRow } from "babel.slint";
 import { CalendarView, CalEventRow } from "calendar.slint";
 import { SelfImproveView, SiProposalRow, SiLogRow } from "selfimprove.slint";
 import { ActivitySidecar, ActivityRow } from "activity.slint";
+// Wave 4b — six new panels
+import { ObsidianView } from "obsidian.slint";
+import { DreamingView, DreamDayRow, DreamEntryRow } from "dreaming.slint";
+import { WikiView, WikiRow } from "wiki.slint";
+import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
+import { CompanionView } from "companion.slint";
+import { MeshView, MeshPeerRow } from "mesh.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 export { Theme }
 
@@ -46,6 +53,11 @@ export { ToastData }
 export { ActivityRow }
 // Wave-3 overview dashboard — structs Rust constructs in refresh_overview().
 export { HemiCard, CalEvent, ConsentEntry }
+// Wave 4b — six new panel structs.
+export { DreamDayRow, DreamEntryRow }
+export { WikiRow }
+export { SelfActSkill }
+export { MeshPeerRow }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -434,6 +446,74 @@ export component MainWindow inherits Window {
     callback si-accept-clicked(string);
     callback si-rollback-clicked(string);
 
+    // ── Wave 4b — Obsidian panel ──────────────────────────────────────────────
+    in property <bool>   obs-configured: false;
+    in property <string> obs-vault-path: "";
+    in property <string> obs-subdir: "";
+    in property <int>    obs-auto-sync-secs: 0;
+    in property <int>    obs-wiki-rebuild-secs: 0;
+    in property <bool>   obs-reader-enabled: false;
+    in property <bool>   obs-sync-loading: false;
+    in property <bool>   obs-wiki-loading: false;
+    in property <string> obs-result-text: "";
+    in property <bool>   obs-result-ok: true;
+    in property <string> obs-refreshed-at: "";
+    callback obs-refresh-clicked();
+    callback obs-sync-clicked();
+    callback obs-wiki-clicked();
+
+    // ── Wave 4b — Dreaming panel ──────────────────────────────────────────────
+    in property <[DreamDayRow]>   dr-days: [];
+    in property <[DreamEntryRow]> dr-entries: [];
+    in-out property <string>      dr-selected-day: "";
+    in property <bool>            dr-dream-now-loading: false;
+    in property <string>          dr-dream-now-result: "";
+    in property <bool>            dr-reflect-loading: false;
+    in property <string>          dr-reflect-result: "";
+    in property <string>          dr-refreshed-at: "";
+    callback dr-show-day(string);
+    callback dr-dream-now-clicked();
+    callback dr-reflect-clicked();
+    callback dr-refresh-clicked();
+
+    // ── Wave 4b — Wiki / Capability Map panel ────────────────────────────────
+    in property <int>             wiki-total: 0;
+    in-out property <string>      wiki-active-kind: "";
+    in-out property <string>      wiki-search-text: "";
+    in property <[WikiRow]>       wiki-rows: [];
+    in property <string>          wiki-refreshed-at: "";
+    callback wiki-search(string);
+    callback wiki-filter-kind(string);
+    callback wiki-refresh-clicked();
+
+    // ── Wave 4b — Buddy Config panel ─────────────────────────────────────────
+    in property <[SelfActSkill]>  bc-self-activation-skills: [];
+    in property <string>          bc-autonomy: "";
+    in property <string>          bc-refreshed-at: "";
+    callback bc-sovereign-toggle(bool);
+    callback bc-selfact-toggle(bool);
+    callback bc-smart-approve-toggle(bool);
+    callback bc-proactive-toggle(bool);
+    callback bc-refresh-clicked();
+
+    // ── Wave 4b — Companion / Smartphone Pairing panel ───────────────────────
+    in property <string> cp-pair-url: "";
+    in property <bool>   cp-loading: false;
+    in property <bool>   cp-invite-pending: false;
+    in property <string> cp-error: "";
+    in property <string> cp-refreshed-at: "";
+    callback cp-generate-invite();
+    callback cp-refresh-clicked();
+
+    // ── Wave 4b — Mesh & Cluster panel ───────────────────────────────────────
+    in property <string>          mesh-node-id: "";
+    in property <string>          mesh-listen-port: "";
+    in property <string>          mesh-trusted-ssids: "";
+    in property <[MeshPeerRow]>   mesh-peers: [];
+    in property <string>          mesh-gossip-note: "";
+    in property <string>          mesh-refreshed-at: "";
+    callback mesh-refresh-clicked();
+
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
     property <string> shell-title:
@@ -455,6 +535,12 @@ export component MainWindow inherits Window {
         : root.nav-active == "babel"       ? "Babel Observer"
         : root.nav-active == "calendar"    ? "Calendar"
         : root.nav-active == "evolve"      ? "Self-Improvement"
+        : root.nav-active == "obsidian"    ? "Obsidian Vault"
+        : root.nav-active == "dreaming"    ? "Dreaming - Memory & Self-Awareness"
+        : root.nav-active == "wiki"        ? "Capability Map"
+        : root.nav-active == "buddyconfig" ? "Buddy Configuration"
+        : root.nav-active == "companion"   ? "Companion - Smartphone Pairing"
+        : root.nav-active == "mesh"        ? "Mesh & Cluster"
         : "Config";
 
     /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
@@ -1878,7 +1964,10 @@ export component MainWindow inherits Window {
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
-                        && root.nav-active != "calendar" && root.nav-active != "evolve"): SettingsView {
+                        && root.nav-active != "calendar" && root.nav-active != "evolve"
+                        && root.nav-active != "obsidian" && root.nav-active != "dreaming"
+                        && root.nav-active != "wiki" && root.nav-active != "buddyconfig"
+                        && root.nav-active != "companion" && root.nav-active != "mesh"): SettingsView {
                     active: root.nav-active == "memory" ? SettingsTab.memory
                         : root.nav-active == "hemispheres" ? SettingsTab.hemispheres
                         : root.nav-active == "channels" ? SettingsTab.channels
@@ -2213,6 +2302,86 @@ export component MainWindow inherits Window {
                     si-run-dry-clicked => { root.si-run-dry-clicked(); }
                     si-accept-clicked(id) => { root.si-accept-clicked(id); }
                     si-rollback-clicked(id) => { root.si-rollback-clicked(id); }
+                }
+
+                // Wave 4b — Obsidian Vault.
+                if root.nav-active == "obsidian": ObsidianView {
+                    obs-configured: root.obs-configured;
+                    obs-vault-path: root.obs-vault-path;
+                    obs-subdir: root.obs-subdir;
+                    obs-auto-sync-secs: root.obs-auto-sync-secs;
+                    obs-wiki-rebuild-secs: root.obs-wiki-rebuild-secs;
+                    obs-reader-enabled: root.obs-reader-enabled;
+                    obs-sync-loading: root.obs-sync-loading;
+                    obs-wiki-loading: root.obs-wiki-loading;
+                    obs-result-text: root.obs-result-text;
+                    obs-result-ok: root.obs-result-ok;
+                    obs-refreshed-at: root.obs-refreshed-at;
+                    obs-refresh-clicked => { root.obs-refresh-clicked(); }
+                    obs-sync-clicked => { root.obs-sync-clicked(); }
+                    obs-wiki-clicked => { root.obs-wiki-clicked(); }
+                }
+
+                // Wave 4b — Dreaming / Memory & Self-Awareness.
+                if root.nav-active == "dreaming": DreamingView {
+                    dr-days: root.dr-days;
+                    dr-entries: root.dr-entries;
+                    dr-selected-day <=> root.dr-selected-day;
+                    dr-dream-now-loading: root.dr-dream-now-loading;
+                    dr-dream-now-result: root.dr-dream-now-result;
+                    dr-reflect-loading: root.dr-reflect-loading;
+                    dr-reflect-result: root.dr-reflect-result;
+                    dr-refreshed-at: root.dr-refreshed-at;
+                    dr-show-day(day) => { root.dr-show-day(day); }
+                    dr-dream-now-clicked => { root.dr-dream-now-clicked(); }
+                    dr-reflect-clicked => { root.dr-reflect-clicked(); }
+                    dr-refresh-clicked => { root.dr-refresh-clicked(); }
+                }
+
+                // Wave 4b — Wiki / Capability Map.
+                if root.nav-active == "wiki": WikiView {
+                    wiki-total: root.wiki-total;
+                    wiki-active-kind <=> root.wiki-active-kind;
+                    wiki-search-text <=> root.wiki-search-text;
+                    wiki-rows: root.wiki-rows;
+                    wiki-refreshed-at: root.wiki-refreshed-at;
+                    wiki-search(text) => { root.wiki-search(text); }
+                    wiki-filter-kind(kind) => { root.wiki-filter-kind(kind); }
+                    wiki-refresh-clicked => { root.wiki-refresh-clicked(); }
+                }
+
+                // Wave 4b — Buddy Configuration.
+                if root.nav-active == "buddyconfig": BuddyConfigView {
+                    bc-self-activation-skills: root.bc-self-activation-skills;
+                    bc-autonomy: root.bc-autonomy;
+                    bc-refreshed-at: root.bc-refreshed-at;
+                    bc-sovereign-toggle(v) => { root.bc-sovereign-toggle(v); }
+                    bc-selfact-toggle(v) => { root.bc-selfact-toggle(v); }
+                    bc-smart-approve-toggle(v) => { root.bc-smart-approve-toggle(v); }
+                    bc-proactive-toggle(v) => { root.bc-proactive-toggle(v); }
+                    bc-refresh-clicked => { root.bc-refresh-clicked(); }
+                }
+
+                // Wave 4b — Companion / Smartphone Pairing.
+                if root.nav-active == "companion": CompanionView {
+                    cp-pair-url: root.cp-pair-url;
+                    cp-loading: root.cp-loading;
+                    cp-invite-pending: root.cp-invite-pending;
+                    cp-error: root.cp-error;
+                    cp-refreshed-at: root.cp-refreshed-at;
+                    cp-generate-invite => { root.cp-generate-invite(); }
+                    cp-refresh-clicked => { root.cp-refresh-clicked(); }
+                }
+
+                // Wave 4b — Mesh & Cluster.
+                if root.nav-active == "mesh": MeshView {
+                    mesh-node-id: root.mesh-node-id;
+                    mesh-listen-port: root.mesh-listen-port;
+                    mesh-trusted-ssids: root.mesh-trusted-ssids;
+                    mesh-peers: root.mesh-peers;
+                    mesh-gossip-note: root.mesh-gossip-note;
+                    mesh-refreshed-at: root.mesh-refreshed-at;
+                    mesh-refresh-clicked => { root.mesh-refresh-clicked(); }
                 }
 
                 StatusFooter {

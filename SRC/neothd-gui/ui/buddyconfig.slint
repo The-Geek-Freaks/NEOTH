@@ -1,0 +1,586 @@
+// NEOTH — Buddy Configuration panel (Design Wave 5).
+//
+// Brain-level settings for the sovereign buddy: sovereign mode, self-activation
+// skill allowlist, smart-approve, autonomy level, proactive messaging.
+//
+// Hard constraints observed:
+//   - @children must NOT sit inside an `if` block.
+//   - `visible: false` still reserves layout space — `if` used throughout.
+//   - No inline hex — Theme tokens only.
+//   - ScrollView needs an explicit inner height when inside a stretched layout.
+//   - Structs exported here must also be re-exported from main.slint by the integrator.
+//   - Led state values: "live" | "connecting" | "error" | "off" (NOT "active"/"idle").
+//   - NeothButton prop is `label:`, NOT `text:`.
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire structs ──────────────────────────────────────────────────────────────
+
+/// One skill chip in the self-activation allowlist.
+export struct SelfActSkill {
+    name: string,
+}
+
+// ── Internal micro-components ─────────────────────────────────────────────────
+
+// Kicker label — 8px mono, wide-tracked uppercase, text-disabled.
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+// One-line key/value row — same idiom as overview.slint InfoRow.
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: start;
+        spacing: 12px;
+        Text {
+            text: root.label;
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: 8px;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: 90px;
+        }
+        Text {
+            text: root.value != "" ? root.value : "—";
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// Explanation text — small, muted, left-aligned.
+component Note inherits Text {
+    in property <string> body;
+    text: root.body;
+    color: Theme.text-tertiary;
+    font-family: Theme.font-sans;
+    font-size: Theme.font-size-xs;
+    wrap: word-wrap;
+}
+
+// Refresh timestamp footer.
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    letter-spacing: Theme.letter-spacing-tight;
+    horizontal-alignment: right;
+}
+
+// Horizontal card-header row: kicker + LED on right.
+// The header is a plain HorizontalLayout rather than a component so that
+// the outer VerticalLayout drives the height.
+// --- used inline at each card site ---
+
+// Thin divider line inside cards.
+component Divider inherits Rectangle {
+    height: 1px;
+    background: Theme.border-subtle;
+}
+
+// Toggle row: label left, LED + Enable/Disable buttons right.
+component ToggleRow inherits Rectangle {
+    in property <string>  label;
+    in property <string>  led-state: "off";   // "live" | "off"
+    in property <bool>    enabled-state: false;
+    callback enable-clicked();
+    callback disable-clicked();
+
+    height: 40px;
+    background: transparent;
+
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        Text {
+            text: root.label;
+            color: Theme.text-secondary;
+            font-family: Theme.font-sans;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Led {
+            state: root.led-state;
+            dot-size: 7px;
+        }
+        NeothButton {
+            label: "Enable";
+            size: "sm";
+            primary: !root.enabled-state;
+            enabled: !root.enabled-state;
+            clicked => { root.enable-clicked(); }
+        }
+        NeothButton {
+            label: "Disable";
+            size: "sm";
+            danger: root.enabled-state;
+            enabled: root.enabled-state;
+            clicked => { root.disable-clicked(); }
+        }
+    }
+}
+
+// Skill chip pill — mono text on audit-tint background.
+component SkillChip inherits Rectangle {
+    in property <string> name;
+
+    height: 24px;
+    border-radius: Theme.radius-pill;
+    background: Theme.audit-tint;
+    border-width: 1px;
+    border-color: Theme.audit;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        alignment: center;
+        Text {
+            text: root.name;
+            color: Theme.audit;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// ── BuddyConfigView ───────────────────────────────────────────────────────────
+
+export component BuddyConfigView inherits Rectangle {
+
+    // ── Data properties (set by Rust) ─────────────────────────────────────────
+
+    /// Sovereign buddy: acts without being asked AND sends unsolicited messages.
+    in property <bool>   bc-sovereign-buddy: false;
+
+    /// Self-activation: buddy may autonomously invoke skills from the allowlist.
+    in property <bool>   bc-self-activation-enabled: false;
+
+    /// Allowlist of skill names that can be self-activated.
+    in property <[SelfActSkill]> bc-self-activation-skills: [];
+
+    /// Smart-approve: auto-approves read-only tool calls without prompting.
+    in property <bool>   bc-smart-approve: false;
+
+    /// Current autonomy level label (e.g. "standard", "elevated", "full").
+    in property <string> bc-autonomy: "";
+
+    /// Proactive messaging: buddy sends scheduled / context-triggered messages.
+    in property <bool>   bc-proactive-enabled: false;
+
+    /// Refresh timestamp — shown in footer of each card.
+    in property <string> bc-refreshed-at: "";
+
+    // ── Callbacks (fired by UI, mapped to daemon commands by integrator) ──────
+
+    /// Sovereign mode toggled — true = enable, false = disable.
+    callback bc-sovereign-toggle(bool);
+
+    /// Self-activation toggled.
+    callback bc-selfact-toggle(bool);
+
+    /// Smart-approve toggled.
+    callback bc-smart-approve-toggle(bool);
+
+    /// Proactive messaging toggled.
+    callback bc-proactive-toggle(bool);
+
+    /// Refresh requested.
+    callback bc-refresh-clicked();
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+    background: Theme.bg-base;
+
+    EntranceFade {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            // ── View header ──────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                height: 44px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Buddy Configuration";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-md;
+                        font-weight: 700;
+                        letter-spacing: Theme.letter-spacing-tight;
+                    }
+                    Text {
+                        text: "brain-level settings — distinct from the orb animation";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: 8.5px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                    }
+                }
+
+                // spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button — styled inline, same pattern as overview.slint.
+                Rectangle {
+                    height: 30px;
+                    width: 90px;
+                    border-radius: Theme.radius-button;
+                    background: Theme.accent-tint;
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "⟳ Refresh";
+                            color: Theme.accent;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-xs;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.bc-refresh-clicked(); }
+                    }
+                }
+            }
+
+            // Hairline separator
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── Scrollable card stack ────────────────────────────────────────
+            ScrollView {
+
+                VerticalLayout {
+                    spacing: 14px;
+                    alignment: start;
+                    // ScrollView needs a concrete inner height; cards self-size
+                    // so we give the inner layout a generous min-height.
+                    min-height: 1100px;
+
+                    // ────────────────────────────────────────────────────────
+                    // SOVEREIGN card — pink-consent accent (highest-trust mode)
+                    // ────────────────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            // Card header: kicker + consent LED
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "SOVEREIGN"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-sovereign-buddy ? "live" : "off";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            // Pink-tinted banner — only when sovereign is active,
+                            // signals to the operator this is the highest-trust mode.
+                            if root.bc-sovereign-buddy: Rectangle {
+                                height: 34px;
+                                border-radius: Theme.radius-md;
+                                background: Theme.consent-tint;
+                                border-width: 1px;
+                                border-color: Theme.consent;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    alignment: start;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "⚠";
+                                        color: Theme.consent;
+                                        font-size: Theme.font-size-sm;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Sovereign mode is active — buddy may act without asking.";
+                                        color: Theme.consent;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+
+                            Note {
+                                body: "Sovereign mode: buddy acts without asking AND sends unsolicited messages. This is the highest-trust configuration — enable only when you want fully autonomous proactive behavior.";
+                            }
+
+                            Divider {}
+
+                            // Enable / Disable buttons
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: end;
+                                NeothButton {
+                                    label: "Enable";
+                                    size: "sm";
+                                    primary: !root.bc-sovereign-buddy;
+                                    enabled: !root.bc-sovereign-buddy;
+                                    clicked => { root.bc-sovereign-toggle(true); }
+                                }
+                                NeothButton {
+                                    label: "Disable";
+                                    size: "sm";
+                                    danger: root.bc-sovereign-buddy;
+                                    enabled: root.bc-sovereign-buddy;
+                                    clicked => { root.bc-sovereign-toggle(false); }
+                                }
+                            }
+
+                            RefreshFooter { ts: root.bc-refreshed-at; }
+                        }
+                    }
+
+                    // ────────────────────────────────────────────────────────
+                    // SELF-ACTIVATION card
+                    // ────────────────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            // Header
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "SELF-ACTIVATION"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-self-activation-enabled ? "live" : "off";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            Note {
+                                body: "When enabled, the buddy may autonomously invoke any skill on the allowlist below without an explicit operator command.";
+                            }
+
+                            Divider {}
+
+                            // Toggle controls
+                            ToggleRow {
+                                label: "Self-activation";
+                                led-state: root.bc-self-activation-enabled ? "live" : "off";
+                                enabled-state: root.bc-self-activation-enabled;
+                                enable-clicked => { root.bc-selfact-toggle(true); }
+                                disable-clicked => { root.bc-selfact-toggle(false); }
+                            }
+
+                            // Skill allowlist chips — shown even when disabled so
+                            // operator can review the list without toggling.
+                            if root.bc-self-activation-skills.length > 0: VerticalLayout {
+                                spacing: 6px;
+                                alignment: start;
+
+                                Kicker { label: "ALLOWED SKILLS"; }
+
+                                // Wrap chips horizontally — Slint has no flex-wrap,
+                                // so we render each chip as a full-width pill row.
+                                // (A true multi-row chip grid requires width math from
+                                //  Rust; for now one chip per row is the safe idiom.)
+                                for skill in root.bc-self-activation-skills: SkillChip {
+                                    name: skill.name;
+                                }
+                            }
+
+                            if root.bc-self-activation-skills.length == 0: Text {
+                                text: "No skills in allowlist — add via neoth self-activate add <skill>.";
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                            }
+
+                            RefreshFooter { ts: root.bc-refreshed-at; }
+                        }
+                    }
+
+                    // ────────────────────────────────────────────────────────
+                    // SMART-APPROVE card
+                    // ────────────────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "SMART-APPROVE"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-smart-approve ? "live" : "off";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            Note {
+                                body: "Auto-approves read-only tool calls (file reads, searches, status queries) without prompting. Write and destructive operations are never auto-approved.";
+                            }
+
+                            Divider {}
+
+                            ToggleRow {
+                                label: "Smart-approve";
+                                led-state: root.bc-smart-approve ? "live" : "off";
+                                enabled-state: root.bc-smart-approve;
+                                enable-clicked => { root.bc-smart-approve-toggle(true); }
+                                disable-clicked => { root.bc-smart-approve-toggle(false); }
+                            }
+
+                            RefreshFooter { ts: root.bc-refreshed-at; }
+                        }
+                    }
+
+                    // ────────────────────────────────────────────────────────
+                    // AUTONOMY card — read-only display; change in Privacy tab
+                    // ────────────────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "AUTONOMY"; }
+                            }
+
+                            InfoRow {
+                                label: "LEVEL";
+                                value: root.bc-autonomy;
+                                value-color: root.bc-autonomy == "full" ? Theme.consent
+                                           : root.bc-autonomy == "elevated" ? Theme.warning
+                                           : Theme.accent;
+                            }
+
+                            // Static note — no toggle here.
+                            Rectangle {
+                                height: 32px;
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    alignment: start;
+                                    spacing: 6px;
+                                    Text {
+                                        text: "ℹ";
+                                        color: Theme.audit;
+                                        font-size: Theme.font-size-xs;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Change autonomy level in Privacy tab → Autonomy.";
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+
+                            RefreshFooter { ts: root.bc-refreshed-at; }
+                        }
+                    }
+
+                    // ────────────────────────────────────────────────────────
+                    // PROACTIVE card
+                    // ────────────────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "PROACTIVE MESSAGING"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-proactive-enabled ? "live" : "off";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            Note {
+                                body: "When enabled, the buddy sends scheduled check-ins and context-triggered messages even when not directly addressed. Requires at least Standard autonomy.";
+                            }
+
+                            Divider {}
+
+                            ToggleRow {
+                                label: "Proactive messaging";
+                                led-state: root.bc-proactive-enabled ? "live" : "off";
+                                enabled-state: root.bc-proactive-enabled;
+                                enable-clicked => { root.bc-proactive-toggle(true); }
+                                disable-clicked => { root.bc-proactive-toggle(false); }
+                            }
+
+                            RefreshFooter { ts: root.bc-refreshed-at; }
+                        }
+                    }
+
+                }
+            }
+        }
+    }
+}

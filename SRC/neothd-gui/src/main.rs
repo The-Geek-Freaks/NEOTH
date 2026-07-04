@@ -2007,6 +2007,302 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── Wave 4b — Obsidian Vault panel callbacks ──────────────────────────────
+    {
+        let weak_obs = window.as_weak();
+        window.on_obs_refresh_clicked(move || {
+            let weak = weak_obs.clone();
+            std::thread::spawn(move || {
+                refresh_obsidian(weak);
+            });
+        });
+
+        let weak_obs_sync = window.as_weak();
+        window.on_obs_sync_clicked(move || {
+            let weak = weak_obs_sync.clone();
+            std::thread::spawn(move || {
+                let Some(w0) = weak.upgrade() else { return };
+                let vault = w0.get_obs_vault_path().to_string();
+                let args = ["obsidian", "sync", vault.trim()];
+                let out = run_neothd_probe(&args);
+                let msg = if out.trim().is_empty() { "Sync started.".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "success", "Obsidian", &msg);
+                std::thread::spawn(move || refresh_obsidian(weak2));
+            });
+        });
+
+        let weak_obs_wiki = window.as_weak();
+        window.on_obs_wiki_clicked(move || {
+            let weak = weak_obs_wiki.clone();
+            std::thread::spawn(move || {
+                let Some(w0) = weak.upgrade() else { return };
+                let vault = w0.get_obs_vault_path().to_string();
+                let args = ["obsidian", "wiki-build", vault.trim()];
+                let out = run_neothd_probe(&args);
+                let msg = if out.trim().is_empty() { "Wiki build started.".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "success", "Obsidian", &msg);
+                std::thread::spawn(move || refresh_obsidian(weak2));
+            });
+        });
+
+        // Fire once at startup.
+        let weak_obs_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_obsidian(weak_obs_init);
+        });
+    }
+
+    // ── Wave 4b — Dreaming panel callbacks ───────────────────────────────────
+    {
+        let weak_dr = window.as_weak();
+        window.on_dr_refresh_clicked(move || {
+            let weak = weak_dr.clone();
+            std::thread::spawn(move || {
+                refresh_dreaming(weak);
+            });
+        });
+
+        let weak_dr_show = window.as_weak();
+        window.on_dr_show_day(move |day| {
+            let weak = weak_dr_show.clone();
+            let day = day.to_string();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["dream", "show", day.trim(), "--output", "json"]);
+                let entries = panel_logic::parse_dream_entries(&out);
+                let _ = slint::invoke_from_event_loop(move || {
+                    use slint::VecModel;
+                    let Some(w) = weak.upgrade() else { return };
+                    let rows: Vec<DreamEntryRow> = entries
+                        .into_iter()
+                        .map(|(day, title, body)| DreamEntryRow {
+                            day: day.into(),
+                            title: title.into(),
+                            body: body.into(),
+                        })
+                        .collect();
+                    w.set_dr_entries(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+                });
+            });
+        });
+
+        let weak_dr_now = window.as_weak();
+        window.on_dr_dream_now_clicked(move || {
+            let weak = weak_dr_now.clone();
+            std::thread::spawn(move || {
+                let _ = slint::invoke_from_event_loop({
+                    let weak = weak.clone();
+                    move || { if let Some(w) = weak.upgrade() { w.set_dr_dream_now_loading(true); } }
+                });
+                let out = run_neothd_probe(&["dream", "now"]);
+                let msg = if out.trim().is_empty() { "Dream recorded.".to_string() } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_dr_dream_now_loading(false);
+                        w.set_dr_dream_now_result(msg.as_str().into());
+                    }
+                });
+                push_toast(&weak2, "success", "Dreaming", "Dream now complete.");
+                std::thread::spawn(move || refresh_dreaming(weak2));
+            });
+        });
+
+        let weak_dr_ref = window.as_weak();
+        window.on_dr_reflect_clicked(move || {
+            let weak = weak_dr_ref.clone();
+            std::thread::spawn(move || {
+                let _ = slint::invoke_from_event_loop({
+                    let weak = weak.clone();
+                    move || { if let Some(w) = weak.upgrade() { w.set_dr_reflect_loading(true); } }
+                });
+                let out = run_neothd_probe(&["reflect"]);
+                let msg = if out.trim().is_empty() { "Reflect complete.".to_string() } else { out.trim().to_string() };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_dr_reflect_loading(false);
+                        w.set_dr_reflect_result(msg.as_str().into());
+                    }
+                });
+            });
+        });
+
+        // Fire once at startup.
+        let weak_dr_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_dreaming(weak_dr_init);
+        });
+    }
+
+    // ── Wave 4b — Wiki / Capability Map panel callbacks ──────────────────────
+    {
+        let weak_wiki = window.as_weak();
+        window.on_wiki_refresh_clicked(move || {
+            let weak = weak_wiki.clone();
+            std::thread::spawn(move || {
+                refresh_wiki(weak);
+            });
+        });
+
+        let weak_wiki_s = window.as_weak();
+        window.on_wiki_search(move |text| {
+            let weak = weak_wiki_s.clone();
+            let text = text.to_string();
+            std::thread::spawn(move || {
+                refresh_wiki_filtered(weak, text, String::new());
+            });
+        });
+
+        let weak_wiki_f = window.as_weak();
+        window.on_wiki_filter_kind(move |kind| {
+            let weak = weak_wiki_f.clone();
+            let kind = kind.to_string();
+            std::thread::spawn(move || {
+                refresh_wiki_filtered(weak, String::new(), kind);
+            });
+        });
+
+        // Fire once at startup.
+        let weak_wiki_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_wiki(weak_wiki_init);
+        });
+    }
+
+    // ── Wave 4b — Buddy Config panel callbacks ───────────────────────────────
+    {
+        let weak_bc = window.as_weak();
+        window.on_bc_refresh_clicked(move || {
+            let weak = weak_bc.clone();
+            std::thread::spawn(move || {
+                refresh_buddyconfig(weak);
+            });
+        });
+
+        // Self-activation toggle — real daemon command.
+        let weak_bc_sa = window.as_weak();
+        window.on_bc_selfact_toggle(move |enable| {
+            let weak = weak_bc_sa.clone();
+            std::thread::spawn(move || {
+                let flag = if enable { "--enable" } else { "--disable" };
+                let out = run_neothd_probe(&["buddy", "self-activation", flag]);
+                let msg = if out.trim().is_empty() {
+                    format!("Self-activation {}.", if enable { "enabled" } else { "disabled" })
+                } else {
+                    out.trim().to_string()
+                };
+                let weak2 = weak.clone();
+                push_toast(&weak, "success", "Buddy", &msg);
+                std::thread::spawn(move || refresh_buddyconfig(weak2));
+            });
+        });
+
+        // Proactive toggle — real daemon command.
+        let weak_bc_pr = window.as_weak();
+        window.on_bc_proactive_toggle(move |enable| {
+            let weak = weak_bc_pr.clone();
+            std::thread::spawn(move || {
+                let flag = if enable { "--enable" } else { "--disable" };
+                let out = run_neothd_probe(&["buddy", "proactive", flag]);
+                let msg = if out.trim().is_empty() {
+                    format!("Proactive mode {}.", if enable { "enabled" } else { "disabled" })
+                } else {
+                    out.trim().to_string()
+                };
+                let weak2 = weak.clone();
+                push_toast(&weak, "success", "Buddy", &msg);
+                std::thread::spawn(move || refresh_buddyconfig(weak2));
+            });
+        });
+
+        // Sovereign toggle — read-only; redirect the operator to Privacy tab.
+        let weak_bc_sov = window.as_weak();
+        window.on_bc_sovereign_toggle(move |_| {
+            push_toast(
+                &weak_bc_sov,
+                "info",
+                "Buddy Config",
+                "Change sovereign buddy in the Privacy tab.",
+            );
+        });
+
+        // Smart-approve toggle — read-only per-channel; redirect to Privacy tab.
+        let weak_bc_sma = window.as_weak();
+        window.on_bc_smart_approve_toggle(move |_| {
+            push_toast(
+                &weak_bc_sma,
+                "info",
+                "Buddy Config",
+                "Smart-approve is a per-channel setting — configure in Privacy tab.",
+            );
+        });
+
+        // Fire once at startup.
+        let weak_bc_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_buddyconfig(weak_bc_init);
+        });
+    }
+
+    // ── Wave 4b — Companion / Smartphone Pairing panel callbacks ─────────────
+    {
+        let weak_cp = window.as_weak();
+        window.on_cp_refresh_clicked(move || {
+            let weak = weak_cp.clone();
+            std::thread::spawn(move || {
+                refresh_companion(weak);
+            });
+        });
+
+        let weak_cp_gen = window.as_weak();
+        window.on_cp_generate_invite(move || {
+            let weak = weak_cp_gen.clone();
+            std::thread::spawn(move || {
+                let _ = slint::invoke_from_event_loop({
+                    let weak = weak.clone();
+                    move || { if let Some(w) = weak.upgrade() { w.set_cp_loading(true); } }
+                });
+                let out = run_neothd_probe(&["companion", "pair-phone", "--write-invite-for-serve"]);
+                let pair_url = out
+                    .lines()
+                    .find(|l| l.starts_with("neoth://companion/pair"))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let ok = !pair_url.is_empty();
+                let url_copy = pair_url.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_cp_loading(false);
+                        w.set_cp_pair_url(url_copy.as_str().into());
+                        w.set_cp_invite_pending(ok);
+                        if !ok {
+                            w.set_cp_error("Failed to generate invite URL.".into());
+                        }
+                    }
+                });
+            });
+        });
+    }
+
+    // ── Wave 4b — Mesh & Cluster panel callbacks ──────────────────────────────
+    {
+        let weak_mesh = window.as_weak();
+        window.on_mesh_refresh_clicked(move || {
+            let weak = weak_mesh.clone();
+            std::thread::spawn(move || {
+                refresh_mesh(weak);
+            });
+        });
+
+        // Fire once at startup.
+        let weak_mesh_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_mesh(weak_mesh_init);
+        });
+    }
+
     // ── GOLD-LOOP-03 — Loop panel wiring (display-gated `gui-loop`) ────
     // The GUI never links the loop engine: runs go through a
     // `neothd loop run` subprocess (the CLI's daemon-owns-WAL guard fires
@@ -5410,7 +5706,7 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
 /// ODY-12 UI-control targets — must match `main.slint`'s nav values.
 /// A `nav` chip whose id is not in this list is ignored (prompt drift
 /// must not navigate somewhere undefined).
-pub const NAV_PANELS: [&str; 19] = [
+pub const NAV_PANELS: [&str; 25] = [
     "chat",
     "overview",
     "memory",
@@ -5431,6 +5727,13 @@ pub const NAV_PANELS: [&str; 19] = [
     "babel",
     "calendar",
     "evolve",
+    // Wave 4b
+    "obsidian",
+    "dreaming",
+    "wiki",
+    "buddyconfig",
+    "companion",
+    "mesh",
 ];
 
 /// GOLD-ADAPT-ODY-12/14 — deep-link chips from the done-sentinel's
@@ -6204,6 +6507,135 @@ fn refresh_selfimprove(weak: slint::Weak<MainWindow>) {
             w.set_si_log(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
         }
         w.set_si_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Wave 4b — Obsidian Vault probe ───────────────────────────────────────────
+fn refresh_obsidian(weak: slint::Weak<MainWindow>) {
+    let out = run_neothd_probe(&["obsidian", "status", "--output", "json"]);
+    let (vault_path, subdir, result_text) = panel_logic::parse_obsidian_status(&out);
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_obs_vault_path(vault_path.as_str().into());
+        w.set_obs_subdir(subdir.as_str().into());
+        w.set_obs_result_text(result_text.as_str().into());
+        w.set_obs_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Wave 4b — Dreaming / Memory & Self-Awareness probe ───────────────────────
+fn refresh_dreaming(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let out = run_neothd_probe(&["dream", "list", "--output", "json"]);
+    let (days, refreshed_at) = panel_logic::parse_dream_days(&out);
+    let ts = if refreshed_at.is_empty() { panel_logic::now_hhmm() } else { refreshed_at };
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let rows: Vec<DreamDayRow> = days
+            .into_iter()
+            .map(|(day, path, entries)| DreamDayRow {
+                day: day.into(),
+                path: path.into(),
+                entries,
+            })
+            .collect();
+        w.set_dr_days(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        w.set_dr_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Wave 4b — Wiki / Capability Map probe ────────────────────────────────────
+fn refresh_wiki(weak: slint::Weak<MainWindow>) {
+    let out = run_neothd_probe(&["capabilities", "--output", "json"]);
+    let rows = panel_logic::parse_wiki_rows(&out);
+    apply_wiki(weak, rows);
+}
+
+fn refresh_wiki_filtered(weak: slint::Weak<MainWindow>, search: String, kind: String) {
+    let out = run_neothd_probe(&["capabilities", "--output", "json"]);
+    let all = panel_logic::parse_wiki_rows(&out);
+    let rows = panel_logic::filter_wiki_rows(all, &search, &kind);
+    apply_wiki(weak, rows);
+}
+
+fn apply_wiki(weak: slint::Weak<MainWindow>, rows: Vec<panel_logic::WikiRowData>) {
+    use slint::VecModel;
+    let total = rows.len() as i32;
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let slint_rows: Vec<WikiRow> = rows
+            .into_iter()
+            .map(|r| WikiRow {
+                id: r.id.into(),
+                kind: r.kind.into(),
+                description: r.description.into(),
+                gate: r.gate.into(),
+            })
+            .collect();
+        w.set_wiki_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(slint_rows))));
+        w.set_wiki_total(total);
+        w.set_wiki_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Wave 4b — Buddy Config probe ─────────────────────────────────────────────
+fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let out = run_neothd_probe(&["buddy", "status", "--output", "json"]);
+    let snap = panel_logic::parse_buddy_status(&out);
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let skill_rows: Vec<SelfActSkill> = snap
+            .self_activation_skills
+            .into_iter()
+            .map(|name| SelfActSkill { name: name.into() })
+            .collect();
+        w.set_bc_self_activation_skills(
+            slint::ModelRc::new(std::rc::Rc::new(VecModel::from(skill_rows))),
+        );
+        w.set_bc_autonomy(snap.autonomy.as_str().into());
+        w.set_bc_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Wave 4b — Companion probe ────────────────────────────────────────────────
+fn refresh_companion(weak: slint::Weak<MainWindow>) {
+    let home = default_neoth_home();
+    let pending = home.join("companion_pending_invite.json").exists();
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_cp_invite_pending(pending);
+        w.set_cp_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Wave 4b — Mesh & Cluster probe ───────────────────────────────────────────
+fn refresh_mesh(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let out = run_neothd_probe(&["cluster", "status", "--output", "json"]);
+    let snap = panel_logic::parse_mesh_status(&out);
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_mesh_node_id(snap.node_id.as_str().into());
+        w.set_mesh_listen_port(snap.listen_port.as_str().into());
+        w.set_mesh_trusted_ssids(snap.trusted_ssids.as_str().into());
+        let peer_rows: Vec<MeshPeerRow> = snap
+            .peers
+            .into_iter()
+            .map(|p| MeshPeerRow {
+                id: p.id.into(),
+                last_seen: p.last_seen.into(), // Slint kebab→snake: last-seen → last_seen
+                reachable: p.reachable,
+            })
+            .collect();
+        w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(peer_rows))));
+        w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
+        w.set_mesh_refreshed_at(ts.as_str().into());
     });
 }
 
@@ -7369,9 +7801,10 @@ mod deep_link_tests {
     fn nav_panels_list_matches_slint_nav_values() {
         // Drift guard: main.slint's nav-active values. A chip id outside
         // this list is ignored by the click handler.
-        assert_eq!(NAV_PANELS.len(), 19);
+        assert_eq!(NAV_PANELS.len(), 25);
         for p in ["chat", "overview", "coding", "memory", "config", "loops",
-                  "n8n", "babel", "calendar", "evolve"] {
+                  "n8n", "babel", "calendar", "evolve",
+                  "obsidian", "dreaming", "wiki", "buddyconfig", "companion", "mesh"] {
             assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
         }
     }

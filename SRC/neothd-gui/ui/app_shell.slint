@@ -196,6 +196,9 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "n8n"; glyph: "⧉"; visible: root.complexity >= 1; active: root.active-tab == "n8n"; clicked => { root.nav("n8n"); } }
                 NavBtn { label: "Calendar"; glyph: "▦"; visible: root.complexity >= 1; active: root.active-tab == "calendar"; clicked => { root.nav("calendar"); } }
                 NavBtn { label: "Evolve"; glyph: "✦"; visible: root.complexity >= 1; active: root.active-tab == "evolve"; clicked => { root.nav("evolve"); } }
+                // Wave 4b — CORE additions.
+                NavBtn { label: "Dreaming"; glyph: "☽"; visible: root.complexity >= 1; active: root.active-tab == "dreaming"; clicked => { root.nav("dreaming"); } }
+                NavBtn { label: "Buddy Config"; glyph: "⊙"; visible: root.complexity >= 1; active: root.active-tab == "buddyconfig"; clicked => { root.nav("buddyconfig"); } }
 
                 // ── SYSTEM ───────────────────────────────────────────────
                 // Always has Memory (≥1), Hemispheres (≥1), Channels, Privacy,
@@ -212,6 +215,11 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Resources"; glyph: "▦"; visible: root.complexity >= 2; active: root.active-tab == "resources"; clicked => { root.nav("resources"); } }
                 // Wave 4a — Babel observer in SYSTEM (≥2, technical observer).
                 NavBtn { label: "Babel"; glyph: "◬"; visible: root.complexity >= 2; active: root.active-tab == "babel"; clicked => { root.nav("babel"); } }
+                // Wave 4b — SYSTEM additions.
+                NavBtn { label: "Obsidian"; glyph: "◉"; visible: root.complexity >= 1; active: root.active-tab == "obsidian"; clicked => { root.nav("obsidian"); } }
+                NavBtn { label: "Wiki"; glyph: "⌗"; visible: root.complexity >= 1; active: root.active-tab == "wiki"; clicked => { root.nav("wiki"); } }
+                NavBtn { label: "Companion"; glyph: "⊕"; active: root.active-tab == "companion"; clicked => { root.nav("companion"); } }
+                NavBtn { label: "Mesh"; glyph: "◇"; visible: root.complexity >= 2; active: root.active-tab == "mesh"; clicked => { root.nav("mesh"); } }
                 NavBtn { label: "Doctor"; glyph: "✚"; active: root.active-tab == "doctor"; clicked => { root.nav("doctor"); } }
                 NavBtn { label: "Config"; glyph: "⚙"; active: root.active-tab == "config"; clicked => { root.nav("config"); } }
             }

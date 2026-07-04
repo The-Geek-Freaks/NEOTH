@@ -1,0 +1,396 @@
+// NEOTH — Wiki / Capability Self-Map panel.
+//
+// Shows the full capability registry produced by `neoth capabilities --output json`.
+// Header: total count + NeothLineEdit search box + kind-filter chips.
+// Body: scrollable WikiRow list — id (mono) + kind chip + description + optional gate tag.
+// Filtering is Rust-side: Rust repopulates wiki-rows after search or filter changes.
+//
+// Slint 1.8 rules observed:
+//   - ScrollView from std-widgets; inner VerticalLayout needs min-height for scroll.
+//   - No starts-with / regex in expressions → Rust re-pushes filtered model.
+//   - @children inside if blocks unsupported → avoided.
+//   - visible: false still reserves layout space → use if for empty-state.
+//   - All colors via Theme tokens; no inline hex.
+
+import { Theme } from "theme.slint";
+import { Card, EntranceFade, NeothButton } from "components.slint";
+import { NeothLineEdit } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Exported struct (Rust must construct; re-export from main.slint) ──────────
+
+/// One capability row in the Wiki list.
+export struct WikiRow {
+    id: string,           // e.g. "skill:ponytail" — rendered mono
+    kind: string,         // "skill" | "cron" | "cli" | "slash"
+    description: string,  // free-form, word-wrapped
+    gate: string,         // feature_gate, "" when not set
+}
+
+// ── Internal micro-components ─────────────────────────────────────────────────
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    letter-spacing: Theme.letter-spacing-tight;
+    horizontal-alignment: right;
+}
+
+// Kind chip — small pill whose background + text color are driven by kind string.
+// Colours: skill=memory, cron=warning, cli=audit, slash=text-tertiary (fallback).
+// The chip is pure display; filtering is Rust-side.
+component KindChip inherits Rectangle {
+    in property <string> kind: "";
+
+    // Resolve colors from kind string via ternary chain.
+    // "skill" → memory-tint / memory
+    // "cron"  → warning-tint / warning
+    // "cli"   → audit-tint / audit
+    // anything else ("slash" etc.) → surface-2 / text-tertiary
+    property <color> chip-bg:
+        root.kind == "skill"  ? Theme.memory-tint  :
+        root.kind == "cron"   ? Theme.warning-tint :
+        root.kind == "cli"    ? Theme.audit-tint   :
+        Theme.surface-2;
+
+    property <color> chip-fg:
+        root.kind == "skill"  ? Theme.memory   :
+        root.kind == "cron"   ? Theme.warning  :
+        root.kind == "cli"    ? Theme.audit    :
+        Theme.text-tertiary;
+
+    width: 48px;
+    height: 20px;
+    border-radius: Theme.radius-pill;
+    background: root.chip-bg;
+    border-width: 1px;
+    border-color: root.chip-fg;
+
+    Text {
+        text: root.kind;
+        color: root.chip-fg;
+        font-family: Theme.font-mono;
+        font-size: 9px;
+        letter-spacing: Theme.letter-spacing-wide;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Gate tag — tertiary badge shown only when feature_gate is set.
+component GateTag inherits Rectangle {
+    in property <string> gate;
+    width: max(60px, self.preferred-width + 16px);
+    height: 18px;
+    border-radius: Theme.radius-sm;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-default;
+
+    Text {
+        text: root.gate;
+        color: Theme.text-disabled;
+        font-family: Theme.font-mono;
+        font-size: 9px;
+        letter-spacing: Theme.letter-spacing-tight;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// One capability row: id mono | kind chip | description (wraps) | optional gate.
+component CapRow inherits Rectangle {
+    in property <WikiRow> cap;
+
+    // Row height is dynamic (description wraps).  A minimum keeps it readable.
+    min-height: 54px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 12px;
+        alignment: start;
+
+        // id — mono, fixed narrow column
+        Text {
+            text: root.cap.id;
+            color: Theme.audit;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-xs;
+            letter-spacing: Theme.letter-spacing-tight;
+            vertical-alignment: center;
+            overflow: elide;
+            width: 160px;
+        }
+
+        // kind chip — centered vertically
+        KindChip {
+            kind: root.cap.kind;
+            y: (parent.height - self.height) / 2;
+        }
+
+        // description — word-wrap, takes remaining space
+        Text {
+            text: root.cap.description;
+            color: Theme.text-secondary;
+            font-family: Theme.font-sans;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+
+        // gate tag — only rendered when gate is set
+        if root.cap.gate != "": GateTag {
+            gate: root.cap.gate;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+}
+
+// Filter chip button — a slim NeothButton-style pill used for kind-filter tabs.
+// Active state: accent background + text-on-accent text.
+// Idle: surface-2 background + text-tertiary text.
+component FilterChip inherits Rectangle {
+    in property <string> label;
+    in property <bool>   active: false;
+    callback clicked();
+
+    height: 26px;
+    width: max(44px, self.preferred-width + 20px);
+    border-radius: Theme.radius-pill;
+    background: root.active ? Theme.accent-tint : Theme.surface-2;
+    border-width: 1px;
+    border-color: root.active ? Theme.accent : Theme.border-default;
+
+    Text {
+        text: root.label;
+        color: root.active ? Theme.accent : Theme.text-tertiary;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-xs;
+        letter-spacing: Theme.letter-spacing-tight;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// ── WikiView — public exported component ──────────────────────────────────────
+
+export component WikiView inherits Rectangle {
+    // ── Data props — set by Rust via invoke_from_event_loop ──────────────────
+
+    /// Total capability count from daemon (displayed in header band).
+    in property <int> wiki-total: 0;
+
+    /// Currently active kind filter.  "" = "all".  Rust reads this to decide
+    /// which subset to push into wiki-rows.
+    in-out property <string> wiki-active-kind: "";
+
+    /// Current search text mirror (Rust writes back on search() callback to
+    /// keep the field in sync when Rust clears it programmatically).
+    in-out property <string> wiki-search-text: "";
+
+    /// Filtered + searched list of capability rows — Rust repopulates on every
+    /// search / filter change.
+    in property <[WikiRow]> wiki-rows: [];
+
+    /// Timestamp of last successful daemon response.
+    in property <string> wiki-refreshed-at: "";
+
+    // ── Callbacks — Rust wires these to daemon calls ──────────────────────────
+
+    /// User typed in the search box; Rust must filter wiki-rows and repopulate.
+    callback wiki-search(string);
+
+    /// User clicked a kind-filter chip; value = "" | "skill" | "cron" | "cli" | "slash".
+    /// Rust must set wiki-active-kind and repopulate wiki-rows.
+    callback wiki-filter-kind(string);
+
+    /// Refresh button pressed — Rust re-runs `neoth capabilities --output json`.
+    callback wiki-refresh-clicked();
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+    background: Theme.bg-base;
+
+    EntranceFade {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            // ── View header ──────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                height: 44px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Capability Map";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-md;
+                        letter-spacing: Theme.letter-spacing-tight;
+                    }
+                    Text {
+                        text: root.wiki-total > 0
+                            ? "\{root.wiki-total} capabilities registered"
+                            : "capability self-map";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: 8.5px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                    }
+                }
+
+                // spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button — inline Rectangle to avoid importing full NeothButton size
+                Rectangle {
+                    height: 30px;
+                    width: 90px;
+                    border-radius: Theme.radius-button;
+                    background: Theme.accent-tint;
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "⟳ Refresh";
+                            color: Theme.accent;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-xs;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.wiki-refresh-clicked(); }
+                    }
+                }
+            }
+
+            // hairline separator
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── Search + filter bar ──────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                height: 32px;
+
+                // Search box — fills available width
+                NeothLineEdit {
+                    placeholder-text: "filter capabilities…";
+                    text <=> root.wiki-search-text;
+                    horizontal-stretch: 1;
+                    height: 30px;
+                    edited(t) => { root.wiki-search(t); }
+                    accepted(t) => { root.wiki-search(t); }
+                }
+
+                // Kind-filter chips
+                FilterChip {
+                    label: "all";
+                    active: root.wiki-active-kind == "";
+                    clicked => { root.wiki-filter-kind(""); }
+                }
+                FilterChip {
+                    label: "skill";
+                    active: root.wiki-active-kind == "skill";
+                    clicked => { root.wiki-filter-kind("skill"); }
+                }
+                FilterChip {
+                    label: "cron";
+                    active: root.wiki-active-kind == "cron";
+                    clicked => { root.wiki-filter-kind("cron"); }
+                }
+                FilterChip {
+                    label: "cli";
+                    active: root.wiki-active-kind == "cli";
+                    clicked => { root.wiki-filter-kind("cli"); }
+                }
+                FilterChip {
+                    label: "slash";
+                    active: root.wiki-active-kind == "slash";
+                    clicked => { root.wiki-filter-kind("slash"); }
+                }
+            }
+
+            // ── Scrollable capability list ────────────────────────────────────
+            ScrollView {
+
+                VerticalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    // min-height forces scroll viewport computation
+                    min-height: max(600px, root.wiki-rows.length * 60px);
+
+                    // ── Rows ─────────────────────────────────────────────────
+                    for item in root.wiki-rows: CapRow {
+                        cap: item;
+                    }
+
+                    // ── Empty state ───────────────────────────────────────────
+                    if root.wiki-rows.length == 0: Card {
+                        VerticalLayout {
+                            padding: 32px;
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: "⌀";
+                                color: Theme.text-disabled;
+                                font-size: 28px;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: root.wiki-search-text != "" || root.wiki-active-kind != ""
+                                    ? "No capabilities match the current filter."
+                                    : "No capabilities loaded — hit Refresh.";
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Refresh footer right-aligned below the list
+                    RefreshFooter { ts: root.wiki-refreshed-at; }
+                }
+            }
+        }
+    }
+}

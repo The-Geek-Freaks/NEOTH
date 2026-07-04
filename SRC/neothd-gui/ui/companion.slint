@@ -1,0 +1,361 @@
+// NEOTH — Companion / Smartphone pairing panel (Design Wave 4b).
+//
+// Allows the operator to generate a single-use Noise-XX pairing invite for
+// the NEOTH companion app.  No status JSON exists yet — the tab degrades
+// honestly: a paired phone appears in the Mesh peer list, not here.
+//
+// Daemon call: `neoth companion pair-phone --write-invite-for-serve`
+//   → writes  ~/.neoth/companion_pending_invite.json
+//   → prints  a QR code + neoth://companion/pair?… URL to stdout
+//   Rust captures that stdout line into `cp-pair-url`.
+//
+// Refresh: re-checks whether companion_pending_invite.json still exists
+//   (file-exists check, no daemon needed) → feeds `cp-invite-pending`.
+//
+// Accent colour: Theme.audit (P2P / proof / cyan semantic).
+//
+// Slint 1.8 rules observed:
+//   - `if` used instead of `visible:false` to remove elements from layout.
+//   - @children NOT inside any `if` block.
+//   - No inline hex — Theme tokens only.
+//   - ScrollView given explicit height when inside a stretched container.
+//   - transform-rotation not used here (no bare Rectangle rotation).
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Kicker — 8 px mono wide-tracked uppercase section heading ────────────────
+
+component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8px;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+// ── InfoRow — 36 px label + value pill (matches overview.slint idiom) ────────
+
+component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color>  value-color: Theme.text-primary;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: start;
+        spacing: 12px;
+        Text {
+            text: root.label;
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: 8px;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: 80px;
+        }
+        Text {
+            text: root.value != "" ? root.value : "—";
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// ── RefreshFooter — 8.5 px mono timestamp (matches overview.slint) ───────────
+
+component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: 8.5px;
+    letter-spacing: Theme.letter-spacing-tight;
+}
+
+// ── CompanionView — public exported component ─────────────────────────────────
+
+export component CompanionView inherits Rectangle {
+
+    // ── Props set by Rust ─────────────────────────────────────────────────────
+
+    /// The neoth://companion/pair?… URL captured from daemon stdout after
+    /// generate-invite fires.  Empty until the first successful run.
+    in property <string> cp-pair-url: "";
+
+    /// True while the daemon command is in-flight (disables the button,
+    /// shows loading state).
+    in property <bool> cp-loading: false;
+
+    /// True when ~/.neoth/companion_pending_invite.json exists on disk.
+    /// Rust checks this on refresh; set to false after invite is consumed.
+    in property <bool> cp-invite-pending: false;
+
+    /// Error text from the last generate-invite attempt, "" on success.
+    in property <string> cp-error: "";
+
+    /// Timestamp of the last refresh / invite generation.
+    in property <string> cp-refreshed-at: "";
+
+    // ── Callbacks fired to Rust ───────────────────────────────────────────────
+
+    /// Run: neoth companion pair-phone --write-invite-for-serve
+    /// Rust captures stdout URL → cp-pair-url; sets cp-invite-pending=true.
+    callback cp-generate-invite();
+
+    /// Re-check file existence of companion_pending_invite.json →
+    /// update cp-invite-pending + cp-refreshed-at.
+    callback cp-refresh-clicked();
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+
+    background: Theme.bg-base;
+
+    EntranceFade {
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            // ── View header ──────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                height: 44px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Companion";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-md;
+                        letter-spacing: Theme.letter-spacing-tight;
+                    }
+                    Text {
+                        text: "smartphone pairing via local mesh";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: 8.5px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                    }
+                }
+
+                // spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button (inline, matches overview.slint pattern)
+                Rectangle {
+                    height: 30px;
+                    width: 90px;
+                    border-radius: Theme.radius-button;
+                    background: Theme.audit-tint;
+                    border-width: 1px;
+                    border-color: Theme.audit;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "⟳ Refresh";
+                            color: Theme.audit;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-xs;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.cp-refresh-clicked(); }
+                    }
+                }
+            }
+
+            // hairline separator
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── Scrollable content ───────────────────────────────────────────
+            ScrollView {
+
+                VerticalLayout {
+                    padding: 0px;
+                    spacing: 14px;
+                    alignment: start;
+                    min-height: 700px;
+
+                    // ── PAIR card ────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 12px;
+                            alignment: start;
+
+                            // Card header: kicker + audit LED (pending = live)
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+
+                                Kicker { label: "PAIR"; }
+
+                                Rectangle { horizontal-stretch: 1; }
+
+                                Led {
+                                    state: root.cp-invite-pending ? "live" : "off";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            // Generate button
+                            HorizontalLayout {
+                                alignment: start;
+                                height: 36px;
+
+                                NeothButton {
+                                    label: root.cp-loading ? "Generating…" : "Generate pairing invite";
+                                    primary: true;
+                                    loading: root.cp-loading;
+                                    enabled: !root.cp-loading;
+                                    size: "md";
+                                    clicked => { root.cp-generate-invite(); }
+                                }
+                            }
+
+                            // Instruction text
+                            Text {
+                                text: "Scan with the NEOTH companion app on your phone (P2P over the local mesh, Noise-XX encrypted; the invite is single-use and expires).";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
+                            }
+
+                            // Invite URL — shown only after generation succeeds
+                            if root.cp-pair-url != "": VerticalLayout {
+                                spacing: 6px;
+                                alignment: start;
+
+                                Rectangle {
+                                    height: 1px;
+                                    background: Theme.border-subtle;
+                                }
+
+                                Kicker { label: "INVITE URL"; }
+
+                                // URL display: audit-tinted pill, mono, wraps
+                                Rectangle {
+                                    border-radius: Theme.radius-md;
+                                    background: Theme.audit-tint;
+                                    border-width: 1px;
+                                    border-color: Theme.audit;
+                                    min-height: 40px;
+
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        padding-top: 10px;
+                                        padding-bottom: 10px;
+                                        alignment: start;
+                                        Text {
+                                            text: root.cp-pair-url;
+                                            color: Theme.audit;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Pending indicator row
+                            if root.cp-invite-pending: InfoRow {
+                                label: "INVITE";
+                                value: "pending on disk — single-use";
+                                value-color: Theme.audit;
+                            }
+
+                            // Error row
+                            if root.cp-error != "": InfoRow {
+                                label: "ERROR";
+                                value: root.cp-error;
+                                value-color: Theme.warning;
+                            }
+
+                            RefreshFooter { ts: root.cp-refreshed-at; }
+                        }
+                    }
+
+                    // ── STATUS card ──────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 12px;
+                            alignment: start;
+
+                            Kicker { label: "STATUS"; }
+
+                            // Honest degradation notice
+                            Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                min-height: 52px;
+
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    padding-top: 12px;
+                                    padding-bottom: 12px;
+                                    alignment: start;
+                                    spacing: 10px;
+
+                                    // info glyph
+                                    Text {
+                                        text: "ℹ";
+                                        color: Theme.audit;
+                                        font-size: Theme.font-size-md;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 0;
+                                    }
+
+                                    Text {
+                                        text: "Pairing status is not yet queryable — a paired phone appears in the mesh peer list (Mesh tab).";
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        wrap: word-wrap;
+                                        horizontal-stretch: 1;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            RefreshFooter { ts: root.cp-refreshed-at; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
