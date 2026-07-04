@@ -177,10 +177,6 @@ fn strip_single_word_fillers(text: &str) -> String {
                     out.push_str(s);
                 }
             }
-            Token::Punct(p) => {
-                out.push_str(p);
-                first = false;
-            }
         }
     }
     out
@@ -352,11 +348,12 @@ fn token_spans(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
     })
 }
 
-/// Simple token stream used by `strip_single_word_fillers`.
+/// Simple token stream used by `strip_single_word_fillers`. The
+/// tokenizer folds punctuation into `Word` (a word "may include
+/// trailing punct") — there is deliberately no separate punct token.
 enum Token<'a> {
     Word(&'a str),
     Space(&'a str),
-    Punct(&'a str),
 }
 
 struct WordTokenIter<'a> {

@@ -470,21 +470,6 @@ sources:
 
     // ── R-8 LocalFsConnector round-trip (Session 19) ────────────────
 
-    fn cfg_with_local_root(provider: Provider, root: &std::path::Path) -> CloudConfig {
-        let mut opts = std::collections::HashMap::new();
-        opts.insert(
-            "local_root".to_string(),
-            root.to_string_lossy().into_owned(),
-        );
-        CloudConfig {
-            provider,
-            oauth_token: String::new(),
-            root_path: "/".into(),
-            label: None,
-            connector_options: Some(opts),
-        }
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn local_fs_connector_round_trip_write_read_list() {
         // OpenDAL's blocking shim spawns its own runtime; running

@@ -102,14 +102,6 @@ pub async fn resolve_with_profile(
     }
 }
 
-/// Build the structured synthesis prompt. Pinned format so the
-/// Cerebellum's expectation stays stable across refactors. Operators
-/// reading WAL audit can correlate the synthesis call back to this
-/// exact framing.
-fn build_synthesis_prompt(original_prompt: &str, left_text: &str, right_text: &str) -> String {
-    build_synthesis_prompt_with_profile(original_prompt, left_text, right_text, None)
-}
-
 /// CH-11: synthesis prompt builder with optional operator-profile
 /// context. Pinned format: when a non-empty `profile_block` is supplied,
 /// the OPERATOR PROFILE section appears between the council framing and
@@ -287,10 +279,8 @@ mod tests {
     }
 
     #[test]
-    fn build_synthesis_prompt_with_profile_none_matches_no_profile_form() {
+    fn build_synthesis_prompt_with_profile_none_skips_profile_section() {
         let with_none = build_synthesis_prompt_with_profile("Q", "L", "R", None);
-        let without = build_synthesis_prompt("Q", "L", "R");
-        assert_eq!(with_none, without);
         assert!(!with_none.contains("OPERATOR PROFILE"));
     }
 
@@ -298,7 +288,7 @@ mod tests {
     fn build_synthesis_prompt_with_profile_empty_or_whitespace_skips_section() {
         let with_empty = build_synthesis_prompt_with_profile("Q", "L", "R", Some(""));
         let with_ws = build_synthesis_prompt_with_profile("Q", "L", "R", Some("   \n  "));
-        let without = build_synthesis_prompt("Q", "L", "R");
+        let without = build_synthesis_prompt_with_profile("Q", "L", "R", None);
         assert_eq!(with_empty, without);
         assert_eq!(with_ws, without);
     }
@@ -334,7 +324,7 @@ mod tests {
     fn build_synthesis_prompt_format_is_stable() {
         // Pin the prompt shape so a refactor doesn't silently drift
         // it (would invalidate cached audit traces).
-        let prompt = build_synthesis_prompt("Q", "L", "R");
+        let prompt = build_synthesis_prompt_with_profile("Q", "L", "R", None);
         assert!(prompt.starts_with("Two hemispheres of a debate council"));
         assert!(prompt.contains("QUESTION: Q"));
         assert!(prompt.contains("LEFT (analytic) said:\nL"));

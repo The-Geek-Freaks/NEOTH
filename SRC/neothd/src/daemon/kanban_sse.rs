@@ -264,22 +264,6 @@ mod tests {
     use tokio::sync::broadcast;
     use tokio::time::timeout;
 
-    fn make_state(
-        home: std::path::PathBuf,
-        tx: Arc<broadcast::Sender<FeedEntry>>,
-    ) -> Arc<SseState> {
-        use crate::config::FreedomConfig;
-        let mut cfg = FreedomConfig::default();
-        cfg.kanban_sse.enabled = true;
-        cfg.kanban_sse.port = 0;
-        Arc::new(SseState {
-            config: Arc::new(cfg),
-            tx,
-            home,
-            token: "test-token".to_string(),
-        })
-    }
-
     #[test]
     fn auth_helper_rejects_wrong_token() {
         assert!(!crate::n8n_api::constant_time_token_eq("wrong", "test-token"));

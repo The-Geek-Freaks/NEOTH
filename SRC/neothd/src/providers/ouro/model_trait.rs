@@ -22,6 +22,11 @@ use super::quantized_forward::QuantizedOuroModel;
 /// The shared model surface. `forward` and `embed` take `&mut self`
 /// because the per-loop KV caches (GOLD-COR-36) mutate during the
 /// recurrent loop.
+// Compile-time drift guard BY DESIGN (GOLD-ARCH-11, module doc): the
+// trait pins the two impls' APIs; production dispatch stays the
+// zero-cost LoadedOuroModel match, so no code path uses the trait as
+// a bound — dead_code is the expected state.
+#[allow(dead_code)]
 pub(crate) trait OuroForward {
     /// Full forward pass: `[b, seq]` token ids at `seqlen_offset` →
     /// last-position logits.

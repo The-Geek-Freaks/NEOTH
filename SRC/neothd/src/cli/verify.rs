@@ -562,6 +562,9 @@ fn extract_markers_from(logical: &[u8], header_len: usize) -> Vec<compaction::Ma
 /// reconstructs its LOGICAL bytes (decompressing a compressed v2 segment so the
 /// marker frames inside the zstd blob are actually walked), and extracts the
 /// markers. Tolerant: a too-short / unparseable file yields none.
+/// Test-only — production callers already hold logical bytes and use
+/// `extract_markers_from` directly.
+#[cfg(test)]
 fn extract_markers(seg: &Path) -> Result<Vec<compaction::MarkerPayload>> {
     let raw = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
     let Ok((header_len, logical)) = compaction::logical_segment_bytes(&raw) else {

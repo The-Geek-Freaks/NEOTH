@@ -43,13 +43,6 @@ fn publish_provider_responded(
     });
 }
 
-/// Round-3 v0.4 ARCH-04 integration — default pre-flight token cap
-/// fallback for tests that don't supply a `FreedomConfig`. Production
-/// callers read `config.tokens.max_per_request` (defaults to 100_000
-/// via `crate::config::TokensConfig::default_max_per_request`).
-#[cfg(test)]
-const DEFAULT_PROMPT_TOKEN_CAP: u32 = 100_000;
-
 #[derive(Args, Debug, Clone)]
 pub struct ChatArgs {
     /// Message to send. If omitted, NEOTH reads from stdin until EOF.

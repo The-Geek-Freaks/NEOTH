@@ -531,95 +531,8 @@ enum ClaimEvent {
     },
 }
 
-async fn emit_claim_event(
-    writer: &WalWriterHandle,
-    extraction_id: &str,
-    guard_version: &str,
-    event: &ClaimEvent,
-    now_unix: i64,
-) -> Result<()> {
-    match event {
-        ClaimEvent::Delta { claim, event_id } => {
-            emit_profile_delta_frame(
-                writer,
-                extraction_id,
-                claim,
-                *event_id,
-                guard_version,
-                now_unix,
-            )
-            .await
-        }
-        ClaimEvent::Reinforced {
-            prior_event_id,
-            field,
-            old_confidence,
-            new_confidence,
-        } => {
-            let payload = serde_json::to_vec(&serde_json::json!({
-                "prior_event_id": prior_event_id,
-                "field": field,
-                "old_confidence": old_confidence,
-                "new_confidence": new_confidence,
-                "extraction_id": extraction_id,
-                "ts_unix": now_unix,
-            }))
-            .context("serialise PROFILE_REINFORCED payload")?;
-            let header =
-                crate::wal::HeaderBuilder::new(EVENT_TYPE_PROFILE_REINFORCED, &payload).build();
-            writer
-                .append(header, payload)
-                .await
-                .context("append PROFILE_REINFORCED frame")?;
-            Ok(())
-        }
-        ClaimEvent::Superseded {
-            prior_event_id,
-            field,
-            old_value_hash,
-            new_value_hash,
-        } => {
-            let payload = serde_json::to_vec(&serde_json::json!({
-                "prior_event_id": prior_event_id,
-                "field": field,
-                "old_value_hash": old_value_hash,
-                "new_value_hash": new_value_hash,
-                "extraction_id": extraction_id,
-                "ts_unix": now_unix,
-            }))
-            .context("serialise PROFILE_SUPERSEDED payload")?;
-            let header =
-                crate::wal::HeaderBuilder::new(EVENT_TYPE_PROFILE_SUPERSEDED, &payload).build();
-            writer
-                .append(header, payload)
-                .await
-                .context("append PROFILE_SUPERSEDED frame")?;
-            Ok(())
-        }
-        ClaimEvent::RedactBlocked {
-            field,
-            redaction_id,
-            asserted_by,
-        } => {
-            let payload = serde_json::to_vec(&serde_json::json!({
-                "extraction_id": extraction_id,
-                "field": field,
-                "redaction_id": redaction_id,
-                "asserted_by": asserted_by,
-                "guard_version": guard_version,
-                "ts_unix": now_unix,
-            }))
-            .context("serialise PROFILE_REDACT_BLOCKED payload")?;
-            let header =
-                crate::wal::HeaderBuilder::new(EVENT_TYPE_PROFILE_REDACT_BLOCKED, &payload).build();
-            writer
-                .append(header, payload)
-                .await
-                .context("append PROFILE_REDACT_BLOCKED frame")?;
-            Ok(())
-        }
-    }
-}
+// (The direct async claim-event emitters were deleted in the dead-code
+// sweep — `serialise_claim_event` + the outbox drain superseded them.)
 
 /// Audit-only: emit a `PROFILE_DELTA_BLOCKED` WAL frame for a rejected
 /// delta. The caller (typically the dispatcher invoking stage 5) passes
@@ -696,33 +609,6 @@ fn insert_profile_row(
     )
     .context("backfill event_id on idx_profile row")?;
     Ok(row_id)
-}
-
-async fn emit_profile_delta_frame(
-    writer: &WalWriterHandle,
-    extraction_id: &str,
-    claim: &RawClaim,
-    event_id: i64,
-    guard_version: &str,
-    now_unix: i64,
-) -> Result<()> {
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "extraction_id": extraction_id,
-        "event_id": event_id,
-        "field": claim.field,
-        "value_json": claim.value_json,
-        "confidence": claim.confidence,
-        "evidence_event_ids": claim.evidence_event_ids,
-        "guard_version": guard_version,
-        "ts_unix": now_unix,
-    }))
-    .context("serialise PROFILE_DELTA payload")?;
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PROFILE_DELTA, &payload).build();
-    writer
-        .append(header, payload)
-        .await
-        .context("append PROFILE_DELTA frame")?;
-    Ok(())
 }
 
 #[cfg(test)]

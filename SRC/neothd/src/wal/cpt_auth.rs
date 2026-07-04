@@ -88,14 +88,6 @@ impl CompactionAuthenticator {
         Self { sub_key }
     }
 
-    /// Test-only constructor that takes a pre-derived 32-byte sub-key.
-    /// Used by unit tests that want to verify cross-key rejection
-    /// without running the full derivation.
-    #[cfg(test)]
-    pub(crate) fn from_raw_sub_key(sub_key: [u8; CPT_HMAC_TAG_LEN]) -> Self {
-        Self { sub_key }
-    }
-
     /// Compute HMAC-SHA256 over `cpt_content`. Caller persists the
     /// returned bytes alongside the `.cpt` file as `.cpt.hmac`.
     pub fn sign(&self, cpt_content: &[u8]) -> [u8; CPT_HMAC_TAG_LEN] {

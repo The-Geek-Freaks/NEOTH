@@ -114,6 +114,9 @@ pub fn url_has_credential_params(url: &str) -> bool {
     })
 }
 
+// Test fixture helper — production callers stamp `stored_unix` at the
+// fetch site (web_fetch.rs).
+#[cfg(test)]
 fn now_unix() -> i64 {
     crate::time::now_unix_i64()
 }

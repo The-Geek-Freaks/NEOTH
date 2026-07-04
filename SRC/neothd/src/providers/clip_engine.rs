@@ -68,7 +68,6 @@ const CLIP_STD: [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
 
 pub struct ClipEngine {
     repo: String,
-    cache_dir: PathBuf,
     config_path: PathBuf,
     weights_path: PathBuf,
     tokenizer_path: PathBuf,
@@ -92,7 +91,6 @@ impl ClipEngine {
             .with_context(|| format!("create cache dir {}", cache_dir.display()))?;
         let engine = ClipEngine {
             repo: repo.clone(),
-            cache_dir: cache_dir.clone(),
             config_path: cache_dir.join(CONFIG_FILE),
             weights_path: cache_dir.join(SAFETENSORS_FILE),
             tokenizer_path: cache_dir.join(TOKENIZER_FILE),

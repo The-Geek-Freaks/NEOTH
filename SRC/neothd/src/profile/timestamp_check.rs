@@ -131,23 +131,6 @@ fn parse_iso_date_anywhere(s: &str) -> Option<NaiveDate> {
 mod tests {
     use super::*;
     use crate::profile::delta::RawClaim;
-    use crate::profile::types::{
-        AttributedSegment, Attribution, ConversationSegment, SegmentOrigin,
-    };
-
-    fn seg(ts_ns: i64) -> AttributedSegment {
-        AttributedSegment {
-            segment: ConversationSegment {
-                event_id: 1,
-                ts_ns,
-                origin: SegmentOrigin::OperatorInbound,
-                text: "x".into(),
-            },
-            attribution: Attribution::UserSpeech,
-            confidence: 0.9,
-            matched_signals: vec![],
-        }
-    }
 
     fn delta_with(value: serde_json::Value) -> ProfileDelta {
         ProfileDelta {

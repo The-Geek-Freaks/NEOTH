@@ -326,27 +326,6 @@ mod tests {
         "x".repeat(chars)
     }
 
-    /// Build a compactor where threshold fires at 100 tokens → 400 chars.
-    fn make_compactor(
-        inner_calls: &Arc<Mutex<Vec<String>>>,
-    ) -> (CompactingProvider, Arc<Mutex<Vec<String>>>) {
-        let (inner, ic) = StubProvider::new("inner_reply");
-        // Give the inner a separate call-tracker — we want to verify inner IS called.
-        let _ = inner_calls; // caller passes theirs; we wire it below differently
-        let (util, _uc) = StubProvider::new("SUMMARY");
-        (
-            CompactingProvider::new(
-                Box::new(inner),
-                Some(Box::new(util)),
-                /* max_tokens */ 100,
-                /* threshold */ 0.8, // fires at 80 tokens → 320 chars
-                /* keep_recent_chars */ 50,
-                None,
-            ),
-            ic,
-        )
-    }
-
     #[tokio::test]
     async fn no_fire_when_under_threshold() {
         // 80 chars → 20 tokens → well under 80-token threshold

@@ -134,6 +134,9 @@ pub fn parse_kanban_payload(event_type: u8, ts_ns: u64, payload_bytes: &[u8]) ->
 struct SessionOpenedPayload {
     #[allow(dead_code)]
     session_id: i64,
+    // Mirrors the emitted JSON shape (schema doc, same as session_id);
+    // no reader yet.
+    #[allow(dead_code)]
     #[serde(default)]
     prompt_hash: String,
     #[serde(default)]

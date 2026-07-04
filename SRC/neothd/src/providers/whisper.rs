@@ -154,7 +154,6 @@ impl Default for WhisperOptions {
 
 pub struct WhisperEngine {
     repo: String,
-    cache_dir: PathBuf,
     tokenizer_path: PathBuf,
     config_path: PathBuf,
     weights_path: PathBuf,
@@ -322,7 +321,6 @@ impl WhisperEngine {
 
         let mut engine = WhisperEngine {
             repo: repo.clone(),
-            cache_dir: cache_dir.clone(),
             tokenizer_path: cache_dir.join(TOKENIZER_FILE),
             config_path: cache_dir.join(CONFIG_FILE),
             weights_path: cache_dir.join(SAFETENSORS_FILE),

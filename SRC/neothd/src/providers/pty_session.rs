@@ -101,6 +101,7 @@ impl PtySpawn {
 /// Generate a short session-id slug for WAL correlation.
 /// Uses unix-nanos XOR a call-count so two spawns in the same nanosecond
 /// stay distinct. Not cryptographic; scoped to operator-local audit.
+#[cfg(feature = "pty-subprocess")]
 fn new_session_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -253,25 +254,18 @@ mod real {
             matches!(guard.try_wait(), Ok(None))
         }
 
-        /// Wait for the child to exit and return its exit code (None on
-        /// Windows ConPTY paths where the code is unavailable).
+        /// Wait for the child to exit and return its exit code (None only
+        /// when the child mutex is poisoned or `wait()` errors).
+        /// `portable_pty::ExitStatus` is platform-uniform: a signal death
+        /// reports `success() == false` with code 1, otherwise the raw
+        /// process exit code — no per-OS branch needed (the old
+        /// std-ExitStatusExt branch predates the portable-pty type and
+        /// never compiled against it).
         pub fn wait_exit_code(&self) -> Option<i32> {
             let Ok(mut guard) = self.child.lock() else {
                 return None;
             };
-            guard.wait().ok().and_then(|status| {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::ExitStatusExt;
-                    Some(status.code().unwrap_or_else(|| {
-                        status.signal().map(|s| -(s as i32)).unwrap_or(-1)
-                    }))
-                }
-                #[cfg(not(unix))]
-                {
-                    status.code()
-                }
-            })
+            guard.wait().ok().map(|status| status.exit_code() as i32)
         }
 
         pub fn spawn_params(&self) -> &PtySpawn {

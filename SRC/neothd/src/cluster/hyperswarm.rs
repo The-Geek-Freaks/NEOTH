@@ -14,8 +14,7 @@
 //! use crate::cluster::{hyperswarm, PeerLoadRegistry};
 //!
 //! // Production path: always supply the cluster_key so inbound-peer
-//! // proof enforcement is armed. `spawn_discovery` (no key) is
-//! // crate-internal only.
+//! // proof enforcement is armed.
 //! let registry = Arc::new(Mutex::new(PeerLoadRegistry::new()));
 //! let cluster_key = Arc::new(identity.key);
 //! let handle = hyperswarm::spawn_discovery_with_wal(
@@ -45,9 +44,9 @@
 //! - [`SwarmHandle`] — RAII wrapper around the spawned
 //!   peeroxide swarm + the JoinHandle. Drop aborts the task.
 //! - [`spawn_discovery_with_wal`] — bring up the swarm, join the
-//!   topic, spawn the peer-acceptor loop. Returns the
-//!   handle. (`spawn_discovery` is a crate-internal convenience
-//!   wrapper; external callers should always supply a cluster_key.)
+//!   topic, spawn the peer-acceptor loop. Returns the handle.
+//!   Callers always supply a cluster_key (the keyless convenience
+//!   wrapper was deleted — it had no consumer).
 //!
 //! ## What this module does NOT do (yet)
 //!
@@ -69,7 +68,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::AsyncRead;
+// Only the test-gated `send_hello` writes; production sinks go through
+// `heartbeat::write_framed` with concrete stream types.
+#[cfg(test)]
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 use super::discovery::ClusterKey;
@@ -88,7 +91,7 @@ use super::{PeerLoad, PeerLoadRegistry, PeerSessionId};
 use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
 
-/// Optional WAL writer handle threaded into `spawn_discovery`
+/// Optional WAL writer handle threaded into `spawn_discovery_with_wal`
 /// so each per-peer task emits `0xE0..=0xE5 CLUSTER_*` frames
 /// into the audit chain. CLI one-shots that don't have a
 /// live writer pass `None`; the daemon's `cli::serve` path
@@ -182,36 +185,7 @@ impl Drop for SwarmHandle {
     }
 }
 
-/// Bring up a peeroxide swarm, join the cluster's topic, and
-/// spawn a background loop that handles each incoming peer
-/// connection. Returns a `SwarmHandle` that the daemon's
-/// shutdown path drops cleanly.
-///
-/// `registry` is held by `Arc<Mutex>` so the loop can write
-/// peer-load snapshots into it once the heartbeat protocol
-/// ships (follow-up). Today the loop only logs.
-pub(crate) async fn spawn_discovery(
-    cluster_name: &str,
-    registry: Arc<Mutex<PeerLoadRegistry>>,
-) -> Result<SwarmHandle> {
-    // No-auth/no-wal path (CLI one-shots / tests): a throwaway peer-stream
-    // registry — nothing external sends directed frames on this path.
-    spawn_discovery_with_wal(
-        cluster_name,
-        None,
-        registry,
-        None,
-        Arc::new(PeerStreamRegistry::new()),
-        // No-auth path never accepts delegated tasks: Strict autonomy + no
-        // executor ⇒ any TaskDelegate is rejected. neoth_home for completeness.
-        AutonomyLevel::Strict,
-        crate::config::FreedomConfig::default_neoth_home(),
-        None,
-    )
-    .await
-}
-
-/// Same as [`spawn_discovery`] but threads a live
+/// Bring up a peeroxide swarm, join the cluster's topic, and thread a live
 /// `WalWriterHandle` into every per-peer task so cluster
 /// lifecycle events emit `0xE0..=0xE5` frames. Used by
 /// `cli::serve` which holds the writer; CLI one-shots call
@@ -1468,7 +1442,10 @@ fn emit_gossip_dropped_wal(
 //      the cluster meaningful peer-discovery + health observability)
 
 /// Send our Hello over a fresh peer connection. Pure send +
-/// flush; caller pairs with [`receive_hello`].
+/// flush; caller pairs with [`receive_hello`]. Test-only: the
+/// production handshake is `handle_peeroxide_connection` (fail-closed
+/// on the cluster_key proof — this helper carries none).
+#[cfg(test)]
 pub(crate) async fn send_hello<W: AsyncWrite + Unpin>(
     sink: &mut W,
     peer_id: &str,
@@ -1504,11 +1481,13 @@ pub(crate) async fn send_hello<W: AsyncWrite + Unpin>(
 /// protocol/version mismatch, or when the cluster hash
 /// doesn't match ours.
 ///
-/// `pub(crate)` ON PURPOSE (SL-00(1b) review): this is a `tokio::io::duplex`
+/// `#[cfg(test)]` ON PURPOSE (SL-00(1b) review, tightened from
+/// pub(crate) in the dead-code sweep): this is a `tokio::io::duplex`
 /// test primitive that does NOT verify the `cluster_key_proof`. The production
 /// handshake runs through `handle_peeroxide_connection`, which is fail-closed
-/// on the proof. Keeping this crate-private prevents a future caller from
+/// on the proof. Test-gating prevents a future caller from
 /// standing up an unauthenticated Hello exchange.
+#[cfg(test)]
 pub(crate) async fn receive_hello<R: AsyncRead + Unpin>(
     source: &mut R,
     expected_cluster_name: &str,

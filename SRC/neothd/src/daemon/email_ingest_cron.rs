@@ -55,14 +55,14 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Result;
-#[cfg(any(test, feature = "imap_fetch"))]
+#[cfg(feature = "imap_fetch")]
 use anyhow::Context;
 #[cfg(feature = "imap_fetch")]
 use tracing::{info, warn};
 
 use crate::config::automation::EmailIngestCronConfig;
 use crate::config::FreedomConfig;
-#[cfg(any(test, feature = "imap_fetch"))]
+#[cfg(feature = "imap_fetch")]
 use crate::email::gmail::AuthMethod;
 #[cfg(feature = "imap_fetch")]
 use crate::email::gmail::{ImapConnectionConfig, GMAIL_IMAP_HOST, GMAIL_IMAP_PORT};
@@ -83,7 +83,7 @@ use crate::security::paperless_ingest::{OcrSource, ingest_ocr_text};
 // logic, but we need an async free function here that doesn't pull clap args).
 // ---------------------------------------------------------------------------
 
-#[cfg(any(test, feature = "imap_fetch"))]
+#[cfg(feature = "imap_fetch")]
 async fn resolve_auth_for_cron(username: &str) -> Result<AuthMethod> {
     if let Ok(pw) = std::env::var("NEOTH_IMAP_PASSWORD") {
         if !pw.is_empty() {
@@ -422,6 +422,7 @@ pub async fn run_email_ingest_tick(
 ///
 /// Keeps alphanumeric + hyphen + underscore + dot + @; replaces everything
 /// else with `_`; truncates to 80 chars.
+#[cfg(any(test, feature = "imap_fetch"))]
 fn sanitize_doc_id(uid: &str) -> String {
     uid.chars()
         .map(|c| {

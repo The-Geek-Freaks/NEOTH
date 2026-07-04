@@ -171,6 +171,11 @@ impl ReadOnlyCache {
 /// {"read_only_tools": ["tool_a", "tool_c"]}
 /// ```
 /// Any tool NOT listed in the array is treated as write / side-effecting.
+// DELIBERATELY not wired (ADOPT-22 security-review F3): name-based LLM
+// judging is the trust-creep risk; prod auto-approve keys off
+// server-declared effect annotations only. Kept (with tests) as the
+// documented judge primitive should annotations ever prove insufficient.
+#[allow(dead_code)]
 pub(crate) fn build_judge_prompt(tool_names: &[&str]) -> String {
     let names_list = tool_names
         .iter()
@@ -202,6 +207,8 @@ pub(crate) fn build_judge_prompt(tool_names: &[&str]) -> String {
 /// The `known_tools` slice is the full list of tools the judge was asked about.
 /// Every tool NOT in the returned read-only list is recorded as `false`
 /// (write-or-unknown) so the cache is fully populated in one pass.
+// DELIBERATELY not wired — see `build_judge_prompt` (ADOPT-22 F3).
+#[allow(dead_code)]
 pub(crate) fn parse_judge_response(response: &str, known_tools: &[&str]) -> HashMap<String, bool> {
     let mut result: HashMap<String, bool> =
         known_tools.iter().map(|t| (t.to_string(), false)).collect();

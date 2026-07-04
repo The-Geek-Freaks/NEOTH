@@ -79,9 +79,12 @@ impl DiscordChannel {
         Ok(Self { bot_token, http })
     }
 
-    fn auth_header_value(&self) -> String {
-        format!("Bot {}", self.bot_token.expose())
-    }
+}
+
+/// The Discord REST `Authorization` header value — single source of the
+/// `Bot <token>` format (contract-pinned by test).
+fn auth_header_value(bot_token: &SecretString) -> String {
+    format!("Bot {}", bot_token.expose())
 }
 
 #[async_trait]
@@ -201,10 +204,7 @@ async fn post_one_chunk(
     let body = MessageCreateRequest { content };
     let response = http
         .post(&url)
-        .header(
-            reqwest::header::AUTHORIZATION,
-            format!("Bot {}", bot_token.expose()),
-        )
+        .header(reqwest::header::AUTHORIZATION, auth_header_value(bot_token))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(
             reqwest::header::USER_AGENT,
@@ -302,8 +302,7 @@ mod tests {
 
     #[test]
     fn adapter_builds_authorization_header_with_bot_prefix() {
-        let a = DiscordChannel::new(SecretString::new("abc123".into())).unwrap();
-        let header = a.auth_header_value();
+        let header = auth_header_value(&SecretString::new("abc123".into()));
         assert!(header.starts_with("Bot "));
         assert!(header.ends_with("abc123"));
     }

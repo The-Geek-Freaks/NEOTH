@@ -748,9 +748,10 @@ async fn run_test_invoke_with_wal(
 
 /// UX-07b — decode every frame in a (small, single-segment) WAL file into
 /// `{event_type, payload}` JSON, in emission order. Tolerant: a missing /
-/// torn / truncated segment yields the frames recovered so far. Always
-/// compiled (the `wal` read primitives are feature-independent), so the
-/// capture/read-back logic is unit-testable without the wasm host.
+/// torn / truncated segment yields the frames recovered so far. The `wal`
+/// read primitives are feature-independent, so the capture/read-back logic
+/// unit-tests without the wasm host (the `test` half of the cfg).
+#[cfg(any(test, feature = "wasm-plugin-host"))]
 fn decode_wal_frames(segment: &std::path::Path) -> Vec<serde_json::Value> {
     use crate::wal::compress::decompress_frames;
     use crate::wal::frame::decode_frame;

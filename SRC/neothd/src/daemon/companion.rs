@@ -290,14 +290,6 @@ impl std::fmt::Debug for CompanionInvite {
 
 // ── HTTP body type ───────────────────────────────────────────────────────────
 
-fn json_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(status)
-        .header(hyper::header::CONTENT_TYPE, "application/json")
-        .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
-        .expect("static response always builds")
-}
-
 fn plain_response(status: StatusCode, msg: &'static str) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)

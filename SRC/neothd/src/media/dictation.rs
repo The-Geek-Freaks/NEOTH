@@ -18,8 +18,9 @@
 //!
 //! - **Verdict: dictation-surface-only.** No new STT engine. The dictation mode
 //!   reuses the existing `transcribe_if_cached` path (faster-whisper → candle
-//!   priority order) which already auto-downloads models on first use via
-//!   `model_manager` (GOLD-ADAPT-HANDY-04, already wired as of `b70ce4d`).
+//!   priority order) which auto-downloads models on first use via
+//!   `WhisperEngine::ensure_artifacts` (hf_hub; GOLD-ADAPT-HANDY-04 chose it
+//!   over `model_manager` — see the consumer-status section below).
 //!
 //! - **`whisper-stt` Cargo feature**: reserved in `Cargo.toml` for future GGML
 //!   integration. Currently gates nothing; the `#[cfg(feature = "whisper-stt")]`
@@ -27,10 +28,14 @@
 //!
 //! # model_manager consumer status
 //!
-//! `model_manager::download_model_files` is already consumed by
-//! `audio::maybe_auto_download_whisper` (GOLD-ADAPT-HANDY-04). The dictation
-//! path inherits that consumer via `transcribe_if_cached`; no second consumer
-//! needed here.
+//! `model_manager::download_model_files` is NOT the whisper download path:
+//! `audio::maybe_auto_download_whisper` routes through
+//! `WhisperEngine::new_with_idle_secs` (hf_hub `ensure_artifacts`, which is
+//! itself resumable) — a deliberate HANDY-04 scope decision. `model_manager`
+//! (SHA-256-pinned + atomic-extract) is the library seam for downloads that
+//! NEED pinning, e.g. the Silero ONNX model when the `vad` feature's real
+//! backend lands. Wiring it into the whisper path requires pinned upstream
+//! SHA-256s first.
 //!
 //! # Consent
 //!

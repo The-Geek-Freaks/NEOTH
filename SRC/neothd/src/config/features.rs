@@ -448,7 +448,7 @@ pub struct MediaConfig {
     /// Default `false` — microphone capture is opt-in because it records audio.
     /// First use prints a consent notice regardless of this flag.
     ///
-    /// Configure in `freedom.yaml` under `input.dictation`.
+    /// Configure in `freedom.yaml` under `media.dictation_enabled`.
     #[serde(default)]
     pub dictation_enabled: bool,
 }

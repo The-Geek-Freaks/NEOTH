@@ -44,12 +44,6 @@ use super::{Completion, Provider, Request};
 /// `bedrock-runtime` — the runtime data plane signs under `bedrock`.
 const SERVICE_NAME: &str = "bedrock";
 
-/// Default region applied when neither the slot nor the freedom-yaml
-/// top-level pins one. Matches the most common Bedrock landing zone
-/// in operator deployments (`us-east-1` has the broadest model
-/// catalogue).
-const DEFAULT_REGION: &str = "us-east-1";
-
 /// Adapter for Bedrock Runtime.
 pub struct AwsBedrockAdapter {
     region: String,

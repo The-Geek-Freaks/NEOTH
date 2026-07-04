@@ -51,8 +51,6 @@
 // so external callers can't construct AlwaysAllow yet exhaustive matches in
 // the crate keep working.
 #![allow(clippy::manual_non_exhaustive)]
-// dead_code is allowed crate-wide during the Day-2..Day-30 ramp-up.
-#![allow(dead_code)]
 
 /// Process-global serialization lock for tests that mutate or read the
 /// real process environment (`NEOTH_HOME`, `NEOTH_NO_AUTO_CODE`, …).
