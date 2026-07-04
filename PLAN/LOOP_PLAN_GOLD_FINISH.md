@@ -261,6 +261,7 @@ Optional cross-model second opinion when available: Chorus template `codex-gemin
 | `GOLD-PROG-15` | PC-02 Chrome-DevTools-MCP license/telemetry acceptance — config shipped; operator go/no-go for default recommendation. |
 | `GOLD-HR-00` | Host-level tooling install (`uv tool install headroom-ai[proxy]` + CC plugin hooks) — outside repo; operator's Claude-Code setup. |
 | `GOLD-ADAPT-JV-MODE-02` consent ceremony | Sovereign-mode default wording/level — propose, Alex ratifies. |
+| `GOLD-ADAPT-OH-01` apply-scope | Tracker contradiction found 2026-07-04: item demands "close the apply bail" for v1.0, but neoth-migrate/src/main.rs:7-8 records apply as post-v1.0 by design (dry-run + manifest + readers ARE shipped). Ratify: (A) dry-run scope = v1.0-GOLD, apply post-tag; or (B) apply blocks the tag (multi-day L build). |
 | Release tag timing | `v1.0-gold` tag + GitHub release publish = operator confirms. |
 
 Record each decision as a dated line in the tracker item, then the release-gate box can close.
@@ -322,6 +323,18 @@ session4_final: >
   ULTRA still OPEN (real, tracked): webhook durable inbound spool,
   gossip-WAL ingest (=G02-CLUSTER-02), smart-loader plan_loader unwire,
   doctor advisable-config hints, GUI-parity long-tail.
+session4_part4: >
+  1cb61050 = RMAS-03 SHIPPED, B13 COMPLETE. 3 spec-corrections recorded
+  in the tracker flip: hysteria (not tailscale) is the subprocess
+  precedent; council wiring = existing hemisphere-slot architecture
+  (from_config_for_role -> from_config, NO chat.rs injection);
+  is_implemented = cfg!(feature). Adapter feature-gated w/ consent
+  marker ~/.neoth/rmas_consent_acknowledged. GOTCHA for future enum
+  work: E0004 catches most sites but STRING matches (from_str,
+  is_local_provider, ALL_PROVIDERS drift-guard, run_show) only surface
+  in the FULL suite — 2 red gates before green here.
+  REMAINING BUILDABLE: OH-01 rest (M) + ODY-12/ODY-14 (GUI pair,
+  fresh-session wave). Then B17 gates + 3 operator-blocked.
 session4_part3: >
   +2 commits: 367e68c9 (RMAS-01+02) already noted; f52d3c86 =
   GOLD-FEAT-03b SHIPPED (spec-corrected: NO WAL byte possible — 256/256
