@@ -14,6 +14,7 @@ pub mod arxiv;
 pub mod babel;
 pub mod arxiv_ingest_task;
 pub mod backup;
+pub mod buddy;
 /// HERMES-02 — `/background` + `/btw` parallel ephemeral sessions.
 pub mod bg_session;
 pub mod catalog;
@@ -803,6 +804,13 @@ pub enum Commands {
     /// offline + supports `--dry-run` and `--to <version>`.
     Migrate(migrate::MigrateArgs),
 
+    /// GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + two
+    /// safe toggles. `status` reads six buddy-config fields from freedom.yaml;
+    /// `self-activation --enable/--disable` toggles `self_activation.enabled`;
+    /// `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign
+    /// and smart-approve are read-only here — they have their own gated paths.
+    Buddy(buddy::BuddyArgs),
+
     /// HMAC key management — show / rotate / list archived keys. Phase 33b
     /// SP-2 follow-up. Rotation is non-destructive: archived keys still
     /// verify historical compaction markers.
@@ -1452,6 +1460,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Migrate(mut args) => {
             args.output = global_output;
             migrate::run_migrate(args).await?;
+        }
+        Commands::Buddy(mut args) => {
+            args.output = global_output;
+            buddy::run_buddy(args)?;
         }
         Commands::Keys(mut args) => {
             args.output = global_output;
