@@ -74,6 +74,13 @@ pub enum ProviderKind {
     /// `provider_endpoint`. Runs entirely on operator hardware — treated as a
     /// local provider for quota / privacy / WAL audit gating.
     LocalOllama,
+    /// GOLD-ADAPT-RMAS-03 — EXPERIMENTAL RecursiveMAS Python sidecar
+    /// (latent-recursion council refinement). Local-only, VRAM-gated,
+    /// default-off; adapter behind the `recursive-mas` Cargo feature.
+    /// Operator-installed checkout — NEOTH never downloads it.
+    #[serde(rename = "recursive_mas")]
+    #[value(name = "recursive_mas")]
+    RecursiveMas,
     /// No provider yet; configure later via `neoth provider add`.
     Skip,
 }
@@ -97,6 +104,7 @@ impl ProviderKind {
             ProviderKind::AzureOpenAi => "azure_openai",
             ProviderKind::GitHubCopilot => "copilot_api",
             ProviderKind::LocalOllama => "local_ollama",
+            ProviderKind::RecursiveMas => "recursive_mas",
             ProviderKind::Skip => "skip",
         }
     }
@@ -135,6 +143,7 @@ impl ProviderKind {
             ProviderKind::LocalQwen
             | ProviderKind::LocalOuro
             | ProviderKind::LocalOllama
+            | ProviderKind::RecursiveMas
             | ProviderKind::AzureOpenAi
             | ProviderKind::Cohere
             | ProviderKind::GitHubCopilot
@@ -161,6 +170,7 @@ impl ProviderKind {
             ProviderKind::AzureOpenAi => I::AzureOpenAi,
             ProviderKind::GitHubCopilot => I::GitHubCopilot,
             ProviderKind::LocalOllama => I::LocalOllama,
+            ProviderKind::RecursiveMas => I::RecursiveMas,
             ProviderKind::Skip => I::ClaudeCli, // unreachable in practice
         }
     }

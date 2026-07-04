@@ -86,6 +86,12 @@ pub enum InferenceProvider {
     /// local provider (quota / privacy / WAL audit gating identical to
     /// LocalQwen / LocalOuro).
     LocalOllama,
+    /// GOLD-ADAPT-RMAS-03 — EXPERIMENTAL operator-installed RecursiveMAS
+    /// Python sidecar (latent-recursion council refinement). Local-only,
+    /// VRAM-gated, default-off; the adapter compiles behind the
+    /// `recursive-mas` Cargo feature. NEOTH never downloads the code or
+    /// weights (upstream license unresolved — invoke-only).
+    RecursiveMas,
 }
 
 impl InferenceProvider {
@@ -103,6 +109,7 @@ impl InferenceProvider {
             InferenceProvider::Cohere => "cohere_api",
             InferenceProvider::GitHubCopilot => "copilot_api",
             InferenceProvider::LocalOllama => "local_ollama",
+            InferenceProvider::RecursiveMas => "recursive_mas",
         }
     }
 
@@ -133,6 +140,9 @@ impl InferenceProvider {
             InferenceProvider::LocalOllama => {
                 "Local Ollama via its native /api/chat NDJSON endpoint (no API key; point at a running `ollama serve`)"
             }
+            InferenceProvider::RecursiveMas => {
+                "EXPERIMENTAL local RecursiveMAS sidecar (latent recursion; VRAM-gated, operator-installed, `recursive-mas` build feature)"
+            }
         }
     }
 
@@ -150,6 +160,7 @@ impl InferenceProvider {
             "local_ouro" | "ouro" => Some(Self::LocalOuro),
             "copilot_api" | "copilot" | "github_copilot" => Some(Self::GitHubCopilot),
             "local_ollama" | "ollama" => Some(Self::LocalOllama),
+            "recursive_mas" | "rmas" => Some(Self::RecursiveMas),
             _ => None,
         }
     }
@@ -169,7 +180,14 @@ impl InferenceProvider {
     pub fn is_implemented(self) -> bool {
         // Every variant is wired as of Session 14. Add `false` arms
         // for future stub-only variants when they land.
-        true
+        match self {
+            // RMAS-03: the sidecar adapter only exists behind the
+            // `recursive-mas` Cargo feature — a default build shows
+            // `[stub]` in the wizard and from_config bails with the
+            // feature hint.
+            Self::RecursiveMas => cfg!(feature = "recursive-mas"),
+            _ => true,
+        }
     }
 
     /// Bridge to the single-mode `ProviderKind` enum used by
@@ -197,6 +215,7 @@ impl InferenceProvider {
             InferenceProvider::Cohere => ProviderKind::Cohere,
             InferenceProvider::GitHubCopilot => ProviderKind::GitHubCopilot,
             InferenceProvider::LocalOllama => ProviderKind::LocalOllama,
+            InferenceProvider::RecursiveMas => ProviderKind::RecursiveMas,
         }
     }
 }

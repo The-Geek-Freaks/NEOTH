@@ -45,6 +45,7 @@ pub fn is_cloud(kind: ProviderKind) -> bool {
         ProviderKind::LocalQwen
         | ProviderKind::LocalOuro
         | ProviderKind::LocalOllama
+        | ProviderKind::RecursiveMas
         | ProviderKind::Skip => false,
     }
 }
@@ -65,6 +66,7 @@ pub fn slug(kind: ProviderKind) -> &'static str {
         ProviderKind::AwsBedrock => "aws_bedrock",
         ProviderKind::AzureOpenAi => "azure_openai",
         ProviderKind::GitHubCopilot => "copilot_api",
+        ProviderKind::RecursiveMas => "recursive_mas",
         ProviderKind::Skip => "skip",
     }
 }
@@ -83,6 +85,7 @@ pub fn kind_from_slug(s: &str) -> Option<ProviderKind> {
         "aws_bedrock" => Some(ProviderKind::AwsBedrock),
         "azure_openai" => Some(ProviderKind::AzureOpenAi),
         "copilot_api" => Some(ProviderKind::GitHubCopilot),
+        "recursive_mas" => Some(ProviderKind::RecursiveMas),
         "skip" => Some(ProviderKind::Skip),
         _ => None,
     }
@@ -102,6 +105,7 @@ fn cloud_label(kind: ProviderKind) -> &'static str {
         ProviderKind::LocalQwen => "local Qwen (no remote network)",
         ProviderKind::LocalOuro => "local Ouro thinking-models (no remote network)",
         ProviderKind::LocalOllama => "local Ollama (no remote network)",
+        ProviderKind::RecursiveMas => "local RecursiveMAS sidecar (no remote network)",
         ProviderKind::Skip => "no provider",
     }
 }

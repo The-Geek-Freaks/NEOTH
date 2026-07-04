@@ -52,6 +52,8 @@ pub mod ouro;
 pub mod pty_session;
 pub mod quota;
 pub mod recursive_mas;
+#[cfg(feature = "recursive-mas")]
+pub mod recursive_mas_adapter;
 pub mod singleflight;
 pub mod tmux_session;
 pub mod tmux_socket;
@@ -171,7 +173,7 @@ pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send
 pub fn is_local_provider(name: &str) -> bool {
     matches!(
         name,
-        "local_qwen" | "local_ouro" | "local_abliterated" | "local_ollama"
+        "local_qwen" | "local_ouro" | "local_abliterated" | "local_ollama" | "recursive_mas"
     )
 }
 
@@ -892,6 +894,20 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 .clone()
                 .unwrap_or_else(|| ollama_api::DEFAULT_MODEL.to_string());
             Ok(Box::new(ollama_api::OllamaAdapter::new(base_url, model)?))
+        }
+        // GOLD-ADAPT-RMAS-03 — experimental local sidecar. The live adapter
+        // only exists behind the `recursive-mas` feature; the runtime gate
+        // (enabled + VRAM + checkout present) runs inside spawn().
+        #[cfg(feature = "recursive-mas")]
+        ProviderKind::RecursiveMas => Ok(Box::new(
+            recursive_mas_adapter::RecursiveMasAdapter::spawn(&config.recursive_mas)?,
+        )),
+        #[cfg(not(feature = "recursive-mas"))]
+        ProviderKind::RecursiveMas => {
+            anyhow::bail!(
+                "recursive_mas requires a build with the `recursive-mas` Cargo feature \
+                 (experimental operator-installed sidecar; see freedom.yaml::recursive_mas)"
+            )
         }
         ProviderKind::Skip => {
             anyhow::bail!("provider was set to `skip` during init. Run `neoth provider add`.")

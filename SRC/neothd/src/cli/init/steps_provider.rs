@@ -376,6 +376,23 @@ pub(crate) async fn step5_provider(
             state.provider_model =
                 Some(args.provider_model.clone().unwrap_or(bundled_default));
         }
+        ProviderKind::RecursiveMas => {
+            // GOLD-ADAPT-RMAS-03 — no endpoint / key / model repo. The
+            // sidecar is an operator-installed checkout configured via
+            // freedom.yaml::recursive_mas; the wizard only points there.
+            state.provider_model = None;
+            if interactive {
+                println!(
+                    "  recursive_mas is an EXPERIMENTAL local sidecar (latent \
+                     recursion for council deliberation). It needs: a GPU with \
+                     enough VRAM, an operator-installed RecursiveMAS checkout, \
+                     and `recursive_mas.enabled: true` + `sidecar_repo` in \
+                     freedom.yaml. The binary must be built with the \
+                     `recursive-mas` feature. NEOTH never downloads the \
+                     upstream code or weights."
+                );
+            }
+        }
         ProviderKind::Skip => {
             if interactive {
                 println!("  Skipped. Configure later: `neoth provider add`");

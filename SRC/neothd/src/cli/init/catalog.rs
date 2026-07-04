@@ -434,6 +434,7 @@ pub(crate) fn catalog_key_for_provider(
         I::LocalQwen
         | I::LocalOuro
         | I::LocalOllama
+        | I::RecursiveMas
         | I::AzureOpenAi
         | I::Cohere
         | I::GitHubCopilot => return None,
