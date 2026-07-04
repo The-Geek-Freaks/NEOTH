@@ -69,7 +69,8 @@ pub use automation::{
     DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
     DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, GuidanceCronConfig, KanbanSseConfig,
     MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig, ProactiveConfig,
-    ProfileAdaptConfig, RecallLatencyConfig, RegressionAnchorConfig, ResourceWatchConfig,
+    ProfileAdaptConfig, RecallLatencyConfig, RecursiveMasConfig, RegressionAnchorConfig,
+    ResourceWatchConfig,
     SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
     SelfActivationConfig, WatchdogConfig, EmailIngestCronConfig,
 };
@@ -630,6 +631,12 @@ pub struct FreedomConfig {
     /// non-NVIDIA hosts.
     #[serde(default)]
     pub resource_watch: ResourceWatchConfig,
+    /// GOLD-ADAPT-RMAS-01 — optional RecursiveMAS latent-recursion sidecar
+    /// for council deliberation. Default OFF; runtime-gated on VRAM +
+    /// operator-installed checkout (`providers::recursive_mas`), provider
+    /// adapter compile-gated behind the `recursive-mas` Cargo feature.
+    #[serde(default)]
+    pub recursive_mas: RecursiveMasConfig,
     /// HO-07 — neoth-monitor alerting sidecar cron. When `enabled`, the
     /// daemon polls WAL integrity, crash.log, and channel activity and
     /// emits `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /

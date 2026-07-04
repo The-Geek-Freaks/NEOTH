@@ -540,6 +540,50 @@ impl ResourceWatchConfig {
     }
 }
 
+/// GOLD-ADAPT-RMAS-01 — optional local RecursiveMAS sidecar config.
+/// Latent-recursion refinement for council deliberation via an
+/// OPERATOR-INSTALLED Python checkout (NEOTH never downloads weights or
+/// code itself — upstream license is unresolved, so we only invoke).
+/// Default OFF; additionally gated at runtime by
+/// `providers::recursive_mas::recursive_mas_available` (VRAM + sidecar
+/// presence) and at compile time the provider adapter sits behind the
+/// `recursive-mas` Cargo feature.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RecursiveMasConfig {
+    /// Master switch. `false` (default) = never considered.
+    pub enabled: bool,
+    /// Recursion style passed to the sidecar. Default `sequential_light`
+    /// (the upstream low-VRAM mode).
+    pub style: String,
+    /// Latent recursion rounds per deliberation. Default 3 (upstream
+    /// default).
+    pub num_recursive_rounds: u8,
+    /// Minimum total GPU VRAM (GiB) required before the gate opens.
+    /// Default 12.
+    pub min_vram_gib: u32,
+    /// Python interpreter of the operator's RMAS venv (e.g.
+    /// `.venv-rmas/bin/python`). `None` = not installed.
+    pub sidecar_python: Option<std::path::PathBuf>,
+    /// Path to the operator's RecursiveMAS checkout (must contain
+    /// `inference_mas.py`). `None` = not installed.
+    pub sidecar_repo: Option<std::path::PathBuf>,
+}
+
+impl Default for RecursiveMasConfig {
+    fn default() -> Self {
+        // Off by default — experimental, operator-installed sidecar only.
+        Self {
+            enabled: false,
+            style: "sequential_light".to_string(),
+            num_recursive_rounds: 3,
+            min_vram_gib: 12,
+            sidecar_python: None,
+            sidecar_repo: None,
+        }
+    }
+}
+
 /// HO-07 — neoth-monitor alerting cron config. When `enabled`, the daemon
 /// scans the WAL + crash log every `interval_secs` and emits advisory
 /// frames when anomalies are detected:

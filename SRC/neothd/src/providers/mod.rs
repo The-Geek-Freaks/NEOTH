@@ -51,6 +51,7 @@ pub mod openai_api;
 pub mod ouro;
 pub mod pty_session;
 pub mod quota;
+pub mod recursive_mas;
 pub mod singleflight;
 pub mod tmux_session;
 pub mod tmux_socket;

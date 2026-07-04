@@ -183,6 +183,13 @@ nostr-channel = ["dep:nostr-sdk"]
 # probe row + the pure `gchat_api` mapping stay compiled in every build; only
 # the pull/send adapter needs the feature.
 gchat-channel = ["dep:jsonwebtoken"]
+# GOLD-ADAPT-RMAS-01/03 — optional local RecursiveMAS Python sidecar for
+# council deliberation. Default OFF; NOT flipped on in release CI. No new
+# crate deps — the sidecar is an OPERATOR-INSTALLED checkout that NEOTH only
+# spawns (JSON-over-stdio); runtime-gated by freedom.yaml::recursive_mas +
+# the VRAM/sidecar-presence gate in providers::recursive_mas (which itself
+# compiles in every build — only the live adapter is feature-gated).
+recursive-mas = []
 
 [dependencies]
 # GOLD-FEAT-10 — IRC channel (optional, behind `irc-channel`). Tokio-native,

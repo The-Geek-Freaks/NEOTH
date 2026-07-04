@@ -968,4 +968,38 @@ mod tests {
             "alias key that equals a real id WILL redirect it at the config layer"
         );
     }
+
+    /// GOLD-ADAPT-RMAS-01 — the sidecar config ships default-OFF and
+    /// round-trips YAML (absent section = defaults; explicit section
+    /// parses every field).
+    #[test]
+    fn recursive_mas_config_default_is_disabled() {
+        let cfg = FreedomConfig::default();
+        assert!(!cfg.recursive_mas.enabled, "RMAS must be opt-in");
+        assert_eq!(cfg.recursive_mas.style, "sequential_light");
+        assert_eq!(cfg.recursive_mas.num_recursive_rounds, 3);
+        assert_eq!(cfg.recursive_mas.min_vram_gib, 12);
+        assert!(cfg.recursive_mas.sidecar_repo.is_none());
+        assert!(cfg.recursive_mas.sidecar_python.is_none());
+    }
+
+    #[test]
+    fn recursive_mas_config_round_trips_yaml() {
+        let yaml = "enabled: true\nstyle: sequential_light\nnum_recursive_rounds: 5\nmin_vram_gib: 24\nsidecar_repo: /opt/rmas\n";
+        let parsed: crate::config::RecursiveMasConfig =
+            serde_yaml::from_str(yaml).expect("explicit section parses");
+        assert!(parsed.enabled);
+        assert_eq!(parsed.num_recursive_rounds, 5);
+        assert_eq!(parsed.min_vram_gib, 24);
+        assert_eq!(
+            parsed.sidecar_repo.as_deref(),
+            Some(std::path::Path::new("/opt/rmas"))
+        );
+        // sidecar_python absent → default None survives partial sections.
+        assert!(parsed.sidecar_python.is_none());
+        let back = serde_yaml::to_string(&parsed).expect("serializes");
+        let re: crate::config::RecursiveMasConfig =
+            serde_yaml::from_str(&back).expect("round-trips");
+        assert_eq!(re, parsed);
+    }
 }
