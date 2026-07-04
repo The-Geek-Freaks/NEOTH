@@ -91,6 +91,15 @@ fn default_enabled() -> bool {
 pub struct McpServers {
     #[serde(default)]
     pub servers: Vec<McpServerConfig>,
+    /// N-04: only inject full tool blocks for servers whose name or tool
+    /// names appear in the current prompt; deferred servers get a one-line
+    /// hint instead. Set `false` to restore the old full-render path.
+    #[serde(default = "default_smart_loading")]
+    pub smart_loading: bool,
+}
+
+fn default_smart_loading() -> bool {
+    true
 }
 
 impl McpServers {
@@ -770,6 +779,7 @@ servers:
     #[test]
     fn get_enabled_filters_disabled() {
         let s = McpServers {
+            smart_loading: true,
             servers: vec![
                 McpServerConfig {
                     id: "a".into(),
@@ -856,6 +866,7 @@ servers:
 
     fn one_enabled_server() -> McpServers {
         McpServers {
+            smart_loading: true,
             servers: vec![McpServerConfig {
                 id: "fs".into(),
                 description: None,
@@ -912,6 +923,7 @@ servers:
     #[test]
     fn autoroute_decision_auto_off_when_only_disabled_servers() {
         let s = McpServers {
+            smart_loading: true,
             servers: vec![McpServerConfig {
                 id: "fs".into(),
                 description: None,

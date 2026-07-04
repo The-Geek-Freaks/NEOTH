@@ -409,8 +409,9 @@ mod tests {
         // 37 for self-improvement (SkillOpt); +2 since (parallel-lane checks);
         // +1 self-heal proposals (HERMES-07b) + 1 wal encryption (CRYPTO-04e) = 41;
         // +1 PTY terminal session check (HERMES-11) = 42;
-        // +1 post-init readiness (GOLD-FEAT-11) = 43.
-        assert_eq!(all_check_docs().count(), 43);
+        // +1 post-init readiness (GOLD-FEAT-11) = 43;
+        // +2 advisable-config hints (groundtruth injection, consolidation sweep) = 45.
+        assert_eq!(all_check_docs().count(), 45);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1160,8 +1161,9 @@ mod tests {
         // okf export, iroh transport, mcp servers, wal audit, self-improvement)
         // + 2 parallel-lane + self-heal proposals (HERMES-07b) + wal encryption
         // (CRYPTO-04e) = 41; + PTY terminal check (HERMES-11) = 42;
-        // + post-init readiness (GOLD-FEAT-11) = 43.
-        assert_eq!(outs.len(), 43);
+        // + post-init readiness (GOLD-FEAT-11) = 43;
+        // + 2 advisable-config hints (groundtruth injection, consolidation sweep) = 45.
+        assert_eq!(outs.len(), 45);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
@@ -1525,5 +1527,98 @@ servers:
         assert_eq!(o.status, CheckStatus::Fail);
         assert!(o.detail.contains("400"));
         assert!(o.detail.contains("rotate"));
+    }
+
+    // ── advisable-config hint checks ─────────────────────────────────────
+
+    #[test]
+    fn advisable_groundtruth_injection_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_groundtruth_injection(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("absent"));
+    }
+
+    #[test]
+    fn advisable_groundtruth_injection_passes_when_flag_is_true() {
+        let dir = tempdir().unwrap();
+        // Explicit true — no hint needed.
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "council:\n  groundtruth_injection: true\n",
+        )
+        .unwrap();
+        let o = check_advisable_groundtruth_injection(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_groundtruth_injection_warns_when_flag_is_false() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "council:\n  groundtruth_injection: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_groundtruth_injection(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("groundtruth_injection"));
+        assert!(o.detail.contains("neoth preset apply balanced"));
+    }
+
+    #[test]
+    fn advisable_groundtruth_injection_passes_when_flag_absent_from_yaml() {
+        // Default is true — omitting the field must NOT fire the hint.
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("freedom.yaml"), "operator_id: demo-user\n").unwrap();
+        let o = check_advisable_groundtruth_injection(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_consolidation_sweep_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_consolidation_sweep(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("absent"));
+    }
+
+    #[test]
+    fn advisable_consolidation_sweep_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "consolidation_sweep:\n  enabled: true\n",
+        )
+        .unwrap();
+        let o = check_advisable_consolidation_sweep(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_consolidation_sweep_warns_when_enabled_is_false() {
+        // Explicit false — must fire the hint.
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "consolidation_sweep:\n  enabled: false\n",
+        )
+        .unwrap();
+        let o = check_advisable_consolidation_sweep(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("consolidation_sweep"));
+        assert!(o.detail.contains("neoth preset apply balanced"));
+    }
+
+    #[test]
+    fn advisable_consolidation_sweep_warns_when_field_absent_from_yaml() {
+        // Default is false — omitting the field triggers the hint.
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("freedom.yaml"), "operator_id: demo-user\n").unwrap();
+        let o = check_advisable_consolidation_sweep(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("consolidation_sweep"));
     }
 }

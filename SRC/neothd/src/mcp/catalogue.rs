@@ -12,6 +12,17 @@
 //! via [`super::gate::invoke_with_audit`]. That ships separately so
 //! Step 1 lands first without an LLM-format dependency.
 //!
+//! ## Smart loading (N-04)
+//!
+//! [`assemble_catalogue_for_prompt`] is the prompt-aware variant: it runs
+//! the same fetch path but then partitions servers into active (full block)
+//! and deferred (one-line hint) via [`super::smart_loader::plan_loader`].
+//! Use it wherever the current user prompt is available. Fall back to
+//! [`assemble_catalogue`] only when no prompt exists (e.g. a pre-prompt
+//! system-bootstrap path). The `servers.smart_loading` config flag gates
+//! the behaviour; `false` makes `assemble_catalogue_for_prompt` behave
+//! identically to `assemble_catalogue`.
+//!
 //! Failure modes (operator-friendly):
 //!   - Server unreachable / handshake timeout → skip + log warning,
 //!     other servers still surface their tools.
@@ -27,13 +38,96 @@ use tracing::{info, warn};
 
 use crate::mcp::client::McpClient;
 use crate::mcp::config::McpServers;
-use crate::mcp::gate::list_tools_sanitized;
+use crate::mcp::gate::{SanitizedTool, list_tools_sanitized};
+use crate::mcp::smart_loader::{LoadPlan, ServerProfile, plan_loader, render_deferred_hint};
 
 /// Per-server spawn timeout. Chat hot-path can't afford to block 30s
 /// waiting for a misconfigured server — 5s is generous for a healthy
 /// MCP server's handshake while still keeping the prompt-build phase
 /// fast on the unhappy path.
 pub const CATALOGUE_SERVER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Prompt-aware catalogue assembly (N-04 smart loader path).
+///
+/// Fetches tools from every enabled server exactly once, then asks
+/// [`plan_loader`] which servers are relevant to `prompt`. Active
+/// servers get their full tool block; deferred servers are replaced by
+/// the compact one-line hint from [`render_deferred_hint`].
+///
+/// When `servers.smart_loading` is `false` this falls back to the old
+/// full-render path (identical to [`assemble_catalogue`]).
+///
+/// Returns `None` when no enabled servers are configured.
+pub async fn assemble_catalogue_for_prompt(
+    servers: &McpServers,
+    prompt: &str,
+) -> Option<String> {
+    if !servers.smart_loading {
+        return assemble_catalogue(servers).await;
+    }
+
+    let enabled = servers.enabled();
+    if enabled.is_empty() {
+        return None;
+    }
+
+    // Fetch tools for every server. One spawn per server, same timeout as
+    // the full-render path. Errors surface as UNAVAILABLE lines (unchanged).
+    let mut fetched: Vec<FetchedServer> = Vec::with_capacity(enabled.len());
+    for cfg in &enabled {
+        match fetch_server_tools(cfg).await {
+            Ok(Some(tools)) => fetched.push(FetchedServer {
+                id: cfg.id.clone(),
+                description: cfg.description.clone(),
+                tools,
+                unavailable: None,
+            }),
+            Ok(None) => {
+                info!(server = %cfg.id, "MCP server returned empty tool catalogue, skipping");
+            }
+            Err(e) => {
+                warn!(
+                    server = %cfg.id,
+                    error = %e,
+                    "MCP server unreachable for catalogue assembly, surfacing as UNAVAILABLE",
+                );
+                fetched.push(FetchedServer {
+                    id: cfg.id.clone(),
+                    description: cfg.description.clone(),
+                    tools: vec![],
+                    unavailable: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    if fetched.is_empty() {
+        return None;
+    }
+
+    // Build ServerProfiles for plan_loader from the fetched tool names.
+    let profiles: Vec<ServerProfile> = fetched
+        .iter()
+        .filter(|f| f.unavailable.is_none())
+        .map(|f| {
+            ServerProfile::new(
+                f.id.clone(),
+                f.tools.iter().map(|t| t.tool.name.clone()),
+            )
+        })
+        .collect();
+
+    let plan = plan_loader(prompt, &profiles);
+
+    // Render: active servers → full block; unavailable → UNAVAILABLE line;
+    // deferred servers → replaced by the combined hint below.
+    let hint = render_deferred_hint(&plan, &profiles);
+    let out = render_catalogue_with_plan(&fetched, &plan, hint.as_deref());
+    if out.trim().is_empty() {
+        return None;
+    }
+    Some(out)
+}
 
 /// Build a system-prompt-ready block describing every enabled MCP
 /// server's tool catalogue. Returns `None` when no enabled servers are
@@ -88,14 +182,118 @@ pub async fn assemble_catalogue(servers: &McpServers) -> Option<String> {
     if blocks.is_empty() {
         return None;
     }
+    Some(join_blocks(&blocks))
+}
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Intermediate result of fetching one server's tools. `unavailable` is
+/// set when the spawn/list step failed; `tools` is empty in that case.
+pub(crate) struct FetchedServer {
+    id: String,
+    description: Option<String>,
+    tools: Vec<SanitizedTool>,
+    unavailable: Option<String>,
+}
+
+/// Fetch and sanitize tools for one server. Returns `Ok(None)` when the
+/// server is reachable but returned an empty tool list after allowlist
+/// filtering.
+async fn fetch_server_tools(
+    cfg: &crate::mcp::config::McpServerConfig,
+) -> Result<Option<Vec<SanitizedTool>>> {
+    let work = async {
+        let mut client = McpClient::spawn_with_timeout(cfg, CATALOGUE_SERVER_TIMEOUT).await?;
+        let tools = list_tools_sanitized(&mut client).await?;
+        Ok::<_, anyhow::Error>(tools)
+    };
+    let tools = match tokio::time::timeout(CATALOGUE_SERVER_TIMEOUT, work).await {
+        Ok(Ok(t)) => t,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => anyhow::bail!("timed out after {:?}", CATALOGUE_SERVER_TIMEOUT),
+    };
+    if tools.is_empty() {
+        return Ok(None);
+    }
+
+    let allow = cfg.allow_tools.as_ref();
+    let filtered: Vec<SanitizedTool> = tools
+        .into_iter()
+        .filter(|t| {
+            allow
+                .map(|list| list.iter().any(|name| name == &t.tool.name))
+                .unwrap_or(true)
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(filtered))
+    }
+}
+
+/// Pure: given already-fetched servers + a load plan, render the final
+/// catalogue string (header + active full blocks + UNAVAILABLE lines +
+/// optional deferred hint). Testable without live MCP servers.
+pub(crate) fn render_catalogue_with_plan(
+    fetched: &[FetchedServer],
+    plan: &LoadPlan,
+    deferred_hint: Option<&str>,
+) -> String {
+    let active_names: std::collections::HashSet<&str> =
+        plan.active_servers().into_iter().collect();
+
+    let mut blocks: Vec<String> = Vec::with_capacity(fetched.len() + 1);
+    for f in fetched {
+        if let Some(reason) = &f.unavailable {
+            // Always surface UNAVAILABLE regardless of plan — the model
+            // needs to know why the tool is missing.
+            blocks.push(format!("## Server `{}` — UNAVAILABLE: {}\n", f.id, reason));
+            continue;
+        }
+        if active_names.contains(f.id.as_str()) {
+            blocks.push(render_full_server_block(&f.id, f.description.as_deref(), &f.tools));
+        }
+        // Deferred servers with tools are summarised in deferred_hint below.
+    }
+
+    if let Some(hint) = deferred_hint {
+        blocks.push(format!("{hint}\n"));
+    }
+
+    if blocks.is_empty() && deferred_hint.is_none() {
+        // Every server was deferred AND returned no tools — nothing useful.
+        return String::new();
+    }
+
+    join_blocks(&blocks)
+}
+
+/// Concatenate rendered blocks under the shared catalogue header.
+fn join_blocks(blocks: &[String]) -> String {
     let mut out = String::with_capacity(512 + blocks.iter().map(|b| b.len()).sum::<usize>());
     out.push_str(CATALOGUE_HEADER);
     out.push('\n');
     for b in blocks {
-        out.push_str(&b);
+        out.push_str(b);
         out.push('\n');
     }
-    Some(out)
+    out
+}
+
+/// Render the full markdown block for one server's tool list.
+fn render_full_server_block(id: &str, description: Option<&str>, tools: &[SanitizedTool]) -> String {
+    let mut block =
+        String::with_capacity(64 + tools.iter().map(|t| t.tool.name.len() + 80).sum::<usize>());
+    block.push_str(&format!("## Server `{id}`\n"));
+    if let Some(desc) = description {
+        block.push_str(&format!("{desc}\n\n"));
+    }
+    for t in tools {
+        block.push_str(&render_tool_entry(t));
+    }
+    block
 }
 
 /// The static preamble explaining how the LLM should invoke a tool.
@@ -164,7 +362,7 @@ async fn build_server_block(cfg: &crate::mcp::config::McpServerConfig) -> Result
     Ok(Some(block))
 }
 
-fn render_tool_entry(t: &crate::mcp::gate::SanitizedTool) -> String {
+fn render_tool_entry(t: &SanitizedTool) -> String {
     let name = &t.tool.name;
     let desc = t
         .tool
@@ -231,6 +429,117 @@ mod tests {
             matched_patterns: vec!["ignore previous instructions".into()],
         }
     }
+
+    fn make_tool(name: &str) -> SanitizedTool {
+        SanitizedTool {
+            tool: McpTool {
+                name: name.into(),
+                description: Some(format!("Does {name}.")),
+                input_schema: serde_json::json!({}),
+                annotations: None,
+            },
+            verdict: clean_verdict(),
+        }
+    }
+
+    fn make_fetched(id: &str, tool_names: &[&str]) -> FetchedServer {
+        FetchedServer {
+            id: id.to_string(),
+            description: None,
+            tools: tool_names.iter().map(|n| make_tool(n)).collect(),
+            unavailable: None,
+        }
+    }
+
+    fn make_unavailable(id: &str, reason: &str) -> FetchedServer {
+        FetchedServer {
+            id: id.to_string(),
+            description: None,
+            tools: vec![],
+            unavailable: Some(reason.to_string()),
+        }
+    }
+
+    // ── render_catalogue_with_plan (pure, no network) ────────────────────────
+
+    #[test]
+    fn active_server_gets_full_block() {
+        let fetched = vec![make_fetched("fs", &["read_file", "list_dir"])];
+        let profiles = vec![ServerProfile::new("fs", ["read_file".to_string(), "list_dir".to_string()])];
+        let plan = plan_loader("read_file something", &profiles);
+        let out = render_catalogue_with_plan(&fetched, &plan, None);
+        assert!(out.contains("## Server `fs`"), "got: {out}");
+        assert!(out.contains("**read_file**"), "got: {out}");
+    }
+
+    #[test]
+    fn deferred_server_omitted_from_full_blocks() {
+        let fetched = vec![make_fetched("github", &["search_repos"])];
+        let profiles = vec![ServerProfile::new("github", ["search_repos".to_string()])];
+        // Prompt mentions nothing github-related → server deferred.
+        let plan = plan_loader("tell me a joke", &profiles);
+        let hint = render_deferred_hint(&plan, &profiles);
+        let out = render_catalogue_with_plan(&fetched, &plan, hint.as_deref());
+        assert!(!out.contains("## Server `github`"), "deferred server appeared in full blocks: {out}");
+        // Hint must be present so the model knows it can ask.
+        assert!(out.contains("github"), "deferred hint absent: {out}");
+    }
+
+    #[test]
+    fn unavailable_server_always_surfaces() {
+        let fetched = vec![make_unavailable("broken", "timed out")];
+        let profiles: Vec<ServerProfile> = vec![];
+        let plan = plan_loader("anything", &profiles);
+        let out = render_catalogue_with_plan(&fetched, &plan, None);
+        assert!(out.contains("UNAVAILABLE"), "got: {out}");
+        assert!(out.contains("timed out"), "got: {out}");
+    }
+
+    #[test]
+    fn mixed_active_deferred_unavailable() {
+        let fetched = vec![
+            make_fetched("fs", &["read_file"]),
+            make_fetched("gh", &["search_repos"]),
+            make_unavailable("slack", "connection refused"),
+        ];
+        let profiles = vec![
+            ServerProfile::new("fs", ["read_file".to_string()]),
+            ServerProfile::new("gh", ["search_repos".to_string()]),
+        ];
+        // Prompt triggers fs (explicit server name) but not gh.
+        let plan = plan_loader("/fs list my files", &profiles);
+        let hint = render_deferred_hint(&plan, &profiles);
+        let out = render_catalogue_with_plan(&fetched, &plan, hint.as_deref());
+        // Active: full block.
+        assert!(out.contains("## Server `fs`"), "fs block missing: {out}");
+        // Deferred: no full block, but hint.
+        assert!(!out.contains("## Server `gh`"), "gh should be deferred: {out}");
+        assert!(out.contains("gh"), "deferred hint absent: {out}");
+        // Unavailable: UNAVAILABLE line.
+        assert!(out.contains("UNAVAILABLE"), "got: {out}");
+    }
+
+    #[test]
+    fn all_deferred_with_tools_returns_header_plus_hint() {
+        let fetched = vec![make_fetched("github", &["search_repos"])];
+        let profiles = vec![ServerProfile::new("github", ["search_repos".to_string()])];
+        let plan = plan_loader("unrelated prompt", &profiles);
+        let hint = render_deferred_hint(&plan, &profiles);
+        assert!(hint.is_some(), "expected a hint when servers are deferred");
+        let out = render_catalogue_with_plan(&fetched, &plan, hint.as_deref());
+        assert!(out.contains(CATALOGUE_HEADER), "header missing: {out}");
+        assert!(out.contains("github"), "hint absent: {out}");
+    }
+
+    // ── profile building from tool names ─────────────────────────────────────
+
+    #[test]
+    fn server_profile_lowercases_tool_names() {
+        let p = ServerProfile::new("Test", ["Read_File".to_string(), "LIST_DIR".to_string()]);
+        assert!(p.tool_names.iter().all(|n| n == n.to_lowercase().as_str()));
+    }
+
+    // ── existing unit tests (unchanged) ──────────────────────────────────────
 
     #[test]
     fn render_input_schema_compacts_object_with_required_marker() {
@@ -323,6 +632,12 @@ mod tests {
     async fn assemble_catalogue_returns_none_when_no_servers_enabled() {
         let empty = McpServers::default();
         assert!(assemble_catalogue(&empty).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn assemble_catalogue_for_prompt_returns_none_when_no_servers_enabled() {
+        let empty = McpServers::default();
+        assert!(assemble_catalogue_for_prompt(&empty, "read my files").await.is_none());
     }
 
     #[test]

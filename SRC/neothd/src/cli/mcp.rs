@@ -272,6 +272,7 @@ mod tests {
     #[test]
     fn run_list_renders_with_entries() {
         let s = McpServers {
+            smart_loading: true,
             servers: vec![McpServerConfig {
                 id: "filesystem".into(),
                 description: Some("local fs server".into()),
@@ -304,6 +305,7 @@ mod tests {
     #[tokio::test]
     async fn run_call_errors_on_bad_args_json() {
         let s = McpServers {
+            smart_loading: true,
             servers: vec![McpServerConfig {
                 id: "test".into(),
                 description: None,

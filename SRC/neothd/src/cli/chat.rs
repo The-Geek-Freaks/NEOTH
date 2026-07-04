@@ -759,7 +759,7 @@ async fn build_prompt_bundle(
     let mcp_catalogue: Option<String> = if mcp_servers.enabled().is_empty() {
         None
     } else {
-        match crate::mcp::catalogue::assemble_catalogue(&mcp_servers).await {
+        match crate::mcp::catalogue::assemble_catalogue_for_prompt(&mcp_servers, &prompt).await {
             Some(cat) => {
                 info!(
                     enabled = mcp_servers.enabled().len(),

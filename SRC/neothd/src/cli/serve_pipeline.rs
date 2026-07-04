@@ -1518,7 +1518,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             {
                 None
             } else {
-                crate::mcp::catalogue::assemble_catalogue(&channel_mcp_servers).await
+                crate::mcp::catalogue::assemble_catalogue_for_prompt(
+                    &channel_mcp_servers,
+                    &sanitized_text,
+                )
+                .await
             };
 
             let channel_tweaks_path = crate::tweaks::Tweaks::default_path();

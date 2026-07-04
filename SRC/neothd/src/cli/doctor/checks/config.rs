@@ -234,6 +234,104 @@ pub(crate) fn check_tweaks_toml(home: &Path) -> CheckOutcome {
     }
 }
 
+/// Advisory hint: `council.groundtruth_injection` is off.
+///
+/// When enabled, the daemon reads verified facts from `idx_groundtruth`
+/// (rows with `fact_state = 'verified'`) and prepends them as a tagged
+/// context block before each council debate — improving factual accuracy
+/// without adding provider round-trips. The default is `true`; this check
+/// fires only when the operator has explicitly set it to `false` in
+/// `freedom.yaml`, which is easy to miss and rarely intentional.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_groundtruth_injection(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        // freedom.yaml missing is already a Fail in check_freedom_yaml; skip here.
+        return CheckOutcome {
+            name: "advisable: groundtruth injection",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => {
+            // Parse errors are already surfaced by check_freedom_yaml.
+            CheckOutcome {
+                name: "advisable: groundtruth injection",
+                status: CheckStatus::Pass,
+                detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+            }
+        }
+        Ok(cfg) => {
+            if cfg.council.groundtruth_injection {
+                CheckOutcome {
+                    name: "advisable: groundtruth injection",
+                    status: CheckStatus::Pass,
+                    detail: "council.groundtruth_injection = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: groundtruth injection",
+                    status: CheckStatus::Warn,
+                    detail: "council.groundtruth_injection is false — enabling injects \
+                             verified facts into council debates, improving factual accuracy. \
+                             Set `council.groundtruth_injection: true` in freedom.yaml, \
+                             or apply a built-in preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
+/// Advisory hint: `consolidation_sweep.enabled` is off.
+///
+/// When enabled, the daemon runs a background cron that consolidates fragmented
+/// memory entries — merging near-duplicates, promoting high-recall candidates,
+/// and expiring stale facts — so that recall quality improves over time without
+/// any user action. Defaults to `false` (opt-in); operators frequently miss this
+/// toggle during initial setup.
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_consolidation_sweep(home: &Path) -> CheckOutcome {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return CheckOutcome {
+            name: "advisable: consolidation sweep",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check".into(),
+        };
+    }
+    match crate::config::FreedomConfig::load_from_path(&path) {
+        Err(_) => CheckOutcome {
+            name: "advisable: consolidation sweep",
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
+        },
+        Ok(cfg) => {
+            if cfg.consolidation_sweep.enabled {
+                CheckOutcome {
+                    name: "advisable: consolidation sweep",
+                    status: CheckStatus::Pass,
+                    detail: "consolidation_sweep.enabled = true".into(),
+                }
+            } else {
+                CheckOutcome {
+                    name: "advisable: consolidation sweep",
+                    status: CheckStatus::Warn,
+                    detail: "consolidation_sweep.enabled is false — background memory \
+                             consolidation is off; recall quality degrades over long \
+                             sessions as near-duplicate facts accumulate. \
+                             Set `consolidation_sweep.enabled: true` in freedom.yaml, \
+                             or apply a built-in preset: `neoth preset apply balanced`."
+                        .into(),
+                }
+            }
+        }
+    }
+}
+
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
 pub(crate) const CHECKS: &[CheckFn] = &[
@@ -243,6 +341,8 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_policy_yaml,
     check_tweaks_toml,
     check_profile_extensions,
+    check_advisable_groundtruth_injection,
+    check_advisable_consolidation_sweep,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -322,5 +422,39 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                          TOML syntax error.",
         fix: "Missing → use defaults. Syntax error → diff against \
               `assets/profile_extensions.toml.example`.",
+    },
+    CheckDoc {
+        name: "advisable: groundtruth injection",
+        purpose: "Advisory hint that fires when `council.groundtruth_injection` \
+                  is explicitly set to `false` in `freedom.yaml`. When enabled, \
+                  the daemon reads verified facts from `idx_groundtruth` \
+                  (rows with `fact_state = 'verified'`) and prepends them as \
+                  a tagged context block before council debates, improving \
+                  factual accuracy without additional provider round-trips. \
+                  The check is informational only — daemon starts either way.",
+        common_failures: "Operator disabled the flag during debugging and \
+                         forgot to re-enable it; old freedom.yaml from before \
+                         GOLD-G02-COUNCIL-01 that pre-dates the field (serde \
+                         default = true, so absence is fine — explicit false \
+                         is the only trigger).",
+        fix: "Set `council.groundtruth_injection: true` in \
+              `~/.neoth/freedom.yaml`, or run \
+              `neoth preset apply balanced` to restore recommended defaults.",
+    },
+    CheckDoc {
+        name: "advisable: consolidation sweep",
+        purpose: "Advisory hint that fires when `consolidation_sweep.enabled` \
+                  is `false` (the default). When enabled, the daemon runs a \
+                  background cron that merges near-duplicate memory entries, \
+                  promotes high-recall candidates, and expires stale facts. \
+                  Recall quality improves over long sessions without any user \
+                  action. The check is informational only — daemon starts \
+                  either way.",
+        common_failures: "Fresh install — the field defaults to `false` and \
+                         the wizard does not flip it unless the operator \
+                         chooses a preset that includes memory consolidation.",
+        fix: "Set `consolidation_sweep.enabled: true` in \
+              `~/.neoth/freedom.yaml`, or run \
+              `neoth preset apply balanced` to restore recommended defaults.",
     },
 ];

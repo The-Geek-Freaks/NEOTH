@@ -26,7 +26,8 @@
 //!    upstream and hands the assembled string here.
 //! 6. **mcp_catalogue** — rendered MCP tool catalogue when at least
 //!    one MCP server is enabled. Caller pre-assembles the block via
-//!    `mcp::catalogue::assemble_catalogue` (async).
+//!    `mcp::catalogue::assemble_catalogue_for_prompt` (async) when the
+//!    prompt is available, or `mcp::catalogue::assemble_catalogue` otherwise.
 //! 7. **persona_override** — `tweaks.toml::persona_override` rendered
 //!    as a `"Tone + persona: <text>"` PREFIX so the tone instruction
 //!    is the first line the model reads after the layered context.
@@ -84,7 +85,7 @@ pub struct EnrichmentInputs<'a> {
     /// Identifier of the activated skill, plumbed through to the
     /// downstream WAL audit. `None` mirrors `skill_system_prompt`.
     pub used_skill_id: Option<&'a str>,
-    /// Pre-assembled MCP tool catalogue (`mcp::catalogue::assemble_catalogue`).
+    /// Pre-assembled MCP tool catalogue (`mcp::catalogue::assemble_catalogue_for_prompt`).
     /// `None` when no MCP servers are enabled or the catalogue was
     /// empty.
     pub mcp_catalogue: Option<&'a str>,

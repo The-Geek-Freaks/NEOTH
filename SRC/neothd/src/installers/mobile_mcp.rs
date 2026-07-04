@@ -202,6 +202,7 @@ mod tests {
 
         // Pre-populate with a different server.
         let pre_existing = crate::mcp::config::McpServers {
+            smart_loading: true,
             servers: vec![crate::mcp::config::McpServerConfig {
                 id: "other-server".into(),
                 description: None,
