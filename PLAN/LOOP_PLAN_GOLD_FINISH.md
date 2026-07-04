@@ -322,7 +322,44 @@ session4_final: >
   ULTRA still OPEN (real, tracked): webhook durable inbound spool,
   gossip-WAL ingest (=G02-CLUSTER-02), smart-loader plan_loader unwire,
   doctor advisable-config hints, GUI-parity long-tail.
-next_b12: >
+session4_part2: >
+  CONTINUED under /goal hook (neoth fertig bauen). Additional commits:
+  cb27cdf4 (B12 slice-3), e88e65c0 (G02-CLUSTER-02 persist-then-dedup:
+  accept_inbound now CHECK-ONLY + commit_inbound after awaited DB
+  confirm; iroh path commits immediately — no persistence there;
+  cluster:: 344 green), 367e68c9 (RMAS-01+02: RecursiveMasConfig +
+  recursive-mas feature + recursive_mas_available VRAM/sidecar gate,
+  spec-corrected to Option<&VramReading>; 7 tests). FEAT-05/06
+  annotated v1.1-per-WS-F (NOT v1.0 blockers; WAL-byte specs stale —
+  0xDB/0xDC taken, byte space exhausted).
+  REMAINING BUILDABLE at 367e68c9: RMAS-03 (L — live sidecar adapter +
+  council wiring; research in wf_4c409a18 result: hysteria supervisor
+  is the subprocess pattern, injection point dispatch_council_with_
+  recovery cli/chat.rs:6224 NOT run_council_debate, ProviderKind
+  variant + InferenceProvider variant + is_local_provider), FEAT-03b
+  (M, v1.0-BLOCKER — wiki_build_task cron + SelfWikiConfig +
+  include_str corpus embed; NO WAL byte free -> tracing-audit or
+  payload-ride, spec's 0x4E/0x4F taken by RSS), OH-01 rest (M, v1.0
+  CRITICAL — source detector + importer apply; readers exist via
+  JV-IMP-01, step1d branch shipped), ODY-12/14 (GUI pair, panel_logic
+  + UiControl sentinel + deep-link router). Then B17 gates (11 boxes).
+b12_final: >
+  B12 COMPLETE (cb27cdf4): JV-MISC-01..15 roll-up CLOSED 15/15 — shipped
+  news_aggregator + advanced_skill_creator (bundled + routing tests,
+  alpha-sort invariant caught misplacement), SKIP-verdicts omniparser
+  (PC-01-blocked; MCP-only architecture) + home-assistant (official HA
+  MCP server exists; DO_NOT_ADOPT rows are LOCAL — QUELLEN gitignored).
+  G02-TOOLS-01 closed ALREADY-WIRED (neoth fetch --selector ->
+  web_selector_cache -> web_extract). DRAW-02 duplicate line closed.
+  ARCHITECTURE FACT (verified, load-bearing for future items): NEOTH
+  model-tools are MCP-ONLY — no builtin Rust tool dispatch table;
+  mcp/dispatch_loop.rs:568 dispatch_one -> external MCP servers from
+  mcp_servers.yaml. Any "give the model a native tool" item must ship
+  as MCP server or CLI command.
+  REMAINING BUILDABLE (10): RMAS-01/02/03 (B13), FEAT-03b/05/06 +
+  OH-01 + ODY-12/14 (B14), G02-CLUSTER-02. Operator-blocked: HR-00,
+  PROG-13, PROG-15 (park list §9). B17 = 11 rollup gates last.
+next_b12_superseded: >
   B12 skills rest (research DONE, in wf_9d29bc0b result file): remaining
   of JV-MISC-01..15 = news-aggregator (pure-prompt, rss_feed_task lives,
   LLM-summary layer IS the skill), advanced-skill-creator delta (bundled
