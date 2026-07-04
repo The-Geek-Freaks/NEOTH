@@ -323,6 +323,28 @@ session4_final: >
   ULTRA still OPEN (real, tracked): webhook durable inbound spool,
   gossip-WAL ingest (=G02-CLUSTER-02), smart-loader plan_loader unwire,
   doctor advisable-config hints, GUI-parity long-tail.
+session4_part7: >
+  7c8051d6 = OH-01 COMPLETE + WS-I GATE FLIPPED. The parked §9
+  apply-scope decision DISSOLVED on a second verify-first pass: the
+  full apply pipeline existed all along behind the --confirm consent
+  gate (main.rs:211+) — the "post-v1.0 / not implemented" module-doc
+  was stale prose. Shipped the real gaps: neoth-migrate detect
+  (canonical-source scanner -> generated manifest, src/detect.rs,
+  4 tests) + doc corrections + GUI welcome-card mirror (worker thread
+  spawns detect --json; which_neoth_migrate locator;
+  format_migrate_summary; card hidden when nothing found).
+  neoth-migrate 100/100, neothd-gui 142/142.
+  ⚠ LESSON (2nd occurrence today): stale DOC prose caused a phantom
+  blocker — ALWAYS read behind a bail/guard before believing
+  "not implemented" claims.
+  FINAL STATE: gates 10/11 [x] (only signed-artifacts, waits on
+  PROG-13 keypair). Tracker open boxes: 5 — FEAT-05/06 (v1.1 by plan,
+  full build plans in REVIEWS/_gold_audit/research/, WAL-byte specs
+  annotated stale), PROG-13 + PROG-15 + HR-00 (physical operator
+  actions/decisions, §9). ZERO agent-buildable v1.0 items remain.
+  TAG PATH: wave #s4-2 clean + #s4-3 clean -> Alex: PROG-13 keypair
+  (+ PROG-15/HR-00 optional, not gate-blocking) -> signed artifacts
+  -> v1.0-gold tag. FEAT-05/06 ship AFTER the tag per plan WS-F.
 session4_part6: >
   9bedcaa2 = ERROR-HUNT WAVE #s4-1 (4 lenses over e302373a..94bd7dcf)
   RAN + all confirmed findings FIXED same-push: RMAS timeout-kills-child
