@@ -136,6 +136,31 @@ async fn run_apply(
     )
     .context("preset apply refused: required audit cannot be written")?;
 
+    // ZF-01 (review wave 2026-07-04) — the full-auto ceremony runs BEFORE
+    // commit: an aborted ceremony must leave NOTHING applied (previously
+    // the feature flags were already committed + the reload sentinel
+    // fired when the operator answered `n`). The ceremony writes
+    // autonomy + skills.enable_all_bundled itself, so the plan is
+    // recomputed on the post-ceremony freedom.yaml — otherwise the
+    // commit would clobber the ceremony's writes with the stale body.
+    let body = if report.autonomy_requested.as_deref() == Some("full") {
+        crate::cli::autonomy::run_autonomy(
+            crate::cli::autonomy::AutonomyArgs {
+                action: crate::cli::autonomy::AutonomyAction::FullAuto {
+                    gui_confirmed,
+                    gui_token,
+                },
+            },
+            crate::cli::OutputFormat::Table,
+        )
+        .await
+        .context("FULL-AUTO was not enabled — preset NOT applied")?;
+        let (_report2, body2) = presets::plan_apply(home, &preset)?;
+        body2
+    } else {
+        body
+    };
+
     presets::commit_planned(home, &body)?;
 
     // P1 — durable record: WHICH preset, WHICH field NAMES changed (never the
@@ -183,23 +208,6 @@ async fn run_apply(
         );
     }
 
-    // ZF-01 — `autonomy: full` was NOT written by apply: route through the
-    // full-auto consent ceremony (TTY y/N, or GUI token pass-through). The
-    // ceremony also enables the full bundled skill library + emits the
-    // 0xDD sudomode audit anchor.
-    if report.autonomy_requested.as_deref() == Some("full") {
-        crate::cli::autonomy::run_autonomy(
-            crate::cli::autonomy::AutonomyArgs {
-                action: crate::cli::autonomy::AutonomyAction::FullAuto {
-                    gui_confirmed,
-                    gui_token,
-                },
-            },
-            crate::cli::OutputFormat::Table,
-        )
-        .await
-        .context("preset applied, but FULL-AUTO was not enabled")?;
-    }
     Ok(())
 }
 

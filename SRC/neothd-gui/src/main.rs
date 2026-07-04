@@ -1135,6 +1135,18 @@ fn main() -> Result<()> {
                         let preset_name = plan.name;
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = weak.upgrade() {
+                                // Guard: a consent panel is already pending →
+                                // drop this dry-run result instead of swapping
+                                // the modal's target under the operator's
+                                // cursor (double-Apply race, review wave
+                                // 2026-07-04). The check-then-set is atomic
+                                // here — we are ON the event loop.
+                                if w.get_consent_visible() {
+                                    w.set_status_line(
+                                        "Finish the open preset confirmation first.".into(),
+                                    );
+                                    return;
+                                }
                                 w.set_consent_preset_name(preset_name.into());
                                 w.set_consent_warn_text(warn_text.into());
                                 w.set_consent_needs_fullauto(needs_fa);
@@ -1204,18 +1216,23 @@ fn main() -> Result<()> {
     });
 
     // SPEC-05 builtin-presets — operator clicked Delete on an operator preset.
+    // Subprocess work in a worker thread — this callback runs ON the event
+    // loop; blocking here freezes the whole UI (review wave 2026-07-04).
     let weak_preset_delete = window.as_weak();
     window.on_preset_delete_clicked(move |name| {
-        let status = delete_preset_via_subprocess(&name);
-        let presets = fetch_presets();
-        let summary = probe_preset_summary_via_subprocess();
         let weak = weak_preset_delete.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_status_line(status.into());
-                w.set_preset_summary(summary.into());
-                apply_presets(&w, presets);
-            }
+        let name_s = name.to_string();
+        std::thread::spawn(move || {
+            let status = delete_preset_via_subprocess(&name_s);
+            let presets = fetch_presets();
+            let summary = probe_preset_summary_via_subprocess();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(status.into());
+                    w.set_preset_summary(summary.into());
+                    apply_presets(&w, presets);
+                }
+            });
         });
     });
 
@@ -2064,10 +2081,6 @@ fn main() -> Result<()> {
     // All other levels use the normal `autonomy set <level>` path unchanged.
     let weak_autonomy_set = window.as_weak();
     window.on_autonomy_set(move |level| {
-        if let Some(w) = weak_autonomy_set.upgrade() {
-            // Autonomy is a trust decision → the orb shows the secured state.
-            buddy(&w, GuiActivity::Secured);
-        }
         let weak = weak_autonomy_set.clone();
         let level = level.to_string();
         std::thread::spawn(move || {
@@ -2093,9 +2106,12 @@ fn main() -> Result<()> {
                     let token = if let Ok(v) =
                         serde_json::from_str::<serde_json::Value>(&raw)
                     {
+                        // JSON but token missing/not-a-string → empty, so the
+                        // is_empty guard below rejects it (never pass the raw
+                        // JSON blob as a token).
                         v.get("token")
                             .and_then(|t| t.as_str())
-                            .unwrap_or(&raw)
+                            .unwrap_or("")
                             .to_string()
                     } else {
                         raw
@@ -2124,6 +2140,10 @@ fn main() -> Result<()> {
                     if let Some(w) = weak.upgrade() {
                         match result {
                             Ok(()) => {
+                                // Orb flips to secured only on a CONFIRMED
+                                // change (review wave 2026-07-04: no visual
+                                // drift when the ceremony fails).
+                                buddy(&w, GuiActivity::Secured);
                                 w.set_autonomy_choice("full".into());
                                 w.set_status_line(
                                     "Autonomy set to full (sudomode) via GUI token.".into(),
@@ -2159,6 +2179,7 @@ fn main() -> Result<()> {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     if ok {
+                        buddy(&w, GuiActivity::Secured);
                         w.set_autonomy_choice(level.clone().into());
                         w.set_status_line(format!("Autonomy set to {level}.").into());
                     } else {
@@ -4157,9 +4178,11 @@ fn apply_preset_with_fullauto_token(name: &str) -> String {
             // Output may be `{"token":"…"}` or bare token — extract either way.
             let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                // JSON but token missing/not-a-string → empty (caught by the
+                // is_empty filter) — never pass a raw JSON blob as a token.
                 v.get("token")
                     .and_then(|t| t.as_str())
-                    .unwrap_or(&raw)
+                    .unwrap_or("")
                     .to_string()
             } else {
                 raw

@@ -553,7 +553,12 @@ pub(crate) fn step_zero_friction(
             "local-sovereign" => AutonomyLevel::Elevated,
             _ => AutonomyLevel::Standard,
         };
-        state.inference.mode = TopologyMode::Single;
+        // Only full-auto forces single-provider (the original zero-friction
+        // contract); the other presets have no topology opinion and must
+        // not silently override an explicit per-step Triplet pick.
+        if name == "full-auto" {
+            state.inference.mode = TopologyMode::Single;
+        }
         info!(preset = name, "ZF-01 operating-style preset selected");
         if interactive {
             let desc = crate::config::preset_builtins::builtin_by_name(name)

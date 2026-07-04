@@ -667,15 +667,9 @@ export component SettingsView inherits Rectangle {
     in property <bool> memory-search-running: false;
     callback memory-search-clicked(string);
 
-    // GAP-05 — Status probe. Rust shells `neoth status` and renders output.
-    in property <string> status-probe-output: "";
-    in property <bool> status-probe-running: false;
-    callback status-probe-clicked;
-
-    // GAP-13 — Security audit probe. Rust shells `neoth security audit`.
-    in property <string> security-audit-output: "";
-    in property <bool> security-audit-running: false;
-    callback security-audit-clicked;
+    // GAP-05/GAP-13 — Status + Security-audit probes live in the Doctor
+    // nav panel (tabs.slint DoctorView), wired via MainWindow — no
+    // SettingsView surface.
 
     // GAP-07 — Backup / rollback preview. Rust shells `neoth backup` or
     // `neoth rollback list` (read-only) and appends result to status-line.

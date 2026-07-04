@@ -220,7 +220,12 @@ pub fn remove(home: &Path, name: &str) -> Result<bool> {
 /// stealth no-op.
 pub fn set_active(home: &Path, name: &str) -> Result<()> {
     let mut file = load(home)?;
-    if !file.presets.contains_key(name) {
+    // ZF-01 — built-ins are activatable too (they show up in `preset
+    // list`); consumers of the active pointer resolve via [`resolve`],
+    // which falls back to the compiled-in set.
+    if !file.presets.contains_key(name)
+        && super::preset_builtins::builtin_by_name(name).is_none()
+    {
         anyhow::bail!("preset `{}` not found", name);
     }
     file.active = Some(name.to_string());
@@ -341,6 +346,14 @@ fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String
         _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
     };
     let mut report = ApplyReport::default();
+    // ZF-01 — snapshot warn-path values BEFORE any mutation (typed fields
+    // AND overrides) so the consent diff shows the operator's true
+    // old→new. Review wave 2026-07-04: snapshotting after the typed
+    // daily_usd_cap write made cap changes invisible in the diff.
+    let warn_before: Vec<Option<serde_yaml::Value>> = PRESET_WARN_PATHS
+        .iter()
+        .map(|p| lookup_dotted(mapping, p))
+        .collect();
     if let Some(cap) = preset.daily_usd_cap {
         ensure_council_block(mapping);
         set_nested(mapping, "council", "daily_usd_cap", &mut report, |m, k| {
@@ -436,16 +449,9 @@ fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String
             serde_yaml::Value::Mapping(inference_mapping),
         );
     }
-    // ZF-01 — snapshot warn-path values BEFORE the override merge so the
-    // consent diff can show old→new.
-    let before: Vec<Option<serde_yaml::Value>> = PRESET_WARN_PATHS
-        .iter()
-        .map(|p| lookup_dotted(mapping, p))
-        .collect();
-
     merge_overrides(mapping, &preset.overrides, &mut report)?;
 
-    for (path, old) in PRESET_WARN_PATHS.iter().zip(before) {
+    for (path, old) in PRESET_WARN_PATHS.iter().zip(warn_before) {
         let new = lookup_dotted(mapping, path);
         if new != old && preset_touches(preset, path) {
             report.warn_changes.push((
