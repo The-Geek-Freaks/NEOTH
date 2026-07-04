@@ -39,10 +39,18 @@ pub const CONSENT_MARKER: &str = "rmas_consent_acknowledged";
 
 pub struct RecursiveMasAdapter {
     child: Arc<Mutex<std::process::Child>>,
-    stdin: Arc<Mutex<std::process::ChildStdin>>,
-    stdout: Arc<Mutex<BufReader<std::process::ChildStdout>>>,
+    // ONE mutex over the whole request→response turn: with separate
+    // stdin/stdout locks, concurrent complete() calls could interleave
+    // (A writes, B writes, B reads A's reply). The stdio protocol has no
+    // request IDs, so the turn itself must be the critical section.
+    io: Arc<Mutex<SidecarIo>>,
     style: String,
     rounds: u8,
+}
+
+struct SidecarIo {
+    stdin: std::process::ChildStdin,
+    stdout: BufReader<std::process::ChildStdout>,
 }
 
 impl RecursiveMasAdapter {
@@ -114,8 +122,10 @@ impl RecursiveMasAdapter {
         );
         Ok(Self {
             child: Arc::new(Mutex::new(child)),
-            stdin: Arc::new(Mutex::new(stdin)),
-            stdout: Arc::new(Mutex::new(BufReader::new(stdout))),
+            io: Arc::new(Mutex::new(SidecarIo {
+                stdin,
+                stdout: BufReader::new(stdout),
+            })),
             style: cfg.style.clone(),
             rounds: cfg.num_recursive_rounds,
         })
@@ -159,19 +169,18 @@ impl Provider for RecursiveMasAdapter {
         let started = Instant::now();
         let line = encode_request(&req, &self.style, self.rounds);
 
-        let stdin = Arc::clone(&self.stdin);
-        let stdout = Arc::clone(&self.stdout);
-        // Blocking pipe I/O off the reactor; locks live entirely inside
-        // the blocking closure (never across an .await).
+        let io_arc = Arc::clone(&self.io);
+        // Blocking pipe I/O off the reactor; the lock lives entirely inside
+        // the blocking closure (never across an .await) and spans the FULL
+        // write→read turn so concurrent callers can't swap replies.
         let io = tokio::task::spawn_blocking(move || -> Result<String> {
-            {
-                let mut w = stdin.lock().unwrap_or_else(PoisonError::into_inner);
-                w.write_all(line.as_bytes()).context("write to sidecar stdin")?;
-                w.flush().context("flush sidecar stdin")?;
-            }
+            let mut io = io_arc.lock().unwrap_or_else(PoisonError::into_inner);
+            io.stdin
+                .write_all(line.as_bytes())
+                .context("write to sidecar stdin")?;
+            io.stdin.flush().context("flush sidecar stdin")?;
             let mut buf = String::new();
-            let mut r = stdout.lock().unwrap_or_else(PoisonError::into_inner);
-            let n = r.read_line(&mut buf).context("read sidecar stdout")?;
+            let n = io.stdout.read_line(&mut buf).context("read sidecar stdout")?;
             if n == 0 {
                 anyhow::bail!("sidecar closed stdout (process died?)");
             }
@@ -181,7 +190,7 @@ impl Provider for RecursiveMasAdapter {
             Ok(joined) => joined.context("sidecar I/O task panicked")??,
             Err(_elapsed) => {
                 // Error-hunt wave s4: the blocking thread is still stuck
-                // in read_line HOLDING the stdout lock — spawn_blocking
+                // in read_line HOLDING the io lock — spawn_blocking
                 // threads can't be aborted. Kill the child so read_line
                 // unblocks (EOF) and the lock frees; otherwise every
                 // later complete() queues on the lock forever and the
