@@ -36,6 +36,7 @@ pub mod code;
 pub mod code_intel;
 pub mod code_map;
 pub mod deps;
+pub mod dictate;
 pub mod distill;
 pub mod trace_replay;
 pub mod demo;
@@ -781,6 +782,12 @@ pub enum Commands {
     /// a file via ElevenLabs (cloud) or piper-rs (Phase 2 local).
     Tts(tts::TtsArgs),
 
+    /// Transcribe an audio file via the local STT pipeline (GOLD-ADOPT-25:
+    /// faster-whisper → candle Whisper, optional VAD pre-filter). Requires
+    /// `media.dictation_enabled: true` in freedom.yaml. Microphone capture
+    /// is a follow-up; this is the file-based dictation surface.
+    Dictate(dictate::DictateArgs),
+
     /// Run operator health checks (freedom/credentials/db/wal/hmac/quota/...).
     /// Exit code non-zero on any FAIL. CI-friendly: `neoth doctor --quiet`.
     Doctor(doctor::DoctorArgs),
@@ -1429,6 +1436,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Tts(mut args) => {
             args.output = global_output;
             tts::run_tts(args).await?;
+        }
+        Commands::Dictate(mut args) => {
+            args.output = global_output;
+            dictate::run_dictate(args).await?;
         }
         Commands::Doctor(mut args) => {
             args.output = global_output;

@@ -100,9 +100,10 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
 /// Priority order:
 ///   1. **faster-whisper** (JV-VOICE-02/03): probe for `faster-whisper` on
 ///      PATH; if present, write samples to a tmp WAV, invoke the CLI with
-///      `--model tiny --compute_type int8`, and parse JSONL output. This path
-///      fires WITHOUT the model-cache check — faster-whisper downloads its
-///      own models on first use (into `~/.cache/huggingface/`).
+///      `--model tiny --compute_type int8`, and parse JSONL output. Gated on
+///      `updater.allow_huggingface_downloads` — faster-whisper downloads its
+///      own models on first use (into `~/.cache/huggingface/`), so the
+///      air-gap policy applies to this path too.
 ///   2. **candle WhisperEngine** (existing path): fires when
 ///      `faster-whisper` is absent. If the model is not yet cached, triggers
 ///      an auto-download gated by `updater.allow_huggingface_downloads`
@@ -119,13 +120,42 @@ pub(crate) fn transcribe_pcm_samples(samples: &[f32]) -> (String, &'static str) 
     transcribe_if_cached(samples)
 }
 
+/// GOLD-ADOPT-25 — decode an audio file to 16 kHz mono f32 for the
+/// `neoth dictate` CLI. Thin seam over the private symphonia decoder so
+/// the dictation path reuses the ingest decode (incl. the 512 MiB cap
+/// and WAV/MP3/FLAC/Ogg/M4A support). Blocking — call from
+/// `spawn_blocking`.
+pub(crate) fn decode_file_to_pcm(path: &Path) -> anyhow::Result<Vec<f32>> {
+    decode_from_path(path)
+        .map(|d| d.samples)
+        .map_err(|e| anyhow::anyhow!("decode {}: {e}", path.display()))
+}
+
 fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
     // ── Path 1: faster-whisper subprocess (JV-VOICE-02/03) ─────────────────
+    // Gated on the same `updater.allow_huggingface_downloads` policy as the
+    // candle path: faster-whisper downloads its own models into
+    // ~/.cache/huggingface/ on first use, so an air-gapped operator who
+    // disabled HF downloads must not have this path reach out either.
+    // (We can't know whether ITS cache is warm, so the gate is on the path.)
     if let Some(exe) = crate::media::stt_provider::faster_whisper_exe() {
-        if let Some((text, status)) = transcribe_via_faster_whisper(&exe, samples) {
-            return (text, status);
+        // unwrap_or_default (NOT unwrap_or(true)): on config-load failure
+        // the gate must track the canonical field default, matching the
+        // candle path below — never independently hardcode permissive.
+        let allow_hf = crate::config::FreedomConfig::load_from_default_path()
+            .unwrap_or_default()
+            .updater
+            .allow_huggingface_downloads;
+        if allow_hf {
+            if let Some((text, status)) = transcribe_via_faster_whisper(&exe, samples) {
+                return (text, status);
+            }
+            // faster-whisper present but failed — fall through to candle path.
+        } else {
+            tracing::info!(
+                "faster-whisper skipped: updater.allow_huggingface_downloads=false — using candle path"
+            );
         }
-        // faster-whisper present but failed — fall through to candle path.
     }
 
     // ── Path 2: candle WhisperEngine (HANDY-05: shared global instance) ────

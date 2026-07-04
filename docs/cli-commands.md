@@ -668,6 +668,12 @@ GOLD-ADAPT-SNYK-03 — scan a `package.json` for dependency-health issues (OSV a
 
 OH-04 — detect host RAM / CPU / GPU and recommend a local-AI deployment tier (cloud-first / hybrid / local-capable).  No LLM call; purely hardware-derived.  Used internally by `onboarding-status`
 
+## `neoth dictate`
+
+Transcribe an audio file via the local STT pipeline (GOLD-ADOPT-25: faster-whisper → candle Whisper, optional VAD pre-filter). Requires `media.dictation_enabled: true` in freedom.yaml. Microphone capture is a follow-up; this is the file-based dictation surface
+
+- `<FILE>` — Audio file to transcribe (WAV/MP3/FLAC/Ogg/M4A — decoded to 16 kHz mono before STT)
+
 ## `neoth distill`
 
 GOLD-ADAPT-KB-03 — scan session trajectory files for repeated tool-call sequences and surface them as candidate skills to distill
