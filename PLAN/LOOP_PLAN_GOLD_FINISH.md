@@ -323,6 +323,23 @@ session4_final: >
   ULTRA still OPEN (real, tracked): webhook durable inbound spool,
   gossip-WAL ingest (=G02-CLUSTER-02), smart-loader plan_loader unwire,
   doctor advisable-config hints, GUI-parity long-tail.
+session4_part6: >
+  9bedcaa2 = ERROR-HUNT WAVE #s4-1 (4 lenses over e302373a..94bd7dcf)
+  RAN + all confirmed findings FIXED same-push: RMAS timeout-kills-child
+  (stdout-lock deadlock cascade), hysteria shutdown-recheck under lock,
+  deep_links continue+id-charset+MAX_LINKS=8, faster-whisper gate
+  fail-CLOSED on unreadable config, self_wiki dictate entry. Suite
+  9871/9871 (4th consecutive green full run).
+  RELEASE GATES: 9/11 boxes [x] with evidence (WS-D/E, beta, Roman,
+  WS-G [ADOPT-25-open claim was stale dashboard], WS-H, docs-honesty,
+  build-green, CLI-docs). ONLY 2 gate boxes left: WS-I (waits on the
+  §9 OH-01 apply-scope ratification — ONE ADAPT box) + signed-artifacts
+  (waits on §9 PROG-13 minisign keypair). Tracker-wide open boxes: 6
+  (FEAT-05/06 v1.1, PROG-13/15 + HR-00 operator, OH-01 decision).
+  WAVE CADENCE: this wave HAD findings -> gate needs 2 consecutive
+  CLEAN waves; next session runs wave #s4-2 over 9bedcaa2-delta (small)
+  and, if clean, one more. Then: Alex's §9 answers -> WS-I flip ->
+  PROG-13 execution -> signed artifacts -> v1.0-gold tag.
 session4_part5: >
   94bd7dcf = ODY-12 + ODY-14 SHIPPED as ONE mechanism (deep-link chips):
   daemon cli/deep_links.rs (extract + DEEP_LINK_PROMPT, stream-only
