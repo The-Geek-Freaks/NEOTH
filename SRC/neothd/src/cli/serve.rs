@@ -1418,6 +1418,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let consolidation_sweep_handle =
         crate::cli::serve_tasks::spawn_consolidation_sweep_cron(&config, &reload_controller, writer.clone());
 
+    // ── GOLD-FEAT-03b self-wiki rebuild cron ─────────────────────────────
+    // Re-renders the in-binary capability map (+ PLAN corpus on dev
+    // checkouts) into the Obsidian vault. Default OFF; tracing-audited.
+    let self_wiki_handle =
+        crate::cli::serve_tasks::spawn_self_wiki_cron(&config, &reload_controller);
+
     // ── GOLD-ADAPT-JV-SELF-03 self-improvement collector cron ────────────
     // Daily scan of episode topics + groundtruth lessons + SkillOpt ledger;
     // classifies PatchSkill/PromptEdit/ConfigChange/Escalate signals and
@@ -2136,6 +2142,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         skill_curator_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
+        self_wiki_handle,
         self_improvement_collector_handle,
         dreaming_task,
         arxiv_ingest_task,

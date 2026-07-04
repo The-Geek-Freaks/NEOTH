@@ -1870,6 +1870,55 @@ pub(crate) fn spawn_consolidation_sweep_cron(
     }))
 }
 
+/// GOLD-FEAT-03b — self-wiki rebuild cron. Re-renders the in-binary
+/// capability map (+ the PLAN/ design corpus on dev checkouts) into the
+/// operator's Obsidian vault + refreshes the ground-truth pointers.
+/// Reload-aware (interval + paths track `neoth reload`). Audit: tracing
+/// only — no WAL byte free. `None` when `self_wiki.enabled = false`
+/// (the default).
+pub(crate) fn spawn_self_wiki_cron(
+    config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
+) -> Option<JoinHandle<()>> {
+    if !config.self_wiki.enabled {
+        return None;
+    }
+    let ctrl = Arc::clone(reload_controller);
+    let boot_cfg = config.self_wiki.clone();
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        subdir = %boot_cfg.subdir,
+        "self-wiki rebuild cron spawned (GOLD-FEAT-03b)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = boot_cfg.interval_duration();
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().self_wiki.clone();
+            let live_interval = live_cfg.interval_duration();
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                tracing::info!(
+                    interval_secs = current_interval.as_secs(),
+                    "self-wiki cron: interval updated via config reload",
+                );
+            }
+            let report = crate::daemon::wiki_build_cron::run_self_wiki_tick(live_cfg).await;
+            tracing::info!(
+                capability_pages = report.capability_pages,
+                plan_pages = report.plan_pages,
+                ingested = report.ingested,
+                had_errors = report.had_errors,
+                "self-wiki rebuild tick complete",
+            );
+        }
+    }))
+}
+
 /// JV-SELF-03 — auto-builder signal collector cron. Scans episode topics,
 /// groundtruth lessons, and the SkillOpt ledger to classify improvement
 /// signals; writes the sidecar for HERMES-06. Emits `0xBE`/`0xBF`. Default
@@ -4055,6 +4104,9 @@ pub(crate) struct BackgroundHandles {
     /// JV-SELF-02 — AMEM4Rec consolidation-sweep cron handle.
     /// Emits `0x9D`/`0x9E`; `None` when `consolidation_sweep.enabled = false` (default).
     pub consolidation_sweep_handle: Option<JoinHandle<()>>,
+    /// GOLD-FEAT-03b — self-wiki rebuild cron handle. Tracing-audited
+    /// (no WAL byte free); `None` when `self_wiki.enabled = false` (default).
+    pub self_wiki_handle: Option<JoinHandle<()>>,
     /// GOLD-ADAPT-JV-SELF-03 — auto-builder signal collector cron handle.
     /// Emits `0xBE`/`0xBF`; `None` when
     /// `self_improvement_collector.enabled = false` (default).
@@ -4191,6 +4243,7 @@ pub(crate) async fn shutdown_background_tasks(
         skill_curator_cron_handle,
         synthesis_cron_handle,
         consolidation_sweep_handle,
+        self_wiki_handle,
         self_improvement_collector_handle,
         dreaming_task,
         arxiv_ingest_task,
@@ -4461,6 +4514,11 @@ pub(crate) async fn shutdown_background_tasks(
     // independent appends. At worst one audit frame is lost — the next
     // boot's tick re-establishes correct state.
     crate::cli::serve_tasks::abort_optional(consolidation_sweep_handle).await;
+    // GOLD-FEAT-03b — abort the self-wiki rebuild cron. Mid-tick abort is
+    // safe: page writes are whole-file fs::write (worst case one stale
+    // page, overwritten next tick) and the ground-truth ingest is an
+    // idempotent revoke-then-insert.
+    crate::cli::serve_tasks::abort_optional(self_wiki_handle).await;
     // GOLD-ADAPT-JV-SELF-03 — abort the self-improvement collector cron.
     // Mid-tick abort is safe: the SQLite work runs in spawn_blocking and
     // the sidecar write is atomic (tmp→rename); at worst one scan is lost.

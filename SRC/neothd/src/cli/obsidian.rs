@@ -203,7 +203,7 @@ fn render_wiki_build(
 /// `~/Documents/NEOTH-Vault/` — same default Obsidian uses for new vaults
 /// on every platform. Falls back to the current dir when HOME / USERPROFILE
 /// can't be resolved (rare; mostly affects locked-down containers).
-fn default_vault_path() -> PathBuf {
+pub(crate) fn default_vault_path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -481,7 +481,7 @@ fn render_init(outcome: InitOutcome, output: OutputFormat) {
 /// cur-dir mid-path, drive-relative `C:foo`, UNC, null byte) bails.
 /// Operators who genuinely want nested vault paths build them as
 /// separate join targets at the call site, not via this knob.
-fn validate_subdir(subdir: &Path) -> Result<()> {
+pub(crate) fn validate_subdir(subdir: &Path) -> Result<()> {
     // Reject null bytes outright — they don't appear in any legit
     // Unicode subdir and `Path::components` keeps them as part of a
     // `Normal` component which would survive validation.

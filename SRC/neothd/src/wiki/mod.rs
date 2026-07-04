@@ -7,10 +7,14 @@
 //! Slice 1 (this module): [`sources`] discovery + [`renderer`] page/index
 //! layout + [`writer`] plan/dry-run/write, surfaced via
 //! `neoth obsidian wiki-build [--dry-run] [--ingest]`. The groundtruth ingest
-//! pass IS shipped (`ingest_sources`, wired live via `--ingest`); only the
-//! background rebuild cron + `SelfWikiConfig` remain deferred (those need a
-//! WAL event byte).
+//! pass IS shipped (`ingest_sources`, wired live via `--ingest`).
+//! Slice 3 (GOLD-FEAT-03b): [`capabilities`] renders the in-binary
+//! capability map (the release-binary corpus) and
+//! `daemon::wiki_build_cron` rebuilds the whole wiki on a schedule
+//! (`freedom.yaml::self_wiki`). No WAL frame — the event-type byte space
+//! is exhausted; the cron is tracing-audited instead.
 
+pub mod capabilities;
 pub mod ingest;
 pub mod renderer;
 pub mod sources;

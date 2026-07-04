@@ -207,6 +207,10 @@ pub mod updater_cron;
 /// (crash-loop-guarded by a per-window restart budget), and emits
 /// `0x5F WATCHDOG_RESTART`. Off by default.
 pub mod watchdog_cron;
+/// GOLD-FEAT-03b — self-wiki background rebuild cron (capability map +
+/// PLAN corpus → Obsidian vault). Default OFF; tracing-audited (no WAL
+/// byte free).
+pub mod wiki_build_cron;
 /// MONITOR-02 — real-time worker-task death detection. Polls the daemon's
 /// long-running cron/worker abort handles + emits `0x4D WORKER_DIED` (naming the
 /// task) the moment one panics/exits — lower latency + attribution than the

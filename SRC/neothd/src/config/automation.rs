@@ -540,6 +540,61 @@ impl ResourceWatchConfig {
     }
 }
 
+/// GOLD-FEAT-03b — self-wiki background rebuild cron config. When
+/// `enabled`, the daemon periodically re-renders NEOTH's self-wiki into
+/// the operator's Obsidian vault: the compile-time capability map
+/// (skills / crons / CLI / slash — always available, ships in-binary)
+/// plus the `PLAN/` design corpus when `source_dir` exists (dev
+/// checkouts). Default OFF (opt-in — writes into the operator's vault).
+/// Audit: tracing only — the WAL event-type byte space is exhausted
+/// (255/256 at spec time), so no dedicated frame exists.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SelfWikiConfig {
+    /// Master switch. `false` (default) = the cron never spawns.
+    pub enabled: bool,
+    /// Rebuild interval in seconds. Default 86 400 (daily). Clamped to a
+    /// 1-hour floor by [`Self::interval_duration`].
+    pub interval_secs: u64,
+    /// Obsidian vault root. `None` = the standard default vault path
+    /// (`Documents/NEOTH-Vault`).
+    pub vault: Option<std::path::PathBuf>,
+    /// Subdirectory inside the vault. Single normal path component
+    /// (validated like `neoth obsidian wiki-build --subdir`).
+    pub subdir: String,
+    /// Design-doc source directory (the repo `PLAN/`). `None` or missing
+    /// on disk = capability pages only (the release-binary case).
+    pub source_dir: Option<std::path::PathBuf>,
+    /// After each rebuild, refresh the ground-truth pointers (scope
+    /// `neoth-self-wiki`, idempotent revoke-then-insert). Default `true`.
+    pub ingest: bool,
+}
+
+/// 24 hours — the self-wiki rebuild default cadence.
+pub const DEFAULT_SELF_WIKI_INTERVAL_SECS: u64 = 86_400;
+
+impl Default for SelfWikiConfig {
+    fn default() -> Self {
+        // Off by default — writes into the operator's vault, opt-in.
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_SELF_WIKI_INTERVAL_SECS,
+            vault: None,
+            subdir: "NEOTH-Wiki".to_string(),
+            source_dir: None,
+            ingest: true,
+        }
+    }
+}
+
+impl SelfWikiConfig {
+    /// Rebuild interval as a `Duration`, clamped to a 1-hour floor so a
+    /// misconfigured `0` can't tight-loop vault writes.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(3_600))
+    }
+}
+
 /// GOLD-ADAPT-RMAS-01 — optional local RecursiveMAS sidecar config.
 /// Latent-recursion refinement for council deliberation via an
 /// OPERATOR-INSTALLED Python checkout (NEOTH never downloads weights or

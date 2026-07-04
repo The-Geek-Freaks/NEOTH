@@ -70,7 +70,7 @@ pub use automation::{
     DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, GuidanceCronConfig, KanbanSseConfig,
     MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig, ProactiveConfig,
     ProfileAdaptConfig, RecallLatencyConfig, RecursiveMasConfig, RegressionAnchorConfig,
-    ResourceWatchConfig,
+    ResourceWatchConfig, SelfWikiConfig,
     SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
     SelfActivationConfig, WatchdogConfig, EmailIngestCronConfig,
 };
@@ -637,6 +637,12 @@ pub struct FreedomConfig {
     /// adapter compile-gated behind the `recursive-mas` Cargo feature.
     #[serde(default)]
     pub recursive_mas: RecursiveMasConfig,
+    /// GOLD-FEAT-03b — self-wiki background rebuild cron. When `enabled`,
+    /// periodically re-renders the in-binary capability map (+ the PLAN/
+    /// design corpus on dev checkouts) into the operator's Obsidian
+    /// vault and refreshes the ground-truth pointers. Default OFF.
+    #[serde(default)]
+    pub self_wiki: SelfWikiConfig,
     /// HO-07 — neoth-monitor alerting sidecar cron. When `enabled`, the
     /// daemon polls WAL integrity, crash.log, and channel activity and
     /// emits `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
