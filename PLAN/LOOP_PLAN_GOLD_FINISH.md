@@ -298,7 +298,38 @@ Record each decision as a dated line in the tracker item, then the release-gate 
 ## LOOP STATE  *(rewrite this block as batches complete — it is the resume pointer)*
 
 ```yaml
-updated: 2026-07-04 (Fable 5 session #4 — dead-code salvage + ULTRA closure + B10 rest + B11 verified-done)
+updated: 2026-07-04 (Fable 5 session #5 — ZF-01 zero-friction presets + ULTRA-rest + GUI-parity wave)
+session5: >
+  6 commits b0ae6fe5..(docs/plan): (1) RMAS adapter stdin/stdout-race ->
+  ONE io-mutex over the full turn (operator finding). (2) ZF-01 SHIPPED:
+  built-in presets full-auto/balanced/essentials/local-sovereign,
+  Preset.overrides dotted-path map (denylist autonomy/sovereign/
+  self_activation/security/secrets/hook_chain; typo-paths fail loud via
+  FreedomConfig round-trip; PRESET_WARN_PATHS consent-diff; autonomy:full
+  ALWAYS via full-auto ceremony), wizard picker (replaces zero-friction
+  y/n, --zero-friction -> full-auto, only full-auto forces Single
+  topology), CLI --yes/--dry-run/--gui-confirmed/--gui-token, GUI
+  BUILT-IN/YOURS sections + dry-run consent modal + token ceremony.
+  (3) BEIFANG-BUG: CouncilConfig::default() zeroed serde field-defaults
+  (absent council: block => groundtruth_injection=false despite
+  default-ON) -> manual Default via serde route. (4) ULTRA-rest closed:
+  doctor advisable-hints + smart MCP loader N-04 wired (smart_loading
+  flag default on); webhook-spool + audit findings verified STALE;
+  G02-CLUSTER-02 = PARTIAL (foreign indexer fehlt, tracked WS-ZF).
+  (5) GUI parity wave: memory search, doctor status+security probes,
+  backup/rollback-preview, GAP-09 sudomode token route, tmux text fix.
+  (6) REVIEW-WAVE (2 reviewer) fand 2 P1 (ceremony-before-commit;
+  warn-snapshot) + GUI races (delete UI-block, consent TOCTOU) — ALLE
+  gefixt same-session (f75e396a). Suiten: daemon 9897 green (nach
+  docgen-regen), neothd-gui 153/153, clippy 0 beide.
+  NEW TRACKER SECTION WS-ZF (ROAD_TO_1_0_GOLD) + PLAN/ZERO_FRICTION_PLAN.md
+  = master doc; offene ZF-02..08 (wizard express path, live key verify,
+  rmas consent cmd, GUI-wizard parity, cron hot-spawn, boot-stagger,
+  doctor hints long-tail) + GUI-parity long-tail (cron CRUD etc.).
+  Screenshot-verify DENIED by operator (B8 precedent) — gates+tests are
+  the evidence. WAVE CADENCE: session-5-delta had findings (review wave)
+  -> tag path still needs 2 consecutive CLEAN error-hunt waves over the
+  full delta + PROG-13 keypair.
 session4_final: >
   3 commits e302373a/5a4e7ffc/cfcb9b8c, all pushed. (1) SALVAGE: prior
   session's crate-wide #![allow(dead_code)] removal was dirty-tree —

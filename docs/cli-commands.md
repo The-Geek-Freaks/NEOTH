@@ -1893,9 +1893,11 @@ Mark a preset as the active bundle. Future loads apply it
 
 ### `neoth preset apply`
 
-QM-8 Phase 1.5: merge a preset's values INTO `freedom.yaml`. Atomic write — survives a mid-write crash via `.tmp` + rename. Fields the preset doesn't set are left untouched in `freedom.yaml`, so manual edits between switches survive
+QM-8 Phase 1.5: merge a preset's values INTO `freedom.yaml`. Atomic write — survives a mid-write crash via `.tmp` + rename. Fields the preset doesn't set are left untouched in `freedom.yaml`, so manual edits between switches survive. Built-in bundles (full-auto / balanced / essentials / local-sovereign) apply the same way; security-relevant changes show a consent diff first
 
 - `<NAME>`
+- `--yes` — Skip the consent-diff confirmation (scripted applies)
+- `--dry-run` — Print the apply plan as JSON WITHOUT writing anything — the GUI renders its consent modal from this
 
 ### `neoth preset deactivate`
 
