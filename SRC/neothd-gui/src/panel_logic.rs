@@ -1654,6 +1654,37 @@ pub fn next_toast_id(toasts: &[(i32, String, String, String)]) -> i32 {
     max + 1
 }
 
+// ── Wave-2 activity helpers ──────────────────────────────────────────────────
+// Pure, Slint-free functions — the ActivitySidecar plumbing (push_activity,
+// settle_activity) lives in main.rs and calls these for id allocation + cap.
+
+/// One activity row tuple: (id, ts, kind, title, detail, active).
+pub type ActivityTuple = (i32, String, String, String, String, bool);
+
+/// Allocate the next activity id (monotonic, no collision with existing rows).
+pub fn next_activity_id(rows: &[ActivityTuple]) -> i32 {
+    let max = rows.iter().map(|(id, _, _, _, _, _)| *id).max().unwrap_or(0);
+    max + 1
+}
+
+/// Enforce the session-scoped cap. Keeps the NEWEST `max` rows (rows are stored
+/// newest-first in main.rs). Called after every push.
+pub fn cap_activity(mut rows: Vec<ActivityTuple>, max: usize) -> Vec<ActivityTuple> {
+    rows.truncate(max);
+    rows
+}
+
+/// Mark all rows whose `kind` equals `kind` as `active = false`.
+/// Returns the modified vec. Called on completion events to settle a burst.
+pub fn settle_activity(rows: Vec<ActivityTuple>, kind: &str) -> Vec<ActivityTuple> {
+    rows.into_iter()
+        .map(|(id, ts, k, title, detail, active)| {
+            let settled = if k == kind { false } else { active };
+            (id, ts, k, title, detail, settled)
+        })
+        .collect()
+}
+
 // GAP-04 — Format the raw stdout+stderr of `neoth recall <query>` into a
 // display string for the GUI. Pure: no I/O, no allocation from caller.
 //
@@ -2859,6 +2890,52 @@ mod tests {
     fn format_recall_output_trims_trailing_whitespace_from_result() {
         let out = format_recall_output("found it  \n\n", "", "q");
         assert_eq!(out, "found it");
+    }
+
+    // ── Wave-2 activity helpers ──────────────────────────────────────────
+    fn make_row(id: i32, kind: &str, active: bool) -> ActivityTuple {
+        (id, "12:00".to_string(), kind.to_string(), "T".to_string(), "D".to_string(), active)
+    }
+
+    #[test]
+    fn next_activity_id_monotonic_and_no_collision() {
+        assert_eq!(next_activity_id(&[]), 1);
+        let rows = vec![make_row(1, "plan", true), make_row(5, "loop", false)];
+        assert_eq!(next_activity_id(&rows), 6);
+    }
+
+    #[test]
+    fn cap_activity_keeps_newest_n_rows() {
+        let rows = vec![make_row(3, "plan", true), make_row(2, "kanban", false), make_row(1, "loop", false)];
+        let capped = cap_activity(rows.clone(), 2);
+        assert_eq!(capped.len(), 2);
+        assert_eq!(capped[0].0, 3);
+        assert_eq!(capped[1].0, 2);
+        // cap larger than vec → unchanged
+        let full = cap_activity(rows, 10);
+        assert_eq!(full.len(), 3);
+    }
+
+    #[test]
+    fn settle_activity_marks_matching_kind_inactive() {
+        let rows = vec![
+            make_row(1, "plan", true),
+            make_row(2, "kanban", true),
+            make_row(3, "plan", true),
+        ];
+        let settled = settle_activity(rows, "plan");
+        // plan rows → inactive
+        assert!(!settled[0].5);
+        assert!(!settled[2].5);
+        // kanban row unchanged
+        assert!(settled[1].5);
+    }
+
+    #[test]
+    fn settle_activity_noop_on_unknown_kind() {
+        let rows = vec![make_row(1, "plan", true)];
+        let settled = settle_activity(rows, "skill");
+        assert!(settled[0].5, "unmatched kind must stay active");
     }
 
     // ── Wave-1 toast helpers ─────────────────────────────────────────────

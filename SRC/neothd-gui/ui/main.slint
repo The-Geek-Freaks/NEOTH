@@ -27,6 +27,7 @@ import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
+import { ActivitySidecar, ActivityRow } from "activity.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 export { Theme }
 
@@ -35,6 +36,8 @@ export { Theme }
 export { PresetRow, ProfilePresetRow }
 // Wave-1 toast system — ToastData exported so Rust can push toasts.
 export { ToastData }
+// Wave-2 activity sidecar — ActivityRow exported so Rust can push rows.
+export { ActivityRow }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -419,6 +422,10 @@ export component MainWindow inherits Window {
     in property <[LinkChip]> chat-link-chips: [];
     /// ODY-12/14 — chip click: (kind, id) → Rust routes nav/entity focus.
     callback chat-link-chip-clicked(string, string);
+    // Wave-2 — activity sidecar state. Rust pushes rows; toggle flips open.
+    in-out property <bool> activity-open: false;
+    in property <[ActivityRow]> activity-rows: [];
+    callback activity-toggle();
     callback chat-attach-clicked();
     callback chat-remove-attachment(int);
     /// Channel labels for the chat sidebar. CLI is always first
@@ -1744,7 +1751,34 @@ export component MainWindow inherits Window {
                 toggle-theme => { root.theme-toggle-clicked(); }
             }
             VerticalLayout {
-                TopBar { kicker: "NEOTH · SOVEREIGN"; title: root.shell-title; }
+                TopBar {
+                    kicker: "NEOTH · SOVEREIGN";
+                    title: root.shell-title;
+                    // Wave-2: activity toggle button in the TopBar right slot.
+                    // Badge dot shows when rows contain active entries and panel is closed.
+                    Rectangle {
+                        width: 36px; height: 36px;
+                        border-radius: Theme.radius-sm;
+                        background: act-ta.has-hover ? Theme.surface-2
+                            : (root.activity-open ? Theme.accent-tint : transparent);
+                        border-width: root.activity-open ? 1px : 0px;
+                        border-color: Theme.border-accent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        Text {
+                            text: "◫";
+                            color: root.activity-open ? Theme.accent : Theme.text-secondary;
+                            font-size: 16px; font-family: Theme.font-mono;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        // badge dot — visible when there are active rows while closed
+                        if !root.activity-open && root.activity-rows.length > 0: Rectangle {
+                            x: parent.width - 9px; y: 3px;
+                            width: 7px; height: 7px; border-radius: 3.5px;
+                            background: Theme.accent;
+                        }
+                        act-ta := TouchArea { clicked => { root.activity-toggle(); } }
+                    }
+                }
 
                 // `if` (not `visible:`) so a hidden SettingsView is removed from
                 // the layout tree entirely — a `visible:false` element still
@@ -2014,6 +2048,13 @@ export component MainWindow inherits Window {
                     status-message: root.status-message;
                 }
             }  // close shell content VerticalLayout
+            // Wave-2: activity sidecar — rightmost child, full-height right dock.
+            // Width animation (0↔300px) handled inside ActivitySidecar.
+            ActivitySidecar {
+                rows: root.activity-rows;
+                open: root.activity-open;
+                toggle => { root.activity-toggle(); }
+            }
         }  // close shell HorizontalLayout
     }
 

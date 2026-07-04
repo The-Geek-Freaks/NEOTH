@@ -94,6 +94,80 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
     });
 }
 
+// ── Wave-2 activity sidecar plumbing ─────────────────────────────────────────
+//
+// push_activity  — appends an ActivityRow (newest-first, cap 60), auto-opens
+//                  the sidecar on the first significant event of a burst.
+// settle_activity_kind — marks all rows of a given kind inactive (completion).
+//
+// Both mutate the Slint model via invoke_from_event_loop so they are safe to
+// call from worker threads (same pattern as push_toast).
+
+/// Append one activity row to the sidecar.
+/// `significant`: non-metric row triggers auto-open when the panel is closed.
+fn push_activity(
+    window: &slint::Weak<MainWindow>,
+    kind: &'static str,
+    title: &str,
+    detail: &str,
+) {
+    use slint::Model as _;
+    let title  = title.to_string();
+    let detail = detail.to_string();
+    let window = window.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = window.upgrade() else { return };
+        // Collect current rows (newest-first) as plain tuples.
+        let current: Vec<panel_logic::ActivityTuple> = w.get_activity_rows()
+            .iter()
+            .map(|r| (r.id, r.ts.to_string(), r.kind.to_string(),
+                      r.title.to_string(), r.detail.to_string(), r.active))
+            .collect();
+        let id = panel_logic::next_activity_id(&current);
+        let ts = format_now_hms();
+        let mut rows = current;
+        // Insert at front (newest-first).
+        rows.insert(0, (id, ts, kind.to_string(), title, detail, true));
+        let rows = panel_logic::cap_activity(rows, 60);
+        let slint_rows: Vec<ActivityRow> = rows.iter().map(|(id, ts, k, ti, de, ac)| ActivityRow {
+            id: *id,
+            ts: ts.as_str().into(),
+            kind: k.as_str().into(),
+            title: ti.as_str().into(),
+            detail: de.as_str().into(),
+            active: *ac,
+        }).collect();
+        w.set_activity_rows(slint::ModelRc::new(slint::VecModel::from(slint_rows)));
+        // Auto-open on first significant row of a burst (kind != "metric").
+        if !w.get_activity_open() && kind != "metric" {
+            w.set_activity_open(true);
+        }
+    });
+}
+
+/// Mark all rows of `kind` as inactive (call on completion events).
+fn settle_activity_kind(window: &slint::Weak<MainWindow>, kind: &'static str) {
+    use slint::Model as _;
+    let window = window.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = window.upgrade() else { return };
+        let current: Vec<panel_logic::ActivityTuple> = w.get_activity_rows()
+            .iter()
+            .map(|r| (r.id, r.ts.to_string(), r.kind.to_string(),
+                      r.title.to_string(), r.detail.to_string(), r.active))
+            .collect();
+        let settled = panel_logic::settle_activity(current, kind);
+        let slint_rows: Vec<ActivityRow> = settled.iter().map(|(id, ts, k, ti, de, ac)| ActivityRow {
+            id: *id,
+            ts: ts.as_str().into(),
+            kind: k.as_str().into(),
+            title: ti.as_str().into(),
+            detail: de.as_str().into(),
+            active: *ac,
+        }).collect();
+        w.set_activity_rows(slint::ModelRc::new(slint::VecModel::from(slint_rows)));
+    });
+}
 
 // ── Code Sessions tab — subprocess JSON envelopes ─────────────────────
 // Mirror of `KanbanSession` + `KanbanTask` in `neothd::coding::types`.
@@ -589,6 +663,11 @@ fn main() -> Result<()> {
         // GOLD-ADAPT-GUI-07 — Send spins + re-sends are blocked until the
         // stream settles (flipped back in the completion closure below).
         w.set_chat_send_in_flight(true);
+        // Wave-2 feed A: chat send start → plan row.
+        {
+            let snippet = if body.len() > 80 { &body[..80] } else { &body };
+            push_activity(&w.as_weak(), "plan", "Thinking…", snippet);
+        }
         // ODY-04 — arm the stall watchdog; refill the auto-nudge budget on
         // a MANUAL send only (the auto-fired "continue" turn must not
         // refill its own budget or it would loop).
@@ -726,6 +805,19 @@ fn main() -> Result<()> {
                     // GUI-07: the stream settled (reply or error) — unspin Send.
                     w.set_chat_send_in_flight(false);
                     w.set_chat_stall_active(false);
+                    // Wave-2 feed A: settle plan row + push metric.
+                    {
+                        let weak_settle = weak_for_loop.clone();
+                        settle_activity_kind(&weak_settle, "plan");
+                        let metric_detail = match &outcome {
+                            Ok((_, stats, _)) => format!(
+                                "{}t out · {}ms",
+                                stats.output_tokens, stats.elapsed_ms
+                            ),
+                            Err(e) => format!("error: {}", &e[..e.len().min(60)]),
+                        };
+                        push_activity(&weak_settle, "metric", "Reply done", &metric_detail);
+                    }
                     // ODY-12/14 — swap the deep-link chip row for this turn
                     // (cleared on error so stale chips can't dangle).
                     let chips: Vec<LinkChip> = match &outcome {
@@ -739,6 +831,16 @@ fn main() -> Result<()> {
                             .collect(),
                         Err(_) => Vec::new(),
                     };
+                    // Wave-2 feed B: one activity row per deep-link chip.
+                    for chip in &chips {
+                        let kind = if chip.kind.as_str() == "kanban" { "kanban" } else { "link" };
+                        push_activity(
+                            &weak_for_loop,
+                            kind,
+                            chip.label.as_str(),
+                            chip.id.as_str(),
+                        );
+                    }
                     w.set_chat_link_chips(slint::ModelRc::new(slint::VecModel::from(chips)));
                     use slint::{Model, ModelRc, VecModel};
                     let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
@@ -1098,6 +1200,16 @@ fn main() -> Result<()> {
         info!(channel_index = idx, "chat: channel-switched");
     });
 
+    // Wave-2 — activity sidecar toggle: flip open↔closed.
+    {
+        let weak_act = window.as_weak();
+        window.on_activity_toggle(move || {
+            if let Some(w) = weak_act.upgrade() {
+                w.set_activity_open(!w.get_activity_open());
+            }
+        });
+    }
+
     // Pick #32 — Settings panel auto-save sentinel. Operator clicked
     // "Reload config" in the Settings → Config tab; drop the sentinel
     // file the daemon polls every 2s. This is the same path that
@@ -1145,6 +1257,10 @@ fn main() -> Result<()> {
                 ("success", "Preset applied", outcome.as_str())
             };
         push_toast(&weak_preset_apply, toast_kind, toast_title, toast_body);
+        // Wave-2 feed E: consent row when preset actually applied.
+        if toast_kind == "success" {
+            push_activity(&weak_preset_apply, "consent", "Preset applied", toast_body);
+        }
         let weak = weak_preset_apply.clone();
         let outcome2 = outcome.clone();
         let _ = slint::invoke_from_event_loop(move || {
@@ -1822,6 +1938,11 @@ fn main() -> Result<()> {
             w0.set_loop_running(true);
             w0.set_loop_status_note("".into());
             let prompt = prompt.to_string();
+            // Wave-2 feed D: loop started.
+            {
+                let snippet = if prompt.len() > 80 { &prompt[..80] } else { &prompt };
+                push_activity(&w0.as_weak(), "loop", "Loop started", snippet);
+            }
             let weak = weak_loop_run.clone();
             let child_slot = child_run.clone();
             let refresh = refresh_after_run.clone();
@@ -1888,6 +2009,8 @@ fn main() -> Result<()> {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak_done.upgrade() {
                         w.set_loop_running(false);
+                        // Wave-2 feed D: loop done — settle the active row.
+                        settle_activity_kind(&w.as_weak(), "loop");
                         if !note.is_empty() {
                             w.set_loop_status_note(note.into());
                         } else {
@@ -2365,12 +2488,15 @@ fn main() -> Result<()> {
                         if want_board {
                             let snap = fetch_board_warm_or_cold(&client);
                             let snap_for_state = snap.clone();
+                            // Wave-2 feed C: extract before the move into the closure.
+                            let board_summary = snap_for_state.summary.clone();
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Ok(mut g) = mutex.lock() {
                                     *g = snap_for_state;
                                 }
                                 if let Some(w) = weak.upgrade() {
                                     apply_kanban_snapshot(&w, snap);
+                                    push_activity(&w.as_weak(), "kanban", "Board updated", &board_summary);
                                 }
                             });
                         }

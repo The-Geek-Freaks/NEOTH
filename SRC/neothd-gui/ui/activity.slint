@@ -1,0 +1,226 @@
+// Activity Sidecar — Design Wave 2.
+//
+// Live background-work feed: plan / skill / agent / goal / kanban / loop /
+// link / metric / consent rows stream in from Rust; the panel slides open
+// automatically on the first significant event of a burst.
+//
+// Layout contract: caller mounts ActivitySidecar as the RIGHT-MOST sibling
+// in the shell's content HorizontalLayout (full-height, under the TopBar).
+// Width animates 0 ↔ 300px; `clip: true` masks the outgoing content so no
+// overflow bleeds into the chat surface during the slide.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { SideIn, Led } from "components.slint";
+
+// Wire type — declared here, imported + re-exported by main.slint so Rust
+// can push rows. Follows the ToastData pattern from Wave-1.
+export struct ActivityRow {
+    id: int,
+    ts: string,
+    // plan | skill | agent | goal | kanban | loop | link | metric | consent
+    kind: string,
+    title: string,
+    detail: string,
+    // true while the action is in progress (drives the breathing led).
+    active: bool,
+}
+
+// ── Kind → Theme colour mapping ───────────────────────────────────────────
+// Centralised so the led and any future accent surface agree.
+//
+//   plan   → accent (green)   "NEOTH is thinking"
+//   skill  → audit  (cyan)    "a skill is running"
+//   agent  → accent           "an agent was dispatched"
+//   goal   → warning (amber)  "goal set / reached"
+//   kanban → audit             "board update"
+//   loop   → accent            "loop tick"
+//   link   → audit             "deep-link chip"
+//   metric → text-tertiary    "quiet telemetry"
+//   consent→ consent (pink)   "trust boundary touched"
+
+// ── ActivitySidecar ───────────────────────────────────────────────────────
+export component ActivitySidecar inherits Rectangle {
+    in property <[ActivityRow]> rows;
+    in-out property <bool> open: false;
+    callback toggle();
+
+    // Width slides 0 ↔ 300px; clip masks the content during the animation
+    // so nothing bleeds into the sibling chat surface.
+    width: root.open ? 300px : 0px;
+    clip: true;
+    animate width {
+        duration: Theme.duration-screen-min;
+        easing: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    // Left hairline separates the sidecar from the content area.
+    Rectangle {
+        x: 0; width: 1px; height: parent.height;
+        background: Theme.border-subtle;
+    }
+
+    // Panel body — surface-1 background, full height.
+    Rectangle {
+        x: 1px;
+        width: parent.width - 1px;
+        height: parent.height;
+        background: Theme.surface-1;
+
+        VerticalLayout {
+            // ── Header ───────────────────────────────────────────────────
+            Rectangle {
+                height: 44px;
+                background: Theme.bg-sunken;
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border-subtle;
+                }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 10px;
+                    alignment: space-between;
+                    HorizontalLayout {
+                        spacing: 8px; alignment: start;
+                        Text {
+                            // mono eyebrow kicker
+                            text: "ACTIVITY";
+                            color: Theme.text-disabled;
+                            font-family: Theme.font-mono;
+                            font-size: 8px;
+                            letter-spacing: 2.4px;
+                            vertical-alignment: center;
+                        }
+                        // live row count chip
+                        if root.rows.length > 0: Rectangle {
+                            height: 16px;
+                            width: cnt.width + 12px;
+                            border-radius: Theme.radius-pill;
+                            background: Theme.surface-3;
+                            y: (parent.height - self.height) / 2;
+                            cnt := Text {
+                                text: "\{root.rows.length}";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: 10px;
+                                x: 6px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    // collapse chevron
+                    Rectangle {
+                        width: 28px; height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: chev-ta.has-hover ? Theme.surface-2 : transparent;
+                        animate background {
+                            duration: Theme.duration-fast;
+                            easing: ease-out;
+                        }
+                        Text {
+                            text: "›";
+                            color: Theme.text-tertiary;
+                            font-size: 16px;
+                            font-family: Theme.font-mono;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        chev-ta := TouchArea {
+                            clicked => { root.toggle(); }
+                        }
+                    }
+                }
+            }
+
+            // ── Body ─────────────────────────────────────────────────────
+            if root.rows.length == 0: Rectangle {
+                vertical-stretch: 1;
+                Text {
+                    text: "quiet — no background work";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%; height: 100%;
+                }
+            }
+            if root.rows.length > 0: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 8px; spacing: 4px;
+                    for r in root.rows: SideIn {
+                        height: row-body.preferred-height + 18px;
+                        border-radius: Theme.radius-card;
+                        background: Theme.bg-card;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        row-body := HorizontalLayout {
+                            padding: 9px; spacing: 8px;
+                            alignment: start;
+
+                            // 6px kind-coloured led, breathes when active
+                            Rectangle {
+                                width: 6px; height: 6px;
+                                border-radius: 3px;
+                                y: 5px;         // optical top-align with title
+                                background:
+                                    r.kind == "plan"    ? Theme.accent
+                                  : r.kind == "agent"   ? Theme.accent
+                                  : r.kind == "loop"    ? Theme.accent
+                                  : r.kind == "goal"    ? Theme.warning
+                                  : r.kind == "skill"   ? Theme.audit
+                                  : r.kind == "kanban"  ? Theme.audit
+                                  : r.kind == "link"    ? Theme.audit
+                                  : r.kind == "consent" ? Theme.consent
+                                  : Theme.text-tertiary;
+                                // breathe while active (same sin formula as Led)
+                                opacity: r.active
+                                    ? 0.55 + 0.45 * sin(360deg * (animation-tick() / Theme.duration-breathe))
+                                    : 1.0;
+                            }
+
+                            VerticalLayout {
+                                spacing: 2px; horizontal-stretch: 1;
+
+                                // title row: bold label + timestamp right-aligned
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    Text {
+                                        text: r.title;
+                                        color: Theme.text-primary;
+                                        font-family: Theme.font-sans;
+                                        font-size: 12px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                    Text {
+                                        text: r.ts;
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: 8.5px;
+                                        vertical-alignment: top;
+                                    }
+                                }
+
+                                // detail — secondary muted text, up to ~3 lines
+                                if r.detail != "": Text {
+                                    text: r.detail;
+                                    color: Theme.text-secondary;
+                                    font-family: Theme.font-sans;
+                                    font-size: 10.5px;
+                                    wrap: word-wrap;
+                                    overflow: elide;
+                                    // cap to ~3 lines (10.5px * 1.4 line-height * 3)
+                                    max-height: 46px;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
