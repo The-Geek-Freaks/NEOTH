@@ -655,6 +655,14 @@ export component SettingsView inherits Rectangle {
     /// for a channel. Rust shells `neoth channel test|remove <name>`.
     callback channel-test-clicked(string);
     callback channel-remove-clicked(string);
+    /// GAP-19 — Add a new channel credential from the GUI.
+    /// Args: (channel_type, f1, f2, f3, f4) — fields mapped per-channel-type in Rust.
+    /// telegram: f1=token; slack: f1=bot-token f2=app-token; whatsapp: f1=token f2=phone-id;
+    /// discord: f1=token; keet: f1=seed; signal: f1=url f2=phone; line: f1=token f2=password;
+    /// irc: f1=server f2=nick f3=password f4=channels-csv;
+    /// imessage/bluebubbles: f1=url f2=password; mattermost: f1=url f2=token;
+    /// gchat: f1=url f2=server.
+    callback channel-add-clicked(string, string, string, string, string);
     /// GUI-overhaul feature parity — Memory forget. Preview is a dry run
     /// (`neoth memory --forget <t>`); confirm wipes (`… --forget <t> --confirm`).
     callback memory-forget-preview-clicked(string);
@@ -1107,6 +1115,8 @@ export component SettingsView inherits Rectangle {
             if root.active == SettingsTab.channels: VerticalBox {
                 padding: Theme.space-base;
                 spacing: Theme.space-base;
+                // GAP-19 — local toggle for the Add channel inline form.
+                property <bool> add-channel-open: false;
                 PanelHeader {
                     title: "Channels";
                     subtitle: "Messaging surfaces NEOTH can reach. Connect/disconnect via the CLI; this shows which have credentials configured — the secrets themselves never leave ~/.neoth/credentials.yaml.";
@@ -1119,7 +1129,157 @@ export component SettingsView inherits Rectangle {
                         primary: false;
                         clicked => { root.channels-refresh-clicked(); }
                     }
+                    NeothButton {
+                        label: "Add channel";
+                        primary: true;
+                        clicked => { add-channel-open = !add-channel-open; }
+                    }
                 }
+
+                // GAP-19 — inline Add channel form, toggled by the button above.
+                // Uses per-channel-type conditional field blocks to label fields correctly.
+                // type-index mirrors the channel-type-model array order below.
+                if add-channel-open: Card {
+                    shimmer: false;
+                    property <int> type-index: 0;
+                    property <string> ch-f1: "";
+                    property <string> ch-f2: "";
+                    property <string> ch-f3: "";
+                    property <string> ch-f4: "";
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-base;
+
+                        // ── channel type picker ───────────────────────────────
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "Channel type";
+                                color: Theme.text-muted;
+                                font-size: Theme.font-size-caption;
+                                vertical-alignment: center;
+                            }
+                            add-type-combo := NeothComboBox {
+                                model: ["telegram","slack","whatsapp","discord","keet","signal","line","irc","imessage","mattermost","gchat"];
+                                current-index <=> type-index;
+                                horizontal-stretch: 1;
+                            }
+                        }
+
+                        // ── per-channel hint + fields ─────────────────────────
+                        // telegram (0): token
+                        if type-index == 0: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Bot token from @BotFather"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
+                        }
+                        // slack (1): bot-token + app-token
+                        if type-index == 1: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Slack bot token (xoxb-…) + app-level token (xapp-…)"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Bot token (--bot-token)"; password: true; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "App token (--app-token)"; password: true; text <=> ch-f2; }
+                        }
+                        // whatsapp (2): token + phone-id
+                        if type-index == 2: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "WhatsApp Cloud API token + phone number ID"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Phone ID (--phone-id)"; text <=> ch-f2; }
+                        }
+                        // discord (3): token
+                        if type-index == 3: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Discord bot token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
+                        }
+                        // keet (4): seed
+                        if type-index == 4: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Keet identity seed (hex or mnemonic)"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Seed (--seed)"; password: true; text <=> ch-f1; }
+                        }
+                        // signal (5): url + phone
+                        if type-index == 5: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "signal-cli REST URL + registered phone number"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://localhost:8080"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Phone (--phone)  e.g. +4917…"; text <=> ch-f2; }
+                        }
+                        // line (6): token + password (optional)
+                        if type-index == 6: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "LINE Messaging API channel access token; password optional"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Password (--password, optional)"; password: true; text <=> ch-f2; }
+                        }
+                        // irc (7): server + nick + password (opt) + channels-csv (opt)
+                        if type-index == 7: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "IRC server host, nick, optional password + channel list (comma-separated)"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Server (--server)  e.g. irc.libera.chat"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Nick (--nick)"; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Password (--password, optional)"; password: true; text <=> ch-f3; }
+                            NeothLineEdit { placeholder-text: "Channels CSV (--channels-csv, optional)  e.g. #general,#dev"; text <=> ch-f4; }
+                        }
+                        // imessage / bluebubbles (8): url + password
+                        if type-index == 8: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "BlueBubbles server URL + password"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://mac.local:1234"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Password (--password)"; password: true; text <=> ch-f2; }
+                        }
+                        // mattermost (9): url + token
+                        if type-index == 9: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Mattermost server URL + personal access token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "URL (--url)  e.g. https://chat.example.com"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f2; }
+                        }
+                        // gchat (10): url + server
+                        if type-index == 10: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Google Chat Pub/Sub subscription URL + project/server ID"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "URL (--url)  subscription endpoint"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Server / project ID (--server)"; text <=> ch-f2; }
+                        }
+
+                        // ── action row ────────────────────────────────────────
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: end;
+                            NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                clicked => {
+                                    add-channel-open = false;
+                                    ch-f1 = "";
+                                    ch-f2 = "";
+                                    ch-f3 = "";
+                                    ch-f4 = "";
+                                    type-index = 0;
+                                }
+                            }
+                            NeothButton {
+                                label: "Add";
+                                primary: true;
+                                clicked => {
+                                    root.channel-add-clicked(
+                                        add-type-combo.model[add-type-combo.current-index],
+                                        ch-f1, ch-f2, ch-f3, ch-f4
+                                    );
+                                    add-channel-open = false;
+                                    ch-f1 = "";
+                                    ch-f2 = "";
+                                    ch-f3 = "";
+                                    ch-f4 = "";
+                                    type-index = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Card {
                     shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {

@@ -2801,6 +2801,159 @@ fn main() -> Result<()> {
         });
     });
 
+    // GAP-19 — Add a new channel credential from the GUI.
+    // Maps (channel_type, f1..f4) → the correct `neoth channel add <type> <flags>` args.
+    // Empty required fields are caught before shelling; on success re-reads
+    // credentials.yaml + refreshes the channel rows exactly like on_channel_remove.
+    let weak_channel_add = window.as_weak();
+    window.on_channel_add(move |ctype, f1, f2, f3, f4| {
+        let ctype = ctype.to_string();
+        let f1 = f1.trim().to_string();
+        let f2 = f2.trim().to_string();
+        let f3 = f3.trim().to_string();
+        let f4 = f4.trim().to_string();
+
+        // Build the flag args for this channel type; return Err(hint) on missing required fields.
+        let args_result: Result<Vec<String>, String> = (|| {
+            match ctype.as_str() {
+                "telegram" => {
+                    if f1.is_empty() { return Err("telegram needs: --token".into()); }
+                    Ok(vec!["--token".into(), f1])
+                }
+                "slack" => {
+                    if f1.is_empty() || f2.is_empty() {
+                        return Err("slack needs: --bot-token and --app-token".into());
+                    }
+                    Ok(vec!["--bot-token".into(), f1, "--app-token".into(), f2])
+                }
+                "whatsapp" => {
+                    if f1.is_empty() || f2.is_empty() {
+                        return Err("whatsapp needs: --token and --phone-id".into());
+                    }
+                    Ok(vec!["--token".into(), f1, "--phone-id".into(), f2])
+                }
+                "discord" => {
+                    if f1.is_empty() { return Err("discord needs: --token".into()); }
+                    Ok(vec!["--token".into(), f1])
+                }
+                "keet" => {
+                    if f1.is_empty() { return Err("keet needs: --seed".into()); }
+                    Ok(vec!["--seed".into(), f1])
+                }
+                "signal" => {
+                    if f1.is_empty() || f2.is_empty() {
+                        return Err("signal needs: --url and --phone".into());
+                    }
+                    Ok(vec!["--url".into(), f1, "--phone".into(), f2])
+                }
+                "line" => {
+                    if f1.is_empty() { return Err("line needs: --token".into()); }
+                    let mut a = vec!["--token".into(), f1];
+                    if !f2.is_empty() { a.extend(["--password".into(), f2]); }
+                    Ok(a)
+                }
+                "irc" => {
+                    if f1.is_empty() || f2.is_empty() {
+                        return Err("irc needs: --server and --nick".into());
+                    }
+                    let mut a = vec!["--server".into(), f1, "--nick".into(), f2];
+                    if !f3.is_empty() { a.extend(["--password".into(), f3]); }
+                    if !f4.is_empty() { a.extend(["--channels-csv".into(), f4]); }
+                    Ok(a)
+                }
+                "imessage" | "bluebubbles" => {
+                    if f1.is_empty() || f2.is_empty() {
+                        return Err(format!("{ctype} needs: --url and --password"));
+                    }
+                    Ok(vec!["--url".into(), f1, "--password".into(), f2])
+                }
+                "mattermost" => {
+                    if f1.is_empty() || f2.is_empty() {
+                        return Err("mattermost needs: --url and --token".into());
+                    }
+                    Ok(vec!["--url".into(), f1, "--token".into(), f2])
+                }
+                "gchat" => {
+                    if f1.is_empty() || f2.is_empty() {
+                        return Err("gchat needs: --url and --server".into());
+                    }
+                    Ok(vec!["--url".into(), f1, "--server".into(), f2])
+                }
+                other => Err(format!("unknown channel type: {other}")),
+            }
+        })();
+
+        match args_result {
+            Err(hint) => {
+                push_toast(&weak_channel_add, "warn", "Add channel", &hint);
+            }
+            Ok(extra_args) => {
+                let weak = weak_channel_add.clone();
+                let ctype_clone = ctype.clone();
+                std::thread::spawn(move || {
+                    let result = which_neothd().and_then(|bin| {
+                        let mut cmd = spawn_neothd_plain(&bin);
+                        cmd.arg("channel").arg("add").arg(&ctype_clone);
+                        for a in &extra_args {
+                            cmd.arg(a);
+                        }
+                        cmd.arg("--output").arg("json").output().ok()
+                    });
+
+                    let (toast_kind, toast_title, toast_body, refresh) = match result {
+                        Some(o) if o.status.success() => {
+                            // Parse {ok, channel, configured} from stdout.
+                            let raw = String::from_utf8_lossy(&o.stdout);
+                            let configured = raw.contains("\"configured\":true");
+                            let msg = if configured {
+                                format!("Channel {ctype_clone} connected and configured.")
+                            } else {
+                                format!("Channel {ctype_clone} credential stored (not yet configured).")
+                            };
+                            ("success", "Add channel", msg, true)
+                        }
+                        Some(o) => {
+                            let stderr = String::from_utf8_lossy(&o.stderr);
+                            let detail = stderr.lines()
+                                .map(str::trim)
+                                .find(|l| !l.is_empty())
+                                .unwrap_or("unknown error")
+                                .to_string();
+                            (
+                                "error",
+                                "Add channel failed",
+                                format!("{ctype_clone}: {detail}"),
+                                false,
+                            )
+                        }
+                        None => (
+                            "error",
+                            "Add channel failed",
+                            format!("{ctype_clone}: neothd binary not on PATH"),
+                            false,
+                        ),
+                    };
+
+                    let channels = if refresh {
+                        Some(panel_logic::read_channel_status(&default_neoth_home()))
+                    } else {
+                        None
+                    };
+
+                    let toast_body_clone = toast_body.clone();
+                    push_toast(&weak, toast_kind, toast_title, &toast_body_clone);
+                    if let Some(ch) = channels {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak.upgrade() {
+                                apply_channels(&w, ch);
+                            }
+                        });
+                    }
+                });
+            }
+        }
+    });
+
     // GUI-overhaul feature parity — Memory "forget a topic". Preview runs the
     // dry-run (`neoth memory --forget <topic>`, no --confirm) and reports the
     // would-wipe summary; it mutates nothing.

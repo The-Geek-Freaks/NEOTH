@@ -787,6 +787,9 @@ export component MainWindow inherits Window {
     callback channels-refresh-clicked;
     callback channel-test(string);
     callback channel-remove(string);
+    /// GAP-19 — add a new channel credential from the GUI.
+    /// Args: (channel_type, f1, f2, f3, f4) — field mapping per channel type.
+    callback channel-add(string, string, string, string, string);
     callback memory-forget-preview(string);
     callback memory-forget-confirm(string);
     // GAP-04 — Memory search forwarding.
@@ -2193,6 +2196,7 @@ export component MainWindow inherits Window {
             }
             channel-test-clicked(name) => { root.channel-test(name); }
             channel-remove-clicked(name) => { root.channel-remove(name); }
+            channel-add-clicked(ctype, f1, f2, f3, f4) => { root.channel-add(ctype, f1, f2, f3, f4); }
             memory-forget-preview-clicked(t) => { root.memory-forget-preview(t); }
             memory-forget-confirm-clicked(t) => { root.memory-forget-confirm(t); }
             // GAP-04 — Memory search.
