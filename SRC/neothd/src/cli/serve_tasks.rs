@@ -88,15 +88,9 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     use CronKey::*;
     let mut keys = std::collections::HashSet::new();
 
-    // Genuinely always-on / non-`.enabled`-gated (their spawn_* either always
-    // returns Some or gates on a non-boolean condition — interval, autonomy —
-    // that isn't a simple operator opt-out):
-    keys.insert(ResourceWatch);
-    keys.insert(Babel);
-    keys.insert(WatchdogCron);
+    // Genuinely always-on: BgMonitor gates only on `interval_secs != 0` (not a
+    // boolean opt-out), so it stays unconditional.
     keys.insert(BgMonitor);
-    keys.insert(ContradictionResolve);
-    keys.insert(SelfImprovementCollector);
 
     // `.enabled`-gated crons: the desired set MUST mirror each spawn_*'s
     // `if !config.X.enabled { return None }` guard. Otherwise a cron enabled at
@@ -150,6 +144,25 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     }
     if cfg.webhook_manager.enabled {
         keys.insert(WebhookManager);
+    }
+    // Wave-11: these five were wrongly classed as always-on in the first pass —
+    // each spawn_* (or its inner loop) has an `.enabled` gate, so a reload that
+    // disables them must stop the running task. WatchdogCron is the sharpest:
+    // it can auto-restart the daemon at Elevated/Full autonomy.
+    if cfg.watchdog.enabled {
+        keys.insert(WatchdogCron);
+    }
+    if cfg.resource_watch.enabled {
+        keys.insert(ResourceWatch);
+    }
+    if cfg.contradiction_resolve.enabled {
+        keys.insert(ContradictionResolve);
+    }
+    if cfg.self_improvement_collector.enabled {
+        keys.insert(SelfImprovementCollector);
+    }
+    if cfg.babel.enabled {
+        keys.insert(Babel);
     }
     // Vault-gated crons: all four spawn_* helpers early-return None without
     // `obsidian_vault`, so on first boot the key would spawn nothing. The gate
@@ -5582,17 +5595,9 @@ mod zf06_fleet_tests {
     fn desired_cron_keys_default_config_contains_core_keys() {
         let cfg = FreedomConfig::default();
         let keys = desired_cron_keys(&cfg);
-        // The genuinely always-on keys (no operator `.enabled` gate) must always
-        // be present regardless of config.
-        for key in &[
-            CronKey::BgMonitor,
-            CronKey::Babel,
-            CronKey::WatchdogCron,
-            CronKey::ResourceWatch,
-            CronKey::ContradictionResolve,
-        ] {
-            assert!(keys.contains(key), "missing always-on key: {:?}", key);
-        }
+        // BgMonitor is the only genuinely always-on key (interval-gated, no
+        // operator `.enabled` opt-out), so it must be present regardless of config.
+        assert!(keys.contains(&CronKey::BgMonitor), "BgMonitor must always be present");
     }
 
     #[test]

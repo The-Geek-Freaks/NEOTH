@@ -199,6 +199,14 @@ fn semantic_split(prompt: &str, keep_recent_chars: usize) -> usize {
         raw_split -= 1;
     }
 
+    // Wave-11: when `keep_recent_chars >= prompt.len()` the whole prompt is the
+    // live zone (old zone is empty) — return 0 so nothing is summarised. Without
+    // this, the marker search below could pick a boundary > 0 and hand a slice
+    // of "recent" content to the summariser.
+    if raw_split == 0 {
+        return 0;
+    }
+
     // Search window: ±25% of keep_recent_chars around raw_split. `window` is a
     // raw byte count, so the window bounds must be snapped back to char
     // boundaries before slicing — otherwise a multibyte codepoint (emoji, CJK)
@@ -1030,6 +1038,15 @@ mod tests {
             let _ = &prompt[..at];
             let _ = &prompt[at..];
         }
+    }
+
+    /// Wave-11: when keep_recent_chars >= prompt.len() the whole prompt is live,
+    /// so the split must be 0 — even if the prompt contains a turn marker.
+    #[test]
+    fn pxp02_semantic_split_zero_when_keep_covers_whole_prompt() {
+        let prompt = "assistant preamble\n\nHuman: hi there, this is the whole thing";
+        assert_eq!(semantic_split(prompt, prompt.len()), 0);
+        assert_eq!(semantic_split(prompt, prompt.len() + 1000), 0);
     }
 
     /// Two consecutive fires over the same stable prefix must produce identical
