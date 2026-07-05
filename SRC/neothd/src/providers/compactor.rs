@@ -109,11 +109,12 @@ static RE_FILE_PATH_UNIX: LazyLock<Regex> = LazyLock::new(|| {
     // Two+ `/segment` components, but only when the leading `/` sits at the
     // start of the text or right after whitespace / a quote / a delimiter —
     // NOT after `//` in a URL. This catches mid-sentence filesystem paths
-    // ("config lives at /etc/neoth/config.yaml", "path:/var/log") while NOT
-    // matching the path portion of an https:// URL. Matching every URL would
-    // veto compaction of essentially every real conversation (they nearly
-    // always contain a link), silently disabling the feature.
-    Regex::new(r#"(?:^|[\s"'(<=,:])(?:/[a-zA-Z0-9_.\-]+){2,}"#).unwrap()
+    // ("config lives at /etc/neoth/config.yaml", "path:/var/log",
+    // "2>/var/log/err", "cmd |/usr/bin/tee") while NOT matching the path
+    // portion of an https:// URL. Matching every URL would veto compaction of
+    // essentially every real conversation (they nearly always contain a link),
+    // silently disabling the feature.
+    Regex::new(r#"(?:^|[\s"'(<=,:>|])(?:/[a-zA-Z0-9_.\-]+){2,}"#).unwrap()
 });
 static RE_FILE_PATH_WIN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^[A-Za-z]:\\(?:[^\\\r\n]+\\)+").unwrap()
@@ -918,6 +919,15 @@ mod tests {
             should_compact_block(s),
             "a URL alone must not veto compaction"
         );
+    }
+
+    /// Wave-5 regression: a path after a shell redirect/pipe operator (no space)
+    /// must still be caught.
+    #[test]
+    fn pxp01_redirect_path_not_compactable() {
+        for s in ["run 2>/var/log/neoth/err.log now", "tee |/usr/bin/logger here"] {
+            assert!(!should_compact_block(s), "redirect/pipe path must not be compactable: {s}");
+        }
     }
 
     // -------------------------------------------------------------------------
