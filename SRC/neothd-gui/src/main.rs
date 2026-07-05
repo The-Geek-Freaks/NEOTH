@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+// FIX 1 — serialize all freedom.yaml writers so concurrent GUI toggles cannot
+// interleave their read-modify-write cycles and lose an update.
+static FREEDOM_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// GU-03 — persona-adaptive settings-panel visibility rule engine (pure Rust,
 /// unit-tested without Slint). The `.slint` binds its `show_*` properties to
 /// [`panel_logic::PanelVisibility`], populated on startup from the operator's
@@ -532,14 +536,23 @@ fn main() -> Result<()> {
         {
             let fp = &neoth_dir.join("freedom.yaml");
             // Welle A — council
-            let cap = read_nested_str_in_freedom(fp, "council.daily_usd_cap", "");
-            window.set_cfg_council_daily_usd(cap.into());
+            // FIX 4 — daily_usd_cap is a YAML float; as_str() always returns None for
+            // numeric nodes. Use the f64 reader and format for display.
+            let cap_str = read_nested_f64_in_freedom(fp, "council.daily_usd_cap", 0.0)
+                .map(format_cap_f64)
+                .unwrap_or_default();
+            window.set_cfg_council_daily_usd(cap_str.into());
             let mc = read_nested_i64_in_freedom(fp, "council.max_calls_per_user_message", 0);
             window.set_cfg_council_max_calls(if mc == 0 { "".into() } else { mc.to_string().into() });
             let md = read_nested_i64_in_freedom(fp, "council.max_recursion_depth", 0);
             window.set_cfg_council_max_depth(if md == 0 { "".into() } else { md.to_string().into() });
             let sm = read_nested_str_in_freedom(fp, "council.selection_mode", "legacy_majority");
-            window.set_cfg_council_selection_mode_idx(if sm == "consensus_or_best" { 1 } else { 0 });
+            // FIX 5 — 3 variants: 0=legacy_majority 1=consensus_or_best 2=best_always
+            window.set_cfg_council_selection_mode_idx(match sm.as_str() {
+                "consensus_or_best" => 1,
+                "best_always"       => 2,
+                _                   => 0,
+            });
             // Welle A — provider
             window.set_cfg_provider_model(read_nested_str_in_freedom(fp, "provider_model", "").into());
             window.set_cfg_provider_endpoint(read_nested_str_in_freedom(fp, "provider_endpoint", "").into());
@@ -4032,7 +4045,7 @@ fn main() -> Result<()> {
         wire_nested_i64_str!(on_cfg_council_max_depth_changed, "council.max_recursion_depth", "Max depth");
         wire_nested_int_combo!(on_cfg_council_selection_mode_changed,
             "council.selection_mode",
-            &["legacy_majority", "consensus_or_best"],
+            &["legacy_majority", "consensus_or_best", "best_always"],  // FIX 5
             "Selection mode");
 
         // Welle A — Provider
@@ -4042,10 +4055,36 @@ fn main() -> Result<()> {
         wire_nested_str!(on_cfg_provider_api_version_changed,  "provider_api_version", "API version");
 
         // Welle A — Profile + Behavior
-        wire_nested_int_combo!(on_cfg_persona_mode_changed,
-            "persona_mode",
-            &["", "loyal_buddy"],    // "" = None variant → empty string → daemon treats as absent
-            "Persona mode");
+        // FIX 2 — persona_mode index 0 must write YAML null (→ None) not ""
+        // which would cause serde_yaml to fail parsing Option<PersonaMode>.
+        // Inline callback instead of wire_nested_int_combo! to emit Null for "".
+        {
+            let nd = neoth_dir.clone();
+            let weak = window.as_weak();
+            let variants: &'static [&'static str] = &["", "loyal_buddy"];
+            window.on_cfg_persona_mode_changed(move |idx: i32| {
+                let val = variants.get(idx as usize).copied().unwrap_or(variants[0]);
+                let yaml_val = if val.is_empty() {
+                    serde_yaml::Value::Null
+                } else {
+                    serde_yaml::Value::from(val)
+                };
+                let fp = nd.join("freedom.yaml");
+                let rd = nd.join(".reload-requested");
+                let result = set_nested_in_freedom(&fp, "persona_mode", yaml_val)
+                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                let w2 = weak.clone();
+                slint::invoke_from_event_loop(move || {
+                    match result {
+                        Ok(_) => push_toast(&w2, "success", "Persona mode", val),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&w2, "warn", "Persona mode write failed", &msg);
+                        }
+                    }
+                }).ok();
+            });
+        }
         wire_nested_str!(on_cfg_user_tz_changed,                "user_tz",                  "Timezone");
         wire_nested_bool!(on_cfg_elicitation_enabled_changed,   "elicitation.enabled",      "Elicitation");
         wire_nested_bool!(on_cfg_tone_modifier_enabled_changed, "tone_modifier.enabled",     "Tone modifier");
@@ -4125,10 +4164,14 @@ fn main() -> Result<()> {
             let fp = nd.join("freedom.yaml");
             let rd = nd.join(".reload-requested");
             let result: anyhow::Result<()> = (|| {
-                let v: i64 = if s.trim().is_empty() { 0 } else {
-                    s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?
+                // FIX 3 — empty input → Null (None), not 0 (Some(0) = busy loop).
+                let yaml_val = if s.trim().is_empty() {
+                    serde_yaml::Value::Null
+                } else {
+                    let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
+                    serde_yaml::Value::from(v)
                 };
-                set_nested_in_freedom(&fp, "obsidian_auto_sync_secs", serde_yaml::Value::from(v))?;
+                set_nested_in_freedom(&fp, "obsidian_auto_sync_secs", yaml_val)?;
                 std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
             })();
             let w2 = weak.clone();
@@ -4791,6 +4834,7 @@ fn load_cluster_settings(path: &Path) -> ClusterSettingsSnapshot {
 /// council, ...) survives the rewrite unchanged. Atomic via
 /// `.tmp` + rename.
 fn set_cluster_mdns_enabled_in_freedom(path: &Path, enabled: bool) -> Result<()> {
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let body = if path.exists() {
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
     } else {
@@ -4836,6 +4880,7 @@ fn set_cluster_mdns_enabled_in_freedom(path: &Path, enabled: bool) -> Result<()>
 /// doesn't model. This is the only safe writer for the settings panel's
 /// provider/model selectors. Atomic via `write_mode_0600` (.tmp + rename).
 fn set_top_level_string_in_freedom(path: &Path, key: &str, value: &str) -> Result<()> {
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let body = if path.exists() {
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
     } else {
@@ -4938,6 +4983,7 @@ fn set_nested_in_freedom(
     dotted_key: &str,
     value: serde_yaml::Value,
 ) -> Result<()> {
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let body = if path.exists() {
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
     } else {
@@ -5065,6 +5111,39 @@ fn read_nested_i64_in_freedom(path: &Path, dotted_key: &str, default: i64) -> i6
     leaf.and_then(|v| v.as_i64()).unwrap_or(default)
 }
 
+/// DES-09 helper — read a nested f64 from freedom.yaml.
+/// Returns `default` on missing file / key / malformed YAML.
+/// Used for fields like `council.daily_usd_cap` which are stored as YAML floats.
+fn read_nested_f64_in_freedom(path: &Path, dotted_key: &str, default: f64) -> Option<f64> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return None;
+    };
+    let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
+    let leaf = match segments.as_slice() {
+        [leaf] => root.get(serde_yaml::Value::from(*leaf)),
+        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, k2, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(*k2))
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        _ => None,
+    };
+    leaf.and_then(|v| v.as_f64())
+}
+
+/// Format an f64 cap value for display: strip the trailing ".0" for whole
+/// numbers so "10" shows instead of "10.0", but "10.5" stays "10.5".
+fn format_cap_f64(v: f64) -> String {
+    if v.fract() == 0.0 && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
 #[cfg(test)]
 mod des09_tests {
     use super::*;
@@ -5170,6 +5249,67 @@ mod des09_tests {
         let got = root.get("memory").and_then(|v| v.get("vector_index"))
             .and_then(|v| v.get("backend")).and_then(|v| v.as_str()).unwrap();
         assert_eq!(got, "hnsw");
+    }
+
+    // ── FIX 4 tests — read_nested_f64_in_freedom + format_cap_f64 ──────────
+
+    #[test]
+    fn read_f64_returns_value_for_float_node() {
+        let dir = TempDir::new().unwrap();
+        let path = write_yaml(&dir, "council:\n  daily_usd_cap: 10.0\n");
+        let v = read_nested_f64_in_freedom(&path, "council.daily_usd_cap", 0.0);
+        assert!(v.is_some(), "expected Some, got None");
+        assert!((v.unwrap() - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn read_f64_returns_none_for_missing_key() {
+        let dir = TempDir::new().unwrap();
+        let path = write_yaml(&dir, "council:\n  max_calls: 5\n");
+        let v = read_nested_f64_in_freedom(&path, "council.daily_usd_cap", 0.0);
+        assert!(v.is_none(), "expected None for missing key");
+    }
+
+    #[test]
+    fn format_cap_strips_dot_zero_for_whole() {
+        assert_eq!(format_cap_f64(10.0), "10");
+        assert_eq!(format_cap_f64(0.0), "0");
+        assert_eq!(format_cap_f64(100.0), "100");
+    }
+
+    #[test]
+    fn format_cap_preserves_fractional() {
+        assert_eq!(format_cap_f64(10.5), "10.5");
+        assert_eq!(format_cap_f64(3.14), "3.14");
+    }
+
+    // ── FIX 2 / FIX 3 tests — Null write deserialized as YAML null ─────────
+
+    #[test]
+    fn null_write_round_trips_as_yaml_null() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        // Write Null to a key; read back and verify it is YAML null / absent.
+        set_nested_test(&path, "persona_mode", serde_yaml::Value::Null).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        // serde_yaml::Value::Null means Option<T> deserializes as None.
+        let node = root.get("persona_mode");
+        // Either the key is absent or its value is Null — both are valid representations.
+        let is_null_or_absent = node.map_or(true, |v| v.is_null());
+        assert!(is_null_or_absent, "expected null or absent, got {:?}", node);
+    }
+
+    #[test]
+    fn null_write_for_obsidian_sync_is_yaml_null() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        set_nested_test(&path, "obsidian_auto_sync_secs", serde_yaml::Value::Null).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        let node = root.get("obsidian_auto_sync_secs");
+        let is_null_or_absent = node.map_or(true, |v| v.is_null());
+        assert!(is_null_or_absent, "expected null or absent, got {:?}", node);
     }
 }
 

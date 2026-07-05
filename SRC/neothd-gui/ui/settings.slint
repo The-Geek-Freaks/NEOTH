@@ -698,7 +698,7 @@ export component SettingsView inherits Rectangle {
     in-out property <string> cfg-council-daily-usd: "";
     in-out property <string> cfg-council-max-calls: "";
     in-out property <string> cfg-council-max-depth: "";
-    in-out property <int>    cfg-council-selection-mode-idx: 0;  // 0=legacy_majority 1=consensus_or_best
+    in-out property <int>    cfg-council-selection-mode-idx: 0;  // 0=legacy_majority 1=consensus_or_best 2=best_always
     callback cfg-council-daily-usd-changed(string);
     callback cfg-council-max-calls-changed(string);
     callback cfg-council-max-depth-changed(string);
@@ -3194,7 +3194,7 @@ export component SettingsView inherits Rectangle {
                                 width: 160px;
                             }
                             NeothComboBox {
-                                model: ["legacy_majority", "consensus_or_best"];
+                                model: ["legacy_majority", "consensus_or_best", "best_always"];  // FIX 5
                                 current-index: root.cfg-council-selection-mode-idx;
                                 horizontal-stretch: 1;
                                 selected(idx) => {
