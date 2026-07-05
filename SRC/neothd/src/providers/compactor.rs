@@ -443,6 +443,25 @@ impl CompactingProvider {
             format!("[CONTEXT SUMMARY: {summary}]\n\n{live_zone}")
         };
 
+        // GOLD-PXP-03 churn telemetry: track the stable-zone hash on EVERY
+        // past-threshold fire with a non-empty old zone — including verbatim-keep
+        // fires that emit no WAL. If we only updated inside the `compacted` block,
+        // a verbatim-keep fire between two real compactions would leave
+        // prev_static_hash stale and the next compaction's churn/cache booleans
+        // wrong. `raw_hash` also content-addresses the pre-compaction raw text
+        // (ODY-06) for the WAL payload below.
+        let raw_hash = hex::encode(Sha256::digest(old_zone.as_bytes()));
+        let (churn_detected, cache_hit_probable) = if old_zone.is_empty() {
+            (false, false)
+        } else {
+            let mut guard = self.prev_static_hash.lock().unwrap();
+            let prev = guard.clone();
+            let churn = prev.as_ref().is_some_and(|p| p != &raw_hash);
+            let cache_hit = prev.as_ref().is_some_and(|p| p == &raw_hash);
+            *guard = Some(raw_hash.clone());
+            (churn, cache_hit)
+        };
+
         // Best-effort WAL emit — only when a real compaction occurred.
         if let (true, Some(wal)) = (compacted, &self.wal) {
             let model_name = self
@@ -450,19 +469,6 @@ impl CompactingProvider {
                 .as_ref()
                 .map(|u| u.name())
                 .unwrap_or("none");
-            // ODY-06 compactor-rawhash: content-address the pre-compaction raw text.
-            let raw_hash = hex::encode(Sha256::digest(old_zone.as_bytes()));
-
-            // GOLD-PXP-03: churn telemetry — compare stable-zone hash against
-            // the previous fire.
-            let (churn_detected, cache_hit_probable) = {
-                let mut guard = self.prev_static_hash.lock().unwrap();
-                let prev = guard.as_deref().map(|s| s.to_owned());
-                let churn = prev.as_ref().is_some_and(|p| p != &raw_hash);
-                let cache_hit = prev.as_ref().is_some_and(|p| p == &raw_hash);
-                *guard = Some(raw_hash.clone());
-                (churn, cache_hit)
-            };
 
             let payload_json = json!(CompactionPayload {
                 original_chars,

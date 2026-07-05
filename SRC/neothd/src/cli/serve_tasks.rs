@@ -88,9 +88,13 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     use CronKey::*;
     let mut keys = std::collections::HashSet::new();
 
-    // Genuinely always-on: BgMonitor gates only on `interval_secs != 0` (not a
-    // boolean opt-out), so it stays unconditional.
-    keys.insert(BgMonitor);
+    // BgMonitor gates on `interval_secs != 0` (spawn_bg_monitor_task returns
+    // None at 0). Mirror that here too — otherwise a reload that sets the
+    // interval to 0 leaves the running monitor un-stopped, and the reload log
+    // over-counts `started` (to_start holds a key that spawns nothing).
+    if cfg.bg_monitor.interval_secs != 0 {
+        keys.insert(BgMonitor);
+    }
 
     // `.enabled`-gated crons: the desired set MUST mirror each spawn_*'s
     // `if !config.X.enabled { return None }` guard. Otherwise a cron enabled at
@@ -5593,11 +5597,15 @@ mod zf06_fleet_tests {
 
     #[test]
     fn desired_cron_keys_default_config_contains_core_keys() {
-        let cfg = FreedomConfig::default();
-        let keys = desired_cron_keys(&cfg);
-        // BgMonitor is the only genuinely always-on key (interval-gated, no
-        // operator `.enabled` opt-out), so it must be present regardless of config.
-        assert!(keys.contains(&CronKey::BgMonitor), "BgMonitor must always be present");
+        // BgMonitor is present iff its interval is non-zero; a reload to 0 must
+        // drop it from the desired set so the running monitor is stopped.
+        let mut on = FreedomConfig::default();
+        on.bg_monitor.interval_secs = 60;
+        assert!(desired_cron_keys(&on).contains(&CronKey::BgMonitor), "interval>0 → present");
+
+        let mut off = on.clone();
+        off.bg_monitor.interval_secs = 0;
+        assert!(!desired_cron_keys(&off).contains(&CronKey::BgMonitor), "interval=0 → absent");
     }
 
     #[test]
