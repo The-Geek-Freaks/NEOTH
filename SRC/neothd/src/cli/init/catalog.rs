@@ -85,6 +85,14 @@ fn ping_provider_key_blocking(key: &str, kind: ProviderKind, endpoint: Option<&s
     if crate::providers::is_local_provider(kind.as_str()) {
         return;
     }
+    // Skip when the CONFIGURED ENDPOINT is local (loopback / ::1) — the
+    // provider-name check above misses an OpenAI-compat provider pointed at a
+    // local server (ollama / lm-studio / vLLM). A local server needs no
+    // key-verification round-trip, and skipping avoids POSTing the bearer key
+    // to a loopback socket during setup.
+    if endpoint.is_some_and(crate::providers::known_endpoints::is_local_endpoint) {
+        return;
+    }
     // Skip for providers that use OAuth / CLI, not a raw API key.
     if matches!(kind, ProviderKind::ClaudeCli | ProviderKind::Skip) {
         return;

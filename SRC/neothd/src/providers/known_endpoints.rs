@@ -227,7 +227,7 @@ pub fn find_by_id(provider_id: &str) -> Option<&'static KnownEndpoint> {
 /// Used by [`local_only`], [`cloud_only`], and the locality checks that gate
 /// the remote-consent prompt. Mirrors the pattern in `pears_bridge.rs`.
 #[inline]
-fn is_local_endpoint(endpoint: &str) -> bool {
+pub(crate) fn is_local_endpoint(endpoint: &str) -> bool {
     endpoint.contains("localhost")
         || endpoint.contains("127.0.0.1")
         || endpoint.contains("::1")
