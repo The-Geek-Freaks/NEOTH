@@ -694,6 +694,60 @@ export component SettingsView inherits Rectangle {
     callback backup-now-clicked;
     callback rollback-preview-clicked;
 
+    // ── DES-09 Welle A — Council editors ─────────────────────────────────
+    in-out property <string> cfg-council-daily-usd: "";
+    in-out property <string> cfg-council-max-calls: "";
+    in-out property <string> cfg-council-max-depth: "";
+    in-out property <int>    cfg-council-selection-mode-idx: 0;  // 0=legacy_majority 1=consensus_or_best
+    callback cfg-council-daily-usd-changed(string);
+    callback cfg-council-max-calls-changed(string);
+    callback cfg-council-max-depth-changed(string);
+    callback cfg-council-selection-mode-changed(int);
+
+    // ── DES-09 Welle A — Provider detail editors ──────────────────────────
+    in-out property <string> cfg-provider-model: "";
+    in-out property <string> cfg-provider-endpoint: "";
+    in-out property <string> cfg-provider-region: "";
+    in-out property <string> cfg-provider-api-version: "";
+    callback cfg-provider-model-changed(string);
+    callback cfg-provider-endpoint-changed(string);
+    callback cfg-provider-region-changed(string);
+    callback cfg-provider-api-version-changed(string);
+
+    // ── DES-09 Welle A — Profile + Behavior editors ───────────────────────
+    in-out property <int>    cfg-persona-mode-idx: 0;  // 0=(none) 1=loyal_buddy
+    in-out property <string> cfg-user-tz: "";
+    in-out property <bool>   cfg-elicitation-enabled: false;
+    in-out property <bool>   cfg-tone-modifier-enabled: false;
+    callback cfg-persona-mode-changed(int);
+    callback cfg-user-tz-changed(string);
+    callback cfg-elicitation-enabled-changed(bool);
+    callback cfg-tone-modifier-enabled-changed(bool);
+
+    // ── DES-09 Welle B — Privacy editors ─────────────────────────────────
+    in-out property <bool> cfg-review-gate-enabled: false;
+    in-out property <bool> cfg-cloud-stt-enabled: false;
+    in-out property <bool> cfg-cloud-tts-enabled: false;
+    in-out property <bool> cfg-cloud-vision-enabled: false;
+    in-out property <bool> cfg-vad-enabled: false;
+    in-out property <bool> cfg-dictation-enabled: false;
+    in-out property <bool> cfg-proactive-idle-only: false;
+    callback cfg-review-gate-enabled-changed(bool);
+    callback cfg-cloud-stt-enabled-changed(bool);
+    callback cfg-cloud-tts-enabled-changed(bool);
+    callback cfg-cloud-vision-enabled-changed(bool);
+    callback cfg-vad-enabled-changed(bool);
+    callback cfg-dictation-enabled-changed(bool);
+    callback cfg-proactive-idle-only-changed(bool);
+
+    // ── DES-09 Welle C — Memory editors ──────────────────────────────────
+    in-out property <bool> cfg-memory-name-sessions: false;
+    in-out property <bool> cfg-memory-recall-shortcut: false;
+    in-out property <int>  cfg-memory-vector-backend-idx: 0;  // 0=brute_force 1=hnsw
+    callback cfg-memory-name-sessions-changed(bool);
+    callback cfg-memory-recall-shortcut-changed(bool);
+    callback cfg-memory-vector-backend-changed(int);
+
     background: Theme.bg-base;
 
     HorizontalLayout {
@@ -1620,6 +1674,65 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
+                // DES-09 Welle C — memory settings editors
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "MEMORY SETTINGS";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        NeothCheckBox {
+                            text: "Name sessions automatically";
+                            checked: root.cfg-memory-name-sessions;
+                            toggled(v) => {
+                                root.cfg-memory-name-sessions = v;
+                                root.cfg-memory-name-sessions-changed(v);
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Recall shortcut (auto-prepend relevant memories)";
+                            checked: root.cfg-memory-recall-shortcut;
+                            toggled(v) => {
+                                root.cfg-memory-recall-shortcut = v;
+                                root.cfg-memory-recall-shortcut-changed(v);
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            alignment: center;
+                            Text {
+                                text: "vector index backend";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            NeothComboBox {
+                                model: ["brute_force", "hnsw"];
+                                current-index: root.cfg-memory-vector-backend-idx;
+                                selected(idx) => {
+                                    root.cfg-memory-vector-backend-idx = idx;
+                                    root.cfg-memory-vector-backend-changed(idx);
+                                }
+                            }
+                        }
+                        Text {
+                            text: "After switching vector backend, run: neoth memory --rebuild-index";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
             }
 
             if root.active == SettingsTab.privacy: VerticalBox {
@@ -1953,6 +2066,117 @@ export component SettingsView inherits Rectangle {
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
+                // DES-09 Welle B — review gate
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "REVIEW GATE";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        NeothCheckBox {
+                            text: "Review gate enabled (confirm before each council dispatch)";
+                            checked: root.cfg-review-gate-enabled;
+                            toggled(v) => {
+                                root.cfg-review-gate-enabled = v;
+                                root.cfg-review-gate-enabled-changed(v);
+                            }
+                        }
+                    }
+                }
+                // DES-09 Welle B — cloud media toggles
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "CLOUD MEDIA";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: "⚠ Sends audio / images to your configured cloud provider.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
+                            wrap: word-wrap;
+                        }
+                        NeothCheckBox {
+                            text: "Cloud speech-to-text (STT)";
+                            checked: root.cfg-cloud-stt-enabled;
+                            toggled(v) => {
+                                root.cfg-cloud-stt-enabled = v;
+                                root.cfg-cloud-stt-enabled-changed(v);
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Cloud text-to-speech (TTS)";
+                            checked: root.cfg-cloud-tts-enabled;
+                            toggled(v) => {
+                                root.cfg-cloud-tts-enabled = v;
+                                root.cfg-cloud-tts-enabled-changed(v);
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Cloud vision (image understanding)";
+                            checked: root.cfg-cloud-vision-enabled;
+                            toggled(v) => {
+                                root.cfg-cloud-vision-enabled = v;
+                                root.cfg-cloud-vision-enabled-changed(v);
+                            }
+                        }
+                    }
+                }
+                // DES-09 Welle B — local media + proactive
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "LOCAL MEDIA & PROACTIVE";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        NeothCheckBox {
+                            text: "Voice activity detection (VAD) — local mic trigger";
+                            checked: root.cfg-vad-enabled;
+                            toggled(v) => {
+                                root.cfg-vad-enabled = v;
+                                root.cfg-vad-enabled-changed(v);
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Dictation mode (auto-transcribe mic input)";
+                            checked: root.cfg-dictation-enabled;
+                            toggled(v) => {
+                                root.cfg-dictation-enabled = v;
+                                root.cfg-dictation-enabled-changed(v);
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Proactive messages only when idle (quieter)";
+                            checked: root.cfg-proactive-idle-only;
+                            toggled(v) => {
+                                root.cfg-proactive-idle-only = v;
+                                root.cfg-proactive-idle-only-changed(v);
                             }
                         }
                     }
@@ -2885,6 +3109,254 @@ export component SettingsView inherits Rectangle {
                                 color: Theme.text-muted;
                             }
                         }
+                        // DES-09 Welle A — editable council fields
+                        Rectangle { height: Theme.space-base; }
+                        Text {
+                            text: "EDIT COUNCIL LIMITS";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            alignment: center;
+                            Text {
+                                text: "daily USD cap";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                                width: 160px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "e.g. 5.0";
+                                text: root.cfg-council-daily-usd;
+                                horizontal-stretch: 1;
+                                edited(t) => {
+                                    root.cfg-council-daily-usd = t;
+                                    root.cfg-council-daily-usd-changed(t);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            alignment: center;
+                            Text {
+                                text: "max calls / message";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                                width: 160px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "e.g. 4";
+                                text: root.cfg-council-max-calls;
+                                horizontal-stretch: 1;
+                                edited(t) => {
+                                    root.cfg-council-max-calls = t;
+                                    root.cfg-council-max-calls-changed(t);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            alignment: center;
+                            Text {
+                                text: "max recursion depth (1-4)";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                                width: 160px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "1..4";
+                                text: root.cfg-council-max-depth;
+                                horizontal-stretch: 1;
+                                edited(t) => {
+                                    root.cfg-council-max-depth = t;
+                                    root.cfg-council-max-depth-changed(t);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            alignment: center;
+                            Text {
+                                text: "selection mode";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                                width: 160px;
+                            }
+                            NeothComboBox {
+                                model: ["legacy_majority", "consensus_or_best"];
+                                current-index: root.cfg-council-selection-mode-idx;
+                                horizontal-stretch: 1;
+                                selected(idx) => {
+                                    root.cfg-council-selection-mode-idx = idx;
+                                    root.cfg-council-selection-mode-changed(idx);
+                                }
+                            }
+                        }
+                }
+
+                // ── PROVIDER DETAILS (DES-09 Welle A) ────────────────
+                Expander {
+                    title: "PROVIDER DETAILS";
+                    hint: "model · endpoint · region";
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: center;
+                        Text {
+                            text: "model";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            width: 140px;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "e.g. claude-opus-4-5";
+                            text: root.cfg-provider-model;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-provider-model = t;
+                                root.cfg-provider-model-changed(t);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: center;
+                        Text {
+                            text: "endpoint";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            width: 140px;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "https://api.anthropic.com";
+                            text: root.cfg-provider-endpoint;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-provider-endpoint = t;
+                                root.cfg-provider-endpoint-changed(t);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: center;
+                        Text {
+                            text: "region";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            width: 140px;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "e.g. us-east-1";
+                            text: root.cfg-provider-region;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-provider-region = t;
+                                root.cfg-provider-region-changed(t);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: center;
+                        Text {
+                            text: "api-version";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            width: 140px;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "e.g. 2024-01-01";
+                            text: root.cfg-provider-api-version;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-provider-api-version = t;
+                                root.cfg-provider-api-version-changed(t);
+                            }
+                        }
+                    }
+                }
+
+                // ── PROFILE + BEHAVIOR (DES-09 Welle A) ──────────────
+                Expander {
+                    title: "PROFILE & BEHAVIOR";
+                    hint: "persona · timezone · elicitation";
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: center;
+                        Text {
+                            text: "persona mode";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            width: 160px;
+                        }
+                        NeothComboBox {
+                            model: ["(none)", "loyal_buddy"];
+                            current-index: root.cfg-persona-mode-idx;
+                            horizontal-stretch: 1;
+                            selected(idx) => {
+                                root.cfg-persona-mode-idx = idx;
+                                root.cfg-persona-mode-changed(idx);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: center;
+                        Text {
+                            text: "timezone";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            width: 160px;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "e.g. Europe/Berlin";
+                            text: root.cfg-user-tz;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-user-tz = t;
+                                root.cfg-user-tz-changed(t);
+                            }
+                        }
+                    }
+                    NeothCheckBox {
+                        text: "Elicitation (daemon asks clarifying questions)";
+                        checked: root.cfg-elicitation-enabled;
+                        toggled(v) => {
+                            root.cfg-elicitation-enabled = v;
+                            root.cfg-elicitation-enabled-changed(v);
+                        }
+                    }
+                    NeothCheckBox {
+                        text: "Tone modifier (adaptive response style)";
+                        checked: root.cfg-tone-modifier-enabled;
+                        toggled(v) => {
+                            root.cfg-tone-modifier-enabled = v;
+                            root.cfg-tone-modifier-enabled-changed(v);
+                        }
+                    }
                 }
 
                 // ── MAINTENANCE ──────────────────────────────────────

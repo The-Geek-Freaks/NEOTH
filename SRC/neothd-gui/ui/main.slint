@@ -465,6 +465,61 @@ export component MainWindow inherits Window {
     callback obs-refresh-clicked();
     callback obs-sync-clicked();
     callback obs-wiki-clicked();
+    // DES-09 Welle E — write-back props + callbacks
+    in-out property <string> obs-vault-path-edit: "";
+    in-out property <string> obs-subdir-edit: "";
+    in-out property <int>    obs-auto-sync-secs-edit: 0;
+    in-out property <bool>   obs-reader-enabled-edit: false;
+    callback obs-vault-path-changed(string);
+    callback obs-subdir-changed(string);
+    callback obs-auto-sync-secs-str-changed(string);
+    callback obs-reader-enabled-changed(bool);
+    callback obs-browse-clicked();
+    // DES-09 Welle A/B/C — settings editor props + callbacks (forwarded to SettingsView)
+    in-out property <string> cfg-council-daily-usd: "";
+    in-out property <string> cfg-council-max-calls: "";
+    in-out property <string> cfg-council-max-depth: "";
+    in-out property <int>    cfg-council-selection-mode-idx: 0;
+    in-out property <string> cfg-provider-model: "";
+    in-out property <string> cfg-provider-endpoint: "";
+    in-out property <string> cfg-provider-region: "";
+    in-out property <string> cfg-provider-api-version: "";
+    in-out property <int>    cfg-persona-mode-idx: 0;
+    in-out property <string> cfg-user-tz: "";
+    in-out property <bool>   cfg-elicitation-enabled: false;
+    in-out property <bool>   cfg-tone-modifier-enabled: false;
+    in-out property <bool>   cfg-review-gate-enabled: false;
+    in-out property <bool>   cfg-cloud-stt-enabled: false;
+    in-out property <bool>   cfg-cloud-tts-enabled: false;
+    in-out property <bool>   cfg-cloud-vision-enabled: false;
+    in-out property <bool>   cfg-vad-enabled: false;
+    in-out property <bool>   cfg-dictation-enabled: false;
+    in-out property <bool>   cfg-proactive-idle-only: false;
+    in-out property <bool>   cfg-memory-name-sessions: false;
+    in-out property <bool>   cfg-memory-recall-shortcut: false;
+    in-out property <int>    cfg-memory-vector-backend-idx: 0;
+    callback cfg-council-daily-usd-changed(string);
+    callback cfg-council-max-calls-changed(string);
+    callback cfg-council-max-depth-changed(string);
+    callback cfg-council-selection-mode-changed(int);
+    callback cfg-provider-model-changed(string);
+    callback cfg-provider-endpoint-changed(string);
+    callback cfg-provider-region-changed(string);
+    callback cfg-provider-api-version-changed(string);
+    callback cfg-persona-mode-changed(int);
+    callback cfg-user-tz-changed(string);
+    callback cfg-elicitation-enabled-changed(bool);
+    callback cfg-tone-modifier-enabled-changed(bool);
+    callback cfg-review-gate-enabled-changed(bool);
+    callback cfg-cloud-stt-enabled-changed(bool);
+    callback cfg-cloud-tts-enabled-changed(bool);
+    callback cfg-cloud-vision-enabled-changed(bool);
+    callback cfg-vad-enabled-changed(bool);
+    callback cfg-dictation-enabled-changed(bool);
+    callback cfg-proactive-idle-only-changed(bool);
+    callback cfg-memory-name-sessions-changed(bool);
+    callback cfg-memory-recall-shortcut-changed(bool);
+    callback cfg-memory-vector-backend-changed(int);
 
     // ── Wave 4b — Dreaming panel ──────────────────────────────────────────────
     in property <[DreamDayRow]>   dr-days: [];
@@ -2174,6 +2229,55 @@ export component MainWindow inherits Window {
             // G-5 fix: route "← Chat" back to the Chat surface so the
             // operator can leave Settings without hunting for an exit.
                     back-clicked => { root.nav-active = "chat"; root.step = WizardStep.chat; }
+                    // DES-09 Welle A — council editors
+                    cfg-council-daily-usd <=> root.cfg-council-daily-usd;
+                    cfg-council-max-calls <=> root.cfg-council-max-calls;
+                    cfg-council-max-depth <=> root.cfg-council-max-depth;
+                    cfg-council-selection-mode-idx <=> root.cfg-council-selection-mode-idx;
+                    cfg-council-daily-usd-changed(v) => { root.cfg-council-daily-usd-changed(v); }
+                    cfg-council-max-calls-changed(v) => { root.cfg-council-max-calls-changed(v); }
+                    cfg-council-max-depth-changed(v) => { root.cfg-council-max-depth-changed(v); }
+                    cfg-council-selection-mode-changed(v) => { root.cfg-council-selection-mode-changed(v); }
+                    // DES-09 Welle A — provider editors
+                    cfg-provider-model <=> root.cfg-provider-model;
+                    cfg-provider-endpoint <=> root.cfg-provider-endpoint;
+                    cfg-provider-region <=> root.cfg-provider-region;
+                    cfg-provider-api-version <=> root.cfg-provider-api-version;
+                    cfg-provider-model-changed(v) => { root.cfg-provider-model-changed(v); }
+                    cfg-provider-endpoint-changed(v) => { root.cfg-provider-endpoint-changed(v); }
+                    cfg-provider-region-changed(v) => { root.cfg-provider-region-changed(v); }
+                    cfg-provider-api-version-changed(v) => { root.cfg-provider-api-version-changed(v); }
+                    // DES-09 Welle A — profile + behavior
+                    cfg-persona-mode-idx <=> root.cfg-persona-mode-idx;
+                    cfg-user-tz <=> root.cfg-user-tz;
+                    cfg-elicitation-enabled <=> root.cfg-elicitation-enabled;
+                    cfg-tone-modifier-enabled <=> root.cfg-tone-modifier-enabled;
+                    cfg-persona-mode-changed(v) => { root.cfg-persona-mode-changed(v); }
+                    cfg-user-tz-changed(v) => { root.cfg-user-tz-changed(v); }
+                    cfg-elicitation-enabled-changed(v) => { root.cfg-elicitation-enabled-changed(v); }
+                    cfg-tone-modifier-enabled-changed(v) => { root.cfg-tone-modifier-enabled-changed(v); }
+                    // DES-09 Welle B — privacy
+                    cfg-review-gate-enabled <=> root.cfg-review-gate-enabled;
+                    cfg-cloud-stt-enabled <=> root.cfg-cloud-stt-enabled;
+                    cfg-cloud-tts-enabled <=> root.cfg-cloud-tts-enabled;
+                    cfg-cloud-vision-enabled <=> root.cfg-cloud-vision-enabled;
+                    cfg-vad-enabled <=> root.cfg-vad-enabled;
+                    cfg-dictation-enabled <=> root.cfg-dictation-enabled;
+                    cfg-proactive-idle-only <=> root.cfg-proactive-idle-only;
+                    cfg-review-gate-enabled-changed(v) => { root.cfg-review-gate-enabled-changed(v); }
+                    cfg-cloud-stt-enabled-changed(v) => { root.cfg-cloud-stt-enabled-changed(v); }
+                    cfg-cloud-tts-enabled-changed(v) => { root.cfg-cloud-tts-enabled-changed(v); }
+                    cfg-cloud-vision-enabled-changed(v) => { root.cfg-cloud-vision-enabled-changed(v); }
+                    cfg-vad-enabled-changed(v) => { root.cfg-vad-enabled-changed(v); }
+                    cfg-dictation-enabled-changed(v) => { root.cfg-dictation-enabled-changed(v); }
+                    cfg-proactive-idle-only-changed(v) => { root.cfg-proactive-idle-only-changed(v); }
+                    // DES-09 Welle C — memory
+                    cfg-memory-name-sessions <=> root.cfg-memory-name-sessions;
+                    cfg-memory-recall-shortcut <=> root.cfg-memory-recall-shortcut;
+                    cfg-memory-vector-backend-idx <=> root.cfg-memory-vector-backend-idx;
+                    cfg-memory-name-sessions-changed(v) => { root.cfg-memory-name-sessions-changed(v); }
+                    cfg-memory-recall-shortcut-changed(v) => { root.cfg-memory-recall-shortcut-changed(v); }
+                    cfg-memory-vector-backend-changed(v) => { root.cfg-memory-vector-backend-changed(v); }
                 }
 
                 // Chat — primary surface, inside the shell content. Sovereign-
@@ -2372,6 +2476,16 @@ export component MainWindow inherits Window {
                     obs-refresh-clicked => { root.obs-refresh-clicked(); }
                     obs-sync-clicked => { root.obs-sync-clicked(); }
                     obs-wiki-clicked => { root.obs-wiki-clicked(); }
+                    // DES-09 Welle E write-back
+                    obs-vault-path-edit <=> root.obs-vault-path-edit;
+                    obs-subdir-edit <=> root.obs-subdir-edit;
+                    obs-auto-sync-secs-edit <=> root.obs-auto-sync-secs-edit;
+                    obs-reader-enabled-edit <=> root.obs-reader-enabled-edit;
+                    obs-vault-path-changed(v) => { root.obs-vault-path-changed(v); }
+                    obs-subdir-changed(v) => { root.obs-subdir-changed(v); }
+                    obs-auto-sync-secs-str-changed(v) => { root.obs-auto-sync-secs-str-changed(v); }
+                    obs-reader-enabled-changed(v) => { root.obs-reader-enabled-changed(v); }
+                    obs-browse-clicked => { root.obs-browse-clicked(); }
                 }
 
                 // Wave 4b — Dreaming / Memory & Self-Awareness.

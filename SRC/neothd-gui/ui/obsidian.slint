@@ -16,7 +16,7 @@
 //   - No inline hex — Theme tokens only.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, NeothLineEdit, NeothCheckBox, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Public component ──────────────────────────────────────────────────────────
@@ -43,6 +43,14 @@ export component ObsidianView inherits Rectangle {
     // Shared refresh timestamp
     in property <string> obs-refreshed-at: "";
 
+    // ── DES-09 Welle E — write-back properties ─────────────────────────────
+    // These mirror the read-only props above but are in-out so the edit
+    // card can write back; Rust populates them from the same status refresh.
+    in-out property <string> obs-vault-path-edit: "";
+    in-out property <string> obs-subdir-edit: "";
+    in-out property <int>    obs-auto-sync-secs-edit: 0;
+    in-out property <bool>   obs-reader-enabled-edit: false;
+
     // ── Callbacks fired to Rust ─────────────────────────────────────────────
 
     callback obs-refresh-clicked();
@@ -55,6 +63,13 @@ export component ObsidianView inherits Rectangle {
     callback obs-wiki-clicked();
     // Shell: neoth obsidian wiki-build <vault>
     // On completion Rust sets obs-result-text / obs-result-ok and clears obs-wiki-loading.
+
+    // DES-09 Welle E write-back callbacks
+    callback obs-vault-path-changed(string);
+    callback obs-subdir-changed(string);
+    callback obs-auto-sync-secs-str-changed(string);  // Rust parses to i64; ignores non-numeric
+    callback obs-reader-enabled-changed(bool);
+    callback obs-browse-clicked();   // rfd folder picker → fires obs-vault-path-changed
 
     // ── Layout ────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -322,6 +337,113 @@ export component ObsidianView inherits Rectangle {
                                         horizontal-stretch: 1;
                                         overflow: elide;
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── DES-09 Welle E — EDIT VAULT SETTINGS card ────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            Kicker { label: "EDIT VAULT SETTINGS"; }
+
+                            Text {
+                                text: "Changes write directly to freedom.yaml and take effect on next daemon reload.";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                wrap: word-wrap;
+                            }
+
+                            // vault path row
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "VAULT PATH";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    letter-spacing: Theme.letter-spacing-wide;
+                                    vertical-alignment: center;
+                                    width: 110px;
+                                }
+                                NeothLineEdit {
+                                    placeholder-text: "/home/user/MyVault";
+                                    text: root.obs-vault-path-edit;
+                                    horizontal-stretch: 1;
+                                    edited(t) => {
+                                        root.obs-vault-path-edit = t;
+                                        root.obs-vault-path-changed(t);
+                                    }
+                                }
+                                NeothButton {
+                                    label: "Browse…";
+                                    primary: false;
+                                    size: "sm";
+                                    clicked => { root.obs-browse-clicked(); }
+                                }
+                            }
+
+                            // subdir row
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "SUBDIR";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    letter-spacing: Theme.letter-spacing-wide;
+                                    vertical-alignment: center;
+                                    width: 110px;
+                                }
+                                NeothLineEdit {
+                                    placeholder-text: "optional subfolder inside vault";
+                                    text: root.obs-subdir-edit;
+                                    horizontal-stretch: 1;
+                                    edited(t) => {
+                                        root.obs-subdir-edit = t;
+                                        root.obs-subdir-changed(t);
+                                    }
+                                }
+                            }
+
+                            // auto-sync interval row
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "AUTO-SYNC (s)";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    letter-spacing: Theme.letter-spacing-wide;
+                                    vertical-alignment: center;
+                                    width: 110px;
+                                }
+                                NeothLineEdit {
+                                    placeholder-text: "0 = disabled";
+                                    text: root.obs-auto-sync-secs-edit == 0 ? "" : "\{root.obs-auto-sync-secs-edit}";
+                                    horizontal-stretch: 1;
+                                    edited(t) => {
+                                        // Rust handler parses t as i64; non-numeric → no-op
+                                        root.obs-auto-sync-secs-str-changed(t);
+                                    }
+                                }
+                            }
+
+                            // reader toggle
+                            NeothCheckBox {
+                                text: "Vault reader enabled (daemon indexes vault for recall)";
+                                checked: root.obs-reader-enabled-edit;
+                                toggled(v) => {
+                                    root.obs-reader-enabled-edit = v;
+                                    root.obs-reader-enabled-changed(v);
                                 }
                             }
                         }

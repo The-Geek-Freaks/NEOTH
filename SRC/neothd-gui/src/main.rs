@@ -528,6 +528,50 @@ fn main() -> Result<()> {
             &neoth_dir.join("freedom.yaml"),
         ));
 
+        // DES-09 — populate all editable settings fields from freedom.yaml.
+        {
+            let fp = &neoth_dir.join("freedom.yaml");
+            // Welle A — council
+            let cap = read_nested_str_in_freedom(fp, "council.daily_usd_cap", "");
+            window.set_cfg_council_daily_usd(cap.into());
+            let mc = read_nested_i64_in_freedom(fp, "council.max_calls_per_user_message", 0);
+            window.set_cfg_council_max_calls(if mc == 0 { "".into() } else { mc.to_string().into() });
+            let md = read_nested_i64_in_freedom(fp, "council.max_recursion_depth", 0);
+            window.set_cfg_council_max_depth(if md == 0 { "".into() } else { md.to_string().into() });
+            let sm = read_nested_str_in_freedom(fp, "council.selection_mode", "legacy_majority");
+            window.set_cfg_council_selection_mode_idx(if sm == "consensus_or_best" { 1 } else { 0 });
+            // Welle A — provider
+            window.set_cfg_provider_model(read_nested_str_in_freedom(fp, "provider_model", "").into());
+            window.set_cfg_provider_endpoint(read_nested_str_in_freedom(fp, "provider_endpoint", "").into());
+            window.set_cfg_provider_region(read_nested_str_in_freedom(fp, "provider_region", "").into());
+            window.set_cfg_provider_api_version(read_nested_str_in_freedom(fp, "provider_api_version", "").into());
+            // Welle A — profile + behavior
+            let pm = read_nested_str_in_freedom(fp, "persona_mode", "");
+            window.set_cfg_persona_mode_idx(if pm == "loyal_buddy" { 1 } else { 0 });
+            window.set_cfg_user_tz(read_nested_str_in_freedom(fp, "user_tz", "").into());
+            window.set_cfg_elicitation_enabled(read_nested_bool_in_freedom(fp, "elicitation.enabled", false));
+            window.set_cfg_tone_modifier_enabled(read_nested_bool_in_freedom(fp, "tone_modifier.enabled", false));
+            // Welle B — privacy
+            window.set_cfg_review_gate_enabled(read_nested_bool_in_freedom(fp, "review_gate_enabled", false));
+            window.set_cfg_cloud_stt_enabled(read_nested_bool_in_freedom(fp, "media.cloud_stt_enabled", false));
+            window.set_cfg_cloud_tts_enabled(read_nested_bool_in_freedom(fp, "media.cloud_tts_enabled", false));
+            window.set_cfg_cloud_vision_enabled(read_nested_bool_in_freedom(fp, "media.cloud_vision_enabled", false));
+            window.set_cfg_vad_enabled(read_nested_bool_in_freedom(fp, "media.vad_enabled", false));
+            window.set_cfg_dictation_enabled(read_nested_bool_in_freedom(fp, "media.dictation_enabled", false));
+            window.set_cfg_proactive_idle_only(read_nested_bool_in_freedom(fp, "proactive.idle_only", false));
+            // Welle C — memory
+            window.set_cfg_memory_name_sessions(read_nested_bool_in_freedom(fp, "memory.name_sessions", false));
+            window.set_cfg_memory_recall_shortcut(read_nested_bool_in_freedom(fp, "memory.recall_shortcut", false));
+            let vb = read_nested_str_in_freedom(fp, "memory.vector_index.backend", "brute_force");
+            window.set_cfg_memory_vector_backend_idx(if vb == "hnsw" { 1 } else { 0 });
+            // Welle E — obsidian edit fields
+            window.set_obs_vault_path_edit(read_nested_str_in_freedom(fp, "obsidian_vault", "").into());
+            window.set_obs_subdir_edit(read_nested_str_in_freedom(fp, "obsidian_subdir", "").into());
+            let asx = read_nested_i64_in_freedom(fp, "obsidian_auto_sync_secs", 0);
+            window.set_obs_auto_sync_secs_edit(asx as i32);
+            window.set_obs_reader_enabled_edit(read_nested_bool_in_freedom(fp, "obsidian_vault_reader_enabled", false));
+        }
+
         window.set_status_line(
             format!(
                 "NEOTH is already configured at {}.\n\
@@ -3852,6 +3896,312 @@ fn main() -> Result<()> {
         }
     });
 
+    // ── DES-09 Welle A/B/C — freedom.yaml write-back callbacks ────────────
+    //
+    // Pattern: weak ref → worker thread → set_nested_in_freedom + reload
+    // sentinel → push_toast on the Slint event loop via invoke_from_event_loop.
+    // All handlers are identical modulo the YAML dotted-key and value type.
+    {
+        let neoth_dir = default_neoth_home();
+        macro_rules! wire_nested_str {
+            ($cb:ident, $key:literal, $label:literal) => {{
+                let nd = neoth_dir.clone();
+                let weak = window.as_weak();
+                window.$cb(move |raw: slint::SharedString| {
+                    let val = raw.to_string();
+                    let fp = nd.join("freedom.yaml");
+                    let rd = nd.join(".reload-requested");
+                    let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val.as_str()))
+                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                    let w2 = weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        match result {
+                            Ok(_) => push_toast(&w2, "success", $label, "saved — daemon reloading"),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&w2, "warn", concat!($label, " write failed"), &msg);
+                            }
+                        }
+                    }).ok();
+                });
+            }};
+        }
+        macro_rules! wire_nested_bool {
+            ($cb:ident, $key:literal, $label:literal) => {{
+                let nd = neoth_dir.clone();
+                let weak = window.as_weak();
+                window.$cb(move |v: bool| {
+                    let fp = nd.join("freedom.yaml");
+                    let rd = nd.join(".reload-requested");
+                    let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))
+                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                    let state = if v { "enabled" } else { "disabled" };
+                    let w2 = weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        match result {
+                            Ok(_) => push_toast(&w2, "success", $label, state),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&w2, "warn", concat!($label, " write failed"), &msg);
+                            }
+                        }
+                    }).ok();
+                });
+            }};
+        }
+        macro_rules! wire_nested_int_combo {
+            ($cb:ident, $key:literal, $variants:expr, $label:literal) => {{
+                let nd = neoth_dir.clone();
+                let weak = window.as_weak();
+                let variants: &'static [&'static str] = $variants;
+                window.$cb(move |idx: i32| {
+                    let val = variants.get(idx as usize).copied().unwrap_or(variants[0]);
+                    let fp = nd.join("freedom.yaml");
+                    let rd = nd.join(".reload-requested");
+                    let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val))
+                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                    let w2 = weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        match result {
+                            Ok(_) => push_toast(&w2, "success", $label, val),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&w2, "warn", concat!($label, " write failed"), &msg);
+                            }
+                        }
+                    }).ok();
+                });
+            }};
+        }
+        macro_rules! wire_nested_f64_str {
+            ($cb:ident, $key:literal, $label:literal) => {{
+                let nd = neoth_dir.clone();
+                let weak = window.as_weak();
+                window.$cb(move |raw: slint::SharedString| {
+                    let s = raw.to_string();
+                    let fp = nd.join("freedom.yaml");
+                    let rd = nd.join(".reload-requested");
+                    let result: anyhow::Result<()> = (|| {
+                        let v: f64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not a number: {s}"))?;
+                        set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
+                        std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                    })();
+                    let w2 = weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        match result {
+                            Ok(_) => push_toast(&w2, "success", $label, "saved"),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&w2, "warn", concat!($label, " invalid"), &msg);
+                            }
+                        }
+                    }).ok();
+                });
+            }};
+        }
+        macro_rules! wire_nested_i64_str {
+            ($cb:ident, $key:literal, $label:literal) => {{
+                let nd = neoth_dir.clone();
+                let weak = window.as_weak();
+                window.$cb(move |raw: slint::SharedString| {
+                    let s = raw.to_string();
+                    let fp = nd.join("freedom.yaml");
+                    let rd = nd.join(".reload-requested");
+                    let result: anyhow::Result<()> = (|| {
+                        let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
+                        set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
+                        std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                    })();
+                    let w2 = weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        match result {
+                            Ok(_) => push_toast(&w2, "success", $label, "saved"),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&w2, "warn", concat!($label, " invalid"), &msg);
+                            }
+                        }
+                    }).ok();
+                });
+            }};
+        }
+
+        // Welle A — Council
+        wire_nested_f64_str!(on_cfg_council_daily_usd_changed, "council.daily_usd_cap", "USD cap");
+        wire_nested_i64_str!(on_cfg_council_max_calls_changed, "council.max_calls_per_user_message", "Max calls");
+        wire_nested_i64_str!(on_cfg_council_max_depth_changed, "council.max_recursion_depth", "Max depth");
+        wire_nested_int_combo!(on_cfg_council_selection_mode_changed,
+            "council.selection_mode",
+            &["legacy_majority", "consensus_or_best"],
+            "Selection mode");
+
+        // Welle A — Provider
+        wire_nested_str!(on_cfg_provider_model_changed,        "provider_model",       "Model");
+        wire_nested_str!(on_cfg_provider_endpoint_changed,     "provider_endpoint",    "Endpoint");
+        wire_nested_str!(on_cfg_provider_region_changed,       "provider_region",      "Region");
+        wire_nested_str!(on_cfg_provider_api_version_changed,  "provider_api_version", "API version");
+
+        // Welle A — Profile + Behavior
+        wire_nested_int_combo!(on_cfg_persona_mode_changed,
+            "persona_mode",
+            &["", "loyal_buddy"],    // "" = None variant → empty string → daemon treats as absent
+            "Persona mode");
+        wire_nested_str!(on_cfg_user_tz_changed,                "user_tz",                  "Timezone");
+        wire_nested_bool!(on_cfg_elicitation_enabled_changed,   "elicitation.enabled",      "Elicitation");
+        wire_nested_bool!(on_cfg_tone_modifier_enabled_changed, "tone_modifier.enabled",     "Tone modifier");
+
+        // Welle B — Privacy
+        wire_nested_bool!(on_cfg_review_gate_enabled_changed,   "review_gate_enabled",       "Review gate");
+        wire_nested_bool!(on_cfg_cloud_stt_enabled_changed,     "media.cloud_stt_enabled",   "Cloud STT");
+        wire_nested_bool!(on_cfg_cloud_tts_enabled_changed,     "media.cloud_tts_enabled",   "Cloud TTS");
+        wire_nested_bool!(on_cfg_cloud_vision_enabled_changed,  "media.cloud_vision_enabled","Cloud vision");
+        wire_nested_bool!(on_cfg_vad_enabled_changed,           "media.vad_enabled",         "VAD");
+        wire_nested_bool!(on_cfg_dictation_enabled_changed,     "media.dictation_enabled",   "Dictation");
+        wire_nested_bool!(on_cfg_proactive_idle_only_changed,   "proactive.idle_only",       "Proactive idle-only");
+
+        // Welle C — Memory
+        wire_nested_bool!(on_cfg_memory_name_sessions_changed,    "memory.name_sessions",           "Name sessions");
+        wire_nested_bool!(on_cfg_memory_recall_shortcut_changed,  "memory.recall_shortcut",         "Recall shortcut");
+        wire_nested_int_combo!(on_cfg_memory_vector_backend_changed,
+            "memory.vector_index.backend",
+            &["brute_force", "hnsw"],
+            "Vector backend");
+    }
+
+    // ── DES-09 Welle E — Obsidian write-back callbacks ─────────────────────
+    {
+        let neoth_dir = default_neoth_home();
+
+        // vault path
+        let nd = neoth_dir.clone();
+        let weak = window.as_weak();
+        window.on_obs_vault_path_changed(move |raw: slint::SharedString| {
+            let val = raw.to_string();
+            let fp = nd.join("freedom.yaml");
+            let rd = nd.join(".reload-requested");
+            let result = set_nested_in_freedom(&fp, "obsidian_vault", serde_yaml::Value::from(val.as_str()))
+                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+            let w2 = weak.clone();
+            slint::invoke_from_event_loop(move || {
+                match result {
+                    Ok(_) => {
+                        push_toast(&w2, "success", "Vault path", "saved — daemon reloading");
+                        if let Some(w) = w2.upgrade() { w.invoke_obs_refresh_clicked(); }
+                    }
+                    Err(ref e) => {
+                        let msg = e.to_string();
+                        push_toast(&w2, "warn", "Vault path write failed", &msg);
+                    }
+                }
+            }).ok();
+        });
+
+        // subdir
+        let nd = neoth_dir.clone();
+        let weak = window.as_weak();
+        window.on_obs_subdir_changed(move |raw: slint::SharedString| {
+            let val = raw.to_string();
+            let fp = nd.join("freedom.yaml");
+            let rd = nd.join(".reload-requested");
+            let result = set_nested_in_freedom(&fp, "obsidian_subdir", serde_yaml::Value::from(val.as_str()))
+                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+            let w2 = weak.clone();
+            slint::invoke_from_event_loop(move || {
+                match result {
+                    Ok(_) => push_toast(&w2, "success", "Vault subdir", "saved"),
+                    Err(ref e) => {
+                        let msg = e.to_string();
+                        push_toast(&w2, "warn", "Subdir write failed", &msg);
+                    }
+                }
+            }).ok();
+        });
+
+        // auto-sync secs (comes as string, parse to i64)
+        let nd = neoth_dir.clone();
+        let weak = window.as_weak();
+        window.on_obs_auto_sync_secs_str_changed(move |raw: slint::SharedString| {
+            let s = raw.to_string();
+            let fp = nd.join("freedom.yaml");
+            let rd = nd.join(".reload-requested");
+            let result: anyhow::Result<()> = (|| {
+                let v: i64 = if s.trim().is_empty() { 0 } else {
+                    s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?
+                };
+                set_nested_in_freedom(&fp, "obsidian_auto_sync_secs", serde_yaml::Value::from(v))?;
+                std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+            })();
+            let w2 = weak.clone();
+            slint::invoke_from_event_loop(move || {
+                match result {
+                    Ok(_) => push_toast(&w2, "success", "Auto-sync interval", "saved"),
+                    Err(ref e) => {
+                        let msg = e.to_string();
+                        push_toast(&w2, "warn", "Auto-sync invalid", &msg);
+                    }
+                }
+            }).ok();
+        });
+
+        // reader enabled
+        let nd = neoth_dir.clone();
+        let weak = window.as_weak();
+        window.on_obs_reader_enabled_changed(move |v: bool| {
+            let fp = nd.join("freedom.yaml");
+            let rd = nd.join(".reload-requested");
+            let result = set_nested_in_freedom(&fp, "obsidian_vault_reader_enabled", serde_yaml::Value::from(v))
+                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+            let state = if v { "enabled" } else { "disabled" };
+            let w2 = weak.clone();
+            slint::invoke_from_event_loop(move || {
+                match result {
+                    Ok(_) => push_toast(&w2, "success", "Vault reader", state),
+                    Err(ref e) => {
+                        let msg = e.to_string();
+                        push_toast(&w2, "warn", "Vault reader write failed", &msg);
+                    }
+                }
+            }).ok();
+        });
+
+        // Browse… — rfd folder picker, same pattern as skill-install
+        let nd = neoth_dir.clone();
+        let weak = window.as_weak();
+        window.on_obs_browse_clicked(move || {
+            let w2 = weak.clone();
+            let nd2 = nd.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .set_title("Select Obsidian vault folder")
+                    .pick_folder();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(p) = picked {
+                        if let Some(w) = w2.upgrade() {
+                            let s: slint::SharedString = p.to_string_lossy().to_string().into();
+                            w.set_obs_vault_path_edit(s);
+                        }
+                        let fp = nd2.join("freedom.yaml");
+                        let rd = nd2.join(".reload-requested");
+                        let path_str = p.to_string_lossy().to_string();
+                        let result = set_nested_in_freedom(&fp, "obsidian_vault",
+                                serde_yaml::Value::from(path_str.as_str()))
+                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                        match result {
+                            Ok(_) => {
+                                push_toast(&w2, "success", "Vault path", "set — daemon reloading");
+                                if let Some(w) = w2.upgrade() { w.invoke_obs_refresh_clicked(); }
+                            }
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&w2, "warn", "Vault path write failed", &msg);
+                            }
+                        }
+                    }
+                }).ok();
+            });
+        });
+    }
+
     // Pick #32 — Settings panel "Re-run wizard". Reset the wizard
     // state back to mode-selection so the operator walks the flow
     // fresh.
@@ -4560,6 +4910,266 @@ fn validate_autonomy(level: &str) -> Result<()> {
     match level {
         "strict" | "standard" | "elevated" | "full" | "custom" => Ok(()),
         other => anyhow::bail!("unrecognised autonomy level '{other}'"),
+    }
+}
+
+// ── DES-09 generic nested writer ──────────────────────────────────────────
+//
+// All DES-09 settings-panel write-backs go through `set_nested_in_freedom`.
+// The dotted-key notation "a.b.c" walks (and creates) nested YAML mappings
+// exactly like the daemon's `merge_overrides` in config/presets.rs, but is
+// self-contained in the GUI crate so no daemon dep is needed.
+//
+// Top-level keys (e.g. "obsidian_vault", "user_tz") use a single segment.
+
+/// DES-09 — generic lossless nested-key writer for freedom.yaml.
+///
+/// `dotted_key` — dot-separated YAML path, e.g. "council.daily_usd_cap"
+///                or bare top-level key "user_tz".
+///
+/// Preserves every other key via `serde_yaml::Value` round-trip.
+/// Atomic write via `write_mode_0600` (.tmp + rename).
+///
+/// # Panics
+///
+/// None — all errors are returned via `Result`.
+fn set_nested_in_freedom(
+    path: &Path,
+    dotted_key: &str,
+    value: serde_yaml::Value,
+) -> Result<()> {
+    let body = if path.exists() {
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    let mut root: serde_yaml::Value = if body.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?
+    };
+    let map = match &mut root {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
+    };
+
+    let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
+    match segments.as_slice() {
+        [leaf] => {
+            map.insert(serde_yaml::Value::from(*leaf), value);
+        }
+        [k1, leaf] => {
+            let k1v = serde_yaml::Value::from(*k1);
+            let mut inner = map
+                .get(&k1v)
+                .and_then(|v| v.as_mapping())
+                .cloned()
+                .unwrap_or_default();
+            inner.insert(serde_yaml::Value::from(*leaf), value);
+            map.insert(k1v, serde_yaml::Value::Mapping(inner));
+        }
+        [k1, k2, leaf] => {
+            let k1v = serde_yaml::Value::from(*k1);
+            let mut m1 = map
+                .get(&k1v)
+                .and_then(|v| v.as_mapping())
+                .cloned()
+                .unwrap_or_default();
+            let k2v = serde_yaml::Value::from(*k2);
+            let mut m2 = m1
+                .get(&k2v)
+                .and_then(|v| v.as_mapping())
+                .cloned()
+                .unwrap_or_default();
+            m2.insert(serde_yaml::Value::from(*leaf), value);
+            m1.insert(k2v, serde_yaml::Value::Mapping(m2));
+            map.insert(k1v, serde_yaml::Value::Mapping(m1));
+        }
+        _ => anyhow::bail!("set_nested_in_freedom: path depth > 3 not supported: {dotted_key}"),
+    }
+
+    let serialised = serde_yaml::to_string(&root)
+        .with_context(|| format!("serialise freedom.yaml after setting {dotted_key}"))?;
+    write_mode_0600(path, serialised.as_bytes())
+}
+
+/// DES-09 helper — read a nested boolean from freedom.yaml.
+/// Returns `default` on missing file / key / malformed YAML.
+fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> bool {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return default;
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return default;
+    };
+    let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
+    let leaf = match segments.as_slice() {
+        [leaf] => root.get(serde_yaml::Value::from(*leaf)),
+        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, k2, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(*k2))
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        _ => None,
+    };
+    leaf.and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
+/// DES-09 helper — read a nested string from freedom.yaml.
+/// Returns `default` on missing file / key / malformed YAML.
+fn read_nested_str_in_freedom<'a>(
+    path: &Path,
+    dotted_key: &str,
+    default: &'a str,
+) -> String {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return default.to_string();
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return default.to_string();
+    };
+    let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
+    let leaf = match segments.as_slice() {
+        [leaf] => root.get(serde_yaml::Value::from(*leaf)),
+        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, k2, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(*k2))
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        _ => None,
+    };
+    leaf.and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// DES-09 helper — read a nested i64 from freedom.yaml.
+/// Returns `default` on missing file / key / malformed YAML.
+fn read_nested_i64_in_freedom(path: &Path, dotted_key: &str, default: i64) -> i64 {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return default;
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return default;
+    };
+    let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
+    let leaf = match segments.as_slice() {
+        [leaf] => root.get(serde_yaml::Value::from(*leaf)),
+        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, k2, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(*k2))
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        _ => None,
+    };
+    leaf.and_then(|v| v.as_i64()).unwrap_or(default)
+}
+
+#[cfg(test)]
+mod des09_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_yaml(dir: &TempDir, content: &str) -> std::path::PathBuf {
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    // Helper that uses std write (no ACL) so tests pass on all platforms.
+    fn set_nested_test(path: &Path, key: &str, value: serde_yaml::Value) -> Result<()> {
+        let body = if path.exists() {
+            std::fs::read_to_string(path).unwrap()
+        } else {
+            String::new()
+        };
+        let mut root: serde_yaml::Value = if body.trim().is_empty() {
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+        } else {
+            serde_yaml::from_str(&body).unwrap()
+        };
+        let map = match &mut root {
+            serde_yaml::Value::Mapping(m) => m,
+            _ => panic!("not a mapping"),
+        };
+        let segs: Vec<&str> = key.splitn(8, '.').collect();
+        match segs.as_slice() {
+            [leaf] => {
+                map.insert(serde_yaml::Value::from(*leaf), value);
+            }
+            [k1, leaf] => {
+                let k1v = serde_yaml::Value::from(*k1);
+                let mut inner = map.get(&k1v).and_then(|v| v.as_mapping()).cloned().unwrap_or_default();
+                inner.insert(serde_yaml::Value::from(*leaf), value);
+                map.insert(k1v, serde_yaml::Value::Mapping(inner));
+            }
+            [k1, k2, leaf] => {
+                let k1v = serde_yaml::Value::from(*k1);
+                let mut m1 = map.get(&k1v).and_then(|v| v.as_mapping()).cloned().unwrap_or_default();
+                let k2v = serde_yaml::Value::from(*k2);
+                let mut m2 = m1.get(&k2v).and_then(|v| v.as_mapping()).cloned().unwrap_or_default();
+                m2.insert(serde_yaml::Value::from(*leaf), value);
+                m1.insert(k2v, serde_yaml::Value::Mapping(m2));
+                map.insert(k1v, serde_yaml::Value::Mapping(m1));
+            }
+            _ => panic!("depth > 3"),
+        }
+        let out = serde_yaml::to_string(&root).unwrap();
+        std::fs::write(path, out).unwrap();
+        Ok(())
+    }
+
+    #[test]
+    fn nested_create_two_level() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        set_nested_test(&path, "council.daily_usd_cap", serde_yaml::Value::from(5.0f64)).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        let got = root.get("council").and_then(|v| v.get("daily_usd_cap"))
+            .and_then(|v| v.as_f64()).unwrap();
+        assert!((got - 5.0).abs() < 1e-9, "expected 5.0 got {got}");
+    }
+
+    #[test]
+    fn nested_update_preserves_siblings() {
+        let dir = TempDir::new().unwrap();
+        let path = write_yaml(&dir,
+            "council:\n  daily_usd_cap: 3.0\n  max_calls: 10\nother_key: kept\n");
+        set_nested_test(&path, "council.daily_usd_cap", serde_yaml::Value::from(9.0f64)).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        // other_key preserved
+        assert_eq!(root.get("other_key").and_then(|v| v.as_str()), Some("kept"));
+        // sibling inside council preserved
+        assert_eq!(root.get("council").and_then(|v| v.get("max_calls")).and_then(|v| v.as_i64()), Some(10));
+        // updated value
+        let cap = root.get("council").and_then(|v| v.get("daily_usd_cap")).and_then(|v| v.as_f64()).unwrap();
+        assert!((cap - 9.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn top_level_key() {
+        let dir = TempDir::new().unwrap();
+        let path = write_yaml(&dir, "provider_kind: claude_cli\n");
+        set_nested_test(&path, "user_tz", serde_yaml::Value::from("Europe/Berlin")).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        assert_eq!(root.get("user_tz").and_then(|v| v.as_str()), Some("Europe/Berlin"));
+        // provider_kind survives
+        assert_eq!(root.get("provider_kind").and_then(|v| v.as_str()), Some("claude_cli"));
+    }
+
+    #[test]
+    fn three_level_nested() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        set_nested_test(&path, "memory.vector_index.backend", serde_yaml::Value::from("hnsw")).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        let got = root.get("memory").and_then(|v| v.get("vector_index"))
+            .and_then(|v| v.get("backend")).and_then(|v| v.as_str()).unwrap();
+        assert_eq!(got, "hnsw");
     }
 }
 
