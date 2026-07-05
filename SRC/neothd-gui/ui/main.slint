@@ -21,7 +21,7 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow, PresetRow, ProfilePresetRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
@@ -61,6 +61,8 @@ export { DreamDayRow, DreamEntryRow }
 export { WikiRow }
 export { SelfActSkill }
 export { MeshPeerRow }
+// DES-12 — plugin WAL-feed detail pane event row.
+export { PluginEventRow }
 // GAP-01 Cron panel — CronJobRow exported so Rust can push rows.
 export { CronJobRow }
 // Chat-surface consent strip.
@@ -801,6 +803,12 @@ export component MainWindow inherits Window {
     callback plugin-toggle(string, bool);
     callback plugin-install();
     callback plugin-remove(string);
+    // DES-12 — plugin WAL-feed detail pane.
+    in-out property <string> plugin-detail-id: "";
+    in property <string> plugin-detail-title: "";
+    in property <[PluginEventRow]> plugin-detail-events: [];
+    callback plugin-detail-clicked(string);
+    callback plugin-detail-close();
     callback autonomy-set(string);
     /// Step 5 (2026-05-20): operator clicked a task card.
     callback kanban-task-selected(string);
@@ -2151,6 +2159,12 @@ export component MainWindow inherits Window {
             plugin-toggle-clicked(id, en) => { root.plugin-toggle(id, en); }
             plugin-install-clicked => { root.plugin-install(); }
             plugin-remove-clicked(id) => { root.plugin-remove(id); }
+            // DES-12 — detail pane two-way binding + callbacks.
+            plugin-detail-id <=> root.plugin-detail-id;
+            plugin-detail-title: root.plugin-detail-title;
+            plugin-detail-events: root.plugin-detail-events;
+            plugin-detail-clicked(id) => { root.plugin-detail-clicked(id); }
+            plugin-detail-close => { root.plugin-detail-close(); }
             autonomy-set-clicked(level) => { root.autonomy-set(level); }
             channels: root.channels;
             plugins: root.plugins;

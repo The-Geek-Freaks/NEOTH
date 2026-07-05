@@ -3165,6 +3165,71 @@ fn main() -> Result<()> {
         });
     }
 
+    // DES-12 — Plugin WAL-feed detail pane: operator clicked "Activity" on a row.
+    // Shells `neoth plugin events <id> --output json --last 30` off the UI thread,
+    // parses the result, and updates plugin-detail-id / title / events.
+    {
+        let weak_pdc = window.as_weak();
+        window.on_plugin_detail_clicked(move |id| {
+            use slint::Model as _; // ModelRc::row_count / row_data
+            let weak = weak_pdc.clone();
+            let id_str = id.to_string();
+            // Look up ui_title from the current plugins model so we can set the
+            // detail title without an extra subprocess call.
+            let title = weak
+                .upgrade()
+                .and_then(|w| {
+                    let model = w.get_plugins();
+                    (0..model.row_count()).find_map(|i| {
+                        let row = model.row_data(i)?;
+                        if row.id.as_str() == id_str {
+                            Some(row.ui_title.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or_default();
+            std::thread::spawn(move || {
+                let events = fetch_plugin_events(&id_str);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        use slint::{ModelRc, VecModel};
+                        let rows: Vec<PluginEventRow> = events
+                            .into_iter()
+                            .map(|e| PluginEventRow {
+                                // SECURITY: kind is plugin-controlled text; stored as
+                                // plain string — Slint renders it via plain Text only
+                                // (no markup parsing). Do NOT pass to any rich-text API.
+                                kind: e.kind.into(),
+                                bytes: fmt_event_bytes(e.payload_bytes).into(),
+                                ts: fmt_ts_unix(e.ts_unix).into(),
+                            })
+                            .collect();
+                        w.set_plugin_detail_id(id_str.as_str().into());
+                        w.set_plugin_detail_title(title.as_str().into());
+                        w.set_plugin_detail_events(ModelRc::new(VecModel::from(rows)));
+                    }
+                });
+            });
+        });
+    }
+
+    // DES-12 — Plugin detail pane close: clear the selection.
+    {
+        let weak_pclose = window.as_weak();
+        window.on_plugin_detail_close(move || {
+            if let Some(w) = weak_pclose.upgrade() {
+                use slint::{ModelRc, VecModel};
+                w.set_plugin_detail_id("".into());
+                w.set_plugin_detail_title("".into());
+                w.set_plugin_detail_events(ModelRc::new(VecModel::from(
+                    Vec::<PluginEventRow>::new(),
+                )));
+            }
+        });
+    }
+
     // GUI-overhaul feature parity — set the autonomy level from the Privacy combo.
     // Shells `neoth autonomy set <level>` (mutates freedom.yaml::autonomy + emits
     // a WAL audit frame). On success, mirror the new level into autonomy-choice so
@@ -6002,9 +6067,56 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<panel_logic::PluginSummary>) 
             id: p.id.into(),
             name: p.name.into(),
             activation: p.activation.into(),
+            // DES-12
+            has_ui_surface: p.has_ui_surface,
+            ui_title: p.ui_title.into(),
         })
         .collect();
     window.set_plugins(ModelRc::new(VecModel::from(rows)));
+}
+
+/// DES-12 — fetch WAL-feed events for a plugin via
+/// `neoth plugin events <id> --output json --last 30`.
+fn fetch_plugin_events(id: &str) -> Vec<panel_logic::PluginEventRow> {
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("plugin")
+        .arg("events")
+        .arg(id)
+        .arg("--output")
+        .arg("json")
+        .arg("--last")
+        .arg("30")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_plugin_events(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// DES-12 — format a unix timestamp as HH:MM:SS (UTC).
+/// Falls back to the raw seconds string when time parsing is unavailable.
+fn fmt_ts_unix(ts: u64) -> String {
+    // Simple modulo decomposition — avoids pulling in chrono just for display.
+    let s = ts % 60;
+    let m = (ts / 60) % 60;
+    let h = (ts / 3600) % 24;
+    format!("{h:02}:{m:02}:{s:02}")
+}
+
+/// DES-12 — format a byte count as a compact human-readable string.
+fn fmt_event_bytes(n: u64) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    }
 }
 
 /// GU-01 — fetch memory-block sizes via `neoth memory --size --output json`

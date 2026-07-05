@@ -846,10 +846,15 @@ pub struct PluginSummary {
     pub id: String,
     pub name: String,
     pub activation: String, // "enabled" | "pending" | "disabled" | …
+    /// True when the plugin's manifest declares a `ui_surface` object.
+    pub has_ui_surface: bool,
+    /// The `ui_surface.title` value, or "" when absent.
+    pub ui_title: String,
 }
 
-/// Parse `neoth plugin list --output json` (array of `{id,name,activation}`).
+/// Parse `neoth plugin list --output json` (array of `{id,name,activation,ui_surface?}`).
 /// PURE + robust (malformed/non-array → empty; id-less entries skipped).
+/// `ui_surface` is optional — absent or non-object → has_ui_surface=false, ui_title="".
 pub fn parse_plugins(json: &str) -> Vec<PluginSummary> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
@@ -870,10 +875,66 @@ pub fn parse_plugins(json: &str) -> Vec<PluginSummary> {
                 .and_then(|a| a.as_str())
                 .unwrap_or("unknown")
                 .to_string();
+            // ui_surface is optional; tolerant — missing or wrong type → false / "".
+            let (has_ui_surface, ui_title) = match p.get("ui_surface").and_then(|s| s.as_object()) {
+                Some(surf) => {
+                    let title = surf
+                        .get("title")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (true, title)
+                }
+                None => (false, String::new()),
+            };
             Some(PluginSummary {
                 id,
                 name,
                 activation,
+                has_ui_surface,
+                ui_title,
+            })
+        })
+        .collect()
+}
+
+/// One WAL-feed event row from `neoth plugin events <id> --output json --last 30`.
+/// Fields: event kind (opaque string), payload byte count, unix timestamp.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PluginEventRow {
+    pub kind: String,
+    pub payload_bytes: u64,
+    pub ts_unix: u64,
+}
+
+/// Parse `neoth plugin events <id> --output json --last 30`.
+/// Shape: `{"id":"...","events":[{"kind":"...","payload_bytes":N,"ts_unix":T}]}`.
+/// PURE + tolerant: not-found / no-events / malformed → empty Vec.
+pub fn parse_plugin_events(json: &str) -> Vec<PluginEventRow> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let events = match v.get("events").and_then(|e| e.as_array()) {
+        Some(arr) => arr,
+        None => return Vec::new(),
+    };
+    events
+        .iter()
+        .filter_map(|e| {
+            // kind must be present; payload_bytes + ts_unix default to 0 if absent/wrong type.
+            let kind = e.get("kind")?.as_str()?.to_string();
+            let payload_bytes = e
+                .get("payload_bytes")
+                .and_then(|b| b.as_u64())
+                .unwrap_or(0);
+            let ts_unix = e
+                .get("ts_unix")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
+            Some(PluginEventRow {
+                kind,
+                payload_bytes,
+                ts_unix,
             })
         })
         .collect()
@@ -3285,6 +3346,92 @@ mod tests {
             "object not array"
         );
         assert_eq!(parse_plugins(r#"[{"name":"no id"},{"id":"ok"}]"#).len(), 1);
+    }
+
+    #[test]
+    fn parse_plugins_ui_surface_present() {
+        let json = r#"[
+            {"id":"feed","name":"Feed","activation":"enabled",
+             "ui_surface":{"kind":"wal_feed","title":"Live Feed"}},
+            {"id":"plain","name":"Plain","activation":"disabled"}
+        ]"#;
+        let rows = parse_plugins(json);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].has_ui_surface);
+        assert_eq!(rows[0].ui_title, "Live Feed");
+        assert!(!rows[1].has_ui_surface);
+        assert_eq!(rows[1].ui_title, "");
+    }
+
+    #[test]
+    fn parse_plugins_ui_surface_missing_title_defaults_empty() {
+        let json = r#"[{"id":"x","activation":"enabled","ui_surface":{"kind":"wal_feed"}}]"#;
+        let rows = parse_plugins(json);
+        assert!(rows[0].has_ui_surface);
+        assert_eq!(rows[0].ui_title, "");
+    }
+
+    #[test]
+    fn parse_plugins_ui_surface_not_object_ignored() {
+        // ui_surface is a scalar — should treat as absent
+        let json = r#"[{"id":"x","activation":"enabled","ui_surface":"bad"}]"#;
+        let rows = parse_plugins(json);
+        assert!(!rows[0].has_ui_surface);
+    }
+
+    // ── DES-12 parse_plugin_events ────────────────────────────────────────────
+
+    #[test]
+    fn parse_plugin_events_happy_path() {
+        let json = r#"{"id":"feed","events":[
+            {"kind":"wal::commit","payload_bytes":128,"ts_unix":1700000000},
+            {"kind":"wal::read","payload_bytes":0,"ts_unix":1700000060}
+        ]}"#;
+        let rows = parse_plugin_events(json);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].kind, "wal::commit");
+        assert_eq!(rows[0].payload_bytes, 128);
+        assert_eq!(rows[0].ts_unix, 1700000000);
+        assert_eq!(rows[1].kind, "wal::read");
+        assert_eq!(rows[1].payload_bytes, 0);
+    }
+
+    #[test]
+    fn parse_plugin_events_empty_array() {
+        let json = r#"{"id":"feed","events":[]}"#;
+        assert!(parse_plugin_events(json).is_empty());
+    }
+
+    #[test]
+    fn parse_plugin_events_no_events_key() {
+        // not-found / daemon returns {"id":"x"} with no "events" field
+        assert!(parse_plugin_events(r#"{"id":"x"}"#).is_empty());
+    }
+
+    #[test]
+    fn parse_plugin_events_malformed_json() {
+        assert!(parse_plugin_events("not json").is_empty());
+        assert!(parse_plugin_events("[]").is_empty()); // array at root, no "events" key
+    }
+
+    #[test]
+    fn parse_plugin_events_kind_less_entries_skipped() {
+        // entry without "kind" must be skipped; entry with kind survives
+        let json = r#"{"id":"x","events":[
+            {"payload_bytes":10,"ts_unix":1},
+            {"kind":"ok","payload_bytes":20,"ts_unix":2}
+        ]}"#;
+        let rows = parse_plugin_events(json);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "ok");
+    }
+
+    #[test]
+    fn parse_plugin_events_missing_numeric_fields_default_zero() {
+        let json = r#"{"id":"x","events":[{"kind":"evt"}]}"#;
+        let rows = parse_plugin_events(json);
+        assert_eq!(rows[0].payload_bytes, 0);
+        assert_eq!(rows[0].ts_unix, 0);
     }
 
     // ── GU-01 parse_memory_size ───────────────────────────────────────────────

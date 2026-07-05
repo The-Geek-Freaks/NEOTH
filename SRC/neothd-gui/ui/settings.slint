@@ -126,6 +126,17 @@ export struct PluginRow {
     id: string,
     name: string,
     activation: string,  // "enabled" | "pending" | "disabled" | …
+    // DES-12 — set when the plugin declares ui_surface in its manifest.
+    has-ui-surface: bool,
+    ui-title: string,     // ui_surface.title, or "" when absent
+}
+
+// DES-12 — one WAL-feed event row for the inline plugin detail pane.
+// kind is plain text (never parsed as rich text / markup — plugin-controlled content).
+export struct PluginEventRow {
+    kind: string,   // event kind — MUST be rendered as plain Text only
+    bytes: string,  // pre-formatted payload byte count, e.g. "128 B"
+    ts: string,     // pre-formatted timestamp, e.g. "14:23:07"
 }
 
 // GU-01 — one memory block (metadata only) for the Memory panel.
@@ -672,6 +683,18 @@ export component SettingsView inherits Rectangle {
     /// Operator clicked "Remove" on a plugin row.
     /// Rust shells `neoth plugin remove <id>` → toast + refresh.
     callback plugin-remove-clicked(string);
+    // DES-12 — inline plugin WAL-feed detail pane.
+    // "" = closed; set to a plugin id to open the detail section.
+    in-out property <string> plugin-detail-id: "";
+    /// The ui_title of the currently-open detail pane (set by Rust from the row).
+    in property <string> plugin-detail-title: "";
+    /// WAL-feed events for the open plugin. Empty while no plugin is selected.
+    in property <[PluginEventRow]> plugin-detail-events: [];
+    /// Operator clicked the "Activity" button on a plugin row with ui_surface.
+    /// Rust shells `neoth plugin events <id>` and populates plugin-detail-events.
+    callback plugin-detail-clicked(string /*id*/);
+    /// Operator clicked "Close" on the detail pane header.
+    callback plugin-detail-close();
     /// GUI-overhaul feature parity — operator picked an autonomy level from the
     /// Privacy combo. Arg: level string. Rust shells `neoth autonomy set <level>`.
     callback autonomy-set-clicked(string);
@@ -1455,6 +1478,13 @@ export component SettingsView inherits Rectangle {
                                 font-size: Theme.font-size-caption;
                                 color: p.activation == "enabled" ? Theme.accent-green : Theme.text-muted;
                             }
+                            // DES-12 — Activity button appears only for plugins with ui_surface.
+                            if p.has-ui-surface: NeothButton {
+                                label: p.ui-title != "" ? p.ui-title : "Activity";
+                                primary: root.plugin-detail-id == p.id;
+                                size: "sm";
+                                clicked => { root.plugin-detail-clicked(p.id); }
+                            }
                             // Per-row remove — inline confirm guards against fat-finger.
                             property <bool> pl-confirming: false;
                             if !pl-confirming: NeothButton {
@@ -1479,6 +1509,82 @@ export component SettingsView inherits Rectangle {
                                 primary: false;
                                 size: "sm";
                                 clicked => { pl-confirming = false; }
+                            }
+                        }
+                    }
+                }
+                // DES-12 — inline WAL-feed detail pane.
+                // Shown below the plugins list when operator clicks "Activity".
+                // Removed from the layout entirely when no plugin is selected.
+                if root.plugin-detail-id != "": Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        // Header row: title + close button
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: root.plugin-detail-title != ""
+                                    ? root.plugin-detail-title
+                                    : root.plugin-detail-id;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: 600;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            NeothButton {
+                                label: "Close";
+                                primary: false;
+                                size: "sm";
+                                clicked => { root.plugin-detail-close(); }
+                            }
+                        }
+                        // Event list — 200px scrollable area.
+                        // SECURITY: kind is plugin-controlled text; rendered as plain
+                        // Text only — never as markup, links, or rich content.
+                        if root.plugin-detail-events.length == 0: Text {
+                            text: "no activity recorded";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                        }
+                        if root.plugin-detail-events.length > 0: Rectangle {
+                            height: 200px;
+                            clip: true;
+                            ScrollView {
+                                VerticalLayout {
+                                    spacing: Theme.space-tight;
+                                    padding: 2px;
+                                    for ev in root.plugin-detail-events: HorizontalLayout {
+                                        spacing: Theme.space-base;
+                                        // ts
+                                        Text {
+                                            text: ev.ts;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.text-muted;
+                                            min-width: 64px;
+                                        }
+                                        // kind — plain Text only, never parsed as markup
+                                        Text {
+                                            text: ev.kind;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.text-primary;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+                                        // bytes
+                                        Text {
+                                            text: ev.bytes;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.text-muted;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
