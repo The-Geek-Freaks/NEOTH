@@ -222,13 +222,24 @@ pub fn find_by_id(provider_id: &str) -> Option<&'static KnownEndpoint> {
         .find(|e| e.provider_id == provider_id)
 }
 
-/// All entries whose endpoint resolves to `localhost` / `127.0.0.1` —
-/// surfaced separately in the wizard so operators see the local-only
-/// options grouped together.
+/// Return `true` when `endpoint` resolves to the local machine — i.e. it
+/// contains `localhost`, `127.0.0.1`, or the IPv6 loopback (`::1` / `[::1]`).
+/// Used by [`local_only`], [`cloud_only`], and the locality checks that gate
+/// the remote-consent prompt. Mirrors the pattern in `pears_bridge.rs`.
+#[inline]
+fn is_local_endpoint(endpoint: &str) -> bool {
+    endpoint.contains("localhost")
+        || endpoint.contains("127.0.0.1")
+        || endpoint.contains("::1")
+}
+
+/// All entries whose endpoint resolves to `localhost` / `127.0.0.1` /
+/// `[::1]` — surfaced separately in the wizard so operators see the
+/// local-only options grouped together.
 pub fn local_only() -> impl Iterator<Item = &'static KnownEndpoint> {
     KNOWN_ENDPOINTS
         .iter()
-        .filter(|e| e.endpoint.contains("localhost") || e.endpoint.contains("127.0.0.1"))
+        .filter(|e| is_local_endpoint(e.endpoint))
 }
 
 /// All entries that hit a remote (cloud) endpoint. Inverse of
@@ -237,7 +248,7 @@ pub fn local_only() -> impl Iterator<Item = &'static KnownEndpoint> {
 pub fn cloud_only() -> impl Iterator<Item = &'static KnownEndpoint> {
     KNOWN_ENDPOINTS
         .iter()
-        .filter(|e| !e.endpoint.contains("localhost") && !e.endpoint.contains("127.0.0.1"))
+        .filter(|e| !is_local_endpoint(e.endpoint))
 }
 
 #[cfg(test)]
@@ -307,12 +318,10 @@ mod tests {
     #[test]
     fn endpoints_are_https_or_localhost_only() {
         for e in KNOWN_ENDPOINTS {
-            let ok = e.endpoint.starts_with("https://")
-                || e.endpoint.contains("localhost")
-                || e.endpoint.contains("127.0.0.1");
+            let ok = e.endpoint.starts_with("https://") || is_local_endpoint(e.endpoint);
             assert!(
                 ok,
-                "endpoint {} should be https:// or localhost: {}",
+                "endpoint {} should be https:// or local (localhost/127.0.0.1/::1): {}",
                 e.provider_id, e.endpoint
             );
         }
@@ -350,9 +359,9 @@ mod tests {
         assert!(!locals.is_empty(), "expect ollama/lmstudio/vllm at least");
         for e in &locals {
             assert!(
-                e.endpoint.contains("localhost") || e.endpoint.contains("127.0.0.1"),
-                "{} should be local",
-                e.provider_id
+                is_local_endpoint(e.endpoint),
+                "{} should be local (localhost/127.0.0.1/::1): {}",
+                e.provider_id, e.endpoint
             );
         }
     }
@@ -363,11 +372,21 @@ mod tests {
         assert!(!cloud.is_empty());
         for e in &cloud {
             assert!(
-                !e.endpoint.contains("localhost") && !e.endpoint.contains("127.0.0.1"),
-                "{} should be remote",
-                e.provider_id
+                !is_local_endpoint(e.endpoint),
+                "{} should be remote (not localhost/127.0.0.1/::1): {}",
+                e.provider_id, e.endpoint
             );
         }
+    }
+
+    #[test]
+    fn is_local_endpoint_matches_ipv6_loopback() {
+        assert!(is_local_endpoint("http://[::1]:11434/v1"), "[::1] bracketed form");
+        assert!(is_local_endpoint("http://::1:11434/v1"), "bare ::1 form");
+        assert!(is_local_endpoint("http://localhost:11434/v1"), "localhost");
+        assert!(is_local_endpoint("http://127.0.0.1:11434/v1"), "127.0.0.1");
+        assert!(!is_local_endpoint("https://api.openai.com/v1"), "cloud endpoint");
+        assert!(!is_local_endpoint("https://api.deepseek.com/v1"), "cloud endpoint 2");
     }
 
     #[test]
