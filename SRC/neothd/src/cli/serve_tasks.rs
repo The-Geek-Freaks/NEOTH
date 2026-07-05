@@ -203,10 +203,38 @@ pub(crate) fn spawn_cron_for_key(
 }
 
 /// Adapt `Option<JoinHandle<anyhow::Result<()>>>` → `Option<JoinHandle<()>>`.
+///
+/// Two subtleties the naive `spawn(async { let _ = h.await; })` gets wrong:
+///  1. Aborting the OUTER wrapper only drops the inner `JoinHandle`, which in
+///     Tokio *detaches* (not aborts) the inner task — so a WAL-emitting cron
+///     would keep ticking after `drop(writer)` at shutdown and append to a
+///     closed channel. `AbortOnDrop` aborts the inner task when the wrapper's
+///     future is dropped (including on shutdown abort).
+///  2. A `let _ = h.await` swallows a panic (`JoinError`) or an `Err(_)` from
+///     the task, so a dead cron looks healthy. We now surface both via `warn!`.
 fn wrap_result_handle(
     h: Option<JoinHandle<anyhow::Result<()>>>,
 ) -> Option<JoinHandle<()>> {
-    h.map(|handle| tokio::spawn(async move { let _ = handle.await; }))
+    h.map(|handle| {
+        tokio::spawn(async move {
+            struct AbortOnDrop(JoinHandle<anyhow::Result<()>>);
+            impl Drop for AbortOnDrop {
+                fn drop(&mut self) {
+                    self.0.abort();
+                }
+            }
+            // `&mut JoinHandle` is a `Future` (JoinHandle is Unpin), so awaiting
+            // through the guard does not consume it — the guard's Drop still
+            // owns the inner handle and aborts it if this wrapper is cancelled.
+            let mut guard = AbortOnDrop(handle);
+            match (&mut guard.0).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!(error = %e, "fleet cron task returned an error"),
+                Err(e) if e.is_cancelled() => {} // normal shutdown/reload abort
+                Err(e) => warn!(error = %e, "fleet cron task panicked"),
+            }
+        })
+    })
 }
 
 /// R-5 — Obsidian vault auto-sync. Spawned only when `freedom.yaml::obsidian_vault`
@@ -5022,6 +5050,46 @@ pub(crate) fn bootstrap_plugin_invoker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wave-4 regression: aborting the outer wrapper must abort the INNER task
+    /// (dropping a JoinHandle only detaches it). Deterministic via a drop-guard
+    /// that signals a oneshot — no sleep-polling, so it can't flake.
+    #[tokio::test]
+    async fn wrap_result_handle_aborts_inner_on_outer_abort() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let inner = tokio::spawn(async move {
+            struct SendOnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+            impl Drop for SendOnDrop {
+                fn drop(&mut self) {
+                    if let Some(t) = self.0.take() {
+                        let _ = t.send(());
+                    }
+                }
+            }
+            let _g = SendOnDrop(Some(tx));
+            // Never completes on its own — only an abort ends it.
+            std::future::pending::<()>().await;
+            #[allow(unreachable_code)]
+            Ok(())
+        });
+        let outer = wrap_result_handle(Some(inner)).expect("Some handle");
+        tokio::task::yield_now().await; // let the inner poll once
+        outer.abort();
+        let _ = outer.await;
+        tokio::time::timeout(std::time::Duration::from_secs(2), rx)
+            .await
+            .expect("inner task was not aborted within 2s")
+            .expect("inner drop guard did not fire");
+    }
+
+    /// Wave-4 regression: an inner task that returns Err must not hang or panic
+    /// the wrapper — the wrapper logs and completes cleanly.
+    #[tokio::test]
+    async fn wrap_result_handle_completes_on_inner_error() {
+        let inner = tokio::spawn(async move { Err(anyhow::anyhow!("boom")) });
+        let outer = wrap_result_handle(Some(inner)).expect("Some handle");
+        outer.await.expect("wrapper must complete cleanly on inner Err");
+    }
 
     /// GOLD-PROG-08: the usage-meter export writes valid JSON that round-trips
     /// back to the same snapshot (the GUI's `parse_usage_meter` consumes this).

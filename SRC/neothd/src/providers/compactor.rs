@@ -106,11 +106,14 @@ static RE_HEX_RUN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:0x)?[0-9a-f]{8,}\b").unwrap()
 });
 static RE_FILE_PATH_UNIX: LazyLock<Regex> = LazyLock::new(|| {
-    // Two+ `/segment` components ANYWHERE (not just line start) — real prompts
-    // mention paths mid-sentence ("config lives at /etc/neoth/config.yaml").
-    // A leading `^` anchor would miss every one of those. Over-matching a URL
-    // path is harmless here (it only biases toward keep-verbatim).
-    Regex::new(r"(?:/[a-zA-Z0-9_.\-]+){2,}").unwrap()
+    // Two+ `/segment` components, but only when the leading `/` sits at the
+    // start of the text or right after whitespace / a quote / a delimiter —
+    // NOT after `//` in a URL. This catches mid-sentence filesystem paths
+    // ("config lives at /etc/neoth/config.yaml", "path:/var/log") while NOT
+    // matching the path portion of an https:// URL. Matching every URL would
+    // veto compaction of essentially every real conversation (they nearly
+    // always contain a link), silently disabling the feature.
+    Regex::new(r#"(?:^|[\s"'(<=,:])(?:/[a-zA-Z0-9_.\-]+){2,}"#).unwrap()
 });
 static RE_FILE_PATH_WIN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^[A-Za-z]:\\(?:[^\\\r\n]+\\)+").unwrap()
@@ -385,6 +388,13 @@ impl CompactingProvider {
         let summarised_chars = summary.len();
         let kept_chars = live_zone.len();
 
+        // Did we actually reduce anything? The verbatim-risk guard
+        // (`summary == old_zone`) and an empty old zone are no-ops — forwarding
+        // the original prompt unchanged. Emitting HISTORY_COMPACTION_FIRED in
+        // those cases records a ratio-1.0 "compaction" that never happened and
+        // pollutes the churn/cache telemetry, so we skip the WAL frame.
+        let compacted = !summary.is_empty() && summary != old_zone;
+
         // Reassemble: summary block + live zone.
         // When keep-verbatim fired, `summary` == `old_zone` and we skip the
         // [CONTEXT SUMMARY:] wrapper so the original bytes are preserved exactly.
@@ -397,8 +407,8 @@ impl CompactingProvider {
             format!("[CONTEXT SUMMARY: {summary}]\n\n{live_zone}")
         };
 
-        // Best-effort WAL emit.
-        if let Some(ref wal) = self.wal {
+        // Best-effort WAL emit — only when a real compaction occurred.
+        if let (true, Some(wal)) = (compacted, &self.wal) {
             let model_name = self
                 .utility
                 .as_ref()
@@ -894,6 +904,19 @@ mod tests {
         assert!(
             !should_compact_block(s),
             "mid-sentence path must not be compactable"
+        );
+    }
+
+    /// Wave-4 regression: a URL's path must NOT veto compaction — otherwise a
+    /// history containing any link (nearly all of them) is kept verbatim and
+    /// compaction never fires. A plain-prose block with only a URL and no other
+    /// identifier is compactable.
+    #[test]
+    fn pxp01_url_only_block_is_compactable() {
+        let s = "The docs are at https://api.anthropic.com/v1/messages for reference.";
+        assert!(
+            should_compact_block(s),
+            "a URL alone must not veto compaction"
         );
     }
 

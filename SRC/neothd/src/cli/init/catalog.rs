@@ -96,6 +96,11 @@ fn ping_provider_key_blocking(key: &str, kind: ProviderKind, endpoint: Option<&s
 
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
+        // Never follow redirects: the key travels in a custom header
+        // (x-api-key / x-goog-api-key) which reqwest does NOT strip on a
+        // cross-domain redirect, so a redirect would leak it to the target.
+        // Matches the Policy::none() convention of every other auth'd client.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(c) => c,
