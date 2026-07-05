@@ -26,6 +26,7 @@ slint = { version = "1.8", default-features = false, features = [
     "renderer-femtovg",
     "backend-winit",
     "std",
+    "unstable-winit-030",
 ] }
 
 # GOLD-ADAPT-ODY-03 — native file picker for the chat attachment strip.

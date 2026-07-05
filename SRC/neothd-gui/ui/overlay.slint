@@ -1,0 +1,281 @@
+// NEOTH Companion Overlay — minimized always-on-top chat companion.
+//
+// When the operator minimizes the main window via the "⊟" TopBar button,
+// this frameless semi-transparent window floats above all other windows so
+// the operator can keep chatting / receive nudges while doing other work.
+//
+// Transparency note: `background` is set to Theme.bg-void at ~0.9 alpha.
+// True per-pixel transparency requires the platform compositor to create a
+// transparent window; whether that succeeds depends on the OS/WM. If the
+// platform renders it opaque, the near-opaque dark background still reads
+// correctly — the design does not rely on window-level transparency for
+// functional correctness.
+//
+// Always-on-top: The Slint `Window` does not expose an `always-on-top`
+// in-out property in the 1.x series (checked Slint 1.16 Window API — the
+// property does not exist at the Slint DSL layer). Always-on-top is wired
+// entirely on the Rust side via the `slint::winit_030::WinitWindowAccessor`
+// + `winit::window::WindowLevel::AlwaysOnTop` after `overlay.show()`.
+//
+// Drag: A TouchArea covering the title strip sets `root.title-drag-delta` so
+// Rust can offset the window position on drag events. Because Slint's
+// winit accessor does not expose pointer-move events directly, drag is
+// approximated by the operator using OS native window move (they can grab
+// any frameless area and drag it with the OS compositor if the platform
+// supports it). The title-strip TouchArea is reserved for future pointer-
+// delta wiring — for now it just provides a distinct grab area.
+
+import { Theme } from "theme.slint";
+import { Buddy } from "buddy.slint";
+import { Led, NeothButton, NeothLineEdit } from "components.slint";
+
+export component MiniOverlay inherits Window {
+    // ── Window chrome ────────────────────────────────────────────────
+    // no-frame: frameless window — platform title-bar is hidden.
+    no-frame: true;
+    // Sizing — operator can resize down to 280×200 but starts at 380×520.
+    preferred-width: 380px;
+    preferred-height: 520px;
+    min-width: 280px;
+    min-height: 200px;
+    // Background: dark canvas at 0.9 alpha. The alpha here tints the
+    // composited window surface; actual per-pixel transparency depends on
+    // the platform (see file header note).
+    background: Theme.bg-void.with-alpha(0.92);
+
+    // ── Public properties ────────────────────────────────────────────
+    /// Buddy mood string — same vocabulary as buddy.slint / GuiActivity.
+    in property <string> buddy-mood: "idle";
+    /// Short daemon state: "live" | "connecting" | "error" | "off".
+    in property <string> daemon-state: "connecting";
+    /// Last few message snippets from the main chat (Rust caps at 6).
+    in property <[string]> recent-lines: [];
+    /// Current text in the one-line composer (in-out so Rust can clear it).
+    in-out property <string> overlay-input: "";
+    /// One-line status text below the composer (mood caption / daemon note).
+    in property <string> status-text: "ready";
+
+    // ── Callbacks ────────────────────────────────────────────────────
+    /// Operator clicked "⤢" restore — show main window, hide overlay.
+    callback restore-clicked();
+    /// Operator clicked "✕" hide — same as restore (never leave windowless).
+    callback hide-clicked();
+    /// Operator sent a message from the overlay composer.
+    callback send-clicked(string);
+
+    // ── Root rectangle — applies the border + inner layout ───────────
+    Rectangle {
+        // single root child auto-fills the Window; binding size to the parent
+        // Window (which sizes from content) closes a layoutinfo-v loop (Slint 1.16).
+
+        border-radius: Theme.radius-card;
+        border-width: 1px;
+        border-color: Theme.border-default;
+        background: transparent; // actual bg is on the Window above
+
+        VerticalLayout {
+            padding: 0px; spacing: 0px;
+
+            // ── Title / drag strip ───────────────────────────────────
+            // grab-area + brand label + orb + restore + close buttons.
+            title-bar := Rectangle {
+                height: 44px;
+                border-radius: Theme.radius-card;
+                background: Theme.bg-sunken;
+                // bottom hairline
+                Rectangle {
+                    y: parent.height - 1px; height: 1px;
+                    background: Theme.border-subtle;
+                }
+                HorizontalLayout {
+                    padding-left: 12px; padding-right: 10px;
+                    alignment: space-between;
+                    // Left: wordmark + orb
+                    HorizontalLayout {
+                        alignment: start; spacing: 8px;
+                        Text {
+                            text: "NEOTH";
+                            color: Theme.accent;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-extra-wide;
+                            vertical-alignment: center;
+                        }
+                        // Buddy orb — 28px, self-animating
+                        Buddy {
+                            mood: root.buddy-mood;
+                            orb-size: 28px;
+                            show-face: false;
+                            y: (title-bar.height - self.height) / 2;
+                        }
+                    }
+                    // Right: status Led + restore + close
+                    HorizontalLayout {
+                        alignment: end; spacing: 6px;
+                        Led {
+                            state: root.daemon-state;
+                            y: (title-bar.height - self.height) / 2;
+                        }
+                        // Restore button — returns to main window
+                        restore-btn := Rectangle {
+                            width: 28px; height: 28px;
+                            border-radius: Theme.radius-sm;
+                            background: restore-ta.has-hover ? Theme.surface-2 : transparent;
+                            y: (title-bar.height - self.height) / 2;
+                            animate background {
+                                duration: Theme.duration-micro;
+                                easing: ease-out;
+                            }
+                            Text {
+                                text: "⤢";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-body;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            restore-ta := TouchArea {
+                                clicked => { root.restore-clicked(); }
+                            }
+                        }
+                        // Close/hide button — same action as restore
+                        close-btn := Rectangle {
+                            width: 28px; height: 28px;
+                            border-radius: Theme.radius-sm;
+                            background: close-ta.has-hover ? Theme.surface-2 : transparent;
+                            y: (title-bar.height - self.height) / 2;
+                            animate background {
+                                duration: Theme.duration-micro;
+                                easing: ease-out;
+                            }
+                            Text {
+                                text: "✕";
+                                color: Theme.text-dim;
+                                font-size: Theme.font-size-caption;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            close-ta := TouchArea {
+                                clicked => { root.hide-clicked(); }
+                            }
+                        }
+                    }
+                }
+                // Drag TouchArea covering the title bar (for future pointer-delta wiring)
+                TouchArea {
+                    width: title-bar.width - 80px;  // leave the buttons accessible
+                    height: title-bar.height;
+                    x: 0; y: 0;
+                    // No action — just marks the drag zone for the operator
+                }
+            }
+
+            // ── Scrollback — recent message snippets ─────────────────
+            // Shows up to the last 6 snippets pushed by Rust. Simple
+            // non-scrolling list; the operator uses the main window for
+            // full history. Grows from top; newest at bottom.
+            scrollback := Rectangle {
+                vertical-stretch: 1;
+                background: Theme.bg-void;
+                clip: true;
+
+                VerticalLayout {
+                    padding: 10px; spacing: 4px;
+                    alignment: end; // newest lines stay anchored to the bottom
+
+                    if root.recent-lines.length == 0: Text {
+                        text: "— companion ready —";
+                        color: Theme.text-disabled;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    for line[i] in root.recent-lines: Text {
+                        text: line;
+                        color: i == root.recent-lines.length - 1
+                            ? Theme.text-primary    // most recent = full brightness
+                            : Theme.text-muted;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        wrap: word-wrap;
+                        // Newest (last) line slightly larger for visual emphasis
+                        font-weight: i == root.recent-lines.length - 1
+                            ? Theme.weight-medium
+                            : Theme.weight-regular;
+                    }
+                }
+            }
+
+            // ── Status line — mood caption + daemon indicator ─────────
+            status-bar := Rectangle {
+                height: 24px;
+                background: Theme.bg-sunken;
+                // top hairline
+                Rectangle {
+                    y: 0; height: 1px;
+                    background: Theme.border-subtle;
+                }
+                HorizontalLayout {
+                    padding-left: 10px; padding-right: 10px;
+                    alignment: space-between;
+                    Text {
+                        text: root.status-text;
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.buddy-mood;
+                        color: Theme.text-disabled;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // ── Composer — one-line input + send button ───────────────
+            composer := Rectangle {
+                height: 52px;
+                background: Theme.bg-sunken;
+                border-radius: Theme.radius-card;
+                // top hairline
+                Rectangle {
+                    y: 0; height: 1px;
+                    background: Theme.border-subtle;
+                }
+                HorizontalLayout {
+                    padding: 8px; spacing: 6px; alignment: center;
+                    NeothLineEdit {
+                        horizontal-stretch: 1;
+                        text <=> root.overlay-input;
+                        placeholder-text: "message NEOTH…";
+                        enabled: true;
+                        accepted(t) => {
+                            if t != "" {
+                                root.send-clicked(t);
+                                root.overlay-input = "";
+                            }
+                        }
+                    }
+                    NeothButton {
+                        label: "→";
+                        primary: true;
+                        size: "sm";
+                        enabled: root.overlay-input != "";
+                        clicked => {
+                            if root.overlay-input != "" {
+                                root.send-clicked(root.overlay-input);
+                                root.overlay-input = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

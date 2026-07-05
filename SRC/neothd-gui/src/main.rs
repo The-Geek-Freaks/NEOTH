@@ -275,6 +275,13 @@ fn main() -> Result<()> {
 
     let window = MainWindow::new()?;
 
+    // ── Companion overlay — created here, hidden until the operator
+    // clicks "⊟" in the TopBar. Both windows share the one event loop
+    // that `window.run()` drives; `overlay.show()` / `overlay.hide()`
+    // are safe to call from UI-thread callbacks at any time.
+    // DO NOT call `overlay.run()` — only `window.run()` drives the loop.
+    let overlay = MiniOverlay::new()?;
+
     // Theme — restore the persisted light/dark choice before the window paints
     // (default dark). Persisted at `<neoth_home>/.gui-theme` as "dark"/"light".
     {
@@ -3755,6 +3762,165 @@ fn main() -> Result<()> {
             }
         }
     });
+
+    // ── Companion overlay wiring ──────────────────────────────────────────────
+    //
+    // minimize-to-companion: hide the main window, show the overlay, then
+    // arm always-on-top + position it bottom-right via the winit accessor.
+    // The winit accessor only succeeds while the event loop is active, so
+    // we call it inside the callback (which runs on the UI thread, inside
+    // the event loop). with_winit_window returns Option — ignore None
+    // (headless / non-winit backend) gracefully.
+    {
+        use slint::winit_030::{WinitWindowAccessor, winit::window::WindowLevel};
+        use slint::winit_030::winit::dpi::PhysicalPosition;
+
+        let overlay_weak_for_minimize = overlay.as_weak();
+        let window_weak_for_minimize = window.as_weak();
+        window.on_minimize_to_companion(move || {
+            let Some(ov) = overlay_weak_for_minimize.upgrade() else { return };
+            let Some(win) = window_weak_for_minimize.upgrade() else { return };
+            win.hide().unwrap_or(());
+            ov.show().unwrap_or(());
+            // Set always-on-top and position bottom-right after show() so the
+            // winit event loop is active and the accessor can succeed.
+            ov.window().with_winit_window(|w| {
+                w.set_window_level(WindowLevel::AlwaysOnTop);
+                // Position: primary-monitor bottom-right, 20px inset.
+                if let Some(mon) = w.current_monitor() {
+                    let s = mon.size();
+                    // 400 × 560 is the overlay's approximate pixel footprint at
+                    // default 96 DPI; at higher scale factors it may clip —
+                    // the operator can drag it from there.
+                    w.set_outer_position(PhysicalPosition::new(
+                        (s.width as i32).saturating_sub(400),
+                        (s.height as i32).saturating_sub(560),
+                    ));
+                }
+            });
+            // Seed the overlay with the current buddy state so it is not blank.
+            if let Some(ov2) = overlay_weak_for_minimize.upgrade() {
+                if let Some(win2) = window_weak_for_minimize.upgrade() {
+                    ov2.set_buddy_mood(win2.get_buddy_mood());
+                    ov2.set_status_text(win2.get_buddy_caption());
+                    ov2.set_daemon_state(win2.get_daemon_state());
+                }
+            }
+        });
+
+        // overlay restore-clicked → hide overlay, show main window.
+        let overlay_weak_for_restore = overlay.as_weak();
+        let window_weak_for_restore = window.as_weak();
+        overlay.on_restore_clicked(move || {
+            let Some(ov) = overlay_weak_for_restore.upgrade() else { return };
+            let Some(win) = window_weak_for_restore.upgrade() else { return };
+            ov.hide().unwrap_or(());
+            win.show().unwrap_or(());
+        });
+
+        // overlay hide-clicked → same as restore (never leave the operator windowless).
+        let overlay_weak_for_hide = overlay.as_weak();
+        let window_weak_for_hide = window.as_weak();
+        overlay.on_hide_clicked(move || {
+            let Some(ov) = overlay_weak_for_hide.upgrade() else { return };
+            let Some(win) = window_weak_for_hide.upgrade() else { return };
+            ov.hide().unwrap_or(());
+            win.show().unwrap_or(());
+        });
+
+        // overlay send-clicked → replicate the minimal neothd chat --stream path.
+        // We do NOT invoke_chat_send_clicked on the main window because the main
+        // window is hidden; instead we run the same subprocess directly and feed
+        // the reply snippet into the overlay's recent-lines (capped at 6).
+        let overlay_weak_for_send = overlay.as_weak();
+        overlay.on_send_clicked(move |text| {
+            let body = text.trim().to_string();
+            if body.is_empty() { return; }
+            let Some(ov) = overlay_weak_for_send.upgrade() else { return };
+
+            // Buddy goes thinking while we wait for the reply.
+            ov.set_buddy_mood("thinking".into());
+            ov.set_status_text("thinking…".into());
+
+            // Append the operator line to recent-lines immediately.
+            {
+                use slint::{Model, ModelRc, VecModel};
+                let mut lines: Vec<slint::SharedString> =
+                    ov.get_recent_lines().iter().collect();
+                lines.push(format!("▶ {body}").into());
+                // Cap at 6 — oldest drop off.
+                if lines.len() > 6 {
+                    let drain_count = lines.len() - 6;
+                    lines.drain(..drain_count);
+                }
+                ov.set_recent_lines(ModelRc::new(VecModel::from(lines)));
+            }
+
+            let ov_weak = ov.as_weak();
+            let body_clone = body.clone();
+            std::thread::spawn(move || {
+                use std::io::Read as _;
+                let result: std::result::Result<String, String> = (|| {
+                    let bin = which_neothd()
+                        .ok_or_else(|| "neothd not on PATH".to_string())?;
+                    let mut cmd = spawn_neothd_plain(&bin);
+                    cmd.arg("chat").arg("--stream").arg(&body_clone);
+                    let mut child = cmd
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .map_err(|e| format!("spawn failed: {e}"))?;
+                    let mut stdout = child
+                        .stdout
+                        .take()
+                        .ok_or_else(|| "no stdout".to_string())?;
+                    let mut acc: Vec<u8> = Vec::new();
+                    let mut buf = [0u8; 512];
+                    loop {
+                        match stdout.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => acc.extend_from_slice(&buf[..n]),
+                            Err(_) => break,
+                        }
+                    }
+                    let raw = String::from_utf8_lossy(&acc).into_owned();
+                    // strip_stream_sentinel strips the JSON done-sentinel line.
+                    let (reply, _) = strip_stream_sentinel(&raw);
+                    Ok(reply.trim().to_string())
+                })();
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    use slint::{Model, ModelRc, VecModel};
+                    let Some(ov) = ov_weak.upgrade() else { return };
+                    let (mood, caption, snippet) = match result {
+                        Ok(ref reply) if !reply.is_empty() => {
+                            // Truncate to 120 chars for the compact scrollback.
+                            let snip = if reply.len() > 120 {
+                                format!("{}…", &reply[..120])
+                            } else {
+                                reply.clone()
+                            };
+                            ("success", "done ✓", snip)
+                        }
+                        Ok(_) => ("idle", "ready", "—".to_string()),
+                        Err(ref e) => ("error", "error", format!("⚠ {e}")),
+                    };
+                    ov.set_buddy_mood(mood.into());
+                    ov.set_status_text(caption.into());
+                    // Append the reply snippet to recent-lines, cap at 6.
+                    let mut lines: Vec<slint::SharedString> =
+                        ov.get_recent_lines().iter().collect();
+                    lines.push(snippet.into());
+                    if lines.len() > 6 {
+                        let drain_count = lines.len() - 6;
+                        lines.drain(..drain_count);
+                    }
+                    ov.set_recent_lines(ModelRc::new(VecModel::from(lines)));
+                });
+            });
+        });
+    } // end companion overlay wiring
+
     window.run()?;
     Ok(())
 }

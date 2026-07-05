@@ -25,6 +25,8 @@ import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentR
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
+import { MiniOverlay } from "overlay.slint";
+export { MiniOverlay }
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
 import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
@@ -518,6 +520,9 @@ export component MainWindow inherits Window {
 
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
+    /// Companion overlay — operator clicked "⊟" in the TopBar to minimize
+    /// the main window and float the MiniOverlay companion instead.
+    callback minimize-to-companion();
     property <string> shell-title:
         root.nav-active == "chat"        ? "Chat"
         : root.nav-active == "overview"    ? "Mission Control"
@@ -1968,6 +1973,21 @@ export component MainWindow inherits Window {
                             background: Theme.accent;
                         }
                         act-ta := TouchArea { clicked => { root.activity-toggle(); } }
+                    }
+                    // Companion overlay — minimize to floating orb companion.
+                    // "⊟" glyph reads as "collapse/minimize" without being a system chrome icon.
+                    Rectangle {
+                        width: 36px; height: 36px;
+                        border-radius: Theme.radius-sm;
+                        background: min-ta.has-hover ? Theme.surface-2 : transparent;
+                        animate background { duration: Theme.duration-micro; easing: ease-out; }
+                        Text {
+                            text: "⊟";
+                            color: Theme.text-dim;
+                            font-size: 16px; font-family: Theme.font-mono;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        min-ta := TouchArea { clicked => { root.minimize-to-companion(); } }
                     }
                 }
 
