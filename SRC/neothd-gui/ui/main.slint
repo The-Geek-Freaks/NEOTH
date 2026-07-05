@@ -821,6 +821,7 @@ export component MainWindow inherits Window {
     callback kanban-task-promote(string);
     callback kanban-task-comment(string, string);
     callback kanban-task-assign(string, string);
+    callback kanban-task-finish(string);
 
     // True when the currently-picked provider needs an API key. Mirrors
     // the require_provider_key() logic in `providers/mod.rs`: claude_cli
@@ -2218,6 +2219,7 @@ export component MainWindow inherits Window {
             kanban-task-promote(id) => { root.kanban-task-promote(id); }
             kanban-task-comment(id, body) => { root.kanban-task-comment(id, body); }
             kanban-task-assign(id, hemi) => { root.kanban-task-assign(id, hemi); }
+            kanban-task-finish(id) => { root.kanban-task-finish(id); }
             // G-12 fix: provider change in Settings → Config flows
             // up to MainWindow where Rust persists it.
             provider-changed(name) => {

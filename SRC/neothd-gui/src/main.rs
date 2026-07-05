@@ -3966,6 +3966,37 @@ fn main() -> Result<()> {
         });
     });
 
+    // GAP-03: finish-task handler. Subprocesses `neoth kanban finish
+    // <id>`; the 2s live-tail picks up the done status automatically.
+    window.on_kanban_task_finish(move |task_id| {
+        let id = strip_id_hash(&task_id);
+        std::thread::spawn(move || {
+            let Some(bin) = which_neothd() else {
+                tracing::warn!("kanban finish: neothd binary not on PATH");
+                return;
+            };
+            let out = spawn_neothd_plain(&bin)
+                .arg("kanban")
+                .arg("finish")
+                .arg(&id)
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    info!(task_id = %id, "kanban: task finished");
+                }
+                Ok(o) => tracing::warn!(
+                    task_id = %id,
+                    exit = ?o.status,
+                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                    "kanban finish failed"
+                ),
+                Err(e) => {
+                    tracing::warn!(task_id = %id, error = %e, "kanban finish could not start")
+                }
+            }
+        });
+    });
+
     // Step 5 (2026-05-20): task-card click handler. Resolves the
     // task-id from the last-applied snapshot and pushes the detail
     // properties so the Code Sessions detail pane renders.

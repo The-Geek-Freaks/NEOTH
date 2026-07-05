@@ -646,6 +646,9 @@ export component SettingsView inherits Rectangle {
     /// is one of "left" / "right" / "cerebellum" / "unassigned" —
     /// subprocess `neoth kanban assign <id> <hemisphere>`.
     callback kanban-task-assign(string, string);
+    /// GAP-03: mark a task done via `neoth kanban finish <id>`.
+    /// Fires from the "✓ Finish Task" button in the detail pane.
+    callback kanban-task-finish(string);
     /// G-5 fix — operator clicked "← Chat" in the sidebar header so
     /// they can leave Settings. Without this they were trapped
     /// because the ⚙ icon lives in the Chat sidebar (not visible
@@ -3106,6 +3109,24 @@ export component SettingsView inherits Rectangle {
                                 primary: false;
                                 clicked => {
                                     root.kanban-task-assign(root.kanban-selected-task-id, "unassigned");
+                                }
+                            }
+                        }
+
+                        // GAP-03: Finish task — marks the selected task
+                        // done via `neoth kanban finish <id>`.
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: end;
+                            NeothButton {
+                                label: "✓ Finish Task";
+                                primary: true;
+                                clicked => {
+                                    root.kanban-task-finish(root.kanban-selected-task-id);
                                 }
                             }
                         }
