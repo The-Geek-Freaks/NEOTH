@@ -1411,13 +1411,13 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 > Kern-Idee: ~75 default-OFF-Flags → EINE Wahl (built-in Presets), per-Flag-Kontrolle bleibt.
 
 - [x] **ZF-01** Built-in-Presets `full-auto`/`balanced`/`essentials`/`local-sovereign` + generic `overrides`-Map (dotted-path→freedom.yaml, Denylist, Typo-fail-loud via Round-Trip, Consent-Diff, autonomy:full via Ceremony) + Wizard-Picker (ersetzt zero-friction y/n; `--zero-friction`→full-auto) + GUI (BUILT-IN/YOURS-Sektionen, Dry-Run-Consent-Modal, Token-Ceremony, Delete) — *files:* config/presets.rs, config/preset_builtins.rs (neu), cli/preset.rs (--yes/--dry-run/--gui-*), cli/init/steps_autonomy.rs, neothd-gui settings/main — *commits:* b4b2de9e + 5b3cd857 + f75e396a (Review-Wave-Fixes: ceremony-before-commit, warn-snapshot, set_active builtins, GUI races). Suiten: preset 86, gui 153/153.
-- [ ] **ZF-02** Wizard-Express-Pfad: Picker an Position 2, Nicht-custom skippt identity-Detail/topology/autonomy/auto-update/wasm/supervisor; Channels/Keet/Obsidian/n8n/tududi/mobile-mcp → Post-Setup-Tipps. Ziel ≤5 Fragen. M.
-- [ ] **ZF-03** Live-API-Key-Verify im Wizard (1-Token-Ping, grün/rot, skip-bar). S/M.
-- [ ] **ZF-04** `neoth rmas consent --acknowledge` (zeigt Lizenz-Status; Wizard/Preset erstellen den Marker NIE). S.
+- [x] **ZF-02** ✅ DONE (2026-07-05 — Picker Position 2, is_express=non-custom, Detail-Steps geskippt, Post-Setup-Tipps, ≤5 Fragen compile-asserted) Wizard-Express-Pfad: Picker an Position 2, Nicht-custom skippt identity-Detail/topology/autonomy/auto-update/wasm/supervisor; Channels/Keet/Obsidian/n8n/tududi/mobile-mcp → Post-Setup-Tipps. Ziel ≤5 Fragen. M.
+- [x] **ZF-03** ✅ DONE (2026-07-05 — do_ping/PingResult in init/catalog.rs, 1-Token-Ping pro Provider-Kind, skip-bar, non-TTY/local auto-skip, wiremock-Tests) Live-API-Key-Verify im Wizard (1-Token-Ping, grün/rot, skip-bar). S/M.
+- [x] **ZF-04** ✅ DONE (2026-07-05 — cli/rmas.rs, idempotent, 12 Tests, wizard/preset-schreibt-nie verifiziert) `neoth rmas consent --acknowledge` (zeigt Lizenz-Status; Wizard/Preset erstellen den Marker NIE). S.
 - [ ] **ZF-05** GUI-Wizard-Parity/Express (fehlend: HMAC/Keet/Obsidian/n8n/Bitwarden/WASM; Preset-Picker als Screen 2). M/L.
-- [ ] **ZF-06** Cron-Hot-Spawn: enabled-Gates sind spawn-time → Preset-Flip braucht Restart; Supervisor-Muster wie adapter-fleet (serve.rs:719-771) für Cron-Fleet. M.
+- [x] **ZF-06** ✅ DONE (2026-07-05, `1a6a5537` — CronKey-Fleet + Supervisor mit gen_rx-Hot-Reload in serve.rs/serve_tasks.rs; Preset-Flip spawnt/stoppt ohne Restart) Cron-Hot-Spawn: enabled-Gates sind spawn-time → Preset-Flip braucht Restart; Supervisor-Muster wie adapter-fleet (serve.rs:719-771) für Cron-Fleet. M.
 - [ ] **ZF-07** Boot-Stagger/First-Tick-Semaphore für full-auto (28 Crons) — NACH Feldbericht (YAGNI-Gate). S.
-- [ ] **ZF-08** Doctor advisable-Hints für weitere default-OFF-Gruppen (Muster steht: checks/config.rs). S, wiederkehrend.
+- [x] **ZF-08** ✅ DONE (2026-07-05 — 7 neue Gruppen-Hints, consent-gated Gruppen explizit ausgeschlossen, 28 Tests) Doctor advisable-Hints für weitere default-OFF-Gruppen (Muster steht: checks/config.rs). S, wiederkehrend.
 - [x] **ULTRA-N-04** smart MCP loader verdrahtet (assemble_catalogue_for_prompt @ chat/serve_pipeline; `smart_loading:false` = alter Pfad) — e8c085a9.
 - [x] **ULTRA-DOC** doctor advisable-hints groundtruth_injection + consolidation_sweep — e8c085a9. Beifang: **CouncilConfig::default() serde-Default-Drift-Bug gefixt** (26c3c903 — absent council-Block ⇒ groundtruth false trotz Default-ON).
 - [ ] **G02-CLUSTER-02b** Foreign-Indexer (persist-then-dedup liegt; idx_foreign_events hat keinen Konsumenten, wal_sync.rs:22-24). M.
