@@ -22,7 +22,7 @@ import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widg
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow, PresetRow, ProfilePresetRow } from "settings.slint";
-import { ChatView, ChatMessage, SessionRow, LinkChip } from "chat.slint";
+import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
@@ -58,6 +58,8 @@ export { DreamDayRow, DreamEntryRow }
 export { WikiRow }
 export { SelfActSkill }
 export { MeshPeerRow }
+// Chat-surface consent strip.
+export { ConsentGrant }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -629,6 +631,20 @@ export component MainWindow inherits Window {
     callback chat-composer-recall-requested();
     /// Operator switched channels in the sidebar.
     callback chat-channel-switched(int);
+
+    // ── Chat-surface consent strip ────────────────────────────────────
+    /// Current operating-mode string for the consent strip pill.
+    /// Rust sets from `neoth autonomy show --output json` .mode field.
+    in property <string> chat-consent-mode: "gated";
+    /// Per-provider consent grants for the consent strip popover.
+    /// Rust sets from `neoth consent list --output json`.
+    in property <[ConsentGrant]> chat-consent-grants: [];
+    /// Operator switched mode from the chat strip: "gated" | "full".
+    callback chat-consent-set-mode(string);
+    /// Operator revoked a provider from the chat strip.
+    callback chat-consent-revoke(string);
+    /// Chat strip requests a consent data refresh.
+    callback chat-consent-refresh();
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust populates these from `neothd kanban list/show --output json`
@@ -2156,6 +2172,12 @@ export component MainWindow inherits Window {
                     stall-continue-clicked => { root.chat-stall-continue(); }
                     stall-stop-clicked => { root.chat-stall-stop(); }
                     open-settings => { root.nav-active = "config"; }
+                    // Chat-surface consent strip wiring
+                    consent-mode: root.chat-consent-mode;
+                    consent-grants: root.chat-consent-grants;
+                    consent-set-mode(m) => { root.chat-consent-set-mode(m); }
+                    consent-revoke(p) => { root.chat-consent-revoke(p); }
+                    consent-refresh => { root.chat-consent-refresh(); }
                 } }  // close ChatView + SovereignFade
 
                 // Design Wave 3 — Overview / Mission Control dashboard.

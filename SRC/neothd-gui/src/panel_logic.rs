@@ -2474,6 +2474,58 @@ pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
     MeshStatusSnap { node_id, listen_port, trusted_ssids, peers, gossip_note: String::new() }
 }
 
+// ── Chat-surface consent strip helpers ───────────────────────────────────────
+
+/// Parse `neoth autonomy show --output json` → operating-mode string for the
+/// chat consent strip pill.
+/// JSON shape: `{"mode":"<mode>","autonomy":"<level>","skills_enable_all_bundled":<bool>}`
+/// Returns the `mode` field, falling back to the `autonomy` field, then "".
+pub fn parse_autonomy_mode(json: &str) -> String {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    v.get("mode")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| v.get("autonomy").and_then(|x| x.as_str()))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Parse `neoth consent list --output json` → Vec<(provider, granted)> for the
+/// chat consent strip popover.
+/// JSON shape: array of `{"provider":"<slug>","granted_unix_ts":<ts>}`.
+/// A row is "granted" when it appears in the array (any `granted_unix_ts` value).
+/// Also handles the generic `{"granted":bool}` field shape used by `parse_consent`.
+pub fn parse_chat_consent_grants(json: &str) -> Vec<(String, bool)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .as_array()
+        .or_else(|| v.get("grants").and_then(|x| x.as_array()))
+        .cloned()
+        .unwrap_or_default();
+    arr.iter()
+        .filter_map(|item| {
+            let provider = item
+                .get("provider")
+                .or_else(|| item.get("name"))
+                .and_then(|x| x.as_str())?
+                .to_string();
+            // `granted_unix_ts` present → the marker file exists → granted.
+            // Fall back to explicit `"granted": bool` for the show-single shape.
+            let granted = if item.get("granted_unix_ts").is_some() {
+                true
+            } else if let Some(b) = item.get("granted").and_then(|x| x.as_bool()) {
+                b
+            } else {
+                item.get("status")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s == "granted")
+                    .unwrap_or(false)
+            };
+            Some((provider, granted))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4195,5 +4247,65 @@ mod tests {
         let snap = super::parse_mesh_status("not json");
         assert!(snap.node_id.is_empty());
         assert!(snap.peers.is_empty());
+    }
+
+    // ── parse_autonomy_mode ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_autonomy_mode_mode_field_preferred() {
+        let json = r#"{"mode":"gated","autonomy":"standard","skills_enable_all_bundled":false}"#;
+        assert_eq!(super::parse_autonomy_mode(json), "gated");
+    }
+
+    #[test]
+    fn parse_autonomy_mode_full_auto() {
+        let json = r#"{"mode":"full-auto","autonomy":"full","skills_enable_all_bundled":true}"#;
+        assert_eq!(super::parse_autonomy_mode(json), "full-auto");
+    }
+
+    #[test]
+    fn parse_autonomy_mode_falls_back_to_autonomy_field() {
+        // Missing "mode" key — fall back to "autonomy".
+        let json = r#"{"autonomy":"elevated"}"#;
+        assert_eq!(super::parse_autonomy_mode(json), "elevated");
+    }
+
+    #[test]
+    fn parse_autonomy_mode_malformed_returns_empty() {
+        assert_eq!(super::parse_autonomy_mode("not json"), "");
+        assert_eq!(super::parse_autonomy_mode("{}"), "");
+    }
+
+    // ── parse_chat_consent_grants ────────────────────────────────────────────
+
+    #[test]
+    fn parse_chat_consent_grants_granted_unix_ts_means_granted() {
+        let json = r#"[{"provider":"anthropic_api","granted_unix_ts":1720000000},{"provider":"openai","granted_unix_ts":1720001000}]"#;
+        let grants = super::parse_chat_consent_grants(json);
+        assert_eq!(grants.len(), 2);
+        assert_eq!(grants[0].0, "anthropic_api");
+        assert!(grants[0].1);
+        assert_eq!(grants[1].0, "openai");
+        assert!(grants[1].1);
+    }
+
+    #[test]
+    fn parse_chat_consent_grants_explicit_bool_field() {
+        // `granted: false` row — marker absent, so not granted.
+        let json = r#"[{"provider":"gemini","granted":false},{"provider":"mistral","granted":true}]"#;
+        let grants = super::parse_chat_consent_grants(json);
+        assert_eq!(grants.len(), 2);
+        assert!(!grants[0].1);
+        assert!(grants[1].1);
+    }
+
+    #[test]
+    fn parse_chat_consent_grants_empty_array() {
+        assert!(super::parse_chat_consent_grants("[]").is_empty());
+    }
+
+    #[test]
+    fn parse_chat_consent_grants_malformed_returns_empty() {
+        assert!(super::parse_chat_consent_grants("not json").is_empty());
     }
 }

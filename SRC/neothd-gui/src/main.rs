@@ -2908,6 +2908,175 @@ fn main() -> Result<()> {
         });
     });
 
+    // ── Chat-surface consent strip wiring ─────────────────────────────────────
+    // Three callbacks + one startup fire. The refresh fn is also called after
+    // any mode/revoke action so the strip stays in sync.
+
+    // Initial populate — fires immediately so the strip shows real data on first
+    // chat view without requiring a manual refresh.
+    {
+        let weak_cc_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_chat_consent(weak_cc_init);
+        });
+    }
+
+    // chat-consent-refresh — operator opened the popover; re-probe daemon.
+    let weak_cc_refresh = window.as_weak();
+    window.on_chat_consent_refresh(move || {
+        let weak = weak_cc_refresh.clone();
+        std::thread::spawn(move || {
+            refresh_chat_consent(weak);
+        });
+    });
+
+    // chat-consent-set-mode — "Gated" or "Full-Auto" pill clicked.
+    let weak_cc_mode = window.as_weak();
+    window.on_chat_consent_set_mode(move |mode| {
+        let weak = weak_cc_mode.clone();
+        let mode = mode.to_string();
+        std::thread::spawn(move || {
+            if mode == "full" {
+                // GAP-09 / GR-RESID-D34: Full-auto requires the token-mint
+                // ceremony — same path as on_autonomy_set("full").
+                let result: Result<(), String> = (|| {
+                    let bin = which_neothd()
+                        .ok_or_else(|| "neothd binary not on PATH".to_string())?;
+                    let tok_out = spawn_neothd_plain(&bin)
+                        .arg("autonomy")
+                        .arg("mint-fullauto-token")
+                        .arg("--output")
+                        .arg("json")
+                        .output()
+                        .map_err(|e| format!("mint-fullauto-token spawn failed: {e}"))?;
+                    if !tok_out.status.success() {
+                        let err = String::from_utf8_lossy(&tok_out.stderr).trim().to_string();
+                        return Err(format!("mint-fullauto-token failed: {err}"));
+                    }
+                    let raw = String::from_utf8_lossy(&tok_out.stdout).trim().to_string();
+                    let token = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        v.get("token")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        raw
+                    };
+                    if token.is_empty() {
+                        return Err("mint-fullauto-token returned an empty token".to_string());
+                    }
+                    let apply_out = spawn_neothd_plain(&bin)
+                        .arg("autonomy")
+                        .arg("full-auto")
+                        .arg("--gui-confirmed")
+                        .arg("--gui-token")
+                        .arg(&token)
+                        .output()
+                        .map_err(|e| format!("autonomy full-auto spawn failed: {e}"))?;
+                    if !apply_out.status.success() {
+                        let err = String::from_utf8_lossy(&apply_out.stderr).trim().to_string();
+                        return Err(format!("autonomy full-auto failed: {err}"));
+                    }
+                    Ok(())
+                })();
+                let result_ok = result.is_ok();
+                let result_msg = result.err().unwrap_or_default();
+                let weak2 = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak2.upgrade() {
+                        if result_ok {
+                            w.set_chat_consent_mode("full-auto".into());
+                            push_toast(
+                                &w.as_weak(),
+                                "success",
+                                "Consent",
+                                "Full-Auto enabled via GUI ceremony.",
+                            );
+                        } else {
+                            w.set_status_line(
+                                format!(
+                                    "Full-auto gate (chat strip): {result_msg} — mode NOT changed."
+                                )
+                                .into(),
+                            );
+                        }
+                    }
+                });
+                if result_ok {
+                    refresh_chat_consent(weak);
+                }
+            } else {
+                // Gated (and any other mode): plain autonomy set.
+                let ok = which_neothd()
+                    .and_then(|bin| {
+                        spawn_neothd_plain(&bin)
+                            .arg("autonomy")
+                            .arg("gated")
+                            .output()
+                            .ok()
+                    })
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                let weak2 = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak2.upgrade() {
+                        if ok {
+                            push_toast(&w.as_weak(), "success", "Consent", "Mode set to Gated.");
+                        } else {
+                            w.set_status_line(
+                                "autonomy gated failed — is neothd on PATH?".into(),
+                            );
+                        }
+                    }
+                });
+                if ok {
+                    refresh_chat_consent(weak);
+                }
+            }
+        });
+    });
+
+    // chat-consent-revoke — Revoke button clicked for a provider.
+    let weak_cc_revoke = window.as_weak();
+    window.on_chat_consent_revoke(move |provider| {
+        let weak = weak_cc_revoke.clone();
+        let provider = provider.to_string();
+        std::thread::spawn(move || {
+            let ok = which_neothd()
+                .and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("consent")
+                        .arg("revoke")
+                        .arg(&provider)
+                        .output()
+                        .ok()
+                })
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let provider2 = provider.clone();
+            let weak2 = weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak2.upgrade() {
+                    if ok {
+                        push_toast(
+                            &w.as_weak(),
+                            "info",
+                            "Consent",
+                            &format!("Revoked consent for {provider2}."),
+                        );
+                    } else {
+                        w.set_status_line(
+                            format!("consent revoke {provider2} failed.").into(),
+                        );
+                    }
+                }
+            });
+            if ok {
+                refresh_chat_consent(weak);
+            }
+        });
+    });
+
     // Pick #8 step 4 — pseudo-live-tail via 2-second poll (2026-05-20).
     // A real WAL-file-watcher (notify crate + WAL frame parser) lands
     // when the dispatcher (Pick #6) starts mutating the board mid-run.
@@ -6636,6 +6805,49 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(peer_rows))));
         w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
         w.set_mesh_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── Chat-surface consent strip probe ─────────────────────────────────────────
+//
+// Shells two JSON subcommands (`autonomy show` + `consent list`), parses via
+// panel_logic pure-fns, then writes chat-consent-mode and chat-consent-grants
+// in one invoke_from_event_loop call.  Must be called from a worker thread.
+fn refresh_chat_consent(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+
+    let run = |args: &[&str]| -> String {
+        which_neothd()
+            .and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .args(args)
+                    .output()
+                    .ok()
+            })
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default()
+    };
+
+    let autonomy_json = run(&["autonomy", "show", "--output", "json"]);
+    let consent_json  = run(&["consent", "list", "--output", "json"]);
+
+    let mode   = panel_logic::parse_autonomy_mode(&autonomy_json);
+    let grants = panel_logic::parse_chat_consent_grants(&consent_json);
+
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        w.set_chat_consent_mode(mode.as_str().into());
+        let grant_rows: Vec<ConsentGrant> = grants
+            .into_iter()
+            .map(|(provider, granted)| ConsentGrant {
+                provider: provider.into(),
+                granted,
+            })
+            .collect();
+        w.set_chat_consent_grants(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            grant_rows,
+        ))));
     });
 }
 

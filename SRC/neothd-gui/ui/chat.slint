@@ -18,7 +18,7 @@
 
 import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card } from "components.slint";
+import { NeothButton, Card, Led } from "components.slint";
 
 /// One message in the scrollback. Owned by the Rust side; Slint
 /// renders the list reactively.
@@ -54,6 +54,13 @@ export struct LinkChip {
     label: string,
     kind: string,
     id: string,
+}
+
+/// Chat-surface consent strip — one row per provider grant.
+/// Rust constructs from `neoth consent list --output json`.
+export struct ConsentGrant {
+    provider: string,
+    granted: bool,
 }
 
 // ── ChatBubble ───────────────────────────────────────────────────────
@@ -523,6 +530,19 @@ export component ChatView inherits Rectangle {
     /// Rust so it can write the last sent input back into `composer-draft`.
     callback recall-requested();
 
+    // ── Consent strip (chat-surface quick-access) ─────────────────────
+    /// Current operating mode string: "gated" | "full-auto" | "sovereign-buddy" | "advanced"
+    /// Rust sets from `neoth autonomy show --output json` .mode field.
+    in property <string> consent-mode: "gated";
+    /// Per-provider consent grants. Rust sets from `neoth consent list --output json`.
+    in property <[ConsentGrant]> consent-grants: [];
+    /// Operator clicked Gated or Full-Auto pill: fires with "gated" or "full".
+    callback consent-set-mode(string);
+    /// Operator clicked Revoke for a provider.
+    callback consent-revoke(string);
+    /// Operator asked for a manual refresh of consent data.
+    callback consent-refresh();
+
     // Chat-feel #2 (beat-openhuman): auto-scroll-to-bottom. `auto-follow`
     // stays true while the operator is at/near the bottom; a manual
     // scroll-up disengages it (so reading history isn't yanked away by a
@@ -689,6 +709,173 @@ export component ChatView inherits Rectangle {
                     }
                 }
             }
+            // ── CONSENT STRIP ─────────────────────────────────────────────
+            // Thin ~34px bar giving quick access to operating-mode and
+            // per-provider consent without leaving the chat surface.
+            // Tool-call auto-approve follows the mode. Per-channel
+            // smart-approve lives in Channels.
+            Rectangle {
+                height: 34px;
+                background: Theme.bg-sunken;
+                // Bottom separator line.
+                Rectangle {
+                    x: 0; y: parent.height - 1px;
+                    width: parent.width; height: 1px;
+                    background: Theme.border-subtle;
+                }
+
+                // Consent popover — shows below the strip via popup.show().
+                // PopupWindow x/y are relative to the instantiating element
+                // (the outer 34px Rectangle). Named so the button can call
+                // consent-popup.show() without a private bool toggle.
+                consent-popup := PopupWindow {
+                    x: parent.width - 320px;
+                    y: parent.height;
+                    width: 320px;
+                    Rectangle {
+                        background: Theme.bg-card;
+                        border-color: Theme.border-default;
+                        border-width: 1px;
+                        border-radius: Theme.radius-card;
+
+                        VerticalLayout {
+                            padding: Theme.space-base;
+                            spacing: Theme.space-tight;
+
+                            // Popover header
+                            Text {
+                                text: "Provider consent";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-primary;
+                            }
+
+                            // Hint line
+                            Text {
+                                text: "Tool-call auto-approve follows the mode above. Per-channel smart-approve lives in Channels.";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-dim;
+                                wrap: word-wrap;
+                            }
+
+                            // Separator
+                            Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                            // Grant rows — one per provider
+                            if root.consent-grants.length == 0: Text {
+                                text: "No provider grants recorded. Cloud providers require one-time consent before NEOTH routes any text to them.";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-dim;
+                                wrap: word-wrap;
+                            }
+                            for g in root.consent-grants: HorizontalLayout {
+                                spacing: Theme.space-tight;
+                                alignment: start;
+                                // Led dot — Rectangle; wrap in a small container
+                                // to centre it within the row height.
+                                Rectangle {
+                                    width: 10px;
+                                    height: 10px;
+                                    Led { state: g.granted ? "live" : "off"; }
+                                }
+                                Text {
+                                    text: g.provider;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: g.granted ? Theme.text-primary : Theme.text-disabled;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                }
+                                if g.granted: NeothButton {
+                                    label: "Revoke";
+                                    primary: false;
+                                    danger: true;
+                                    size: "sm";
+                                    clicked => { root.consent-revoke(g.provider); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: Theme.space-base;
+                    padding-right: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    alignment: start;
+
+                    // Kicker label
+                    Text {
+                        text: "CONSENT";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        letter-spacing: Theme.letter-spacing-extra-wide;
+                        color: Theme.text-disabled;
+                        vertical-alignment: center;
+                    }
+
+                    // Spacer
+                    Rectangle { width: Theme.space-tight; }
+
+                    // Operating-mode Led dot + mode label.
+                    // Wrap Led in a fixed-size container — Led inherits Rectangle
+                    // which has no vertical-alignment; the container centres it.
+                    Rectangle {
+                        width: 10px;
+                        height: 10px;
+                        Led {
+                            state: root.consent-mode == "gated" ? "live"
+                                : (root.consent-mode == "full-auto" ? "connecting"
+                                : (root.consent-mode == "sovereign-buddy" ? "error" : "off"));
+                        }
+                    }
+                    Text {
+                        text: root.consent-mode;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+
+                    // Spacer
+                    Rectangle { width: Theme.space-tight; }
+
+                    // Mode toggle — Gated button (primary when active)
+                    NeothButton {
+                        label: "Gated";
+                        primary: root.consent-mode == "gated";
+                        size: "sm";
+                        enabled: root.consent-mode != "gated";
+                        clicked => { root.consent-set-mode("gated"); }
+                    }
+                    // Full-Auto button (primary when active)
+                    NeothButton {
+                        label: "Full-Auto";
+                        primary: root.consent-mode == "full-auto";
+                        size: "sm";
+                        enabled: root.consent-mode != "full-auto";
+                        clicked => { root.consent-set-mode("full"); }
+                    }
+
+                    // Spacer fills remaining width, pushing Consent… right.
+                    Rectangle { horizontal-stretch: 1; }
+
+                    // Consent popover trigger — ghost button on the right.
+                    NeothButton {
+                        label: "Consent…";
+                        primary: false;
+                        size: "sm";
+                        clicked => {
+                            root.consent-refresh();
+                            consent-popup.show();
+                        }
+                    }
+                }
+            }
+
             scrollback := ScrollView {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
