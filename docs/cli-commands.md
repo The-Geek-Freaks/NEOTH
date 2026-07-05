@@ -1890,6 +1890,13 @@ Flip a plugin to `active`. Idempotent — already-active plugins return success 
 
 - `<ID>` — Plugin manifest id (matches the directory name under `~/.neoth/plugins/<id>/`)
 
+### `neoth plugin events`
+
+DES-12 — read-only WAL feed for a plugin's emitted events (0xC4 frames). Used by the GUI to populate a plugin-provided tab without granting the plugin any direct filesystem or command access
+
+- `<ID>` — Plugin manifest id to query
+- `--last <LAST>` — Maximum number of events to return (newest first)
+
 ### `neoth plugin install`
 
 Install a plugin from a local directory into `~/.neoth/plugins/<id>/`. The id is derived from the manifest `id` field inside `<path>/plugin.toml`. Only `plugin.toml` and `plugin.wasm` are copied — arbitrary extra files are never installed (mirrors the discovery contract). After copy the same integrity gate as `neoth plugin verify` is applied; if it fails the partial install is rolled back and the error is reported
