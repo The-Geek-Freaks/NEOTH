@@ -1,0 +1,366 @@
+// NEOTH GUI — Automation / Cron panel (GAP-01).
+//
+// Full CRUD for scheduled jobs backed by `neoth cron` commands.
+// Layout: EntranceFade > ScrollView > VerticalLayout with min-height.
+// No parent.height bindings — avoids Slint 1.8 binding-loop in ScrollView.
+//
+// Daemon surface (all exist in cli/cron.rs):
+//   list   --output json → [{id,name,enabled,cron,tz,role,timeout_seconds,channel,recipient}]
+//   add    --id --name --cron --prompt [--tz --channel --recipient --timeout]
+//   edit   <id> [--enabled true|false  --name --cron --prompt --tz --channel --recipient --timeout]
+//   remove <id>
+//   run    <id>  (refused while daemon live → surface gracefully via toast)
+//
+// Note: jobs.yaml has NO hot-reload; changes take effect on next daemon restart.
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, NeothLineEdit, NeothCheckBox } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire struct ───────────────────────────────────────────────────────────────
+
+/// One scheduled-job row from `neoth cron list --output json`.
+export struct CronJobRow {
+    id:        string,
+    name:      string,
+    enabled:   bool,
+    cron:      string,   // 5-field cron expression
+    tz:        string,
+    role:      string,
+    timeout:   string,   // timeout_seconds as display string
+    channel:   string,
+    recipient: string,
+}
+
+// ── Job-row card component ────────────────────────────────────────────────────
+
+component CronJobCard inherits Rectangle {
+    in property <CronJobRow> job;
+    callback run-clicked(string);
+    callback toggle-clicked(string, bool);   // (id, new_enabled)
+    callback remove-clicked(string);
+
+    background: Theme.bg-card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding: 14px; spacing: 6px;
+
+        // ── Row 1: name + id + Led ──────────────────────────────────────────
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                horizontal-stretch: 1; spacing: 2px;
+                Text {
+                    text: job.name != "" ? job.name : job.id;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-base;
+                    font-weight: Theme.weight-semibold;
+                    overflow: elide;
+                }
+                Text {
+                    text: job.id;
+                    color: Theme.text-disabled;
+                    font-size: 10px;
+                    font-family: "monospace";
+                    overflow: elide;
+                }
+            }
+            Led { state: job.enabled ? "live" : "off"; }
+        }
+
+        // ── Row 2: cron expr + tz ───────────────────────────────────────────
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: job.cron;
+                color: Theme.text-primary;
+                font-size: Theme.font-size-sm;
+                font-family: "monospace";
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            if job.tz != "": Text {
+                text: job.tz;
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                overflow: elide;
+            }
+        }
+
+        // ── Row 3: channel · recipient (if present) ─────────────────────────
+        if job.channel != "" || job.recipient != "": HorizontalLayout {
+            spacing: 4px;
+            Text {
+                text: (job.channel != "" ? job.channel : "—")
+                    + (job.recipient != "" ? "  ·  " + job.recipient : "");
+                color: Theme.text-secondary;
+                font-size: Theme.font-size-sm;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            if job.timeout != "" && job.timeout != "0": Text {
+                text: job.timeout + "s";
+                color: Theme.text-disabled;
+                font-size: Theme.font-size-sm;
+            }
+        }
+
+        // ── Row 4: action buttons ───────────────────────────────────────────
+        HorizontalLayout {
+            spacing: 6px; alignment: end;
+
+            NeothButton {
+                label: "Run";
+                size: "sm";
+                primary: false;
+                clicked => { root.run-clicked(job.id); }
+            }
+            NeothButton {
+                label: job.enabled ? "Disable" : "Enable";
+                size: "sm";
+                primary: false;
+                clicked => { root.toggle-clicked(job.id, !job.enabled); }
+            }
+            NeothButton {
+                label: "Remove";
+                size: "sm";
+                primary: false;
+                clicked => { root.remove-clicked(job.id); }
+            }
+        }
+    }
+}
+
+// ── CronView ──────────────────────────────────────────────────────────────────
+
+export component CronView inherits Rectangle {
+    // ── props ───────────────────────────────────────────────────────────────
+    in property <[CronJobRow]> cron-jobs;
+    in property <bool>         cron-running: false;
+    in property <string>       cron-refreshed-at: "";
+
+    // Add-form fields (in-out so Slint can two-way bind from Rust if needed).
+    in-out property <string>   add-id: "";
+    in-out property <string>   add-name: "";
+    in-out property <string>   add-cron: "";
+    in-out property <string>   add-prompt: "";
+    in-out property <string>   add-tz: "";
+    in-out property <string>   add-channel: "";
+    in-out property <string>   add-recipient: "";
+    in-out property <string>   add-timeout: "";
+    in-out property <bool>     add-form-open: false;
+
+    // ── callbacks ───────────────────────────────────────────────────────────
+    callback cron-refresh();
+    callback cron-add(string, string, string, string, string, string, string, string);
+    //        id      name    cron    prompt  tz      channel recipient timeout
+    callback cron-run(string);          // id
+    callback cron-toggle(string, bool); // id, new_enabled
+    callback cron-remove(string);       // id
+
+    background: transparent;
+
+    EntranceFade {
+        ScrollView {
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                min-height: 1200px;
+
+                // ── HEADER ──────────────────────────────────────────────────
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "⏱  Automation · Cron";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-size-lg;
+                        font-weight: Theme.weight-bold;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: root.cron-jobs.length == 1
+                            ? "1 job"
+                            : root.cron-jobs.length + " jobs";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-size-sm;
+                        vertical-alignment: center;
+                    }
+                    NeothButton {
+                        label: root.cron-running ? "Loading…" : "Refresh";
+                        size: "sm";
+                        primary: false;
+                        enabled: !root.cron-running;
+                        clicked => { root.cron-refresh(); }
+                    }
+                }
+
+                // Restart-required hint
+                Text {
+                    text: "ℹ  Changes apply on next daemon restart (jobs.yaml has no hot-reload).";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-size-sm;
+                    wrap: word-wrap;
+                }
+
+                // ── ADD JOB CARD ─────────────────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "ADD JOB"; }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "Schedule a new cron job.";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            NeothButton {
+                                label: root.add-form-open ? "▲ Hide" : "▼ Add job";
+                                size: "sm";
+                                primary: root.add-form-open;
+                                clicked => { root.add-form-open = !root.add-form-open; }
+                            }
+                        }
+
+                        if root.add-form-open: VerticalLayout {
+                            spacing: 8px;
+
+                            // Row: id + name
+                            HorizontalLayout {
+                                spacing: 8px;
+                                NeothLineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "id (slug, e.g. daily-summary)";
+                                    text <=> root.add-id;
+                                }
+                                NeothLineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "name (display)";
+                                    text <=> root.add-name;
+                                }
+                            }
+
+                            // Row: cron expr with hint
+                            NeothLineEdit {
+                                placeholder-text: "cron expr — 5 fields e.g. 0 7 * * * = daily 07:00";
+                                text <=> root.add-cron;
+                            }
+
+                            // Row: prompt
+                            NeothLineEdit {
+                                placeholder-text: "prompt (sent to daemon when job fires)";
+                                text <=> root.add-prompt;
+                            }
+
+                            // Row: optional fields
+                            HorizontalLayout {
+                                spacing: 8px;
+                                NeothLineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "tz (IANA, optional)";
+                                    text <=> root.add-tz;
+                                }
+                                NeothLineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "channel (optional)";
+                                    text <=> root.add-channel;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                NeothLineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "recipient id (optional)";
+                                    text <=> root.add-recipient;
+                                }
+                                NeothLineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "timeout secs (optional)";
+                                    text <=> root.add-timeout;
+                                }
+                            }
+
+                            HorizontalLayout {
+                                alignment: end; spacing: 8px;
+                                NeothButton {
+                                    label: "Cancel";
+                                    size: "sm";
+                                    primary: false;
+                                    clicked => {
+                                        root.add-form-open = false;
+                                        root.add-id = "";
+                                        root.add-name = "";
+                                        root.add-cron = "";
+                                        root.add-prompt = "";
+                                        root.add-tz = "";
+                                        root.add-channel = "";
+                                        root.add-recipient = "";
+                                        root.add-timeout = "";
+                                    }
+                                }
+                                NeothButton {
+                                    label: "Add job";
+                                    size: "sm";
+                                    primary: true;
+                                    enabled: root.add-id != "" && root.add-cron != "" && root.add-prompt != "";
+                                    clicked => {
+                                        root.cron-add(
+                                            root.add-id,
+                                            root.add-name,
+                                            root.add-cron,
+                                            root.add-prompt,
+                                            root.add-tz,
+                                            root.add-channel,
+                                            root.add-recipient,
+                                            root.add-timeout,
+                                        );
+                                        root.add-form-open = false;
+                                        root.add-id = "";
+                                        root.add-name = "";
+                                        root.add-cron = "";
+                                        root.add-prompt = "";
+                                        root.add-tz = "";
+                                        root.add-channel = "";
+                                        root.add-recipient = "";
+                                        root.add-timeout = "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── JOB LIST ─────────────────────────────────────────────────
+                if root.cron-jobs.length == 0: Card {
+                    VerticalLayout {
+                        padding: 20px; spacing: 8px;
+                        alignment: center;
+                        Text {
+                            text: "No scheduled jobs — add one above.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-size-sm;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                for j in root.cron-jobs: CronJobCard {
+                    job: j;
+                    run-clicked(id) => { root.cron-run(id); }
+                    toggle-clicked(id, en) => { root.cron-toggle(id, en); }
+                    remove-clicked(id) => { root.cron-remove(id); }
+                }
+
+                // ── FOOTER ───────────────────────────────────────────────────
+                RefreshFooter { ts: root.cron-refreshed-at; }
+            }
+        }
+    }
+}

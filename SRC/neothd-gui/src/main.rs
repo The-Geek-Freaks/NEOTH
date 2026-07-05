@@ -1856,27 +1856,107 @@ fn main() -> Result<()> {
         });
     });
 
-    // Automation tab — scheduled crons + the n8n bridge.
-    let weak_auto = window.as_weak();
-    window.on_automation_refresh_clicked(move || {
-        let Some(w0) = weak_auto.upgrade() else {
-            return;
-        };
-        w0.set_automation_running(true);
-        buddy(&w0, GuiActivity::AgentParallel);
-        let weak = weak_auto.clone();
-        std::thread::spawn(move || {
-            let cron = run_neothd_probe(&["cron", "list"]);
-            let n8n = run_neothd_probe(&["n8n", "status"]);
-            let output = format!("── CRON ──\n{cron}\n\n── N8N ──\n{n8n}");
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(w) = weak.upgrade() {
-                    w.set_automation_output(output.into());
-                    w.set_automation_running(false);
-                }
+    // ── GAP-01 Automation / Cron CRUD panel ──────────────────────────────────
+    {
+        // Refresh — `neoth cron list --output json` → typed model.
+        let weak_cron = window.as_weak();
+        window.on_cron_refresh_clicked(move || {
+            let weak = weak_cron.clone();
+            std::thread::spawn(move || {
+                refresh_cron(weak);
             });
         });
-    });
+
+        // Add — build arg list, omit empty optional flags.
+        let weak_cron_add = window.as_weak();
+        window.on_cron_add_clicked(move |id, name, cron, prompt, tz, channel, recipient, timeout| {
+            let id        = id.to_string();
+            let name      = name.to_string();
+            let cron      = cron.to_string();
+            let prompt    = prompt.to_string();
+            let tz        = tz.to_string();
+            let channel   = channel.to_string();
+            let recipient = recipient.to_string();
+            let timeout   = timeout.to_string();
+            let weak = weak_cron_add.clone();
+            std::thread::spawn(move || {
+                let mut args: Vec<&str> = vec!["cron", "add",
+                    "--id",     id.trim(),
+                    "--name",   name.trim(),
+                    "--cron",   cron.trim(),
+                    "--prompt", prompt.trim(),
+                ];
+                // Optional flags — only appended when non-empty.
+                if !tz.trim().is_empty()        { args.extend(["--tz",        tz.trim()]); }
+                if !channel.trim().is_empty()   { args.extend(["--channel",   channel.trim()]); }
+                if !recipient.trim().is_empty() { args.extend(["--recipient", recipient.trim()]); }
+                if !timeout.trim().is_empty()   { args.extend(["--timeout",   timeout.trim()]); }
+                let out = run_neothd_probe(&args);
+                let msg = if out.trim().is_empty() { format!("added {}", id.trim()) } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "success", "Cron", &msg);
+                std::thread::spawn(move || refresh_cron(weak2));
+            });
+        });
+
+        // Run — `neoth cron run <id>` (daemon refuses while live; surface error as toast).
+        let weak_cron_run = window.as_weak();
+        window.on_cron_run_clicked(move |id| {
+            let id   = id.to_string();
+            let weak = weak_cron_run.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["cron", "run", id.trim()]);
+                let (kind, title) = if out.to_lowercase().contains("refused")
+                    || out.to_lowercase().contains("daemon")
+                    || out.to_lowercase().contains("live")
+                {
+                    ("warn", "Cron run refused")
+                } else {
+                    ("info", "Cron run")
+                };
+                push_toast(&weak, kind, title, out.trim());
+            });
+        });
+
+        // Toggle — `neoth cron edit <id> --enabled <bool>`.
+        let weak_cron_tog = window.as_weak();
+        window.on_cron_toggle_clicked(move |id, new_enabled| {
+            let id   = id.to_string();
+            let weak = weak_cron_tog.clone();
+            std::thread::spawn(move || {
+                let enabled_str = if new_enabled { "true" } else { "false" };
+                let out = run_neothd_probe(&["cron", "edit", id.trim(), "--enabled", enabled_str]);
+                let msg = if out.trim().is_empty() {
+                    format!("{} {}", if new_enabled { "enabled" } else { "disabled" }, id.trim())
+                } else {
+                    out.trim().to_string()
+                };
+                let weak2 = weak.clone();
+                push_toast(&weak, "info", "Cron", &msg);
+                std::thread::spawn(move || refresh_cron(weak2));
+            });
+        });
+
+        // Remove — `neoth cron remove <id>`.
+        let weak_cron_rem = window.as_weak();
+        window.on_cron_remove_clicked(move |id| {
+            let id   = id.to_string();
+            let weak = weak_cron_rem.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["cron", "remove", id.trim()]);
+                let msg = if out.trim().is_empty() { format!("removed {}", id.trim()) } else { out.trim().to_string() };
+                let weak2 = weak.clone();
+                push_toast(&weak, "warn", "Cron", &msg);
+                std::thread::spawn(move || refresh_cron(weak2));
+            });
+        });
+
+        // Fire once at startup so the list pre-loads.
+        let weak_cron_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_cron(weak_cron_init);
+        });
+    }
 
     // ── Overview / Mission Control — refresh callback ───────────────────────
     // One worker thread per click; all subprocess work stays off the event loop.
@@ -3922,20 +4002,24 @@ fn main() -> Result<()> {
                 let weak = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let val = raw.to_string();
-                    let fp = nd.join("freedom.yaml");
-                    let rd = nd.join(".reload-requested");
-                    let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val.as_str()))
-                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                    let w2 = weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        match result {
-                            Ok(_) => push_toast(&w2, "success", $label, "saved — daemon reloading"),
-                            Err(ref e) => {
-                                let msg = e.to_string();
-                                push_toast(&w2, "warn", concat!($label, " write failed"), &msg);
+                    let nd2 = nd.clone();
+                    let weak2 = weak.clone();
+                    // I/O (read + parse + fsync + rename) off the UI event loop.
+                    std::thread::spawn(move || {
+                        let fp = nd2.join("freedom.yaml");
+                        let rd = nd2.join(".reload-requested");
+                        let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val.as_str()))
+                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                        slint::invoke_from_event_loop(move || {
+                            match result {
+                                Ok(_) => push_toast(&weak2, "success", $label, "saved — daemon reloading"),
+                                Err(ref e) => {
+                                    let msg = e.to_string();
+                                    push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
+                                }
                             }
-                        }
-                    }).ok();
+                        }).ok();
+                    });
                 });
             }};
         }
@@ -3944,21 +4028,25 @@ fn main() -> Result<()> {
                 let nd = neoth_dir.clone();
                 let weak = window.as_weak();
                 window.$cb(move |v: bool| {
-                    let fp = nd.join("freedom.yaml");
-                    let rd = nd.join(".reload-requested");
-                    let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))
-                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                    let nd2 = nd.clone();
+                    let weak2 = weak.clone();
                     let state = if v { "enabled" } else { "disabled" };
-                    let w2 = weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        match result {
-                            Ok(_) => push_toast(&w2, "success", $label, state),
-                            Err(ref e) => {
-                                let msg = e.to_string();
-                                push_toast(&w2, "warn", concat!($label, " write failed"), &msg);
+                    // I/O (read + parse + fsync + rename) off the UI event loop.
+                    std::thread::spawn(move || {
+                        let fp = nd2.join("freedom.yaml");
+                        let rd = nd2.join(".reload-requested");
+                        let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))
+                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                        slint::invoke_from_event_loop(move || {
+                            match result {
+                                Ok(_) => push_toast(&weak2, "success", $label, state),
+                                Err(ref e) => {
+                                    let msg = e.to_string();
+                                    push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
+                                }
                             }
-                        }
-                    }).ok();
+                        }).ok();
+                    });
                 });
             }};
         }
@@ -3969,20 +4057,24 @@ fn main() -> Result<()> {
                 let variants: &'static [&'static str] = $variants;
                 window.$cb(move |idx: i32| {
                     let val = variants.get(idx as usize).copied().unwrap_or(variants[0]);
-                    let fp = nd.join("freedom.yaml");
-                    let rd = nd.join(".reload-requested");
-                    let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val))
-                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                    let w2 = weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        match result {
-                            Ok(_) => push_toast(&w2, "success", $label, val),
-                            Err(ref e) => {
-                                let msg = e.to_string();
-                                push_toast(&w2, "warn", concat!($label, " write failed"), &msg);
+                    let nd2 = nd.clone();
+                    let weak2 = weak.clone();
+                    // I/O (read + parse + fsync + rename) off the UI event loop.
+                    std::thread::spawn(move || {
+                        let fp = nd2.join("freedom.yaml");
+                        let rd = nd2.join(".reload-requested");
+                        let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val))
+                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                        slint::invoke_from_event_loop(move || {
+                            match result {
+                                Ok(_) => push_toast(&weak2, "success", $label, val),
+                                Err(ref e) => {
+                                    let msg = e.to_string();
+                                    push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
+                                }
                             }
-                        }
-                    }).ok();
+                        }).ok();
+                    });
                 });
             }};
         }
@@ -3992,23 +4084,27 @@ fn main() -> Result<()> {
                 let weak = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
-                    let fp = nd.join("freedom.yaml");
-                    let rd = nd.join(".reload-requested");
-                    let result: anyhow::Result<()> = (|| {
-                        let v: f64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not a number: {s}"))?;
-                        set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
-                        std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
-                    })();
-                    let w2 = weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        match result {
-                            Ok(_) => push_toast(&w2, "success", $label, "saved"),
-                            Err(ref e) => {
-                                let msg = e.to_string();
-                                push_toast(&w2, "warn", concat!($label, " invalid"), &msg);
+                    let nd2 = nd.clone();
+                    let weak2 = weak.clone();
+                    // I/O (read + parse + fsync + rename) off the UI event loop.
+                    std::thread::spawn(move || {
+                        let fp = nd2.join("freedom.yaml");
+                        let rd = nd2.join(".reload-requested");
+                        let result: anyhow::Result<()> = (|| {
+                            let v: f64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not a number: {s}"))?;
+                            set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
+                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                        })();
+                        slint::invoke_from_event_loop(move || {
+                            match result {
+                                Ok(_) => push_toast(&weak2, "success", $label, "saved"),
+                                Err(ref e) => {
+                                    let msg = e.to_string();
+                                    push_toast(&weak2, "warn", concat!($label, " invalid"), &msg);
+                                }
                             }
-                        }
-                    }).ok();
+                        }).ok();
+                    });
                 });
             }};
         }
@@ -4018,23 +4114,27 @@ fn main() -> Result<()> {
                 let weak = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
-                    let fp = nd.join("freedom.yaml");
-                    let rd = nd.join(".reload-requested");
-                    let result: anyhow::Result<()> = (|| {
-                        let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
-                        set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
-                        std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
-                    })();
-                    let w2 = weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        match result {
-                            Ok(_) => push_toast(&w2, "success", $label, "saved"),
-                            Err(ref e) => {
-                                let msg = e.to_string();
-                                push_toast(&w2, "warn", concat!($label, " invalid"), &msg);
+                    let nd2 = nd.clone();
+                    let weak2 = weak.clone();
+                    // I/O (read + parse + fsync + rename) off the UI event loop.
+                    std::thread::spawn(move || {
+                        let fp = nd2.join("freedom.yaml");
+                        let rd = nd2.join(".reload-requested");
+                        let result: anyhow::Result<()> = (|| {
+                            let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
+                            set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
+                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                        })();
+                        slint::invoke_from_event_loop(move || {
+                            match result {
+                                Ok(_) => push_toast(&weak2, "success", $label, "saved"),
+                                Err(ref e) => {
+                                    let msg = e.to_string();
+                                    push_toast(&weak2, "warn", concat!($label, " invalid"), &msg);
+                                }
                             }
-                        }
-                    }).ok();
+                        }).ok();
+                    });
                 });
             }};
         }
@@ -4069,20 +4169,24 @@ fn main() -> Result<()> {
                 } else {
                     serde_yaml::Value::from(val)
                 };
-                let fp = nd.join("freedom.yaml");
-                let rd = nd.join(".reload-requested");
-                let result = set_nested_in_freedom(&fp, "persona_mode", yaml_val)
-                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                let w2 = weak.clone();
-                slint::invoke_from_event_loop(move || {
-                    match result {
-                        Ok(_) => push_toast(&w2, "success", "Persona mode", val),
-                        Err(ref e) => {
-                            let msg = e.to_string();
-                            push_toast(&w2, "warn", "Persona mode write failed", &msg);
+                let nd2 = nd.clone();
+                let weak2 = weak.clone();
+                // I/O (read + parse + fsync + rename) off the UI event loop.
+                std::thread::spawn(move || {
+                    let fp = nd2.join("freedom.yaml");
+                    let rd = nd2.join(".reload-requested");
+                    let result = set_nested_in_freedom(&fp, "persona_mode", yaml_val)
+                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                    slint::invoke_from_event_loop(move || {
+                        match result {
+                            Ok(_) => push_toast(&weak2, "success", "Persona mode", val),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&weak2, "warn", "Persona mode write failed", &msg);
+                            }
                         }
-                    }
-                }).ok();
+                    }).ok();
+                });
             });
         }
         wire_nested_str!(on_cfg_user_tz_changed,                "user_tz",                  "Timezone");
@@ -4116,23 +4220,27 @@ fn main() -> Result<()> {
         let weak = window.as_weak();
         window.on_obs_vault_path_changed(move |raw: slint::SharedString| {
             let val = raw.to_string();
-            let fp = nd.join("freedom.yaml");
-            let rd = nd.join(".reload-requested");
-            let result = set_nested_in_freedom(&fp, "obsidian_vault", serde_yaml::Value::from(val.as_str()))
-                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+            let nd2 = nd.clone();
             let w2 = weak.clone();
-            slint::invoke_from_event_loop(move || {
-                match result {
-                    Ok(_) => {
-                        push_toast(&w2, "success", "Vault path", "saved — daemon reloading");
-                        if let Some(w) = w2.upgrade() { w.invoke_obs_refresh_clicked(); }
+            // I/O (read + parse + fsync + rename) off the UI event loop.
+            std::thread::spawn(move || {
+                let fp = nd2.join("freedom.yaml");
+                let rd = nd2.join(".reload-requested");
+                let result = set_nested_in_freedom(&fp, "obsidian_vault", serde_yaml::Value::from(val.as_str()))
+                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                slint::invoke_from_event_loop(move || {
+                    match result {
+                        Ok(_) => {
+                            push_toast(&w2, "success", "Vault path", "saved — daemon reloading");
+                            if let Some(w) = w2.upgrade() { w.invoke_obs_refresh_clicked(); }
+                        }
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&w2, "warn", "Vault path write failed", &msg);
+                        }
                     }
-                    Err(ref e) => {
-                        let msg = e.to_string();
-                        push_toast(&w2, "warn", "Vault path write failed", &msg);
-                    }
-                }
-            }).ok();
+                }).ok();
+            });
         });
 
         // subdir
@@ -4140,20 +4248,24 @@ fn main() -> Result<()> {
         let weak = window.as_weak();
         window.on_obs_subdir_changed(move |raw: slint::SharedString| {
             let val = raw.to_string();
-            let fp = nd.join("freedom.yaml");
-            let rd = nd.join(".reload-requested");
-            let result = set_nested_in_freedom(&fp, "obsidian_subdir", serde_yaml::Value::from(val.as_str()))
-                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+            let nd2 = nd.clone();
             let w2 = weak.clone();
-            slint::invoke_from_event_loop(move || {
-                match result {
-                    Ok(_) => push_toast(&w2, "success", "Vault subdir", "saved"),
-                    Err(ref e) => {
-                        let msg = e.to_string();
-                        push_toast(&w2, "warn", "Subdir write failed", &msg);
+            // I/O (read + parse + fsync + rename) off the UI event loop.
+            std::thread::spawn(move || {
+                let fp = nd2.join("freedom.yaml");
+                let rd = nd2.join(".reload-requested");
+                let result = set_nested_in_freedom(&fp, "obsidian_subdir", serde_yaml::Value::from(val.as_str()))
+                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                slint::invoke_from_event_loop(move || {
+                    match result {
+                        Ok(_) => push_toast(&w2, "success", "Vault subdir", "saved"),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&w2, "warn", "Subdir write failed", &msg);
+                        }
                     }
-                }
-            }).ok();
+                }).ok();
+            });
         });
 
         // auto-sync secs (comes as string, parse to i64)
@@ -4161,50 +4273,58 @@ fn main() -> Result<()> {
         let weak = window.as_weak();
         window.on_obs_auto_sync_secs_str_changed(move |raw: slint::SharedString| {
             let s = raw.to_string();
-            let fp = nd.join("freedom.yaml");
-            let rd = nd.join(".reload-requested");
-            let result: anyhow::Result<()> = (|| {
-                // FIX 3 — empty input → Null (None), not 0 (Some(0) = busy loop).
-                let yaml_val = if s.trim().is_empty() {
-                    serde_yaml::Value::Null
-                } else {
-                    let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
-                    serde_yaml::Value::from(v)
-                };
-                set_nested_in_freedom(&fp, "obsidian_auto_sync_secs", yaml_val)?;
-                std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
-            })();
+            let nd2 = nd.clone();
             let w2 = weak.clone();
-            slint::invoke_from_event_loop(move || {
-                match result {
-                    Ok(_) => push_toast(&w2, "success", "Auto-sync interval", "saved"),
-                    Err(ref e) => {
-                        let msg = e.to_string();
-                        push_toast(&w2, "warn", "Auto-sync invalid", &msg);
+            // I/O (read + parse + fsync + rename) off the UI event loop.
+            std::thread::spawn(move || {
+                let fp = nd2.join("freedom.yaml");
+                let rd = nd2.join(".reload-requested");
+                let result: anyhow::Result<()> = (|| {
+                    // FIX 3 — empty input → Null (None), not 0 (Some(0) = busy loop).
+                    let yaml_val = if s.trim().is_empty() {
+                        serde_yaml::Value::Null
+                    } else {
+                        let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
+                        serde_yaml::Value::from(v)
+                    };
+                    set_nested_in_freedom(&fp, "obsidian_auto_sync_secs", yaml_val)?;
+                    std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                })();
+                slint::invoke_from_event_loop(move || {
+                    match result {
+                        Ok(_) => push_toast(&w2, "success", "Auto-sync interval", "saved"),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&w2, "warn", "Auto-sync invalid", &msg);
+                        }
                     }
-                }
-            }).ok();
+                }).ok();
+            });
         });
 
         // reader enabled
         let nd = neoth_dir.clone();
         let weak = window.as_weak();
         window.on_obs_reader_enabled_changed(move |v: bool| {
-            let fp = nd.join("freedom.yaml");
-            let rd = nd.join(".reload-requested");
-            let result = set_nested_in_freedom(&fp, "obsidian_vault_reader_enabled", serde_yaml::Value::from(v))
-                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-            let state = if v { "enabled" } else { "disabled" };
+            let nd2 = nd.clone();
             let w2 = weak.clone();
-            slint::invoke_from_event_loop(move || {
-                match result {
-                    Ok(_) => push_toast(&w2, "success", "Vault reader", state),
-                    Err(ref e) => {
-                        let msg = e.to_string();
-                        push_toast(&w2, "warn", "Vault reader write failed", &msg);
+            let state = if v { "enabled" } else { "disabled" };
+            // I/O (read + parse + fsync + rename) off the UI event loop.
+            std::thread::spawn(move || {
+                let fp = nd2.join("freedom.yaml");
+                let rd = nd2.join(".reload-requested");
+                let result = set_nested_in_freedom(&fp, "obsidian_vault_reader_enabled", serde_yaml::Value::from(v))
+                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                slint::invoke_from_event_loop(move || {
+                    match result {
+                        Ok(_) => push_toast(&w2, "success", "Vault reader", state),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&w2, "warn", "Vault reader write failed", &msg);
+                        }
                     }
-                }
-            }).ok();
+                }).ok();
+            });
         });
 
         // Browse… — rfd folder picker, same pattern as skill-install
@@ -7695,6 +7815,37 @@ mod chat_subprocess_tests {
             "empty send must not clobber recall buffer"
         );
     }
+}
+
+// ── GAP-01 Cron panel probe ───────────────────────────────────────────────────
+//
+// Shells `neoth cron list --output json`, parses via panel_logic::parse_cron_jobs,
+// then pushes a typed CronJobRow model into the Slint event loop.
+fn refresh_cron(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let json = run_neothd_probe(&["cron", "list", "--output", "json"]);
+    let jobs = panel_logic::parse_cron_jobs(&json);
+    let ts   = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let rows: Vec<CronJobRow> = jobs
+            .into_iter()
+            .map(|(id, name, enabled, cron, tz, role, timeout, channel, recipient)| CronJobRow {
+                id:        id.into(),
+                name:      name.into(),
+                enabled,
+                cron:      cron.into(),
+                tz:        tz.into(),
+                role:      role.into(),
+                timeout:   timeout.into(),
+                channel:   channel.into(),
+                recipient: recipient.into(),
+            })
+            .collect();
+        w.set_cron_jobs(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        w.set_cron_running(false);
+        w.set_cron_refreshed_at(ts.as_str().into());
+    });
 }
 
 // ── Design Wave 4a — n8n panel probe ─────────────────────────────────────────

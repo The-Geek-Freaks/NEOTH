@@ -28,6 +28,7 @@ import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
 export { MiniOverlay }
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
+import { CronView, CronJobRow } from "cron.slint";
 import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
 // Design Wave 4a — new real-data panels.
@@ -60,6 +61,8 @@ export { DreamDayRow, DreamEntryRow }
 export { WikiRow }
 export { SelfActSkill }
 export { MeshPeerRow }
+// GAP-01 Cron panel — CronJobRow exported so Rust can push rows.
+export { CronJobRow }
 // Chat-surface consent strip.
 export { ConsentGrant }
 
@@ -351,10 +354,16 @@ export component MainWindow inherits Window {
     in property <string> agents-output: "";
     in property <bool> agents-running: false;
     callback agents-refresh-clicked();
-    // Automation tab — `neoth cron list` + `neoth n8n status`.
-    in property <string> automation-output: "";
-    in property <bool> automation-running: false;
-    callback automation-refresh-clicked();
+    // Automation tab — CRUD cron panel (GAP-01).
+    in property <[CronJobRow]> cron-jobs: [];
+    in property <bool>         cron-running: false;
+    in property <string>       cron-refreshed-at: "";
+    callback cron-refresh-clicked();
+    callback cron-add-clicked(string, string, string, string, string, string, string, string);
+    //                        id      name    cron    prompt  tz      channel recipient timeout
+    callback cron-run-clicked(string);          // id
+    callback cron-toggle-clicked(string, bool); // id, new_enabled
+    callback cron-remove-clicked(string);       // id
     // GOLD-LOOP-03 — Loop panel (display-gated: Rust sets show-loops from
     // the `gui-loop` cargo feature; the wiring drives a `neothd loop run`
     // subprocess + the `~/.neoth/loops/` history).
@@ -2375,14 +2384,18 @@ export component MainWindow inherits Window {
                     empty-hint: "Click \"Refresh agents\" to load the live topology.";
                     run-clicked => { root.agents-refresh-clicked(); }
                 }
-                // Automation — scheduled jobs + n8n (`neoth cron list` / `n8n status`).
-                if root.nav-active == "automation": ProbeView {
-                    blurb: "Automation — scheduled crons + the n8n workflow bridge.";
-                    action-label: "Refresh automation";
-                    output: root.automation-output;
-                    running: root.automation-running;
-                    empty-hint: "Click \"Refresh automation\" to load crons + n8n status.";
-                    run-clicked => { root.automation-refresh-clicked(); }
+                // Automation — CRUD cron scheduler (GAP-01). n8n lives in its own tab.
+                if root.nav-active == "automation": CronView {
+                    cron-jobs: root.cron-jobs;
+                    cron-running: root.cron-running;
+                    cron-refreshed-at: root.cron-refreshed-at;
+                    cron-refresh => { root.cron-refresh-clicked(); }
+                    cron-add(id, name, cron, prompt, tz, ch, rcpt, tmo) => {
+                        root.cron-add-clicked(id, name, cron, prompt, tz, ch, rcpt, tmo);
+                    }
+                    cron-run(id) => { root.cron-run-clicked(id); }
+                    cron-toggle(id, en) => { root.cron-toggle-clicked(id, en); }
+                    cron-remove(id) => { root.cron-remove-clicked(id); }
                 }
                 // GOLD-LOOP-03 — Loop panel (history + timeline + run/kill).
                 if root.nav-active == "loops": LoopPanel {

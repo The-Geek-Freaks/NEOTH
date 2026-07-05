@@ -2526,6 +2526,44 @@ pub fn parse_chat_consent_grants(json: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
+// ── GAP-01 Cron panel parse helper ───────────────────────────────────────────
+//
+// Pure function: takes raw JSON from `neoth cron list --output json` and
+// returns a typed Vec ready for the Slint model. Tolerant of missing keys,
+// wrong types, and non-JSON input (returns empty Vec gracefully).
+//
+// JSON shape per cli/cron.rs:
+//   [{id, name, enabled, cron, tz, role, timeout_seconds, channel, recipient}]
+//
+// Return tuple per row: (id, name, enabled, cron, tz, role, timeout, channel, recipient)
+// where `timeout` is `timeout_seconds` as a display string (empty if 0/absent).
+pub fn parse_cron_jobs(
+    json: &str,
+) -> Vec<(String, String, bool, String, String, String, String, String, String)> {
+    let arr = match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(v) => v.as_array().cloned().unwrap_or_default(),
+        Err(_) => return vec![],
+    };
+    arr.iter()
+        .filter_map(|item| {
+            let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if id.is_empty() {
+                return None; // id is required
+            }
+            let name    = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let enabled = item.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
+            let cron    = item.get("cron").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let tz      = item.get("tz").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let role    = item.get("role").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let timeout_secs = item.get("timeout_seconds").and_then(|x| x.as_i64()).unwrap_or(0);
+            let timeout = if timeout_secs > 0 { timeout_secs.to_string() } else { String::new() };
+            let channel   = item.get("channel").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let recipient = item.get("recipient").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Some((id, name, enabled, cron, tz, role, timeout, channel, recipient))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4307,5 +4345,72 @@ mod tests {
     #[test]
     fn parse_chat_consent_grants_malformed_returns_empty() {
         assert!(super::parse_chat_consent_grants("not json").is_empty());
+    }
+
+    // ── GAP-01 parse_cron_jobs ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_cron_jobs_happy_path() {
+        let json = r#"[
+            {"id":"daily-summary","name":"Daily Summary","enabled":true,
+             "cron":"0 7 * * *","tz":"UTC","role":"","timeout_seconds":120,
+             "channel":"telegram","recipient":"12345"},
+            {"id":"weekly-report","name":"Weekly Report","enabled":false,
+             "cron":"0 9 * * 1","tz":"Europe/Berlin","role":"","timeout_seconds":0,
+             "channel":"","recipient":""}
+        ]"#;
+        let rows = super::parse_cron_jobs(json);
+        assert_eq!(rows.len(), 2);
+        let (id, name, enabled, cron, tz, _role, timeout, channel, recipient) = &rows[0];
+        assert_eq!(id, "daily-summary");
+        assert_eq!(name, "Daily Summary");
+        assert!(enabled);
+        assert_eq!(cron, "0 7 * * *");
+        assert_eq!(tz, "UTC");
+        assert_eq!(timeout, "120");
+        assert_eq!(channel, "telegram");
+        assert_eq!(recipient, "12345");
+        let (id2, _name, enabled2, _cron, _tz, _role, timeout2, channel2, _rcpt) = &rows[1];
+        assert_eq!(id2, "weekly-report");
+        assert!(!enabled2);
+        assert_eq!(timeout2, "", "timeout_seconds=0 → empty string");
+        assert_eq!(channel2, "");
+    }
+
+    #[test]
+    fn parse_cron_jobs_empty_array() {
+        assert!(super::parse_cron_jobs("[]").is_empty());
+    }
+
+    #[test]
+    fn parse_cron_jobs_malformed_non_json() {
+        assert!(super::parse_cron_jobs("unavailable — binary not found").is_empty());
+    }
+
+    #[test]
+    fn parse_cron_jobs_skips_rows_without_id() {
+        let json = r#"[
+            {"name":"no-id","enabled":true,"cron":"* * * * *"},
+            {"id":"has-id","enabled":false,"cron":"0 0 * * *"}
+        ]"#;
+        let rows = super::parse_cron_jobs(json);
+        assert_eq!(rows.len(), 1, "row without id must be skipped");
+        assert_eq!(rows[0].0, "has-id");
+    }
+
+    #[test]
+    fn parse_cron_jobs_tolerates_missing_optional_fields() {
+        let json = r#"[{"id":"minimal","cron":"*/5 * * * *","enabled":true}]"#;
+        let rows = super::parse_cron_jobs(json);
+        assert_eq!(rows.len(), 1);
+        let (id, name, enabled, cron, tz, _role, timeout, channel, recipient) = &rows[0];
+        assert_eq!(id, "minimal");
+        assert_eq!(name, "", "missing name → empty string");
+        assert!(enabled);
+        assert_eq!(cron, "*/5 * * * *");
+        assert_eq!(tz, "");
+        assert_eq!(timeout, "");
+        assert_eq!(channel, "");
+        assert_eq!(recipient, "");
     }
 }
