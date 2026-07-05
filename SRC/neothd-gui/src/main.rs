@@ -3991,35 +3991,24 @@ fn main() -> Result<()> {
 
     // ── DES-09 Welle A/B/C — freedom.yaml write-back callbacks ────────────
     //
-    // Pattern: weak ref → worker thread → set_nested_in_freedom + reload
-    // sentinel → push_toast on the Slint event loop via invoke_from_event_loop.
-    // All handlers are identical modulo the YAML dotted-key and value type.
+    // Per-keystroke LineEdit fields (wire_nested_str! / _f64_str! / _i64_str!)
+    // route through make_coalescing_writer: a per-field worker that keeps only
+    // the last value of a keystroke burst (last-typed wins) and does one write —
+    // this closes the non-FIFO-mutex ordering race a plain thread-per-keystroke
+    // would introduce on slow/network home dirs. Single-fire fields (bool /
+    // int_combo / persona) spawn a one-shot worker directly. All writes serialise
+    // on FREEDOM_WRITE_LOCK inside set_nested_in_freedom; toasts via push_toast.
     {
         let neoth_dir = default_neoth_home();
         macro_rules! wire_nested_str {
             ($cb:ident, $key:literal, $label:literal) => {{
-                let nd = neoth_dir.clone();
-                let weak = window.as_weak();
+                // Per-keystroke LineEdit → coalescing writer (last-typed wins).
+                let tx = make_coalescing_writer(
+                    neoth_dir.join("freedom.yaml"),
+                    neoth_dir.join(".reload-requested"),
+                    $key, $label, window.as_weak());
                 window.$cb(move |raw: slint::SharedString| {
-                    let val = raw.to_string();
-                    let nd2 = nd.clone();
-                    let weak2 = weak.clone();
-                    // I/O (read + parse + fsync + rename) off the UI event loop.
-                    std::thread::spawn(move || {
-                        let fp = nd2.join("freedom.yaml");
-                        let rd = nd2.join(".reload-requested");
-                        let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val.as_str()))
-                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                        slint::invoke_from_event_loop(move || {
-                            match result {
-                                Ok(_) => push_toast(&weak2, "success", $label, "saved — daemon reloading"),
-                                Err(ref e) => {
-                                    let msg = e.to_string();
-                                    push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
-                                }
-                            }
-                        }).ok();
-                    });
+                    tx.send(serde_yaml::Value::from(raw.to_string().as_str())).ok();
                 });
             }};
         }
@@ -4080,61 +4069,37 @@ fn main() -> Result<()> {
         }
         macro_rules! wire_nested_f64_str {
             ($cb:ident, $key:literal, $label:literal) => {{
-                let nd = neoth_dir.clone();
-                let weak = window.as_weak();
+                // Validate on the UI thread; only valid numbers reach the writer.
+                let tx = make_coalescing_writer(
+                    neoth_dir.join("freedom.yaml"),
+                    neoth_dir.join(".reload-requested"),
+                    $key, $label, window.as_weak());
+                let weak_err = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
-                    let nd2 = nd.clone();
-                    let weak2 = weak.clone();
-                    // I/O (read + parse + fsync + rename) off the UI event loop.
-                    std::thread::spawn(move || {
-                        let fp = nd2.join("freedom.yaml");
-                        let rd = nd2.join(".reload-requested");
-                        let result: anyhow::Result<()> = (|| {
-                            let v: f64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not a number: {s}"))?;
-                            set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
-                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
-                        })();
-                        slint::invoke_from_event_loop(move || {
-                            match result {
-                                Ok(_) => push_toast(&weak2, "success", $label, "saved"),
-                                Err(ref e) => {
-                                    let msg = e.to_string();
-                                    push_toast(&weak2, "warn", concat!($label, " invalid"), &msg);
-                                }
-                            }
-                        }).ok();
-                    });
+                    match s.trim().parse::<f64>() {
+                        Ok(v) => { tx.send(serde_yaml::Value::from(v)).ok(); }
+                        Err(_) => push_toast(&weak_err, "warn", concat!($label, " invalid"),
+                                             &format!("not a number: {}", s.trim())),
+                    }
                 });
             }};
         }
         macro_rules! wire_nested_i64_str {
             ($cb:ident, $key:literal, $label:literal) => {{
-                let nd = neoth_dir.clone();
-                let weak = window.as_weak();
+                // Validate on the UI thread; only valid integers reach the writer.
+                let tx = make_coalescing_writer(
+                    neoth_dir.join("freedom.yaml"),
+                    neoth_dir.join(".reload-requested"),
+                    $key, $label, window.as_weak());
+                let weak_err = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
-                    let nd2 = nd.clone();
-                    let weak2 = weak.clone();
-                    // I/O (read + parse + fsync + rename) off the UI event loop.
-                    std::thread::spawn(move || {
-                        let fp = nd2.join("freedom.yaml");
-                        let rd = nd2.join(".reload-requested");
-                        let result: anyhow::Result<()> = (|| {
-                            let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
-                            set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))?;
-                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
-                        })();
-                        slint::invoke_from_event_loop(move || {
-                            match result {
-                                Ok(_) => push_toast(&weak2, "success", $label, "saved"),
-                                Err(ref e) => {
-                                    let msg = e.to_string();
-                                    push_toast(&weak2, "warn", concat!($label, " invalid"), &msg);
-                                }
-                            }
-                        }).ok();
-                    });
+                    match s.trim().parse::<i64>() {
+                        Ok(v) => { tx.send(serde_yaml::Value::from(v)).ok(); }
+                        Err(_) => push_toast(&weak_err, "warn", concat!($label, " invalid"),
+                                             &format!("not an integer: {}", s.trim())),
+                    }
                 });
             }};
         }
@@ -5041,6 +5006,9 @@ fn read_skills_always_embed_route(path: &Path) -> bool {
 /// `set_cluster_mdns_enabled_in_freedom`: a serde_yaml `Value` round-trip that
 /// preserves EVERY other field. Atomic via `write_mode_0600`.
 fn set_skills_always_embed_route_in_freedom(path: &Path, enabled: bool) -> Result<()> {
+    // Serialise with every other freedom.yaml read-modify-write (the DES-09 GUI
+    // worker threads) — same lock set_nested_in_freedom holds.
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let body = if path.exists() {
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
     } else {
@@ -5157,6 +5125,51 @@ fn set_nested_in_freedom(
     let serialised = serde_yaml::to_string(&root)
         .with_context(|| format!("serialise freedom.yaml after setting {dotted_key}"))?;
     write_mode_0600(path, serialised.as_bytes())
+}
+
+/// DES-09 — per-field coalescing writer for freedom.yaml.
+///
+/// A LineEdit's `edited` callback fires once per keystroke, so typing "gpt-4o"
+/// would otherwise spawn six writer threads that race for `FREEDOM_WRITE_LOCK`.
+/// `std::sync::Mutex` is not FIFO-fair, so a stale-prefix thread ("gpt-4") can
+/// acquire the lock after the final-value thread ("gpt-4o") and overwrite the
+/// correct value on disk — worst on the slow/network home dirs this async path
+/// exists to keep responsive.
+///
+/// This returns a `SyncSender`; the callback becomes a non-blocking `send`. One
+/// dedicated worker per field drains the channel keeping only the latest value
+/// (last-typed wins — stronger than FIFO, no ordering assumptions), then does a
+/// single read-modify-write + reload sentinel + toast. Collapses a keystroke
+/// burst to one fsync and one toast, and never touches the UI thread with I/O.
+///
+/// The worker exits cleanly when the callback (and thus the `SyncSender`) is
+/// dropped on window teardown — `recv()` then returns `Err`.
+fn make_coalescing_writer(
+    fp: std::path::PathBuf,
+    rd: std::path::PathBuf,
+    dotted_key: &'static str,
+    label: &'static str,
+    weak: slint::Weak<MainWindow>,
+) -> std::sync::mpsc::SyncSender<serde_yaml::Value> {
+    // Bounded buffer: human typing never outpaces one fsync by 64 events, and a
+    // paste is a single `edited` event, so `send` never blocks the UI thread in
+    // practice while still bounding memory.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<serde_yaml::Value>(64);
+    std::thread::spawn(move || {
+        while let Ok(mut val) = rx.recv() {
+            // Coalesce the burst: keep only the most recent queued value.
+            while let Ok(newer) = rx.try_recv() {
+                val = newer;
+            }
+            let result = set_nested_in_freedom(&fp, dotted_key, val)
+                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+            match result {
+                Ok(_) => push_toast(&weak, "success", label, "saved — daemon reloading"),
+                Err(ref e) => push_toast(&weak, "warn", label, &format!("write failed: {e}")),
+            }
+        }
+    });
+    tx
 }
 
 /// DES-09 helper — read a nested boolean from freedom.yaml.
