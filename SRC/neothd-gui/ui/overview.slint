@@ -98,8 +98,6 @@ export component OverviewView inherits Rectangle {
     background: Theme.bg-base;
 
     EntranceFade {
-        width: parent.width;
-        height: parent.height;
 
         VerticalLayout {
             padding: 24px;
@@ -153,7 +151,6 @@ export component OverviewView inherits Rectangle {
             ScrollView {
                 // Give scroll view an explicit height so Slint can compute
                 // the viewport height (required when placed inside a layout).
-                height: parent.height - 80px;
 
                 HorizontalLayout {
                     spacing: 14px;
