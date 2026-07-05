@@ -109,15 +109,18 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     keys.insert(TokenAnomaly);
     keys.insert(SessionHealth);
     keys.insert(WebhookManager);
-    keys.insert(ObsidianSync);
-    keys.insert(ObsidianVaultReader);
-    keys.insert(ObsidianWikiRebuild);
-    keys.insert(SelfMap);
-    // Config-gated extras that don't have an enabled field but depend on
-    // a vault/dir being set — spawn_* returns None when unconfigured, which
-    // is safe (inserting the key just causes a None spawn, no double-spawn).
+    // Vault-gated crons: all four spawn_* helpers early-return None without
+    // `obsidian_vault`, so on first boot the key would spawn nothing. The gate
+    // matters on RELOAD: if these keys stayed in the desired set unconditionally
+    // and the operator cleared `obsidian_vault`, diff_cron_fleet would compute
+    // an empty to_stop and the already-running tasks would never be aborted.
+    // Gating the desired set on the config makes a vault-clearing reload stop
+    // them.
     if cfg.obsidian_vault.is_some() {
-        // already inserted above; kept explicit for readability
+        keys.insert(ObsidianSync);
+        keys.insert(ObsidianVaultReader);
+        keys.insert(ObsidianWikiRebuild);
+        keys.insert(SelfMap);
     }
     keys
 }
@@ -5469,25 +5472,41 @@ mod zf06_fleet_tests {
     fn desired_cron_keys_default_config_contains_core_keys() {
         let cfg = FreedomConfig::default();
         let keys = desired_cron_keys(&cfg);
-        // A non-exhaustive set of keys that must always be present
+        // A non-exhaustive set of always-on keys (no config gate).
         for key in &[
             CronKey::DoctorCron,
             CronKey::BgMonitor,
             CronKey::Babel,
             CronKey::MonitorCron,
-            CronKey::ObsidianSync,
         ] {
             assert!(keys.contains(key), "missing key: {:?}", key);
         }
     }
 
     #[test]
-    fn desired_cron_keys_has_expected_count() {
-        // desired_cron_keys returns all 25 fleet-managed keys for a default config.
-        // Deferred keys (CheckinCron/SessionSort/EmailIngest/Regression) are not
-        // CronKey variants and therefore can never appear in the set.
-        let cfg = FreedomConfig::default();
-        let keys = desired_cron_keys(&cfg);
-        assert_eq!(keys.len(), 25, "expected exactly 25 fleet-managed cron keys");
+    fn desired_cron_keys_gates_obsidian_on_vault() {
+        // Wave-3 regression: the four vault-gated keys must be ABSENT without a
+        // vault (else a vault-clearing reload leaves the tasks running forever),
+        // and PRESENT once a vault is configured.
+        let vault_gated = [
+            CronKey::ObsidianSync,
+            CronKey::ObsidianVaultReader,
+            CronKey::ObsidianWikiRebuild,
+            CronKey::SelfMap,
+        ];
+
+        let no_vault = desired_cron_keys(&FreedomConfig::default());
+        for key in &vault_gated {
+            assert!(!no_vault.contains(key), "{key:?} must be gated off without a vault");
+        }
+        assert_eq!(no_vault.len(), 21, "expected 21 fleet keys without a vault");
+
+        let mut cfg = FreedomConfig::default();
+        cfg.obsidian_vault = Some("/tmp/vault".to_string());
+        let with_vault = desired_cron_keys(&cfg);
+        for key in &vault_gated {
+            assert!(with_vault.contains(key), "{key:?} must be present with a vault");
+        }
+        assert_eq!(with_vault.len(), 25, "expected 25 fleet keys with a vault");
     }
 }

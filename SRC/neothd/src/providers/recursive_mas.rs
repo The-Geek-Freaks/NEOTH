@@ -20,6 +20,13 @@ use std::path::PathBuf;
 use crate::config::RecursiveMasConfig;
 use crate::daemon::resource_watch::VramReading;
 
+/// Consent marker file name under `~/.neoth/`. Defined here (not in the
+/// feature-gated `recursive_mas_adapter`) so the always-compiled
+/// `neoth rmas consent` CLI and the gated adapter share ONE source of truth —
+/// otherwise the write path and the spawn-time check drift apart and the
+/// consent gate becomes unsatisfiable.
+pub const CONSENT_MARKER: &str = "rmas_consent_acknowledged";
+
 /// Typed refusal reason — callers surface this verbatim to the operator
 /// (actionable: which knob to turn), never a bare bool.
 #[derive(Debug, Clone, PartialEq, Eq)]

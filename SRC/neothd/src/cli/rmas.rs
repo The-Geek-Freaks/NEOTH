@@ -9,8 +9,10 @@
 //!
 //! ## Marker path
 //!
-//! `<neoth_home>/rmas_consent.acknowledged`
-//! (default home: `~/.neoth`; overridable via `--home` for tests).
+//! `<neoth_home>/rmas_consent_acknowledged` — the EXACT filename the adapter
+//! (`providers::recursive_mas::CONSENT_MARKER`) checks at spawn time.
+//! This command reuses that constant so the write path and the gate can never
+//! drift apart (default home: `~/.neoth`; overridable via `--home` for tests).
 //!
 //! ## Critical constraint
 //!
@@ -58,9 +60,11 @@ at the path set via `recursive_mas.sidecar_repo` in freedom.yaml.";
 
 // ── Marker path ───────────────────────────────────────────────────────────────
 
-/// Path to the RMAS consent marker inside `neoth_home`.
+/// Path to the RMAS consent marker inside `neoth_home`. Reuses the adapter's
+/// `CONSENT_MARKER` constant — the same filename `RecursiveMasAdapter::spawn`
+/// checks — so `--acknowledge` actually satisfies the gate it claims to.
 pub fn rmas_marker_path(home: &Path) -> PathBuf {
-    home.join("rmas_consent.acknowledged")
+    home.join(crate::providers::recursive_mas::CONSENT_MARKER)
 }
 
 /// True iff the consent marker exists.
@@ -78,7 +82,7 @@ pub fn write_rmas_consent_marker(home: &Path) -> Result<()> {
         .with_context(|| format!("create neoth home {}", home.display()))?;
     let marker = rmas_marker_path(home);
     // Store a human-readable UTC timestamp so operators can audit when they
-    // acknowledged by hand (`cat ~/.neoth/rmas_consent.acknowledged`).
+    // acknowledged by hand (`cat ~/.neoth/rmas_consent_acknowledged`).
     let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     fs::write(&marker, ts.as_bytes())
         .with_context(|| format!("write RMAS consent marker {}", marker.display()))?;
@@ -214,10 +218,22 @@ mod tests {
     fn marker_path_uses_expected_filename() {
         let dir = TempDir::new().unwrap();
         let p = rmas_marker_path(dir.path());
+        // Must be byte-identical to the constant the adapter checks, or the
+        // consent gate is unsatisfiable (Wave-3 regression).
         assert_eq!(
             p.file_name().and_then(|s| s.to_str()),
-            Some("rmas_consent.acknowledged"),
+            Some(crate::providers::recursive_mas::CONSENT_MARKER),
         );
+    }
+
+    #[test]
+    fn acknowledge_satisfies_adapter_gate_path() {
+        // The written marker must land at exactly the path the adapter probes.
+        let dir = TempDir::new().unwrap();
+        write_rmas_consent_marker(dir.path()).unwrap();
+        let adapter_probe =
+            dir.path().join(crate::providers::recursive_mas::CONSENT_MARKER);
+        assert!(adapter_probe.exists(), "adapter would still see consent missing");
     }
 
     #[test]

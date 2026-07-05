@@ -165,13 +165,13 @@ pub(crate) fn do_ping(
                 .send()
         }
         ProviderKind::GeminiApi => {
-            // Gemini uses a query-param key; we send to the models list
-            // endpoint which is a GET and returns 200 for valid keys.
-            let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-                key
-            );
-            client.get(&url).send()
+            // Gemini accepts the key via the `x-goog-api-key` header — used
+            // instead of the `?key=` query param so the key never lands in a
+            // URL (proxy logs, reqwest error Display, redirect targets), per
+            // the contract in the fn doc comment. GET models list = 200 for a
+            // valid key.
+            let url = "https://generativelanguage.googleapis.com/v1beta/models";
+            client.get(url).header("x-goog-api-key", key).send()
         }
         ProviderKind::Cohere => {
             let url = "https://api.cohere.com/v2/chat";

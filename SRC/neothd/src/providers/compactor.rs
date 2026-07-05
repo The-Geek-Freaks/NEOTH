@@ -98,12 +98,19 @@ static RE_UUID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").unwrap()
 });
 static RE_HEX_RUN: LazyLock<Regex> = LazyLock::new(|| {
-    // ≥8 contiguous hex chars that are NOT surrounded by word chars (avoids
-    // false-positives inside base64 that contains [+/=]).
-    Regex::new(r"(?i)\b[0-9a-f]{8,}\b").unwrap()
+    // ≥8 contiguous hex chars, optionally `0x`-prefixed. The optional prefix
+    // matters: a bare `\b[0-9a-f]{8,}\b` never anchors on `0xdeadbeef…`
+    // because `x` is a word char, so the boundary before the hex run fails —
+    // Ethereum addresses / tx hashes / Rust hex literals would slip through
+    // and get summarised. Leading `\b` keeps it off mid-word base64.
+    Regex::new(r"(?i)\b(?:0x)?[0-9a-f]{8,}\b").unwrap()
 });
 static RE_FILE_PATH_UNIX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^(?:/[a-zA-Z0-9_.\-]+){2,}").unwrap()
+    // Two+ `/segment` components ANYWHERE (not just line start) — real prompts
+    // mention paths mid-sentence ("config lives at /etc/neoth/config.yaml").
+    // A leading `^` anchor would miss every one of those. Over-matching a URL
+    // path is harmless here (it only biases toward keep-verbatim).
+    Regex::new(r"(?:/[a-zA-Z0-9_.\-]+){2,}").unwrap()
 });
 static RE_FILE_PATH_WIN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^[A-Za-z]:\\(?:[^\\\r\n]+\\)+").unwrap()
@@ -862,6 +869,31 @@ mod tests {
         assert!(
             !should_compact_block(s),
             "long hex run must not be compactable"
+        );
+    }
+
+    /// Wave-3 regression: `0x`-prefixed hex (Ethereum addresses, tx hashes,
+    /// Rust literals) must be caught — the `x` in `0x` is a word char, so a
+    /// bare `\b[0-9a-f]{8,}\b` used to miss them.
+    #[test]
+    fn pxp01_0x_prefixed_hex_not_compactable() {
+        for s in [
+            "send to 0x742d35Cc6634C0532925a3b844Bc454e4438f44e now",
+            "tx 0xdeadbeefdeadbeef confirmed",
+            "const MAGIC: u32 = 0xCAFEBABE;",
+        ] {
+            assert!(!should_compact_block(s), "0x-hex must not be compactable: {s}");
+        }
+    }
+
+    /// Wave-3 regression: a Unix path appearing mid-sentence must be caught —
+    /// the old `^`-anchored regex only matched paths at the start of a line.
+    #[test]
+    fn pxp01_midline_unix_path_not_compactable() {
+        let s = "Your config lives at /etc/neoth/config.yaml — update it now";
+        assert!(
+            !should_compact_block(s),
+            "mid-sentence path must not be compactable"
         );
     }
 

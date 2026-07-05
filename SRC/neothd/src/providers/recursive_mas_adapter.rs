@@ -34,8 +34,10 @@ use crate::providers::{Completion, Provider, Request};
 /// Local ML inference is slow — generous per-completion ceiling.
 const SIDECAR_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Consent marker file name under `~/.neoth/`.
-pub const CONSENT_MARKER: &str = "rmas_consent_acknowledged";
+/// Consent marker file name under `~/.neoth/`. Re-exported from the
+/// always-compiled `recursive_mas` gate module so the CLI write path and this
+/// spawn-time check use one shared constant.
+pub use super::recursive_mas::CONSENT_MARKER;
 
 pub struct RecursiveMasAdapter {
     child: Arc<Mutex<std::process::Child>>,
