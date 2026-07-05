@@ -410,8 +410,10 @@ mod tests {
         // +1 self-heal proposals (HERMES-07b) + 1 wal encryption (CRYPTO-04e) = 41;
         // +1 PTY terminal session check (HERMES-11) = 42;
         // +1 post-init readiness (GOLD-FEAT-11) = 43;
-        // +2 advisable-config hints (groundtruth injection, consolidation sweep) = 45.
-        assert_eq!(all_check_docs().count(), 45);
+        // +2 advisable-config hints (groundtruth injection, consolidation sweep) = 45;
+        // +7 ZF-08 advisable hints (proactive, dreaming, ecology, companion,
+        // synthesis_cron, skill_curator, auto_skill_extract) = 52.
+        assert_eq!(all_check_docs().count(), 52);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1162,8 +1164,10 @@ mod tests {
         // + 2 parallel-lane + self-heal proposals (HERMES-07b) + wal encryption
         // (CRYPTO-04e) = 41; + PTY terminal check (HERMES-11) = 42;
         // + post-init readiness (GOLD-FEAT-11) = 43;
-        // + 2 advisable-config hints (groundtruth injection, consolidation sweep) = 45.
-        assert_eq!(outs.len(), 45);
+        // + 2 advisable-config hints (groundtruth injection, consolidation sweep) = 45;
+        // + 7 ZF-08 advisable hints (proactive, dreaming, ecology, companion,
+        // synthesis_cron, skill_curator, auto_skill_extract) = 52.
+        assert_eq!(outs.len(), 52);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
@@ -1620,5 +1624,264 @@ servers:
         let o = check_advisable_consolidation_sweep(dir.path());
         assert_eq!(o.status, CheckStatus::Warn);
         assert!(o.detail.contains("consolidation_sweep"));
+    }
+
+    // ── ZF-08 advisable-config hint checks ───────────────────────────────
+
+    // Helper: write a minimal freedom.yaml with a single group's enabled key.
+    fn write_freedom_with(dir: &std::path::Path, yaml: &str) {
+        std::fs::write(dir.join("freedom.yaml"), yaml).unwrap();
+    }
+
+    // ── proactive ────────────────────────────────────────────────────────
+
+    #[test]
+    fn advisable_proactive_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_proactive(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_proactive_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "proactive:\n  enabled: true\n");
+        let o = check_advisable_proactive(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_proactive_warns_when_enabled_is_false() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "proactive:\n  enabled: false\n");
+        let o = check_advisable_proactive(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("proactive.enabled"));
+    }
+
+    #[test]
+    fn advisable_proactive_warns_when_field_absent_from_yaml() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "operator_id: demo-user\n");
+        let o = check_advisable_proactive(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("proactive.enabled"));
+    }
+
+    // ── dreaming ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn advisable_dreaming_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_dreaming(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_dreaming_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "dreaming:\n  enabled: true\n");
+        let o = check_advisable_dreaming(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_dreaming_warns_when_enabled_is_false() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "dreaming:\n  enabled: false\n");
+        let o = check_advisable_dreaming(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("dreaming.enabled"));
+    }
+
+    #[test]
+    fn advisable_dreaming_warns_when_field_absent_from_yaml() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "operator_id: demo-user\n");
+        let o = check_advisable_dreaming(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("dreaming.enabled"));
+    }
+
+    // ── ecology ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn advisable_ecology_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_ecology(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_ecology_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "ecology:\n  enabled: true\n");
+        let o = check_advisable_ecology(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_ecology_warns_when_enabled_is_false() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "ecology:\n  enabled: false\n");
+        let o = check_advisable_ecology(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("ecology.enabled"));
+    }
+
+    #[test]
+    fn advisable_ecology_warns_when_field_absent_from_yaml() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "operator_id: demo-user\n");
+        let o = check_advisable_ecology(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("ecology.enabled"));
+    }
+
+    // ── companion ────────────────────────────────────────────────────────
+
+    #[test]
+    fn advisable_companion_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_companion(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_companion_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "companion:\n  enabled: true\n");
+        let o = check_advisable_companion(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_companion_warns_when_enabled_is_false() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "companion:\n  enabled: false\n");
+        let o = check_advisable_companion(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("companion.enabled"));
+    }
+
+    #[test]
+    fn advisable_companion_warns_when_field_absent_from_yaml() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "operator_id: demo-user\n");
+        let o = check_advisable_companion(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("companion.enabled"));
+    }
+
+    // ── synthesis_cron ───────────────────────────────────────────────────
+
+    #[test]
+    fn advisable_synthesis_cron_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_synthesis_cron(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_synthesis_cron_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "synthesis_cron:\n  enabled: true\n");
+        let o = check_advisable_synthesis_cron(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_synthesis_cron_warns_when_enabled_is_false() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "synthesis_cron:\n  enabled: false\n");
+        let o = check_advisable_synthesis_cron(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("synthesis_cron.enabled"));
+    }
+
+    #[test]
+    fn advisable_synthesis_cron_warns_when_field_absent_from_yaml() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "operator_id: demo-user\n");
+        let o = check_advisable_synthesis_cron(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("synthesis_cron.enabled"));
+    }
+
+    // ── skill_curator ────────────────────────────────────────────────────
+
+    #[test]
+    fn advisable_skill_curator_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_skill_curator(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_skill_curator_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "skill_curator:\n  enabled: true\n");
+        let o = check_advisable_skill_curator(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_skill_curator_warns_when_enabled_is_false() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "skill_curator:\n  enabled: false\n");
+        let o = check_advisable_skill_curator(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("skill_curator.enabled"));
+    }
+
+    #[test]
+    fn advisable_skill_curator_warns_when_field_absent_from_yaml() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "operator_id: demo-user\n");
+        let o = check_advisable_skill_curator(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("skill_curator.enabled"));
+    }
+
+    // ── auto_skill_extract ───────────────────────────────────────────────
+
+    #[test]
+    fn advisable_auto_skill_extract_passes_when_freedom_yaml_absent() {
+        let dir = tempdir().unwrap();
+        let o = check_advisable_auto_skill_extract(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn advisable_auto_skill_extract_passes_when_enabled_is_true() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "auto_skill_extract:\n  enabled: true\n");
+        let o = check_advisable_auto_skill_extract(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("true"));
+    }
+
+    #[test]
+    fn advisable_auto_skill_extract_warns_when_enabled_is_false() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "auto_skill_extract:\n  enabled: false\n");
+        let o = check_advisable_auto_skill_extract(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("auto_skill_extract.enabled"));
+    }
+
+    #[test]
+    fn advisable_auto_skill_extract_warns_when_field_absent_from_yaml() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(dir.path(), "operator_id: demo-user\n");
+        let o = check_advisable_auto_skill_extract(dir.path());
+        assert_eq!(o.status, CheckStatus::Warn);
+        assert!(o.detail.contains("auto_skill_extract.enabled"));
     }
 }

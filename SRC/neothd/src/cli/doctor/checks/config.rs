@@ -332,6 +332,232 @@ pub(crate) fn check_advisable_consolidation_sweep(home: &Path) -> CheckOutcome {
     }
 }
 
+// ── ZF-08 advisable hints: remaining meaningful default-OFF groups ────────
+
+/// Shared preamble used by every `advisable:*` check that reads a single
+/// `enabled` bool from `freedom.yaml` via `FreedomConfig`.
+///
+/// Returns `None` when freedom.yaml is absent or unreadable (those cases are
+/// already surfaced by `check_freedom_yaml`; we don't duplicate the noise here).
+fn load_cfg_for_advisable(home: &Path) -> Option<crate::config::FreedomConfig> {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return None;
+    }
+    crate::config::FreedomConfig::load_from_path(&path).ok()
+}
+
+/// Builds the standard Pass outcome when a group is already enabled.
+fn advisable_pass(name: &'static str, key: &str) -> CheckOutcome {
+    CheckOutcome {
+        name,
+        status: CheckStatus::Pass,
+        detail: format!("{key}.enabled = true"),
+    }
+}
+
+/// Builds the standard Pass outcome when freedom.yaml is absent/unreadable.
+fn advisable_skip(name: &'static str) -> CheckOutcome {
+    CheckOutcome {
+        name,
+        status: CheckStatus::Pass,
+        detail: "freedom.yaml absent or unreadable — skipping advisable check".into(),
+    }
+}
+
+/// Advisory hint: `proactive.enabled` is off.
+///
+/// When enabled, the daemon's cron may post outbound briefings and follow-ups
+/// on its own — the "proactive channel messaging" feature (C-16). Operators
+/// who want NEOTH to reach out without being asked need this toggle. Default
+/// `false` per the AGENTER rule "no destructive auto-action without operator GO".
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_proactive(home: &Path) -> CheckOutcome {
+    const NAME: &str = "advisable: proactive messaging";
+    let Some(cfg) = load_cfg_for_advisable(home) else {
+        return advisable_skip(NAME);
+    };
+    if cfg.proactive.enabled {
+        return advisable_pass(NAME, "proactive");
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: "proactive.enabled is false — the daemon will not send outbound \
+                 briefings or follow-ups on its own. Enable if you want NEOTH to \
+                 reach out proactively. \
+                 Set `proactive.enabled: true` in freedom.yaml, \
+                 or apply a built-in preset: `neoth preset apply balanced`."
+            .into(),
+    }
+}
+
+/// Advisory hint: `dreaming.enabled` is off.
+///
+/// When enabled, the daemon runs a background dream-synthesis pass that clusters
+/// recent memories into themes, surfaces patterns, and writes synthesis notes
+/// to `~/.neoth/dreams/`. Improves long-horizon recall without requiring
+/// operator action. Default `false` (opt-in).
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_dreaming(home: &Path) -> CheckOutcome {
+    const NAME: &str = "advisable: dreaming";
+    let Some(cfg) = load_cfg_for_advisable(home) else {
+        return advisable_skip(NAME);
+    };
+    if cfg.dreaming.enabled {
+        return advisable_pass(NAME, "dreaming");
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: "dreaming.enabled is false — background dream-synthesis is off; \
+                 long-horizon pattern recognition and theme clustering are inactive. \
+                 Set `dreaming.enabled: true` in freedom.yaml, \
+                 or apply a built-in preset: `neoth preset apply balanced`."
+            .into(),
+    }
+}
+
+/// Advisory hint: `ecology.enabled` is off.
+///
+/// The ecology layer (F4-01) is the self-adaptation auto-scheduler: when
+/// enabled, it periodically correlates operator feedback signals and adjusts
+/// response weights accordingly. The read-only `neoth ecology correlation`
+/// diagnostic works regardless — this hint is about the live adaptation cron.
+/// Default `false` (opt-in).
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_ecology(home: &Path) -> CheckOutcome {
+    const NAME: &str = "advisable: ecology";
+    let Some(cfg) = load_cfg_for_advisable(home) else {
+        return advisable_skip(NAME);
+    };
+    if cfg.ecology.enabled {
+        return advisable_pass(NAME, "ecology");
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: "ecology.enabled is false — the self-adaptation scheduler is off; \
+                 NEOTH will not auto-tune response weights from operator feedback. \
+                 Set `ecology.enabled: true` in freedom.yaml, \
+                 or apply a built-in preset: `neoth preset apply balanced`."
+            .into(),
+    }
+}
+
+/// Advisory hint: `companion.enabled` is off.
+///
+/// The companion server (loopback port 9745) exposes a local HTTP API so that
+/// a paired mobile client (`neoth companion qr`) can reach the daemon without
+/// going through a messenger channel. Useful for operators who want a dedicated
+/// NEOTH mobile client. Default `false` (opt-in, loopback-only).
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_companion(home: &Path) -> CheckOutcome {
+    const NAME: &str = "advisable: companion server";
+    let Some(cfg) = load_cfg_for_advisable(home) else {
+        return advisable_skip(NAME);
+    };
+    if cfg.companion.enabled {
+        return advisable_pass(NAME, "companion");
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: "companion.enabled is false — the local companion HTTP server is off; \
+                 mobile pairing via `neoth companion qr` will not work. \
+                 Set `companion.enabled: true` in freedom.yaml, \
+                 or run `neoth companion start` to enable it interactively."
+            .into(),
+    }
+}
+
+/// Advisory hint: `synthesis_cron.enabled` is off.
+///
+/// The synthesis cron periodically reconciles contradictions across memory
+/// entries, writes a structured synthesis note as an `idx_groundtruth` row,
+/// and optionally archives it to `~/.neoth/synthesis/YYYY-WW.md`. Improves
+/// factual coherence without operator action. Default `false` (opt-in).
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_synthesis_cron(home: &Path) -> CheckOutcome {
+    const NAME: &str = "advisable: synthesis cron";
+    let Some(cfg) = load_cfg_for_advisable(home) else {
+        return advisable_skip(NAME);
+    };
+    if cfg.synthesis_cron.enabled {
+        return advisable_pass(NAME, "synthesis_cron");
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: "synthesis_cron.enabled is false — periodic memory synthesis and \
+                 contradiction reconciliation are off; factual coherence degrades \
+                 over long sessions without it. \
+                 Set `synthesis_cron.enabled: true` in freedom.yaml, \
+                 or apply a built-in preset: `neoth preset apply balanced`."
+            .into(),
+    }
+}
+
+/// Advisory hint: `skill_curator.enabled` is off.
+///
+/// The skill curator cron auto-promotes mature operator-accepted skill proposals
+/// from `~/.neoth/proposals/` to `~/.neoth/skills/`. Without it, accepted
+/// proposals sit in the queue indefinitely until promoted manually.
+/// Default `false` (opt-in).
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_skill_curator(home: &Path) -> CheckOutcome {
+    const NAME: &str = "advisable: skill curator";
+    let Some(cfg) = load_cfg_for_advisable(home) else {
+        return advisable_skip(NAME);
+    };
+    if cfg.skill_curator.enabled {
+        return advisable_pass(NAME, "skill_curator");
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: "skill_curator.enabled is false — accepted skill proposals in \
+                 `~/.neoth/proposals/` will not be auto-promoted to `~/.neoth/skills/`. \
+                 Set `skill_curator.enabled: true` in freedom.yaml, \
+                 or apply a built-in preset: `neoth preset apply balanced`."
+            .into(),
+    }
+}
+
+/// Advisory hint: `auto_skill_extract.enabled` is off.
+///
+/// When enabled, after turns with enough tool calls NEOTH distils a structured
+/// skill block (`{title, steps, tags, confidence}`) and stages high-confidence
+/// computer-executable extractions in the proactive review queue
+/// (`~/.neoth/proposals/`). Feeds the skill curator pipeline.
+/// Default `false` (opt-in; requires usage data before proposals are meaningful).
+///
+/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+pub(crate) fn check_advisable_auto_skill_extract(home: &Path) -> CheckOutcome {
+    const NAME: &str = "advisable: auto skill extract";
+    let Some(cfg) = load_cfg_for_advisable(home) else {
+        return advisable_skip(NAME);
+    };
+    if cfg.auto_skill_extract.enabled {
+        return advisable_pass(NAME, "auto_skill_extract");
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: "auto_skill_extract.enabled is false — NEOTH will not distil \
+                 reusable skill steps from agent runs into the proposals queue. \
+                 Set `auto_skill_extract.enabled: true` in freedom.yaml, \
+                 or apply a built-in preset: `neoth preset apply balanced`."
+            .into(),
+    }
+}
+
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
 pub(crate) const CHECKS: &[CheckFn] = &[
@@ -343,6 +569,14 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_profile_extensions,
     check_advisable_groundtruth_injection,
     check_advisable_consolidation_sweep,
+    // ZF-08: remaining meaningful default-OFF groups.
+    check_advisable_proactive,
+    check_advisable_dreaming,
+    check_advisable_ecology,
+    check_advisable_companion,
+    check_advisable_synthesis_cron,
+    check_advisable_skill_curator,
+    check_advisable_auto_skill_extract,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -456,5 +690,92 @@ pub(crate) const DOCS: &[CheckDoc] = &[
         fix: "Set `consolidation_sweep.enabled: true` in \
               `~/.neoth/freedom.yaml`, or run \
               `neoth preset apply balanced` to restore recommended defaults.",
+    },
+    // ── ZF-08 advisable hints ─────────────────────────────────────────────
+    CheckDoc {
+        name: "advisable: proactive messaging",
+        purpose: "Advisory hint that fires when `proactive.enabled` is `false` \
+                  (the default). When enabled, the daemon's cron may post \
+                  outbound briefings and follow-ups on its own without a user \
+                  trigger — the C-16 proactive channel messaging feature. \
+                  The check is informational only — daemon starts either way.",
+        common_failures: "Default-off by design per the AGENTER operator-GO \
+                         rule; operator missed the toggle during initial setup.",
+        fix: "Set `proactive.enabled: true` in `~/.neoth/freedom.yaml`, \
+              or run `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: dreaming",
+        purpose: "Advisory hint that fires when `dreaming.enabled` is `false` \
+                  (the default). When enabled, the daemon runs background \
+                  dream-synthesis passes that cluster recent memories into \
+                  themes and write synthesis notes to `~/.neoth/dreams/`. \
+                  Improves long-horizon recall. The check is informational \
+                  only — daemon starts either way.",
+        common_failures: "Default-off; operator missed the toggle at setup.",
+        fix: "Set `dreaming.enabled: true` in `~/.neoth/freedom.yaml`, \
+              or run `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: ecology",
+        purpose: "Advisory hint that fires when `ecology.enabled` is `false` \
+                  (the default). The ecology layer (F4-01) is the \
+                  self-adaptation auto-scheduler: it periodically correlates \
+                  operator feedback and adjusts response weights. The \
+                  read-only `neoth ecology correlation` diagnostic still works \
+                  without it. The check is informational only.",
+        common_failures: "Default-off; the cron is separate from the \
+                         read-only correlation scan which always runs.",
+        fix: "Set `ecology.enabled: true` in `~/.neoth/freedom.yaml`, \
+              or run `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: companion server",
+        purpose: "Advisory hint that fires when `companion.enabled` is \
+                  `false` (the default). When enabled, a loopback HTTP server \
+                  on port 9745 (configurable) allows a paired mobile client \
+                  to reach the daemon. Needed for `neoth companion qr` mobile \
+                  pairing. The check is informational only.",
+        common_failures: "Default-off; operator has not set up mobile pairing.",
+        fix: "Set `companion.enabled: true` in `~/.neoth/freedom.yaml`, \
+              or run `neoth companion start` for an interactive setup.",
+    },
+    CheckDoc {
+        name: "advisable: synthesis cron",
+        purpose: "Advisory hint that fires when `synthesis_cron.enabled` is \
+                  `false` (the default). When enabled, a background cron \
+                  reconciles contradictions across memory entries and writes \
+                  structured synthesis notes to `idx_groundtruth` and \
+                  optionally to `~/.neoth/synthesis/YYYY-WW.md`. Improves \
+                  factual coherence over time. The check is informational only.",
+        common_failures: "Default-off; operator missed the toggle at setup.",
+        fix: "Set `synthesis_cron.enabled: true` in `~/.neoth/freedom.yaml`, \
+              or run `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: skill curator",
+        purpose: "Advisory hint that fires when `skill_curator.enabled` is \
+                  `false` (the default). When enabled, a background cron \
+                  auto-promotes mature, operator-accepted skill proposals from \
+                  `~/.neoth/proposals/` to `~/.neoth/skills/`. Without it, \
+                  accepted proposals accumulate unacted upon. The check is \
+                  informational only.",
+        common_failures: "Default-off; operator hasn't opted into automatic \
+                         skill promotion yet.",
+        fix: "Set `skill_curator.enabled: true` in `~/.neoth/freedom.yaml`, \
+              or run `neoth preset apply balanced`.",
+    },
+    CheckDoc {
+        name: "advisable: auto skill extract",
+        purpose: "Advisory hint that fires when `auto_skill_extract.enabled` \
+                  is `false` (the default). When enabled, after turns with \
+                  enough tool calls NEOTH distils a structured skill block \
+                  and stages high-confidence extractions in the proactive \
+                  review queue for curator promotion. Feeds the skill pipeline. \
+                  The check is informational only.",
+        common_failures: "Default-off; requires accumulated usage data before \
+                         proposals are meaningful.",
+        fix: "Set `auto_skill_extract.enabled: true` in \
+              `~/.neoth/freedom.yaml`, or run `neoth preset apply balanced`.",
     },
 ];
