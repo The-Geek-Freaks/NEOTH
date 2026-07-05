@@ -199,10 +199,19 @@ fn semantic_split(prompt: &str, keep_recent_chars: usize) -> usize {
         raw_split -= 1;
     }
 
-    // Search window: ±25% of keep_recent_chars around raw_split.
+    // Search window: ±25% of keep_recent_chars around raw_split. `window` is a
+    // raw byte count, so the window bounds must be snapped back to char
+    // boundaries before slicing — otherwise a multibyte codepoint (emoji, CJK)
+    // straddling a bound panics at `&prompt[search_lo..search_hi]`.
     let window = keep_recent_chars / 4;
-    let search_lo = raw_split.saturating_sub(window);
-    let search_hi = (raw_split + window).min(prompt.len());
+    let mut search_lo = raw_split.saturating_sub(window);
+    while search_lo > 0 && !prompt.is_char_boundary(search_lo) {
+        search_lo -= 1;
+    }
+    let mut search_hi = (raw_split + window).min(prompt.len());
+    while search_hi < prompt.len() && !prompt.is_char_boundary(search_hi) {
+        search_hi += 1;
+    }
 
     // Find the last turn-boundary marker whose *end* falls within [search_lo, search_hi].
     let mut best: Option<usize> = None;
@@ -1000,6 +1009,28 @@ mod tests {
 
     // -------------------------------------------------------------------------
     // GOLD-PXP-02 — semantic boundary split
+
+    /// Wave-9 regression: multibyte codepoints straddling the search window
+    /// bounds must NOT panic (`byte index N is not a char boundary`). The split
+    /// point returned must always be a valid char boundary.
+    #[test]
+    fn pxp02_semantic_split_no_panic_on_multibyte() {
+        for (prompt, keep) in [
+            ("💡abc", 4usize),
+            ("日本語テキスト💡more text here", 6),
+            ("emoji 🎉 in the middle 🚀 of things", 10),
+            ("плоскость экран 中文 mixed", 8),
+        ] {
+            let at = semantic_split(prompt, keep);
+            assert!(
+                prompt.is_char_boundary(at),
+                "split {at} not a char boundary in {prompt:?}"
+            );
+            // Slicing at the returned point must not panic.
+            let _ = &prompt[..at];
+            let _ = &prompt[at..];
+        }
+    }
 
     /// Two consecutive fires over the same stable prefix must produce identical
     /// stable-zone bytes (byte-identical prefix → prompt-cache hit).

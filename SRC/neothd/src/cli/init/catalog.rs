@@ -219,21 +219,25 @@ pub(crate) fn do_ping(
 
     match result {
         Err(_) => PingResult::Skipped,
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            match status {
-                200..=299 => PingResult::Ok,
-                // 401 = unauthorized (bad key), 403 = forbidden (key valid but no scope)
-                // — for the purposes of "does this key work" we treat 403 as OK
-                // (key recognised, but missing a specific permission the ping
-                // endpoint needs; the runtime will surface a clearer error).
-                403 => PingResult::Ok,
-                401 => PingResult::Unauthorized,
-                // 429 = rate-limited → key is valid.
-                429 => PingResult::Ok,
-                _ => PingResult::Skipped,
-            }
-        }
+        Ok(resp) => classify_ping_status(resp.status().as_u16(), kind),
+    }
+}
+
+/// Map an HTTP status to a ping verdict. Split out so the per-provider 403
+/// semantics are unit-testable without a live endpoint.
+fn classify_ping_status(status: u16, kind: ProviderKind) -> PingResult {
+    match status {
+        200..=299 => PingResult::Ok,
+        401 => PingResult::Unauthorized,
+        // 403 is provider-dependent: OpenAI-family returns it for a VALID key
+        // that lacks a scope (treat as OK — the key is recognised). Gemini
+        // returns 403 PERMISSION_DENIED for an INVALID key, so a Gemini 403
+        // means the key is bad and must be surfaced as unauthorized.
+        403 if matches!(kind, ProviderKind::GeminiApi) => PingResult::Unauthorized,
+        403 => PingResult::Ok,
+        // 429 = rate-limited → key is valid.
+        429 => PingResult::Ok,
+        _ => PingResult::Skipped,
     }
 }
 
@@ -980,6 +984,27 @@ mod tests {
         // AzureOpenAi with no endpoint → Skipped (can't construct URL).
         let result = do_ping(&client, "key", ProviderKind::AzureOpenAi, None);
         assert_eq!(result, PingResult::Skipped);
+    }
+
+    /// Wave-9 regression: Gemini returns 403 for an INVALID key, so it must map
+    /// to Unauthorized — while OpenAI-family 403 (valid key, no scope) stays Ok.
+    #[test]
+    fn classify_ping_status_gemini_403_is_unauthorized() {
+        assert_eq!(
+            classify_ping_status(403, ProviderKind::GeminiApi),
+            PingResult::Unauthorized
+        );
+        assert_eq!(
+            classify_ping_status(403, ProviderKind::OpenaiApi),
+            PingResult::Ok
+        );
+        assert_eq!(
+            classify_ping_status(401, ProviderKind::GeminiApi),
+            PingResult::Unauthorized
+        );
+        assert_eq!(classify_ping_status(200, ProviderKind::GeminiApi), PingResult::Ok);
+        assert_eq!(classify_ping_status(429, ProviderKind::OpenaiApi), PingResult::Ok);
+        assert_eq!(classify_ping_status(500, ProviderKind::OpenaiApi), PingResult::Skipped);
     }
 
     #[test]
