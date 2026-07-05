@@ -77,6 +77,19 @@ pub struct WizardCheckpoint {
     pub install_n8n: bool,
     pub import_memory: Option<PathBuf>,
     pub steps_completed: Vec<u8>,
+    /// ZF-02: `true` when a non-custom built-in preset was chosen and the
+    /// express-skip path is active. Persisted so a resumed wizard does not
+    /// re-prompt all express-gated steps.
+    /// `#[serde(default)]` keeps old checkpoints (which lack this key) valid.
+    #[serde(default)]
+    pub is_express: bool,
+    /// ZF-02: name of the built-in preset chosen at step 2 (`"full-auto"`,
+    /// `"balanced"`, `"essentials"`, `"local-sovereign"`, or `"custom"`).
+    /// `None` when the operator had not yet reached the preset picker before
+    /// the checkpoint was written.
+    /// `#[serde(default)]` keeps old checkpoints (which lack this key) valid.
+    #[serde(default)]
+    pub chosen_preset: Option<String>,
     /// Unix-seconds wall clock at the most recent `save_checkpoint`.
     /// Surfaced in the resume prompt so the operator sees "your previous
     /// wizard from 2 hours ago" instead of an opaque file age.
@@ -109,6 +122,8 @@ impl WizardCheckpoint {
             install_n8n: state.install_n8n,
             import_memory: state.import_memory.clone(),
             steps_completed: state.steps_completed.clone(),
+            is_express: state.is_express,
+            chosen_preset: state.chosen_preset.clone(),
             checkpoint_written_at_unix: now_unix(),
         }
     }
@@ -137,6 +152,8 @@ impl WizardCheckpoint {
         state.install_n8n = self.install_n8n;
         state.import_memory = self.import_memory;
         state.steps_completed = self.steps_completed;
+        state.is_express = self.is_express;
+        state.chosen_preset = self.chosen_preset;
     }
 }
 
@@ -314,6 +331,73 @@ mod tests {
         std::fs::write(checkpoint_path(dir.path()), b"").unwrap();
         let out = load_checkpoint(dir.path()).unwrap();
         assert!(out.is_none());
+    }
+
+    /// Finding: "Checkpoint resume loses is_express/chosen_preset"
+    /// Guards: round-trip serialises both fields; `#[serde(default)]`
+    /// keeps an old checkpoint (lacking the keys) deserialising cleanly.
+    #[test]
+    fn is_express_and_chosen_preset_round_trip() {
+        let dir = tempdir().unwrap();
+        let mut state = WizardState::default();
+        state.is_express = true;
+        state.chosen_preset = Some("balanced".to_string());
+        state.steps_completed = vec![1, 2];
+
+        save_checkpoint(dir.path(), &state).expect("save");
+        let loaded = load_checkpoint(dir.path()).unwrap().expect("Some");
+        assert!(loaded.is_express, "is_express must round-trip");
+        assert_eq!(
+            loaded.chosen_preset.as_deref(),
+            Some("balanced"),
+            "chosen_preset must round-trip"
+        );
+
+        // apply_to must restore both fields into a fresh WizardState.
+        let mut restored = WizardState::default();
+        loaded.apply_to(&mut restored);
+        assert!(restored.is_express, "apply_to must restore is_express");
+        assert_eq!(
+            restored.chosen_preset.as_deref(),
+            Some("balanced"),
+            "apply_to must restore chosen_preset"
+        );
+    }
+
+    /// Old checkpoints (written before ZF-02) must still deserialise
+    /// cleanly: missing `is_express` / `chosen_preset` keys → `false` / `None`.
+    #[test]
+    fn old_checkpoint_without_express_fields_deserialises_with_defaults() {
+        // Construct a checkpoint JSON that has no is_express / chosen_preset keys.
+        // is_express and chosen_preset are intentionally absent — old checkpoint format.
+        let json = serde_json::json!({
+            "operator_id": "alice",
+            "language_primary": null,
+            "language_code": null,
+            "role": null,
+            "role_custom": null,
+            "provider_kind": null,
+            "provider_binary": null,
+            "provider_endpoint": null,
+            "provider_model": null,
+            "telegram_user_id": null,
+            "autonomy": "standard",
+            "inference": {},
+            "auto_update": {},
+            "plugins": {},
+            "download_qwen_weights": false,
+            "install_obsidian": false,
+            "bootstrap_vault": false,
+            "vault_path": null,
+            "install_n8n": false,
+            "import_memory": null,
+            "steps_completed": [1, 2, 3],
+            "checkpoint_written_at_unix": 1_700_000_000_i64
+        });
+        let cp: WizardCheckpoint = serde_json::from_value(json).expect("should deserialise");
+        assert!(!cp.is_express, "absent is_express must default to false");
+        assert!(cp.chosen_preset.is_none(), "absent chosen_preset must default to None");
+        assert_eq!(cp.operator_id.as_deref(), Some("alice"));
     }
 
     #[test]

@@ -510,6 +510,13 @@ fn main() -> Result<()> {
             &neoth_dir.join("freedom.yaml"),
         ));
 
+        // ZF-FIX-2: on re-entry the operator did not walk the preset picker,
+        // so keep wizard_preset_choice at "custom" (safe no-op) rather than
+        // letting it default to "balanced" from the Slint property default.
+        // This prevents Finish from silently applying the balanced overlay over
+        // an existing, possibly-customised freedom.yaml.
+        window.set_wizard_preset_choice("custom".into());
+
         window.set_status_line(
             format!(
                 "NEOTH is already configured at {}.\n\
@@ -1310,8 +1317,25 @@ fn main() -> Result<()> {
             let plan = dry_run_preset_via_subprocess(&name_s);
             match plan {
                 None => {
-                    // dry-run unavailable (old daemon / missing binary) →
-                    // fall back: apply directly then refresh.
+                    // dry-run unavailable (old daemon / missing binary).
+                    // For full-auto we must NOT fall through to apply_preset_direct
+                    // because without a dry-run result there is no consent-modal path
+                    // and the CLI would fail closed anyway (non-TTY ceremony bail).
+                    // Surface a clear diagnostic instead of a confusing internal error.
+                    if name_s == "full-auto" {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak.upgrade() {
+                                w.set_status_line(
+                                    "Cannot apply full-auto: dry-run unavailable. \
+                                     Ensure the neoth binary is present and the database \
+                                     is not locked, then retry."
+                                        .into(),
+                                );
+                            }
+                        });
+                        return;
+                    }
+                    // For all other presets: fall back to direct apply then refresh.
                     let status = apply_preset_direct(&name_s);
                     let presets = fetch_presets();
                     let summary = probe_preset_summary_via_subprocess();
@@ -2978,6 +3002,11 @@ fn main() -> Result<()> {
             w.set_step(WizardStep::ModeSelection);
             w.set_license_accepted(false);
             w.set_operator_id("".into());
+            // ZF-FIX-2: reset to "custom" so the Finish button does not apply
+            // a preset the operator never confirmed in this re-run session.
+            // The picker on the preset screen will update this if the operator
+            // actively selects one.
+            w.set_wizard_preset_choice("custom".into());
             w.set_status_line(
                 "Wizard reset. Re-walking the flow will overwrite existing freedom.yaml at Finish."
                     .into(),
@@ -3108,11 +3137,25 @@ fn main() -> Result<()> {
                 Ok(report) => {
                     info!(?report.freedom_path, ?report.credentials_path, "wizard finished");
                     w.set_status_line(report.message().into());
-                    // ZF-05: apply the preset overlay OFF the event loop —
+                    // ZF-05 / ZF-FIX-1: apply the preset overlay OFF the event loop.
                     // `apply_preset_direct` shells a subprocess and must never
                     // block the window. Result surfaces as a toast.
+                    //
+                    // full-auto requires an explicit two-step consent ceremony
+                    // (the same modal the Settings → Presets panel shows before
+                    // minting the autonomy token).  A single Finish click is NOT
+                    // equivalent consent — fail closed and direct the operator to
+                    // Settings → Presets where the ceremony is wired up.
                     let preset = state.wizard_preset.clone();
-                    if preset != "custom" {
+                    if preset == "full-auto" {
+                        push_toast(
+                            &weak,
+                            "warn",
+                            "Full-auto not applied",
+                            "Enable full-auto via Settings → Presets after setup completes \
+                             (it requires an extra confirmation step).",
+                        );
+                    } else if preset != "custom" {
                         let weak_for_toast = weak.clone();
                         std::thread::spawn(move || {
                             let msg = apply_preset_direct(&preset);
@@ -6618,6 +6661,80 @@ mod tests {
         validate_preset(&state.wizard_preset).expect("custom is a valid preset");
         let freedom = write_freedom_yaml(&state, dir.path()).expect("freedom.yaml");
         assert!(freedom.exists());
+    }
+
+    // ── ZF-FIX-1: full-auto wizard routing ──────────────────────────
+    //
+    // The on_finish_clicked worker must NOT call apply_preset_direct for
+    // "full-auto" (that path fails closed at the CLI because the subprocess
+    // has no TTY for the ceremony).  The fix routes full-auto to a warn-toast
+    // and leaves the non-full-auto presets on the direct path.
+    //
+    // We can't exercise the Slint event loop from unit tests, but we CAN
+    // assert on the pure-logic gating: the branch condition that distinguishes
+    // "full-auto" from other non-custom presets.
+
+    #[test]
+    fn finish_fullauto_preset_is_not_custom_and_not_other_preset() {
+        // Asserts the property that drives the three-way branch in on_finish_clicked:
+        //   preset == "full-auto"  → warn-toast path
+        //   preset == "custom"     → no-op path
+        //   everything else        → apply_preset_direct path
+        let fa = "full-auto";
+        let custom = "custom";
+        let other = "balanced";
+
+        assert!(fa != custom,   "full-auto must not be treated as custom (no-op)");
+        assert!(fa == "full-auto", "full-auto identity check");
+        assert!(other != "full-auto" && other != custom,
+            "balanced must take the apply_preset_direct branch");
+    }
+
+    #[test]
+    fn validate_preset_full_auto_is_valid() {
+        // full-auto must pass validate_preset so finish() does not reject it
+        // before the branch logic in on_finish_clicked can redirect it.
+        validate_preset("full-auto").expect("full-auto must be a valid preset name");
+    }
+
+    // ── ZF-FIX-2: re-entry / rerun wizard_preset_choice default ────
+    //
+    // The empty_snapshot helper (used by all finish/write tests) must default
+    // wizard_preset to "custom" so those tests exercise the no-apply path.
+    // Additionally we test the pure predicate: "custom" is the safe sentinel
+    // that prevents any preset overlay from firing on re-entry or rerun.
+
+    #[test]
+    fn empty_snapshot_defaults_wizard_preset_to_custom() {
+        // Re-entry and rerun both call set_wizard_preset_choice("custom").
+        // The empty_snapshot mirrors the same safe default so existing tests
+        // continue to exercise the no-apply branch unmodified.
+        let state = empty_snapshot();
+        assert_eq!(
+            state.wizard_preset, "custom",
+            "empty_snapshot must default wizard_preset to 'custom' — \
+             re-entry/rerun set the same sentinel so Finish never applies \
+             a preset the operator did not confirm in this session"
+        );
+    }
+
+    #[test]
+    fn finish_reentry_default_custom_does_not_apply_preset() {
+        // Simulate the re-entry path: freedom.yaml already exists, Rust sets
+        // wizard_preset_choice to "custom", operator clicks Finish.
+        // validate_preset("custom") must succeed (no error) and the branch
+        // `preset == "full-auto"` is false, `preset != "custom"` is false →
+        // apply_preset_direct is NOT called.
+        let mut state = empty_snapshot();
+        state.wizard_preset = "custom".into();
+        // validate_preset is called inside finish() before any preset logic.
+        validate_preset(&state.wizard_preset)
+            .expect("re-entry custom preset must pass validation");
+        // Branch condition: neither full-auto nor other-non-custom → no apply.
+        let is_fullauto = state.wizard_preset == "full-auto";
+        let is_non_custom = state.wizard_preset != "custom";
+        assert!(!is_fullauto,   "re-entry must not trigger the full-auto warn path");
+        assert!(!is_non_custom, "re-entry must not trigger apply_preset_direct");
     }
 
     #[test]

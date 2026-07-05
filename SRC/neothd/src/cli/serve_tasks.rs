@@ -4369,11 +4369,9 @@ pub(crate) struct BackgroundHandles {
     pub cron_supervisor_task: JoinHandle<()>,
     pub dispatch_join: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     pub cron_task: Option<JoinHandle<()>>,
-    pub doctor_cron_task: Option<JoinHandle<()>>,
-    pub resource_watch_handle: Option<JoinHandle<()>>,
-    pub monitor_cron_handle: Option<JoinHandle<()>>,
-    pub babel_cron_handle: Option<JoinHandle<()>>,
-    pub watchdog_cron_handle: Option<JoinHandle<()>>,
+    // ZF-06: doctor_cron_task, resource_watch_handle, monitor_cron_handle,
+    // babel_cron_handle, watchdog_cron_handle removed — fleet-managed via
+    // CronKey::DoctorCron/ResourceWatch/MonitorCron/Babel/WatchdogCron.
     pub snapshot_refresh_handle: Option<JoinHandle<()>>,
     pub omi_handle: Option<JoinHandle<()>>,
     pub updater_self_task: Option<JoinHandle<()>>,
@@ -4405,49 +4403,42 @@ pub(crate) struct BackgroundHandles {
     pub reflection_cron_handle: JoinHandle<()>,
     pub proactive_dispatcher_handle: JoinHandle<()>,
     pub g02_surfacing_cron_handle: JoinHandle<()>,
-    pub drift_alert_cron_handle: Option<JoinHandle<()>>,
-    pub token_anomaly_cron_handle: Option<JoinHandle<()>>,
-    pub session_health_cron_handle: Option<JoinHandle<()>>,
-    /// GOLD-ADAPT-ODY-21 — outbound webhook manager cron handle.
-    /// `None` when `webhook_manager.enabled = false` (the default).
-    pub webhook_manager_handle: Option<JoinHandle<()>>,
+    // ZF-06: the following fields were fleet-managed crons and have been removed.
+    // They are now owned by cron_fleet / cron_supervisor_task and drained there:
+    //   drift_alert_cron_handle   → CronKey::DriftAlert
+    //   token_anomaly_cron_handle → CronKey::TokenAnomaly
+    //   session_health_cron_handle → CronKey::SessionHealth
+    //   webhook_manager_handle    → CronKey::WebhookManager
+    //   recall_latency_cron_handle → CronKey::RecallLatency
+    //   profile_adapt_cron_handle → CronKey::ProfileAdapt
+    //   ecology_cron_handle       → CronKey::EcologyCron
+    //   pattern_cron_handle       → CronKey::PatternCron
+    //   bg_monitor_handle         → CronKey::BgMonitor
+    //   contradiction_resolve_cron_handle → CronKey::ContradictionResolve
+    //   guidance_cron_handle      → CronKey::GuidanceCron
+    //   skill_curator_cron_handle → CronKey::SkillCurator
+    //   synthesis_cron_handle     → CronKey::SynthesisCron
+    //   consolidation_sweep_handle → CronKey::ConsolidationSweep
+    //   self_wiki_handle          → CronKey::SelfWiki
+    //   self_improvement_collector_handle → CronKey::SelfImprovementCollector
+    //   obsidian_task             → CronKey::ObsidianSync
+    //   obsidian_vault_reader_task → CronKey::ObsidianVaultReader
+    //   obsidian_wiki_rebuild_task → CronKey::ObsidianWikiRebuild
+    //   self_map_task             → CronKey::SelfMap
+    //
+    // Deferred keys — kept as individual fields until migrated to the fleet:
+    /// ADV-14 — regression-anchor cron. Deferred from fleet (async + provider dep).
     pub regression_cron_handle: Option<JoinHandle<()>>,
-    pub recall_latency_cron_handle: Option<JoinHandle<()>>,
-    pub profile_adapt_cron_handle: Option<JoinHandle<()>>,
-    pub ecology_cron_handle: Option<JoinHandle<()>>,
-    pub pattern_cron_handle: Option<JoinHandle<()>>,
-    /// GOLD-ADAPT-ODY-07 — background-job detach monitor handle.
-    pub bg_monitor_handle: Option<JoinHandle<()>>,
-    /// NN-MEM-06 — daily contradiction auto-resolution cron handle.
-    pub contradiction_resolve_cron_handle: Option<JoinHandle<()>>,
-    /// GOLD-ADAPT-JV-MEM-16 — guidance-block snapshot refresh cron handle.
-    /// WAL-free; `None` when `guidance_cron.enabled = false` (default).
-    pub guidance_cron_handle: Option<JoinHandle<()>>,
-    /// GOLD-FEAT-11 — LLM check-in body cron handle.
+    /// GOLD-FEAT-11 — LLM check-in cron. Deferred from fleet (async spawn).
     /// `None` when `checkin_cron.enabled = false` (default).
     pub checkin_cron_handle: Option<JoinHandle<()>>,
-    /// GOLD-ADAPT-ODY-26 — session auto-sort cron handle.
+    /// GOLD-ADAPT-ODY-26 — session auto-sort cron. Deferred from fleet (async spawn).
     /// `None` when `session_sort_cron.enabled = false` (default).
     pub session_sort_cron_handle: Option<JoinHandle<()>>,
     /// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless→Obsidian ingest cron.
+    /// Deferred from fleet (inline spawn logic in serve.rs).
     /// `None` when `email_ingest_cron.enabled = false` (default).
     pub email_ingest_cron_handle: Option<JoinHandle<()>>,
-    /// GOLD-FEAT-11 — skill-curator cron handle.
-    /// `None` when `skill_curator.enabled = false` (default).
-    pub skill_curator_cron_handle: Option<JoinHandle<()>>,
-    /// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron handle.
-    /// WAL-free; `None` when `synthesis_cron.enabled = false` (default).
-    pub synthesis_cron_handle: Option<JoinHandle<()>>,
-    /// JV-SELF-02 — AMEM4Rec consolidation-sweep cron handle.
-    /// Emits `0x9D`/`0x9E`; `None` when `consolidation_sweep.enabled = false` (default).
-    pub consolidation_sweep_handle: Option<JoinHandle<()>>,
-    /// GOLD-FEAT-03b — self-wiki rebuild cron handle. Tracing-audited
-    /// (no WAL byte free); `None` when `self_wiki.enabled = false` (default).
-    pub self_wiki_handle: Option<JoinHandle<()>>,
-    /// GOLD-ADAPT-JV-SELF-03 — auto-builder signal collector cron handle.
-    /// Emits `0xBE`/`0xBF`; `None` when
-    /// `self_improvement_collector.enabled = false` (default).
-    pub self_improvement_collector_handle: Option<JoinHandle<()>>,
     pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
     /// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron handle.
@@ -4480,20 +4471,10 @@ pub(crate) struct BackgroundHandles {
     /// `None` when `companion.p2p_enabled = false` (default) or `cluster`
     /// feature not compiled in.
     pub companion_p2p_task: Option<JoinHandle<()>>,
-    pub obsidian_task: Option<JoinHandle<anyhow::Result<()>>>,
-    /// GOLD-ADAPT-JV-IMP-05 — Obsidian vault bidirectional reader+writer cron handle.
-    /// WAL-free; `None` when `obsidian_vault` is not set or
-    /// `obsidian_vault_reader_enabled = false` (default).
-    pub obsidian_vault_reader_task: Option<JoinHandle<anyhow::Result<()>>>,
-    /// OH-14 — periodic self-wiki rebuild cron handle.
-    /// WAL-emitting (0xFA); `None` when `obsidian_vault` or source dir
-    /// is not configured. Must be aborted BEFORE `drop(writer)`.
-    pub obsidian_wiki_rebuild_task: Option<JoinHandle<anyhow::Result<()>>>,
-    /// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron handle.
-    /// WAL-emitting (0xFB); `None` when `obsidian_vault` or
-    /// `self_map_source_dir` / env `NEOTH_SRC_DIR` is not configured.
-    /// Must be aborted BEFORE `drop(writer)`.
-    pub self_map_task: Option<JoinHandle<anyhow::Result<()>>>,
+    // ZF-06: obsidian_task, obsidian_vault_reader_task, obsidian_wiki_rebuild_task,
+    // self_map_task removed — fleet-managed via CronKey::ObsidianSync,
+    // ObsidianVaultReader, ObsidianWikiRebuild, SelfMap. The fleet drain handles
+    // WAL-emitting ones (ObsidianWikiRebuild/SelfMap) before drop(writer).
     pub cloud_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor>,
     /// TERMIX-01 — running SSH local-forward tunnels. Shut down (task
@@ -4530,11 +4511,6 @@ pub(crate) async fn shutdown_background_tasks(
         cron_supervisor_task,
         dispatch_join,
         cron_task,
-        doctor_cron_task,
-        resource_watch_handle,
-        monitor_cron_handle,
-        babel_cron_handle,
-        watchdog_cron_handle,
         snapshot_refresh_handle,
         omi_handle,
         updater_self_task,
@@ -4564,26 +4540,21 @@ pub(crate) async fn shutdown_background_tasks(
         reflection_cron_handle,
         proactive_dispatcher_handle,
         g02_surfacing_cron_handle,
-        drift_alert_cron_handle,
-        token_anomaly_cron_handle,
-        session_health_cron_handle,
-        webhook_manager_handle,
+        // ZF-06: drift_alert_cron_handle, token_anomaly_cron_handle,
+        // session_health_cron_handle, webhook_manager_handle,
+        // recall_latency_cron_handle, profile_adapt_cron_handle,
+        // ecology_cron_handle, pattern_cron_handle, bg_monitor_handle,
+        // contradiction_resolve_cron_handle, guidance_cron_handle,
+        // skill_curator_cron_handle, synthesis_cron_handle,
+        // consolidation_sweep_handle, self_wiki_handle,
+        // self_improvement_collector_handle, doctor_cron_task,
+        // resource_watch_handle, monitor_cron_handle, babel_cron_handle,
+        // watchdog_cron_handle — all fleet-managed; drained above via
+        // cron_fleet (WAL-emitting keys first, then rest).
         regression_cron_handle,
-        recall_latency_cron_handle,
-        profile_adapt_cron_handle,
-        ecology_cron_handle,
-        pattern_cron_handle,
-        bg_monitor_handle,
-        contradiction_resolve_cron_handle,
-        guidance_cron_handle,
         checkin_cron_handle,
         session_sort_cron_handle,
         email_ingest_cron_handle,
-        skill_curator_cron_handle,
-        synthesis_cron_handle,
-        consolidation_sweep_handle,
-        self_wiki_handle,
-        self_improvement_collector_handle,
         dreaming_task,
         arxiv_ingest_task,
         arxiv_skill_scan_task,
@@ -4599,10 +4570,8 @@ pub(crate) async fn shutdown_background_tasks(
         companion_task,
         companion_p2p_shutdown,
         companion_p2p_task,
-        obsidian_task,
-        obsidian_vault_reader_task,
-        obsidian_wiki_rebuild_task,
-        self_map_task,
+        // ZF-06: obsidian_task, obsidian_vault_reader_task,
+        // obsidian_wiki_rebuild_task, self_map_task — fleet-managed.
         cloud_task,
         hysteria_supervisor,
         #[cfg(feature = "ssh-tunnel")]
@@ -4626,10 +4595,30 @@ pub(crate) async fn shutdown_background_tasks(
     // ZF-06: Drain the cron fleet. WAL-emitting keys first (before drop(writer)),
     // then the rest. This preserves the WAL ordering invariant.
     {
+        // Keys whose cron task emits WAL frames and must be drained BEFORE
+        // drop(writer). Extend this list whenever a new fleet-managed cron
+        // gains a WAL write.
+        //
+        // Audit trail:
+        //   ObsidianWikiRebuild — 0xFA
+        //   SelfMap             — 0xFB
+        //   ConsolidationSweep  — 0x?? (AMEM4Rec sweep audit frames)
+        //   MonitorCron         — 0x48 / 0x49 / 0x4A
+        //   DriftAlert          — 0xBA
+        //   TokenAnomaly        — 0x6E
+        //   SessionHealth       — 0x6F
+        //   WebhookManager      — 0x08 / 0x09 / 0x0A
+        //   SelfImprovementCollector — 0xBE / 0xBF
         const WAL_EMITTING_CRON_KEYS: &[CronKey] = &[
             CronKey::ObsidianWikiRebuild,
             CronKey::SelfMap,
             CronKey::ConsolidationSweep,
+            CronKey::MonitorCron,
+            CronKey::DriftAlert,
+            CronKey::TokenAnomaly,
+            CronKey::SessionHealth,
+            CronKey::WebhookManager,
+            CronKey::SelfImprovementCollector,
         ];
         // Remove under the lock; abort+await after the lock scope ends
         // (std MutexGuard is not Send across await).
@@ -4700,19 +4689,10 @@ pub(crate) async fn shutdown_background_tasks(
     // new WAL frames before the writer drains.
     crate::cli::serve_tasks::abort_optional(cron_task).await;
 
-    // Abort the EL-01 doctor cron loop. Same drain-before-writer-close
-    // discipline as the regular cron scheduler.
-    crate::cli::serve_tasks::abort_optional(doctor_cron_task).await;
+    // ZF-06: doctor_cron_task, resource_watch_handle, monitor_cron_handle,
+    // babel_cron_handle, watchdog_cron_handle — all fleet-managed; drained
+    // above via cron_fleet (WAL-emitting keys first, then rest).
 
-    // Abort the SL-03 resource-watch cron loop (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(resource_watch_handle).await;
-
-    // Abort the HO-07 monitor alerting cron loop (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(monitor_cron_handle).await;
-    // Abort the GOLD-DELTA-04 Babel observer cron (SQLite-only, no WAL drain).
-    crate::cli::serve_tasks::abort_optional(babel_cron_handle).await;
-    // Abort the GOLD-FEAT-09 watchdog/auto-recovery cron loop.
-    crate::cli::serve_tasks::abort_optional(watchdog_cron_handle).await;
     // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
     // frames (only SQLite reads + an atomic snapshot rename), so its ordering vs
     // the writer drain is irrelevant — but abort it cleanly like the others.
@@ -4835,71 +4815,27 @@ pub(crate) async fn shutdown_background_tasks(
     // claims + re-enqueues are no-ops.
     crate::cli::serve_tasks::abort_join(g02_surfacing_cron_handle).await;
 
-    // Abort the HO-09b drift-alert cron. Same drain-before-writer-close
-    // discipline as the doctor cron: abort + await BEFORE the WAL writer
-    // is dropped so an in-flight 0xBA frame isn't lost.
-    crate::cli::serve_tasks::abort_optional(drift_alert_cron_handle).await;
-    // Abort the GOLD-ADAPT-JV-PRO-02 token-anomaly cron (same drain-before-close
-    // discipline: abort + await BEFORE the WAL writer drops so an in-flight 0x6E
-    // frame isn't lost).
-    crate::cli::serve_tasks::abort_optional(token_anomaly_cron_handle).await;
-    // GOLD-ADAPT-VIEW-05 — abort the session-health cron (same drain-before-close
-    // order so an in-flight 0x6F frame isn't lost).
-    crate::cli::serve_tasks::abort_optional(session_health_cron_handle).await;
-    // GOLD-ADAPT-ODY-21 — abort the webhook-manager cron (same drain-before-close
-    // order so in-flight 0x08/0x09/0x0A audit frames aren't lost).
-    crate::cli::serve_tasks::abort_optional(webhook_manager_handle).await;
-    // Abort the ADV-14 regression-anchor cron (same drain-before-close order
-    // so an in-flight 0x3F frame isn't lost).
+    // ZF-06: drift_alert_cron_handle (0xBA), token_anomaly_cron_handle (0x6E),
+    // session_health_cron_handle (0x6F), webhook_manager_handle (0x08/09/0A),
+    // recall_latency_cron_handle, profile_adapt_cron_handle, ecology_cron_handle,
+    // pattern_cron_handle, bg_monitor_handle, contradiction_resolve_cron_handle,
+    // guidance_cron_handle, skill_curator_cron_handle, synthesis_cron_handle,
+    // consolidation_sweep_handle, self_wiki_handle, self_improvement_collector_handle
+    // — all fleet-managed; drained above via cron_fleet (WAL-emitting keys first).
+
+    // Abort the ADV-14 regression-anchor cron (deferred from fleet; async + provider dep).
+    // drain-before-close order so an in-flight 0x3F frame isn't lost.
     crate::cli::serve_tasks::abort_optional(regression_cron_handle).await;
-    // Abort the MONITOR-03 recall-latency cron (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(recall_latency_cron_handle).await;
-    crate::cli::serve_tasks::abort_optional(profile_adapt_cron_handle).await;
-    // Abort the F4-01 ecology auto-scheduler (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(ecology_cron_handle).await;
-    crate::cli::serve_tasks::abort_optional(pattern_cron_handle).await;
-    // Abort the GOLD-ADAPT-ODY-07 background-job monitor. WAL-free task — safe
-    // to cancel at any point; in-flight scan_once calls are idempotent.
-    crate::cli::serve_tasks::abort_optional(bg_monitor_handle).await;
-    // NN-MEM-06 — abort the contradiction auto-resolve cron. WAL-free;
-    // mid-tick abort leaves any in-progress SQLite batch rolled back
-    // automatically on connection close — safe to cancel at any point.
-    crate::cli::serve_tasks::abort_optional(contradiction_resolve_cron_handle).await;
-    // GOLD-ADAPT-JV-MEM-16 — abort the guidance-block snapshot refresh cron.
-    // WAL-free (writes only a JSON snapshot file); safe to abort at any point.
-    crate::cli::serve_tasks::abort_optional(guidance_cron_handle).await;
-    // GOLD-FEAT-11 — abort the LLM check-in cron. No WAL writes; provider
-    // call is best-effort; mid-tick abort is safe.
+    // GOLD-FEAT-11 — abort the LLM check-in cron. Deferred from fleet (async spawn).
+    // No WAL writes; provider call is best-effort; mid-tick abort is safe.
     crate::cli::serve_tasks::abort_optional(checkin_cron_handle).await;
-    // GOLD-ADAPT-ODY-26 — abort the session-sort cron. Card writes are
-    // atomic per file; mid-tick abort is safe (re-run is idempotent).
+    // GOLD-ADAPT-ODY-26 — abort the session-sort cron. Deferred from fleet (async spawn).
+    // Card writes are atomic per file; mid-tick abort is safe (re-run is idempotent).
     crate::cli::serve_tasks::abort_optional(session_sort_cron_handle).await;
-    // GOLD-ADAPT-JV-PAPERLESS-01 — abort the email-ingest cron. Quarantine
-    // writes are per-file atomic; a mid-tick abort re-fetches unseen mail
-    // next boot (IMAP unseen flag is the cursor).
+    // GOLD-ADAPT-JV-PAPERLESS-01 — abort the email-ingest cron. Deferred from fleet
+    // (inline spawn logic). Quarantine writes are per-file atomic; a mid-tick abort
+    // re-fetches unseen mail next boot (IMAP unseen flag is the cursor).
     crate::cli::serve_tasks::abort_optional(email_ingest_cron_handle).await;
-    // GOLD-FEAT-11 — abort the skill-curator cron. Writes only skill YAML via
-    // atomic_write; mid-tick abort is safe (partial writes become dead tmp files).
-    crate::cli::serve_tasks::abort_optional(skill_curator_cron_handle).await;
-    // NN-MEM-02 — abort the synthesis pattern-recognition cron. WAL-free;
-    // mid-tick abort is safe — the groundtruth insert is transactional, and
-    // the vault write uses atomic tmp→rename so a partial write is never seen.
-    crate::cli::serve_tasks::abort_optional(synthesis_cron_handle).await;
-    // JV-SELF-02 — abort the AMEM4Rec consolidation-sweep cron. Mid-tick
-    // abort is safe: the SQLite work runs in spawn_blocking (transaction
-    // is rolled back on connection close) and the two WAL frames are
-    // independent appends. At worst one audit frame is lost — the next
-    // boot's tick re-establishes correct state.
-    crate::cli::serve_tasks::abort_optional(consolidation_sweep_handle).await;
-    // GOLD-FEAT-03b — abort the self-wiki rebuild cron. Mid-tick abort is
-    // safe: page writes are whole-file fs::write (worst case one stale
-    // page, overwritten next tick) and the ground-truth ingest is an
-    // idempotent revoke-then-insert.
-    crate::cli::serve_tasks::abort_optional(self_wiki_handle).await;
-    // GOLD-ADAPT-JV-SELF-03 — abort the self-improvement collector cron.
-    // Mid-tick abort is safe: the SQLite work runs in spawn_blocking and
-    // the sidecar write is atomic (tmp→rename); at worst one scan is lost.
-    crate::cli::serve_tasks::abort_optional(self_improvement_collector_handle).await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;
@@ -4970,24 +4906,11 @@ pub(crate) async fn shutdown_background_tasks(
         let _ = task.await;
     }
 
-    // Abort the Obsidian auto-sync task. Pure file IO — aborting mid-copy
-    // is safe; the next start runs a fresh full sync from `wal_cursor=0`.
-    crate::cli::serve_tasks::abort_optional(obsidian_task).await;
-
-    // GOLD-ADAPT-JV-IMP-05: abort the vault reader+writer cron. WAL-free;
-    // mid-tick abort at worst leaves the SHA-256 state map un-persisted for
-    // one pass — the next boot re-reads any changed files and re-imports them.
-    crate::cli::serve_tasks::abort_optional(obsidian_vault_reader_task).await;
-
-    // OH-14: abort the wiki-rebuild cron BEFORE drop(writer) — it emits
-    // 0xFA WAL frames; mid-tick abort at worst drops one rebuild-complete
-    // frame (the next boot re-runs the rebuild on its first tick).
-    crate::cli::serve_tasks::abort_optional(obsidian_wiki_rebuild_task).await;
-
-    // GOLD-ADAPT-GRAPH-05: abort the self-map cron BEFORE drop(writer) — it
-    // emits 0xFB SELF_MAP_COMPLETE frames; mid-tick abort at worst drops one
-    // frame (the next boot re-runs the graphify update on its first tick).
-    crate::cli::serve_tasks::abort_optional(self_map_task).await;
+    // ZF-06: obsidian_task (ObsidianSync), obsidian_vault_reader_task
+    // (ObsidianVaultReader), obsidian_wiki_rebuild_task (ObsidianWikiRebuild),
+    // self_map_task (SelfMap) — all fleet-managed; ObsidianWikiRebuild and
+    // SelfMap are in WAL_EMITTING_CRON_KEYS and were drained above via the
+    // fleet WAL-first pass before drop(writer).
 
     // Same drill for the cloud auto-mirror task. The cloud client
     // upstream gets the final delta on its own schedule once the
@@ -5929,6 +5852,59 @@ mod tests {
         assert!(
             !super::relay_latest_feed_to_sse(&exec, &sse_tx).await,
             "empty kanban table → relay sends nothing"
+        );
+    }
+
+    /// ZF-06: Assert that WAL_EMITTING_CRON_KEYS contains exactly the fleet-managed
+    /// crons that emit WAL frames. If you add a new WAL-emitting cron to the fleet,
+    /// update the const AND extend this expected set — the test will catch the gap.
+    #[test]
+    fn wal_emitting_cron_keys_complete() {
+        use std::collections::HashSet;
+
+        // Hardcoded expected set. Keep in sync with the const in
+        // shutdown_background_tasks and the audit-trail comment there.
+        let expected: HashSet<CronKey> = [
+            CronKey::ObsidianWikiRebuild,
+            CronKey::SelfMap,
+            CronKey::ConsolidationSweep,
+            CronKey::MonitorCron,
+            CronKey::DriftAlert,
+            CronKey::TokenAnomaly,
+            CronKey::SessionHealth,
+            CronKey::WebhookManager,
+            CronKey::SelfImprovementCollector,
+        ]
+        .into_iter()
+        .collect();
+
+        // Re-declare the const here so the test is self-contained and will
+        // fail to compile if a CronKey variant is renamed or removed.
+        const ACTUAL: &[CronKey] = &[
+            CronKey::ObsidianWikiRebuild,
+            CronKey::SelfMap,
+            CronKey::ConsolidationSweep,
+            CronKey::MonitorCron,
+            CronKey::DriftAlert,
+            CronKey::TokenAnomaly,
+            CronKey::SessionHealth,
+            CronKey::WebhookManager,
+            CronKey::SelfImprovementCollector,
+        ];
+
+        let actual: HashSet<CronKey> = ACTUAL.iter().copied().collect();
+
+        assert_eq!(
+            actual, expected,
+            "WAL_EMITTING_CRON_KEYS does not match the expected set — \
+             add new WAL-emitting fleet crons to both the const and this test"
+        );
+
+        // No duplicates.
+        assert_eq!(
+            ACTUAL.len(),
+            actual.len(),
+            "WAL_EMITTING_CRON_KEYS contains duplicate entries"
         );
     }
 }

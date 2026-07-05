@@ -35,6 +35,42 @@ use rusqlite::Connection;
 use serde::Deserialize;
 use tracing::{debug, trace, warn};
 
+// ── Importance scale bounds ───────────────────────────────────────────────────
+//
+// The local importance column uses the range [0.0, 1.0]:
+//   FORGET_FLOOR = 0.10  (rows below this are dropped at consolidation)
+//   PROMOTION_THRESHOLD = 0.65  (warm → cold promotion)
+//   maximum = 1.0  (fully reinforced / pinned)
+//
+// Peer-supplied importance values MUST be clamped into this range before
+// reaching the SQL MAX(). A non-finite or out-of-range value from a
+// compromised peer must not corrupt the local importance column.
+const IMPORTANCE_MAX: f64 = 1.0;
+const IMPORTANCE_MIN: f64 = 0.0;
+
+// ── Decay floor ───────────────────────────────────────────────────────────────
+//
+// A single peer signal must not zero-out a locally-held episode. Applying the
+// same floor as the consolidation pass (FORGET_FLOOR = 0.10) matches the
+// minimum importance a row can hold before the daemon's own consolidation
+// sweep would drop it. This prevents a flood of 0x92 events from driving
+// importance to zero before the local sweep acts.
+//
+// Note: full per-peer dedup (one decay per event_id per N hours) is out of
+// scope for v1.0. The UNIQUE (origin_peer_pk, origin_seq) constraint on
+// idx_foreign_events already blocks a single peer from replaying the exact
+// same frame; a peer with multiple origin_seq values can still trigger
+// multiple decays, but each is floored at DECAY_FLOOR.
+const DECAY_FLOOR: f64 = 0.10;
+
+// ── Timestamp validation bounds ───────────────────────────────────────────────
+//
+// `revoked_at` stores Unix-nanoseconds (i64) — matching the `now_ns: i64`
+// parameter of `memory::groundtruth::revoke`. Allowed range:
+//   lower bound: 1 ns  (strictly positive; 0 and negatives are invalid)
+//   upper bound: now + 1 day in nanoseconds
+const ONE_DAY_NS: i64 = 86_400 * 1_000_000_000_i64;
+
 // ── WAL event type constants (Replicate band — wal_sync.rs:95-101) ──────────
 
 /// Peer episode transitioned to consolidated tier (importance boost applicable).
@@ -221,13 +257,28 @@ fn handle_episode_boost(conn: &Connection, row: &PendingRow) -> Result<()> {
         }
     };
 
+    // Security: reject non-finite peer-supplied importance values (NaN, ±Inf)
+    // and clamp finite values into the local importance scale [0.0, 1.0].
+    // A compromised peer sending 1e300 or NaN must not corrupt local recall
+    // scoring or trigger spurious PROMOTION_THRESHOLD crossings.
+    if !payload.importance.is_finite() {
+        trace!(
+            foreign_event_id = row.id,
+            episode_event_id = payload.event_id,
+            peer_importance = payload.importance,
+            "foreign_indexer: non-finite importance — skipping boost"
+        );
+        return Ok(());
+    }
+    let importance = payload.importance.clamp(IMPORTANCE_MIN, IMPORTANCE_MAX);
+
     // Guard: only update if the episode exists locally.
     conn.execute(
         "UPDATE idx_episode \
          SET importance = MAX(importance, ?1) \
          WHERE event_id = ?2 \
          AND EXISTS (SELECT 1 FROM idx_episode WHERE event_id = ?2)",
-        rusqlite::params![payload.importance, payload.event_id],
+        rusqlite::params![importance, payload.event_id],
     )
     .context("foreign_indexer: episode importance boost")?;
 
@@ -235,6 +286,7 @@ fn handle_episode_boost(conn: &Connection, row: &PendingRow) -> Result<()> {
         foreign_event_id = row.id,
         episode_event_id = payload.event_id,
         peer_importance = payload.importance,
+        clamped_importance = importance,
         "foreign_indexer: episode importance boost applied (no-op if not held locally)"
     );
     Ok(())
@@ -255,17 +307,23 @@ fn handle_episode_decay(conn: &Connection, row: &PendingRow) -> Result<()> {
         }
     };
 
+    // Apply ×0.5 decay but floor at DECAY_FLOOR (0.10) so repeated 0x92
+    // events from a peer (each with a distinct origin_seq) cannot drive
+    // importance to zero before the local consolidation sweep acts.
+    // Using MAX(importance * 0.5, DECAY_FLOOR) ensures the row stays above
+    // the forget threshold until the daemon's own pass decides to drop it.
     conn.execute(
         "UPDATE idx_episode \
-         SET importance = importance * 0.5 \
-         WHERE event_id = ?1",
-        rusqlite::params![payload.event_id],
+         SET importance = MAX(importance * 0.5, ?1) \
+         WHERE event_id = ?2",
+        rusqlite::params![DECAY_FLOOR, payload.event_id],
     )
     .context("foreign_indexer: episode soft decay")?;
 
     trace!(
         foreign_event_id = row.id,
         episode_event_id = payload.event_id,
+        decay_floor = DECAY_FLOOR,
         "foreign_indexer: episode soft decay applied (no-op if not held locally)"
     );
     Ok(())
@@ -285,6 +343,28 @@ fn handle_groundtruth_revoke(conn: &Connection, row: &PendingRow) -> Result<()> 
             return Ok(());
         }
     };
+
+    // Security: validate the peer-supplied `ts` before writing it as
+    // `revoked_at`. The column stores Unix-nanoseconds (i64), matching the
+    // `memory::groundtruth::revoke(now_ns: i64)` API.
+    //
+    // Reject:
+    //  • ts <= 0  — zero or negative is not a valid nanosecond epoch
+    //  • ts > now + 1 day  — far-future values would make the revocation
+    //    appear to "never expire" in any consumer doing `WHERE revoked_at < now`
+    //
+    // On rejection mark the row processed (to unblock the queue) and skip.
+    let now_ns = crate::time::now_unix_ns() as i64;
+    if payload.ts <= 0 || payload.ts > now_ns + ONE_DAY_NS {
+        warn!(
+            foreign_event_id = row.id,
+            groundtruth_id = payload.id,
+            peer_ts = payload.ts,
+            now_ns,
+            "foreign_indexer: 0x98 ts out of range — skipping revoke"
+        );
+        return Ok(());
+    }
 
     // Guard: only revoke if the id is locally held AND not yet revoked.
     conn.execute(
@@ -595,6 +675,198 @@ mod tests {
             )
             .unwrap();
         assert_eq!(processed, 1);
+    }
+
+    // ── Security guard tests ─────────────────────────────────────────────
+
+    /// Finding: importance value far above 1.0 is clamped, not passed raw.
+    ///
+    /// Note: JSON cannot represent IEEE Inf/NaN literals so we cannot test
+    /// non-finite values through the serde_json path. The `is_finite()` guard
+    /// in `handle_episode_boost` exists for callers that construct an
+    /// `EpisodeEventPayload` directly (e.g. future binary encodings). Here we
+    /// verify that a very large finite float (100.0) is clamped to 1.0.
+    #[test]
+    fn boost_large_importance_is_clamped_to_max() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (10, 0.4)",
+            [],
+        )
+        .unwrap();
+
+        // Peer sends importance = 100.0 — must be clamped to 1.0.
+        let payload =
+            serde_json::json!({"event_id": 10, "importance": 100.0, "ts": 1000}).to_string();
+        insert_foreign_event(&conn, EVENT_EPISODE_CONSOLIDATED, payload.as_bytes());
+        let count = process_pending(&conn).unwrap();
+        assert_eq!(count, 1);
+        let importance: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 10",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            (importance - 1.0).abs() < 1e-9,
+            "importance 100.0 must be clamped to 1.0, got {importance}"
+        );
+    }
+
+    /// Finding: importance above 1.0 is clamped to 1.0 before the SQL MAX.
+    #[test]
+    fn boost_importance_clamped_to_importance_max() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (20, 0.5)",
+            [],
+        )
+        .unwrap();
+        // Peer sends importance = 999.0 — must be clamped to 1.0.
+        let payload =
+            serde_json::json!({"event_id": 20, "importance": 999.0, "ts": 1000}).to_string();
+        insert_foreign_event(&conn, EVENT_EPISODE_CONSOLIDATED, payload.as_bytes());
+        process_pending(&conn).unwrap();
+        let importance: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 20",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            (importance - 1.0).abs() < 1e-9,
+            "peer importance 999.0 must clamp to 1.0, got {importance}"
+        );
+    }
+
+    /// Finding: repeated 0x92 decay events cannot drive importance below DECAY_FLOOR.
+    #[test]
+    fn decay_floors_at_decay_floor_after_repeated_events() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (30, 0.5)",
+            [],
+        )
+        .unwrap();
+
+        // Insert 10 distinct 0x92 events for the same episode. Each halves
+        // importance; without a floor 0.5 × 0.5^10 ≈ 0.00049 < DECAY_FLOOR.
+        for _ in 0..10 {
+            let payload =
+                serde_json::json!({"event_id": 30, "importance": 0.5, "ts": 1000}).to_string();
+            insert_foreign_event(&conn, EVENT_EPISODE_ARCHIVED, payload.as_bytes());
+        }
+
+        let count = process_pending(&conn).unwrap();
+        assert_eq!(count, 10);
+
+        let importance: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 30",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            importance >= DECAY_FLOOR - 1e-9,
+            "importance {importance} must not drop below DECAY_FLOOR {DECAY_FLOOR}"
+        );
+    }
+
+    /// Finding: 0x98 with ts <= 0 is skipped (row marked processed, no DB write).
+    #[test]
+    fn revoke_ts_zero_or_negative_is_skipped() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, revoked_at) VALUES (42, NULL)",
+            [],
+        )
+        .unwrap();
+
+        for bad_ts in &[0_i64, -1, i64::MIN] {
+            let payload =
+                serde_json::json!({"id": 42, "ts": *bad_ts}).to_string();
+            insert_foreign_event(&conn, EVENT_GROUNDTRUTH_REVOKED, payload.as_bytes());
+        }
+
+        let count = process_pending(&conn).unwrap();
+        assert_eq!(count, 3, "all three rows must be marked processed");
+
+        // The groundtruth row must NOT have been revoked.
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM idx_groundtruth WHERE id = 42",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            revoked_at.is_none(),
+            "bad-ts revoke must not write revoked_at, got {revoked_at:?}"
+        );
+    }
+
+    /// Finding: 0x98 with ts > now + 1 day is skipped.
+    #[test]
+    fn revoke_far_future_ts_is_skipped() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, revoked_at) VALUES (43, NULL)",
+            [],
+        )
+        .unwrap();
+
+        // i64::MAX is astronomically in the future.
+        let payload = serde_json::json!({"id": 43, "ts": i64::MAX}).to_string();
+        insert_foreign_event(&conn, EVENT_GROUNDTRUTH_REVOKED, payload.as_bytes());
+
+        let count = process_pending(&conn).unwrap();
+        assert_eq!(count, 1);
+
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM idx_groundtruth WHERE id = 43",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            revoked_at.is_none(),
+            "far-future ts must not write revoked_at, got {revoked_at:?}"
+        );
+    }
+
+    /// Sanity: a valid ts in the plausible past is accepted.
+    #[test]
+    fn revoke_valid_ts_is_accepted() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, revoked_at) VALUES (44, NULL)",
+            [],
+        )
+        .unwrap();
+
+        // A plausible Unix-nanosecond timestamp: 2024-01-01T00:00:00Z
+        let valid_ts: i64 = 1_704_067_200_000_000_000_i64;
+        let payload = serde_json::json!({"id": 44, "ts": valid_ts}).to_string();
+        insert_foreign_event(&conn, EVENT_GROUNDTRUTH_REVOKED, payload.as_bytes());
+
+        process_pending(&conn).unwrap();
+
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM idx_groundtruth WHERE id = 44",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            revoked_at,
+            Some(valid_ts),
+            "valid ts must be accepted and written"
+        );
     }
 
     #[test]

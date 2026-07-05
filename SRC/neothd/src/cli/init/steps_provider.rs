@@ -8,7 +8,7 @@ use tracing::debug;
 // telemetry-guard lint (Phase 33c BS-6) keeps the daemon's `cli/` tree
 // clean of any HTTP-client construction. Loopback-only probes still
 // belong in `providers/` architecturally — the wizard is just one caller.
-use crate::providers::local_probe::probe_local_bridge_sync;
+use crate::providers::local_probe::{is_local_endpoint, probe_local_bridge_sync};
 
 #[cfg(feature = "wizard")]
 use super::npm_path_hint;
@@ -289,6 +289,10 @@ pub(crate) async fn step5_provider(
             // ZF-03 — live key verify (interactive only; CI / non-interactive skip).
             if interactive {
                 if let Some(ref current_key) = state.provider_key {
+                    // Use the shared `is_local_endpoint` helper so IPv6 loopback
+                    // ([::1] / ::1) and 0.0.0.0 are treated identically to
+                    // localhost / 127.0.0.1 — matching the guard inside
+                    // `ping_cloud_key` itself.
                     let verifiable = matches!(
                         kind,
                         ProviderKind::AnthropicApi
@@ -298,7 +302,7 @@ pub(crate) async fn step5_provider(
                         && state
                             .provider_endpoint
                             .as_deref()
-                            .map(|e| !e.contains("localhost") && !e.contains("127.0.0.1"))
+                            .map(|e| !is_local_endpoint(e))
                             .unwrap_or(false));
 
                     if verifiable {

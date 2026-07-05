@@ -20,6 +20,28 @@ const CANDIDATES: &[&str] = &[
     "http://localhost:31338/v1", // legacy claude-bridge port
 ];
 
+/// Return `true` when `endpoint` refers to a loopback / unspecified address
+/// that should never be subjected to cloud-key verification.
+///
+/// Recognised local forms:
+/// - `localhost`        — DNS name for IPv4 loopback
+/// - `127.0.0.1`        — IPv4 loopback
+/// - `::1`              — IPv6 loopback (bare, e.g. inside a URL authority)
+/// - `[::1]`            — IPv6 loopback (bracket-quoted in a URL like `http://[::1]:8080/v1`)
+/// - `0.0.0.0`          — unspecified / wildcard address (binds all interfaces;
+///                        a server at this address is always local to the machine)
+///
+/// Shared between `ping_cloud_key` and `steps_provider.rs` so the two call
+/// sites cannot drift. The check is a substring scan rather than a URL parse
+/// to avoid adding a dependency and to handle edge cases (missing scheme,
+/// trailing slash variations) consistently.
+pub fn is_local_endpoint(endpoint: &str) -> bool {
+    endpoint.contains("localhost")
+        || endpoint.contains("127.0.0.1")
+        || endpoint.contains("::1")      // matches both `[::1]` and bare `::1`
+        || endpoint.contains("0.0.0.0")
+}
+
 /// ZF-03 — fire a cheap one-shot call to verify an API key is accepted.
 ///
 /// Returns `Ok(())` on success, `Err(msg)` on authentication failure or a
@@ -55,11 +77,12 @@ pub async fn ping_cloud_key(
         }
         ProviderKind::GeminiApi => ping_gemini_models(&client, api_key).await,
         ProviderKind::OpenaiCompat => {
-            // Only verify non-localhost OpenaiCompat endpoints; local servers
-            // often run without a key or return 401 for all requests.
-            let is_local = endpoint_override
-                .is_none_or(|e| e.contains("localhost") || e.contains("127.0.0.1"));
-            if is_local {
+            // Only verify non-local OpenaiCompat endpoints; local servers often
+            // run without a key or return 401 for all requests. Uses the shared
+            // `is_local_endpoint` helper so IPv6 loopback ([::1] / ::1) and
+            // 0.0.0.0 are treated identically to localhost / 127.0.0.1.
+            let local = endpoint_override.is_none_or(is_local_endpoint);
+            if local {
                 Ok(())
             } else if let Some(base) = endpoint_override {
                 ping_openai_models(&client, api_key, base).await
@@ -78,6 +101,13 @@ async fn ping_anthropic(
     client: &reqwest::Client,
     key: &SecretString,
 ) -> Result<(), String> {
+    // Disclose cost before sending. The caller already printed "Verifying key…"
+    // so this is an inline clarification, not a repeated prompt.
+    // A real 1-token Messages call costs roughly $0.00001 on Haiku; the
+    // disclosure lets operators with strict audit logging know why a singleton
+    // `claude-haiku-4-5-20251001` call appears in their billing dashboard.
+    println!("  (verifying key with a ~1-token test call — billed at Haiku rates, < $0.0001)");
+
     // Cheapest valid Messages call: 1 output token, tiny prompt. Haiku is used
     // over flagship to minimise cost (verified in all test runs: billed < 1 cent).
     // The body mirrors AnthropicAdapter::complete (anthropic_api.rs).
@@ -220,6 +250,57 @@ mod tests {
         assert!(r.is_ok(), "Skip must return Ok: {r:?}");
     }
 
+    // ── is_local_endpoint unit tests ─────────────────────────────────────
+
+    /// Finding: "[::1] IPv6 localhost not recognized"
+    /// Verify the shared helper treats all local-address forms as local.
+    #[test]
+    fn is_local_endpoint_recognises_localhost() {
+        assert!(is_local_endpoint("http://localhost:1234/v1"));
+        assert!(is_local_endpoint("http://localhost/v1"));
+        assert!(is_local_endpoint("localhost:1234"));
+    }
+
+    #[test]
+    fn is_local_endpoint_recognises_ipv4_loopback() {
+        assert!(is_local_endpoint("http://127.0.0.1:8080/v1"));
+        assert!(is_local_endpoint("127.0.0.1:11434"));
+    }
+
+    #[test]
+    fn is_local_endpoint_recognises_ipv6_loopback_bracketed() {
+        // URL syntax: http://[::1]:port/path
+        assert!(
+            is_local_endpoint("http://[::1]:8080/v1"),
+            "[::1] must be treated as local"
+        );
+    }
+
+    #[test]
+    fn is_local_endpoint_recognises_ipv6_loopback_bare() {
+        // Bare ::1 without brackets (non-standard but operators may type it)
+        assert!(
+            is_local_endpoint("::1"),
+            "bare ::1 must be treated as local"
+        );
+    }
+
+    #[test]
+    fn is_local_endpoint_recognises_unspecified_address() {
+        assert!(is_local_endpoint("http://0.0.0.0:8080/v1"));
+    }
+
+    #[test]
+    fn is_local_endpoint_rejects_remote_address() {
+        assert!(!is_local_endpoint("https://api.openai.com/v1"));
+        assert!(!is_local_endpoint("https://api.anthropic.com/v1"));
+        assert!(!is_local_endpoint("https://openrouter.ai/api/v1"));
+        assert!(!is_local_endpoint("http://192.168.1.100:1234/v1"));
+        assert!(!is_local_endpoint("http://10.0.0.5:8080/v1"));
+    }
+
+    // ── ping_cloud_key routing tests ──────────────────────────────────────
+
     #[tokio::test]
     async fn ping_openai_compat_localhost_is_noop() {
         // Localhost compat endpoints must NOT be verified (operator controls them;
@@ -244,6 +325,45 @@ mod tests {
         )
         .await;
         assert!(r.is_ok(), "127.0.0.1 compat must skip verify: {r:?}");
+    }
+
+    /// Finding: IPv6 [::1] must be treated as local — no key verify call.
+    #[tokio::test]
+    async fn ping_openai_compat_ipv6_bracketed_is_noop() {
+        let key = fake_key("irrelevant");
+        let r = ping_cloud_key(
+            ProviderKind::OpenaiCompat,
+            &key,
+            Some("http://[::1]:1234/v1"),
+        )
+        .await;
+        assert!(r.is_ok(), "http://[::1]:1234/v1 must skip verify: {r:?}");
+    }
+
+    /// Finding: bare ::1 must also be treated as local.
+    #[tokio::test]
+    async fn ping_openai_compat_ipv6_bare_is_noop() {
+        let key = fake_key("irrelevant");
+        let r = ping_cloud_key(
+            ProviderKind::OpenaiCompat,
+            &key,
+            Some("http://::1:1234/v1"),
+        )
+        .await;
+        assert!(r.is_ok(), "http://::1:1234/v1 must skip verify: {r:?}");
+    }
+
+    /// Finding: 0.0.0.0 must be treated as local.
+    #[tokio::test]
+    async fn ping_openai_compat_unspecified_is_noop() {
+        let key = fake_key("irrelevant");
+        let r = ping_cloud_key(
+            ProviderKind::OpenaiCompat,
+            &key,
+            Some("http://0.0.0.0:8080/v1"),
+        )
+        .await;
+        assert!(r.is_ok(), "0.0.0.0 compat must skip verify: {r:?}");
     }
 
     #[tokio::test]
