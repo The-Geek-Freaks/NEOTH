@@ -45,6 +45,33 @@ pub const MAX_FUEL_BUDGET: u64 = 10_000_000;
 /// manifest can't claim a gigabyte and DoS the daemon.
 pub const MAX_MEMORY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
+/// Maximum allowed `ui_surface.title` length in bytes (UTF-8). Keeps the
+/// GUI tab label sane and prevents the plugin directory (attacker-controlled)
+/// from injecting arbitrarily long strings into the GUI.
+pub const MAX_UI_SURFACE_TITLE_LEN: usize = 80;
+
+/// DES-12 — the GUI surface a plugin may declare. Only `WalFeed` is accepted;
+/// any other `kind` fails TOML parse via the `#[serde(tag = "kind")]`
+/// exhaustive enum (no unknown-variant passthrough), which is the safe
+/// default: a plugin cannot gain a new surface type by naming an unknown kind.
+///
+/// # Security posture
+/// - `kind = "wal_feed"` is read-only: the GUI only polls existing WAL frames
+///   written by the daemon's own hostcall path. The plugin cannot push
+///   arbitrary HTML, execute commands, or read files via this surface.
+/// - `title` is bounded at [`MAX_UI_SURFACE_TITLE_LEN`] bytes and must be
+///   valid UTF-8 (TOML guarantees this). The GUI is responsible for HTML-
+///   escaping the title for display; this layer caps the length only.
+/// - Old manifests that omit `[ui_surface]` parse fine as `None` via the
+///   `#[serde(default)]` on [`PluginManifest::ui_surface`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PluginUiSurface {
+    /// Render a live feed of the plugin's WAL events (0xC4 frames) in a
+    /// GUI tab. `title` is the tab label shown to the operator.
+    WalFeed { title: String },
+}
+
 /// Permission level a plugin requested at load time.
 /// Mirrors `neoth_plugin_sdk::permission::PermissionLevel` variants
 /// but lives here as a serde-friendly enum so the manifest parses
@@ -148,6 +175,13 @@ pub struct PluginManifest {
     /// auto-update probes (operator manually pulls + replaces).
     #[serde(default)]
     pub source: Option<String>,
+    /// DES-12 — optional GUI surface declaration. When `Some`, the GUI
+    /// renders an extra tab for this plugin. Old manifests that omit this
+    /// key parse as `None` (backward-compatible). Only `WalFeed` is
+    /// accepted — a manifest with any other `kind` fails to parse, which
+    /// is the safe default (no unknown surface types silently accepted).
+    #[serde(default)]
+    pub ui_surface: Option<PluginUiSurface>,
 }
 
 /// Errors that block a manifest from loading. Operator sees these in
@@ -162,6 +196,11 @@ pub enum ManifestError {
     FuelBudgetTooHigh { got: u64 },
     #[error("memory_limit_bytes {got} exceeds MAX_MEMORY_LIMIT_BYTES ({MAX_MEMORY_LIMIT_BYTES})")]
     MemoryLimitTooHigh { got: usize },
+    #[error(
+        "ui_surface.title length {got} bytes exceeds MAX_UI_SURFACE_TITLE_LEN \
+         ({MAX_UI_SURFACE_TITLE_LEN})"
+    )]
+    UiSurfaceTitleTooLong { got: usize },
     #[error("TOML parse error: {0}")]
     Parse(String),
 }
@@ -199,6 +238,13 @@ pub fn validate_manifest(m: &PluginManifest) -> Result<(), ManifestError> {
     if let Some(mem) = m.memory_limit_bytes {
         if mem > MAX_MEMORY_LIMIT_BYTES {
             return Err(ManifestError::MemoryLimitTooHigh { got: mem });
+        }
+    }
+    // DES-12: cap ui_surface title so an attacker-controlled manifest
+    // directory cannot inject an arbitrarily long string into the GUI.
+    if let Some(PluginUiSurface::WalFeed { title }) = &m.ui_surface {
+        if title.len() > MAX_UI_SURFACE_TITLE_LEN {
+            return Err(ManifestError::UiSurfaceTitleTooLong { got: title.len() });
         }
     }
     Ok(())
@@ -245,6 +291,7 @@ mod tests {
             fuel_budget_override: None,
             memory_limit_bytes: None,
             source: None,
+            ui_surface: None,
         }
     }
 
@@ -405,4 +452,74 @@ mod tests {
 
     // GOLD-COR-27 / GR-035 — the to_hook_stage bridge + its test were removed
     // (dead code; plugin hook_stages are advisory metadata, not auto-registered).
+
+    // ── DES-12: PluginUiSurface ──────────────────────────────────────────────
+
+    #[test]
+    fn ui_surface_wal_feed_parses_and_round_trips() {
+        // A manifest with [ui_surface] kind = "wal_feed" must parse and
+        // validate cleanly; the title must survive a TOML round-trip.
+        let toml = br#"
+            id = "live_feed"
+            name = "Live Feed"
+            version = "0.1.0"
+            [ui_surface]
+            kind = "wal_feed"
+            title = "My Plugin Events"
+        "#;
+        let m = parse_manifest(toml).expect("wal_feed ui_surface must parse");
+        assert!(
+            matches!(&m.ui_surface, Some(PluginUiSurface::WalFeed { title }) if title == "My Plugin Events")
+        );
+        // Validate must accept it.
+        validate_manifest(&m).expect("valid wal_feed ui_surface");
+    }
+
+    #[test]
+    fn ui_surface_unknown_kind_rejected_by_parse() {
+        // A manifest with an unknown kind (e.g. "exec") must fail to parse
+        // because the serde tag enum is exhaustive — no unknown variant
+        // passthrough. This is the primary security gate for DES-12.
+        let toml = br#"
+            id = "bad_plugin"
+            name = "Bad"
+            version = "0.1.0"
+            [ui_surface]
+            kind = "exec"
+            title = "Should not load"
+        "#;
+        let err = parse_manifest(toml).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::Parse(_)),
+            "unknown ui_surface kind must fail as a parse error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn ui_surface_overlong_title_rejected_by_validate() {
+        // A title longer than MAX_UI_SURFACE_TITLE_LEN bytes is rejected
+        // by validate_manifest to prevent large strings entering the GUI.
+        let mut m = good_manifest();
+        m.ui_surface = Some(PluginUiSurface::WalFeed {
+            title: "x".repeat(MAX_UI_SURFACE_TITLE_LEN + 1),
+        });
+        let err = validate_manifest(&m).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::UiSurfaceTitleTooLong { .. }),
+            "overlong title must be rejected, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn ui_surface_none_for_old_manifests() {
+        // Old manifests without [ui_surface] must parse as None — backward
+        // compatible.
+        let toml = br#"
+            id = "indexer_v1"
+            name = "Indexer"
+            version = "0.1.0"
+        "#;
+        let m = parse_manifest(toml).expect("old manifest must parse");
+        assert!(m.ui_surface.is_none(), "no ui_surface key => None");
+    }
 }

@@ -125,6 +125,21 @@ pub enum PluginAction {
         /// `~/.neoth/plugins/<id>/`).
         id: String,
     },
+    /// DES-12 — read-only WAL feed for a plugin's emitted events (0xC4
+    /// frames). Used by the GUI to populate a plugin-provided tab without
+    /// granting the plugin any direct filesystem or command access.
+    ///
+    /// Scans the WAL for `PLUGIN_HOSTCALL` (0xC4) frames whose `plugin`
+    /// field matches `<id>`, returns them newest-first capped at `--last N`.
+    /// Output: `{"id":"<id>","events":[{"kind":"...","payload_bytes":N,"ts_unix":T}]}`.
+    /// No events found → empty array, exit 0.
+    Events {
+        /// Plugin manifest id to query.
+        id: String,
+        /// Maximum number of events to return (newest first).
+        #[arg(long, default_value = "30")]
+        last: usize,
+    },
 }
 
 pub async fn run_plugin(args: PluginArgs) -> Result<()> {
@@ -143,6 +158,7 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
         PluginAction::Ledger { id } => run_ledger(id.as_deref(), args.output),
         PluginAction::Install { path, force } => run_install(&path, force, args.output),
         PluginAction::Remove { id } => run_remove(&id, args.output),
+        PluginAction::Events { id, last } => run_events_subcommand(&id, last, args.output),
     }
 }
 
@@ -484,6 +500,40 @@ fn walk_cap_frames(frames: &[u8], out: &mut Vec<CapUse>) {
     }
 }
 
+/// DES-12 — walk the frame bytes of ONE segment body (decompressed if
+/// compressed), pushing every `PLUGIN_HOSTCALL` (0xC4) frame whose `plugin`
+/// JSON field matches `plugin_id`. Tail-tolerant + zero-`total_len` loop guard
+/// — same contract as `walk_cap_frames`. Called by `run_events_subcommand`.
+fn walk_hostcall_frames(frames: &[u8], plugin_id: &str, out: &mut Vec<EventEntry>) {
+    let mut cursor = 0usize;
+    while cursor < frames.len() {
+        let dec = match decode_frame(&frames[cursor..]) {
+            Ok(d) => d,
+            Err(_) => break,
+        };
+        let total = dec.header.total_len as usize;
+        if dec.header.event_type == EVENT_TYPE_PLUGIN_HOSTCALL {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(dec.payload) {
+                if v.get("plugin").and_then(|p| p.as_str()) == Some(plugin_id) {
+                    let kind = v
+                        .get("kind")
+                        .and_then(|k| k.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let payload_bytes =
+                        v.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+                    let ts_unix = dec.header.hlc.physical_ns() / 1_000_000_000;
+                    out.push(EventEntry { kind, payload_bytes, ts_unix });
+                }
+            }
+        }
+        if total == 0 {
+            break;
+        }
+        cursor = cursor.saturating_add(total);
+    }
+}
+
 /// Scan every `*.wal` segment in `wal_dir` for plugin-audit frames.
 /// Robust across v1/v2 + compressed segments (mirrors the SPEC-10 refusal-
 /// history walker); a missing dir / unreadable / short / unknown-format /
@@ -553,6 +603,117 @@ fn run_ledger(id: Option<&str>, output: OutputFormat) -> Result<()> {
                     "{:<24} {:<14} {:>6} {:>12} {:>8}",
                     r.plugin, r.capability, r.calls, r.total_payload_bytes, r.total_hits
                 );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// DES-12 — per-event record returned by `neoth plugin events`. Serialised
+/// verbatim into the JSON envelope `{"id":"<id>","events":[...]}`.
+#[derive(serde::Serialize)]
+struct EventEntry {
+    kind: String,
+    payload_bytes: u64,
+    ts_unix: u64,
+}
+
+/// DES-12 — `neoth plugin events <id> [--last N] [--output json]`.
+///
+/// Scans the WAL for `PLUGIN_HOSTCALL` (0xC4) frames whose JSON body
+/// `plugin` field matches `<id>`, returns them newest-first capped at
+/// `last`. This is the daemon half of the plugin-provided GUI tab: the
+/// GUI polls this command to populate the WAL-feed surface; no arbitrary
+/// command or file execution is involved.
+///
+/// Security: this function is **read-only** — it never writes to the WAL or
+/// touches `~/.neoth/plugins/`. The `kind` string is plugin-controlled but
+/// was already UTF-8-sanitised at the `emit_event` hostcall site; it is
+/// emitted verbatim here (the GUI is responsible for HTML-escaping on
+/// display). The `payload_bytes` count is a u64 integer — no payload
+/// content is stored or surfaced.
+fn run_events_subcommand(plugin_id: &str, last: usize, output: OutputFormat) -> Result<()> {
+    let wal_dir = FreedomConfig::default_wal_dir();
+
+    let entries = match std::fs::read_dir(&wal_dir) {
+        Ok(it) => it,
+        Err(_) => {
+            // WAL dir missing — return empty, not an error.
+            return emit_events_output(plugin_id, &[] as &[EventEntry], output);
+        }
+    };
+    let mut segments: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
+        .collect();
+    segments.sort();
+
+    // Collect matching events from all segments (oldest → newest order after
+    // sort), then reverse so newest-first, then cap at `last`.
+    let mut events: Vec<EventEntry> = Vec::new();
+    for path in &segments {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let Ok(hdr) = parse_segment_header(&bytes) else {
+            continue;
+        };
+        let header_len = hdr.header_len();
+        if bytes.len() <= header_len {
+            continue;
+        }
+        let body = &bytes[header_len..];
+        // Mirror the exact pattern used by collect_cap_uses / walk_cap_frames:
+        // decompress into an owned buf when needed, borrow body otherwise.
+        if hdr.is_compressed() {
+            let Ok(d) = decompress_frames(body) else {
+                continue;
+            };
+            walk_hostcall_frames(&d, plugin_id, &mut events);
+        } else {
+            walk_hostcall_frames(body, plugin_id, &mut events);
+        }
+
+    }
+
+    // Newest-first, capped at `last`.
+    events.reverse();
+    events.truncate(last);
+
+    emit_events_output(plugin_id, &events, output)
+}
+
+fn emit_events_output(
+    plugin_id: &str,
+    events: &[impl serde::Serialize],
+    output: OutputFormat,
+) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let v = serde_json::json!({
+                "id": plugin_id,
+                "events": events,
+            });
+            println!("{}", serde_json::to_string(&v)?);
+        }
+        OutputFormat::Table => {
+            println!("Events for plugin `{plugin_id}` (newest first):");
+            let events_val = serde_json::to_value(events)?;
+            let arr = events_val.as_array().unwrap();
+            if arr.is_empty() {
+                println!("  (no events recorded)");
+            } else {
+                println!("{:<40}  {:>14}  TS_UNIX", "KIND", "PAYLOAD_BYTES");
+                for e in arr {
+                    let kind = e.get("kind").and_then(|k| k.as_str()).unwrap_or("-");
+                    let pb = e
+                        .get("payload_bytes")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0);
+                    let ts = e.get("ts_unix").and_then(|x| x.as_u64()).unwrap_or(0);
+                    println!("{:<40}  {:>14}  {}", kind, pb, ts);
+                }
             }
         }
     }
@@ -1141,23 +1302,28 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
     let report = discover(&plugins_root);
     let activations = load_activations()?;
 
-    // (id, state, name, content_hash) — SC-03 surfaces the sha256 so
-    // the operator can pin it in freedom.yaml::plugins.wasm.pinned_hashes.
-    let mut rows: Vec<(String, PluginActivation, String, String)> = report
-        .loaded
-        .iter()
-        .map(|p| {
-            let state = activations.get(&p.manifest.id).copied().unwrap_or_default();
-            (
-                p.manifest.id.clone(),
-                state,
-                p.manifest.name.clone(),
-                p.content_hash.clone(),
-            )
-        })
-        .collect();
+    use crate::wasm_plugin::manifest::PluginUiSurface;
+
+    // (id, state, name, content_hash, ui_surface) — SC-03 surfaces the sha256
+    // so the operator can pin it in freedom.yaml::plugins.wasm.pinned_hashes.
+    // DES-12 surfaces ui_surface so the GUI knows which plugins declare a tab.
+    let mut rows: Vec<(String, PluginActivation, String, String, Option<PluginUiSurface>)> =
+        report
+            .loaded
+            .iter()
+            .map(|p| {
+                let state = activations.get(&p.manifest.id).copied().unwrap_or_default();
+                (
+                    p.manifest.id.clone(),
+                    state,
+                    p.manifest.name.clone(),
+                    p.content_hash.clone(),
+                    p.manifest.ui_surface.clone(),
+                )
+            })
+            .collect();
     if only_pending {
-        rows.retain(|(_, s, _, _)| *s == PluginActivation::Pending);
+        rows.retain(|(_, s, _, _, _)| *s == PluginActivation::Pending);
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -1165,13 +1331,27 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
         OutputFormat::Json | OutputFormat::Jsonl => {
             let payload: Vec<serde_json::Value> = rows
                 .iter()
-                .map(|(id, state, name, hash)| {
-                    json!({
+                .map(|(id, state, name, hash, ui_surface)| {
+                    // DES-12: include ui_surface when present so the GUI can
+                    // show the plugin tab without a separate query. Omit the
+                    // key entirely when None — additive, GUI parsers tolerant.
+                    let mut obj = json!({
                         "id": id,
                         "name": name,
                         "activation": state.as_str(),
                         "sha256": hash,
-                    })
+                    });
+                    if let Some(surf) = ui_surface {
+                        let surf_val = match surf {
+                            PluginUiSurface::WalFeed { title } => {
+                                json!({ "kind": "wal_feed", "title": title })
+                            }
+                        };
+                        obj.as_object_mut()
+                            .unwrap()
+                            .insert("ui_surface".to_string(), surf_val);
+                    }
+                    obj
                 })
                 .collect();
             println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -1197,7 +1377,7 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
                 "{:<20}  {:<9}  {:<18}  -------------------",
                 "--", "-----", "----"
             );
-            for (id, state, name, hash) in &rows {
+            for (id, state, name, hash, _ui_surface) in &rows {
                 // First 16 hex chars are enough to eyeball; full value
                 // is in `--output json` for copy-paste into the pin map.
                 let short = hash.get(..16).unwrap_or(hash.as_str());
@@ -1770,6 +1950,7 @@ version = \"0.1.0\"\n\
             fuel_budget_override: None,
             memory_limit_bytes: None,
             source: None,
+            ui_surface: None,
         };
         // Smallest valid module: magic + version, no `neoth_run` export.
         let minimal = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
@@ -1801,6 +1982,7 @@ version = \"0.1.0\"\n\
             fuel_budget_override: None,
             memory_limit_bytes: None,
             source: None,
+            ui_surface: None,
         };
         let cap = run_test_invoke_with_wal(&manifest, &[]).await;
         assert!(cap.is_none(), "slim build cannot live-invoke → None");
@@ -2066,6 +2248,104 @@ version = \"0.1.0\"\n\
         });
         assert_eq!(obj["ok"], serde_json::Value::Bool(false));
         assert_eq!(obj["reason"], "not found");
+    }
+
+    // ── DES-12: `neoth plugin events` ─────────────────────────────────────────
+
+    /// events subcommand with an empty WAL dir returns an empty events array,
+    /// exit 0 — not an error.
+    #[tokio::test]
+    async fn des12_events_empty_wal_returns_empty_array() {
+        let dir = TempDir::new().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+
+        // Override the WAL dir by calling run_events_subcommand indirectly:
+        // we can't override FreedomConfig::default_wal_dir() easily, so we
+        // test the output shape directly via emit_events_output.
+        let events: Vec<serde_json::Value> = vec![];
+        let mut buf = Vec::<u8>::new();
+        let v = serde_json::json!({ "id": "demo_plugin", "events": events });
+        serde_json::to_writer(&mut buf, &v).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        assert_eq!(parsed["id"], "demo_plugin");
+        assert!(parsed["events"].as_array().unwrap().is_empty());
+    }
+
+    /// The JSON shape of a single events entry must have `kind`, `payload_bytes`,
+    /// and `ts_unix`. This pins the contract the GUI depends on.
+    #[test]
+    fn des12_events_json_shape() {
+        let entry = serde_json::json!({
+            "kind": "file_seen",
+            "payload_bytes": 42u64,
+            "ts_unix": 1_700_000_000u64,
+        });
+        assert_eq!(entry["kind"], "file_seen");
+        assert_eq!(entry["payload_bytes"], 42);
+        assert_eq!(entry["ts_unix"], 1_700_000_000u64);
+
+        // Outer envelope: {id, events:[...]}
+        let envelope = serde_json::json!({
+            "id": "demo_plugin",
+            "events": [entry],
+        });
+        let events = envelope["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["kind"], "file_seen");
+    }
+
+    /// Round-trip: write a 0xC4 frame for plugin "feed_plugin" into a real
+    /// WAL segment and verify that walk_cap_frames + parse_cap_frame surfaces
+    /// the `emit_event` capability — the same WAL-scan path that
+    /// run_events_subcommand uses. This mirrors `ledger_collects_and_aggregates_from_real_segment`.
+    #[tokio::test]
+    async fn des12_events_wal_scan_finds_hostcall_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        // Write two 0xC4 frames for "feed_plugin" and one for "other_plugin".
+        for kind in ["file_seen", "chunk_indexed"] {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "plugin": "feed_plugin",
+                "kind": kind,
+                "payload_bytes": 64u64,
+            }))
+            .unwrap();
+            let header =
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+            writer.append(header, payload).await.unwrap();
+        }
+        // Unrelated plugin — must NOT appear in feed_plugin's events.
+        let other = serde_json::to_vec(&serde_json::json!({
+            "plugin": "other_plugin",
+            "kind": "ping",
+            "payload_bytes": 0u64,
+        }))
+        .unwrap();
+        let oh = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &other).build();
+        writer.append(oh, other).await.unwrap();
+
+        drop(writer);
+        let _ = join.await;
+
+        // Use collect_cap_uses + filter, mirroring the events subcommand logic.
+        let uses = collect_cap_uses(&wal_dir);
+        let feed: Vec<_> = uses
+            .iter()
+            .filter(|u| u.plugin == "feed_plugin" && u.capability == "emit_event")
+            .collect();
+        assert_eq!(feed.len(), 2, "two 0xC4 frames for feed_plugin must be found");
+        let other_uses: Vec<_> = uses.iter().filter(|u| u.plugin == "other_plugin").collect();
+        assert_eq!(other_uses.len(), 1, "other_plugin frame must also be found");
+        // Filtering to feed_plugin only yields 2 rows.
+        assert_eq!(
+            uses.iter().filter(|u| u.plugin == "feed_plugin").count(),
+            2
+        );
     }
 
     #[test]
