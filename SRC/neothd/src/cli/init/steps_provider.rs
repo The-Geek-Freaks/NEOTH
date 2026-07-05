@@ -14,7 +14,7 @@ use crate::providers::local_probe::probe_local_bridge_sync;
 use super::npm_path_hint;
 use super::{
     InitArgs, ProviderKind, WizardState, WizardStep, catalog_recommended_for_provider_kind,
-    prompt_provider_key, which_binary,
+    ping_provider_key, prompt_provider_key, which_binary,
 };
 
 pub(crate) async fn step5_provider(
@@ -282,8 +282,10 @@ pub(crate) async fn step5_provider(
             // Key resolution: OpenaiCompat may accept empty (unauthenticated local server)
             // or a local bridge token (NOT an Anthropic key).
             let key = prompt_provider_key(args, interactive, kind)?;
-            if let Some(k) = key {
-                state.provider_key = Some(crate::secret::SecretString::from(k));
+            if let Some(ref k) = key {
+                // ZF-03 — live ping with the entered key (non-fatal).
+                ping_provider_key(k, kind, state.provider_endpoint.as_deref());
+                state.provider_key = Some(crate::secret::SecretString::from(k.clone()));
             }
 
             // Default model per provider. K-Models-Discovery (Session 14)
@@ -364,8 +366,10 @@ pub(crate) async fn step5_provider(
                 );
             }
             let key = prompt_provider_key(args, interactive, kind)?;
-            if let Some(k) = key {
-                state.provider_key = Some(crate::secret::SecretString::from(k));
+            if let Some(ref k) = key {
+                // ZF-03 — live ping (non-fatal).
+                ping_provider_key(k, kind, state.provider_endpoint.as_deref());
+                state.provider_key = Some(crate::secret::SecretString::from(k.clone()));
             }
             use crate::providers::model_roles::ModelRole;
             let bundled_default = crate::providers::default_model(

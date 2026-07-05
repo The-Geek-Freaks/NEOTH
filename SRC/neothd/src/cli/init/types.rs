@@ -621,9 +621,15 @@ pub struct WizardState {
     /// preset question and re-apply the same preset at `write_config` time.
     #[serde(default)]
     pub chosen_preset: Option<String>,
-    /// ZF-01 — `true` when the wizard was launched with `--zero-friction` (or
-    /// `--express`). Persisted so a crash-resume skips the full interactive flow
-    /// and honours the original express-mode intent.
+    /// ZF-02 — `true` when the operator chose any non-custom built-in preset
+    /// (full-auto / balanced / essentials / local-sovereign). This is a superset
+    /// of the original ZF-01 `--zero-friction` semantics (which mapped to
+    /// `full-auto` only). When `true`, the wizard skips role, topology, channel,
+    /// autonomy, and add-on steps — the preset covers them.
+    ///
+    /// `#[serde(default)]` keeps old checkpoints (written before ZF-02) valid:
+    /// a missing field deserialises as `false`, so an old checkpoint resumes
+    /// the full wizard flow — the safest fallback on a format upgrade.
     #[serde(default)]
     pub is_express: bool,
 }

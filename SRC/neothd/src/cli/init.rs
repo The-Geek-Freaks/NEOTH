@@ -81,67 +81,85 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step2_operator_id(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
+    // ZF-02 — preset picker moved to position 2 (right after first identity
+    // question). When the operator picks any built-in preset (full-auto /
+    // balanced / essentials / local-sovereign), `is_express` is set to `true`
+    // and the detail steps (role, topology, channels, autonomy, etc.) are
+    // skipped — the preset covers them. `custom` keeps the full flow.
+    //
+    // Semantics change from ZF-01: `is_express` is now "non-custom preset was
+    // chosen" (a superset of the old `args.zero_friction` flag, which maps to
+    // `full-auto`). Checkpoint compat: `is_express` has `#[serde(default)]`
+    // so old checkpoints without it resume correctly (false = full flow).
+    let chosen_preset = step_zero_friction(&args, interactive, &mut state)?;
+    state.chosen_preset = chosen_preset.clone();
+    state.is_express = chosen_preset.as_deref().is_some_and(|n| n != "custom");
+    save_checkpoint_best_effort(&neoth_dir, &state);
+
     step3_language(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step3b_hmac_backup(interactive, &neoth_dir, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
-    step4_role(&args, interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
+    if !state.is_express {
+        step4_role(&args, interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+    }
     step5_provider(&args, interactive, &mut state).await?;
     save_checkpoint_best_effort(&neoth_dir, &state);
-    step5b_inference_topology(&args, interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step5b2_ollama_provision(interactive, &mut state).await?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step5c_qwen_weights(&args, interactive, &mut state).await?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step5d_profile_approval_gate(interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    // GOLD-ADAPT-CBM-02 — optional code-intelligence rail (terminal offer, no
-    // resume marker needed; re-derived each run like the ollama provision step).
-    step5e_cbm_offer(interactive).await?;
-    step6_channel(&args, interactive, &mut state).await?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step6b_keet_pairing(&args, interactive, &mut state).await?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step6c_obsidian_install(&args, interactive, &mut state).await?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step6d_obsidian_vault_bootstrap(&args, interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step6e_n8n_install(&args, interactive, &mut state).await?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step6f_import_memory(&args, interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step6g_credential_import(&args, interactive, &neoth_dir).await;
-    // GOLD-ADAPT-TUDU-01 — optional tududi self-hosted task manager MCP rail.
-    // No checkpoint save needed (re-offerable each run like step5e_cbm_offer).
-    step6i_tududi_offer(interactive).await?;
-    // GOLD-ADAPT-SYS-01 — optional mobile-mcp iOS/Android device control rail.
-    // No checkpoint save needed (re-offerable each run; device prerequisites
-    // vary per operator session).
-    step6j_mobile_mcp_offer(interactive).await?;
-    // GOLD-ADAPT-ODY-24 — companion LAN pairing offer. No checkpoint save
-    // needed (re-offerable each run; LAN topology may differ per session).
-    step6k_companion_pairing_offer(interactive, &mut state).await?;
-    step6h_install_recommended(&args, interactive, &neoth_dir);
-    step7_autonomy(&args, interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step7b_auto_update(&args, interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step7c_wasm_plugin_activation(&args, interactive, &neoth_dir, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    step7d_supervisor(&args, interactive, &mut state)?;
-    save_checkpoint_best_effort(&neoth_dir, &state);
-    // GOLD-FEAT-01b + ZF-01 — the operating-style preset picker is the FINAL
-    // word: applied after every per-step pick so the chosen built-in
-    // (full-auto / balanced / essentials / local-sovereign) cleanly overrides
-    // autonomy + topology before the summary. `custom` keeps the per-step picks.
-    let chosen_preset = step_zero_friction(&args, interactive, &mut state)?;
-    // WIZ-CHECKPOINT: persist preset + express flag so a crash-resume at this
-    // step doesn't silently fall back to defaults on the next `neoth init`.
-    state.chosen_preset = chosen_preset.clone();
-    state.is_express = args.zero_friction;
-    save_checkpoint_best_effort(&neoth_dir, &state);
+    if !state.is_express {
+        step5b_inference_topology(&args, interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step5b2_ollama_provision(interactive, &mut state).await?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step5c_qwen_weights(&args, interactive, &mut state).await?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step5d_profile_approval_gate(interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        // GOLD-ADAPT-CBM-02 — optional code-intelligence rail (terminal offer,
+        // no resume marker needed; re-derived each run).
+        step5e_cbm_offer(interactive).await?;
+        step6_channel(&args, interactive, &mut state).await?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step6b_keet_pairing(&args, interactive, &mut state).await?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step6c_obsidian_install(&args, interactive, &mut state).await?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step6d_obsidian_vault_bootstrap(&args, interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step6e_n8n_install(&args, interactive, &mut state).await?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step6f_import_memory(&args, interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step6g_credential_import(&args, interactive, &neoth_dir).await;
+        // GOLD-ADAPT-TUDU-01
+        step6i_tududi_offer(interactive).await?;
+        // GOLD-ADAPT-SYS-01
+        step6j_mobile_mcp_offer(interactive).await?;
+        // GOLD-ADAPT-ODY-24
+        step6k_companion_pairing_offer(interactive, &mut state).await?;
+        step6h_install_recommended(&args, interactive, &neoth_dir);
+        step7_autonomy(&args, interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step7b_auto_update(&args, interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step7c_wasm_plugin_activation(&args, interactive, &neoth_dir, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step7d_supervisor(&args, interactive, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+    } else if interactive {
+        // ZF-02 — post-setup tips for channels and optional rails.
+        println!(
+            "\n  Later you can enable additional features:\n\
+             \n    Channels:   neoth channel add telegram / discord / matrix …\
+             \n    Keet:       neoth keet pair          (P2P messenger)\
+             \n    Obsidian:   neoth obsidian connect   (knowledge vault)\
+             \n    n8n:        neoth n8n connect        (workflow automation)\
+             \n    Mobile:     neoth mobile-mcp setup   (iOS/Android control)\
+             \n    tududi:     neoth tududi setup        (task manager)\
+             \n    GUI tab:    start neothd-gui → Channels / Integrations tab\
+             \n"
+        );
+    }
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {
