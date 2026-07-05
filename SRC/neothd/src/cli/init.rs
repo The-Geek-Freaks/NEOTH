@@ -137,6 +137,11 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // (full-auto / balanced / essentials / local-sovereign) cleanly overrides
     // autonomy + topology before the summary. `custom` keeps the per-step picks.
     let chosen_preset = step_zero_friction(&args, interactive, &mut state)?;
+    // WIZ-CHECKPOINT: persist preset + express flag so a crash-resume at this
+    // step doesn't silently fall back to defaults on the next `neoth init`.
+    state.chosen_preset = chosen_preset.clone();
+    state.is_express = args.zero_friction;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {
@@ -952,6 +957,8 @@ mod tests {
         WizardState {
             experience_level: crate::wizard::recommend::ExperienceLevel::Beginner,
             onboarding_mode: OnboardingMode::New,
+            chosen_preset: None,
+            is_express: false,
             operator_id: Some("alice".to_string()),
             language_primary: Some("en".to_string()),
             language_code: Some("en".to_string()),

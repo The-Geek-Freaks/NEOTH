@@ -615,6 +615,17 @@ pub struct WizardState {
     #[serde(default)]
     pub companion: crate::config::CompanionConfig,
     pub steps_completed: Vec<u8>,
+    /// ZF-01 — the built-in preset name chosen by `step_zero_friction` (e.g.
+    /// `"balanced"`, `"full-auto"`). `None` means the operator used `"custom"` /
+    /// skipped the step. Persisted so a checkpoint-resume can skip re-asking the
+    /// preset question and re-apply the same preset at `write_config` time.
+    #[serde(default)]
+    pub chosen_preset: Option<String>,
+    /// ZF-01 — `true` when the wizard was launched with `--zero-friction` (or
+    /// `--express`). Persisted so a crash-resume skips the full interactive flow
+    /// and honours the original express-mode intent.
+    #[serde(default)]
+    pub is_express: bool,
 }
 
 /// Outcome of the GUI/CLI mode-selection step. Callers branch on

@@ -77,6 +77,13 @@ pub struct WizardCheckpoint {
     pub install_n8n: bool,
     pub import_memory: Option<PathBuf>,
     pub steps_completed: Vec<u8>,
+    /// ZF-01 — built-in preset chosen by `step_zero_friction`. Matches
+    /// `WizardState::chosen_preset`; `None` means custom/skipped.
+    pub chosen_preset: Option<String>,
+    /// ZF-01 — mirrors `WizardState::is_express` (wizard launched with
+    /// `--zero-friction` / `--express`).
+    #[serde(default)]
+    pub is_express: bool,
     /// Unix-seconds wall clock at the most recent `save_checkpoint`.
     /// Surfaced in the resume prompt so the operator sees "your previous
     /// wizard from 2 hours ago" instead of an opaque file age.
@@ -109,6 +116,8 @@ impl WizardCheckpoint {
             install_n8n: state.install_n8n,
             import_memory: state.import_memory.clone(),
             steps_completed: state.steps_completed.clone(),
+            chosen_preset: state.chosen_preset.clone(),
+            is_express: state.is_express,
             checkpoint_written_at_unix: now_unix(),
         }
     }
@@ -137,6 +146,8 @@ impl WizardCheckpoint {
         state.install_n8n = self.install_n8n;
         state.import_memory = self.import_memory;
         state.steps_completed = self.steps_completed;
+        state.chosen_preset = self.chosen_preset;
+        state.is_express = self.is_express;
     }
 }
 
@@ -322,6 +333,35 @@ mod tests {
         std::fs::write(checkpoint_path(dir.path()), b"{ not real json }").unwrap();
         let r = load_checkpoint(dir.path());
         assert!(r.is_err(), "garbage JSON must Err (operator decides)");
+    }
+
+    #[test]
+    fn chosen_preset_and_is_express_round_trip() {
+        let dir = tempdir().unwrap();
+        let mut state = WizardState::default();
+        state.chosen_preset = Some("balanced".into());
+        state.is_express = true;
+        state.steps_completed = vec![1, 2];
+
+        save_checkpoint(dir.path(), &state).expect("save");
+        let loaded = load_checkpoint(dir.path()).unwrap().expect("Some");
+        assert_eq!(loaded.chosen_preset.as_deref(), Some("balanced"));
+        assert!(loaded.is_express);
+
+        let mut restored = WizardState::default();
+        loaded.apply_to(&mut restored);
+        assert_eq!(restored.chosen_preset.as_deref(), Some("balanced"));
+        assert!(restored.is_express);
+    }
+
+    #[test]
+    fn chosen_preset_none_and_is_express_false_round_trip() {
+        let dir = tempdir().unwrap();
+        let state = WizardState::default(); // chosen_preset = None, is_express = false
+        save_checkpoint(dir.path(), &state).expect("save");
+        let loaded = load_checkpoint(dir.path()).unwrap().expect("Some");
+        assert!(loaded.chosen_preset.is_none());
+        assert!(!loaded.is_express);
     }
 
     #[test]
