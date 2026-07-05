@@ -376,7 +376,17 @@ impl CompactingProvider {
                 thinking_budget: None,
             };
             match util.complete(summary_req).await {
-                Ok(c) => c.text,
+                // A non-empty summary is the happy path.
+                Ok(c) if !c.text.trim().is_empty() => c.text,
+                // An empty-but-Ok summary must NOT be used: it would make
+                // `summary` empty, and the reassembly below would then forward
+                // `live_zone` alone — silently DISCARDING `old_zone` with no
+                // audit frame. Fall back to the truncation placeholder so the
+                // old zone is accounted for and the WAL still fires.
+                Ok(_) => {
+                    warn!("compactor: utility returned an empty summary; using truncation");
+                    format!("[truncated {} chars of earlier context]", old_zone.len())
+                }
                 Err(e) => {
                     warn!(error = %e, "compactor: utility summarisation failed; using truncation");
                     format!("[truncated {} chars of earlier context]", old_zone.len())
@@ -637,6 +647,44 @@ mod tests {
             forwarded.ends_with(live),
             "live zone missing from compacted prompt"
         );
+    }
+
+    /// Wave-6 regression: an empty-but-Ok utility summary must NOT silently
+    /// drop the old zone. The compactor falls back to a truncation placeholder,
+    /// so the forwarded prompt still accounts for the earlier context.
+    #[tokio::test]
+    async fn empty_utility_summary_falls_back_to_truncation_not_drop() {
+        let prompt = long_prompt(500);
+        let (inner, ic) = StubProvider::new("inner_reply");
+        let (util, _uc) = StubProvider::new(""); // empty-but-Ok summary
+        let cp = CompactingProvider::new(
+            Box::new(inner),
+            Some(Box::new(util)),
+            100,
+            0.8,
+            50,
+            None,
+        );
+        let req = Request {
+            prompt: prompt.clone(),
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            stop_sequences: vec![],
+            thinking_budget: None,
+        };
+        cp.complete(req).await.unwrap();
+        let forwarded = ic.lock().unwrap()[0].clone();
+        // Old zone must NOT be silently dropped — the truncation placeholder
+        // stands in for it, and the live tail is still present.
+        assert!(
+            forwarded.contains("[truncated") && forwarded.contains("chars of earlier context]"),
+            "empty summary must fall back to truncation, got: {forwarded:.120}"
+        );
+        let live = &prompt[prompt.len() - 50..];
+        assert!(forwarded.ends_with(live), "live zone missing");
     }
 
     #[tokio::test]
