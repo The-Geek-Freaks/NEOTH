@@ -4255,7 +4255,7 @@ fn main() -> Result<()> {
                 let tx = make_coalescing_writer(
                     neoth_dir.join("freedom.yaml"),
                     neoth_dir.join(".reload-requested"),
-                    $key, $label, window.as_weak());
+                    $key, $label, window.as_weak(), None);
                 window.$cb(move |raw: slint::SharedString| {
                     tx.send(serde_yaml::Value::from(raw.to_string().as_str())).ok();
                 });
@@ -4322,7 +4322,7 @@ fn main() -> Result<()> {
                 let tx = make_coalescing_writer(
                     neoth_dir.join("freedom.yaml"),
                     neoth_dir.join(".reload-requested"),
-                    $key, $label, window.as_weak());
+                    $key, $label, window.as_weak(), None);
                 let weak_err = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
@@ -4340,7 +4340,7 @@ fn main() -> Result<()> {
                 let tx = make_coalescing_writer(
                     neoth_dir.join("freedom.yaml"),
                     neoth_dir.join(".reload-requested"),
-                    $key, $label, window.as_weak());
+                    $key, $label, window.as_weak(), None);
                 let weak_err = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
@@ -4429,91 +4429,44 @@ fn main() -> Result<()> {
     {
         let neoth_dir = default_neoth_home();
 
-        // vault path
-        let nd = neoth_dir.clone();
-        let weak = window.as_weak();
+        // vault path → coalescing writer; on success re-scan the vault view.
+        let obs_refresh: WriteSuccessHook =
+            std::sync::Arc::new(|w: &MainWindow| w.invoke_obs_refresh_clicked());
+        let tx_vault = make_coalescing_writer(
+            neoth_dir.join("freedom.yaml"),
+            neoth_dir.join(".reload-requested"),
+            "obsidian_vault", "Vault path", window.as_weak(), Some(obs_refresh));
         window.on_obs_vault_path_changed(move |raw: slint::SharedString| {
-            let val = raw.to_string();
-            let nd2 = nd.clone();
-            let w2 = weak.clone();
-            // I/O (read + parse + fsync + rename) off the UI event loop.
-            std::thread::spawn(move || {
-                let fp = nd2.join("freedom.yaml");
-                let rd = nd2.join(".reload-requested");
-                let result = set_nested_in_freedom(&fp, "obsidian_vault", serde_yaml::Value::from(val.as_str()))
-                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                slint::invoke_from_event_loop(move || {
-                    match result {
-                        Ok(_) => {
-                            push_toast(&w2, "success", "Vault path", "saved — daemon reloading");
-                            if let Some(w) = w2.upgrade() { w.invoke_obs_refresh_clicked(); }
-                        }
-                        Err(ref e) => {
-                            let msg = e.to_string();
-                            push_toast(&w2, "warn", "Vault path write failed", &msg);
-                        }
-                    }
-                }).ok();
-            });
+            tx_vault.send(serde_yaml::Value::from(raw.to_string().as_str())).ok();
         });
 
-        // subdir
-        let nd = neoth_dir.clone();
-        let weak = window.as_weak();
+        // subdir → coalescing writer (last-typed wins).
+        let tx_subdir = make_coalescing_writer(
+            neoth_dir.join("freedom.yaml"),
+            neoth_dir.join(".reload-requested"),
+            "obsidian_subdir", "Vault subdir", window.as_weak(), None);
         window.on_obs_subdir_changed(move |raw: slint::SharedString| {
-            let val = raw.to_string();
-            let nd2 = nd.clone();
-            let w2 = weak.clone();
-            // I/O (read + parse + fsync + rename) off the UI event loop.
-            std::thread::spawn(move || {
-                let fp = nd2.join("freedom.yaml");
-                let rd = nd2.join(".reload-requested");
-                let result = set_nested_in_freedom(&fp, "obsidian_subdir", serde_yaml::Value::from(val.as_str()))
-                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                slint::invoke_from_event_loop(move || {
-                    match result {
-                        Ok(_) => push_toast(&w2, "success", "Vault subdir", "saved"),
-                        Err(ref e) => {
-                            let msg = e.to_string();
-                            push_toast(&w2, "warn", "Subdir write failed", &msg);
-                        }
-                    }
-                }).ok();
-            });
+            tx_subdir.send(serde_yaml::Value::from(raw.to_string().as_str())).ok();
         });
 
-        // auto-sync secs (comes as string, parse to i64)
-        let nd = neoth_dir.clone();
-        let weak = window.as_weak();
+        // auto-sync secs (string) — validate on the UI thread, then coalescing
+        // writer. Empty → Null (None = disabled); non-integer → warn, no write.
+        let tx_sync = make_coalescing_writer(
+            neoth_dir.join("freedom.yaml"),
+            neoth_dir.join(".reload-requested"),
+            "obsidian_auto_sync_secs", "Auto-sync interval", window.as_weak(), None);
+        let weak_sync_err = window.as_weak();
         window.on_obs_auto_sync_secs_str_changed(move |raw: slint::SharedString| {
             let s = raw.to_string();
-            let nd2 = nd.clone();
-            let w2 = weak.clone();
-            // I/O (read + parse + fsync + rename) off the UI event loop.
-            std::thread::spawn(move || {
-                let fp = nd2.join("freedom.yaml");
-                let rd = nd2.join(".reload-requested");
-                let result: anyhow::Result<()> = (|| {
-                    // FIX 3 — empty input → Null (None), not 0 (Some(0) = busy loop).
-                    let yaml_val = if s.trim().is_empty() {
-                        serde_yaml::Value::Null
-                    } else {
-                        let v: i64 = s.trim().parse().map_err(|_| anyhow::anyhow!("not an integer: {s}"))?;
-                        serde_yaml::Value::from(v)
-                    };
-                    set_nested_in_freedom(&fp, "obsidian_auto_sync_secs", yaml_val)?;
-                    std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
-                })();
-                slint::invoke_from_event_loop(move || {
-                    match result {
-                        Ok(_) => push_toast(&w2, "success", "Auto-sync interval", "saved"),
-                        Err(ref e) => {
-                            let msg = e.to_string();
-                            push_toast(&w2, "warn", "Auto-sync invalid", &msg);
-                        }
-                    }
-                }).ok();
-            });
+            let t = s.trim();
+            if t.is_empty() {
+                tx_sync.send(serde_yaml::Value::Null).ok();
+            } else if let Ok(v) = t.parse::<i64>() {
+                tx_sync.send(serde_yaml::Value::from(v)).ok();
+            } else {
+                push_toast(&weak_sync_err, "warn", "Auto-sync invalid",
+                           &format!("not an integer: {t}"));
+            }
         });
 
         // reader enabled
@@ -5376,6 +5329,10 @@ fn set_nested_in_freedom(
     write_mode_0600(path, serialised.as_bytes())
 }
 
+/// Post-success hook for `make_coalescing_writer`, run on the UI event loop
+/// after a successful write. `Arc<dyn Fn>` so plain fields pass `None`.
+type WriteSuccessHook = std::sync::Arc<dyn Fn(&MainWindow) + Send + Sync>;
+
 /// DES-09 — per-field coalescing writer for freedom.yaml.
 ///
 /// A LineEdit's `edited` callback fires once per keystroke, so typing "gpt-4o"
@@ -5393,12 +5350,16 @@ fn set_nested_in_freedom(
 ///
 /// The worker exits cleanly when the callback (and thus the `SyncSender`) is
 /// dropped on window teardown — `recv()` then returns `Err`.
+///
+/// `on_success`, if set, runs on the UI event loop after each successful write
+/// (e.g. the Obsidian vault field re-scans the vault). `None` for plain fields.
 fn make_coalescing_writer(
     fp: std::path::PathBuf,
     rd: std::path::PathBuf,
     dotted_key: &'static str,
     label: &'static str,
     weak: slint::Weak<MainWindow>,
+    on_success: Option<WriteSuccessHook>,
 ) -> std::sync::mpsc::SyncSender<serde_yaml::Value> {
     // Bounded buffer: human typing never outpaces one fsync by 64 events, and a
     // paste is a single `edited` event, so `send` never blocks the UI thread in
@@ -5413,7 +5374,20 @@ fn make_coalescing_writer(
             let result = set_nested_in_freedom(&fp, dotted_key, val)
                 .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
             match result {
-                Ok(_) => push_toast(&weak, "success", label, "saved — daemon reloading"),
+                Ok(_) => {
+                    push_toast(&weak, "success", label, "saved — daemon reloading");
+                    // Optional post-success hook, marshalled to the UI event loop.
+                    if let Some(hook) = &on_success {
+                        let weak2 = weak.clone();
+                        let hook = hook.clone();
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak2.upgrade() {
+                                hook(&w);
+                            }
+                        })
+                        .ok();
+                    }
+                }
                 Err(ref e) => push_toast(&weak, "warn", label, &format!("write failed: {e}")),
             }
         }
