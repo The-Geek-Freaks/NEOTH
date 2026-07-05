@@ -16,66 +16,8 @@
 //   - No inline hex — Theme tokens only.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
-
-// ── Kicker, InfoRow, RefreshFooter — local micro-components ──────────────────
-// (Intentionally redeclared per-file; each tab is self-contained.)
-
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-component InfoRow inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    in property <color>  value-color: Theme.text-primary;
-
-    height: 36px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface-1;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        spacing: 8px;
-        Text {
-            text: root.label;
-            color: Theme.text-tertiary;
-            font-family: Theme.font-mono;
-            font-size: 8px;
-            letter-spacing: Theme.letter-spacing-wide;
-            vertical-alignment: center;
-            width: 96px;
-        }
-        Text {
-            text: root.value != "" ? root.value : "—";
-            color: root.value-color;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            overflow: elide;
-        }
-    }
-}
-
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    letter-spacing: Theme.letter-spacing-tight;
-    horizontal-alignment: right;
-}
 
 // ── Public component ──────────────────────────────────────────────────────────
 
@@ -143,7 +85,7 @@ export component ObsidianView inherits Rectangle {
                         text: "sync · wiki-build · vault reader";
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
-                        font-size: 8.5px;
+                        font-size: Theme.font-size-2xs;
                         letter-spacing: Theme.letter-spacing-wide;
                     }
                 }
@@ -152,30 +94,11 @@ export component ObsidianView inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
 
                 // Refresh button
-                Rectangle {
-                    height: 30px;
-                    width: 96px;
-                    border-radius: Theme.radius-button;
-                    background: Theme.accent-tint;
-                    border-width: 1px;
-                    border-color: Theme.accent;
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        alignment: center;
-                        spacing: 6px;
-                        Text {
-                            text: "↻ Refresh";
-                            color: Theme.accent;
-                            font-family: Theme.font-mono;
-                            font-size: Theme.font-size-xs;
-                            letter-spacing: Theme.letter-spacing-tight;
-                            vertical-alignment: center;
-                        }
-                    }
-                    TouchArea {
-                        clicked => { root.obs-refresh-clicked(); }
-                    }
+                NeothButton {
+                    label: "Refresh";
+                    size: "sm";
+                    primary: false;
+                    clicked => { root.obs-refresh-clicked(); }
                 }
             }
 
@@ -305,7 +228,7 @@ export component ObsidianView inherits Rectangle {
                                             text: "READER";
                                             color: Theme.text-tertiary;
                                             font-family: Theme.font-mono;
-                                            font-size: 8px;
+                                            font-size: Theme.font-size-2xs;
                                             letter-spacing: Theme.letter-spacing-wide;
                                             vertical-alignment: center;
                                             width: 96px;

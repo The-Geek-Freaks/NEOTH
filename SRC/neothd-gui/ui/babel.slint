@@ -7,7 +7,7 @@
 // Layout: EntranceFade > ScrollView > OBSERVER card + WINDOWS card.
 
 import { Theme } from "theme.slint";
-import { Card, Led, SegBar, EntranceFade, NeothButton } from "components.slint";
+import { Card, Led, SegBar, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -29,58 +29,6 @@ export struct BabelWindowRow {
     b-mult: float,
     b-bottleneck: float,   // 0.0 – 1.0, drives SegBar
     collapse-kind: string, // "" when none
-}
-
-// ── Internal micro-components ─────────────────────────────────────────────────
-
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-component InfoRow inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    in property <color>  value-color: Theme.text-primary;
-
-    height: 36px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface-1;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-
-    HorizontalLayout {
-        padding-left: 12px; padding-right: 12px; spacing: 8px;
-        Text {
-            text: root.label;
-            color: Theme.text-secondary;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            horizontal-stretch: 0;
-        }
-        Text {
-            text: root.value;
-            color: root.value-color;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            horizontal-alignment: right;
-            horizontal-stretch: 1;
-        }
-    }
-}
-
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    horizontal-alignment: right;
 }
 
 // Granularity row: window_secs label + count chip + last-ts-end.
@@ -188,7 +136,7 @@ component WindowRow inherits Rectangle {
             y: (parent.height - self.height) / 2;
             Text {
                 text: root.collapse-kind;
-                color: #ffffff;
+                color: Theme.text-primary;
                 font-family: Theme.font-mono;
                 font-size: 9px;
                 horizontal-alignment: center;
@@ -235,28 +183,16 @@ export component BabelView inherits Rectangle {
                     Text {
                         text: "◬  Babel Observer";
                         color: Theme.text-primary;
-                        font-size: 18px;
-                        font-weight: 700;
+                        font-size: Theme.font-size-lg;
+                        font-weight: Theme.weight-bold;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
-                    Rectangle {
-                        width: 110px; height: 32px;
-                        border-radius: Theme.radius-md;
-                        background: Theme.surface-2;
-                        border-width: 1px;
-                        border-color: Theme.border-subtle;
-                        TouchArea {
-                            clicked => { root.babel-refresh-clicked(); }
-                        }
-                        Text {
-                            text: "↻  Refresh";
-                            color: Theme.accent;
-                            font-size: Theme.font-size-sm;
-                            font-family: Theme.font-mono;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                    NeothButton {
+                        label: "Refresh";
+                        size: "sm";
+                        primary: false;
+                        clicked => { root.babel-refresh-clicked(); }
                     }
                 }
 
@@ -297,18 +233,22 @@ export component BabelView inherits Rectangle {
                         if root.babel-threshold != "": InfoRow {
                             label: "threshold";
                             value: root.babel-threshold;
+                            right-align: true;
                         }
                         if root.babel-epsilon != "": InfoRow {
                             label: "epsilon calibrated";
                             value: root.babel-epsilon;
+                            right-align: true;
                         }
                         InfoRow {
                             label: "total windows";
                             value: "\{root.babel-total-windows}";
+                            right-align: true;
                         }
                         InfoRow {
                             label: "collapse flagged";
                             value: "\{root.babel-collapse-flagged}";
+                            right-align: true;
                         }
 
                         Rectangle { height: 1px; background: Theme.border-subtle; }

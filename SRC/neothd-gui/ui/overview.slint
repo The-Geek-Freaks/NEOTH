@@ -17,7 +17,7 @@
 //     used inside a stretched container.
 
 import { Theme } from "theme.slint";
-import { Card, Led, SegBar, EntranceFade } from "components.slint";
+import { Card, Led, SegBar, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs (exported so main.rs can construct them) ─────────────────────
@@ -47,66 +47,6 @@ export struct CalEvent {
 export struct ConsentEntry {
     provider: string,
     granted: bool,
-}
-
-// ── Internal micro-components ──────────────────────────────────────────────────
-
-// Kicker label — 8px mono, wide-tracked uppercase, text-disabled.
-// Used as card section heading.
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-// One-line value row inside a card: small label + value side by side.
-// Mirrors the StatRow shape from tabs.slint but inline and slimmer (36px).
-component InfoRow inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    in property <color> value-color: Theme.text-primary;
-
-    height: 36px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface-1;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        alignment: start;
-        spacing: 12px;
-        Text {
-            text: root.label;
-            color: Theme.text-tertiary;
-            font-family: Theme.font-mono;
-            font-size: 8px;
-            letter-spacing: Theme.letter-spacing-wide;
-            vertical-alignment: center;
-            width: 72px;
-        }
-        Text {
-            text: root.value != "" ? root.value : "—";
-            color: root.value-color;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-        }
-    }
-}
-
-// Timestamp footer — 8.5px mono, text-disabled.
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    letter-spacing: Theme.letter-spacing-tight;
 }
 
 // ── OverviewView ───────────────────────────────────────────────────────────────
@@ -186,7 +126,7 @@ export component OverviewView inherits Rectangle {
                         text: "everything, at a glance";
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
-                        font-size: 8.5px;
+                        font-size: Theme.font-size-2xs;
                         letter-spacing: Theme.letter-spacing-wide;
                     }
                 }
@@ -195,30 +135,11 @@ export component OverviewView inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
 
                 // Refresh button
-                Rectangle {
-                    height: 30px;
-                    width: 90px;
-                    border-radius: Theme.radius-button;
-                    background: Theme.accent-tint;
-                    border-width: 1px;
-                    border-color: Theme.accent;
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        alignment: center;
-                        spacing: 6px;
-                        Text {
-                            text: "⟳ Refresh";
-                            color: Theme.accent;
-                            font-family: Theme.font-mono;
-                            font-size: Theme.font-size-xs;
-                            letter-spacing: Theme.letter-spacing-tight;
-                            vertical-alignment: center;
-                        }
-                    }
-                    TouchArea {
-                        clicked => { root.overview-refresh-clicked(); }
-                    }
+                NeothButton {
+                    label: "Refresh";
+                    size: "sm";
+                    primary: false;
+                    clicked => { root.overview-refresh-clicked(); }
                 }
             }
 
@@ -299,11 +220,19 @@ export component OverviewView inherits Rectangle {
 
                                 Kicker { label: "TOKENS"; }
 
-                                // Big token numbers
+                                // Hero: total output (primary scannable number)
+                                Text {
+                                    text: root.ov-tokens-out != "" ? root.ov-tokens-out : "—";
+                                    color: Theme.accent;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-display-sm;
+                                    letter-spacing: Theme.letter-spacing-tight;
+                                }
+
+                                // Subordinate: input + output labels
                                 HorizontalLayout {
                                     spacing: 18px;
                                     alignment: start;
-                                    height: 44px;
 
                                     VerticalLayout {
                                         alignment: center;
@@ -312,14 +241,13 @@ export component OverviewView inherits Rectangle {
                                             text: root.ov-tokens-in != "" ? root.ov-tokens-in : "—";
                                             color: Theme.audit;
                                             font-family: Theme.font-mono;
-                                            font-size: 25px;
-                                            letter-spacing: Theme.letter-spacing-tight;
+                                            font-size: Theme.font-size-sm;
                                         }
                                         Text {
                                             text: "INPUT";
                                             color: Theme.text-disabled;
                                             font-family: Theme.font-mono;
-                                            font-size: 8px;
+                                            font-size: Theme.font-size-2xs;
                                             letter-spacing: Theme.letter-spacing-wide;
                                         }
                                     }
@@ -327,8 +255,7 @@ export component OverviewView inherits Rectangle {
                                     Rectangle {
                                         width: 1px;
                                         background: Theme.border-default;
-                                        height: 32px;
-                                        y: 6px;
+                                        height: 28px;
                                     }
 
                                     VerticalLayout {
@@ -338,14 +265,13 @@ export component OverviewView inherits Rectangle {
                                             text: root.ov-tokens-out != "" ? root.ov-tokens-out : "—";
                                             color: Theme.memory;
                                             font-family: Theme.font-mono;
-                                            font-size: 25px;
-                                            letter-spacing: Theme.letter-spacing-tight;
+                                            font-size: Theme.font-size-sm;
                                         }
                                         Text {
                                             text: "OUTPUT";
                                             color: Theme.text-disabled;
                                             font-family: Theme.font-mono;
-                                            font-size: 8px;
+                                            font-size: Theme.font-size-2xs;
                                             letter-spacing: Theme.letter-spacing-wide;
                                         }
                                     }
@@ -475,7 +401,7 @@ export component OverviewView inherits Rectangle {
                                                 text: hemi.role;
                                                 color: Theme.text-disabled;
                                                 font-family: Theme.font-mono;
-                                                font-size: 8px;
+                                                font-size: Theme.font-size-2xs;
                                                 letter-spacing: Theme.letter-spacing-extra-wide;
                                             }
                                             // provider + model
@@ -521,13 +447,13 @@ export component OverviewView inherits Rectangle {
                                             text: root.ov-skills-active != "" ? root.ov-skills-active : "—";
                                             color: Theme.memory;
                                             font-family: Theme.font-mono;
-                                            font-size: 22px;
+                                            font-size: Theme.font-size-lg;
                                         }
                                         Text {
                                             text: "SKILLS";
                                             color: Theme.text-disabled;
                                             font-family: Theme.font-mono;
-                                            font-size: 8px;
+                                            font-size: Theme.font-size-2xs;
                                             letter-spacing: Theme.letter-spacing-wide;
                                         }
                                     }
@@ -546,13 +472,13 @@ export component OverviewView inherits Rectangle {
                                             text: root.ov-plugins-active != "" ? root.ov-plugins-active : "—";
                                             color: Theme.audit;
                                             font-family: Theme.font-mono;
-                                            font-size: 22px;
+                                            font-size: Theme.font-size-lg;
                                         }
                                         Text {
                                             text: "PLUGINS";
                                             color: Theme.text-disabled;
                                             font-family: Theme.font-mono;
-                                            font-size: 8px;
+                                            font-size: Theme.font-size-2xs;
                                             letter-spacing: Theme.letter-spacing-wide;
                                         }
                                     }
@@ -621,7 +547,7 @@ export component OverviewView inherits Rectangle {
                                         text: "not configured";
                                         color: Theme.text-disabled;
                                         font-family: Theme.font-mono;
-                                        font-size: 8px;
+                                        font-size: Theme.font-size-2xs;
                                         vertical-alignment: center;
                                     }
                                 }
@@ -718,7 +644,7 @@ export component OverviewView inherits Rectangle {
                                             text: entry.granted ? "GRANTED" : "PENDING";
                                             color: entry.granted ? Theme.consent : Theme.text-disabled;
                                             font-family: Theme.font-mono;
-                                            font-size: 8px;
+                                            font-size: Theme.font-size-2xs;
                                             letter-spacing: Theme.letter-spacing-wide;
                                             vertical-alignment: center;
                                         }

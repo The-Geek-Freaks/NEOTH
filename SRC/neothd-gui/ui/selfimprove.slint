@@ -7,7 +7,7 @@
 // Layout: EntranceFade > ScrollView > STATUS card + PENDING card + HISTORY card.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -25,58 +25,6 @@ export struct SiLogRow {
     title: string,
     status: string,   // "accepted" | "rolled-back" | "pending" | …
     ts: string,
-}
-
-// ── Internal micro-components ─────────────────────────────────────────────────
-
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-component InfoRow inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    in property <color>  value-color: Theme.text-primary;
-
-    height: 36px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface-1;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-
-    HorizontalLayout {
-        padding-left: 12px; padding-right: 12px; spacing: 8px;
-        Text {
-            text: root.label;
-            color: Theme.text-secondary;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            horizontal-stretch: 0;
-        }
-        Text {
-            text: root.value;
-            color: root.value-color;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            horizontal-alignment: right;
-            horizontal-stretch: 1;
-        }
-    }
-}
-
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    horizontal-alignment: right;
 }
 
 // One proposal card: id + title + description + Accept + Rollback buttons.
@@ -104,7 +52,7 @@ component ProposalCard inherits Rectangle {
                     text: root.title;
                     color: Theme.text-primary;
                     font-size: Theme.font-size-sm;
-                    font-weight: 600;
+                    font-weight: Theme.weight-semibold;
                     overflow: elide;
                 }
                 if root.description != "": Text {
@@ -134,9 +82,9 @@ component ProposalCard inherits Rectangle {
                 }
                 Text {
                     text: "Accept";
-                    color: #ffffff;
+                    color: Theme.text-primary;
                     font-size: Theme.font-size-sm;
-                    font-weight: 600;
+                    font-weight: Theme.weight-semibold;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -234,28 +182,16 @@ export component SelfImproveView inherits Rectangle {
                     Text {
                         text: "✦  Self-Improvement";
                         color: Theme.text-primary;
-                        font-size: 18px;
-                        font-weight: 700;
+                        font-size: Theme.font-size-lg;
+                        font-weight: Theme.weight-bold;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
-                    Rectangle {
-                        width: 110px; height: 32px;
-                        border-radius: Theme.radius-md;
-                        background: Theme.surface-2;
-                        border-width: 1px;
-                        border-color: Theme.border-subtle;
-                        TouchArea {
-                            clicked => { root.si-refresh-clicked(); }
-                        }
-                        Text {
-                            text: "↻  Refresh";
-                            color: Theme.accent;
-                            font-size: Theme.font-size-sm;
-                            font-family: Theme.font-mono;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                    NeothButton {
+                        label: "Refresh";
+                        size: "sm";
+                        primary: false;
+                        clicked => { root.si-refresh-clicked(); }
                     }
                 }
 
@@ -317,11 +253,13 @@ export component SelfImproveView inherits Rectangle {
                         if root.si-autonomy != "": InfoRow {
                             label: "autonomy level";
                             value: root.si-autonomy;
+                            right-align: true;
                         }
                         if root.si-last-run != "": InfoRow {
                             label: "last run";
                             value: root.si-last-run;
                             value-color: Theme.text-secondary;
+                            right-align: true;
                         }
 
                         Rectangle { height: 1px; background: Theme.border-subtle; }

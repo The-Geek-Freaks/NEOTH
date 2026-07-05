@@ -50,8 +50,8 @@ export component ActivitySidecar inherits Rectangle {
     width: root.open ? 300px : 0px;
     clip: true;
     animate width {
-        duration: Theme.duration-screen-min;
-        easing: cubic-bezier(0.16, 1, 0.3, 1);
+        duration: Theme.duration-entrance;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
     }
 
     // Left hairline separates the sidecar from the content area.
@@ -87,8 +87,8 @@ export component ActivitySidecar inherits Rectangle {
                             text: "ACTIVITY";
                             color: Theme.text-disabled;
                             font-family: Theme.font-mono;
-                            font-size: 8px;
-                            letter-spacing: 2.4px;
+                            font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-extra-wide;
                             vertical-alignment: center;
                         }
                         // live row count chip
@@ -191,8 +191,8 @@ export component ActivitySidecar inherits Rectangle {
                                         text: r.title;
                                         color: Theme.text-primary;
                                         font-family: Theme.font-sans;
-                                        font-size: 12px;
-                                        font-weight: 600;
+                                        font-size: Theme.font-size-xs;
+                                        font-weight: Theme.weight-semibold;
                                         overflow: elide;
                                         horizontal-stretch: 1;
                                     }
@@ -200,7 +200,7 @@ export component ActivitySidecar inherits Rectangle {
                                         text: r.ts;
                                         color: Theme.text-tertiary;
                                         font-family: Theme.font-mono;
-                                        font-size: 8.5px;
+                                        font-size: Theme.font-size-2xs;
                                         vertical-alignment: top;
                                     }
                                 }

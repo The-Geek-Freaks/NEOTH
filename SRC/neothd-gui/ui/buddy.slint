@@ -29,7 +29,11 @@ export component Buddy inherits Rectangle {
     property <length> cy: root.orb-size / 2;
 
     // ── Mood → hue / orbit period / breath period ────────────────────
-    pure function hue() -> color {
+    // Animated color transition: target color switches on mood change, Slint
+    // animates background/border-color transitions natively when declared with
+    // `animate`. We expose the TARGET as a pure fn and declare an animatable
+    // property that follows it.
+    pure function hue-target() -> color {
         return root.mood == "thinking" || root.mood == "searching" || root.mood == "analyzing"
                 || root.mood == "audit" || root.mood == "loading" || root.mood == "connecting"
                 || root.mood == "listening"
@@ -39,8 +43,14 @@ export component Buddy inherits Rectangle {
             ? Theme.pink-500
             : root.mood == "intense" || root.mood == "cracking" || root.mood == "notification"
             ? Theme.amber-500
-            : Theme.green-500;                          // memory / working / idle / success …
+            : Theme.green-500;   // memory / working / idle / success …
     }
+
+    // Animated accent color — transitions in 300 ms with sovereign curve.
+    // All child elements reference root.hue instead of root.hue-target().
+    property <color> hue: root.hue-target();
+    animate hue { duration: 300ms; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
+
     pure function spin() -> duration {
         return root.mood == "idle" || root.mood == "sleeping" ? 16s
             : root.mood == "thinking" || root.mood == "audit" ? 6s
@@ -60,52 +70,129 @@ export component Buddy inherits Rectangle {
     }
     pure function is-mood(m: string) -> bool { return root.mood == m; }
 
+    // ── Activity intensity 0..1 (drives glow radius + halo alpha) ────
+    pure function intensity() -> float {
+        return root.mood == "idle" || root.mood == "sleeping" ? 0.15
+            : root.mood == "thinking" || root.mood == "searching" || root.mood == "audit" ? 0.55
+            : root.mood == "working" || root.mood == "analyzing" || root.mood == "loading" ? 0.80
+            : root.mood == "intense" || root.mood == "cracking" || root.mood == "parallel" ? 1.0
+            : root.mood == "memory" || root.mood == "learning" ? 0.60
+            : root.mood == "alert" || root.mood == "consent" || root.mood == "error" ? 0.90
+            : root.mood == "success" || root.mood == "excited" ? 0.75
+            : 0.40;
+    }
+
     // ── Continuous phases ────────────────────────────────────────────
     property <angle> orbit: 360deg * mod(animation-tick(), root.spin()) / root.spin();
-    property <float> pulse: 0.5 + 0.5 * sin(360deg * mod(animation-tick(), root.breath()) / root.breath());
-    property <length> ring-r: 44 * root.u;             // orbiter radius
-    property <length> core-r: 17 * root.u;             // core radius
-    property <length> core-scaled: root.core-r * (0.9 + 0.18 * root.pulse);
 
-    // ══ HALO — soft tri-layer glow (no blur on Rectangle → stack alphas)
+    // Active pulse — drives active overlays and orbiters.
+    property <float> pulse: 0.5 + 0.5 * sin(360deg * mod(animation-tick(), root.breath()) / root.breath());
+
+    // Idle breathe — always-on slow inhale/exhale, period ~4 s regardless of
+    // mood, very subtle so it never competes with the active pulse.
+    property <float> breathe: 0.5 + 0.5 * sin(360deg * mod(animation-tick(), 4000ms) / 4000ms);
+
+    // State-entry pop: a one-shot scale overshoot on entering an active mood.
+    // We approximate it by tracking a fast rising/decaying phase keyed to
+    // animation-tick modulo a very long fake period, then capping it.
+    // Practically: the "pop" lives as an additive term on core-scaled driven
+    // by a fast sine that decays as pulse falls back. Because Slint cannot do
+    // one-shot per-trigger state machines in pure expressions, we use a
+    // short-period (0.35 s) fast-sine whose amplitude is modulated by the
+    // complement of the slower pulse — this gives a small "extra bounce" right
+    // when the mood first activates and the pulse restarts.
+    property <float> pop-phase: sin(360deg * mod(animation-tick(), 350ms) / 350ms);
+    property <float> pop: root.intensity() > 0.5 ? (0.06 * root.pop-phase * (1.0 - root.pulse)) : 0.0;
+
+    property <length> ring-r: 44 * root.u;                          // nominal orbiter radius
+    property <length> core-r: 17 * root.u;
+
+    // Core scale: idle breathe (always) + active pulse + entry pop.
+    property <length> core-scaled: root.core-r * (0.88
+        + 0.06 * root.breathe           // idle breathe — always alive
+        + 0.14 * root.pulse             // active pulse — mood-speed
+        + root.pop);                    // state-entry overshoot
+
+    // Glow size factor — tracks intensity.
+    property <float> glow-f: root.intensity() * (0.7 + 0.3 * root.pulse);
+
+    // ══ OUTER GLOW — luminous halo layers. Radius+alpha scale with activity.
+    // Layer 0: widest, most transparent.
     Rectangle {
-        width: 94 * root.u; height: 94 * root.u; x: 3 * root.u; y: 3 * root.u;
+        width: (98 + 12 * root.glow-f) * root.u;
+        height: self.width;
+        x: root.cx - self.width / 2;
+        y: root.cy - self.height / 2;
         border-radius: self.width / 2;
-        background: root.hue().with-alpha(0.05 + 0.05 * root.pulse);
+        background: root.hue.with-alpha(0.025 + 0.055 * root.glow-f);
+        drop-shadow-blur: 18px * root.glow-f;
+        drop-shadow-color: root.hue.with-alpha(0.10 * root.glow-f);
+        drop-shadow-offset-x: 0px;
+        drop-shadow-offset-y: 0px;
     }
+    // Layer 1: mid glow.
     Rectangle {
-        width: 74 * root.u; height: 74 * root.u; x: 13 * root.u; y: 13 * root.u;
+        width: (82 + 8 * root.glow-f) * root.u;
+        height: self.width;
+        x: root.cx - self.width / 2;
+        y: root.cy - self.height / 2;
         border-radius: self.width / 2;
-        background: root.hue().with-alpha(0.06 + 0.06 * root.pulse);
+        background: root.hue.with-alpha(0.045 + 0.075 * root.glow-f);
+        drop-shadow-blur: 10px * root.glow-f;
+        drop-shadow-color: root.hue.with-alpha(0.15 * root.glow-f);
+        drop-shadow-offset-x: 0px;
+        drop-shadow-offset-y: 0px;
+    }
+    // Layer 2: close glow.
+    Rectangle {
+        width: 66 * root.u; height: 66 * root.u;
+        x: 17 * root.u; y: 17 * root.u;
+        border-radius: self.width / 2;
+        background: root.hue.with-alpha(0.05 + 0.07 * root.pulse);
     }
 
     // ══ RINGS — three concentric outlines, breathing opacity ═══════════
     Rectangle {
         width: 84 * root.u; height: 84 * root.u; x: 8 * root.u; y: 8 * root.u;
         border-radius: self.width / 2;
-        border-width: 1.5px; border-color: root.hue().with-alpha(0.18 + 0.12 * root.pulse);
+        border-width: 1.5px;
+        border-color: root.hue.with-alpha(0.16 + 0.14 * root.breathe + 0.08 * root.pulse);
     }
     Rectangle {
         width: 68 * root.u; height: 68 * root.u; x: 16 * root.u; y: 16 * root.u;
         border-radius: self.width / 2;
-        border-width: 1.5px; border-color: root.hue().with-alpha(0.28 + 0.14 * (1.0 - root.pulse));
+        border-width: 1.5px;
+        border-color: root.hue.with-alpha(0.24 + 0.14 * (1.0 - root.pulse));
     }
     Rectangle {
         width: 52 * root.u; height: 52 * root.u; x: 24 * root.u; y: 24 * root.u;
         border-radius: self.width / 2;
-        border-width: 1px; border-color: root.hue().with-alpha(0.35);
+        border-width: 1px;
+        border-color: root.hue.with-alpha(0.30 + 0.10 * root.breathe);
     }
 
-    // ══ ORBITERS — three dots circling the rim ═════════════════════════
+    // ══ ORBITERS — organic elliptical motion, trailing opacity ═══════════
+    // Each dot: different base radius, phase offset, and a slow wobble that
+    // makes the orbit feel elliptical rather than a rigid circle.
+    // Leading dot (i=0) brightest; trailing dot (i=2) dimmer.
+    // Speed mood-driven via root.spin().
     for d[i] in [3.4, 3.0, 2.6]: Rectangle {
+        // Phase: 120° apart + per-dot wobble.
         property <angle> a: root.orbit + (i * 120deg);
+        // Radius wobble: each dot has slightly different radii (44±4 u) and a
+        // slow elliptical wobble to break rigid-circle symmetry.
+        property <float> wobble: 0.5 + 0.5 * sin((360deg * mod(animation-tick(), 6200ms) / 6200ms) + i * 117deg);
+        property <length> r-base: (42 + i * 1.5) * root.u;   // 42 / 43.5 / 45 u
         property <length> dr: d * root.u;
+        property <length> rx: self.r-base + (3.5 * root.u * self.wobble);   // elliptical x
+        property <length> ry: self.r-base - (2.5 * root.u * self.wobble);   // elliptical y
         width: self.dr * 2; height: self.dr * 2;
-        x: root.cx + (sin(self.a) * root.ring-r) - self.dr;
-        y: root.cy - (cos(self.a) * root.ring-r) - self.dr;
+        x: root.cx + (sin(self.a) * self.rx) - self.dr;
+        y: root.cy - (cos(self.a) * self.ry) - self.dr;
         border-radius: self.dr;
-        background: root.hue();
-        opacity: 0.55 + 0.45 * root.pulse;
+        background: root.hue;
+        // Leading dot (i=0) brightest; trailing (i=2) dimmer.
+        opacity: i == 0 ? 0.90 : (i == 1 ? 0.65 : 0.38);
     }
 
     // ══ MEMORY INFLOW — particles streaming into the core (mood=memory)
@@ -117,8 +204,8 @@ export component Buddy inherits Rectangle {
             width: 3.2 * root.u; height: 3.2 * root.u; border-radius: self.width / 2;
             x: root.cx + (sin(p) * self.rr) - self.width / 2;
             y: root.cy - (cos(p) * self.rr) - self.height / 2;
-            background: root.hue();
-            opacity: self.t;
+            background: root.hue;
+            opacity: self.t * (0.7 + 0.3 * root.pulse);
         }
     }
 
@@ -127,34 +214,40 @@ export component Buddy inherits Rectangle {
         width: root.core-scaled * 2; height: root.core-scaled * 2;
         x: root.cx - root.core-scaled; y: root.cy - root.core-scaled;
         border-radius: self.width / 2;
-        background: root.hue();
-        // inner highlight (top-left)
+        background: root.hue;
+        drop-shadow-blur: 8px + 10px * root.pulse;
+        drop-shadow-color: root.hue.with-alpha(0.55 * root.intensity());
+        drop-shadow-offset-x: 0px;
+        drop-shadow-offset-y: 0px;
+        // inner highlight (top-left specular)
         Rectangle {
             width: 11 * root.u; height: 11 * root.u;
             x: parent.width * 0.24; y: parent.height * 0.24;
             border-radius: self.width / 2;
-            background: Theme.ink-0.with-alpha(0.45);
+            background: Theme.ink-0.with-alpha(0.40 + 0.10 * root.breathe);
         }
     }
 
-    // ══ FACE — eyes + mouth, in the 0..100 viewBox via Path ════════════
+    // ══ FACE — eyes + mouth, in the 0..100 viewBox ═════════════════════
     if root.show-face && !root.is-mood("sleeping") && !root.is-mood("error"): Rectangle {
         // eyes
         Rectangle {
             x: 42.4 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
             width: 3.4 * root.u; height: (9 + 3 * root.pulse) * root.u;
-            border-radius: 1.7 * root.u; background: root.hue() == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
+            border-radius: 1.7 * root.u;
+            background: root.hue == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
         }
         Rectangle {
             x: 54.2 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
             width: 3.4 * root.u; height: (9 + 3 * root.pulse) * root.u;
-            border-radius: 1.7 * root.u; background: root.hue() == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
+            border-radius: 1.7 * root.u;
+            background: root.hue == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
         }
         // mouth — smile for happy/success/excited, neutral otherwise
         Path {
             viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
             width: 100%; height: 100%;
-            stroke: root.hue() == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
+            stroke: root.hue == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
             stroke-width: 2px;
             commands: root.is-mood("happy") || root.is-mood("success") || root.is-mood("excited")
                 ? "M44 55 Q50 62 56 55"
@@ -163,22 +256,43 @@ export component Buddy inherits Rectangle {
     }
 
     // ══ MOOD OVERLAYS ══════════════════════════════════════════════════
-    // thinking — three pulsing dots over the core
+
+    // thinking — three staggered dots with smoother cubic easing via cascaded sin
     if root.is-mood("thinking"): Rectangle {
         for dx[i] in [44, 50, 56]: Rectangle {
-            property <float> ph: 0.5 + 0.5 * sin(360deg * mod(animation-tick() / 0.9s + i * 0.33, 1.0));
-            x: (dx - 1.9) * root.u; y: (50 - 1.9) * root.u;
+            // Stagger offset: each dot 0.28 s behind the previous.
+            // Use a sin²-like shape (sin * abs(sin)) for snappier attack, smooth decay.
+            property <float> raw: sin(360deg * mod(animation-tick() / 0.88s + i * 0.32, 1.0));
+            property <float> ph: self.raw * (self.raw < 0.0 ? -1.0 : 1.0);   // |sin| shape
+            x: (dx - 1.9) * root.u; y: (50 - 1.9 - 3.5 * self.ph) * root.u;
             width: 3.8 * root.u; height: 3.8 * root.u; border-radius: self.width / 2;
-            background: Theme.ink-1000; opacity: 0.3 + 0.7 * self.ph;
+            background: Theme.ink-1000;
+            opacity: 0.25 + 0.75 * (0.5 + 0.5 * self.raw);
         }
     }
-    // working / analyzing — a scan bar sweeping the core vertically
+
+    // working / analyzing — scan bar with edge fade via two gradient rects
     if root.is-mood("working") || root.is-mood("analyzing"): Rectangle {
         property <float> sweep: mod(animation-tick(), 1.4s) / 1.4s;
-        x: 33 * root.u; y: (40 + 20 * self.sweep) * root.u;
-        width: 34 * root.u; height: 1.6 * root.u; border-radius: 0.8 * root.u;
-        background: Theme.ink-1000; opacity: 0.8;
+        x: 30 * root.u; y: (40 + 20 * self.sweep) * root.u;
+        width: 40 * root.u; height: 2.0 * root.u; border-radius: 1.0 * root.u;
+        background: Theme.ink-1000;
+        opacity: 0.85 * (1.0 - abs(2.0 * self.sweep - 1.0));   // fade at top and bottom
+        // left fade cap
+        Rectangle {
+            x: 0; y: 0; width: 8 * root.u; height: parent.height;
+            border-radius: parent.border-radius;
+            background: Theme.ink-1000.with-alpha(0.0);
+        }
+        // right fade cap
+        Rectangle {
+            x: parent.width - 8 * root.u; y: 0;
+            width: 8 * root.u; height: parent.height;
+            border-radius: parent.border-radius;
+            background: Theme.ink-1000.with-alpha(0.0);
+        }
     }
+
     // success — a check mark
     if root.is-mood("success"): Path {
         viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
@@ -186,6 +300,7 @@ export component Buddy inherits Rectangle {
         stroke: Theme.text-on-accent; stroke-width: 3px;
         commands: "M43 50.5 L47.5 55 L57 45";
     }
+
     // alert / consent — a "!" badge top-right
     if root.is-mood("alert") || root.is-mood("consent") || root.is-mood("problem"): Rectangle {
         x: 62 * root.u; y: 26 * root.u; width: 12 * root.u; height: 12 * root.u;
@@ -193,6 +308,7 @@ export component Buddy inherits Rectangle {
         Text { text: "!"; color: Theme.ink-0; font-size: 9 * root.u; font-weight: 700;
                horizontal-alignment: center; vertical-alignment: center; }
     }
+
     // secure — a small lock arc on the core
     if root.is-mood("secure") || root.is-mood("connected"): Path {
         viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
@@ -200,11 +316,14 @@ export component Buddy inherits Rectangle {
         stroke: Theme.ink-1000; stroke-width: 2px;
         commands: "M46 49 v-3.2 a4 4 0 0 1 8 0 v3.2";
     }
+
     // sleeping — z z z
     if root.is-mood("sleeping"): Text {
         x: 64 * root.u; y: 22 * root.u; text: "z z z";
-        color: root.hue().with-alpha(0.7); font-size: 11 * root.u; font-italic: true;
+        color: root.hue.with-alpha(0.60 + 0.15 * root.breathe);
+        font-size: 11 * root.u; font-italic: true;
     }
+
     // error — an X over the core
     if root.is-mood("error") || root.is-mood("danger"): Path {
         viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;

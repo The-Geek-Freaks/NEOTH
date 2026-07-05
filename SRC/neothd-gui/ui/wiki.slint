@@ -13,8 +13,7 @@
 //   - All colors via Theme tokens; no inline hex.
 
 import { Theme } from "theme.slint";
-import { Card, EntranceFade, NeothButton } from "components.slint";
-import { NeothLineEdit } from "components.slint";
+import { Card, EntranceFade, NeothButton, NeothLineEdit, Kicker, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Exported struct (Rust must construct; re-export from main.slint) ──────────
@@ -25,27 +24,6 @@ export struct WikiRow {
     kind: string,         // "skill" | "cron" | "cli" | "slash"
     description: string,  // free-form, word-wrapped
     gate: string,         // feature_gate, "" when not set
-}
-
-// ── Internal micro-components ─────────────────────────────────────────────────
-
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    letter-spacing: Theme.letter-spacing-tight;
-    horizontal-alignment: right;
 }
 
 // Kind chip — small pill whose background + text color are driven by kind string.
@@ -262,7 +240,7 @@ export component WikiView inherits Rectangle {
                             : "capability self-map";
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
-                        font-size: 8.5px;
+                        font-size: Theme.font-size-2xs;
                         letter-spacing: Theme.letter-spacing-wide;
                     }
                 }
@@ -271,30 +249,11 @@ export component WikiView inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
 
                 // Refresh button — inline Rectangle to avoid importing full NeothButton size
-                Rectangle {
-                    height: 30px;
-                    width: 90px;
-                    border-radius: Theme.radius-button;
-                    background: Theme.accent-tint;
-                    border-width: 1px;
-                    border-color: Theme.accent;
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        alignment: center;
-                        spacing: 6px;
-                        Text {
-                            text: "⟳ Refresh";
-                            color: Theme.accent;
-                            font-family: Theme.font-mono;
-                            font-size: Theme.font-size-xs;
-                            letter-spacing: Theme.letter-spacing-tight;
-                            vertical-alignment: center;
-                        }
-                    }
-                    TouchArea {
-                        clicked => { root.wiki-refresh-clicked(); }
-                    }
+                NeothButton {
+                    label: "Refresh";
+                    size: "sm";
+                    primary: false;
+                    clicked => { root.wiki-refresh-clicked(); }
                 }
             }
 

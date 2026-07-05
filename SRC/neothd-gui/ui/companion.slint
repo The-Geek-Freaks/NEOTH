@@ -22,69 +22,8 @@
 //   - transform-rotation not used here (no bare Rectangle rotation).
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
-
-// ── Kicker — 8 px mono wide-tracked uppercase section heading ────────────────
-
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-// ── InfoRow — 36 px label + value pill (matches overview.slint idiom) ────────
-
-component InfoRow inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    in property <color>  value-color: Theme.text-primary;
-
-    height: 36px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface-1;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        alignment: start;
-        spacing: 12px;
-        Text {
-            text: root.label;
-            color: Theme.text-tertiary;
-            font-family: Theme.font-mono;
-            font-size: 8px;
-            letter-spacing: Theme.letter-spacing-wide;
-            vertical-alignment: center;
-            width: 80px;
-        }
-        Text {
-            text: root.value != "" ? root.value : "—";
-            color: root.value-color;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            wrap: word-wrap;
-            horizontal-stretch: 1;
-        }
-    }
-}
-
-// ── RefreshFooter — 8.5 px mono timestamp (matches overview.slint) ───────────
-
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    letter-spacing: Theme.letter-spacing-tight;
-}
 
 // ── CompanionView — public exported component ─────────────────────────────────
 
@@ -150,7 +89,7 @@ export component CompanionView inherits Rectangle {
                         text: "smartphone pairing via local mesh";
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
-                        font-size: 8.5px;
+                        font-size: Theme.font-size-2xs;
                         letter-spacing: Theme.letter-spacing-wide;
                     }
                 }
@@ -159,30 +98,11 @@ export component CompanionView inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
 
                 // Refresh button (inline, matches overview.slint pattern)
-                Rectangle {
-                    height: 30px;
-                    width: 90px;
-                    border-radius: Theme.radius-button;
-                    background: Theme.audit-tint;
-                    border-width: 1px;
-                    border-color: Theme.audit;
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        alignment: center;
-                        spacing: 6px;
-                        Text {
-                            text: "⟳ Refresh";
-                            color: Theme.audit;
-                            font-family: Theme.font-mono;
-                            font-size: Theme.font-size-xs;
-                            letter-spacing: Theme.letter-spacing-tight;
-                            vertical-alignment: center;
-                        }
-                    }
-                    TouchArea {
-                        clicked => { root.cp-refresh-clicked(); }
-                    }
+                NeothButton {
+                    label: "Refresh";
+                    size: "sm";
+                    primary: false;
+                    clicked => { root.cp-refresh-clicked(); }
                 }
             }
 

@@ -15,7 +15,7 @@
 //   - No inline hex — Theme tokens only.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Exported structs (Rust must re-export from main.slint) ────────────────────
@@ -28,65 +28,6 @@ export struct MeshPeerRow {
 }
 
 // ── Internal micro-components ─────────────────────────────────────────────────
-
-// Kicker — 8px mono eyebrow, wide-tracked, text-disabled.
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-// InfoRow — 36px labeled value row with left-rail mono label + right value.
-component InfoRow inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    in property <color>  value-color: Theme.text-primary;
-
-    height: 36px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface-1;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        alignment: start;
-        spacing: 12px;
-        Text {
-            text: root.label;
-            color: Theme.text-tertiary;
-            font-family: Theme.font-mono;
-            font-size: 8px;
-            letter-spacing: Theme.letter-spacing-wide;
-            vertical-alignment: center;
-            width: 80px;
-        }
-        Text {
-            text: root.value != "" ? root.value : "—";
-            color: root.value-color;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
-        }
-    }
-}
-
-// RefreshFooter — 8.5px mono timestamp, right-aligned, text-disabled.
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    letter-spacing: Theme.letter-spacing-tight;
-    horizontal-alignment: right;
-}
 
 // PeerRow — one discovered peer: Led + id (mono, elide) + last-seen badge.
 component PeerRow inherits Rectangle {
@@ -199,7 +140,7 @@ export component MeshView inherits Rectangle {
                         text: "node identity · peers · failover status";
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
-                        font-size: 8.5px;
+                        font-size: Theme.font-size-2xs;
                         letter-spacing: Theme.letter-spacing-wide;
                     }
                 }
@@ -208,30 +149,11 @@ export component MeshView inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
 
                 // Refresh button
-                Rectangle {
-                    height: 30px;
-                    width: 90px;
-                    border-radius: Theme.radius-button;
-                    background: Theme.audit-tint;
-                    border-width: 1px;
-                    border-color: Theme.audit;
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        alignment: center;
-                        spacing: 6px;
-                        Text {
-                            text: "⟳ Refresh";
-                            color: Theme.audit;
-                            font-family: Theme.font-mono;
-                            font-size: Theme.font-size-xs;
-                            letter-spacing: Theme.letter-spacing-tight;
-                            vertical-alignment: center;
-                        }
-                    }
-                    TouchArea {
-                        clicked => { root.mesh-refresh-clicked(); }
-                    }
+                NeothButton {
+                    label: "Refresh";
+                    size: "sm";
+                    primary: false;
+                    clicked => { root.mesh-refresh-clicked(); }
                 }
             }
 
@@ -268,7 +190,7 @@ export component MeshView inherits Rectangle {
                                     text: "mDNS";
                                     color: Theme.text-disabled;
                                     font-family: Theme.font-mono;
-                                    font-size: 8px;
+                                    font-size: Theme.font-size-2xs;
                                     letter-spacing: Theme.letter-spacing-wide;
                                     vertical-alignment: center;
                                 }
@@ -294,7 +216,7 @@ export component MeshView inherits Rectangle {
                                         text: "NODE ID";
                                         color: Theme.text-disabled;
                                         font-family: Theme.font-mono;
-                                        font-size: 8px;
+                                        font-size: Theme.font-size-2xs;
                                         letter-spacing: Theme.letter-spacing-wide;
                                         vertical-alignment: center;
                                         width: 58px;
@@ -481,7 +403,7 @@ export component MeshView inherits Rectangle {
                                             color: Theme.warning;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-sm;
-                                            font-weight: 600;
+                                            font-weight: Theme.weight-semibold;
                                             vertical-alignment: center;
                                             letter-spacing: Theme.letter-spacing-tight;
                                         }
@@ -502,7 +424,7 @@ export component MeshView inherits Rectangle {
                                         color: Theme.warning;
                                         font-family: Theme.font-mono;
                                         font-size: Theme.font-size-sm;
-                                        font-weight: 600;
+                                        font-weight: Theme.weight-semibold;
                                         wrap: word-wrap;
                                     }
 
@@ -545,7 +467,7 @@ export component MeshView inherits Rectangle {
                                         text: "REACHABLE PEERS";
                                         color: Theme.text-tertiary;
                                         font-family: Theme.font-mono;
-                                        font-size: 8px;
+                                        font-size: Theme.font-size-2xs;
                                         letter-spacing: Theme.letter-spacing-wide;
                                         vertical-alignment: center;
                                         width: 110px;

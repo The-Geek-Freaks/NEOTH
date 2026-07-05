@@ -113,6 +113,13 @@ export component Card inherits Rectangle {
     border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.border-subtle;
+    // FIX-5 — subtle elevation: ambient accent-glow halo.
+    // A very-low-alpha glow lifts the card 1px above the canvas read.
+    // No binding loop: drop-shadow props are static, no self-reference.
+    drop-shadow-blur: 10px;
+    drop-shadow-offset-x: 0px;
+    drop-shadow-offset-y: 1px;
+    drop-shadow-color: Theme.accent-glow;
 
     // Clipped overlay so the gradient never spills past the Noble Curve.
     // Declared before the instantiation children, so content (transparent
@@ -895,6 +902,79 @@ export component NeothLineEdit inherits Rectangle {
     touch := TouchArea {
         clicked => { input.focus(); }
     }
+}
+
+// ── Kicker ───────────────────────────────────────────────────────────
+// Mono 11px (font-size-2xs) uppercase card-section eyebrow.
+// Wide letter-spacing, text-disabled colour. Used by every dashboard tab.
+export component Kicker inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-disabled;
+    font-family: Theme.font-mono;
+    font-size: Theme.font-size-2xs;
+    letter-spacing: Theme.letter-spacing-extra-wide;
+}
+
+// ── InfoRow ──────────────────────────────────────────────────────────
+// One-line label+value pill inside a Card.
+//
+// Default (right-align: false): 90px fixed mono-label column on the left,
+// value left-aligned beside it — used by dashboard-style tabs.
+//
+// right-align: true: label left (no fixed width), value mono right-aligned —
+// used by observer / stats tabs (babel, n8n, selfimprove).
+export component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> value-color: Theme.text-primary;
+    // When true: no fixed label width; value right-aligns (observer style).
+    in property <bool> right-align: false;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: start;
+        spacing: Theme.space-3;
+        Text {
+            text: root.label;
+            color: root.right-align ? Theme.text-secondary : Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: root.right-align ? Theme.font-size-sm : Theme.font-size-2xs;
+            letter-spacing: root.right-align ? 0px : Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: root.right-align ? 0px : 90px;
+            horizontal-stretch: root.right-align ? 0 : -1;
+        }
+        Text {
+            text: root.value != "" ? root.value : "—";
+            color: root.value-color;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-alignment: root.right-align ? right : left;
+            horizontal-stretch: root.right-align ? 1 : -1;
+        }
+    }
+}
+
+// ── RefreshFooter ─────────────────────────────────────────────────────
+// Timestamp line at the bottom of a card. Right-aligned, 2xs mono,
+// text-tertiary (dim but readable). Text reads "refreshed <ts>".
+export component RefreshFooter inherits Text {
+    in property <string> ts;
+    text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    color: Theme.text-tertiary;
+    font-family: Theme.font-mono;
+    font-size: Theme.font-size-2xs;
+    letter-spacing: Theme.letter-spacing-tight;
+    horizontal-alignment: right;
 }
 
 // ── FooterBar ────────────────────────────────────────────────────────

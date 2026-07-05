@@ -7,7 +7,7 @@
 // Layout: EntranceFade > ScrollView > NEXT EVENTS card + ADD EVENT card.
 
 import { Theme } from "theme.slint";
-import { Card, EntranceFade, NeothButton, NeothLineEdit } from "components.slint";
+import { Card, EntranceFade, NeothButton, NeothLineEdit, Kicker, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -16,26 +16,6 @@ export struct CalEventRow {
     datetime: string,   // formatted date/time mono string
     summary: string,
     location: string,   // "" when absent
-}
-
-// ── Internal micro-components ─────────────────────────────────────────────────
-
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    horizontal-alignment: right;
 }
 
 // One event row: date-mono + summary + optional location.
@@ -112,28 +92,16 @@ export component CalendarView inherits Rectangle {
                     Text {
                         text: "▦  Calendar";
                         color: Theme.text-primary;
-                        font-size: 18px;
-                        font-weight: 700;
+                        font-size: Theme.font-size-lg;
+                        font-weight: Theme.weight-bold;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
-                    Rectangle {
-                        width: 110px; height: 32px;
-                        border-radius: Theme.radius-md;
-                        background: Theme.surface-2;
-                        border-width: 1px;
-                        border-color: Theme.border-subtle;
-                        TouchArea {
-                            clicked => { root.cal-refresh-clicked(); }
-                        }
-                        Text {
-                            text: "↻  Refresh";
-                            color: Theme.accent;
-                            font-size: Theme.font-size-sm;
-                            font-family: Theme.font-mono;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                    NeothButton {
+                        label: "Refresh";
+                        size: "sm";
+                        primary: false;
+                        clicked => { root.cal-refresh-clicked(); }
                     }
                 }
 
@@ -145,7 +113,7 @@ export component CalendarView inherits Rectangle {
                             text: "CalDAV not configured";
                             color: Theme.consent;
                             font-size: Theme.font-size-sm;
-                            font-weight: 600;
+                            font-weight: Theme.weight-semibold;
                         }
                         Text {
                             text: "Set calendar.caldav_url + credentials in freedom.yaml to enable calendar sync.";

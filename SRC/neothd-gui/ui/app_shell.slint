@@ -21,8 +21,8 @@ component NavGroup inherits Rectangle {
             text: root.label;
             color: Theme.text-disabled;
             font-family: Theme.font-mono;
-            font-size: 8px;
-            letter-spacing: 2.4px;    // ≈ .24em on ~10px base
+            font-size: Theme.font-size-2xs;
+            letter-spacing: Theme.letter-spacing-extra-wide;    // ≈ .24em on ~10px base
         }
     }
 }
@@ -68,14 +68,14 @@ component NavBtn inherits Rectangle {
             Text {
                 text: root.glyph;
                 color: root.active ? root.tier-color : Theme.text-tertiary;
-                font-size: 14px; font-family: Theme.font-mono;
+                font-size: Theme.font-size-sm; font-family: Theme.font-mono;
                 vertical-alignment: center; horizontal-alignment: center;
             }
         }
         Text {
             text: root.label;
             color: root.active ? Theme.text-primary : Theme.text-secondary;
-            font-size: 14px; font-family: Theme.font-sans;
+            font-size: Theme.font-size-sm; font-family: Theme.font-sans;
             vertical-alignment: center;
             horizontal-stretch: 1;
         }
@@ -155,14 +155,14 @@ export component Sidebar inherits Rectangle {
                 alignment: center; spacing: 3px;
                 Text {
                     text: "NEOTH"; color: Theme.accent;
-                    font-family: Theme.font-wordmark; font-size: 23px; font-weight: 700;
+                    font-family: Theme.font-wordmark; font-size: 23px; font-weight: Theme.weight-bold;
                     letter-spacing: 1px;
                 }
                 Text {
                     // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
                     // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
                     text: "v1.0 · sovereign"; color: Theme.text-tertiary;
-                    font-family: Theme.font-mono; font-size: 8.5px;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                     letter-spacing: Theme.letter-spacing-mono-caps;
                 }
             }
@@ -274,7 +274,7 @@ export component Sidebar inherits Rectangle {
                 width: 28px; height: 28px; border-radius: Theme.radius-sm;
                 background: ta.has-hover ? Theme.surface-2 : transparent;
                 Text {
-                    text: Theme.dark ? "☀" : "☾"; color: Theme.text-secondary; font-size: 14px;
+                    text: Theme.dark ? "☀" : "☾"; color: Theme.text-secondary; font-size: Theme.font-size-sm;
                     horizontal-alignment: center; vertical-alignment: center;
                 }
                 // Flip the global theme immediately (live), then bubble up so

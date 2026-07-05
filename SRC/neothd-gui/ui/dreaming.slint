@@ -14,7 +14,7 @@
 //   - Structs exported from this file must be re-exported from main.slint.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -31,64 +31,6 @@ export struct DreamEntryRow {
     day: string,      // ISO date — same as the selected day
     title: string,    // best-effort title extracted from the dream object
     body: string,     // best-effort body / summary text
-}
-
-// ── Internal micro-components ─────────────────────────────────────────────────
-
-component Kicker inherits Text {
-    in property <string> label;
-    text: root.label;
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8px;
-    letter-spacing: Theme.letter-spacing-extra-wide;
-}
-
-component InfoRow inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-    in property <color>  value-color: Theme.text-primary;
-
-    height: 36px;
-    border-radius: Theme.radius-md;
-    background: Theme.surface-1;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        alignment: start;
-        spacing: 12px;
-        Text {
-            text: root.label;
-            color: Theme.text-tertiary;
-            font-family: Theme.font-mono;
-            font-size: 8px;
-            letter-spacing: Theme.letter-spacing-wide;
-            vertical-alignment: center;
-            width: 72px;
-        }
-        Text {
-            text: root.value != "" ? root.value : "—";
-            color: root.value-color;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-sm;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            overflow: elide;
-        }
-    }
-}
-
-component RefreshFooter inherits Text {
-    in property <string> ts;
-    text: root.ts != "" ? "refreshed \{root.ts}" : "";
-    color: Theme.text-disabled;
-    font-family: Theme.font-mono;
-    font-size: 8.5px;
-    letter-spacing: Theme.letter-spacing-tight;
-    horizontal-alignment: right;
 }
 
 // ── DreamingView ──────────────────────────────────────────────────────────────
@@ -177,7 +119,7 @@ export component DreamingView inherits Rectangle {
                             text: "memory consolidation · self-awareness";
                             color: Theme.text-tertiary;
                             font-family: Theme.font-mono;
-                            font-size: 8.5px;
+                            font-size: Theme.font-size-2xs;
                             letter-spacing: Theme.letter-spacing-wide;
                         }
                     }
@@ -186,29 +128,11 @@ export component DreamingView inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
 
                 // Refresh button
-                Rectangle {
-                    height: 30px;
-                    width: 90px;
-                    border-radius: Theme.radius-button;
-                    background: Theme.memory-tint;
-                    border-width: 1px;
-                    border-color: Theme.memory;
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        alignment: center;
-                        Text {
-                            text: "⟳  Refresh";
-                            color: Theme.memory;
-                            font-family: Theme.font-mono;
-                            font-size: Theme.font-size-xs;
-                            letter-spacing: Theme.letter-spacing-tight;
-                            vertical-alignment: center;
-                        }
-                    }
-                    TouchArea {
-                        clicked => { root.dr-refresh-clicked(); }
-                    }
+                NeothButton {
+                    label: "Refresh";
+                    size: "sm";
+                    primary: false;
+                    clicked => { root.dr-refresh-clicked(); }
                 }
             }
 
@@ -366,7 +290,7 @@ export component DreamingView inherits Rectangle {
                                             text: root.dr-selected-day;
                                             color: Theme.audit;
                                             font-family: Theme.font-mono;
-                                            font-size: 8px;
+                                            font-size: Theme.font-size-2xs;
                                             letter-spacing: Theme.letter-spacing-wide;
                                             vertical-alignment: center;
                                         }
@@ -404,7 +328,7 @@ export component DreamingView inherits Rectangle {
                                                     color: Theme.text-primary;
                                                     font-family: Theme.font-sans;
                                                     font-size: Theme.font-size-sm;
-                                                    font-weight: 600;
+                                                    font-weight: Theme.weight-semibold;
                                                     vertical-alignment: center;
                                                     horizontal-stretch: 1;
                                                     overflow: elide;
