@@ -204,7 +204,12 @@ pub fn validate_manifest(m: &PluginManifest) -> Result<(), ManifestError> {
     Ok(())
 }
 
-fn is_snake_case_id(s: &str) -> bool {
+/// Canonical plugin-id shape check: non-empty, `[a-z0-9_]` only, not starting
+/// with `_` or a digit. This is the single source of truth for what a valid
+/// installed plugin directory name looks like — reused by `neoth plugin
+/// remove` to reject path-traversal ids (`../`, absolute paths, separators)
+/// before they reach a filesystem join.
+pub(crate) fn is_snake_case_id(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')

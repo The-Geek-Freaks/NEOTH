@@ -284,7 +284,7 @@ pub(crate) async fn step5_provider(
             let key = prompt_provider_key(args, interactive, kind)?;
             if let Some(ref k) = key {
                 // ZF-03 — live ping with the entered key (non-fatal).
-                ping_provider_key(k, kind, state.provider_endpoint.as_deref());
+                ping_provider_key(k, kind, state.provider_endpoint.as_deref()).await;
                 state.provider_key = Some(crate::secret::SecretString::from(k.clone()));
             }
 
@@ -368,7 +368,7 @@ pub(crate) async fn step5_provider(
             let key = prompt_provider_key(args, interactive, kind)?;
             if let Some(ref k) = key {
                 // ZF-03 — live ping (non-fatal).
-                ping_provider_key(k, kind, state.provider_endpoint.as_deref());
+                ping_provider_key(k, kind, state.provider_endpoint.as_deref()).await;
                 state.provider_key = Some(crate::secret::SecretString::from(k.clone()));
             }
             use crate::providers::model_roles::ModelRole;

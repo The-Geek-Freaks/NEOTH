@@ -65,7 +65,20 @@ pub(crate) fn prompt_provider_key(
 /// - Offline: connection refused / DNS failure → yellow ~ (skipped).
 ///
 /// The key is NEVER logged, echoed, or included in any error message.
-pub(crate) fn ping_provider_key(key: &str, kind: ProviderKind, endpoint: Option<&str>) {
+/// Async entry point. `reqwest::blocking` inside a running tokio runtime
+/// panics ("Cannot start a runtime from within a runtime"), and the wizard
+/// runs on a multi-thread tokio worker — so the synchronous ping work is
+/// offloaded to the blocking pool. Non-fatal: any spawn error is ignored.
+pub(crate) async fn ping_provider_key(key: &str, kind: ProviderKind, endpoint: Option<&str>) {
+    let key = key.to_string();
+    let endpoint = endpoint.map(str::to_string);
+    let _ = tokio::task::spawn_blocking(move || {
+        ping_provider_key_blocking(&key, kind, endpoint.as_deref());
+    })
+    .await;
+}
+
+fn ping_provider_key_blocking(key: &str, kind: ProviderKind, endpoint: Option<&str>) {
     use std::io::IsTerminal;
 
     // Skip for local providers — no API key to validate.
@@ -956,5 +969,17 @@ mod tests {
             let result = do_ping(&client, "irrelevant", kind, None);
             assert_eq!(result, PingResult::Skipped, "{kind:?} should skip");
         }
+    }
+
+    /// Regression: calling the async ping entry point from within a tokio
+    /// runtime must NOT panic. `reqwest::blocking` inside an async context
+    /// otherwise triggers "Cannot start a runtime from within a runtime";
+    /// the spawn_blocking wrapper is what prevents it. A local provider
+    /// returns before any network I/O, so this exercises the runtime-safety
+    /// of the call path without a live endpoint.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ping_provider_key_is_runtime_safe() {
+        ping_provider_key("irrelevant", ProviderKind::LocalQwen, None).await;
+        ping_provider_key("irrelevant", ProviderKind::ClaudeCli, None).await;
     }
 }

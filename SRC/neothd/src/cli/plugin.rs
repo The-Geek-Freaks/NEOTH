@@ -1075,6 +1075,18 @@ fn run_install(path: &std::path::Path, force: bool, output: OutputFormat) -> Res
 /// discovery won't find the directory anymore anyway; the activation key
 /// becomes a stranded no-op that the operator can clean up manually.
 fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
+    // GOLD-SEC — reject path-traversal ids before any filesystem join. An
+    // installed plugin id is always a valid snake_case token (enforced at
+    // install time via parse_manifest); anything else (`../`, absolute paths,
+    // separators) cannot name a real install and must never reach
+    // remove_dir_all. Without this guard `neoth plugin remove ../../foo`
+    // would delete an arbitrary directory the operator can write to.
+    if !crate::wasm_plugin::manifest::is_snake_case_id(id) {
+        anyhow::bail!(
+            "invalid plugin id `{id}` — must be a snake_case token \
+             ([a-z0-9_], not starting with `_` or a digit)"
+        );
+    }
     let home = FreedomConfig::default_neoth_home();
     let plugins_root = home.join("plugins");
     let target = plugins_root.join(id);
@@ -2054,5 +2066,28 @@ version = \"0.1.0\"\n\
         });
         assert_eq!(obj["ok"], serde_json::Value::Bool(false));
         assert_eq!(obj["reason"], "not found");
+    }
+
+    #[test]
+    fn remove_rejects_path_traversal_ids() {
+        // GOLD-SEC: a traversal id must bail BEFORE any filesystem access —
+        // these all fail the is_snake_case_id guard, so no real ~/.neoth is
+        // touched by the test.
+        for evil in [
+            "../../.neoth/credentials.yaml",
+            "..",
+            "/etc/passwd",
+            "a/b",
+            "a\\b",
+            "has space",
+            "Upper",
+        ] {
+            let err = run_remove(evil, OutputFormat::Table)
+                .expect_err("traversal id must be rejected");
+            assert!(
+                err.to_string().contains("invalid plugin id"),
+                "unexpected error for {evil:?}: {err}"
+            );
+        }
     }
 }
