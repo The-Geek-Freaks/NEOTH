@@ -2044,12 +2044,17 @@ fn main() -> Result<()> {
             });
         });
 
+        // Property reads happen HERE on the UI thread: Slint's Weak::upgrade()
+        // has a thread-ID guard and returns None on any worker thread, so an
+        // upgrade inside the spawned closure would silently skip the command.
         let weak_obs_sync = window.as_weak();
         window.on_obs_sync_clicked(move || {
             let weak = weak_obs_sync.clone();
+            let vault = weak
+                .upgrade()
+                .map(|w| w.get_obs_vault_path().to_string())
+                .unwrap_or_default();
             std::thread::spawn(move || {
-                let Some(w0) = weak.upgrade() else { return };
-                let vault = w0.get_obs_vault_path().to_string();
                 let args = ["obsidian", "sync", vault.trim()];
                 let out = run_neothd_probe(&args);
                 let msg = if out.trim().is_empty() { "Sync started.".to_string() } else { out.trim().to_string() };
@@ -2062,9 +2067,11 @@ fn main() -> Result<()> {
         let weak_obs_wiki = window.as_weak();
         window.on_obs_wiki_clicked(move || {
             let weak = weak_obs_wiki.clone();
+            let vault = weak
+                .upgrade()
+                .map(|w| w.get_obs_vault_path().to_string())
+                .unwrap_or_default();
             std::thread::spawn(move || {
-                let Some(w0) = weak.upgrade() else { return };
-                let vault = w0.get_obs_vault_path().to_string();
                 let args = ["obsidian", "wiki-build", vault.trim()];
                 let out = run_neothd_probe(&args);
                 let msg = if out.trim().is_empty() { "Wiki build started.".to_string() } else { out.trim().to_string() };

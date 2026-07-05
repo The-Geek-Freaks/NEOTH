@@ -368,13 +368,20 @@ fn transcribe_via_faster_whisper(
     };
 
     let tmp_dir = std::env::temp_dir();
-    // Use a thread-local timestamp-nanosecond suffix to avoid collisions when
-    // multiple audio extractions run concurrently inside spawn_blocking threads.
-    let suffix = std::time::SystemTime::now()
+    // Process-unique suffix: pid + atomic sequence + wall-clock nanos. Nanos
+    // alone collide when two spawn_blocking extractions read the same clock
+    // tick (Windows timer resolution can be >=1ms) — both calls then share
+    // one temp file and transcribe each other's audio.
+    static FW_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = FW_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
-    let tmp_path = tmp_dir.join(format!("neoth-fw-audio-{suffix}.wav"));
+    let tmp_path = tmp_dir.join(format!(
+        "neoth-fw-audio-{}-{seq}-{nanos}.wav",
+        std::process::id()
+    ));
     if std::fs::write(&tmp_path, &wav).is_err() {
         return None; // can't write → fall through
     }
