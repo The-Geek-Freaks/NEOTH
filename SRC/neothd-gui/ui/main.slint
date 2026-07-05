@@ -731,7 +731,12 @@ export component MainWindow inherits Window {
     callback settings-backup-now-clicked;
     callback settings-rollback-preview-clicked;
     callback skill-toggle(string, bool);
+    callback skill-install();
+    callback skill-uninstall(string);
+    callback skill-create(string, string, string, string);
     callback plugin-toggle(string, bool);
+    callback plugin-install();
+    callback plugin-remove(string);
     callback autonomy-set(string);
     /// Step 5 (2026-05-20): operator clicked a task card.
     callback kanban-task-selected(string);
@@ -2076,7 +2081,12 @@ export component MainWindow inherits Window {
             skills-always-embed-route: root.skills-always-embed-route;
             skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
             skill-toggle-clicked(id, en) => { root.skill-toggle(id, en); }
+            skill-install-clicked => { root.skill-install(); }
+            skill-uninstall-clicked(id) => { root.skill-uninstall(id); }
+            skill-create-clicked(id, desc, kw, prompt) => { root.skill-create(id, desc, kw, prompt); }
             plugin-toggle-clicked(id, en) => { root.plugin-toggle(id, en); }
+            plugin-install-clicked => { root.plugin-install(); }
+            plugin-remove-clicked(id) => { root.plugin-remove(id); }
             autonomy-set-clicked(level) => { root.autonomy-set(level); }
             channels: root.channels;
             plugins: root.plugins;

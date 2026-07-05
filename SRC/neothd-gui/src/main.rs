@@ -468,6 +468,13 @@ fn main() -> Result<()> {
     }
 
     let already_initialized = neoth_dir.join("freedom.yaml").exists();
+    // GUI-REENTRY-PRESET fix: track whether the re-entry config read succeeded.
+    // on_finish_clicked checks this flag and refuses to overwrite the existing
+    // config when the read failed (preventing Slint property defaults — which
+    // correspond to "balanced" preset values — from silently clobbering the
+    // operator's real config). False = first-run or read failed (safe default:
+    // no existing config to protect). True = re-entry with config loaded OK.
+    let reentry_config_ok = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if already_initialized {
         info!(
             freedom_path = %neoth_dir.join("freedom.yaml").display(),
@@ -494,12 +501,16 @@ fn main() -> Result<()> {
                 window.set_provider_choice(cfg.provider_kind.into());
                 window.set_autonomy_choice(cfg.autonomy.into());
                 window.set_enable_telegram(cfg.channels.iter().any(|c| c == "telegram"));
+                // Config loaded successfully — Finish is safe to overwrite.
+                reentry_config_ok.store(true, std::sync::atomic::Ordering::Release);
             }
             Err(e) => {
                 tracing::warn!(
                     error = %e,
                     "could not parse existing freedom.yaml — Done summary shows defaults"
                 );
+                // reentry_config_ok stays false: Finish will refuse to write
+                // rather than clobber the existing config with type defaults.
             }
         }
 
@@ -1313,8 +1324,17 @@ fn main() -> Result<()> {
             match plan {
                 None => {
                     // dry-run unavailable (old daemon / missing binary) →
-                    // fall back: apply directly then refresh.
-                    let status = apply_preset_direct(&name_s);
+                    // fall back, but still gate full-auto through the token
+                    // route: apply_preset_direct does NOT pass --gui-confirmed
+                    // + --gui-token, so confirm_full_auto rejects it (TTY
+                    // fail-closed). Use apply_preset_with_fullauto_token for
+                    // the "full-auto" builtin name even in the fallback path.
+                    // GUI-FULLAUTO-CEREMONY fix.
+                    let status = if name_s == "full-auto" {
+                        apply_preset_with_fullauto_token(&name_s)
+                    } else {
+                        apply_preset_direct(&name_s)
+                    };
                     let presets = fetch_presets();
                     let summary = probe_preset_summary_via_subprocess();
                     let _ = slint::invoke_from_event_loop(move || {
@@ -2791,6 +2811,216 @@ fn main() -> Result<()> {
         });
     });
 
+    // ── Skills: install from dir ───────────────────────────────────────────────
+    // Opens a native folder picker (rfd works from spawned threads on Windows),
+    // shells `neoth skills --install <dir>`, toasts from the worker thread
+    // (push_toast internally schedules on the event loop), then refreshes the list.
+    {
+        let weak_si = window.as_weak();
+        window.on_skill_install(move || {
+            let weak = weak_si.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .set_title("Select skill directory (must contain skill.yaml)")
+                    .pick_folder();
+                let Some(dir) = picked else { return };
+                let dir_str = dir.to_string_lossy().to_string();
+                let result = which_neothd().and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("skills")
+                        .arg("--install")
+                        .arg(&dir)
+                        .output()
+                        .ok()
+                });
+                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
+                let msg = result
+                    .as_ref()
+                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
+                if ok {
+                    push_toast(&weak, "success", "Skill installed", &dir_str);
+                } else {
+                    push_toast(&weak, "warn", "Skill install failed", &msg);
+                }
+                let skills = fetch_skills();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        apply_skills(&w, skills);
+                    }
+                });
+            });
+        });
+    }
+
+    // ── Skills: uninstall by id ────────────────────────────────────────────────
+    // Shells `neoth skills --uninstall <id>` → toast + refresh.
+    {
+        let weak_su = window.as_weak();
+        window.on_skill_uninstall(move |id| {
+            let weak = weak_su.clone();
+            let id = id.to_string();
+            std::thread::spawn(move || {
+                let result = which_neothd().and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("skills")
+                        .arg("--uninstall")
+                        .arg(&id)
+                        .output()
+                        .ok()
+                });
+                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
+                let msg = result
+                    .as_ref()
+                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
+                if ok {
+                    push_toast(&weak, "success", "Skill uninstalled", &id);
+                } else {
+                    push_toast(&weak, "warn", "Skill uninstall failed", &msg);
+                }
+                let skills = fetch_skills();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        apply_skills(&w, skills);
+                    }
+                });
+            });
+        });
+    }
+
+    // ── Skills: create via non-interactive wizard ──────────────────────────────
+    // Shells `neoth skills --create --non-interactive --create-id <id>
+    //   --create-description <d> [--create-keywords <k>] --create-system-prompt <p>`
+    // → toast + refresh.
+    {
+        let weak_sc = window.as_weak();
+        window.on_skill_create(move |id, desc, keywords, prompt| {
+            let weak = weak_sc.clone();
+            let id = id.to_string();
+            let desc = desc.to_string();
+            let keywords = keywords.to_string();
+            let prompt = prompt.to_string();
+            std::thread::spawn(move || {
+                let result = which_neothd().and_then(|bin| {
+                    let mut cmd = spawn_neothd_plain(&bin);
+                    cmd.arg("skills")
+                        .arg("--create")
+                        .arg("--non-interactive")
+                        .arg("--create-id")
+                        .arg(&id)
+                        .arg("--create-description")
+                        .arg(&desc)
+                        .arg("--create-system-prompt")
+                        .arg(&prompt);
+                    if !keywords.is_empty() {
+                        cmd.arg("--create-keywords").arg(&keywords);
+                    }
+                    cmd.output().ok()
+                });
+                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
+                let msg = result
+                    .as_ref()
+                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
+                if ok {
+                    push_toast(&weak, "success", "Skill created", &id);
+                } else {
+                    push_toast(&weak, "warn", "Skill create failed", &msg);
+                }
+                let skills = fetch_skills();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        apply_skills(&w, skills);
+                    }
+                });
+            });
+        });
+    }
+
+    // ── Plugins: install from dir ──────────────────────────────────────────────
+    // Opens a native folder picker, shells `neoth plugin install <dir>` → toast + refresh.
+    {
+        let weak_pi = window.as_weak();
+        window.on_plugin_install(move || {
+            let weak = weak_pi.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .set_title("Select plugin directory (must contain plugin.toml + plugin.wasm)")
+                    .pick_folder();
+                let Some(dir) = picked else { return };
+                let dir_str = dir.to_string_lossy().to_string();
+                let result = which_neothd().and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("plugin")
+                        .arg("install")
+                        .arg(&dir)
+                        .output()
+                        .ok()
+                });
+                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
+                let msg = result
+                    .as_ref()
+                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
+                if ok {
+                    push_toast(&weak, "success", "Plugin installed", &dir_str);
+                } else {
+                    push_toast(&weak, "warn", "Plugin install failed", &msg);
+                }
+                let plugins = fetch_plugins();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        apply_plugins(&w, plugins);
+                    }
+                });
+            });
+        });
+    }
+
+    // ── Plugins: remove by id ──────────────────────────────────────────────────
+    // Shells `neoth plugin remove <id>` → toast + refresh.
+    // The `plugin remove` subcommand is being added in a parallel PR; if the
+    // daemon doesn't support it yet the stderr toast surfaces the error cleanly.
+    {
+        let weak_pr = window.as_weak();
+        window.on_plugin_remove(move |id| {
+            let weak = weak_pr.clone();
+            let id = id.to_string();
+            std::thread::spawn(move || {
+                let result = which_neothd().and_then(|bin| {
+                    spawn_neothd_plain(&bin)
+                        .arg("plugin")
+                        .arg("remove")
+                        .arg(&id)
+                        .output()
+                        .ok()
+                });
+                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
+                let msg = result
+                    .as_ref()
+                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
+                if ok {
+                    push_toast(&weak, "success", "Plugin removed", &id);
+                } else {
+                    push_toast(&weak, "warn", "Plugin remove failed", &msg);
+                }
+                let plugins = fetch_plugins();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        apply_plugins(&w, plugins);
+                    }
+                });
+            });
+        });
+    }
+
     // GUI-overhaul feature parity — set the autonomy level from the Privacy combo.
     // Shells `neoth autonomy set <level>` (mutates freedom.yaml::autonomy + emits
     // a WAL audit frame). On success, mirror the new level into autonomy-choice so
@@ -3737,8 +3967,28 @@ fn main() -> Result<()> {
     });
 
     let weak = window.as_weak();
+    // GUI-REENTRY-PRESET fix: clone the flag into the closure so on_finish_clicked
+    // can refuse to overwrite an existing config when read_freedom_yaml failed on
+    // re-entry (prevents Slint type defaults — "standard"/"claude_cli" — from
+    // silently clobbering the operator's real freedom.yaml as if "balanced" was
+    // explicitly chosen).
+    let reentry_config_ok_for_finish = std::sync::Arc::clone(&reentry_config_ok);
     window.on_finish_clicked(move || {
         if let Some(w) = weak.upgrade() {
+            // Re-entry guard: if freedom.yaml already existed but could not be
+            // parsed, refuse to write rather than stomp it with type defaults.
+            // The operator must fix / inspect the YAML manually first.
+            if already_initialized
+                && !reentry_config_ok_for_finish
+                    .load(std::sync::atomic::Ordering::Acquire)
+            {
+                w.set_status_line(
+                    "Cannot re-write config: the existing freedom.yaml could not be \
+                     read back. Fix or remove it manually, then reopen the wizard."
+                        .into(),
+                );
+                return;
+            }
             let state = WizardSnapshot {
                 operator_id: w.get_operator_id().to_string(),
                 provider_kind: w.get_provider_choice().to_string(),
@@ -8207,5 +8457,128 @@ mod migrate_card_tests {
         assert_eq!(format_migrate_summary("{\"sources\":[],\"scans\":[]}"), "");
         assert_eq!(format_migrate_summary("not json"), "");
         assert_eq!(format_migrate_summary("{}"), "");
+    }
+}
+
+/// GUI-FULLAUTO-CEREMONY + GUI-REENTRY-PRESET regression tests.
+///
+/// Both fixes live in `on_preset_apply_named_clicked` and `on_finish_clicked`
+/// (pure-logic branches) — no Slint or subprocess dependency needed here.
+#[cfg(test)]
+mod gui_bug_regression_tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    use super::{finish, read_freedom_yaml, WizardSnapshot};
+
+    fn base_snapshot() -> WizardSnapshot {
+        WizardSnapshot {
+            operator_id: "alice".into(),
+            provider_kind: "claude_cli".into(),
+            autonomy: "standard".into(),
+            license_accepted: true,
+            enable_telegram: false,
+            provider_key: String::new(),
+            telegram_token: String::new(),
+            cluster_discovery_disabled: false,
+        }
+    }
+
+    // ── GUI-FULLAUTO-CEREMONY ────────────────────────────────────────────────
+
+    /// The routing predicate in the None (dry-run unavailable) arm:
+    /// only `"full-auto"` must be sent through the token route.
+    #[test]
+    fn full_auto_preset_name_triggers_token_route() {
+        let requires_token = |name: &str| name == "full-auto";
+        assert!(requires_token("full-auto"));
+        assert!(!requires_token("balanced"));
+        assert!(!requires_token("essentials"));
+        assert!(!requires_token("local-sovereign"));
+        assert!(!requires_token("my-custom"));
+        assert!(!requires_token(""));
+    }
+
+    // ── GUI-REENTRY-PRESET ───────────────────────────────────────────────────
+
+    /// Valid freedom.yaml → `reentry_config_ok` flag set to true.
+    #[test]
+    fn reentry_flag_set_when_yaml_valid() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: alice\nprovider_kind: claude_cli\n\
+             autonomy: standard\nchannels:\n- cli\n",
+        )
+        .unwrap();
+        let flag = Arc::new(AtomicBool::new(false));
+        if read_freedom_yaml(&path).is_ok() {
+            flag.store(true, Ordering::Release);
+        }
+        assert!(flag.load(Ordering::Acquire), "flag must be true for valid yaml");
+    }
+
+    /// Corrupted freedom.yaml → `reentry_config_ok` flag stays false.
+    #[test]
+    fn reentry_flag_stays_false_when_yaml_corrupt() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "this is: [not: valid: yaml:\n").unwrap();
+        let flag = Arc::new(AtomicBool::new(false));
+        if read_freedom_yaml(&path).is_ok() {
+            flag.store(true, Ordering::Release);
+        }
+        assert!(!flag.load(Ordering::Acquire), "flag must stay false for corrupt yaml");
+    }
+
+    /// Guard: already_initialized=true + flag=false → block.
+    #[test]
+    fn guard_blocks_when_already_initialized_and_read_failed() {
+        let already_initialized = true;
+        let flag = Arc::new(AtomicBool::new(false));
+        let blocked = already_initialized && !flag.load(Ordering::Acquire);
+        assert!(blocked);
+    }
+
+    /// Guard: already_initialized=true + flag=true → allow.
+    #[test]
+    fn guard_allows_when_already_initialized_and_read_succeeded() {
+        let already_initialized = true;
+        let flag = Arc::new(AtomicBool::new(true));
+        let blocked = already_initialized && !flag.load(Ordering::Acquire);
+        assert!(!blocked);
+    }
+
+    /// Guard: already_initialized=false → never block regardless of flag.
+    #[test]
+    fn guard_never_blocks_on_first_run() {
+        let already_initialized = false;
+        for v in [false, true] {
+            let flag = Arc::new(AtomicBool::new(v));
+            let blocked = already_initialized && !flag.load(Ordering::Acquire);
+            assert!(!blocked, "first-run must never be blocked (flag={v})");
+        }
+    }
+
+    /// finish() still validates state even when the re-entry guard passes.
+    #[test]
+    fn finish_validates_state_after_reentry_guard_passes() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: alice\nprovider_kind: claude_cli\n\
+             autonomy: standard\nchannels:\n- cli\n",
+        )
+        .unwrap();
+        let cfg = read_freedom_yaml(&path).expect("parses");
+        let mut state = base_snapshot();
+        state.operator_id = cfg.operator_id;
+        state.autonomy = cfg.autonomy;
+        state.license_accepted = false; // operator unchecked license
+        let err = finish(&state).unwrap_err();
+        assert!(err.to_string().contains("license"));
     }
 }

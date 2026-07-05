@@ -651,9 +651,27 @@ export component SettingsView inherits Rectangle {
     /// GUI-overhaul feature parity — operator toggled a skill's enable state.
     /// Args: (skill-id, enabled). Rust shells `neoth skills --enable/--disable`.
     callback skill-toggle-clicked(string, bool);
+    /// Operator clicked "Install skill…" → Rust opens rfd folder picker →
+    /// `neoth skills --install <dir>` → toast + refresh.
+    callback skill-install-clicked();
+    /// Operator confirmed "Uninstall" on a skill row.
+    /// Rust shells `neoth skills --uninstall <id>` → toast + refresh.
+    callback skill-uninstall-clicked(string);
+    /// Operator clicked "New skill…" create-form submit.
+    /// Args: (id, description, keywords, system_prompt).
+    /// Rust shells `neoth skills --create --non-interactive --create-id <id>
+    ///   --create-description <d> --create-keywords <k> --create-system-prompt <p>`.
+    callback skill-create-clicked(string, string, string, string);
+
     /// GUI-overhaul feature parity — operator toggled a plugin's enable state.
     /// Args: (plugin-id, enabled). Rust shells `neoth plugin enable/disable`.
     callback plugin-toggle-clicked(string, bool);
+    /// Operator clicked "Install plugin…" → Rust opens rfd folder picker →
+    /// `neoth plugin install <dir>` → toast + refresh.
+    callback plugin-install-clicked();
+    /// Operator clicked "Remove" on a plugin row.
+    /// Rust shells `neoth plugin remove <id>` → toast + refresh.
+    callback plugin-remove-clicked(string);
     /// GUI-overhaul feature parity — operator picked an autonomy level from the
     /// Privacy combo. Arg: level string. Rust shells `neoth autonomy set <level>`.
     callback autonomy-set-clicked(string);
@@ -1093,8 +1111,93 @@ export component SettingsView inherits Rectangle {
                 spacing: Theme.space-base;
                 PanelHeader {
                     title: "Skills";
-                    subtitle: "Skill packs teach NEOTH about a domain — each loads automatically when its trigger words appear. Manage them via the CLI; this lists the installed set.";
+                    subtitle: "Skill packs teach NEOTH about a domain — each loads automatically when its trigger words appear.";
                     mirrors-slash: "/skill list   |   neoth skills --install <path>";
+                }
+                // ── Skills action row — Install + New ─────────────────────
+                HorizontalLayout {
+                    spacing: Theme.space-tight;
+                    NeothButton {
+                        label: "Install skill…";
+                        primary: false;
+                        size: "sm";
+                        clicked => { root.skill-install-clicked(); }
+                    }
+                    NeothButton {
+                        label: "New skill…";
+                        primary: false;
+                        size: "sm";
+                        clicked => { skill-create-open = !skill-create-open; }
+                    }
+                    Text {
+                        text: "Or ask in chat: 'build me a skill that…' — NEOTH creates it.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                    }
+                }
+                // ── Inline create form (toggled) ───────────────────────────
+                property <bool> skill-create-open: false;
+                property <string> sc-id: "";
+                property <string> sc-desc: "";
+                property <string> sc-keywords: "";
+                property <string> sc-prompt: "";
+                if skill-create-open: Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "NEW SKILL";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        NeothLineEdit {
+                            text <=> sc-id;
+                            placeholder-text: "id (kebab-case, e.g. rust-security)";
+                        }
+                        NeothLineEdit {
+                            text <=> sc-desc;
+                            placeholder-text: "description — one line";
+                        }
+                        NeothLineEdit {
+                            text <=> sc-keywords;
+                            placeholder-text: "keywords — comma-separated (e.g. rust,unsafe,security)";
+                        }
+                        NeothLineEdit {
+                            text <=> sc-prompt;
+                            placeholder-text: "system prompt — what this skill teaches NEOTH";
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothButton {
+                                label: "Create";
+                                primary: true;
+                                size: "sm";
+                                enabled: sc-id != "" && sc-desc != "" && sc-prompt != "";
+                                clicked => {
+                                    root.skill-create-clicked(sc-id, sc-desc, sc-keywords, sc-prompt);
+                                    skill-create-open = false;
+                                    sc-id = "";
+                                    sc-desc = "";
+                                    sc-keywords = "";
+                                    sc-prompt = "";
+                                }
+                            }
+                            NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                size: "sm";
+                                clicked => { skill-create-open = false; }
+                            }
+                        }
+                    }
                 }
                 // PF-01-GUI — skill auto-routing toggle (skills.always_embed_route).
                 Card {
@@ -1190,6 +1293,32 @@ export component SettingsView inherits Rectangle {
                                     color: Theme.text-tertiary;
                                     vertical-alignment: center;
                                 }
+                                // Per-row uninstall. The daemon no-ops gracefully if
+                                // the skill is built-in / already absent.
+                                property <bool> sk-confirming: false;
+                                if !sk-confirming: NeothButton {
+                                    label: "Uninstall";
+                                    primary: false;
+                                    danger: true;
+                                    size: "sm";
+                                    clicked => { sk-confirming = true; }
+                                }
+                                if sk-confirming: NeothButton {
+                                    label: "Confirm";
+                                    primary: false;
+                                    danger: true;
+                                    size: "sm";
+                                    clicked => {
+                                        sk-confirming = false;
+                                        root.skill-uninstall-clicked(s.id);
+                                    }
+                                }
+                                if sk-confirming: NeothButton {
+                                    label: "Cancel";
+                                    primary: false;
+                                    size: "sm";
+                                    clicked => { sk-confirming = false; }
+                                }
                             }
                             if !s.is-header && s.description != "": Text {
                                 text: s.description;
@@ -1218,8 +1347,18 @@ export component SettingsView inherits Rectangle {
                 spacing: Theme.space-base;
                 PanelHeader {
                     title: "Plugins";
-                    subtitle: "Sandboxed WebAssembly plugins. Drop a .wasm into ~/.neoth/plugins/ and enable via the CLI; this lists the discovered set + activation state.";
-                    mirrors-slash: "/plugin list   |   neoth plugin enable <id>";
+                    subtitle: "Sandboxed WebAssembly plugins. Install a directory containing plugin.toml + plugin.wasm; this lists the discovered set + activation state.";
+                    mirrors-slash: "/plugin list   |   neoth plugin install <dir>";
+                }
+                // ── Plugins action row ─────────────────────────────────────
+                HorizontalLayout {
+                    spacing: Theme.space-tight;
+                    NeothButton {
+                        label: "Install plugin…";
+                        primary: false;
+                        size: "sm";
+                        clicked => { root.plugin-install-clicked(); }
+                    }
                 }
                 Card {
                     shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
@@ -1233,7 +1372,7 @@ export component SettingsView inherits Rectangle {
                             color: Theme.text-muted;
                         }
                         if root.plugins.length == 0: Text {
-                            text: "(none — drop a .wasm into ~/.neoth/plugins/)";
+                            text: "(none — install a plugin directory via the button above or `neoth plugin install <dir>`)";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -1261,6 +1400,31 @@ export component SettingsView inherits Rectangle {
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: p.activation == "enabled" ? Theme.accent-green : Theme.text-muted;
+                            }
+                            // Per-row remove — inline confirm guards against fat-finger.
+                            property <bool> pl-confirming: false;
+                            if !pl-confirming: NeothButton {
+                                label: "Remove";
+                                primary: false;
+                                danger: true;
+                                size: "sm";
+                                clicked => { pl-confirming = true; }
+                            }
+                            if pl-confirming: NeothButton {
+                                label: "Confirm";
+                                primary: false;
+                                danger: true;
+                                size: "sm";
+                                clicked => {
+                                    pl-confirming = false;
+                                    root.plugin-remove-clicked(p.id);
+                                }
+                            }
+                            if pl-confirming: NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                size: "sm";
+                                clicked => { pl-confirming = false; }
                             }
                         }
                     }
