@@ -1890,6 +1890,13 @@ Flip a plugin to `active`. Idempotent — already-active plugins return success 
 
 - `<ID>` — Plugin manifest id (matches the directory name under `~/.neoth/plugins/<id>/`)
 
+### `neoth plugin install`
+
+Install a plugin from a local directory into `~/.neoth/plugins/<id>/`. The id is derived from the manifest `id` field inside `<path>/plugin.toml`. Only `plugin.toml` and `plugin.wasm` are copied — arbitrary extra files are never installed (mirrors the discovery contract). After copy the same integrity gate as `neoth plugin verify` is applied; if it fails the partial install is rolled back and the error is reported
+
+- `<PATH>` — Directory containing `plugin.toml` + `plugin.wasm` to install
+- `--force` — Overwrite an already-installed plugin with the same id. Without this flag the command exits non-zero when the target directory already exists
+
 ### `neoth plugin ledger`
 
 KF-09 — per-plugin capability usage ledger. Scans the WAL for the plugin audit frames (`0xC4 PLUGIN_HOSTCALL` writes via `emit_event`, `0xC6 PLUGIN_CAP_USED` reads via `recall_top`) and aggregates a per-plugin-per-capability call count + volume — so an operator can see WHAT each plugin actually exercised. Read-only; works on a slim daemon too (it reads historical frames, no wasm host needed)
@@ -1903,6 +1910,12 @@ List every discovered plugin + its operator activation state. Plugins NOT yet li
 ### `neoth plugin pending`
 
 Show only the discovered-but-not-yet-decided plugins. Operator review queue
+
+### `neoth plugin remove`
+
+Remove a plugin from `~/.neoth/plugins/<id>/`. Idempotent: if the plugin is not installed the command succeeds with a "not found" note. The plugin's activation entry in `freedom.yaml` is also removed when present so discovery won't see a stale activation key on next boot
+
+- `<ID>` — Plugin manifest id to remove (must match the directory name under `~/.neoth/plugins/<id>/`)
 
 ### `neoth plugin test`
 
@@ -2479,6 +2492,16 @@ GOLD-ADOPT-23 — open a TTL-bounded risk-confirm window so the next risk-gate-b
 - `--ttl <TTL>` — How long the confirm window stays open — `10m`, `300s`, `1h`, or a bare number of seconds. Default `10m`
 - `--egress` — Also lift the egress block (outbound to a non-allowlisted destination), in addition to the dangerous-command block
 - `--egress-only` — Lift ONLY the egress block (leave dangerous commands gated)
+
+## `neoth rmas`
+
+ZF-04 — RecursiveMAS consent gate + status inspector. `consent` prints license notice + marker state; `consent --acknowledge` writes the marker (idempotent). Only this command creates the marker — the wizard and preset code never do
+
+### `neoth rmas consent`
+
+Show RecursiveMAS license/consent status; optionally write the consent marker with `--acknowledge`
+
+- `--acknowledge` — Write the consent marker. Idempotent — safe to run multiple times
 
 ## `neoth rollback`
 
