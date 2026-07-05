@@ -1123,6 +1123,10 @@ pub enum ProviderAction {
     Remove { provider: String },
 }
 
+// GAP-19: the Add variant carries 11 optional credential flags (clap args),
+// making it larger than the sibling id-only variants. A CLI subcommand enum is
+// constructed once per invocation — the size skew is irrelevant here.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 pub enum ChannelAction {
     /// Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts).
