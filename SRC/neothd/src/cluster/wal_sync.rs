@@ -405,6 +405,15 @@ fn now_unix_ms() -> u64 {
 
 // ── Foreign event ingest surface (G-02 CLUSTER-01) ───────────────────────────
 
+/// Maximum skew tolerated between a foreign event's `received_at` timestamp
+/// and the local wall clock. Rejects frames with clock-skewed or crafted
+/// timestamps without touching the opaque payload bytes.
+const FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS: i64 = 300; // 5 minutes
+
+/// Maximum age (in seconds) accepted for a foreign event's `received_at`.
+/// Frames older than this are replays, corrupted, or from a stalled peer.
+const FOREIGN_EVENT_MAX_AGE_SECS: i64 = 86_400; // 24 hours
+
 /// Persist one accepted gossip frame into `idx_foreign_events`.
 ///
 /// Called from the `GossipAcceptance::Accept` arm in
@@ -430,6 +439,23 @@ pub fn ingest_foreign_event(
     payload: &[u8],
     received_at: i64,
 ) -> anyhow::Result<()> {
+    // FOREIGN-IDX: reject absurd timestamps before touching the DB.
+    // `received_at` is always `now_unix_i64()` at the call site; a peer
+    // cannot inject this value, but a clock-skewed or buggy local clock
+    // could produce garbage. Guard both directions.
+    let now = crate::time::now_unix_i64();
+    anyhow::ensure!(
+        received_at <= now + FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS,
+        "ingest_foreign_event: received_at ({received_at}) is more than \
+         {FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS}s in the future (now={now}); \
+         peer={origin_peer_pk} seq={origin_seq}"
+    );
+    anyhow::ensure!(
+        received_at >= now - FOREIGN_EVENT_MAX_AGE_SECS,
+        "ingest_foreign_event: received_at ({received_at}) is more than \
+         {FOREIGN_EVENT_MAX_AGE_SECS}s in the past (now={now}); \
+         peer={origin_peer_pk} seq={origin_seq}"
+    );
     conn.execute(
         "INSERT OR IGNORE INTO idx_foreign_events \
          (origin_peer_pk, origin_seq, event_type, payload, received_at) \
@@ -851,7 +877,7 @@ mod tests {
         let seq = 7u64;
         let et = 0x90u8;
         let payload = b"test-payload";
-        let ts = 1_700_000_000i64;
+        let ts = crate::time::now_unix_i64();
 
         // First ingest succeeds.
         ingest_foreign_event(&conn, pk, seq, et, payload, ts).unwrap();
@@ -861,7 +887,7 @@ mod tests {
         assert_eq!(n, 1);
 
         // Second ingest of same (peer, seq) — idempotent, still 1 row.
-        ingest_foreign_event(&conn, pk, seq, et, b"different-payload", ts + 1).unwrap();
+        ingest_foreign_event(&conn, pk, seq, et, b"different-payload", ts).unwrap();
         let n: i64 = conn
             .query_row("SELECT count(*) FROM idx_foreign_events", [], |r| r.get(0))
             .unwrap();
@@ -869,14 +895,47 @@ mod tests {
     }
 
     #[test]
+    fn ingest_foreign_event_rejects_far_future_timestamp() {
+        let conn = open_foreign_events_db();
+        let now = crate::time::now_unix_i64();
+        let far_future = now + FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS + 1;
+        let result = ingest_foreign_event(&conn, "pk", 1, 0x90, b"pay", far_future);
+        assert!(result.is_err(), "far-future received_at must be rejected");
+    }
+
+    #[test]
+    fn ingest_foreign_event_rejects_ancient_timestamp() {
+        let conn = open_foreign_events_db();
+        let now = crate::time::now_unix_i64();
+        let ancient = now - FOREIGN_EVENT_MAX_AGE_SECS - 1;
+        let result = ingest_foreign_event(&conn, "pk", 1, 0x90, b"pay", ancient);
+        assert!(result.is_err(), "ancient received_at must be rejected");
+    }
+
+    #[test]
+    fn ingest_foreign_event_accepts_within_skew_window() {
+        let conn = open_foreign_events_db();
+        let now = crate::time::now_unix_i64();
+        // Exactly at the edge of acceptable future skew — should succeed.
+        let edge_future = now + FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS;
+        ingest_foreign_event(&conn, "pk1", 1, 0x90, b"pay", edge_future)
+            .expect("within-skew future ts must be accepted");
+        // Exactly at the edge of acceptable past age — should succeed.
+        let edge_past = now - FOREIGN_EVENT_MAX_AGE_SECS;
+        ingest_foreign_event(&conn, "pk2", 1, 0x90, b"pay", edge_past)
+            .expect("within-age past ts must be accepted");
+    }
+
+    #[test]
     fn list_foreign_events_unfiltered_and_filtered() {
         let conn = open_foreign_events_db();
         let pk_a = "aaa111";
         let pk_b = "bbb222";
+        let now = crate::time::now_unix_i64();
 
-        ingest_foreign_event(&conn, pk_a, 1, 0x90, b"pa1", 1000).unwrap();
-        ingest_foreign_event(&conn, pk_a, 2, 0x91, b"pa2", 1001).unwrap();
-        ingest_foreign_event(&conn, pk_b, 1, 0x90, b"pb1", 1002).unwrap();
+        ingest_foreign_event(&conn, pk_a, 1, 0x90, b"pa1", now).unwrap();
+        ingest_foreign_event(&conn, pk_a, 2, 0x91, b"pa2", now).unwrap();
+        ingest_foreign_event(&conn, pk_b, 1, 0x90, b"pb1", now).unwrap();
 
         // Unfiltered — all 3 rows.
         let all = list_foreign_events(&conn, None, 100).unwrap();

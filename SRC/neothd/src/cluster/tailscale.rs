@@ -143,7 +143,7 @@ pub async fn probe_candidate(addr: SocketAddr) -> bool {
     )
 }
 
-/// Map a probe task's join result to a reachability bool.
+/// Map a probe task's join error to a reachability result.
 ///
 /// COR-21: the old call site did `h.await.unwrap_or(false)`, which
 /// silently swallowed BOTH a cancelled task and a *panicked* task as
@@ -161,6 +161,12 @@ fn probe_result(joined: std::result::Result<bool, tokio::task::JoinError>) -> Re
 /// Top-level enumeration: fetch status, build candidate list,
 /// probe each one in parallel. Returns the candidates that
 /// answered. Missing-binary returns empty list.
+///
+/// Uses `JoinSet` instead of `Vec<JoinHandle>` so all probe tasks are
+/// aborted automatically if this future is cancelled mid-loop (e.g. a
+/// SIGTERM arriving while probes are in flight). A bare `Vec<JoinHandle>`
+/// would detach the already-spawned tasks on drop, leaving them running
+/// and holding their TCP sockets until the runtime shuts down.
 pub async fn enumerate(port: u16) -> Result<Vec<TailscaleCandidate>> {
     let Some(status) = fetch_status().await? else {
         return Ok(Vec::new());
@@ -171,17 +177,30 @@ pub async fn enumerate(port: u16) -> Result<Vec<TailscaleCandidate>> {
     }
     // Parallel probe — each probe owns its own timeout so the
     // whole batch can't drag past PROBE_TIMEOUT_MS * candidates.
-    let mut handles = Vec::with_capacity(candidates.len());
-    for cand in &candidates {
+    // JoinSet aborts all contained tasks on drop, providing automatic
+    // cleanup if this future is cancelled between spawns.
+    let mut set: tokio::task::JoinSet<(usize, bool)> = tokio::task::JoinSet::new();
+    for (i, cand) in candidates.iter().enumerate() {
         let addr = cand.addr;
-        handles.push(tokio::spawn(async move { probe_candidate(addr).await }));
+        set.spawn(async move { (i, probe_candidate(addr).await) });
     }
     let mut answered = Vec::new();
-    for (cand, h) in candidates.into_iter().zip(handles) {
-        if probe_result(h.await)? {
-            answered.push(cand);
+    while let Some(res) = set.join_next().await {
+        match res {
+            Ok((i, reachable)) => {
+                if reachable {
+                    answered.push(candidates[i].clone());
+                }
+            }
+            // COR-21 semantics via probe_result: cancelled = "no answer",
+            // panic = loud error instead of silently under-reporting peers.
+            Err(e) => {
+                let _ = probe_result(Err(e))?;
+            }
         }
     }
+    // Restore stable insertion order (JoinSet completes out-of-order).
+    answered.sort_by(|a, b| a.host_name.cmp(&b.host_name).then(a.addr.cmp(&b.addr)));
     Ok(answered)
 }
 
