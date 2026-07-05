@@ -580,14 +580,96 @@ pub fn stage_channel_add(
     Ok(creds)
 }
 
+/// CLI flags for `neoth channel add` — mirrors [`ChannelAddFields`] 1:1 so the
+/// GUI (or any non-interactive caller) can pass all credential values as
+/// `--long-flag` arguments without stdin prompts.
+///
+/// Passed from the clap `ChannelAction::Add` variant into [`run_add`]; kept
+/// separate from `ChannelAddFields` so the internal staging API stays free of
+/// clap types.
+#[derive(Debug, Default, Clone)]
+pub struct ChannelAddFlags {
+    pub token: Option<String>,
+    pub bot_token: Option<String>,
+    pub app_token: Option<String>,
+    pub phone_id: Option<String>,
+    pub seed: Option<String>,
+    pub url: Option<String>,
+    pub phone: Option<String>,
+    pub server: Option<String>,
+    pub nick: Option<String>,
+    pub password: Option<String>,
+    pub channels_csv: Option<String>,
+}
+
+impl ChannelAddFlags {
+    /// True when at least one flag was supplied (→ non-interactive path).
+    fn any_set(&self) -> bool {
+        self.token.is_some()
+            || self.bot_token.is_some()
+            || self.app_token.is_some()
+            || self.phone_id.is_some()
+            || self.seed.is_some()
+            || self.url.is_some()
+            || self.phone.is_some()
+            || self.server.is_some()
+            || self.nick.is_some()
+            || self.password.is_some()
+            || self.channels_csv.is_some()
+    }
+
+    fn into_fields(self) -> ChannelAddFields {
+        ChannelAddFields {
+            token: self.token,
+            bot_token: self.bot_token,
+            app_token: self.app_token,
+            phone_id: self.phone_id,
+            seed: self.seed,
+            url: self.url,
+            phone: self.phone,
+            server: self.server,
+            nick: self.nick,
+            password: self.password,
+            channels_csv: self.channels_csv,
+        }
+    }
+}
+
+/// Required flags per channel, for the "no TTY + no flags" bail message.
+fn required_flags_for(channel: &str) -> &'static str {
+    match channel {
+        "telegram" => "--token",
+        "slack" => "--bot-token --app-token",
+        "whatsapp" => "--token --phone-id",
+        "keet" => "--seed",
+        "discord" => "--token",
+        "signal" => "--url --phone",
+        "line" => "--token  [--password]",
+        "irc" => "--server --nick  [--password --channels-csv]",
+        "imessage" | "imessage_bluebubbles" | "bluebubbles" => "--url --password",
+        "mattermost" => "--url --token",
+        "gchat" | "google_chat" => "--url --server",
+        _ => "(unknown channel)",
+    }
+}
+
 /// `neoth channel add <channel>` — collect the channel's credential(s) and
 /// persist them to `credentials.yaml` (the single durable secret store; the
-/// runtime config merges it at load). Secrets are read with NO terminal echo
-/// when stdin is an interactive TTY (and the `wizard` feature is built, the
-/// release default); a piped/non-wizard stdin falls back to a plain line read
-/// (`printf 'token\n' | neoth channel add telegram` works for scripting). The
-/// secret value is never printed back — only a path + the next-step pointer.
-pub async fn run_add(channel: &str, output: &OutputFormat) -> Result<()> {
+/// runtime config merges it at load).
+///
+/// **Non-interactive path** (GUI / scripting): when `flags` has at least one
+/// field set, `ChannelAddFields` is built directly from the flags and stdin is
+/// never read.  If `flags` is empty AND stdin is not a TTY, the command bails
+/// with a message listing the required flags for that channel.
+///
+/// **Interactive path**: when no flags are set and stdin is a TTY the existing
+/// `prompt_channel_fields` flow runs unchanged.
+///
+/// JSON output shape (--output json):
+/// ```json
+/// {"ok": true, "channel": "telegram", "configured": true}
+/// ```
+pub async fn run_add(channel: &str, flags: &ChannelAddFlags, output: &OutputFormat) -> Result<()> {
     let chan = channel.trim().to_ascii_lowercase();
     let path = crate::config::credentials::default_path();
     let base = Credentials::load_or_default(&path).unwrap_or_default();
@@ -615,7 +697,34 @@ pub async fn run_add(channel: &str, output: &OutputFormat) -> Result<()> {
         return Ok(()); // unreachable — the line above always errors for these
     }
 
-    let fields = prompt_channel_fields(&chan)?;
+    let fields = if flags.any_set() {
+        // Non-interactive: build fields directly from CLI flags.
+        flags.clone().into_fields()
+    } else {
+        // No flags supplied — decide between interactive prompt and hard bail.
+        let is_tty = {
+            #[cfg(feature = "wizard")]
+            {
+                use std::io::IsTerminal;
+                std::io::stdin().is_terminal()
+            }
+            #[cfg(not(feature = "wizard"))]
+            {
+                false
+            }
+        };
+
+        if is_tty {
+            prompt_channel_fields(&chan)?
+        } else {
+            anyhow::bail!(
+                "non-interactive stdin with no flags supplied for channel `{chan}`.\n\
+                 Pass the required flags: neoth channel add {chan} {flags}",
+                flags = required_flags_for(&chan)
+            );
+        }
+    };
+
     let updated = stage_channel_add(&chan, &fields, base)?;
     updated
         .write(&path)
@@ -626,9 +735,9 @@ pub async fn run_add(channel: &str, output: &OutputFormat) -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true,
                     "channel": chan,
-                    "saved": true,
-                    "path": path.display().to_string(),
+                    "configured": true,
                 }))?
             );
         }
@@ -1472,5 +1581,129 @@ mod tests {
         assert_eq!(v["total"], 5);
         assert_eq!(v["channels"][0]["name"], "telegram");
         assert_eq!(v["channels"][0]["configured"], true);
+    }
+
+    // ── ChannelAddFlags non-interactive path ─────────────────────────────
+
+    #[test]
+    fn flags_any_set_false_when_all_none() {
+        assert!(!ChannelAddFlags::default().any_set());
+    }
+
+    #[test]
+    fn flags_any_set_true_when_one_field_provided() {
+        let f = ChannelAddFlags {
+            token: Some("tok".into()),
+            ..Default::default()
+        };
+        assert!(f.any_set());
+    }
+
+    #[test]
+    fn flags_into_fields_maps_all_fields() {
+        let flags = ChannelAddFlags {
+            token: Some("t".into()),
+            bot_token: Some("b".into()),
+            app_token: Some("a".into()),
+            phone_id: Some("p".into()),
+            seed: Some("s".into()),
+            url: Some("u".into()),
+            phone: Some("ph".into()),
+            server: Some("sv".into()),
+            nick: Some("n".into()),
+            password: Some("pw".into()),
+            channels_csv: Some("c".into()),
+        };
+        let f = flags.into_fields();
+        assert_eq!(f.token.as_deref(), Some("t"));
+        assert_eq!(f.bot_token.as_deref(), Some("b"));
+        assert_eq!(f.app_token.as_deref(), Some("a"));
+        assert_eq!(f.phone_id.as_deref(), Some("p"));
+        assert_eq!(f.seed.as_deref(), Some("s"));
+        assert_eq!(f.url.as_deref(), Some("u"));
+        assert_eq!(f.phone.as_deref(), Some("ph"));
+        assert_eq!(f.server.as_deref(), Some("sv"));
+        assert_eq!(f.nick.as_deref(), Some("n"));
+        assert_eq!(f.password.as_deref(), Some("pw"));
+        assert_eq!(f.channels_csv.as_deref(), Some("c"));
+    }
+
+    /// Non-interactive add for telegram: flags → stage → write → credentials present.
+    #[test]
+    fn noninteractive_add_telegram_writes_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        let flags = ChannelAddFlags {
+            token: Some(valid_tg_token()),
+            ..Default::default()
+        };
+        let fields = flags.into_fields();
+        let updated = stage_channel_add("telegram", &fields, Credentials::default()).unwrap();
+        updated.write(&path).unwrap();
+        let reloaded = Credentials::load_or_default(&path).unwrap();
+        assert_eq!(
+            reloaded.telegram_token.as_ref().unwrap().expose(),
+            valid_tg_token()
+        );
+    }
+
+    /// Non-interactive add for slack: --bot-token + --app-token → credentials stored.
+    #[test]
+    fn noninteractive_add_slack_writes_both_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        let flags = ChannelAddFlags {
+            bot_token: Some("xoxb-1".into()),
+            app_token: Some("xapp-1".into()),
+            ..Default::default()
+        };
+        let fields = flags.into_fields();
+        let updated = stage_channel_add("slack", &fields, Credentials::default()).unwrap();
+        updated.write(&path).unwrap();
+        let reloaded = Credentials::load_or_default(&path).unwrap();
+        assert!(reloaded.slack_bot_token.is_some() && reloaded.slack_app_token.is_some());
+    }
+
+    /// Missing required field (no --token for telegram) → stage_channel_add errors.
+    #[test]
+    fn noninteractive_add_missing_required_field_errors() {
+        let flags = ChannelAddFlags {
+            // token intentionally absent
+            ..Default::default()
+        };
+        let fields = flags.into_fields();
+        let err = stage_channel_add("telegram", &fields, Credentials::default()).unwrap_err();
+        assert!(
+            err.to_string().contains("missing"),
+            "expected 'missing' in: {err}"
+        );
+    }
+
+    /// required_flags_for returns the right hint for every known channel.
+    #[test]
+    fn required_flags_for_covers_known_channels() {
+        let channels = [
+            "telegram",
+            "slack",
+            "whatsapp",
+            "keet",
+            "discord",
+            "signal",
+            "line",
+            "irc",
+            "imessage",
+            "imessage_bluebubbles",
+            "bluebubbles",
+            "mattermost",
+            "gchat",
+            "google_chat",
+        ];
+        for ch in channels {
+            let hint = required_flags_for(ch);
+            assert!(
+                !hint.is_empty() && hint != "(unknown channel)",
+                "missing hint for channel `{ch}`"
+            );
+        }
     }
 }

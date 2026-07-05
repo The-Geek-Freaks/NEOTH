@@ -1125,8 +1125,63 @@ pub enum ProviderAction {
 
 #[derive(Subcommand, Debug)]
 pub enum ChannelAction {
-    /// Add a channel (e.g. telegram)
-    Add { channel: String },
+    /// Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts).
+    ///
+    /// Pass at least the flags the channel requires to skip all prompts:
+    ///   telegram:              --token
+    ///   slack:                 --bot-token --app-token
+    ///   whatsapp:              --token --phone-id
+    ///   keet:                  --seed
+    ///   discord:               --token
+    ///   signal:                --url --phone
+    ///   line:                  --token  [--password]
+    ///   irc:                   --server --nick  [--password --channels-csv]
+    ///   imessage/bluebubbles:  --url --password
+    ///   mattermost:            --url --token
+    ///   gchat/google_chat:     --url --server
+    Add {
+        /// Channel name (e.g. telegram, slack, whatsapp, keet, discord,
+        /// signal, line, irc, imessage, bluebubbles, mattermost, gchat).
+        channel: String,
+        /// Bot token / access token (telegram, whatsapp, discord, line,
+        /// mattermost). For whatsapp this is the access token; for line the
+        /// channel access token.
+        #[arg(long)]
+        token: Option<String>,
+        /// Slack bot token (xoxb-…).
+        #[arg(long)]
+        bot_token: Option<String>,
+        /// Slack app token (xapp-…, socket mode).
+        #[arg(long)]
+        app_token: Option<String>,
+        /// WhatsApp phone-number id (numeric, from Meta console).
+        #[arg(long)]
+        phone_id: Option<String>,
+        /// Keet 24-word pairing phrase.
+        #[arg(long)]
+        seed: Option<String>,
+        /// Base URL: signal-cli daemon / BlueBubbles server / Mattermost /
+        /// path to GCP service-account JSON key (gchat).
+        #[arg(long)]
+        url: Option<String>,
+        /// Signal phone number (E.164, e.g. +4917…).
+        #[arg(long)]
+        phone: Option<String>,
+        /// IRC server host (no scheme, e.g. irc.libera.chat) /
+        /// Pub/Sub subscription (gchat, projects/<p>/subscriptions/<s>).
+        #[arg(long)]
+        server: Option<String>,
+        /// IRC bot nick.
+        #[arg(long)]
+        nick: Option<String>,
+        /// Password / secret: IRC NickServ password, BlueBubbles server
+        /// password, or LINE channel secret.
+        #[arg(long)]
+        password: Option<String>,
+        /// IRC channels to join, comma-separated (e.g. #neoth,#dev).
+        #[arg(long)]
+        channels_csv: Option<String>,
+    },
     /// List configured channels
     List,
     /// Test a channel connection
@@ -1686,7 +1741,35 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Channel { action } => match action {
             ChannelAction::List => channel::run_list(&global_output)?,
             ChannelAction::Test { channel: ch } => channel::run_test(&ch, &global_output).await?,
-            ChannelAction::Add { channel: ch } => channel::run_add(&ch, &global_output).await?,
+            ChannelAction::Add {
+                channel: ch,
+                token,
+                bot_token,
+                app_token,
+                phone_id,
+                seed,
+                url,
+                phone,
+                server,
+                nick,
+                password,
+                channels_csv,
+            } => {
+                let flags = channel::ChannelAddFlags {
+                    token,
+                    bot_token,
+                    app_token,
+                    phone_id,
+                    seed,
+                    url,
+                    phone,
+                    server,
+                    nick,
+                    password,
+                    channels_csv,
+                };
+                channel::run_add(&ch, &flags, &global_output).await?;
+            }
             ChannelAction::Remove { channel: ch } => channel::run_remove(&ch, &global_output)?,
         },
         Commands::Plugin(mut args) => {
