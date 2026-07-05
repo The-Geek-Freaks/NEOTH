@@ -131,6 +131,8 @@ pub mod reflect;
 pub mod refusal;
 /// MAR-02 — `neoth release {keygen, sign, pubkey}` DAU-friendly release signing.
 pub mod release;
+/// ZF-04 — `neoth rmas consent [--acknowledge]` RecursiveMAS consent gate.
+pub mod rmas;
 pub mod reload;
 pub mod review;
 pub mod risk_confirm;
@@ -811,6 +813,12 @@ pub enum Commands {
     /// and smart-approve are read-only here — they have their own gated paths.
     Buddy(buddy::BuddyArgs),
 
+    /// ZF-04 — RecursiveMAS consent gate + status inspector. `consent`
+    /// prints license notice + marker state; `consent --acknowledge` writes
+    /// the marker (idempotent). Only this command creates the marker —
+    /// the wizard and preset code never do.
+    Rmas(rmas::RmasArgs),
+
     /// HMAC key management — show / rotate / list archived keys. Phase 33b
     /// SP-2 follow-up. Rotation is non-destructive: archived keys still
     /// verify historical compaction markers.
@@ -1464,6 +1472,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Buddy(mut args) => {
             args.output = global_output;
             buddy::run_buddy(args)?;
+        }
+        Commands::Rmas(args) => {
+            rmas::run_rmas(args, global_output)?;
         }
         Commands::Keys(mut args) => {
             args.output = global_output;
