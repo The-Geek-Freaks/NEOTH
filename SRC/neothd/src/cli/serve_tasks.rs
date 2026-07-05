@@ -87,28 +87,70 @@ pub(crate) const WAL_EMITTING_CRON_KEYS: &[CronKey] = &[
 pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSet<CronKey> {
     use CronKey::*;
     let mut keys = std::collections::HashSet::new();
-    // always-on (disabled via their own .enabled gate inside spawn_*):
-    keys.insert(DoctorCron);
+
+    // Genuinely always-on / non-`.enabled`-gated (their spawn_* either always
+    // returns Some or gates on a non-boolean condition — interval, autonomy —
+    // that isn't a simple operator opt-out):
     keys.insert(ResourceWatch);
-    keys.insert(MonitorCron);
     keys.insert(Babel);
     keys.insert(WatchdogCron);
-    keys.insert(DriftAlert);
-    keys.insert(RecallLatency);
-    keys.insert(ProfileAdapt);
-    keys.insert(EcologyCron);
-    keys.insert(PatternCron);
     keys.insert(BgMonitor);
     keys.insert(ContradictionResolve);
-    keys.insert(GuidanceCron);
-    keys.insert(SkillCurator);
-    keys.insert(SynthesisCron);
-    keys.insert(ConsolidationSweep);
-    keys.insert(SelfWiki);
     keys.insert(SelfImprovementCollector);
-    keys.insert(TokenAnomaly);
-    keys.insert(SessionHealth);
-    keys.insert(WebhookManager);
+
+    // `.enabled`-gated crons: the desired set MUST mirror each spawn_*'s
+    // `if !config.X.enabled { return None }` guard. Otherwise a cron enabled at
+    // boot then disabled via `neoth reload` stays in `desired`, `to_stop` comes
+    // out empty, and the running task is never aborted — so the operator's
+    // opt-out is silently ignored until a full restart (webhook_manager is the
+    // sharpest case: it keeps POSTing to external endpoints). Gating here also
+    // makes disable→enable hot-start work. Each predicate is copied verbatim
+    // from the matching spawn_* helper.
+    if cfg.doctor.enabled {
+        keys.insert(DoctorCron);
+    }
+    if cfg.monitor.enabled {
+        keys.insert(MonitorCron);
+    }
+    if cfg.drift_alert.enabled {
+        keys.insert(DriftAlert);
+    }
+    if cfg.recall_latency.enabled {
+        keys.insert(RecallLatency);
+    }
+    if cfg.profile_adapt.enabled {
+        keys.insert(ProfileAdapt);
+    }
+    if cfg.ecology.enabled {
+        keys.insert(EcologyCron);
+    }
+    if cfg.pattern_cron.enabled {
+        keys.insert(PatternCron);
+    }
+    if cfg.guidance_cron.enabled {
+        keys.insert(GuidanceCron);
+    }
+    if cfg.skill_curator.enabled {
+        keys.insert(SkillCurator);
+    }
+    if cfg.synthesis_cron.enabled {
+        keys.insert(SynthesisCron);
+    }
+    if cfg.consolidation_sweep.enabled {
+        keys.insert(ConsolidationSweep);
+    }
+    if cfg.self_wiki.enabled {
+        keys.insert(SelfWiki);
+    }
+    if cfg.token_anomaly.enabled {
+        keys.insert(TokenAnomaly);
+    }
+    if cfg.session_health.enabled {
+        keys.insert(SessionHealth);
+    }
+    if cfg.webhook_manager.enabled {
+        keys.insert(WebhookManager);
+    }
     // Vault-gated crons: all four spawn_* helpers early-return None without
     // `obsidian_vault`, so on first boot the key would spawn nothing. The gate
     // matters on RELOAD: if these keys stayed in the desired set unconditionally
@@ -5540,14 +5582,16 @@ mod zf06_fleet_tests {
     fn desired_cron_keys_default_config_contains_core_keys() {
         let cfg = FreedomConfig::default();
         let keys = desired_cron_keys(&cfg);
-        // A non-exhaustive set of always-on keys (no config gate).
+        // The genuinely always-on keys (no operator `.enabled` gate) must always
+        // be present regardless of config.
         for key in &[
-            CronKey::DoctorCron,
             CronKey::BgMonitor,
             CronKey::Babel,
-            CronKey::MonitorCron,
+            CronKey::WatchdogCron,
+            CronKey::ResourceWatch,
+            CronKey::ContradictionResolve,
         ] {
-            assert!(keys.contains(key), "missing key: {:?}", key);
+            assert!(keys.contains(key), "missing always-on key: {:?}", key);
         }
     }
 
@@ -5555,7 +5599,8 @@ mod zf06_fleet_tests {
     fn desired_cron_keys_gates_obsidian_on_vault() {
         // Wave-3 regression: the four vault-gated keys must be ABSENT without a
         // vault (else a vault-clearing reload leaves the tasks running forever),
-        // and PRESENT once a vault is configured.
+        // and PRESENT once a vault is configured. Counts are expressed as a
+        // delta so they don't depend on which `.enabled` crons default on/off.
         let vault_gated = [
             CronKey::ObsidianSync,
             CronKey::ObsidianVaultReader,
@@ -5567,7 +5612,6 @@ mod zf06_fleet_tests {
         for key in &vault_gated {
             assert!(!no_vault.contains(key), "{key:?} must be gated off without a vault");
         }
-        assert_eq!(no_vault.len(), 21, "expected 21 fleet keys without a vault");
 
         let mut cfg = FreedomConfig::default();
         cfg.obsidian_vault = Some("/tmp/vault".to_string());
@@ -5575,6 +5619,31 @@ mod zf06_fleet_tests {
         for key in &vault_gated {
             assert!(with_vault.contains(key), "{key:?} must be present with a vault");
         }
-        assert_eq!(with_vault.len(), 25, "expected 25 fleet keys with a vault");
+        assert_eq!(
+            with_vault.len(),
+            no_vault.len() + 4,
+            "a vault adds exactly the four obsidian/self-map keys"
+        );
+    }
+
+    #[test]
+    fn desired_cron_keys_gates_enabled_crons_on_reload() {
+        // Wave-10 regression: a `.enabled`-gated cron must leave the desired set
+        // when disabled, so a `neoth reload` that disables it computes a
+        // non-empty to_stop and actually aborts the running task (webhook_manager
+        // is the sharpest case — it POSTs to external endpoints).
+        let mut on = FreedomConfig::default();
+        on.webhook_manager.enabled = true;
+        assert!(
+            desired_cron_keys(&on).contains(&CronKey::WebhookManager),
+            "enabled webhook_manager must be in the desired set"
+        );
+
+        let mut off = on.clone();
+        off.webhook_manager.enabled = false;
+        assert!(
+            !desired_cron_keys(&off).contains(&CronKey::WebhookManager),
+            "disabled webhook_manager must be GONE from the desired set (reload must stop it)"
+        );
     }
 }

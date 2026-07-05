@@ -228,7 +228,15 @@ pub fn find_by_id(provider_id: &str) -> Option<&'static KnownEndpoint> {
 /// ("127.0.0.1")` flags `127.0.0.10`, and `contains("localhost")` flags
 /// `localhost.evil.com` — all remote hosts a substring match would call local.
 static RE_LOCAL_ENDPOINT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)(?:^|//|@|\[)(?:localhost|127\.0\.0\.1|::1)(?:[:/\]]|$)").unwrap()
+    // Loopback host forms: `localhost`, any 127.x IPv4 loopback, compressed
+    // `::1`, the full-form `0:0:0:0:0:0:0:1`, and the IPv4-mapped
+    // `::ffff:127.0.0.1`. All must be bounded (start after //, @, or [ and end
+    // at :, /, ], or end) so near-miss hosts like [::100] / 127.0.0.10 /
+    // localhost.evil.com are NOT treated as local.
+    regex::Regex::new(
+        r"(?i)(?:^|//|@|\[)(?:localhost|127\.0\.0\.1|::1|0:0:0:0:0:0:0:1|::ffff:127\.0\.0\.1)(?:[:/\]]|$)",
+    )
+    .unwrap()
 });
 
 /// Return `true` when `endpoint` resolves to the local machine — `localhost`,
@@ -393,6 +401,9 @@ mod tests {
         assert!(is_local_endpoint("http://localhost:11434/v1"), "localhost");
         assert!(is_local_endpoint("http://127.0.0.1:11434/v1"), "127.0.0.1");
         assert!(is_local_endpoint("http://localhost/v1"), "localhost no port");
+        // Wave-10: full-form + IPv4-mapped IPv6 loopback must also be local.
+        assert!(is_local_endpoint("https://[0:0:0:0:0:0:0:1]:11434/v1"), "full-form ::1");
+        assert!(is_local_endpoint("https://[::ffff:127.0.0.1]:8080/v1"), "IPv4-mapped loopback");
         assert!(!is_local_endpoint("https://api.openai.com/v1"), "cloud endpoint");
         assert!(!is_local_endpoint("https://api.deepseek.com/v1"), "cloud endpoint 2");
         // Wave-8 regression: near-miss hosts a substring match wrongly flagged.
