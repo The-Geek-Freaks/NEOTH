@@ -133,7 +133,15 @@ fn should_compact_block(content: &str) -> bool {
         if RE_UUID.is_match(content) {
             return false;
         }
-        if RE_HEX_RUN.is_match(content) {
+        // A hex run counts as a byte-exact identifier only if it contains a
+        // digit (real hashes/addresses always do). Requiring a digit avoids
+        // vetoing compaction on ordinary English words that happen to be 8+
+        // all-[a-f] letters ("deadbeef", "cafebabe", "facefeed"), which would
+        // otherwise keep the whole zone verbatim forever.
+        if RE_HEX_RUN
+            .find_iter(content)
+            .any(|m| m.as_str().bytes().any(|b| b.is_ascii_digit()))
+        {
             return false;
         }
         if RE_FILE_PATH_UNIX.is_match(content) || RE_FILE_PATH_WIN.is_match(content) {
@@ -942,6 +950,18 @@ mod tests {
             "const MAGIC: u32 = 0xCAFEBABE;",
         ] {
             assert!(!should_compact_block(s), "0x-hex must not be compactable: {s}");
+        }
+    }
+
+    /// Wave-8 regression: an ordinary English word that happens to be 8+
+    /// all-[a-f] letters must NOT veto compaction (no digit → not an id).
+    #[test]
+    fn pxp01_english_hex_word_is_compactable() {
+        for s in [
+            "the whole thing is a total deadbeef situation honestly",
+            "that cafebabe of a plan will never facefeed correctly",
+        ] {
+            assert!(should_compact_block(s), "all-alpha hex word must stay compactable: {s}");
         }
     }
 

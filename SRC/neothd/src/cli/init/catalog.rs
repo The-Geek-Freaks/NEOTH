@@ -93,6 +93,14 @@ fn ping_provider_key_blocking(key: &str, kind: ProviderKind, endpoint: Option<&s
     if endpoint.is_some_and(crate::providers::known_endpoints::is_local_endpoint) {
         return;
     }
+    // Never put the key on the wire in cleartext: an operator-supplied non-local
+    // `http://` endpoint would transmit the bearer key over plaintext TCP. Local
+    // endpoints are already skipped above; the built-in defaults are all https,
+    // so a `None` endpoint is fine. Refuse to verify rather than leak the key.
+    if endpoint.is_some_and(|e| !e.trim().to_ascii_lowercase().starts_with("https://")) {
+        println!("  API key not verified — endpoint is not https (won't send the key over plaintext).");
+        return;
+    }
     // Skip for providers that use OAuth / CLI, not a raw API key.
     if matches!(kind, ProviderKind::ClaudeCli | ProviderKind::Skip) {
         return;

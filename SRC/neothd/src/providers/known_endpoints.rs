@@ -222,15 +222,22 @@ pub fn find_by_id(provider_id: &str) -> Option<&'static KnownEndpoint> {
         .find(|e| e.provider_id == provider_id)
 }
 
-/// Return `true` when `endpoint` resolves to the local machine — i.e. it
-/// contains `localhost`, `127.0.0.1`, or the IPv6 loopback (`::1` / `[::1]`).
-/// Used by [`local_only`], [`cloud_only`], and the locality checks that gate
-/// the remote-consent prompt. Mirrors the pattern in `pears_bridge.rs`.
+/// Loopback host bounded so it does NOT match near-miss addresses: the host
+/// must sit right after `//`, `@`, or `[`, and end at `:`, `/`, `]`, or the end
+/// of string. Plain `contains("::1")` wrongly flags `[::100]`, `contains
+/// ("127.0.0.1")` flags `127.0.0.10`, and `contains("localhost")` flags
+/// `localhost.evil.com` — all remote hosts a substring match would call local.
+static RE_LOCAL_ENDPOINT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)(?:^|//|@|\[)(?:localhost|127\.0\.0\.1|::1)(?:[:/\]]|$)").unwrap()
+});
+
+/// Return `true` when `endpoint` resolves to the local machine — `localhost`,
+/// `127.0.0.1`, or the IPv6 loopback (`::1` / `[::1]`) — as a bounded host, not
+/// a loose substring. Used by [`local_only`], [`cloud_only`], and the wizard
+/// key-ping locality skip.
 #[inline]
 pub(crate) fn is_local_endpoint(endpoint: &str) -> bool {
-    endpoint.contains("localhost")
-        || endpoint.contains("127.0.0.1")
-        || endpoint.contains("::1")
+    RE_LOCAL_ENDPOINT.is_match(endpoint)
 }
 
 /// All entries whose endpoint resolves to `localhost` / `127.0.0.1` /
@@ -385,8 +392,14 @@ mod tests {
         assert!(is_local_endpoint("http://::1:11434/v1"), "bare ::1 form");
         assert!(is_local_endpoint("http://localhost:11434/v1"), "localhost");
         assert!(is_local_endpoint("http://127.0.0.1:11434/v1"), "127.0.0.1");
+        assert!(is_local_endpoint("http://localhost/v1"), "localhost no port");
         assert!(!is_local_endpoint("https://api.openai.com/v1"), "cloud endpoint");
         assert!(!is_local_endpoint("https://api.deepseek.com/v1"), "cloud endpoint 2");
+        // Wave-8 regression: near-miss hosts a substring match wrongly flagged.
+        assert!(!is_local_endpoint("http://127.0.0.10/v1"), "127.0.0.10 is not loopback");
+        assert!(!is_local_endpoint("http://[::100]:8080/v1"), "[::100] is not loopback");
+        assert!(!is_local_endpoint("http://[::1a]:8080/v1"), "[::1a] is not loopback");
+        assert!(!is_local_endpoint("http://localhost.evil.com/v1"), "localhost.evil.com is remote");
     }
 
     #[test]
