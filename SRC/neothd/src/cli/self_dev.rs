@@ -143,9 +143,14 @@ pub fn save_store(home: &Path, store: &ProposalStore) -> Result<()> {
 /// Operator entrypoint — no WAL writer required (CLI may run without
 /// a live daemon). Pass `Some(writer)` when invoked from inside the
 /// running daemon to also emit the matching WAL frames.
-pub async fn run(home: &Path, args: SelfDevArgs, writer: Option<&WalWriterHandle>) -> Result<()> {
+pub async fn run(
+    home: &Path,
+    args: SelfDevArgs,
+    writer: Option<&WalWriterHandle>,
+    output: crate::cli::OutputFormat,
+) -> Result<()> {
     match args.action {
-        SelfDevAction::Review { min_confidence } => run_review(home, min_confidence),
+        SelfDevAction::Review { min_confidence } => run_review(home, min_confidence, output),
         SelfDevAction::Accept { id } => run_accept(home, &id, writer).await,
         SelfDevAction::Decline { id, reason } => run_decline(home, &id, &reason, writer).await,
         SelfDevAction::Propose {
@@ -156,8 +161,45 @@ pub async fn run(home: &Path, args: SelfDevArgs, writer: Option<&WalWriterHandle
     }
 }
 
-fn run_review(home: &Path, min_confidence: f64) -> Result<()> {
+/// FEAT-05 UI surface — pure JSON row-builder for the GUI Proposal-Review
+/// tab. Display-only fields (`target`/`reason` are operator-facing text, never
+/// interpolated into any shell command GUI-side). Pure so the shape is pinned
+/// by a unit test without stdout capture.
+fn pending_proposals_json(pending: &[&StoredProposal]) -> Vec<serde_json::Value> {
+    pending
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "id": e.proposal.id,
+                "kind": e.proposal.kind.as_str(),
+                "confidence": e.proposal.confidence,
+                "target": e.proposal.target,
+                "reason": e.proposal.reason,
+                "status": "pending",
+            })
+        })
+        .collect()
+}
+
+fn run_review(home: &Path, min_confidence: f64, output: crate::cli::OutputFormat) -> Result<()> {
     let store = load_store(home)?;
+    // FEAT-05 UI surface — machine-readable pending proposals for the GUI
+    // Proposal-Review tab. Pending subset only; the GUI records operator
+    // consent via `self-dev accept/decline` (no source edit — apply path is
+    // v1.1 behind Action::SelfSourceEdit).
+    let pending: Vec<&StoredProposal> = store
+        .entries
+        .iter()
+        .filter(|e| e.status == ProposalStatus::Pending && e.proposal.confidence >= min_confidence)
+        .collect();
+    if matches!(
+        output,
+        crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl
+    ) {
+        let rows = pending_proposals_json(&pending);
+        println!("{}", serde_json::to_string(&rows)?);
+        return Ok(());
+    }
     let mut shown = 0usize;
     for e in &store.entries {
         if e.status != ProposalStatus::Pending {
@@ -537,7 +579,29 @@ mod tests {
                 min_confidence: 0.0,
             },
         };
-        run(dir.path(), args, None).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
+    }
+
+    #[test]
+    fn pending_proposals_json_shape_pins_gui_contract() {
+        // The GUI Proposal-Review tab (FEAT-05 UI surface) parses this exact
+        // shape. Only PENDING proposals reach this fn (filtered upstream).
+        let p = fixture_proposal("switch_preset-aabbccdd", 0.83);
+        let stored = StoredProposal {
+            proposal: p,
+            status: ProposalStatus::Pending,
+            status_at_unix: 0,
+            decline_reason: String::new(),
+        };
+        let rows = pending_proposals_json(&[&stored]);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r["id"], "switch_preset-aabbccdd");
+        assert_eq!(r["status"], "pending");
+        assert_eq!(r["confidence"], 0.83);
+        assert!(r["kind"].is_string());
+        assert!(r["target"].is_string());
+        assert!(r["reason"].is_string());
     }
 
     #[tokio::test]
@@ -548,7 +612,7 @@ mod tests {
                 id: "ghost-12345678".into(),
             },
         };
-        let err = run(dir.path(), args, None).await.unwrap_err();
+        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap_err();
         assert!(err.to_string().contains("ghost"));
     }
 
@@ -568,7 +632,7 @@ mod tests {
                 id: "switch_preset-aabbccdd".into(),
             },
         };
-        run(dir.path(), args, None).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
         let back = load_store(dir.path()).unwrap();
         assert_eq!(back.entries[0].status, ProposalStatus::Accepted);
         assert!(back.entries[0].status_at_unix > 0);
@@ -588,7 +652,7 @@ mod tests {
         let args = SelfDevArgs {
             action: SelfDevAction::Accept { id: "x".into() },
         };
-        run(dir.path(), args, None).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
     }
 
     #[tokio::test]
@@ -608,7 +672,7 @@ mod tests {
                 reason: "garbage".into(),
             },
         };
-        let err = run(dir.path(), args, None).await.unwrap_err();
+        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap_err();
         assert!(err.to_string().contains("declined"));
     }
 
@@ -629,7 +693,7 @@ mod tests {
                 reason: "timeout".into(),
             },
         };
-        run(dir.path(), args, None).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
         let back = load_store(dir.path()).unwrap();
         assert_eq!(back.entries[0].status, ProposalStatus::Declined);
         assert_eq!(back.entries[0].decline_reason, "timeout");
@@ -652,7 +716,7 @@ mod tests {
                 reason: "declined".into(),
             },
         };
-        let err = run(dir.path(), args, None).await.unwrap_err();
+        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap_err();
         assert!(err.to_string().contains("previously accepted"));
     }
 
@@ -685,7 +749,7 @@ mod tests {
                 current_preset: "lowkey".into(),
             },
         };
-        run(dir.path(), args, None).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
         let back = load_store(dir.path()).unwrap();
         assert!(!back.entries.is_empty());
         assert!(
@@ -780,7 +844,7 @@ mod tests {
                 current_preset: "lowkey".into(),
             },
         };
-        run(dir.path(), args1, None).await.unwrap();
+        run(dir.path(), args1, None, crate::cli::OutputFormat::Table).await.unwrap();
         let first = load_store(dir.path()).unwrap();
 
         let args2 = SelfDevArgs {
@@ -789,7 +853,7 @@ mod tests {
                 current_preset: "lowkey".into(),
             },
         };
-        run(dir.path(), args2, None).await.unwrap();
+        run(dir.path(), args2, None, crate::cli::OutputFormat::Table).await.unwrap();
         let second = load_store(dir.path()).unwrap();
 
         assert_eq!(first.entries.len(), second.entries.len());

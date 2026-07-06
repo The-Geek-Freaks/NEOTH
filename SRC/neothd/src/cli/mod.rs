@@ -1740,7 +1740,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             // the matching WAL frames will land when the daemon picks
             // up the change on next start. Invocation from inside the
             // daemon supplies the writer via a different call path.
-            self_dev::run(&home, args, None).await?;
+            self_dev::run(&home, args, None, global_output).await?;
         }
         Commands::Channel { action } => match action {
             ChannelAction::List => channel::run_list(&global_output)?,
