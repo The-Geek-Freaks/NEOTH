@@ -233,9 +233,14 @@ fn classify_ping_status(status: u16, kind: ProviderKind) -> PingResult {
         401 => PingResult::Unauthorized,
         // 403 is provider-dependent: OpenAI-family returns it for a VALID key
         // that lacks a scope (treat as OK — the key is recognised). Gemini
-        // returns 403 PERMISSION_DENIED for an INVALID key, so a Gemini 403
-        // means the key is bad and must be surfaced as unauthorized.
-        403 if matches!(kind, ProviderKind::GeminiApi) => PingResult::Unauthorized,
+        // returns 403 PERMISSION_DENIED for an INVALID key; GitHub Copilot
+        // returns 403 at `copilot_internal/v2/token` for a real PAT that has NO
+        // Copilot entitlement — in both cases the key will NOT work for that
+        // provider, so a green ✓ would mislead the operator. Surface as
+        // unauthorized.
+        403 if matches!(kind, ProviderKind::GeminiApi | ProviderKind::GitHubCopilot) => {
+            PingResult::Unauthorized
+        }
         403 => PingResult::Ok,
         // 429 = rate-limited → key is valid.
         429 => PingResult::Ok,
@@ -999,6 +1004,11 @@ mod tests {
         assert_eq!(
             classify_ping_status(403, ProviderKind::OpenaiApi),
             PingResult::Ok
+        );
+        // Wave-15: Copilot 403 = valid PAT without Copilot entitlement → not Ok.
+        assert_eq!(
+            classify_ping_status(403, ProviderKind::GitHubCopilot),
+            PingResult::Unauthorized
         );
         assert_eq!(
             classify_ping_status(401, ProviderKind::GeminiApi),
