@@ -248,6 +248,53 @@ pub(crate) fn is_local_endpoint(endpoint: &str) -> bool {
     RE_LOCAL_ENDPOINT.is_match(endpoint)
 }
 
+/// Extract the bare host from an endpoint URL: strips scheme, userinfo, path,
+/// port, and IPv6 brackets. Returns `None` if a host can't be isolated.
+fn endpoint_host(endpoint: &str) -> Option<&str> {
+    let after_scheme = endpoint.split("://").nth(1).unwrap_or(endpoint);
+    let authority = after_scheme.split(['/', '?', '#']).next()?;
+    let host_port = authority.rsplit('@').next()?; // drop any user:pass@
+    if let Some(rest) = host_port.strip_prefix('[') {
+        return rest.split(']').next(); // [ipv6]:port -> ipv6
+    }
+    // host:port -> host, but only strip a trailing numeric port when the host
+    // isn't itself a bare (colon-bearing) IPv6 literal.
+    match host_port.rfind(':') {
+        Some(i)
+            if host_port[..i].find(':').is_none()
+                && host_port[i + 1..].chars().all(|c| c.is_ascii_digit()) =>
+        {
+            Some(&host_port[..i])
+        }
+        _ => Some(host_port),
+    }
+}
+
+/// Return `true` when `endpoint` is NOT a public, routable address: loopback,
+/// RFC-1918 private (10/8, 172.16/12, 192.168/16), link-local (169.254/16 —
+/// includes the cloud instance-metadata service), or IPv6 ULA (fc00::/7) /
+/// link-local (fe80::/10). A domain name is treated as public. Used to gate the
+/// ZF-03 wizard key-ping: the bearer key must never be POSTed to a non-public
+/// host (an operator's LAN box, a metadata service, or a tampered endpoint).
+pub(crate) fn is_non_public_endpoint(endpoint: &str) -> bool {
+    if is_local_endpoint(endpoint) {
+        return true;
+    }
+    match endpoint_host(endpoint).and_then(|h| h.parse::<std::net::IpAddr>().ok()) {
+        Some(std::net::IpAddr::V4(ip)) => {
+            ip.is_private() || ip.is_link_local() || ip.is_loopback() || ip.is_unspecified()
+        }
+        Some(std::net::IpAddr::V6(ip)) => {
+            let seg0 = ip.segments()[0];
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || (seg0 & 0xfe00) == 0xfc00 // ULA fc00::/7
+                || (seg0 & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+        None => false, // domain name (or unparseable) → treat as public
+    }
+}
+
 /// All entries whose endpoint resolves to `localhost` / `127.0.0.1` /
 /// `[::1]` — surfaced separately in the wizard so operators see the
 /// local-only options grouped together.
@@ -411,6 +458,33 @@ mod tests {
         assert!(!is_local_endpoint("http://[::100]:8080/v1"), "[::100] is not loopback");
         assert!(!is_local_endpoint("http://[::1a]:8080/v1"), "[::1a] is not loopback");
         assert!(!is_local_endpoint("http://localhost.evil.com/v1"), "localhost.evil.com is remote");
+    }
+
+    #[test]
+    fn is_non_public_endpoint_blocks_private_and_metadata() {
+        // Non-public: loopback, RFC-1918, link-local (incl. IMDS), ULA.
+        for e in [
+            "http://127.0.0.1:11434/v1",
+            "https://[::1]:8080/v1",
+            "https://192.168.1.100/v1",
+            "https://10.0.0.5:8000/v1",
+            "https://172.16.4.2/v1",
+            "https://169.254.169.254/latest/meta-data", // AWS IMDS
+            "http://user:pass@10.1.2.3:9000/v1",
+            "https://[fc00::1]:8080/v1",   // ULA
+            "https://[fe80::1]:8080/v1",   // link-local
+        ] {
+            assert!(is_non_public_endpoint(e), "must be blocked: {e}");
+        }
+        // Public: real cloud provider hosts and public IPs are pingable.
+        for e in [
+            "https://api.openai.com/v1",
+            "https://api.anthropic.com",
+            "https://8.8.8.8/v1",
+            "https://[2606:4700:4700::1111]/v1",
+        ] {
+            assert!(!is_non_public_endpoint(e), "must be public: {e}");
+        }
     }
 
     #[test]

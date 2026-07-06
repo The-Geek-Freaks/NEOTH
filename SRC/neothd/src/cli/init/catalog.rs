@@ -85,12 +85,14 @@ fn ping_provider_key_blocking(key: &str, kind: ProviderKind, endpoint: Option<&s
     if crate::providers::is_local_provider(kind.as_str()) {
         return;
     }
-    // Skip when the CONFIGURED ENDPOINT is local (loopback / ::1) — the
-    // provider-name check above misses an OpenAI-compat provider pointed at a
-    // local server (ollama / lm-studio / vLLM). A local server needs no
-    // key-verification round-trip, and skipping avoids POSTing the bearer key
-    // to a loopback socket during setup.
-    if endpoint.is_some_and(crate::providers::known_endpoints::is_local_endpoint) {
+    // Skip when the CONFIGURED ENDPOINT is not a public, routable host —
+    // loopback, RFC-1918 private (LAN ollama / lm-studio / vLLM), link-local
+    // (incl. the cloud instance-metadata service at 169.254.169.254), or IPv6
+    // ULA/link-local. Such a host needs no key-verification round-trip, and —
+    // more importantly — the bearer key must never be POSTed to a non-public
+    // address that could belong to a metadata service, a co-tenant, or a
+    // tampered endpoint. Non-fatal: the wizard continues without verifying.
+    if endpoint.is_some_and(crate::providers::known_endpoints::is_non_public_endpoint) {
         return;
     }
     // Never put the key on the wire in cleartext: an operator-supplied non-local
