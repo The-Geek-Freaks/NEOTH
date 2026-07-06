@@ -228,9 +228,20 @@ Manage channels (Telegram, WhatsApp, etc.) (Day 7+)
 
 ### `neoth channel add`
 
-Add a channel (e.g. telegram)
+Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts)
 
-- `<CHANNEL>`
+- `<CHANNEL>` — Channel name (e.g. telegram, slack, whatsapp, keet, discord, signal, line, irc, imessage, bluebubbles, mattermost, gchat)
+- `--token <TOKEN>` — Bot token / access token (telegram, whatsapp, discord, line, mattermost). For whatsapp this is the access token; for line the channel access token
+- `--bot-token <BOT_TOKEN>` — Slack bot token (xoxb-…)
+- `--app-token <APP_TOKEN>` — Slack app token (xapp-…, socket mode)
+- `--phone-id <PHONE_ID>` — WhatsApp phone-number id (numeric, from Meta console)
+- `--seed <SEED>` — Keet 24-word pairing phrase
+- `--url <URL>` — Base URL: signal-cli daemon / BlueBubbles server / Mattermost / path to GCP service-account JSON key (gchat)
+- `--phone <PHONE>` — Signal phone number (E.164, e.g. +4917…)
+- `--server <SERVER>` — IRC server host (no scheme, e.g. irc.libera.chat) / Pub/Sub subscription (gchat, projects/<p>/subscriptions/<s>)
+- `--nick <NICK>` — IRC bot nick
+- `--password <PASSWORD>` — Password / secret: IRC NickServ password, BlueBubbles server password, or LINE channel secret
+- `--channels-csv <CHANNELS_CSV>` — IRC channels to join, comma-separated (e.g. #neoth,#dev)
 
 ### `neoth channel list`
 
