@@ -2345,6 +2345,100 @@ pub fn parse_selfimprove_log(json: &str) -> Vec<(String, String, String, String)
         .collect()
 }
 
+// ── FEAT-05 — Self-Dev Proposal Review parse ─────────────────────────────────
+
+/// One decoded proposal from `neoth self-dev review --output json`.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SelfDevProposalData {
+    pub id: String,
+    pub kind: String,
+    pub confidence: f64,
+    pub target: String,
+    pub reason: String,
+    /// Raw status string from the daemon: "pending" | "accepted" | …
+    pub status: String,
+}
+
+/// Parse `neoth self-dev review --output json` → `Vec<SelfDevProposalData>`.
+///
+/// Accepts a top-level JSON array `[{id, kind, confidence, target, reason, status}]`
+/// or an object with a `"proposals"` key.  Pure + tolerant: missing / malformed
+/// input yields an empty vec; unknown extra fields are ignored.
+pub fn parse_selfdev_proposals(json: &str) -> Vec<SelfDevProposalData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let arr = v
+        .get("proposals")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .or_else(|| v.as_array().cloned())
+        .unwrap_or_default();
+    arr.iter()
+        .filter_map(|item| {
+            let id = item.get("id").and_then(|x| x.as_str())?.to_string();
+            let kind = item
+                .get("kind")
+                .and_then(|x| x.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let confidence = item
+                .get("confidence")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0);
+            let target = item
+                .get("target")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let reason = item
+                .get("reason")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let status = item
+                .get("status")
+                .and_then(|x| x.as_str())
+                .unwrap_or("pending")
+                .to_string();
+            Some(SelfDevProposalData { id, kind, confidence, target, reason, status })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod selfdev_tests {
+    use super::parse_selfdev_proposals;
+
+    #[test]
+    fn parse_selfdev_proposals_happy_path() {
+        let json = r#"[
+            {"id":"p-001","kind":"refactor","confidence":0.83,"target":"src/foo.rs","reason":"unused import","status":"pending"},
+            {"id":"p-002","kind":"lint","confidence":0.91,"target":"src/bar.rs","reason":"dead code"}
+        ]"#;
+        let rows = parse_selfdev_proposals(json);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "p-001");
+        assert_eq!(rows[0].kind, "refactor");
+        assert!((rows[0].confidence - 0.83).abs() < 1e-9);
+        assert_eq!(rows[0].target, "src/foo.rs");
+        assert_eq!(rows[0].reason, "unused import");
+        assert_eq!(rows[0].status, "pending");
+        assert_eq!(rows[1].id, "p-002");
+        // Missing status field defaults to "pending".
+        assert_eq!(rows[1].status, "pending");
+    }
+
+    #[test]
+    fn parse_selfdev_proposals_malformed_yields_empty() {
+        assert!(parse_selfdev_proposals("").is_empty());
+        assert!(parse_selfdev_proposals("not json").is_empty());
+        assert!(parse_selfdev_proposals("{}").is_empty());
+        assert!(parse_selfdev_proposals("[]").is_empty());
+        // Entry missing required `id` field → skipped, not fatal.
+        let json = r#"[{"kind":"lint","confidence":0.5}]"#;
+        assert!(parse_selfdev_proposals(json).is_empty());
+    }
+}
+
 // ── Wave 4b parse types ───────────────────────────────────────────────────────
 
 /// One row in the wiki / capability map.

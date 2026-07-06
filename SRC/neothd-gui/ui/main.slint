@@ -36,6 +36,8 @@ import { N8nView, N8nWorkflow } from "n8n.slint";
 import { BabelView, BabelGranRow, BabelWindowRow } from "babel.slint";
 import { CalendarView, CalEventRow } from "calendar.slint";
 import { SelfImproveView, SiProposalRow, SiLogRow } from "selfimprove.slint";
+import { SelfReprogramView, SelfReprogProposalRow } from "selfreprog.slint";
+export { SelfReprogProposalRow }
 import { ActivitySidecar, ActivityRow } from "activity.slint";
 // Wave 4b — six new panels
 import { ObsidianView } from "obsidian.slint";
@@ -463,6 +465,15 @@ export component MainWindow inherits Window {
     callback si-accept-clicked(string);
     callback si-rollback-clicked(string);
 
+    // ── FEAT-05 — Self-Dev Proposal Review panel ─────────────────────────────
+    in property <[SelfReprogProposalRow]> sd-proposals: [];
+    in property <string> sd-refreshed-at: "";
+    in property <bool>   sd-scan-running: false;
+    callback sd-accept-clicked(string);
+    callback sd-decline-clicked(string);
+    callback sd-scan-clicked();
+    callback sd-refresh-clicked();
+
     // ── Wave 4b — Obsidian panel ──────────────────────────────────────────────
     in property <bool>   obs-configured: false;
     in property <string> obs-vault-path: "";
@@ -623,6 +634,7 @@ export component MainWindow inherits Window {
         : root.nav-active == "babel"       ? "Babel Observer"
         : root.nav-active == "calendar"    ? "Calendar"
         : root.nav-active == "evolve"      ? "Self-Improvement"
+        : root.nav-active == "selfdev"     ? "Proposal Review"
         : root.nav-active == "obsidian"    ? "Obsidian Vault"
         : root.nav-active == "dreaming"    ? "Dreaming - Memory & Self-Awareness"
         : root.nav-active == "wiki"        ? "Capability Map"
@@ -2099,6 +2111,7 @@ export component MainWindow inherits Window {
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
                         && root.nav-active != "calendar" && root.nav-active != "evolve"
+                        && root.nav-active != "selfdev"
                         && root.nav-active != "obsidian" && root.nav-active != "dreaming"
                         && root.nav-active != "wiki" && root.nav-active != "buddyconfig"
                         && root.nav-active != "companion" && root.nav-active != "mesh"): SettingsView {
@@ -2517,6 +2530,17 @@ export component MainWindow inherits Window {
                     si-run-dry-clicked => { root.si-run-dry-clicked(); }
                     si-accept-clicked(id) => { root.si-accept-clicked(id); }
                     si-rollback-clicked(id) => { root.si-rollback-clicked(id); }
+                }
+
+                // FEAT-05 — Self-Dev Proposal Review.
+                if root.nav-active == "selfdev": SelfReprogramView {
+                    sd-proposals: root.sd-proposals;
+                    sd-refreshed-at: root.sd-refreshed-at;
+                    sd-scan-running: root.sd-scan-running;
+                    accept-clicked(id)  => { root.sd-accept-clicked(id); }
+                    decline-clicked(id) => { root.sd-decline-clicked(id); }
+                    scan-clicked        => { root.sd-scan-clicked(); }
+                    refresh-clicked     => { root.sd-refresh-clicked(); }
                 }
 
                 // Wave 4b — Obsidian Vault.

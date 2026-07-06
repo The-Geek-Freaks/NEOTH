@@ -1,0 +1,271 @@
+// NEOTH — Self-Dev Proposal Review panel (FEAT-05).
+//
+// Displays proposals from `neoth self-dev review --output json` with per-row
+// Accept / Decline buttons.  Accept marks the proposal for human review — no
+// source files are modified.
+//
+// RED-LINE copy contract (mandatory, never change):
+//   "Accepting a proposal marks it for human review.
+//    No source files are modified — self-editing is not enabled."
+//
+// Layout: EntranceFade > ScrollView > VerticalLayout{min-height} (no binding-loop).
+// Follows the babel.slint / selfimprove.slint wave-4a pattern exactly.
+
+import { Theme } from "theme.slint";
+import { Card, EntranceFade, NeothButton, Kicker, RefreshFooter } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire struct ───────────────────────────────────────────────────────────────
+
+/// One row from `neoth self-dev review --output json`.
+/// confidence is pre-formatted ("0.83").  status-badge is display-only.
+export struct SelfReprogProposalRow {
+    id: string,
+    kind: string,
+    confidence: string,
+    target: string,
+    reason: string,
+    status-badge: string,
+}
+
+// ── Per-row component ─────────────────────────────────────────────────────────
+
+// One proposal row: id chip · kind chip · confidence · target · reason (wrapped)
+// · Accept (consent) · Decline (ghost).
+// target and reason are DISPLAY-ONLY — never forwarded to shell args.
+component SelfReprogRow inherits Rectangle {
+    in property <string> row-id;
+    in property <string> row-kind;
+    in property <string> row-confidence;
+    in property <string> row-target;
+    in property <string> row-reason;
+    in property <string> row-status-badge;
+    callback accept-clicked();
+    callback decline-clicked();
+
+    border-radius: Theme.radius-md;
+    background: Theme.surface-1;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding: 12px; spacing: 6px;
+
+        // ── top meta row: id · kind chip · confidence · status ───────────────
+        HorizontalLayout {
+            spacing: 8px;
+
+            // id (mono)
+            Text {
+                text: root.row-id;
+                color: Theme.text-disabled;
+                font-family: Theme.font-mono;
+                font-size: 9px;
+                vertical-alignment: center;
+                width: 120px;
+                overflow: elide;
+            }
+
+            // kind chip
+            Rectangle {
+                width: 72px; height: 20px;
+                border-radius: 4px;
+                background: Theme.surface-2;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                Text {
+                    text: root.row-kind;
+                    color: Theme.accent;
+                    font-family: Theme.font-mono;
+                    font-size: 9px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // confidence
+            Text {
+                text: root.row-confidence;
+                color: Theme.text-secondary;
+                font-family: Theme.font-mono;
+                font-size: 10px;
+                vertical-alignment: center;
+                width: 36px;
+            }
+
+            // status badge
+            Text {
+                text: root.row-status-badge;
+                color: Theme.text-secondary;
+                font-family: Theme.font-mono;
+                font-size: 9px;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+        }
+
+        // ── target + reason ───────────────────────────────────────────────────
+        if root.row-target != "": Text {
+            text: "target: " + root.row-target;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-sm;
+            overflow: elide;
+        }
+
+        if root.row-reason != "": Text {
+            text: root.row-reason;
+            color: Theme.text-primary;
+            font-size: Theme.font-size-sm;
+            wrap: word-wrap;
+        }
+
+        // ── action buttons ────────────────────────────────────────────────────
+        HorizontalLayout {
+            alignment: end; spacing: 8px;
+
+            // Accept — consent-pink (operator authorization action)
+            Rectangle {
+                width: 72px; height: 26px;
+                border-radius: Theme.radius-md;
+                background: Theme.consent;
+                TouchArea {
+                    clicked => { root.accept-clicked(); }
+                }
+                Text {
+                    text: "Accept";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-sm;
+                    font-weight: Theme.weight-semibold;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Decline — ghost (secondary action)
+            NeothButton {
+                label: "Decline";
+                size: "sm";
+                primary: false;
+                width: 72px; height: 26px;
+                clicked => { root.decline-clicked(); }
+            }
+        }
+    }
+}
+
+// ── Public component ──────────────────────────────────────────────────────────
+
+export component SelfReprogramView inherits Rectangle {
+    // Proposals list
+    in property <[SelfReprogProposalRow]> sd-proposals: [];
+    in property <string>  sd-refreshed-at: "";
+    in property <bool>    sd-scan-running: false;
+
+    // Callbacks
+    callback accept-clicked(string);   // proposal id — validated in Rust before any shell
+    callback decline-clicked(string);  // proposal id — reason is hard-coded "declined" in Rust
+    callback scan-clicked();
+    callback refresh-clicked();
+
+    background: transparent;
+
+    EntranceFade {
+        ScrollView {
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                min-height: 1000px;
+
+                // ── HEADER ────────────────────────────────────────────────────
+                HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout {
+                        horizontal-stretch: 1; spacing: 2px;
+                        Text {
+                            text: "⟁  Proposal Review";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-size-lg;
+                            font-weight: Theme.weight-bold;
+                        }
+                        Text {
+                            text: "Self-development proposals pending review.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-size-sm;
+                        }
+                    }
+                    // Scan button
+                    NeothButton {
+                        label: root.sd-scan-running ? "Scanning…" : "Scan";
+                        size: "sm";
+                        primary: false;
+                        clicked => { root.scan-clicked(); }
+                    }
+                    // Refresh button
+                    NeothButton {
+                        label: "Refresh";
+                        size: "sm";
+                        primary: false;
+                        clicked => { root.refresh-clicked(); }
+                    }
+                }
+
+                // ── MANDATORY RED-LINE INFO CARD ──────────────────────────────
+                // Copy must never say "Applied" or "Self-Reprogramming applied".
+                Rectangle {
+                    border-radius: Theme.radius-md;
+                    background: Theme.surface-1;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    height: 44px;
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 14px;
+                        alignment: center;
+                        Text {
+                            text: "Accepting a proposal marks it for human review. No source files are modified — self-editing is not enabled.";
+                            color: Theme.text-secondary;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // ── PROPOSALS CARD ────────────────────────────────────────────
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
+
+                        Kicker { label: "PROPOSAL REVIEW"; }
+
+                        // Empty state
+                        if root.sd-proposals.length == 0: Rectangle {
+                            height: 48px;
+                            Text {
+                                text: "No pending proposals.";
+                                color: Theme.text-disabled;
+                                font-size: Theme.font-size-sm;
+                                font-family: Theme.font-mono;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Proposal rows
+                        for p in root.sd-proposals: SelfReprogRow {
+                            row-id: p.id;
+                            row-kind: p.kind;
+                            row-confidence: p.confidence;
+                            row-target: p.target;
+                            row-reason: p.reason;
+                            row-status-badge: p.status-badge;
+                            accept-clicked  => { root.accept-clicked(p.id); }
+                            decline-clicked => { root.decline-clicked(p.id); }
+                        }
+                    }
+                }
+
+                RefreshFooter { ts: root.sd-refreshed-at; }
+            }
+        }
+    }
+}

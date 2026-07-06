@@ -2186,6 +2186,102 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── FEAT-05 — Self-Dev Proposal Review callbacks ──────────────────────────
+    {
+        // id validation regex: only [A-Za-z0-9_-]+ is allowed.
+        // target and reason are DISPLAY-ONLY and must never reach shell args.
+        fn sd_id_valid(id: &str) -> bool {
+            // RED LINE + security-review MEDIUM: reject a leading '-' so a
+            // crafted id can never be parsed by clap as a flag (argument
+            // injection), independent of Command-array quoting. Legit ids
+            // are `{kind}-{hash}` — always alphanumeric-first.
+            !id.is_empty()
+                && !id.starts_with('-')
+                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        }
+
+        let weak_sd_refresh = window.as_weak();
+        window.on_sd_refresh_clicked(move || {
+            let weak = weak_sd_refresh.clone();
+            std::thread::spawn(move || {
+                refresh_selfdev(weak);
+            });
+        });
+
+        let weak_sd_scan = window.as_weak();
+        window.on_sd_scan_clicked(move || {
+            let weak = weak_sd_scan.clone();
+            // Set scan-running flag immediately on the UI thread.
+            if let Some(w) = weak.upgrade() {
+                w.set_sd_scan_running(true);
+            }
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["self-dev", "scan"]);
+                let msg = if out.trim().is_empty() {
+                    "scan complete".to_string()
+                } else {
+                    out.trim().to_string()
+                };
+                push_toast(&weak, "info", "Self-Dev", &msg);
+                refresh_selfdev(weak);
+            });
+        });
+
+        let weak_sd_acc = window.as_weak();
+        window.on_sd_accept_clicked(move |id| {
+            let id = id.to_string();
+            let weak = weak_sd_acc.clone();
+            std::thread::spawn(move || {
+                // RED LINE: validate id against [A-Za-z0-9_-]+ before any shell invocation.
+                if !sd_id_valid(id.trim()) {
+                    push_toast(&weak, "warn", "Self-Dev", "invalid proposal id");
+                    return;
+                }
+                let out = run_neothd_probe(&["self-dev", "accept", id.trim()]);
+                let msg = if out.trim().is_empty() {
+                    format!("Accepted (pending apply): {}", id.trim())
+                } else {
+                    out.trim().to_string()
+                };
+                let weak2 = weak.clone();
+                push_toast(&weak, "consent", "Accepted (pending apply)", &msg);
+                // Refresh so accepted proposal shows updated status-badge.
+                std::thread::spawn(move || refresh_selfdev(weak2));
+            });
+        });
+
+        let weak_sd_dec = window.as_weak();
+        window.on_sd_decline_clicked(move |id| {
+            let id = id.to_string();
+            let weak = weak_sd_dec.clone();
+            std::thread::spawn(move || {
+                // RED LINE: validate id against [A-Za-z0-9_-]+ before any shell invocation.
+                if !sd_id_valid(id.trim()) {
+                    push_toast(&weak, "warn", "Self-Dev", "invalid proposal id");
+                    return;
+                }
+                // RED LINE: reason is the hard-coded literal "declined" — never user text.
+                let out = run_neothd_probe(&[
+                    "self-dev", "decline", id.trim(), "--reason", "declined",
+                ]);
+                let msg = if out.trim().is_empty() {
+                    format!("declined: {}", id.trim())
+                } else {
+                    out.trim().to_string()
+                };
+                let weak2 = weak.clone();
+                push_toast(&weak, "info", "Self-Dev", &msg);
+                std::thread::spawn(move || refresh_selfdev(weak2));
+            });
+        });
+
+        // Fire once at startup + the nav-switch case below handles on-demand refresh.
+        let weak_sd_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_selfdev(weak_sd_init);
+        });
+    }
+
     // ── Wave 4b — Obsidian Vault panel callbacks ──────────────────────────────
     {
         let weak_obs = window.as_weak();
@@ -7647,7 +7743,7 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
 /// ODY-12 UI-control targets — must match `main.slint`'s nav values.
 /// A `nav` chip whose id is not in this list is ignored (prompt drift
 /// must not navigate somewhere undefined).
-pub const NAV_PANELS: [&str; 25] = [
+pub const NAV_PANELS: [&str; 26] = [
     "chat",
     "overview",
     "memory",
@@ -7675,6 +7771,8 @@ pub const NAV_PANELS: [&str; 25] = [
     "buddyconfig",
     "companion",
     "mesh",
+    // FEAT-05
+    "selfdev",
 ];
 
 /// GOLD-ADAPT-ODY-12/14 — deep-link chips from the done-sentinel's
@@ -8479,6 +8577,43 @@ fn refresh_selfimprove(weak: slint::Weak<MainWindow>) {
             w.set_si_log(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
         }
         w.set_si_refreshed_at(ts.as_str().into());
+    });
+}
+
+// ── FEAT-05 — Self-Dev Proposal Review probe ─────────────────────────────────
+fn refresh_selfdev(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let json = run_neothd_probe(&["self-dev", "review", "--output", "json"]);
+    let proposals = panel_logic::parse_selfdev_proposals(&json);
+    let ts = panel_logic::now_hhmm();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let rows: Vec<SelfReprogProposalRow> = proposals
+            .into_iter()
+            .map(|p| {
+                // RED LINE: status_badge never says "Applied" or
+                // "Self-Reprogramming applied". Accepted proposals show
+                // "Accepted (pending apply)" — no source file has been
+                // modified. All other statuses show "Pending".
+                let badge = if p.status == "accepted" {
+                    "Accepted (pending apply)"
+                } else {
+                    "Pending"
+                };
+                let conf = format!("{:.2}", p.confidence);
+                SelfReprogProposalRow {
+                    id: p.id.as_str().into(),
+                    kind: p.kind.as_str().into(),
+                    confidence: conf.as_str().into(),
+                    target: p.target.as_str().into(),
+                    reason: p.reason.as_str().into(),
+                    status_badge: badge.into(),
+                }
+            })
+            .collect();
+        w.set_sd_proposals(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        w.set_sd_refreshed_at(ts.as_str().into());
+        w.set_sd_scan_running(false);
     });
 }
 
@@ -9843,10 +9978,11 @@ mod deep_link_tests {
     fn nav_panels_list_matches_slint_nav_values() {
         // Drift guard: main.slint's nav-active values. A chip id outside
         // this list is ignored by the click handler.
-        assert_eq!(NAV_PANELS.len(), 25);
+        assert_eq!(NAV_PANELS.len(), 26);
         for p in ["chat", "overview", "coding", "memory", "config", "loops",
                   "n8n", "babel", "calendar", "evolve",
-                  "obsidian", "dreaming", "wiki", "buddyconfig", "companion", "mesh"] {
+                  "obsidian", "dreaming", "wiki", "buddyconfig", "companion", "mesh",
+                  "selfdev"] {
             assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
         }
     }

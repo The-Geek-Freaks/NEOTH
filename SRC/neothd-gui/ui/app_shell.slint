@@ -196,6 +196,8 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "n8n"; glyph: "⧉"; visible: root.complexity >= 1; active: root.active-tab == "n8n"; clicked => { root.nav("n8n"); } }
                 NavBtn { label: "Calendar"; glyph: "▦"; visible: root.complexity >= 1; active: root.active-tab == "calendar"; clicked => { root.nav("calendar"); } }
                 NavBtn { label: "Evolve"; glyph: "✦"; visible: root.complexity >= 1; active: root.active-tab == "evolve"; clicked => { root.nav("evolve"); } }
+                // FEAT-05 — Self-Dev Proposal Review (same gate as Evolve: complexity ≥ 1).
+                NavBtn { label: "Self-Dev"; glyph: "⊞"; visible: root.complexity >= 1; active: root.active-tab == "selfdev"; clicked => { root.nav("selfdev"); } }
                 // Wave 4b — CORE additions.
                 NavBtn { label: "Dreaming"; glyph: "☽"; visible: root.complexity >= 1; active: root.active-tab == "dreaming"; clicked => { root.nav("dreaming"); } }
                 NavBtn { label: "Buddy Config"; glyph: "⊙"; visible: root.complexity >= 1; active: root.active-tab == "buddyconfig"; clicked => { root.nav("buddyconfig"); } }
