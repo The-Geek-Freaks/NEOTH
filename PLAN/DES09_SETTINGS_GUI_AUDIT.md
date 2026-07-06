@@ -14,12 +14,12 @@ Obsidian-Pfade, Babel, council-budget, cluster-topology, hardware, usage-meter.
 
 ## STATUS (2026-07-06)
 DONE + pushed: Welle A (G3-G9,G35,G36 + **G28 elicitation.min_intensity combo** `25527893`),
-Welle B core (G14,G26,G27,G38), Welle C core (G10-G12), Welle E (G21-G24, coalescing writer).
+Welle B core (G14,G26,G27,G38), Welle C core (G10-G12 + **G40 consolidation_sweep card** `23f0ab75`),
+Welle E (G21-G24, coalescing writer).
 OPEN restgaps (S-effort, config-shape verified, next-up):
-  - **G40 consolidation_sweep** (Memory-Tab): `consolidation_sweep.{enabled(bool)/interval_secs(u64,def 21600)/cosine_threshold(f64,def 0.65)}` → wire_nested_bool!/_i64_str!/_f64_str!. Struct automation.rs:1028, FreedomConfig mod.rs:717.
   - **G37 proactive.quiet_hours_utc** (Privacy-Tab): `Option<[u8;2]>` (automation.rs:81) — 2 num, needs Null-when-empty like obsidian_auto_sync_secs.
   - G13 operator_md_extra_dirs (M — list editor), Welle D G1/G2 language/role (needs `neoth profile` CLI).
-Build-note: main.slint + settings.slint + main.rs = parallel-session hot files (DES-10 live). Edit in clean regions, gate, selective-stage (they `git commit -a`-sweep frequently → may commit for you).
+Build-note: main.slint + settings.slint + main.rs = parallel-session hot files (DES-10/mesh live). Edit in clean regions, gate, selective-stage. ⚠ Their `git commit -a` sweep is NON-atomic across my files — verify HEAD has ALL sides (slint decls+bindings+rust) after a sweep or it pushes a broken build (happened w/ G40 `c12e3f5b`, fixed `23f0ab75`).
 
 ## Build-Plan — 5 Wellen, alle S-Effort (Toggle/Textfield/Combo)
 
