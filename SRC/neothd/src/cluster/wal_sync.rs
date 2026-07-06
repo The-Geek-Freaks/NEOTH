@@ -926,13 +926,15 @@ mod tests {
     fn ingest_foreign_event_accepts_within_skew_window() {
         let conn = open_foreign_events_db();
         let now = crate::time::now_unix_i64();
-        // Exactly at the edge of acceptable future skew — should succeed.
-        let edge_future = now + FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS;
-        ingest_foreign_event(&conn, "pk1", 1, 0x90, b"pay", edge_future)
+        // Near — but a safe 2s INSIDE — each edge. `ingest_foreign_event`
+        // re-samples the wall clock, so a value exactly on the boundary flips to
+        // rejected if a whole second ticks between here and the guard (integer
+        // seconds). The 2s margin keeps the accept-path assertion deterministic.
+        let near_future = now + FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS - 2;
+        ingest_foreign_event(&conn, "pk1", 1, 0x90, b"pay", near_future)
             .expect("within-skew future ts must be accepted");
-        // Exactly at the edge of acceptable past age — should succeed.
-        let edge_past = now - FOREIGN_EVENT_MAX_AGE_SECS;
-        ingest_foreign_event(&conn, "pk2", 1, 0x90, b"pay", edge_past)
+        let near_past = now - FOREIGN_EVENT_MAX_AGE_SECS + 2;
+        ingest_foreign_event(&conn, "pk2", 1, 0x90, b"pay", near_past)
             .expect("within-age past ts must be accepted");
     }
 
