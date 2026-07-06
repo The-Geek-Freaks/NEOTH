@@ -794,9 +794,15 @@ export component SettingsView inherits Rectangle {
     in-out property <bool> cfg-memory-name-sessions: false;
     in-out property <bool> cfg-memory-recall-shortcut: false;
     in-out property <int>  cfg-memory-vector-backend-idx: 0;  // 0=brute_force 1=hnsw
+    in-out property <bool> cfg-consolidation-enabled: false;
+    in-out property <string> cfg-consolidation-interval-secs: "";
+    in-out property <string> cfg-consolidation-cosine: "";
     callback cfg-memory-name-sessions-changed(bool);
     callback cfg-memory-recall-shortcut-changed(bool);
     callback cfg-memory-vector-backend-changed(int);
+    callback cfg-consolidation-enabled-changed(bool);
+    callback cfg-consolidation-interval-secs-changed(string);
+    callback cfg-consolidation-cosine-changed(string);
 
     background: Theme.bg-base;
 
@@ -2143,6 +2149,56 @@ export component SettingsView inherits Rectangle {
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
                             wrap: word-wrap;
+                        }
+                        NeothCheckBox {
+                            text: "Consolidation sweep (cluster hot memories → groundtruth)";
+                            checked: root.cfg-consolidation-enabled;
+                            toggled(v) => {
+                                root.cfg-consolidation-enabled = v;
+                                root.cfg-consolidation-enabled-changed(v);
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            alignment: center;
+                            Text {
+                                text: "sweep interval (s)";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                                width: 160px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "e.g. 21600 (6h)";
+                                text: root.cfg-consolidation-interval-secs;
+                                horizontal-stretch: 1;
+                                edited(t) => {
+                                    root.cfg-consolidation-interval-secs = t;
+                                    root.cfg-consolidation-interval-secs-changed(t);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            alignment: center;
+                            Text {
+                                text: "cosine threshold";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                                width: 160px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "0.0–1.0 (e.g. 0.65)";
+                                text: root.cfg-consolidation-cosine;
+                                horizontal-stretch: 1;
+                                edited(t) => {
+                                    root.cfg-consolidation-cosine = t;
+                                    root.cfg-consolidation-cosine-changed(t);
+                                }
+                            }
                         }
                     }
                 }
