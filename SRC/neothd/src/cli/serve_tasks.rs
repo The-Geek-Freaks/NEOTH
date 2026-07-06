@@ -177,7 +177,13 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     // them.
     if cfg.obsidian_vault.is_some() {
         keys.insert(ObsidianSync);
-        keys.insert(ObsidianVaultReader);
+        // ObsidianVaultReader's spawn gates on the vault AND its own
+        // `obsidian_vault_reader_enabled` flag, so the desired set must too —
+        // otherwise vault-set + reader-disabled leaves the key in `desired`,
+        // reload never stops a running reader, and the start log over-counts.
+        if cfg.obsidian_vault_reader_enabled {
+            keys.insert(ObsidianVaultReader);
+        }
         keys.insert(ObsidianWikiRebuild);
         keys.insert(SelfMap);
     }
@@ -5628,6 +5634,9 @@ mod zf06_fleet_tests {
 
         let mut cfg = FreedomConfig::default();
         cfg.obsidian_vault = Some("/tmp/vault".to_string());
+        // ObsidianVaultReader additionally gates on its own flag — enable it so
+        // all four vault keys are present for the delta assertion.
+        cfg.obsidian_vault_reader_enabled = true;
         let with_vault = desired_cron_keys(&cfg);
         for key in &vault_gated {
             assert!(with_vault.contains(key), "{key:?} must be present with a vault");
@@ -5635,7 +5644,16 @@ mod zf06_fleet_tests {
         assert_eq!(
             with_vault.len(),
             no_vault.len() + 4,
-            "a vault adds exactly the four obsidian/self-map keys"
+            "a vault (+ reader enabled) adds exactly the four obsidian/self-map keys"
+        );
+
+        // Vault set but reader disabled → the reader key must be absent, so
+        // reload after disabling the reader stops the running task.
+        let mut reader_off = cfg.clone();
+        reader_off.obsidian_vault_reader_enabled = false;
+        assert!(
+            !desired_cron_keys(&reader_off).contains(&CronKey::ObsidianVaultReader),
+            "reader-disabled must drop ObsidianVaultReader even with a vault"
         );
     }
 
