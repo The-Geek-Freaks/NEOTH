@@ -21,7 +21,7 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, PresetRow, ProfilePresetRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
@@ -63,6 +63,8 @@ export { SelfActSkill }
 export { MeshPeerRow }
 // DES-12 — plugin WAL-feed detail pane event row.
 export { PluginEventRow }
+// DES-10 — channel activity feed row (traffic metadata, no message bodies).
+export { ChannelActivityRow }
 // GAP-01 Cron panel — CronJobRow exported so Rust can push rows.
 export { CronJobRow }
 // Chat-surface consent strip.
@@ -498,6 +500,7 @@ export component MainWindow inherits Window {
     in-out property <int>    cfg-persona-mode-idx: 0;
     in-out property <string> cfg-user-tz: "";
     in-out property <bool>   cfg-elicitation-enabled: false;
+    in-out property <int>    cfg-elicitation-min-intensity-idx: 1;  // 0=low 1=medium 2=high 3=urgent
     in-out property <bool>   cfg-tone-modifier-enabled: false;
     in-out property <bool>   cfg-review-gate-enabled: false;
     in-out property <bool>   cfg-cloud-stt-enabled: false;
@@ -520,6 +523,7 @@ export component MainWindow inherits Window {
     callback cfg-persona-mode-changed(int);
     callback cfg-user-tz-changed(string);
     callback cfg-elicitation-enabled-changed(bool);
+    callback cfg-elicitation-min-intensity-changed(int);
     callback cfg-tone-modifier-enabled-changed(bool);
     callback cfg-review-gate-enabled-changed(bool);
     callback cfg-cloud-stt-enabled-changed(bool);
@@ -767,6 +771,8 @@ export component MainWindow inherits Window {
     in property <[SkillRow]> skills: [];
     in-out property <bool> skills-always-embed-route: true;
     in property <[ChannelRow]> channels: [];
+    // DES-10 — live channel-activity feed (metadata only, no message bodies).
+    in property <[ChannelActivityRow]> channel-activity: [];
     in property <[PluginRow]> plugins: [];
     in property <[MemoryRow]> memory-blocks: [];
     in property <string> memory-total: "";
@@ -2171,6 +2177,7 @@ export component MainWindow inherits Window {
             plugin-detail-close => { root.plugin-detail-close(); }
             autonomy-set-clicked(level) => { root.autonomy-set(level); }
             channels: root.channels;
+            channel-activity: root.channel-activity;
             plugins: root.plugins;
             memory-blocks: root.memory-blocks;
             memory-total: root.memory-total;
@@ -2280,10 +2287,12 @@ export component MainWindow inherits Window {
                     cfg-persona-mode-idx <=> root.cfg-persona-mode-idx;
                     cfg-user-tz <=> root.cfg-user-tz;
                     cfg-elicitation-enabled <=> root.cfg-elicitation-enabled;
+                    cfg-elicitation-min-intensity-idx <=> root.cfg-elicitation-min-intensity-idx;
                     cfg-tone-modifier-enabled <=> root.cfg-tone-modifier-enabled;
                     cfg-persona-mode-changed(v) => { root.cfg-persona-mode-changed(v); }
                     cfg-user-tz-changed(v) => { root.cfg-user-tz-changed(v); }
                     cfg-elicitation-enabled-changed(v) => { root.cfg-elicitation-enabled-changed(v); }
+                    cfg-elicitation-min-intensity-changed(v) => { root.cfg-elicitation-min-intensity-changed(v); }
                     cfg-tone-modifier-enabled-changed(v) => { root.cfg-tone-modifier-enabled-changed(v); }
                     // DES-09 Welle B — privacy
                     cfg-review-gate-enabled <=> root.cfg-review-gate-enabled;

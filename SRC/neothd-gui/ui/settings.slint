@@ -10,7 +10,7 @@
 
 import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, SegBar, Expander } from "components.slint";
+import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, SegBar, Expander, Led } from "components.slint";
 
 export enum SettingsTab {
     chat,
@@ -150,6 +150,18 @@ export struct MemoryRow {
 export struct ChannelRow {
     name: string,
     connected: bool,
+}
+
+/// DES-10 — one row in the live Channel Activity feed.
+/// Contains ONLY traffic metadata: direction, channel, peer, byte count, time.
+/// Message bodies are never stored (WAL is hashed by design).
+export struct ChannelActivityRow {
+    /// "in" | "out" | "proactive" | "blocked"
+    direction: string,
+    channel: string,
+    peer: string,
+    bytes: string,
+    ts: string,
 }
 
 component TabButton inherits Rectangle {
@@ -530,6 +542,8 @@ export component SettingsView inherits Rectangle {
     callback skills-always-embed-route-changed(bool);
     // GU-01 — Channels / Plugins / Memory panels.
     in property <[ChannelRow]> channels: [];
+    // DES-10 — live channel-activity feed (metadata only, no message bodies).
+    in property <[ChannelActivityRow]> channel-activity: [];
     in property <[PluginRow]> plugins: [];
     in property <[MemoryRow]> memory-blocks: [];
     in property <string> memory-total: "";
@@ -752,10 +766,12 @@ export component SettingsView inherits Rectangle {
     in-out property <int>    cfg-persona-mode-idx: 0;  // 0=(none) 1=loyal_buddy
     in-out property <string> cfg-user-tz: "";
     in-out property <bool>   cfg-elicitation-enabled: false;
+    in-out property <int>    cfg-elicitation-min-intensity-idx: 1;  // 0=low 1=medium 2=high 3=urgent
     in-out property <bool>   cfg-tone-modifier-enabled: false;
     callback cfg-persona-mode-changed(int);
     callback cfg-user-tz-changed(string);
     callback cfg-elicitation-enabled-changed(bool);
+    callback cfg-elicitation-min-intensity-changed(int);
     callback cfg-tone-modifier-enabled-changed(bool);
 
     // ── DES-09 Welle B — Privacy editors ─────────────────────────────────
@@ -1340,6 +1356,134 @@ export component SettingsView inherits Rectangle {
                                 label: "Cancel";
                                 primary: false;
                                 clicked => { confirming = false; }
+                            }
+                        }
+                    }
+                }
+
+                // DES-10 — live Channel Activity feed.
+                // Shows traffic METADATA only: who/when/direction/bytes.
+                // Message bodies are never stored (WAL is hashed by design).
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+
+                        // ── header row ──────────────────────────────────────
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: start;
+                            Text {
+                                text: "CHANNEL ACTIVITY";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: Theme.letter-spacing-extra-wide;
+                                color: Theme.text-disabled;
+                                vertical-alignment: center;
+                            }
+                            Led {
+                                state: "live";
+                                dot-size: 6px;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            Text {
+                                text: "traffic metadata — message text is never stored";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-tertiary;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                        }
+
+                        // ── feed list ────────────────────────────────────────
+                        if root.channel-activity.length == 0: Text {
+                            text: "no channel traffic yet";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-disabled;
+                            horizontal-alignment: center;
+                        }
+
+                        ScrollView {
+                            height: min(root.channel-activity.length * 28px, 280px);
+                            VerticalLayout {
+                                spacing: 2px;
+                                for a in root.channel-activity: HorizontalLayout {
+                                    spacing: Theme.space-tight;
+                                    height: 26px;
+
+                                    // direction chip — color-coded per direction
+                                    Rectangle {
+                                        width: 70px;
+                                        height: 20px;
+                                        border-radius: 4px;
+                                        background: a.direction == "in"       ? Theme.accent-cyan.with-alpha(0.18)
+                                                  : a.direction == "out"      ? Theme.accent-green.with-alpha(0.18)
+                                                  : a.direction == "proactive"? Theme.accent-amber.with-alpha(0.18)
+                                                  :                             Theme.accent-pink.with-alpha(0.18);
+                                        y: (parent.height - self.height) / 2;
+                                        Text {
+                                            text: a.direction;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-caption;
+                                            color: a.direction == "in"       ? Theme.accent-cyan
+                                                 : a.direction == "out"      ? Theme.accent-green
+                                                 : a.direction == "proactive"? Theme.accent-amber
+                                                 :                             Theme.accent-pink;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+
+                                    // channel (mono)
+                                    Text {
+                                        text: a.channel;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-primary;
+                                        width: 80px;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+
+                                    // peer (mono, tertiary, elide)
+                                    Text {
+                                        text: a.peer;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-tertiary;
+                                        horizontal-stretch: 1;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+
+                                    // bytes
+                                    Text {
+                                        text: a.bytes;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-muted;
+                                        width: 56px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+
+                                    // HH:MM:SS
+                                    Text {
+                                        text: a.ts;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-disabled;
+                                        width: 60px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+                                }
                             }
                         }
                     }
@@ -3634,6 +3778,27 @@ export component SettingsView inherits Rectangle {
                         toggled(v) => {
                             root.cfg-elicitation-enabled = v;
                             root.cfg-elicitation-enabled-changed(v);
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: center;
+                        Text {
+                            text: "min intensity";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            width: 160px;
+                        }
+                        NeothComboBox {
+                            model: ["low", "medium", "high", "urgent"];
+                            current-index: root.cfg-elicitation-min-intensity-idx;
+                            horizontal-stretch: 1;
+                            selected(idx) => {
+                                root.cfg-elicitation-min-intensity-idx = idx;
+                                root.cfg-elicitation-min-intensity-changed(idx);
+                            }
                         }
                     }
                     NeothCheckBox {

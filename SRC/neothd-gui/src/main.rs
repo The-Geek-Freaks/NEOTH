@@ -538,7 +538,7 @@ fn main() -> Result<()> {
             // Welle A — council
             // FIX 4 — daily_usd_cap is a YAML float; as_str() always returns None for
             // numeric nodes. Use the f64 reader and format for display.
-            let cap_str = read_nested_f64_in_freedom(fp, "council.daily_usd_cap", 0.0)
+            let cap_str = read_nested_f64_in_freedom(fp, "council.daily_usd_cap")
                 .map(format_cap_f64)
                 .unwrap_or_default();
             window.set_cfg_council_daily_usd(cap_str.into());
@@ -563,6 +563,14 @@ fn main() -> Result<()> {
             window.set_cfg_persona_mode_idx(if pm == "loyal_buddy" { 1 } else { 0 });
             window.set_cfg_user_tz(read_nested_str_in_freedom(fp, "user_tz", "").into());
             window.set_cfg_elicitation_enabled(read_nested_bool_in_freedom(fp, "elicitation.enabled", false));
+            window.set_cfg_elicitation_min_intensity_idx(
+                match read_nested_str_in_freedom(fp, "elicitation.min_intensity", "medium").as_str() {
+                    "low" => 0,
+                    "high" => 2,
+                    "urgent" => 3,
+                    _ => 1,
+                },
+            );
             window.set_cfg_tone_modifier_enabled(read_nested_bool_in_freedom(fp, "tone_modifier.enabled", false));
             // Welle B — privacy
             window.set_cfg_review_gate_enabled(read_nested_bool_in_freedom(fp, "review_gate_enabled", false));
@@ -3767,15 +3775,61 @@ fn main() -> Result<()> {
                             let snap_for_state = snap.clone();
                             // Wave-2 feed C: extract before the move into the closure.
                             let board_summary = snap_for_state.summary.clone();
+                            // DES-10: clone so the channel-activity block below still
+                            // has `weak` (this closure moves its own handle).
+                            let weak_board = weak.clone();
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Ok(mut g) = mutex.lock() {
                                     *g = snap_for_state;
                                 }
-                                if let Some(w) = weak.upgrade() {
+                                if let Some(w) = weak_board.upgrade() {
                                     apply_kanban_snapshot(&w, snap);
                                     push_activity(&w.as_weak(), "kanban", "Board updated", &board_summary);
                                 }
                             });
+                        }
+                        // DES-10 — drain the channel-activity ring accumulated by the
+                        // reader thread's push-line intercept. Cap to 60 display rows.
+                        // Runs every tick (not gated on want_board) so the feed stays
+                        // live even when the operator is not on the Code Sessions tab.
+                        {
+                        use slint::Model as _; // ModelRc row_count/row_data
+                            let guard = client.lock().unwrap_or_else(|p| p.into_inner());
+                            if let Some(ref c) = *guard {
+                                let new_entries = c.drain_channel_activity();
+                                if !new_entries.is_empty() {
+                                    let weak_ca = weak.clone();
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if let Some(w) = weak_ca.upgrade() {
+                                            use slint::{ModelRc, VecModel};
+                                            const MAX_DISPLAY: usize = 60;
+                                            // Read current model, append new entries, cap.
+                                            let mut rows: Vec<ChannelActivityRow> = (0..w
+                                                .get_channel_activity()
+                                                .row_count())
+                                                .map(|i| {
+                                                    w.get_channel_activity().row_data(i).unwrap()
+                                                })
+                                                .collect();
+                                            for entry in new_entries {
+                                                rows.push(ChannelActivityRow {
+                                                    direction: entry.direction.into(),
+                                                    channel: entry.channel.into(),
+                                                    peer: entry.peer.into(),
+                                                    bytes: fmt_event_bytes(entry.bytes).into(),
+                                                    ts: fmt_ts_unix(entry.ts_unix).into(),
+                                                });
+                                            }
+                                            if rows.len() > MAX_DISPLAY {
+                                                rows.drain(0..rows.len() - MAX_DISPLAY);
+                                            }
+                                            w.set_channel_activity(ModelRc::new(
+                                                VecModel::from(rows),
+                                            ));
+                                        }
+                                    });
+                                }
+                            }
                         }
                         // Release the slot AFTER the fetch + UI-write enqueue.
                         done.store(false, std::sync::atomic::Ordering::Release);
@@ -4405,6 +4459,10 @@ fn main() -> Result<()> {
         }
         wire_nested_str!(on_cfg_user_tz_changed,                "user_tz",                  "Timezone");
         wire_nested_bool!(on_cfg_elicitation_enabled_changed,   "elicitation.enabled",      "Elicitation");
+        wire_nested_int_combo!(on_cfg_elicitation_min_intensity_changed,
+            "elicitation.min_intensity",
+            &["low", "medium", "high", "urgent"],
+            "Min intensity");
         wire_nested_bool!(on_cfg_tone_modifier_enabled_changed, "tone_modifier.enabled",     "Tone modifier");
 
         // Welle B — Privacy
@@ -5470,7 +5528,7 @@ fn read_nested_i64_in_freedom(path: &Path, dotted_key: &str, default: i64) -> i6
 /// DES-09 helper — read a nested f64 from freedom.yaml.
 /// Returns `default` on missing file / key / malformed YAML.
 /// Used for fields like `council.daily_usd_cap` which are stored as YAML floats.
-fn read_nested_f64_in_freedom(path: &Path, dotted_key: &str, default: f64) -> Option<f64> {
+fn read_nested_f64_in_freedom(path: &Path, dotted_key: &str) -> Option<f64> {
     let Ok(body) = std::fs::read_to_string(path) else {
         return None;
     };
@@ -5613,7 +5671,7 @@ mod des09_tests {
     fn read_f64_returns_value_for_float_node() {
         let dir = TempDir::new().unwrap();
         let path = write_yaml(&dir, "council:\n  daily_usd_cap: 10.0\n");
-        let v = read_nested_f64_in_freedom(&path, "council.daily_usd_cap", 0.0);
+        let v = read_nested_f64_in_freedom(&path, "council.daily_usd_cap");
         assert!(v.is_some(), "expected Some, got None");
         assert!((v.unwrap() - 10.0).abs() < 1e-9);
     }
@@ -5622,7 +5680,7 @@ mod des09_tests {
     fn read_f64_returns_none_for_missing_key() {
         let dir = TempDir::new().unwrap();
         let path = write_yaml(&dir, "council:\n  max_calls: 5\n");
-        let v = read_nested_f64_in_freedom(&path, "council.daily_usd_cap", 0.0);
+        let v = read_nested_f64_in_freedom(&path, "council.daily_usd_cap");
         assert!(v.is_none(), "expected None for missing key");
     }
 
@@ -6941,11 +6999,107 @@ const GUI_STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// thread nor delay this client's `Drop` (and thus the child kill) past
 /// the timeout. Dropping the client kills the child, which EOFs the
 /// reader thread.
+/// DES-10 — one entry in the live channel activity ring.
+/// Contains ONLY traffic METADATA: who/when/direction/size.
+/// WAL message bodies are hashed by design and never appear here.
+#[derive(Debug, Clone)]
+struct ChannelActivity {
+    event_id: u64,
+    /// "in" | "out" | "proactive" | "blocked"
+    direction: String,
+    channel: String,
+    peer: String,
+    bytes: u64,
+    ts_unix: u64,
+}
+
+/// Parse `{"push":true,"channel_feed":[...]}` tolerantly.
+/// Returns `None` if the line is not a push frame — caller forwards normally.
+fn parse_channel_feed_push(line: &str) -> Option<Vec<ChannelActivity>> {
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if v.get("push").and_then(|b| b.as_bool()) != Some(true) {
+        return None;
+    }
+    let arr = v.get("channel_feed")?.as_array()?;
+    let entries: Vec<ChannelActivity> = arr
+        .iter()
+        .filter_map(|e| {
+            Some(ChannelActivity {
+                event_id: e.get("event_id")?.as_u64().unwrap_or(0),
+                direction: e
+                    .get("direction")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("in")
+                    .to_string(),
+                channel: e
+                    .get("channel")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                peer: e
+                    .get("peer")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                bytes: e.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0),
+                ts_unix: e.get("ts_unix").and_then(|t| t.as_u64()).unwrap_or(0),
+            })
+        })
+        .collect();
+    Some(entries)
+}
+
+#[cfg(test)]
+mod channel_feed_tests {
+    use super::parse_channel_feed_push;
+
+    #[test]
+    fn parses_valid_push_frame() {
+        let line = r#"{"push":true,"channel_feed":[{"event_id":7,"direction":"in","channel":"telegram","peer":"u42","bytes":128,"ts_unix":1720000000}]}"#;
+        let result = parse_channel_feed_push(line).expect("should parse");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].event_id, 7);
+        assert_eq!(result[0].direction, "in");
+        assert_eq!(result[0].channel, "telegram");
+        assert_eq!(result[0].peer, "u42");
+        assert_eq!(result[0].bytes, 128);
+        assert_eq!(result[0].ts_unix, 1_720_000_000);
+    }
+
+    #[test]
+    fn rejects_non_push_json() {
+        let line = r#"{"ok":true,"board":{}}"#;
+        assert!(parse_channel_feed_push(line).is_none());
+    }
+
+    #[test]
+    fn rejects_non_json() {
+        assert!(parse_channel_feed_push("not json at all").is_none());
+    }
+
+    #[test]
+    fn tolerates_missing_optional_fields() {
+        let line = r#"{"push":true,"channel_feed":[{"event_id":1}]}"#;
+        let result = parse_channel_feed_push(line).expect("should parse");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].bytes, 0);
+        assert_eq!(result[0].direction, "in");
+    }
+}
+
+const CHANNEL_ACTIVITY_RING_CAP: usize = 100;
+
 struct GuiStreamClient {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
     /// Lines the reader thread pulled off the child's stdout, in order.
+    /// Push lines (`{"push":true,"channel_feed":[...]}`) are intercepted
+    /// by the reader thread and routed to `activity_ring` instead — so
+    /// `request_board` / `request_activity` never see them.
     rx: std::sync::mpsc::Receiver<String>,
+    /// Capped ring of the latest channel-activity push entries. Shared with
+    /// the reader thread (Arc<Mutex>) and drained by the UI timer.
+    activity_ring: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<ChannelActivity>>>,
     next_id: u64,
 }
 
@@ -6974,7 +7128,16 @@ impl GuiStreamClient {
         // the receiver is dropped (send error). Detached on purpose: it is
         // self-terminating and cheap, and we never want to JOIN it from a
         // drop path that might otherwise block on a stalled read.
+        //
+        // DES-10: push lines (`{"push":true,"channel_feed":[...]}`) are
+        // intercepted here and appended to `ring_writer`. They are NOT
+        // forwarded to `tx`, so `request_board` / `request_activity` never
+        // see them and their stray-line skip logic is unaffected.
         let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let activity_ring = std::sync::Arc::new(std::sync::Mutex::new(
+            std::collections::VecDeque::<ChannelActivity>::new(),
+        ));
+        let ring_writer = activity_ring.clone();
         std::thread::spawn(move || {
             use std::io::BufRead;
             let mut reader = std::io::BufReader::new(stdout);
@@ -6984,7 +7147,18 @@ impl GuiStreamClient {
                 match reader.read_line(&mut line) {
                     Ok(0) => break, // EOF — child exited
                     Ok(_) => {
-                        if tx.send(std::mem::take(&mut line)).is_err() {
+                        // Intercept push frames — route to ring, not response chan.
+                        if let Some(entries) = parse_channel_feed_push(&line) {
+                            if let Ok(mut ring) = ring_writer.lock() {
+                                for entry in entries {
+                                    ring.push_back(entry);
+                                }
+                                while ring.len() > CHANNEL_ACTIVITY_RING_CAP {
+                                    ring.pop_front();
+                                }
+                            }
+                            // Do NOT forward push lines to tx.
+                        } else if tx.send(std::mem::take(&mut line)).is_err() {
                             break; // receiver gone — client dropped
                         }
                     }
@@ -6996,6 +7170,7 @@ impl GuiStreamClient {
             child,
             stdin,
             rx,
+            activity_ring,
             next_id: 1,
         })
     }
@@ -7081,6 +7256,17 @@ impl GuiStreamClient {
             return Some((activity, caption));
         }
         None
+    }
+
+    /// DES-10 — drain all accumulated channel-activity entries from the ring,
+    /// returning them newest-last (FIFO order). Empties the ring so the next
+    /// drain only yields new entries. Called from the UI timer thread; the
+    /// lock is held only for the drain, not across invoke_from_event_loop.
+    fn drain_channel_activity(&self) -> Vec<ChannelActivity> {
+        self.activity_ring
+            .lock()
+            .map(|mut ring| ring.drain(..).collect())
+            .unwrap_or_default()
     }
 }
 
