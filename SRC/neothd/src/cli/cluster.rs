@@ -39,6 +39,31 @@ pub enum ClusterAction {
         #[arg(long, default_value = "50")]
         limit: usize,
     },
+    /// DES-13 — export this node's backup-at-rest for a crashed peer:
+    /// dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL
+    /// file so an operator can pull a failed node's replicated data off a
+    /// surviving peer. This is a RAW BACKUP DUMP — it is NOT auto-restore:
+    /// the file cannot be merged back into local recall/memory (that step
+    /// is unbuilt). One JSON object per line:
+    /// `{origin_peer_pk, origin_seq, event_type, payload_b64, received_at}`.
+    #[command(name = "export-foreign")]
+    ExportForeign {
+        /// Filter to one origin peer public key (hex).
+        #[arg(long, value_name = "PEER_PK")]
+        peer: Option<String>,
+        /// Output file (or `-` for stdout).
+        #[arg(long, value_name = "FILE")]
+        out: String,
+        /// Max rows exported (newest first). Ignored when `--all` is set.
+        #[arg(long, default_value = "1000")]
+        limit: usize,
+        /// Export the full table (lift the `--limit` bound).
+        #[arg(long)]
+        all: bool,
+        /// Overwrite `--out` if it already exists (default: refuse).
+        #[arg(long)]
+        force: bool,
+    },
     /// Run the routing policy against a synthetic load table to show
     /// what `pick_peer` would decide. Useful for sanity-checking the
     /// `LeastLoaded` selection logic without spinning up a real
@@ -159,6 +184,13 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
         ClusterAction::Events { peer, limit } => {
             run_foreign_events(peer.as_deref(), limit, &args.output)
         }
+        ClusterAction::ExportForeign {
+            peer,
+            out,
+            limit,
+            all,
+            force,
+        } => run_export_foreign(peer.as_deref(), &out, limit, all, force),
         ClusterAction::Plan { peers, policy } => run_plan(&peers, policy.as_deref(), &args.output),
         ClusterAction::List => run_list(),
         ClusterAction::Topology => run_topology(&args.output),
@@ -1121,6 +1153,75 @@ fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
 
 
 /// GOLD-G02-CLUSTER-01 — render the foreign-event ledger.
+/// DES-13 — the fixed warning banner every export carries. Honest framing:
+/// this file is a raw backup dump, NOT an importable restore package.
+const EXPORT_FOREIGN_WARNING: &str =
+    "# WARNING: raw backup dump of replicated peer events (idx_foreign_events).\n\
+     # These are raw gossip frames; applying them back into local recall/memory\n\
+     # is NOT implemented — there is no `neoth restore` for this file. Archive it\n\
+     # as an off-node backup; conflict-resolution merge is a future feature.";
+
+/// DES-13 — one JSONL line for the export. PURE + unit-pinned: the payload is
+/// base64 so the file stays valid UTF-8 (`jq`-able). Non-PII by construction —
+/// the gossip ACL only persists Replicate-class events (episode/groundtruth
+/// ids + version strings), never raw text or secrets.
+fn export_foreign_jsonl_line(row: &crate::cluster::wal_sync::ForeignEventRow) -> String {
+    use base64::Engine as _;
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(&row.payload);
+    serde_json::json!({
+        "origin_peer_pk": row.origin_peer_pk,
+        "origin_seq": row.origin_seq,
+        "event_type": format!("0x{:02X}", row.event_type),
+        "payload_b64": payload_b64,
+        "received_at": row.received_at,
+    })
+    .to_string()
+}
+
+fn run_export_foreign(
+    peer: Option<&str>,
+    out: &str,
+    limit: usize,
+    all: bool,
+    force: bool,
+) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let conn = crate::memory::store::open(&home.join("views.db"))
+        .context("open views.db — has the daemon run at least once?")?;
+    // `--all` lifts the bound; otherwise the default 1000 caps a busy cluster.
+    let cap = if all { usize::MAX } else { limit };
+    let rows = crate::cluster::wal_sync::list_foreign_events(&conn, peer, cap)?;
+
+    let mut body = String::new();
+    body.push_str(EXPORT_FOREIGN_WARNING);
+    body.push('\n');
+    for r in &rows {
+        body.push_str(&export_foreign_jsonl_line(r));
+        body.push('\n');
+    }
+
+    if out == "-" {
+        print!("{body}");
+    } else {
+        let path = std::path::Path::new(out);
+        // Clobber guard: refuse to overwrite an existing file unless --force
+        // (a bad path must never silently truncate views.db / a WAL segment).
+        if path.exists() && !force {
+            anyhow::bail!(
+                "refusing to overwrite existing file `{out}` (pass --force to replace)"
+            );
+        }
+        std::fs::write(path, body.as_bytes())
+            .with_context(|| format!("write export to {out}"))?;
+        eprintln!(
+            "exported {} foreign event(s){} → {out}",
+            rows.len(),
+            peer.map(|p| format!(" from peer {p}")).unwrap_or_default(),
+        );
+    }
+    Ok(())
+}
+
 fn run_foreign_events(
     peer: Option<&str>,
     limit: usize,
@@ -1677,5 +1778,38 @@ mod tests {
             status_mode_policy(true, true, true),
             ("cluster", "announce-any-network")
         );
+    }
+
+    // ── DES-13 export-foreign ─────────────────────────────────────────────
+    #[test]
+    fn export_foreign_jsonl_line_shape_and_base64() {
+        use base64::Engine as _;
+        let row = crate::cluster::wal_sync::ForeignEventRow {
+            id: 1,
+            origin_peer_pk: "deadbeef".into(),
+            origin_seq: 42,
+            event_type: 0x90,
+            payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            received_at: 1_720_000_000,
+        };
+        let line = export_foreign_jsonl_line(&row);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["origin_peer_pk"], "deadbeef");
+        assert_eq!(v["origin_seq"], 42);
+        assert_eq!(v["event_type"], "0x90");
+        assert_eq!(v["received_at"], 1_720_000_000_i64);
+        // payload round-trips through base64.
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(v["payload_b64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(decoded, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn export_foreign_warning_never_claims_restore() {
+        // Honesty red-line: the banner must NOT imply an importable restore.
+        assert!(EXPORT_FOREIGN_WARNING.contains("NOT implemented"));
+        assert!(EXPORT_FOREIGN_WARNING.to_lowercase().contains("backup"));
+        assert!(!EXPORT_FOREIGN_WARNING.to_lowercase().contains("one-click restore"));
     }
 }

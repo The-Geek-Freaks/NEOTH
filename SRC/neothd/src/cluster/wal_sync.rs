@@ -487,6 +487,63 @@ pub fn ingest_foreign_event(
     })
 }
 
+/// DES-13 — one accepted gossip frame queued for durable persistence.
+/// Both cluster transports (hyperswarm + iroh) submit these; a single
+/// [`spawn_foreign_persist_writer`] task owns the DB connection and drains
+/// them. Keeps the blocking DB open OFF the transport hot-path (a sync
+/// `open`-per-frame inside a tokio task starves the runtime — panel finding).
+#[derive(Debug, Clone)]
+pub struct ForeignPersistJob {
+    pub origin_peer_pk: String,
+    pub origin_seq: u64,
+    pub event_type: u8,
+    pub payload: Vec<u8>,
+    pub received_at: i64,
+}
+
+/// Sender half handed to a transport's accept path. `try_send` is
+/// non-blocking; a full channel drops the job (gossip is best-effort — the
+/// sender re-delivers via its replay budget). The transport commits the
+/// dedup high-water ONLY on a successful send (persist-then-commit).
+pub type ForeignPersistTx = tokio::sync::mpsc::Sender<ForeignPersistJob>;
+
+/// DES-13 — spawn the single foreign-event DB writer. Returns the sender
+/// (give to the transport's `gossip_handler`) + the JoinHandle (the daemon
+/// keeps it alive and drops the sender on shutdown → the loop ends). The
+/// connection is opened lazily inside the blocking task (rusqlite
+/// `Connection` is `!Send`). A per-job insert failure is logged, not fatal —
+/// `INSERT OR IGNORE` also makes a re-delivered frame a no-op.
+pub fn spawn_foreign_persist_writer(
+    db_path: std::path::PathBuf,
+) -> (ForeignPersistTx, tokio::task::JoinHandle<()>) {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ForeignPersistJob>(256);
+    let handle = tokio::task::spawn_blocking(move || {
+        let conn = match crate::memory::store::open(&db_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(error = %e, db = %db_path.display(),
+                    "foreign-persist writer: cannot open views.db — foreign events will NOT be backed up");
+                return;
+            }
+        };
+        while let Some(job) = rx.blocking_recv() {
+            if let Err(e) = ingest_foreign_event(
+                &conn,
+                &job.origin_peer_pk,
+                job.origin_seq,
+                job.event_type,
+                &job.payload,
+                job.received_at,
+            ) {
+                tracing::warn!(error = %e, peer = %job.origin_peer_pk, seq = job.origin_seq,
+                    "foreign-persist writer: ingest failed (frame not backed up; sender may re-deliver)");
+            }
+        }
+        tracing::debug!("foreign-persist writer: sender dropped, loop exited");
+    });
+    (tx, handle)
+}
+
 /// A single row from `idx_foreign_events`.
 #[derive(Debug, Clone)]
 pub struct ForeignEventRow {
@@ -878,6 +935,42 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_foreign_events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0, "fresh table is empty");
+    }
+
+    #[tokio::test]
+    async fn foreign_persist_writer_ingests_submitted_jobs() {
+        // DES-13: the channel-based writer opens a real views.db, drains jobs,
+        // and persists them — verified end-to-end without a live cluster.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let (tx, handle) = spawn_foreign_persist_writer(db.clone());
+        tx.send(ForeignPersistJob {
+            origin_peer_pk: "aaaa1111".into(),
+            origin_seq: 7,
+            event_type: 0x90,
+            payload: vec![1, 2, 3, 0x90, 4],
+            received_at: crate::time::now_unix_i64(),
+        })
+        .await
+        .unwrap();
+        // A re-delivered (duplicate) frame must be an idempotent no-op.
+        tx.send(ForeignPersistJob {
+            origin_peer_pk: "aaaa1111".into(),
+            origin_seq: 7,
+            event_type: 0x90,
+            payload: vec![1, 2, 3, 0x90, 4],
+            received_at: crate::time::now_unix_i64(),
+        })
+        .await
+        .unwrap();
+        drop(tx); // closes the channel → the blocking loop exits
+        handle.await.unwrap();
+
+        let conn = crate::memory::store::open(&db).unwrap();
+        let rows = list_foreign_events(&conn, Some("aaaa1111"), 10).unwrap();
+        assert_eq!(rows.len(), 1, "duplicate (pk,seq) collapses to one row");
+        assert_eq!(rows[0].origin_seq, 7);
+        assert_eq!(rows[0].event_type, 0x90);
     }
 
     #[test]

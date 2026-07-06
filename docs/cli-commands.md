@@ -355,6 +355,16 @@ GOLD-G02-CLUSTER-01 — list ingested foreign gossip events (`idx_foreign_events
 - `--peer <PEER_PK>` — Filter to one origin peer public key (hex)
 - `--limit <LIMIT>` — Max rows (newest first)
 
+### `neoth cluster export-foreign`
+
+DES-13 — export this node's backup-at-rest for a crashed peer: dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL file so an operator can pull a failed node's replicated data off a surviving peer. This is a RAW BACKUP DUMP — it is NOT auto-restore: the file cannot be merged back into local recall/memory (that step is unbuilt). One JSON object per line: `{origin_peer_pk, origin_seq, event_type, payload_b64, received_at}`
+
+- `--peer <PEER_PK>` — Filter to one origin peer public key (hex)
+- `--out <FILE>` — Output file (or `-` for stdout)
+- `--limit <LIMIT>` — Max rows exported (newest first). Ignored when `--all` is set
+- `--all` — Export the full table (lift the `--limit` bound)
+- `--force` — Overwrite `--out` if it already exists (default: refuse)
+
 ### `neoth cluster list`
 
 SPEC `cluster_auto_discovery` Phase 4: list confirmed peers from `~/.neoth/cluster.yaml`
