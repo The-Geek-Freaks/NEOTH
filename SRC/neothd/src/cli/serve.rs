@@ -1099,18 +1099,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             {
                 let boot_cfg = ctrl.latest();
                 let desired = desired_cron_keys(&boot_cfg);
+                let mut seeded = 0usize;
                 for key in &desired {
                     if let Some(handle) = spawn_cron_for_key(*key, &boot_cfg, &deps) {
                         fleet
                             .lock()
                             .expect("cron_fleet mutex poisoned")
                             .insert(*key, handle);
+                        seeded += 1;
                     }
                 }
-                tracing::info!(
-                    seeded = desired.len(),
-                    "ZF-06 cron fleet seeded"
-                );
+                // Count tasks actually spawned, not the desired-set size: a
+                // desired key whose spawn_* returns None (e.g. a vault is set but
+                // no source_dir) never enters the fleet and must not be counted.
+                tracing::info!(seeded, "ZF-06 cron fleet seeded");
             }
             // Hot-reload loop: diff desired vs running on every generation bump.
             loop {
@@ -1136,19 +1138,24 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         let _ = h.await;
                     }
                 }
-                // Start newly desired tasks.
+                // Start newly desired tasks, counting only those that actually
+                // spawned — a desired key whose spawn_* returns None (vault set
+                // but no source_dir) would otherwise be logged as "started" on
+                // every reload forever without ever entering the fleet.
+                let mut started = 0usize;
                 for key in &to_start {
                     if let Some(handle) = spawn_cron_for_key(*key, &live_cfg, &deps) {
                         fleet
                             .lock()
                             .expect("cron_fleet mutex poisoned")
                             .insert(*key, handle);
+                        started += 1;
                     }
                 }
-                if !to_stop.is_empty() || !to_start.is_empty() {
+                if !to_stop.is_empty() || started > 0 {
                     tracing::info!(
                         stopped = to_stop.len(),
-                        started = to_start.len(),
+                        started,
                         "ZF-06 cron fleet updated on reload"
                     );
                 }
@@ -1448,9 +1455,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let gs = std::sync::Arc::new(std::sync::Mutex::new(
             crate::cluster::wal_sync::GossipState::new(),
         ));
+        // DES-13 — spawn the shared foreign-event persist writer so the iroh
+        // accept path backs up replicated peer events (idx_foreign_events),
+        // reaching parity with the peeroxide loop. The JoinHandle is detached:
+        // the task runs until its sender — held by the gossip-handler closure
+        // below — is dropped at transport teardown.
+        let (foreign_persist_tx, _foreign_persist_join) =
+            crate::cluster::wal_sync::spawn_foreign_persist_writer(
+                crate::config::FreedomConfig::default_neoth_home().join("views.db"),
+            );
         match crate::cluster::iroh_transport::IrohTransport::bind(
             crate::cluster::iroh_transport::gossip_handler(
                 std::sync::Arc::clone(&gs),
+                Some(foreign_persist_tx),
                 cluster_wal.clone(),
             ),
             cluster_key,
