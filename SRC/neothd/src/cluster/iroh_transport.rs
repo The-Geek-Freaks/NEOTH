@@ -420,6 +420,12 @@ impl IrohTransport {
 /// authenticated default carrier) until that lands.
 pub fn gossip_handler(
     state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
+    // DES-13 — foreign-event persistence handoff. `Some` → an accepted frame
+    // is submitted to the shared writer BEFORE the dedup high-water advances
+    // (persist-then-commit parity with the peeroxide loop, so a dropped
+    // persist lets the sender re-deliver). `None` → VC-only (tests / a build
+    // without a live persist writer): commit immediately, legacy semantics.
+    persist_tx: Option<crate::cluster::wal_sync::ForeignPersistTx>,
     writer: Option<Arc<WalWriterHandle>>,
 ) -> FrameHandler {
     use crate::cluster::gossip::GossipPolicy;
@@ -446,12 +452,32 @@ pub fn gossip_handler(
         let verdict = {
             let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
             let v = g.accept_inbound(&frame, payload_et, &policy, now);
-            // accept_inbound is check-only since G02-CLUSTER-02. This path
-            // has no foreign-event persistence step (idx_foreign_events
-            // ingest is the peeroxide loop's job), so commit immediately —
-            // preserving the pre-split dedup/VC semantics here.
             if matches!(v, GossipAcceptance::Accept) {
-                g.commit_inbound(&frame);
+                match &persist_tx {
+                    // DES-13: persist-then-commit. Submit the accepted frame to
+                    // the shared writer; advance the dedup high-water ONLY on a
+                    // successful handoff. A full channel / closed writer → do NOT
+                    // commit, so the sender's replay budget re-delivers (a lost
+                    // backup event is worse than a duplicate — INSERT OR IGNORE
+                    // absorbs the duplicate).
+                    Some(tx) => {
+                        let job = crate::cluster::wal_sync::ForeignPersistJob {
+                            origin_peer_pk: origin.clone(),
+                            origin_seq: frame.event_seq,
+                            event_type: payload_et.unwrap_or(0),
+                            payload: frame.payload.clone(),
+                            received_at: now,
+                        };
+                        if tx.try_send(job).is_ok() {
+                            g.commit_inbound(&frame);
+                        } else {
+                            tracing::warn!(peer = %origin, seq = frame.event_seq,
+                                "iroh gossip: foreign-persist channel unavailable — not committing (sender re-delivers)");
+                        }
+                    }
+                    // VC-only: no persist writer wired (tests). Commit immediately.
+                    None => g.commit_inbound(&frame),
+                }
             }
             v
         };
@@ -600,7 +626,7 @@ mod tests {
     fn gossip_handler_rejects_malformed_and_replies_json() {
         use crate::cluster::wal_sync::GossipState;
         let state = std::sync::Arc::new(std::sync::Mutex::new(GossipState::new()));
-        let handler = gossip_handler(state, None);
+        let handler = gossip_handler(state, None, None);
         // A non-GossipFrame byte blob must be rejected (decode failure), not
         // panic — and the reply is a parseable JSON verdict.
         let reply = handler(b"not a gossip frame".to_vec());
@@ -619,7 +645,7 @@ mod tests {
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
         let writer = Arc::new(writer);
         let state = Arc::new(Mutex::new(GossipState::new()));
-        let handler = gossip_handler(Arc::clone(&state), Some(Arc::clone(&writer)));
+        let handler = gossip_handler(Arc::clone(&state), None, Some(Arc::clone(&writer)));
         let reply = handler(b"not a gossip frame".to_vec());
         let v: serde_json::Value = serde_json::from_slice(&reply).expect("json reply");
         assert_eq!(v["accepted"], false);
