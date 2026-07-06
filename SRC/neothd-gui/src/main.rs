@@ -585,6 +585,13 @@ fn main() -> Result<()> {
             window.set_cfg_memory_recall_shortcut(read_nested_bool_in_freedom(fp, "memory.recall_shortcut", false));
             let vb = read_nested_str_in_freedom(fp, "memory.vector_index.backend", "brute_force");
             window.set_cfg_memory_vector_backend_idx(if vb == "hnsw" { 1 } else { 0 });
+            window.set_cfg_consolidation_enabled(read_nested_bool_in_freedom(fp, "consolidation_sweep.enabled", false));
+            let csi = read_nested_i64_in_freedom(fp, "consolidation_sweep.interval_secs", 0);
+            window.set_cfg_consolidation_interval_secs(if csi == 0 { "".into() } else { csi.to_string().into() });
+            let csc = read_nested_f64_in_freedom(fp, "consolidation_sweep.cosine_threshold")
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            window.set_cfg_consolidation_cosine(csc.into());
             // Welle E — obsidian edit fields
             window.set_obs_vault_path_edit(read_nested_str_in_freedom(fp, "obsidian_vault", "").into());
             window.set_obs_subdir_edit(read_nested_str_in_freedom(fp, "obsidian_subdir", "").into());
@@ -4481,6 +4488,9 @@ fn main() -> Result<()> {
             "memory.vector_index.backend",
             &["brute_force", "hnsw"],
             "Vector backend");
+        wire_nested_bool!(on_cfg_consolidation_enabled_changed,          "consolidation_sweep.enabled",          "Consolidation sweep");
+        wire_nested_i64_str!(on_cfg_consolidation_interval_secs_changed, "consolidation_sweep.interval_secs",    "Sweep interval");
+        wire_nested_f64_str!(on_cfg_consolidation_cosine_changed,        "consolidation_sweep.cosine_threshold", "Cosine threshold");
     }
 
     // ── DES-09 Welle E — Obsidian write-back callbacks ─────────────────────
@@ -8580,6 +8590,12 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
     let out = run_neothd_probe(&["cluster", "status", "--output", "json"]);
     let snap = panel_logic::parse_mesh_status(&out);
+    // DES-13 — the failover backup that already exists: replicated peer events
+    // this node persists (idx_foreign_events). Empty when the cluster feature
+    // isn't built or no peers are paired.
+    let foreign_out =
+        run_neothd_probe(&["cluster", "events", "--output", "json", "--limit", "500"]);
+    let backup = panel_logic::parse_foreign_backup(&foreign_out);
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
@@ -8597,6 +8613,27 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
             .collect();
         w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(peer_rows))));
         w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
+        // DES-13 — backup-at-rest per-peer rows + totals.
+        let foreign_rows: Vec<MeshForeignRow> = backup
+            .peers
+            .iter()
+            .map(|p| MeshForeignRow {
+                peer: p.peer.chars().take(24).collect::<String>().into(),
+                count: p.count.to_string().into(),
+                bytes: panel_logic::format_backup_bytes(p.bytes).into(),
+                latest: panel_logic::format_epoch_utc(p.latest_at).into(),
+            })
+            .collect();
+        w.set_mesh_foreign_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            foreign_rows,
+        ))));
+        w.set_mesh_foreign_total(backup.total_events as i32);
+        w.set_mesh_foreign_peers(backup.peers.len() as i32);
+        w.set_mesh_foreign_bytes(
+            panel_logic::format_backup_bytes(backup.total_bytes)
+                .as_str()
+                .into(),
+        );
         w.set_mesh_refreshed_at(ts.as_str().into());
     });
 }

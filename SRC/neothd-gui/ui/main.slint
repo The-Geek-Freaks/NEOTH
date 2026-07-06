@@ -43,7 +43,7 @@ import { DreamingView, DreamDayRow, DreamEntryRow } from "dreaming.slint";
 import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
-import { MeshView, MeshPeerRow } from "mesh.slint";
+import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 export { Theme }
 
@@ -60,7 +60,7 @@ export { HemiCard, CalEvent, ConsentEntry }
 export { DreamDayRow, DreamEntryRow }
 export { WikiRow }
 export { SelfActSkill }
-export { MeshPeerRow }
+export { MeshPeerRow, MeshForeignRow }
 // DES-12 — plugin WAL-feed detail pane event row.
 export { PluginEventRow }
 // DES-10 — channel activity feed row (traffic metadata, no message bodies).
@@ -512,6 +512,9 @@ export component MainWindow inherits Window {
     in-out property <bool>   cfg-memory-name-sessions: false;
     in-out property <bool>   cfg-memory-recall-shortcut: false;
     in-out property <int>    cfg-memory-vector-backend-idx: 0;
+    in-out property <bool>   cfg-consolidation-enabled: false;
+    in-out property <string> cfg-consolidation-interval-secs: "";
+    in-out property <string> cfg-consolidation-cosine: "";
     callback cfg-council-daily-usd-changed(string);
     callback cfg-council-max-calls-changed(string);
     callback cfg-council-max-depth-changed(string);
@@ -535,6 +538,9 @@ export component MainWindow inherits Window {
     callback cfg-memory-name-sessions-changed(bool);
     callback cfg-memory-recall-shortcut-changed(bool);
     callback cfg-memory-vector-backend-changed(int);
+    callback cfg-consolidation-enabled-changed(bool);
+    callback cfg-consolidation-interval-secs-changed(string);
+    callback cfg-consolidation-cosine-changed(string);
 
     // ── Wave 4b — Dreaming panel ──────────────────────────────────────────────
     in property <[DreamDayRow]>   dr-days: [];
@@ -585,6 +591,11 @@ export component MainWindow inherits Window {
     in property <string>          mesh-trusted-ssids: "";
     in property <[MeshPeerRow]>   mesh-peers: [];
     in property <string>          mesh-gossip-note: "";
+    // DES-13 — failover backup-at-rest (idx_foreign_events).
+    in property <[MeshForeignRow]> mesh-foreign-rows: [];
+    in property <int>             mesh-foreign-total: 0;
+    in property <string>          mesh-foreign-bytes: "";
+    in property <int>             mesh-foreign-peers: 0;
     in property <string>          mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
 
@@ -2313,9 +2324,15 @@ export component MainWindow inherits Window {
                     cfg-memory-name-sessions <=> root.cfg-memory-name-sessions;
                     cfg-memory-recall-shortcut <=> root.cfg-memory-recall-shortcut;
                     cfg-memory-vector-backend-idx <=> root.cfg-memory-vector-backend-idx;
+                    cfg-consolidation-enabled <=> root.cfg-consolidation-enabled;
+                    cfg-consolidation-interval-secs <=> root.cfg-consolidation-interval-secs;
+                    cfg-consolidation-cosine <=> root.cfg-consolidation-cosine;
                     cfg-memory-name-sessions-changed(v) => { root.cfg-memory-name-sessions-changed(v); }
                     cfg-memory-recall-shortcut-changed(v) => { root.cfg-memory-recall-shortcut-changed(v); }
                     cfg-memory-vector-backend-changed(v) => { root.cfg-memory-vector-backend-changed(v); }
+                    cfg-consolidation-enabled-changed(v) => { root.cfg-consolidation-enabled-changed(v); }
+                    cfg-consolidation-interval-secs-changed(v) => { root.cfg-consolidation-interval-secs-changed(v); }
+                    cfg-consolidation-cosine-changed(v) => { root.cfg-consolidation-cosine-changed(v); }
                 }
 
                 // Chat — primary surface, inside the shell content. Sovereign-
@@ -2588,6 +2605,10 @@ export component MainWindow inherits Window {
                     mesh-trusted-ssids: root.mesh-trusted-ssids;
                     mesh-peers: root.mesh-peers;
                     mesh-gossip-note: root.mesh-gossip-note;
+                    mesh-foreign-rows: root.mesh-foreign-rows;
+                    mesh-foreign-total: root.mesh-foreign-total;
+                    mesh-foreign-bytes: root.mesh-foreign-bytes;
+                    mesh-foreign-peers: root.mesh-foreign-peers;
                     mesh-refreshed-at: root.mesh-refreshed-at;
                     mesh-refresh-clicked => { root.mesh-refresh-clicked(); }
                 }

@@ -1350,7 +1350,7 @@ fn format_secs(total: i64) -> String {
 
 /// Epoch seconds → "YYYY-MM-DD HH:MM" (UTC, no chrono dep — the civil-date
 /// arithmetic is the classic days-to-ymd conversion, exact for 1970..9999).
-fn format_epoch_utc(ts: i64) -> String {
+pub fn format_epoch_utc(ts: i64) -> String {
     // `<= 0` on purpose: parse sites use `unwrap_or(0)`, so 0 means
     // "field absent", not "midnight 1970" — render the missing marker.
     if ts <= 0 {
@@ -2533,6 +2533,88 @@ pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
         })
         .unwrap_or_default();
     MeshStatusSnap { node_id, listen_port, trusted_ssids, peers, gossip_note: String::new() }
+}
+
+/// DES-13 — one origin-peer's aggregated backup summary for the Mesh
+/// redundancy panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeignBackupPeer {
+    pub peer: String,   // origin peer pubkey (truncated for display)
+    pub count: u64,
+    pub bytes: u64,
+    pub latest_at: i64, // latest received_at unix secs
+}
+
+/// DES-13 — aggregate of `neoth cluster events --output json` for the Mesh tab.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ForeignBackupSummary {
+    pub peers: Vec<ForeignBackupPeer>,
+    pub total_events: u64,
+    pub total_bytes: u64,
+}
+
+/// DES-13 — parse + aggregate `neoth cluster events --output json`
+/// (`idx_foreign_events`) into a per-peer backup summary. The input is a JSON
+/// array of `{origin_peer_pk, origin_seq, event_type, payload_bytes,
+/// received_at}`. On any parse failure the summary is empty (cluster feature
+/// may not be built / no peers paired) — never panics.
+pub fn parse_foreign_backup(json: &str) -> ForeignBackupSummary {
+    let arr = match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(serde_json::Value::Array(a)) => a,
+        _ => return ForeignBackupSummary::default(),
+    };
+    // Preserve first-seen peer order; aggregate count/bytes/latest per peer.
+    let mut order: Vec<String> = Vec::new();
+    let mut by_peer: std::collections::HashMap<String, ForeignBackupPeer> =
+        std::collections::HashMap::new();
+    let mut total_events = 0u64;
+    let mut total_bytes = 0u64;
+    for e in &arr {
+        let peer = e
+            .get("origin_peer_pk")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        if peer.is_empty() {
+            continue;
+        }
+        let bytes = e.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+        let received = e.get("received_at").and_then(|x| x.as_i64()).unwrap_or(0);
+        total_events += 1;
+        total_bytes += bytes;
+        let entry = by_peer.entry(peer.clone()).or_insert_with(|| {
+            order.push(peer.clone());
+            ForeignBackupPeer {
+                peer: peer.clone(),
+                count: 0,
+                bytes: 0,
+                latest_at: 0,
+            }
+        });
+        entry.count += 1;
+        entry.bytes += bytes;
+        entry.latest_at = entry.latest_at.max(received);
+    }
+    let peers = order
+        .into_iter()
+        .filter_map(|k| by_peer.remove(&k))
+        .collect();
+    ForeignBackupSummary {
+        peers,
+        total_events,
+        total_bytes,
+    }
+}
+
+/// DES-13 — human byte formatter for the backup panel (B / KB / MB).
+pub fn format_backup_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
 }
 
 // ── Chat-surface consent strip helpers ───────────────────────────────────────
@@ -4559,5 +4641,45 @@ mod tests {
         assert_eq!(timeout, "");
         assert_eq!(channel, "");
         assert_eq!(recipient, "");
+    }
+
+    // ── DES-13 foreign-backup aggregation ─────────────────────────────────
+    #[test]
+    fn parse_foreign_backup_aggregates_per_peer() {
+        let json = r#"[
+            {"origin_peer_pk":"aaaa1111","origin_seq":1,"event_type":"0x32","payload_bytes":100,"received_at":1000},
+            {"origin_peer_pk":"aaaa1111","origin_seq":2,"event_type":"0x33","payload_bytes":50,"received_at":1500},
+            {"origin_peer_pk":"bbbb2222","origin_seq":1,"event_type":"0x32","payload_bytes":200,"received_at":1200}
+        ]"#;
+        let s = parse_foreign_backup(json);
+        assert_eq!(s.total_events, 3);
+        assert_eq!(s.total_bytes, 350);
+        assert_eq!(s.peers.len(), 2);
+        // First-seen order preserved.
+        assert_eq!(s.peers[0].peer, "aaaa1111");
+        assert_eq!(s.peers[0].count, 2);
+        assert_eq!(s.peers[0].bytes, 150);
+        assert_eq!(s.peers[0].latest_at, 1500, "latest = max received_at");
+        assert_eq!(s.peers[1].peer, "bbbb2222");
+        assert_eq!(s.peers[1].count, 1);
+    }
+
+    #[test]
+    fn parse_foreign_backup_empty_and_malformed() {
+        assert_eq!(parse_foreign_backup("[]"), ForeignBackupSummary::default());
+        assert_eq!(parse_foreign_backup("not json"), ForeignBackupSummary::default());
+        // Object (not array) → empty (cluster feature returns array).
+        assert_eq!(parse_foreign_backup("{}"), ForeignBackupSummary::default());
+        // Rows missing origin_peer_pk are skipped.
+        let s = parse_foreign_backup(r#"[{"payload_bytes":10,"received_at":1}]"#);
+        assert_eq!(s.total_events, 0);
+        assert!(s.peers.is_empty());
+    }
+
+    #[test]
+    fn format_backup_bytes_scales() {
+        assert_eq!(format_backup_bytes(512), "512 B");
+        assert_eq!(format_backup_bytes(1536), "1.5 KB");
+        assert_eq!(format_backup_bytes(2 * 1024 * 1024), "2.0 MB");
     }
 }

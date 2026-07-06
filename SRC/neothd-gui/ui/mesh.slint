@@ -27,6 +27,17 @@ export struct MeshPeerRow {
     reachable: bool,     // true → Led "live", false → Led "error"
 }
 
+// DES-13 — one origin-peer's replicated-backup summary, aggregated from
+// `neoth cluster events --output json` (idx_foreign_events). This is the
+// failover redundancy that ALREADY exists: events this node holds on behalf
+// of a peer, recoverable if that peer's disk dies.
+export struct MeshForeignRow {
+    peer: string,     // origin peer pubkey (mono, truncated)
+    count: string,    // pre-formatted event count, e.g. "128"
+    bytes: string,    // pre-formatted total payload bytes, e.g. "4.2 KB"
+    latest: string,   // pre-formatted latest received time, e.g. "12:03"
+}
+
 // ── Internal micro-components ─────────────────────────────────────────────────
 
 // PeerRow — one discovered peer: Led + id (mono, elide) + last-seen badge.
@@ -106,6 +117,14 @@ export component MeshView inherits Rectangle {
     in property <int>    mesh-peer-count: 0;
     /// Free-form gossip convergence note from daemon (e.g. "vector clocks synced").
     in property <string> mesh-gossip-note: "";
+    /// DES-13 — backup-at-rest: per-peer replicated-event summary.
+    in property <[MeshForeignRow]> mesh-foreign-rows: [];
+    /// Total replicated events this node holds as failover backup.
+    in property <int>    mesh-foreign-total: 0;
+    /// Pre-formatted total backup payload size (e.g. "4.2 KB").
+    in property <string> mesh-foreign-bytes: "";
+    /// Distinct origin peers this node is backing up.
+    in property <int>    mesh-foreign-peers: 0;
 
     // ── Shared ────────────────────────────────────────────────────────────────
     in property <string> mesh-refreshed-at: "";
@@ -376,7 +395,92 @@ export component MeshView inherits Rectangle {
                                 }
                             }
 
-                            // Warning banner — amber-tinted background
+                            // DES-13 — backup-at-rest LIVE panel (green). Shows the
+                            // redundancy that already exists: replicated peer events
+                            // this node persists (idx_foreign_events).
+                            Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.accent-green.with-alpha(0.08);
+                                border-width: 1px;
+                                border-color: Theme.accent-green.with-alpha(0.35);
+
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 8px;
+                                    alignment: start;
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Led { state: root.mesh-foreign-total > 0 ? "live" : "off"; dot-size: 7px; }
+                                        Text {
+                                            text: root.mesh-foreign-total > 0
+                                                ? "Backup-at-rest is LIVE"
+                                                : "No peer data replicated yet";
+                                            color: Theme.accent-green;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-sm;
+                                            font-weight: Theme.weight-semibold;
+                                            vertical-alignment: center;
+                                            letter-spacing: Theme.letter-spacing-tight;
+                                        }
+                                    }
+                                    Text {
+                                        text: root.mesh-foreign-total > 0
+                                            ? "Holding " + root.mesh-foreign-total + " replicated event(s) from "
+                                              + root.mesh-foreign-peers + " peer(s) · " + root.mesh-foreign-bytes
+                                              + ". If a peer's disk dies, its gossiped events survive here."
+                                            : "Once paired peers gossip, their replicable events are persisted here as failover backup. Pair a peer to begin.";
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-sans;
+                                        font-size: Theme.font-size-sm;
+                                        wrap: word-wrap;
+                                    }
+
+                                    // Per-peer backup rows.
+                                    for f in root.mesh-foreign-rows: HorizontalLayout {
+                                        spacing: 10px;
+                                        alignment: start;
+                                        height: 20px;
+                                        Text {
+                                            text: f.peer;
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            vertical-alignment: center;
+                                            width: 150px;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: f.count + " ev";
+                                            color: Theme.accent-green;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            vertical-alignment: center;
+                                            width: 60px;
+                                        }
+                                        Text {
+                                            text: f.bytes;
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            vertical-alignment: center;
+                                            width: 72px;
+                                        }
+                                        Text {
+                                            text: f.latest;
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Warning banner — amber-tinted background. Honest about
+                            // what is STILL partial: automatic restore-into-recall +
+                            // full-history convergence.
                             Rectangle {
                                 border-radius: Theme.radius-md;
                                 background: Theme.warning-tint;
@@ -399,7 +503,7 @@ export component MeshView inherits Rectangle {
                                             vertical-alignment: center;
                                         }
                                         Text {
-                                            text: "Failover replication is PARTIAL";
+                                            text: "Auto-restore is PARTIAL";
                                             color: Theme.warning;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-sm;
@@ -411,7 +515,7 @@ export component MeshView inherits Rectangle {
 
                                     // Body — honest description
                                     Text {
-                                        text: "Peers gossip and converge vector clocks, but full memory redundancy — a peer holding all your data if this node's disk dies — is not yet complete.";
+                                        text: "Replicated events are stored (above), but automatic merge back into a recovered node's recall/memory is not yet complete. Treat the mesh as durable backup, not one-click restore.";
                                         color: Theme.text-secondary;
                                         font-family: Theme.font-sans;
                                         font-size: Theme.font-size-sm;
