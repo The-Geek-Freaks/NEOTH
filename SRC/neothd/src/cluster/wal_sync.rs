@@ -17,12 +17,22 @@
 //!   own event_type (a buggy/malicious sender could mis-tag a DoNotGossip
 //!   event), then dedup-update + VC merge.
 //!
-//! **DEFERRED (genuine multi-week):** APPLYING an accepted foreign WAL frame
-//! into local memory. The local WAL is an HMAC-chained per-node log with no
-//! origin-tagged foreign-event store; ingesting a peer's event needs a new
-//! `idx_foreign_events` table + a foreign indexer + conflict resolution. Until
-//! then the receiver audits + converges VectorClocks and DROPS the payload —
-//! real, observable anti-entropy, not an SC-04 no-op gate.
+//! - **Persist** ([`ingest_foreign_event`], G02-CLUSTER-02): an accepted frame
+//!   is written to the `idx_foreign_events` table (`(origin_peer_pk,
+//!   origin_seq)` UNIQUE → idempotent), then [`GossipState::commit_inbound`]
+//!   advances the dedup high-water + merges the sender's VC only after the DB
+//!   write confirms. This is the failover backup-at-rest: a peer's replicable
+//!   events survive on this node if the peer's disk dies. Queryable via
+//!   [`list_foreign_events`] / `neoth cluster events`. **Transport note:** the
+//!   hyperswarm/peeroxide receive loop persists; the iroh `gossip_handler`
+//!   (opt-in `cluster-iroh`) is a sync frame handler with no DB context and
+//!   currently commits VC-only without persisting — a known gap.
+//!
+//! **STILL DEFERRED (genuine multi-week):** APPLYING a stored foreign event
+//! back INTO local recall/memory on a recovered node — the conflict-resolution
+//! + merge step. Foreign events are a separate queryable surface today, never
+//! mixed into `idx_episode` / `idx_groundtruth`; automatic restore is not yet
+//! built. Treat the mesh as durable backup, not one-click restore.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
