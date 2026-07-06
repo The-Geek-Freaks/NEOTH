@@ -1398,12 +1398,13 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 > Prop-Referenz: `SRC/neothd-gui/ui/COMPONENT_API.md`. GUI-Tests 219 grün, clippy 0, 0 binding-loops.
 
 - [x] **DES-01..07** Waves 1-7 SHIPPED (de3d9ce6..cb34a491): motion/toasts/nav-groups · agent-activity-sidecar · Mission-Control-Overview · 10 neue Tabs (n8n/babel/calendar/evolve/obsidian/dreaming/wiki/buddyconfig/companion/mesh) + CLI-Backing (buddy/dream/obsidian/babel-json) · Living-Buddy + Steve-Jobs-Polish-Pass · Chat-Consent-Strip · Minimized-Companion-Overlay (winit always-on-top). **Device-Test offen** (Operator denied Screen-Access): Overlay-Transparenz/always-on-top/Taskbar, Buddy-Anim visuell.
-- [ ] **DES-08** Plugins/Skills add+remove in GUI + via Chat (enable/disable existiert; ADD/REMOVE/generate fehlt). M/L.
-- [ ] **DES-09** Alle freedom.yaml-Settings GUI-editierbar (Audit + Editoren: language/role/cost-caps/provider-advanced/persona_mode/aliases/obsidian-Pfade). M.
-- [ ] **DES-10** Channel-Watch live (braucht daemon `channel tail --follow` / gui-stream channel_stream). M.
-- [ ] **DES-11** Self-Reprogramming-Tab — blockiert auf FEAT-05 (v1.1, daemon nicht gebaut). L.
-- [ ] **DES-12** Plugin-provided Tabs (WASM-Manifest `ui_surface` + GUI-Dispatch). M.
-- [ ] **DES-13** Mesh Full-Failover-Redundanz (= G02-CLUSTER-02b foreign-indexer; Tab surfaced Partial ehrlich). L.
+- [x] **DES-08** Plugins/Skills add+remove in GUI (`88f850a8` GUI + `a3184ba3` daemon `plugin install/remove`); via-Chat = skill-creator-Hint.
+- [x] **DES-09** freedom.yaml-Settings GUI-editierbar (`c94e9e9f` ~30 Felder via `set_nested_in_freedom` + Review-Fixes `2f2de950`; Audit `PLAN/DES09_SETTINGS_GUI_AUDIT.md`).
+- [x] **DES-10** Channel-Watch live — Daemon channel_feed über gui-stream (`68cecb1c`) + GUI-Consumer channel-activity-ring (`25527893`). Metadata-only (WAL hashed by design — kein Body).
+- [ ] **DES-11** Self-Reprogramming-Tab — blockiert auf FEAT-05 (v1.1, daemon nicht gebaut; security-kritisch, eigene Session). L. **NICHT blind-loopbar.**
+- [x] **DES-12** Plugin-provided Tabs — Daemon `PluginUiSurface::WalFeed` + `plugin events --json` (`32f100e3`) + GUI Inline-Detail-Pane (`9fa915ce`); SAFE read-only wal-feed, kein exec.
+- [~] **DES-13** Mesh-Failover — GUI zeigt jetzt Backup-at-rest ehrlich (`c12e3f5b`: idx_foreign_events per-peer via `cluster events --json`; „Auto-restore PARTIAL"-Wortlaut korrigiert). **Daemon-Rest offen** (eigene Lane, untestbar headless): iroh-Pfad persistiert foreign events NICHT (nur hyperswarm; check-only), wal_sync-Modul-Doc stale, foreign→recall-restore + conflict-resolution = multi-week (per Modul-Doc). L.
+- **GAP-Batch (Parallel-Loop):** GAP-01 Cron-CRUD (`33b4ae3a`), GAP-03 Kanban-Finish (`5e372bfe`), GAP-19 Channel-Add (`f8d9113f`+`20867617`) — alle SHIPPED. **GUI-Tests: 257.**
 
 ## WS-ZF — Zero-Friction / Preset-Bundles (ZF-NN, 2026-07-04)
 
