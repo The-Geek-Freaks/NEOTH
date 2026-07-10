@@ -60,7 +60,9 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::coding::self_source::{diff_line_count, diff_paths, diff_sha256, neoth_source_root};
+use crate::coding::self_source::{
+    SourceRoots, diff_line_count, diff_paths, diff_sha256, neoth_source_root,
+};
 use crate::coding::worktree::{
     PatchApplyOutcome, apply_patch_in_worktree, cleanup_worktree, create_task_worktree,
     run_cargo_check_json,
@@ -269,7 +271,7 @@ pub async fn run_gate_stack(
     }
 
     // ── Layer 4: worktree isolation ───────────────────────────────────────────
-    let source_root = neoth_source_root(&self_edit_cfg.source_root)
+    let roots = neoth_source_root(&self_edit_cfg.source_root)
         .map_err(|e| {
             let reason = format!("source root detection failed: {e}");
             audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
@@ -279,8 +281,9 @@ pub async fn run_gate_stack(
     // Reentrancy guard: a self-edit may never trigger further self-edits.
     // Layer 5 executes `cargo check` (build scripts run!) — if anything in
     // that process tree invokes `neoth self-edit` again, the lock refuses it.
-    // File-based so it holds across processes; Drop releases it.
-    let _reentrancy_lock = SelfEditLock::acquire(&source_root).map_err(|reason| {
+    // File-based so it holds across processes; Drop releases it. Keyed on the
+    // git root (one self-edit at a time per repo).
+    let _reentrancy_lock = SelfEditLock::acquire(&roots.git_root).map_err(|reason| {
         audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
         GateError::Worktree(reason)
     })?;
@@ -290,9 +293,9 @@ pub async fn run_gate_stack(
     let pseudo_id = pseudo_task_id(&diff_hash);
     let worktree = {
         // git subprocess spawns block; keep them off the async executor.
-        let sr = source_root.clone();
+        let r = roots.clone();
         let dt = diff_text.to_string();
-        tokio::task::spawn_blocking(move || layer4_worktree(&sr, &dt, pseudo_id))
+        tokio::task::spawn_blocking(move || layer4_worktree(&r, &dt, pseudo_id))
             .await
             .map_err(|e| GateError::Worktree(format!("worktree task panicked: {e}")))?
             .map_err(|reason| {
@@ -302,13 +305,16 @@ pub async fn run_gate_stack(
     };
     // RAII: from here the worktree is cleaned up on EVERY exit — error return,
     // panic unwind, and async cancellation (future dropped mid-await) alike.
-    let _worktree_guard = WorktreeGuard::new(source_root.clone(), worktree.clone());
+    // Cleanup is a `git worktree remove` run from the git root.
+    let _worktree_guard = WorktreeGuard::new(roots.git_root.clone(), worktree.clone());
 
     audit.layer4_worktree = LayerOutcome::Pass;
 
     // ── Layer 5: green-test gate (cargo check) ────────────────────────────────
     if self_edit_cfg.require_green_tests {
-        let wt = worktree.clone();
+        // cargo check runs in the WORKSPACE dir inside the worktree so the whole
+        // workspace resolves (NEOTH's workspace is a subdir of the git root).
+        let wt = worktree.join(roots.workspace_rel());
         let outcome = tokio::task::spawn_blocking(move || layer5_green_test(&wt))
             .await
             .map_err(|e| GateError::GreenTest(format!("green-test task panicked: {e}")))?;
@@ -336,10 +342,11 @@ pub async fn run_gate_stack(
     if !dry_run {
         // Apply the SAME in-memory bytes the gates validated (piped via stdin),
         // NOT a re-read of the on-disk file — closes the TOCTOU where the diff
-        // file could be swapped between validation and the live apply.
-        let sr = source_root.clone();
+        // file could be swapped between validation and the live apply. Runs in
+        // the crate dir so `src/…` diff paths resolve.
+        let cd = roots.crate_dir.clone();
         let dt = diff_text.to_string();
-        let applied = tokio::task::spawn_blocking(move || apply_to_live_tree(&sr, &dt))
+        let applied = tokio::task::spawn_blocking(move || apply_to_live_tree(&cd, &dt))
             .await
             .map_err(|e| GateError::Worktree(format!("live-apply task panicked: {e}")))?;
         if let Err(e) = applied {
@@ -616,31 +623,38 @@ fn layer3_permission(
 ///
 /// Returns the worktree path on success (caller owns cleanup via guard).
 fn layer4_worktree(
-    source_root: &Path,
+    roots: &SourceRoots,
     diff_text: &str,
     task_id: KanbanTaskId,
 ) -> Result<PathBuf, String> {
-    let worktree = create_task_worktree(source_root, task_id)
+    // The worktree is a fresh checkout of the WHOLE git repo (NEOTH's crate is
+    // a subdir of it). Returned path is the worktree root — cleanup runs from
+    // the git root against it.
+    let worktree = create_task_worktree(&roots.git_root, task_id)
         .map_err(|e| format!("failed to create worktree: {e}"))?;
 
+    // Apply at the crate dir INSIDE the worktree so `src/…` diff paths resolve
+    // (matching the crate-relative hard-deny / allowlist). The patch file lives
+    // at the worktree root, outside the crate's `src/`.
+    let crate_in_wt = worktree.join(roots.crate_rel());
     let patch_file = worktree.join(".neoth_self_edit.patch");
     if let Err(e) = std::fs::write(&patch_file, diff_text.as_bytes()) {
-        let _ = cleanup_worktree(source_root, &worktree, true);
+        let _ = cleanup_worktree(&roots.git_root, &worktree, true);
         return Err(format!("failed to stage patch in worktree: {e}"));
     }
 
-    let outcome = apply_patch_in_worktree(&worktree, &patch_file);
+    let outcome = apply_patch_in_worktree(&crate_in_wt, &patch_file);
     // Drop the staged patch so layer 5's cargo check sees only the applied diff.
     let _ = std::fs::remove_file(&patch_file);
 
     match outcome {
         Ok(PatchApplyOutcome::Applied { .. }) => Ok(worktree),
         Ok(PatchApplyOutcome::Rejected { stderr }) => {
-            let _ = cleanup_worktree(source_root, &worktree, true);
+            let _ = cleanup_worktree(&roots.git_root, &worktree, true);
             Err(format!("patch rejected by git apply: {stderr}"))
         }
         Err(e) => {
-            let _ = cleanup_worktree(source_root, &worktree, true);
+            let _ = cleanup_worktree(&roots.git_root, &worktree, true);
             Err(format!("worktree patch error: {e}"))
         }
     }

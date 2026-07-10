@@ -12,3 +12,7 @@
 //!   Round-3 v0.4 QU-08.
 
 pub mod episode;
+
+// WAL-VIEWS-SCALE-01 — synthetic long-run scalability bench (test-only).
+#[cfg(test)]
+mod scale_bench;

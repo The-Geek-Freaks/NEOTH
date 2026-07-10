@@ -15,50 +15,112 @@ use sha2::{Digest, Sha256};
 
 // ── Source root detection ─────────────────────────────────────────────────────
 
-/// Locate the NEOTH workspace root.
+/// The three distinct directories a self-edit needs. In NEOTH's real layout
+/// they are NOT the same directory:
+/// - `.git` lives at the repository root,
+/// - the `[workspace]` Cargo.toml lives at `SRC/`,
+/// - the `neothd` package (with `src/`) lives at `SRC/neothd/`.
 ///
-/// Resolution order:
-/// 1. `source_root` override from `SelfEditConfig` (operator-set in
-///    `freedom.yaml::coding.self_edit.source_root`).
-/// 2. Walk up from the running binary path until a `Cargo.toml` containing
-///    `[workspace]` is found.
+/// The gate keeps its hard-deny / allowlist prefixes CRATE-relative
+/// (`src/wal/`, `src/cli`), so `git apply` must run in [`SourceRoots::crate_dir`]
+/// for those paths to resolve; the worktree lives in the git repo, and
+/// `cargo check` runs in the workspace.
+#[derive(Debug, Clone)]
+pub struct SourceRoots {
+    /// Directory containing `.git` — all `git worktree` operations run here.
+    pub git_root: PathBuf,
+    /// The crate directory (contains `src/` + a `[package]` Cargo.toml). Diff
+    /// paths (`src/...`) are relative to THIS dir.
+    pub crate_dir: PathBuf,
+    /// The Cargo workspace directory (`[workspace]` Cargo.toml) — `cargo check`
+    /// runs here so the whole workspace resolves.
+    pub workspace_dir: PathBuf,
+}
+
+impl SourceRoots {
+    /// `crate_dir` relative to `git_root` (e.g. `SRC/neothd`), or `.` when they
+    /// are the same directory (a flat single-crate repo).
+    pub fn crate_rel(&self) -> PathBuf {
+        rel_or_dot(&self.git_root, &self.crate_dir)
+    }
+
+    /// `workspace_dir` relative to `git_root` (e.g. `SRC`), or `.` when equal.
+    pub fn workspace_rel(&self) -> PathBuf {
+        rel_or_dot(&self.git_root, &self.workspace_dir)
+    }
+}
+
+/// `child` relative to `base`, collapsing an empty result (same dir) to `.`.
+fn rel_or_dot(base: &Path, child: &Path) -> PathBuf {
+    match child.strip_prefix(base) {
+        Ok(r) if r.as_os_str().is_empty() => PathBuf::from("."),
+        Ok(r) => r.to_path_buf(),
+        Err(_) => PathBuf::from("."),
+    }
+}
+
+/// Locate the three NEOTH source roots (git repo / crate / workspace).
 ///
-/// Returns an error when neither yields a valid workspace directory.
-pub fn neoth_source_root(
-    cfg_root: &Option<PathBuf>,
-) -> Result<PathBuf> {
-    if let Some(root) = cfg_root {
-        let root = strip_verbatim(root.canonicalize().with_context(|| {
+/// Resolution:
+/// 1. The CRATE dir is the `source_root` override from `SelfEditConfig`
+///    (operator-set), else the compile-time crate dir (`CARGO_MANIFEST_DIR`) —
+///    self-edit runs against the source it was built from.
+/// 2. The git root and workspace dir are found by walking UP from the crate
+///    dir (they are ancestors in NEOTH's `repo/SRC/neothd` layout, or the crate
+///    dir itself in a flat single-crate repo).
+///
+/// Returns an error when the crate dir is invalid or no `.git` is found at or
+/// above it (self-edit needs a git repo for worktree isolation, Layer 4).
+pub fn neoth_source_root(cfg_root: &Option<PathBuf>) -> Result<SourceRoots> {
+    let crate_dir = match cfg_root {
+        Some(root) => strip_verbatim(root.canonicalize().with_context(|| {
             format!("canonicalize source_root override {}", root.display())
-        })?);
-        validate_source_root(&root)?;
-        return Ok(root);
-    }
-
-    // Auto-detect: walk from the current exe up to the workspace root.
-    let exe = std::env::current_exe()
-        .context("determine path of running binary for source-root detection")?;
-
-    for ancestor in exe.ancestors() {
-        let cargo_toml = ancestor.join("Cargo.toml");
-        if cargo_toml.exists() {
-            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-                if content.contains("[workspace]") {
-                    let root = ancestor
-                        .canonicalize()
-                        .with_context(|| format!("canonicalize {}", ancestor.display()))?;
-                    validate_source_root(&root)?;
-                    return Ok(root);
-                }
-            }
+        })?),
+        None => {
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            strip_verbatim(manifest.canonicalize().with_context(|| {
+                format!(
+                    "canonicalize compile-time crate dir {} — set \
+                     freedom.yaml::coding.self_edit.source_root if the source moved",
+                    manifest.display()
+                )
+            })?)
         }
-    }
+    };
+    validate_crate_dir(&crate_dir)?;
 
-    anyhow::bail!(
-        "cannot auto-detect NEOTH source root from binary path {}; \
-         set freedom.yaml::coding.self_edit.source_root explicitly",
-        exe.display()
-    )
+    let git_root = crate_dir
+        .ancestors()
+        .find(|a| a.join(".git").exists())
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no .git found at or above crate dir {} — self-edit requires a \
+                 git repository for worktree isolation",
+                crate_dir.display()
+            )
+        })?;
+
+    // Workspace = nearest ancestor whose Cargo.toml declares [workspace]. Fall
+    // back to the crate dir itself (flat single-crate repo).
+    let workspace_dir = crate_dir
+        .ancestors()
+        .find(|a| dir_is_workspace(a))
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| crate_dir.clone());
+
+    Ok(SourceRoots {
+        git_root,
+        crate_dir,
+        workspace_dir,
+    })
+}
+
+/// True when `dir/Cargo.toml` declares a `[workspace]`.
+fn dir_is_workspace(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join("Cargo.toml"))
+        .map(|c| c.contains("[workspace]"))
+        .unwrap_or(false)
 }
 
 /// Strip Windows' verbatim prefix (`\\?\C:\…` → `C:\…`) from a canonicalized
@@ -77,32 +139,26 @@ fn strip_verbatim(p: PathBuf) -> PathBuf {
     p
 }
 
-/// Validate that `root` is a Rust workspace that lives inside a git repo.
-///
-/// Rejects paths that are not workspace roots (no `[workspace]` in
-/// `Cargo.toml`) or that lack a `.git` directory — self-edit requires a
-/// git repo for worktree isolation (Layer 4).
-pub fn validate_source_root(root: &Path) -> Result<()> {
-    let cargo_toml = root.join("Cargo.toml");
+/// Validate that `dir` is the NEOTH crate root: a `[package]` Cargo.toml and a
+/// `src/` directory. The git-repo and workspace requirements are checked
+/// against ancestors by [`neoth_source_root`], not here.
+pub fn validate_crate_dir(dir: &Path) -> Result<()> {
+    let cargo_toml = dir.join("Cargo.toml");
     if !cargo_toml.exists() {
-        anyhow::bail!(
-            "source root {} has no Cargo.toml",
-            root.display()
-        );
+        anyhow::bail!("crate dir {} has no Cargo.toml", dir.display());
     }
     let content = std::fs::read_to_string(&cargo_toml)
         .with_context(|| format!("read {}", cargo_toml.display()))?;
-    if !content.contains("[workspace]") {
+    if !content.contains("[package]") {
         anyhow::bail!(
-            "{} is not a Cargo workspace (no [workspace] section found)",
+            "{} is not a Rust package (no [package] section found)",
             cargo_toml.display()
         );
     }
-    if !root.join(".git").exists() {
+    if !dir.join("src").is_dir() {
         anyhow::bail!(
-            "source root {} has no .git directory — \
-             self-edit requires a git repository for worktree isolation",
-            root.display()
+            "crate dir {} has no src/ directory — not a NEOTH source checkout",
+            dir.display()
         );
     }
     Ok(())
@@ -207,6 +263,36 @@ pub fn diff_line_count(diff: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_roots_resolve_for_nested_repo_layout() {
+        // P0 regression: NEOTH's real layout has .git at the repo root,
+        // [workspace] at SRC/, and the neothd package (with src/) at
+        // SRC/neothd/ — three DIFFERENT dirs. Auto-detect must find all three
+        // (the old validator required them in ONE dir → feature unreachable).
+        let roots = neoth_source_root(&None).expect("source roots must resolve in-repo");
+        assert!(
+            roots.git_root.join(".git").exists(),
+            "git_root has no .git: {}",
+            roots.git_root.display()
+        );
+        assert!(
+            roots.crate_dir.join("src").is_dir(),
+            "crate_dir has no src/: {}",
+            roots.crate_dir.display()
+        );
+        assert!(
+            dir_is_workspace(&roots.workspace_dir),
+            "workspace_dir is not a [workspace]: {}",
+            roots.workspace_dir.display()
+        );
+        // Nesting: git_root ⊇ workspace_dir ⊇ crate_dir.
+        assert!(roots.crate_dir.starts_with(&roots.workspace_dir));
+        assert!(roots.workspace_dir.starts_with(&roots.git_root));
+        // The crate is genuinely a subdir of the git root (not the flat case),
+        // so git-apply-in-crate-dir vs worktree-at-git-root is exercised.
+        assert_ne!(roots.crate_rel(), PathBuf::from("."));
+    }
 
     // A minimal unified diff touching one file with one added comment line.
     const COMMENT_DIFF: &str = concat!(
