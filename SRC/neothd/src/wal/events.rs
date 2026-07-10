@@ -17,6 +17,7 @@
 //!
 //! | Range          | Purpose                                                |
 //! |----------------|--------------------------------------------------------|
+//! | `0x00`         | **EXTENDED** escape hatch — the u8 `event_type` space is FULL (0x01..=0xFF all assigned). A `0x00` frame carries its real identity in the header's `event_subtype` byte, namespacing 255 further sub-events without a WAL-format change. New features MUST claim an [`ExtendedSubtype`] instead of a top-level code. |
 //! | `0x01..=0x0F`  | Memory + recall (RAW_TEXT, REINFORCE, …); 0x03..=0x04 = elicitation audit (GOLD-ADOPT-17); 0x05..=0x07 = turn-journal recovery anchors; 0x08..=0x0A = webhook audit (GOLD-ADAPT-ODY-21); 0x0B..=0x0C = companion pairing audit (GOLD-ADAPT-ODY-24); 0x0D..=0x0E = companion P2P Noise audit (GOLD-COMPANION-P2P-01) |
 //! | `0x10..=0x1F`  | Daemon lifecycle (BOOT, SHUTDOWN, UPDATE_RAN, …)        |
 //! | `0x20..=0x2F`  | LLM provider lifecycle (REQUEST/RESPONSE/ERROR/STREAM) |
@@ -32,6 +33,85 @@
 //! | `0xB0..=0xDF`  | (reserved)                                             |
 //! | `0xE0..=0xEF`  | Cluster lifecycle (R-7) — 0xE0..=0xEA assigned         |
 //! | `0xF0..=0xFF`  | Operator / system (QUOTA_BREACHED, …)                  |
+
+// ---- 0x00  EXTENDED escape hatch (u8 event_type space exhausted) ----
+
+/// **Extended-event escape hatch.** The single-byte `event_type` space
+/// (`0x01..=0xFF`) is fully allocated, so any NEW event kind is encoded as an
+/// `EVENT_TYPE_EXTENDED` frame whose real identity lives in the header's
+/// `event_subtype` byte (see [`HeaderBuilder::event_subtype`] and the
+/// [`ExtendedSubtype`] registry). This adds 255 further codes without changing
+/// the on-wire header layout.
+///
+/// **Emit:** `HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+/// .event_subtype(ExtendedSubtype::Foo as u8)`.
+/// **Read:** a frame with `event_type == 0x00` is an extended event; resolve its
+/// sub-name via [`extended_subtype_name`].
+///
+/// **Security:** an unknown extended sub-type is treated exactly like any
+/// unrecognised top-level code — the cluster gossip ACL default-denies it
+/// (`0x00` is not in the `Replicate`/`RawIngressGated` sets), so a new
+/// extended event never leaks over the wire until explicitly classified.
+/// **Integrity:** `0x00` is safe as a live type because a frame is validated
+/// (magic + length + payload hash) before its `event_type` is interpreted, so a
+/// zeroed/corrupt header is rejected upstream, never mis-decoded as EXTENDED.
+///
+/// [`HeaderBuilder::event_subtype`]: crate::wal::builder::HeaderBuilder::event_subtype
+pub const EVENT_TYPE_EXTENDED: u8 = 0x00;
+
+/// Registry of `EVENT_TYPE_EXTENDED` sub-types (the header `event_subtype` byte
+/// when `event_type == 0x00`). `0x00` is reserved as "unset / invalid" so a
+/// zeroed subtype on an extended frame is never a real event. Append-only —
+/// never renumber a shipped variant (WAL frames are immutable on disk).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExtendedSubtype {
+    /// GOLD-FEAT-05 — a self-source edit was proposed (pre-consent).
+    SelfEditProposed = 0x01,
+    /// GOLD-FEAT-05 — a self-source edit passed every gate and was applied.
+    SelfEditApplied = 0x02,
+    /// GOLD-FEAT-06 — a peer's `NodeResourceSnapshot` was received via gossip.
+    SwarmResourceSnapshot = 0x03,
+    /// GOLD-FEAT-06 — this node sampled its own resource snapshot.
+    LocalSnapshot = 0x04,
+}
+
+impl ExtendedSubtype {
+    /// Snake_case name for `neoth wal show` display + name↔code round-trips.
+    pub const fn name(self) -> &'static str {
+        match self {
+            ExtendedSubtype::SelfEditProposed => "self_edit_proposed",
+            ExtendedSubtype::SelfEditApplied => "self_edit_applied",
+            ExtendedSubtype::SwarmResourceSnapshot => "swarm_resource_snapshot",
+            ExtendedSubtype::LocalSnapshot => "local_snapshot",
+        }
+    }
+
+    /// Resolve a raw `event_subtype` byte to a known variant, or `None`.
+    pub const fn from_u8(v: u8) -> Option<ExtendedSubtype> {
+        match v {
+            0x01 => Some(ExtendedSubtype::SelfEditProposed),
+            0x02 => Some(ExtendedSubtype::SelfEditApplied),
+            0x03 => Some(ExtendedSubtype::SwarmResourceSnapshot),
+            0x04 => Some(ExtendedSubtype::LocalSnapshot),
+            _ => None,
+        }
+    }
+}
+
+/// Display name for an extended sub-type byte: the registered name, or
+/// `"extended_0xNN"` for an unknown/forward-compat sub-type.
+pub fn extended_subtype_name(subtype: u8) -> std::borrow::Cow<'static, str> {
+    match ExtendedSubtype::from_u8(subtype) {
+        Some(s) => std::borrow::Cow::Borrowed(s.name()),
+        None => std::borrow::Cow::Owned(format!("extended_0x{subtype:02X}")),
+    }
+}
+
+// EXTENDED must stay pinned to 0x00 (its own single-code band).
+const _: () = {
+    let _ = [(); 1][(EVENT_TYPE_EXTENDED != 0x00) as usize];
+};
 
 // ---- 0x01..=0x0F  Memory + recall; 0x05..=0x07 = turn-journal recovery ----
 
@@ -2313,6 +2393,9 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
 /// that every entry resolves to a distinct code so a rename can't silently
 /// orphan a documented `--type` name.
 pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
+    // 0x00 EXTENDED escape hatch — `neoth wal show --type extended` surfaces every
+    // extended frame; the real sub-name comes from `extended_subtype_name`.
+    ("extended", EVENT_TYPE_EXTENDED),
     ("raw_text", EVENT_TYPE_RAW_TEXT),
     ("reinforce", EVENT_TYPE_REINFORCE),
     // GOLD-ADOPT-17 elicitation audit (0x03..=0x04, memory+recall band).
@@ -3268,6 +3351,47 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GOLD-FEAT WAL-blocker: the EXTENDED escape hatch is registered at 0x00
+    /// and its sub-type registry round-trips.
+    #[test]
+    fn extended_event_escape_hatch_registered() {
+        assert_eq!(EVENT_TYPE_EXTENDED, 0x00);
+        assert_eq!(event_name_from_code(EVENT_TYPE_EXTENDED), Some("extended"));
+
+        // Every shipped sub-type round-trips code → variant → name → code.
+        for st in [
+            ExtendedSubtype::SelfEditProposed,
+            ExtendedSubtype::SelfEditApplied,
+            ExtendedSubtype::SwarmResourceSnapshot,
+            ExtendedSubtype::LocalSnapshot,
+        ] {
+            let byte = st as u8;
+            assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");
+            assert_eq!(ExtendedSubtype::from_u8(byte), Some(st));
+            assert_eq!(extended_subtype_name(byte), st.name());
+        }
+        // Unknown/forward-compat sub-type renders a stable placeholder.
+        assert_eq!(ExtendedSubtype::from_u8(0x00), None);
+        assert_eq!(extended_subtype_name(0xAB), "extended_0xAB");
+    }
+
+    /// A built EXTENDED frame carries (event_type=0x00, event_subtype=<sub>) on
+    /// the wire and decodes back to the same pair.
+    #[test]
+    fn extended_frame_roundtrips_type_and_subtype() {
+        use crate::wal::builder::HeaderBuilder;
+        let payload = b"snapshot-bytes";
+        let header = HeaderBuilder::new(EVENT_TYPE_EXTENDED, payload)
+            .event_subtype(ExtendedSubtype::LocalSnapshot as u8)
+            .build();
+        assert_eq!(header.event_type, EVENT_TYPE_EXTENDED);
+        assert_eq!(header.event_subtype, ExtendedSubtype::LocalSnapshot as u8);
+        // The serialized header body carries type at [2] and subtype at [3].
+        let bytes = header.to_le_bytes();
+        assert_eq!(bytes[2], 0x00);
+        assert_eq!(bytes[3], ExtendedSubtype::LocalSnapshot as u8);
+    }
 
     /// Every published event-code must be unique. Catches accidental
     /// duplicate-assignment when a new code is added.
