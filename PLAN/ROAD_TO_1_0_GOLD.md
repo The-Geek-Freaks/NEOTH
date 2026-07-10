@@ -378,7 +378,7 @@ v1.0-WIRE items first, then v1.1 builds.
 
 **v1.1 builds (net-new, after v1.0 complete):**
 
-- [ ] **GOLD-FEAT-05** *(v1.1 per §WS-F note L~1405 — NOT a v1.0-GOLD blocker; excluded from the release-gate sweep)* Build NEOTH self-reprogramming: `Action::SelfSourceEdit`; `coding/self_source.rs` + `self_source_gate.rs`; 5-layer safety stack (freedom.yaml kill-switch, allowed_modules allowlist, permission gate, worktree isolation, green-test gate); WAL `0xDB SELF_EDIT_PROPOSED`/`0xDC SELF_EDIT_APPLIED` *(⚠ spec stale 2026-07-04: 0xDB/0xDC are TAKEN by CONSENT_GRANTED/REVOKED and the byte space is EXHAUSTED — audit must ride an existing payload or tracing)*; CLI `neoth self-edit` — *test:* Strict/Standard level denies; `src/wal/` path in diff is rejected; `src/cli/dummy.rs` comment addition passes — *origin:* Gold-TODO #3 → full plan: `REVIEWS/_gold_audit/research/self_reprogramming.md` — security-reviewer MANDATORY when built.
+- [x] **GOLD-FEAT-05** ✅ DONE (2026-07-10 — built by agent; adversarial multi-lens security review `wf_9648b319-db7` (25 findings→12 confirmed) + 9 fixes: Layer-3 Confirm now needs explicit `--yes` ack (was silent-pass), case-insensitive hard-deny (Windows FS), `..`/absolute/drive/backslash path rejection at parse, segment-aware allowlist, HARD_DENY += `src/permissions/`+`src/config/`, in-memory-pinned live apply via git-apply-stdin (TOCTOU), WAL fail-closed for apply, worktree cleanup on apply-fail; audit rides EVENT_TYPE_EXTENDED/0x01+0x02 subtypes; 278 tests green) *(v1.1 per §WS-F note L~1405 — NOT a v1.0-GOLD blocker; excluded from the release-gate sweep)* Build NEOTH self-reprogramming: `Action::SelfSourceEdit`; `coding/self_source.rs` + `self_source_gate.rs`; 5-layer safety stack (freedom.yaml kill-switch, allowed_modules allowlist, permission gate, worktree isolation, green-test gate); WAL `0xDB SELF_EDIT_PROPOSED`/`0xDC SELF_EDIT_APPLIED` *(⚠ spec stale 2026-07-04: 0xDB/0xDC are TAKEN by CONSENT_GRANTED/REVOKED and the byte space is EXHAUSTED — audit must ride an existing payload or tracing)*; CLI `neoth self-edit` — *test:* Strict/Standard level denies; `src/wal/` path in diff is rejected; `src/cli/dummy.rs` comment addition passes — *origin:* Gold-TODO #3 → full plan: `REVIEWS/_gold_audit/research/self_reprogramming.md` — security-reviewer MANDATORY when built.
 - [ ] **GOLD-FEAT-06** *(v1.1 per §WS-F note L~1405 — NOT a v1.0-GOLD blocker; excluded from the release-gate sweep)* Build exo-style swarm dashboard: `NodeResourceSnapshot` + gossip piggyback on heartbeat; `SwarmTable` in-memory; `daemon/resource_snapshot_cron.rs`; `neoth cluster swarm [--watch]`; WAL `0xDB SWARM_RESOURCE_SNAPSHOT`/`0xDC LOCAL_SNAPSHOT` *(⚠ spec stale 2026-07-04: 0xDB/0xDC taken by consent events AND the whole byte space is exhausted, cluster band 0xE0-0xEF full — snapshots must ride existing cluster payloads)*; Slint `SwarmNodeCard` in cluster tab — *test:* `neoth cluster swarm --output json` returns rows with cpu_pct, ram, vram; GUI card renders; stale entries pruned — *origin:* Gold-TODO #5 → full plan: `REVIEWS/_gold_audit/research/swarm_dashboard_exo.md`
 - [x] **GOLD-FEAT-07** Build LOWKEY moral core framework: `MoralCoreConfig`; `memory/moral_core/` (block.rs, loader.rs); `EnrichmentInputs.moral_core` at position 0; `security/local_shadow.rs` with synthetic-conversation injection; WAL `0xBE MORAL_CORE_APPLIED`/`0xBF LOCAL_SHADOW_FIRED`; `neoth moral-core import/list/preview/doctor` CLI; wizard step 6b — *test:* moral_core dir with tagged MD injects compact directives; local shadow fallback fires on refusal when enabled; moral_core=disabled skips injection — *origin:* Gold-TODO #16 → full plan: `REVIEWS/_gold_audit/research/lowkey_moral_core.md` — **SLICE 1 SHIPPED — loader + CLI** (`memory/moral_core/mod.rs` + `cli/moral_core.rs`): parses a dir of `*.md` (`# Heading`→block tag, `- bullet`→directive) into `MoralCoreBlock`s; `compact_directives` renders the `[MORAL CORE]`-bannered injectable text; `neoth moral-core {list,preview,doctor}`. 5 unit tests; docgen regen; clippy clean. **SLICE 2 SHIPPED — LIVE INJECTION:** `EnrichmentInputs.moral_core` added as the **first layer** of `build_enriched_request` (position 0, ahead of operator-context + persona); `moral_core::compact_for_injection()` loads `~/.neoth/moral_core/` and both chat (`cli/chat.rs`) + channel turns (`cli/serve_pipeline.rs`) now inject it. 2 inject tests (position-0 ordering, empty→unchanged) + all 8 `EnrichmentInputs` construction sites updated; full lib green; clippy clean. So a configured moral core is now actually injected into every turn at highest priority. **✅ SLICE 3 SHIPPED — USER-BUILDABLE (`7615104`, 2026-06-13, operator directive "users build their own moral core — text OR features" + 4-agent gremium → `REVIEWS/_gold_audit/research/moral_core_design_{content,nspace,refusal,ux}.md`):** `memory/moral_core/catalog.rs` (18 built-in directive-templates = the "features to pick", extracted from the operator's `QUELLEN/LOWKEY/` corpus — adoptable values/voice/latitude/sovereignty/anti_hedging/honesty patterns ONLY; compiled-in `const` table so it can't drift toward jailbreak/anti-detection without a code review; a test asserts NO injection-shaped/anti-detection phrasing ever ships) + `memory/moral_core/writer.rs` (all mutations through one place: atomic tmp+rename write, owner-only 0600/DACL, `[a-z0-9_-]{1,64}` path-traversal guard, single-line directive validation; append/remove/disable[→`.md.disabled`]/enable/apply_template/init_starter) + `cli/moral_core.rs` write-commands `init`(scaffold+preview)/`new`/`add`(free-text path)/`remove`/`disable`/`enable` + `template {list,show,add}`(pick-a-feature path). Transparency via existing `preview`/`doctor`. **20 moral_core tests + clippy `-D warnings` green.** **Line held:** operator-sovereignty over their OWN agent's voice/values/latitude — NOT jailbreak/anti-detection (the QUELLEN deep-read's own SKIP decision). **STILL DEFERRED — DESIGNS READY in the 4 `moral_core_design_*.md` docs:** (a) **N-Space anti-pattern scoring penalty + IMBA omission scan** → new `council/nspace.rs` (~60-pattern bundled catalog, self-contained, NO url-fetch) + `quality_score.rs`/`factual_check.rs` hooks — this is GOLD-ADAPT-LOWKEY-02/03 and addresses the "too-strict OUTPUT" (apologies/hedging/assistant-theater); MY-LANE buildable. (b) **refusal hard-block floor** → new `security/refusal_hard_block.rs` (CSAM/bioweapons/mass-casualty = `BLOCKED_FOREVER`, pre-tier-0, non-configurable — the principled boundary that keeps the whole refusal-freedom feature safe) + WAL `0x52`. (c) **FEAT-08 Tier-3 local-abliterated fallback** (THE answer to a cloud model over-refusing a legitimate operator request: route to the operator's OWN local model — NOT provider-deception; gate on `RefusalCause::SafetyPolicy`; WAL `0x50`/`0x51`; synthetic-prior-turn injection; touches hot `config/mod.rs`+`cli/chat.rs` — see `moral_core_design_refusal.md` for the full grounded slice plan; the `0xBF` in this entry is WRONG, that band is full → use `0x50..0x52`). (d) **GUI moral-core editor card** (Slint, display-gated). MoralCoreConfig + WAL `0xBE` still deferred. ✅ **MoralCoreConfig KILL-SWITCH WIRED (2026-06-22, parallel-free lane):** `config/policy.rs::MoralCoreConfig { enabled: bool (Default true) }` + `FreedomConfig.moral_core` field; `compact_for_injection` now best-effort reads `moral_core.enabled` → returns `None` when false — gated ONCE inside the fn so BOTH injection sites (chat.rs:509 + serve_pipeline:979) are covered with ZERO edits to those hot files. Default/unreadable config keeps injection ON (backward-compatible). 22 moral_core tests, lib 8797. RESIDUAL: **WAL `0xBE` audit ✅ ALREADY COVERED (2026-06-22, FEAT-07b verify-first):** toggling `moral_core.enabled` in freedom.yaml is audited by the existing generic **0xD0 CONFIG_RELOADED** frame — `config/reload.rs::try_reload` calls `diff_top_level`, which serialises the whole `FreedomConfig` to a YAML mapping and lists every changed top-level key, so `changed_fields` automatically includes `"moral_core"` on a kill-switch flip. No dedicated `0xBE` event needed (band-full anyway) and no HOT `wal/events.rs`/`serve_pipeline` edit. `security/local_shadow.rs` (FEAT-08-adjacent synthetic-shadow sub-feature) stays deferred — building the bare module now = primitive-ahead-of-consumer (YAGNI; no caller until the shadow-injection feature lands). FEAT-08 Tier-3 fallback = SHIPPED (see GOLD-FEAT-08 `34d1c29`).
 - [x] **GOLD-FEAT-08** Build refusal → local abliterated Qwen fallback (Gold #24): detect refusal after cloud model; route to `AbliteratedProvider`; inject shadow answer as synthetic prior-assistant-turn (Approach 1) or system-prompt context (Approach 2 fallback); cloud model continues — note: Anthropic Claude 4.6+ blocks trailing assistant prefill; use synthetic conversation turn instead — *test:* refusal from cloud model triggers local call; cloud model receives shadow context and produces answer; `0xBF LOCAL_SHADOW_FIRED` WAL frame emitted — *origin:* Gold-TODO #24 → full plan: `REVIEWS/_gold_audit/research/refusal_abliterated_fallback.md`, `REVIEWS/_gold_audit/research/lowkey_moral_core.md` — **✅ SHIPPED (`34d1c29`, 2026-06-13, 3-agent gremium → `REVIEWS/_gold_audit/research/feat08_*.md`):** `providers/abliterated.rs` (`AbliteratedProvider` over `LocalQwenAdapter`, name `local_abliterated`, in `is_local_provider`; `build_continuation_request`) + `security/refusal_abliterated.rs` (`should_route_to_abliterated` = `SafetyPolicy` cause ONLY; `try_abliterated_fallback` runs the GOLD-FEAT-07 **hard-block floor FIRST** [`is_hard_blocked` → 0x28 → return None] then local→shadow→cloud-re-ask→0x26/0x27; xxh3-hash only in WAL, best-effort) + `cli/chat.rs` Tier-3 insert after the LOWKEY recovery block (gated on `refusal_recovery.abliterated_fallback_enabled` [default false] + a re-classified SafetyPolicy over-refusal; replaces `response_text` + sets `derived_from_mirror_pipeline`) + `RefusalRecoveryConfig.{abliterated_fallback_enabled, abliterated_model}`. **DESIGN CORRECTIONS (verified vs shipped code):** `Provider::Request` has NO `history` field → **system-prompt injection** of the shadow draft (the synthetic-prior-turn approach is impossible at the trait level); WAL = **0x26 USED / 0x27 FAILED / 0x28 HARD_BLOCKED** in the provider band (the planned `0xBF`/`0x50`/`0x51` were ALL already taken). Full neothd suite + clippy `-D warnings` green; the GOLD-FEAT-07 hard-block floor is now consumed. The operator's local abliterated model is the principled answer to cloud over-refusal — operator-owned hardware, NOT provider-deception.
@@ -1418,13 +1418,13 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 - [x] **ZF-02** ✅ DONE (2026-07-05 — Picker Position 2, is_express=non-custom, Detail-Steps geskippt, Post-Setup-Tipps, ≤5 Fragen compile-asserted) Wizard-Express-Pfad: Picker an Position 2, Nicht-custom skippt identity-Detail/topology/autonomy/auto-update/wasm/supervisor; Channels/Keet/Obsidian/n8n/tududi/mobile-mcp → Post-Setup-Tipps. Ziel ≤5 Fragen. M.
 - [x] **ZF-03** ✅ DONE (2026-07-05 — do_ping/PingResult in init/catalog.rs, 1-Token-Ping pro Provider-Kind, skip-bar, non-TTY/local auto-skip, wiremock-Tests) Live-API-Key-Verify im Wizard (1-Token-Ping, grün/rot, skip-bar). S/M.
 - [x] **ZF-04** ✅ DONE (2026-07-05 — cli/rmas.rs, idempotent, 12 Tests, wizard/preset-schreibt-nie verifiziert) `neoth rmas consent --acknowledge` (zeigt Lizenz-Status; Wizard/Preset erstellen den Marker NIE). S.
-- [ ] **ZF-05** GUI-Wizard-Parity/Express (fehlend: HMAC/Keet/Obsidian/n8n/Bitwarden/WASM; Preset-Picker als Screen 2). M/L.
+- [x] **ZF-05** ✅ DONE (2026-07-10 — preset-picker screen, 5 parity screens: hmac-setup/obsidian-setup/n8n-setup/keet-tip/wasm-setup; express path Welcome→License→Identity→PresetPicker→Done; write_zf05_fields() patches freedom.yaml on Finish; wizard rerun resets all wz_* state; wizard_logic.rs registered as module with unit tests) GUI-Wizard-Parity/Express (fehlend: HMAC/Keet/Obsidian/n8n/Bitwarden/WASM; Preset-Picker als Screen 2). M/L.
 - [x] **ZF-06** ✅ DONE (2026-07-05, `1a6a5537` — CronKey-Fleet + Supervisor mit gen_rx-Hot-Reload in serve.rs/serve_tasks.rs; Preset-Flip spawnt/stoppt ohne Restart) Cron-Hot-Spawn: enabled-Gates sind spawn-time → Preset-Flip braucht Restart; Supervisor-Muster wie adapter-fleet (serve.rs:719-771) für Cron-Fleet. M.
 - [ ] **ZF-07** Boot-Stagger/First-Tick-Semaphore für full-auto (28 Crons) — NACH Feldbericht (YAGNI-Gate). S.
 - [x] **ZF-08** ✅ DONE (2026-07-05 — 7 neue Gruppen-Hints, consent-gated Gruppen explizit ausgeschlossen, 28 Tests) Doctor advisable-Hints für weitere default-OFF-Gruppen (Muster steht: checks/config.rs). S, wiederkehrend.
 - [x] **ULTRA-N-04** smart MCP loader verdrahtet (assemble_catalogue_for_prompt @ chat/serve_pipeline; `smart_loading:false` = alter Pfad) — e8c085a9.
 - [x] **ULTRA-DOC** doctor advisable-hints groundtruth_injection + consolidation_sweep — e8c085a9. Beifang: **CouncilConfig::default() serde-Default-Drift-Bug gefixt** (26c3c903 — absent council-Block ⇒ groundtruth false trotz Default-ON).
-- [ ] **G02-CLUSTER-02b** Foreign-Indexer (persist-then-dedup liegt; idx_foreign_events hat keinen Konsumenten, wal_sync.rs:22-24). M.
+- [x] **G02-CLUSTER-02b** Foreign-Indexer (persist-then-dedup liegt; idx_foreign_events hat keinen Konsumenten, wal_sync.rs:22-24). M. — ✅ **STALE-FLIP (2026-07-10, Fable-5, verify-first against code):** the "keinen Konsumenten" premise is FALSE — `cluster/foreign_indexer.rs` IS the consumer (30s poll drains `idx_foreign_events` via a separate `idx_foreign_indexed_events` tracking table so it never mutates foreign rows; applies `0x90`/`0x91` → episode importance boost, `0x92` → soft-decay floored 0.10, `0x98`/`0x94`/unknown → mark-indexed-no-write) AND it is WIRED into the daemon: `serve_tasks::spawn_foreign_indexer` (`serve_tasks.rs:3235`) called at `serve.rs:1425`. Hyperswarm receive loop persists-then-advances-dedup correctly (`hyperswarm.rs:769`). **Residual (genuinely open, both narrow — split to a follow-up, NOT this item's scope):** (1) `cluster/iroh_transport.rs::gossip_handler` commits VC-only without persisting to `idx_foreign_events` (documented known gap; `cluster-iroh` opt-in feature only); (2) full multi-week node-restore — APPLYING stored foreign events back INTO recall on a recovered node (conflict-resolution/merge) — the codebase's own header flags this as deferred. The persist→consumer→apply CORE this item names is shipped.
 
 ## 5. Definition of GOLD (Release Gate)
 
@@ -1571,10 +1571,10 @@ Scope note: this is the post-recovery backlog from the interrupted NEOTH session
 ### Memory / Council / Runtime Quality
 
 - [x] **COUNCIL-WEIGHTING-01** ✅ SHIPPED (2026-07-10): locality priors on council winner selection. `CouncilConfig` gains `locality_tie_break` (default TRUE — local wins effective ties), `locality_tie_epsilon` (0.05), `local_score_bonus` (0.0 — default-behavior-preserving additive prior). `quality_score::apply_locality_weights` applied in `chat.rs::select_winner_role_agnostic` BEFORE both selection paths (score display stays consistent); local = `local_qwen|local_ouro|local_ollama|recursive_mas` (`InferenceProvider::is_local`; claude_cli deliberately cloud). Tests pin local-priority tie, cloud-clearly-ahead-still-wins, zero-config identity, bonus flip + 26c3c903 serde-default pin. 392 council tests green.
-- [ ] **WAL-VIEWS-SCALE-01** Evaluate `views.db`/WAL projection scalability over months of usage. *Problem:* append-only WAL plus SQLite projection can degrade with long-lived operators. *Done when:* synthetic long-run fixture measures projection/query latency, index bloat, and compaction/rebuild path; roadmap gets a threshold for when to optimize.
+- [x] **WAL-VIEWS-SCALE-01** Evaluate `views.db`/WAL projection scalability over months of usage. *Problem:* append-only WAL plus SQLite projection can degrade with long-lived operators. *Done when:* synthetic long-run fixture measures projection/query latency, index bloat, and compaction/rebuild path; roadmap gets a threshold for when to optimize. — ✅ **DONE (2026-07-10, `132d2963`, Fable-5):** `wal/views/scale_bench.rs` — `#[ignore]`d synthetic fixture seeds 50k `idx_episode` rows over 6 months into a REAL `views.db` (faithful schema via `memory::store::open` → real `idx_episode` + `idx_episode_fts` + triggers), measures all four required signals: (1) projection latency (`episode::fetch_episodes` SELECT + Rust temporal grouping), (2) FTS single-term MATCH latency, (3) index bloat (on-disk bytes/row after WAL checkpoint), (4) FTS rebuild/compaction wall-clock. Generous ceilings double as a regression guard (10× slowdown fails the build) without CI-runner flake. **Roadmap threshold recorded in module docs:** optimize when field projection >~500 ms (user-perceptible synchronous recall) OR `views.db` >~1 GiB / FTS shadow >2× base `idx_episode` (move rebuild manual→scheduled compaction cron); below that the append-only-projection design needs no change. Ignored so it never runs the default sweep (50k rows; box BSODs under parallel test load) — run on demand `cargo test -p neothd --lib scale_bench -- --ignored --nocapture`. Gates: clippy `-D warnings`; test compiles + correctly ignored.
 - [x] **PROFILE-LOCAL-EXTRACT-01** ✅ SHIPPED (2026-07-10): recon verdict — extraction was ALREADY provider-agnostic (`extract(&dyn Provider, …)`, no cloud hardwiring); real deltas: (1) prompt bounded via `ProfileConfig.extract_window_chars` (serde default 32 000; newest-first segment selection, oversized single segments excluded not truncated), (2) wiremock fixture proves full local openai_compat round-trip with zero cloud config. 6 new tests incl. serde-default pin; nonce determinism (G.1) preserved. 544 profile tests green.
-- [ ] **PROACTIVE-PROFILING-01** Add an opt-in proactive profiling loop. *Motivation:* NEOTH should move beyond reactive answers and suggest actions/crons based on learned operator patterns. *Constraints:* consent-gated delivery, WAL audit, no unsolicited high-autonomy actions. *Done when:* suggestions are explainable, dismissible, and never execute without the configured autonomy gate.
-- [ ] **OBSIDIAN-DREAMING-01** Deepen Obsidian from passive memory vault to active dreaming/self-reflection buffer. *Implementation shape:* synthesize periodic reflection notes from recall/contradictions/goals, write to a bounded subdir, and feed only verified/curated outputs back into recall. *Done when:* generated notes cannot recursively poison preload or groundtruth.
+- [x] **PROACTIVE-PROFILING-01** Add an opt-in proactive profiling loop. *Motivation:* NEOTH should move beyond reactive answers and suggest actions/crons based on learned operator patterns. *Constraints:* consent-gated delivery, WAL audit, no unsolicited high-autonomy actions. *Done when:* suggestions are explainable, dismissible, and never execute without the configured autonomy gate. — ✅ **STALE-FLIP (2026-07-10, Fable-5, verify-first against code):** shipped + wired. `daemon/profile_adapt_cron.rs` (`run_profile_adapt_tick` + `spawn_profile_adapt_cron_loop`) re-aggregates the behavioural snapshot from the WAL every `interval_secs` and queues adaptation proposals as `0x1C SELF_DEV_PROPOSED` frames (WAL-audited) for operator review via `neoth self-dev review/decline` — proposals are never auto-applied. **Consent-gated + dispatched:** `serve_tasks.rs:244` dispatches `ProfileAdapt => spawn_profile_adapt_cron`; opt-in gate `serve_tasks.rs:1753` `if !config.profile_adapt.enabled { return None; }` (default OFF); registered `daemon/mod.rs:126`. Every "Done when" constraint (explainable proposals, dismissible via decline, never executes without the autonomy gate) is met by construction.
+- [x] **OBSIDIAN-DREAMING-01** Deepen Obsidian from passive memory vault to active dreaming/self-reflection buffer. *Implementation shape:* synthesize periodic reflection notes from recall/contradictions/goals, write to a bounded subdir, and feed only verified/curated outputs back into recall. *Done when:* generated notes cannot recursively poison preload or groundtruth. — ✅ **DONE (2026-07-10, `11902c68`, Fable-5):** verify-first found the reflection SYNTHESIS already shipped (`daemon/dreaming.rs` cosine-clusters `idx_episode` → theme dreams → `~/.neoth/dreams/<day>.jsonl`; `dreaming_task.rs` cron composes nightly) AND `sync_dreams_to_obsidian` (bounded `<vault>/<subdir>/Dreams/<day>.md`, atomic write) existed + tested — the ONLY gap was the missing call-site. Wired: after a dream batch lands, `dreaming_task::sync_day_to_obsidian` pushes that exact day (JSONL-stem-derived → no midnight-rollover mismatch) into the vault. **The Done-when is met BY CONSTRUCTION:** dreams land only as markdown and NEVER re-enter recall/groundtruth, so they cannot recursively poison preload — the "feed curated outputs BACK into recall" clause is the exact poisoning path the Done-when forbids and is deliberately NOT built (a re-ingest loop would violate the safety criterion). Gate = a configured `obsidian_vault` (operator vault opt-in); no vault → no-op. Pure `resolve_obsidian_target` helper unit-tested + `sync_dreams_to_obsidian` 5 tests. Gates green: check/clippy/dreaming 77.
 - [ ] **OMI-MULTIMODAL-01** Upgrade the OMI/multimodal pipeline for native audio/video-call handling. *Scope:* voice/video ingestion, transcript alignment, consent boundaries, and memory summarization. *Done when:* text-only paths remain unaffected and media ingestion has explicit operator controls.
 
 ### Security / Platform / Dead Code
@@ -1586,3 +1586,261 @@ Scope note: this is the post-recovery backlog from the interrupted NEOTH session
 - [x] **DEAD-HELPERS-01** — resolved (2026-07-10): `spawn_discovery` never existed — stale doc references fixed (hyperswarm.rs, cluster/mod.rs); `build_judge_prompt`/`parse_judge_response` documented forward-infra with concrete consumer (ADOPT-22 F3), test-covered.
 - [x] **COMPACTOR-STREAM-01** — STALE (verified 2026-07-10): `CompactingProvider::stream` fully implemented (compactor.rs:517); `unimplemented!()` only in `#[cfg(test)]` stub providers.
 - [x] **LOCAL-DEADCODE-CLEANUP-01** — resolved as justified (2026-07-10): all three files carry in-code consumer/gate comments (Bite-3 keep-alives, trait-bound note, builtin anchor). foreign_indexer's 8 unused serde fields deleted outright.
+
+---
+
+## Vetted NEOTH defect audit — Opus 4.8 batch queue (2026-07-10)
+
+This section is the executable successor to the raw recovered backlog above. It was produced from declaration-to-caller traces against `main` at audit snapshot `132d2963`. The worktree was already dirty and `main` continued moving during the audit; therefore every batch starts with the drift preflight below. A prior `SHIPPED` line is not proof that the runtime invariant is true: the foreign indexer and Obsidian preload items below are explicitly **REOPENED** by counter-evidence.
+
+### Opus handoff contract
+
+Before touching a batch:
+
+```powershell
+git rev-parse --short HEAD
+git status --short
+git diff -- <every file named by the batch>
+rg -n "<the cited symbols>" <every file named by the batch>
+```
+
+- Preserve every unrelated dirty change. Never reset, checkout, clean, or rewrite another batch's files.
+- Reproduce the failing invariant with a focused regression test first. A code-presence grep is not acceptance evidence.
+- Keep one logical batch per commit if the operator later asks for commits; this audit itself does not authorize commits.
+- If a cited premise changed since `132d2963`, stop that batch, re-trace declaration → config/default → live caller → shutdown/reload path, and update this card before coding.
+- Schema changes require forward migration, old-schema fixture, idempotent reopen, and rollback/recovery reasoning. WAL event-byte space is exhausted; use the accepted `EVENT_TYPE_EXTENDED` envelope rather than inventing a byte.
+- Any effectful daemon path must satisfy ADR-008/009: truthful status, typed permission action, **intent before effect**, result after effect, safe default, doctor/status surface, and order tests.
+- Do not “fix” isolation with a larger denylist, do not match foreign objects by coincidental numeric IDs, and do not parse provenance out of human-readable text.
+
+### Priority and dependency map
+
+| Batch | Priority | Scope | Effort | Risk | Can run parallel with |
+|---|---:|---|---:|---:|---|
+| B01 SELF-IMPROVE-SAFETY | P0 | false sandbox, verdict parser, verified-accept state | M–L | HIGH | B02, B03, B04, B06 |
+| B02 MCP-TRUST-METADATA | P0 | catalogue/gate parity + prompt-safe metadata | M | MED | B01, B03, B04, B06 |
+| B03 MESH-IDENTITY-RETRY | P0 | peer namespace + retry/dead-letter semantics | M | MED | B01, B02, B04, B06 |
+| B04 PRELOAD-FS-BOUNDARY | P0 | symlink/junction containment | M | MED | B01, B02, B03, B06 |
+| B05 PRELOAD-PROVENANCE-RECOVERY | P0 | exact provenance, reconciliation, transaction/recovery | L | HIGH | nothing touching Obsidian/groundtruth |
+| B06 WAL-FAIL-CLOSED | P0 | quota admission + indexer corruption handling | M | MED | B01–B04 |
+| B07 CHANNEL-CREDENTIAL-ATOMICITY | P1 | fail-loud load and reload-before-teardown | S | LOW–MED | B01–B06 except B08 |
+| B08 CRON-FLEET-LIFECYCLE | P1 | finished-handle supervision + config-aware reload | M | MED | not B07/B14 (`serve.rs`) |
+| B09 MCP-FRAME-LIMITS | P1 | bounded framing/buffering + checked arithmetic | S–M | LOW–MED | all except B02 if same worker |
+| B10 WEBHOOK-SSRF-PRIVACY | P1 | mapped-IP holes + raw URL leakage | M | LOW | all non-webhook batches |
+| B11 UNICODE-BOUNDARIES | P1 | five panic sites + compactor char contract | S–M | LOW | all disjoint batches |
+| B12 HTTP-BODY-LIMITS | P1 | pre-allocation caps for n8n/companion | S | LOW | all disjoint batches |
+| B13 PRELOAD-AUTORUN-AUDIT | P1 | ADR-008/009 closure | M–L | MED | only after B04/B05 |
+| B14 CONFIG-WIRING-TRUTH | P2 | Buddy MCP status + Swarm config | S–M | LOW | after B08 (`serve.rs`) |
+| B15 SELF-IMPROVE-EXECUTOR | P2 | real executor/revise/nightly wiring | L | HIGH | only after B01 |
+| B16 EVAL-RUNNER-HARDENING | P2 | timeout/tests/truthful CLI; shell remains intentional | S | LOW | after B11 if same file |
+
+Recommended waves:
+
+1. **Wave 1, four workers:** B01, B02, B03, B06.
+2. **Wave 2, four workers:** B04, B07, B09, B10/B12.
+3. **Wave 3:** B05 alone in the Obsidian/groundtruth lane; B08 and B11 can run in parallel if their files remain disjoint.
+4. **Wave 4:** B13 after B05; then B14, B15, B16.
+5. Re-audit the parked capability surfaces only after all P0/P1 gates are green.
+
+### B01 — SELF-IMPROVE-SAFETY (P0, REOPEN IMPR-03/KB-02)
+
+- [ ] **NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01** Replace the false isolation guarantee and make approval evidence non-bypassable.
+- **Evidence:** `self_improve.rs::run_verification_in_sandbox` (~945) creates a temp cwd but executes proposal-supplied text through `cmd /C` or `sh -c`; it restores host `PATH`, `HOME`, `USERPROFILE`, `SystemRoot`, and `ComSpec`, has no filesystem/process/network sandbox, and no command timeout. `validate_verification_command` (~1037) is only a token denylist and its own comment admits process/network isolation is absent. Proposal commands originate in SkillOpt JSON via `parse_proposal_output`.
+- **Independent correctness failures:** `review_execution_result` (~747) checks `upper.contains("APPROVE")` before BLOCK/REVISE, so `DO NOT APPROVE`, `DISAPPROVE`, or `BLOCK: unsafe; never APPROVE` can become Approved. `accept_proposal` still uses `read_to_string(path).unwrap_or_default()` (~312), so a read/UTF-8/permission failure can create an empty rollback backup before overwrite. A pending proposal can be accepted without a persisted verified-approval artifact.
+- **Required implementation:**
+  1. Replace free-form proposal shell text with a typed verifier spec and explicit argv. The safest first release is default-deny for legacy strings; only operator-owned trusted verifier profiles may run.
+  2. If arbitrary build/test code must remain possible, run it in the existing isolated-worktree/sandbox stack with a wall-clock cap, child-tree kill, output cap, no inherited home/secrets, and an explicit statement of what the sandbox does and does not isolate. A temp cwd plus denylist is not a sandbox.
+  3. Parse an exact structured verdict (`approve|revise|block`) or anchored first-line grammar. BLOCK/REVISE must never be shadowed by a substring. Persist verifier input hash, output/evidence hash, verdict, timestamp, and base-content hash.
+  4. Add `VerifiedApproved` (or equivalent evidence state). A proposal carrying a spec may not reach `accept_proposal` from Pending. Spec-less manual accept needs an explicit `--accept-unverified` ceremony; automated paths may never use it.
+  5. Fail loudly on current-file read failure and compare the current content hash with the staged base even if git is unavailable/untracked. Keep the already-added git drift abort as defense in depth.
+- **Tests:** hostile absolute-path write; HOME read; renamed-network-tool/Python process spawn; timeout with child process; `DISAPPROVE` and mixed BLOCK/APPROVE; direct pending accept rejection; read failure preserves file/status; untracked content drift rejects; approved evidence digest round-trip; legacy verifier default-deny.
+- **Done:** no source comment claims isolation that the OS boundary does not enforce; no proposal-controlled shell reaches the host by default; only matching, persisted green evidence can authorize verified accept.
+- **STOP:** if a real cross-platform sandbox is not available, ship default-deny/typed trusted profiles. Do not weaken the gate to keep legacy convenience.
+
+### B02 — MCP-TRUST-METADATA (P0)
+
+- [ ] **NEOTH-AUDIT-MCP-TRUST-METADATA-01** Make prompt catalogue visibility identical to execution trust and render child metadata as bounded data.
+- **Evidence:** `mcp/config.rs` defaults `trust_all_tools=false`. `mcp/catalogue.rs::fetch_server_tools` (~202–225) uses `allow_tools.map(...).unwrap_or(true)`; `build_server_block` (~319–349) likewise filters only when an allowlist exists. `mcp/gate.rs` (~243–273) correctly denies `allow_tools=None && trust_all_tools=false`. Thus untrusted tools enter the system prompt and only fail later at invocation.
+- **Metadata gap:** `mcp/sanitizer.rs` checks known phrases in tool names and recursively sanitizes schema `description` values, but property keys, type strings, control/Markdown characters, tool count, schema depth, and total rendered bytes remain open. `catalogue.rs::render_tool_entry/render_input_schema` interpolates them directly into headings/bold/inline-code Markdown.
+- **Required implementation:** one pure `tool_allowed(server_cfg, raw_name)` used by smart catalogue, full catalogue, and runtime gate. Matrix: `Some(list)` exact members only; `None+trust=true` all; `None+trust=false` none and ideally no child spawn. Keep the raw exact name solely for RPC dispatch. Validate supported identifier grammar/length and render the visible schema as bounded canonical JSON via Serde, not string-built Markdown. Cap tools/server, nesting, string lengths, and total catalogue bytes.
+- **Tests:** full 3-state trust matrix in smart and full mode; catalogue↔gate parity property test; no child spawn for deny-all; tool/property/type containing newline, backticks, fences, headings, role text, and known injection phrases cannot create prompt structure; exactly-at-cap/over-cap tests; normal dot/dash/underscore names remain compatible.
+- **Done:** every prompt-visible tool is executable under layer-1 trust, and no child-controlled structural field can escape its serialized data record.
+
+### B03 — MESH-IDENTITY-RETRY (P0, REOPEN DES-13)
+
+- [ ] **NEOTH-AUDIT-MESH-IDENTITY-RETRY-01** Stop applying peer-local episode IDs to unrelated local episodes and stop acknowledging retryable failures.
+- **Evidence:** `iroh_transport.rs` and `cluster/wal_sync.rs` persist `origin_peer_pk`/`origin_seq`, but `foreign_indexer.rs::PendingRow` (~66–70) drops both; `fetch_pending` selects only row id, type, payload. Handlers read peer `event_id` and call `apply_episode_boost/apply_episode_decay_sql` against local `idx_episode WHERE event_id=?`. The ID is a node-local WAL/HLC event ID, not SQLite autoincrement and not origin-namespaced. Existing tests manufacture the same ID on both sides and therefore hide the bug.
+- **Second failure:** `process_one_inner` catches every `dispatch_foreign_row` error and still inserts `idx_foreign_indexed_events`. The savepoint is real and must be preserved, but transient SQLite busy/I/O/schema/trigger errors are permanently lost.
+- **Required implementation:** thread origin through `PendingRow`. In gossip, never map solely by peer numeric ID. Safest immediate behavior is terminal `foreign-only/no-local-mapping`; the complete behavior needs an explicit composite mapping `(origin_peer_pk, peer_event_id) -> local_event_id` or separate foreign episode state. Keep Same-Origin restore helpers unchanged. Return typed outcomes `Applied | TerminalNoop(reason) | Retryable(class)`; only Applied/TerminalNoop get terminal markers. Retryable rows roll back, retain attempts/backoff, do not block later rows, and become visible dead-letter after a bounded budget.
+- **Tests:** peer/local collision leaves local episode unchanged; two peers sharing numeric ID stay isolated; explicit mapping mutates only mapped row; transient trigger failure leaves unmarked then succeeds; malformed/unknown marks once; retry row does not head-of-line block; dead-letter visibility; Same-Origin restore matrix stays green.
+- **Done:** no foreign event can mutate local recall without an origin-bound mapping, and no retryable storage failure is reported as indexed.
+- **STOP:** if stable mapping semantics are not approved, ship the fail-closed no-local-mutation path first. Never infer identity from timestamps or equal numbers.
+
+### B04 — PRELOAD-FS-BOUNDARY (P0, REOPEN L6 autorun)
+
+- [ ] **NEOTH-AUDIT-PRELOAD-FS-BOUNDARY-01** Prevent preload writes escaping the configured vault through descendant symlinks or Windows junctions.
+- **Evidence:** `preload_template` validates a one-component subdir then builds `vault.join(subdir).join(rel)`; `WriteCoalescer::flush` uses normal `create_dir_all/write/rename` and explicitly leaves target safety to the caller. The reader already demonstrates canonical containment in `obsidian_vault_reader_cron.rs`.
+- **Required implementation:** canonicalize and accept the configured vault root (an intentionally symlinked root may remain valid). For every existing descendant ancestor and target parent, resolve and require containment under that canonical root, including Windows reparse points. Use no-follow/handle-relative final writes where available to close check-to-write races. Apply the same guard to preload, scaffold, sync, dreams, and every shared vault writer or centralize it in the coalescer.
+- **Tests:** Unix descendant symlink escape; Windows junction/reparse escape; target symlink swap; no outside file created; configured root symlink remains supported if that is the chosen contract; normal nested writes unchanged.
+- **Done:** every vault write primitive proves its resolved parent stays under the configured canonical root at effect time.
+
+### B05 — PRELOAD-PROVENANCE-RECOVERY (P0, REOPEN all three L6 children)
+
+- [ ] **NEOTH-AUDIT-PRELOAD-PROVENANCE-RECOVERY-01** Replace text-derived provenance and make copy/index/state reconciliation crash-recoverable.
+- **Evidence:** `collect_preload_files` drops the entire file when `copy_to_vault=false`, even if `ingest=true`. Changed-to-empty files update `ingested_hashes` and continue before revocation. Deleted files are never visited, so normal and restricted rows remain. Restricted rows have no retirement lifecycle. `revoke_existing_preload_chunks` matches `statement.contains("source_path=<rel> ")`, allowing cross-match/content spoofing. DB mutations autocommit before vault `coalescer.flush`; JSON state is written last, with no shared transaction/recovery journal.
+- **Required implementation, in this order:**
+  1. Add versioned DB provenance keyed at least by `(template_root_id, rel_key, target_kind, chunk_key)` and store exact row IDs. Namespace multiple configured roots. Never parse the statement to identify ownership.
+  2. Compute a complete previous-vs-current operation plan. `copy_to_vault` and `ingest` are independent; collect when any destination is active. A changed file is revoke/retire-old then insert-new; changed-to-empty is an explicit zero-active tombstone. Deleted normal files revoke owned groundtruth; deleted/changed restricted files retire unpromoted rows. Define and audit the policy for already-promoted restricted rows. Do not auto-delete copied vault files without explicit prune because the operator may have edited them.
+  3. Treat JSON hash state as a rebuildable cache, not authority. Persist a PREPARED operation journal, stage safe temp files, mutate DB provenance/groundtruth/restricted rows in one SQLite transaction, publish staged files atomically, then mark COMMITTED. Rerun/startup must finish or roll back each phase exactly once.
+  4. Add fault injection after every phase. Preserve the existing per-row/restricted trust policy and prevent generated Dreams/Facts/Synthesis/Self/Wiki output from re-entering preload.
+- **Tests:** ingest-only/no-copy; copy-only; both false skip; changed-to-empty revokes; delete one leaves the other; same rel path in two roots isolated; `a.md` change never revokes `a.md extra.md`; changed/deleted restricted retirement; promoted-row policy; copy failure, insert-after-revoke failure, state-write failure, and restart recovery; idempotent rerun after every injected failure.
+- **Done:** active DB rows equal the current manifest snapshot, provenance is exact/structured, and any crash state is replayable without stale facts, duplicate rows, or outside-vault writes.
+- **STOP:** do not ship deletion, empty-file, substring, or state-order changes as competing micro-fixes. They share one provenance/recovery invariant and one hot file.
+
+### B06 — WAL-FAIL-CLOSED (P0, REOPEN GOLD-COR-23)
+
+- [ ] **NEOTH-AUDIT-WAL-FAIL-CLOSED-01** Enforce the quota under concurrency and make index corruption loud instead of permanently stalling projections.
+- **Quota evidence:** `wal/writer.rs::QuotaGuard` checks sticky breach before `fetch_add(payload_bytes)`; only the compare-exchange winner measures disk. Losers do not wait and can return `Ok` while breach is being set. It checks current used bytes rather than `used + projected frame bytes`, and the claimed strict concurrency test accepts admissions even when the fixture is already over ceiling.
+- **Indexer evidence:** `memory/indexer.rs::replay_once` breaks on every `decode_frame` error and commits the same cursor. `wal/frame.rs` distinguishes `BufferTooShort`, `InvalidMagic`, and `CrcMismatch`; `wal/scan.rs` already has the correct rule: only short/torn tail is benign, complete invalid frames are corruption.
+- **Required implementation:** serialize first/threshold measurement state or make concurrent losers await the result. Admit against saturating projected full-frame bytes including overhead; no admission while state is unknown. In indexer, centralize the scan error classifier: `BufferTooShort => benign tail`, everything else => rollback/no cursor advance, deduplicated tamper event, explicit quarantine/rotation policy. Never skip across a corruption island and call it caught up.
+- **Tests:** prefilled-over-limit + 16-thread barrier yields zero admissions; remaining space smaller than frame rejects; under-limit concurrency works; reset clears sticky state. Valid frame+torn tail commits first; CRC/invalid magic/length inconsistency fails loudly with cursor before bad frame; valid frame after corruption is not surfaced; exactly one deduped `INDEXER_TAMPER_SUSPECT`.
+- **Done:** the documented ceiling is a true admission invariant and a complete corrupt frame cannot silently freeze `views.db`.
+
+### B07 — CHANNEL-CREDENTIAL-ATOMICITY (P1)
+
+- [ ] **NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01** Validate credentials before startup degradation or reload teardown.
+- **Evidence:** `serve.rs` uses `Credentials::load_or_default(...).unwrap_or_default()` at startup. On reload it aborts the running channel fleet before loading credentials, then also defaults parse/I/O failure to empty, contradicting `bad_yaml_returns_error_not_silent_default` in `config/credentials.rs`.
+- **Required implementation:** missing file remains the loader's legitimate empty case; parse/I/O/permission errors propagate at startup. On reload, fully load and validate fresh config+credentials before touching handles. A bad reload records warning/audit and leaves the old fleet intact. For valid rotation, construct/probe where possible, then perform the minimal abort→bind swap exactly once.
+- **Tests:** bad YAML startup errors; unreadable file errors; missing file allowed; bad reload preserves fake running adapters/task count; valid token rotation replaces once; failed new bind leaves a truthful degraded status and no duplicate workers.
+- **Done:** configuration failure can never silently convert a healthy fleet to empty credentials.
+
+### B08 — CRON-FLEET-LIFECYCLE (P1)
+
+- [ ] **NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01** Supervise completed handles and reload changed cron specs, not only enable/disable keys.
+- **Evidence:** `serve.rs` stores handles by `CronKey` and derives running state from map keys without `JoinHandle::is_finished`; wrapped Err/Panic handles remain registered forever. `desired_cron_keys/diff_cron_fleet` compares only a `HashSet<CronKey>`, so interval/path/model/config changes do not restart snapshot-based tasks such as Babel, BG monitor, self-improvement collector, and several Obsidian/SelfMap tasks.
+- **Required implementation:** choose one model. Preferred: `CronSpec { key, config_fingerprint }` plus supervisor state/outcome/backoff. Before every diff, remove+join finished handles; desired transient failures restart with bounded backoff, terminal config failures remain visible without a tight loop. A changed fingerprint performs orderly restart from the new config; unchanged self-reloading tasks survive. Shutdown disables respawn before abort/join.
+- **Tests:** finished success/Err/Panic cleanup and bounded respawn; no respawn when undesired; terminal error no loop; interval/path/model fingerprint changes restart once; unchanged fingerprint does not; disable→enable once; shutdown race cannot resurrect.
+- **Done:** status reflects actual live tasks, and every accepted reload value either takes effect or is explicitly reported restart-required.
+
+### B09 — MCP-FRAME-LIMITS (P1)
+
+- [ ] **NEOTH-AUDIT-MCP-FRAME-LIMITS-01** Bound child-controlled MCP framing before allocation.
+- **Evidence:** `mcp/transport.rs::parse_frame` has no header/body cap and computes `body_start + content_length` unchecked. `mcp/client.rs::request` grows a `Vec` until a frame completes; 5/30-second timeouts limit time, not bytes. Handshake, tools/list, and tools/call all share this path.
+- **Required implementation:** document `MAX_MCP_HEADER_BYTES` and a realistic/configurable `MAX_MCP_FRAME_BYTES` (start by validating 16 KiB/16 MiB against real media results). Reject overlong unterminated headers immediately; parse length with cap; use `checked_add`; cap accumulated bytes before and after each read. On violation close/discard the child and return typed server-scoped protocol error.
+- **Tests:** header cap without terminator; declared over-cap rejected before body; `usize` overflow returns Err; exactly-at-limit/one-over; endless mock child bounded and reaped; multiple valid small frames in one read preserved.
+- **Done:** no configured MCP child can make process memory grow beyond the documented per-frame/buffer bound.
+
+### B10 — WEBHOOK-SSRF-PRIVACY (P1)
+
+- [ ] **NEOTH-AUDIT-WEBHOOK-SSRF-PRIVACY-01** Close validator drift and guarantee hash-only endpoint diagnostics.
+- **Evidence:** `webhook_manager.rs::is_blocked_ip` blocks common IPv4/private and native IPv6 ranges but misses IPv4-mapped IPv6 private/loopback, unspecified IPv4/IPv6, and broadcast. The stronger validator already exists in the Obsidian mirror code. Separately, tracing at the delivery/error sites logs `url=%endpoint.url`; `extract_host_port` embeds the raw URL in error strings; WAL helpers hash the explicit URL field but persist unsanitized `reason/error`, reintroducing path/query/userinfo credentials.
+- **Required implementation:** centralize a tested public-endpoint IP predicate and normalize `to_ipv4_mapped()` before classifying. Preserve the already-correct DNS pin/no-redirect behavior. Introduce `SafeEndpointLabel { hash, optional_safe_host }`; logs use only that. Parse/network errors become typed reason codes; strip `reqwest::Error` URLs before tracing/WAL. Audit helpers accept only sanitized types, not raw strings.
+- **Tests:** `::ffff:127.0.0.1`, `::ffff:10.0.0.1`, `0.0.0.0`, `::`, broadcast, RFC1918/CGNAT/ULA blocked; public v4/v6 allowed. Capturing subscriber and decoded WAL for success, non-2xx, missing secret, invalid scheme/host, SSRF, and send failure contain fixture hash but no raw userinfo/path/query token.
+- **Done:** all endpoint validators agree and no webhook URL secret can enter logs or WAL through either primary fields or nested error text.
+
+### B11 — UNICODE-BOUNDARIES (P1)
+
+- [ ] **NEOTH-AUDIT-UNICODE-BOUNDARIES-01** Remove externally triggerable UTF-8 boundary panics and honor the compactor's character contract.
+- **Confirmed panic sites:** `cli/chat.rs` slices council transcript at `MAX_TRANSCRIPT_BYTES` before its ineffective boundary loop; `media/document.rs` calls `String::truncate(MAX_TOTAL_TEXT)` before checking; `tools/web_fetch.rs` slices fetched Unicode at byte 8000 while calling it a char cap; `cli/eval.rs::truncate` returns `&s[..max]`; `coding/validate.rs` truncates accumulated Unicode diagnostics at an arbitrary byte.
+- **Contract error:** `config/policy.rs` exposes `history_keep_recent_chars`, but `providers/compactor.rs::semantic_split` uses `prompt.len()` bytes. CJK/emoji therefore retain far fewer recent characters than configured.
+- **Required implementation:** add one tiny audited UTF-8 byte-cap helper returning the largest valid boundary ≤ cap, plus a separate character-count→byte-offset helper. Apply byte helper where constants are bytes and char helper where config/docs say characters. Derive compactor search windows in character positions, then slice at computed byte offsets. Rename telemetry fields if they truly remain byte counts.
+- **Tests:** for every site, `"a".repeat(cap-1)+"€"+tail` never panics and stays within the selected unit; emoji/CJK compactor keeps exactly N Unicode scalars; `keep == chars.count()` yields split 0; semantic marker in Unicode window; ASCII output remains byte-identical.
+- **Done:** repo search finds no raw constant byte slice/`String::truncate` on untrusted `String` without a preceding boundary calculation in the audited paths.
+
+### B12 — HTTP-BODY-LIMITS (P1)
+
+- [ ] **NEOTH-AUDIT-HTTP-BODY-LIMITS-01** Enforce advertised HTTP body limits before buffering.
+- **Evidence:** `n8n_api::read_body_capped` calls `collect()` and only then checks 256 KiB. `daemon/companion.rs::handle_pair` calls `req.collect()` and only then checks 16 KiB. `channels/webhook_listener.rs` and `paperless/webhook_server.rs` already show the correct `http_body_util::Limited` pattern.
+- **Required implementation:** reject oversized declared Content-Length early and wrap `Incoming` in `Limited` so chunked/lying senders are bounded during collection. Return 413/payload-too-large distinctly from malformed/read errors; retain auth/loopback behavior. Add connection timeout/concurrency caps only if absent and testable, without broad HTTP refactor.
+- **Tests:** honest over-cap Content-Length; chunked one-byte-over; exactly-at-cap; read error; no handler side effect on rejected body; response status 413; bounded allocation assertion via streaming fixture.
+- **Done:** comments claiming a cap describe a pre-allocation cap, not a post-allocation length check.
+
+### B13 — PRELOAD-AUTORUN-AUDIT (P1, depends B04+B05)
+
+- [ ] **NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01** Close ADR-008/009 for the config-driven serve path.
+- **Evidence:** `serve.rs`/`serve_tasks.rs::spawn_obsidian_preload` labels the autorun WAL-free, yet it writes vault files and authoritative DB rows. It has a safe `None` default and decision tests, but no typed permission action, pre-effect audit, result audit, or durable doctor/status outcome.
+- **Required implementation:** add `Action::ObsidianPreloadWrite` with explicit autonomy ladder. Emit EXTENDED intent before the first file/DB effect and result on success/failure/recovery. Status/doctor reports last time, root hash (not sensitive path if policy says so), copied/ingested/revoked/retired counts, pending recovery, and failure. Manual CLI is explicit operator intent but still needs outcome audit.
+- **Tests:** full permission ladder; denied means zero file/DB effects; intent sequence precedes first effect; every intent receives result or recoverable pending state; doctor unconfigured pass, failed/incomplete warn, successful pass; status redaction.
+- **Done:** no daemon preload mutation is unaudited or invisible to operator diagnostics.
+
+### B14 — CONFIG-WIRING-TRUTH (P2, after B08)
+
+- [ ] **NEOTH-AUDIT-CONFIG-WIRING-TRUTH-01** Wire two small configuration surfaces that currently report or run false defaults.
+- **Buddy:** `cli/buddy.rs::run_status` hardcodes `smart_approve_any=false` although the field lives per server in `mcp_servers.yaml`. Load the canonical MCP config and compute any-enabled; on parse/read error report `unknown/error`, never a false negative. Tests: none/some/malformed/missing.
+- **Swarm:** `serve.rs` starts `resource_snapshot_cron` with `SwarmConfig::default()` and carries `TODO(FEAT-06)` instead of reading live config. Add/consume `freedom.yaml::swarm`, include its fingerprint in B08 reload, and make default behavior explicit. Tests: disabled no spawn, interval applies, reload restarts once, status matches.
+- **Done:** operator-visible status derives from the same loader/runtime config as the effectful consumer.
+
+### B15 — SELF-IMPROVE-EXECUTOR (P2, depends B01)
+
+- [ ] **NEOTH-AUDIT-SELF-IMPROVE-EXECUTOR-01** Finish the implementation currently claimed as shipped by IMPR-03.
+- **Evidence:** `cli/self_improve.rs` explicitly says `advisor_fn is a stub that reads operator input via stdin`; the execute docs call it a placeholder. A REVISE round calls the same closure with the same diff/evidence; no cheaper executor changes anything. The roadmap claims a cheaper-executor subagent and nightly auto path.
+- **Required implementation:** inject a provider/executor interface at the CLI and daemon boundary; select a configured lower-cost model under consent/budget policy; on REVISE produce a new candidate, new diff, and rerun B01 verification. Persist every round/evidence/verdict. The nightly path may review/stage but must not auto-accept outside the verified permission policy. If this product behavior is not wanted, downgrade IMPR-03 to PARTIAL and remove the false auto/nightly claim instead.
+- **Tests:** two-round revise changes candidate/diff; provider failure blocks; budget/consent denial blocks; same-output loop detected; nightly disabled no-op; auto mode stages evidence but cannot bypass accept; restart resumes without duplicating rounds.
+- **Done:** either a real bounded executor loop exists end-to-end, or every CLI/roadmap/status surface truthfully calls the feature manual scaffolding.
+
+### B16 — EVAL-RUNNER-HARDENING (P2, non-security)
+
+- [ ] **NEOTH-AUDIT-EVAL-RUNNER-HARDENING-01** Bound and test the intentionally local shell verifier without misclassifying it as command injection.
+- **Verdict:** `neoth eval` deliberately accepts a local suite's `verify_command` and invokes the host shell; there is no request/network/model construction path, so this is not a confirmed injection bug and the shell feature remains adopted.
+- **Required implementation:** add per-command timeout/child-tree termination, explicit trusted-suite warning (optionally `--allow-commands` defense in depth), and platform tests for exit 0/non-zero/spawn/timeout. Either enforce or remove/rename the currently informational `max_steps`; label `preset` as future/no-op in machine output. B11 fixes the Unicode truncation panic in this file.
+- **Done:** a trusted local command cannot hang the suite indefinitely, and CLI help/reporting does not imply unenforced limits.
+
+### Parked incomplete capabilities — truthful, but not mixed into the defect waves
+
+| Surface | Current truth | Required before implementation can be called complete |
+|---|---|---|
+| Pears WAL federation (`cluster/pears_federation.rs`) | Trait exists; default `ship_segment` deliberately returns `Deferred`; no live shipping loop. | Live Pear runtime fixture, authenticated transport, segment-byte streaming, ACK hash verification, retry/backoff, call site, shutdown, doctor, E2E. Do not call the scaffold “federation shipped.” |
+| Cloud connectors (`cloud/mod.rs`) | Local-mirror mode works; without `local_root`, Dropbox/OneDrive/GDrive/GCS/iCloud/Gmail route to `StubConnector`. | Pick providers one batch at a time; typed auth, pagination, byte caps, retries, consent/audit, fixtures. Until then expose `stub-fallback` before execution and avoid generic “cloud ingest supported.” |
+| Telegram outbound media | Inbound media download exists; `TelegramChannel::send_media` returns `NotSupported`. | Implement photo/audio/document mapping, size/MIME caps, caption fallback, retry/rate-limit, no-token-leak tests, capability matrix truth. |
+| LiveDelivery streaming/finalize | Send/edit primitive exists; `finalize()` is a no-op and the channel provider path still produces a complete response rather than progressive chunks. | First build the provider-streaming accumulator with hooks/WAL/gates preserved; then wire mutable LiveDelivery and final edit. Do not ship a cosmetic same-text edit. |
+| Cross-platform keychain | Windows credential store is real; macOS/Linux are documented stubs. | Native Keychain/Secret Service implementations plus migration/ACL/failure tests per platform, or keep the platform limitation explicit. |
+
+### Considered and rejected / stale — Opus must not reopen
+
+| Premise | Vetted result |
+|---|---|
+| Global `#![allow(dead_code)]` in `lib.rs` | Absent. Only unrelated Clippy suppressors remain. |
+| SSH tunnel unwired | False. Config, serve spawn, handle retention, and shutdown are live. |
+| mDNS announcer unwired | False. Config-gated live spawn and retained handle exist. |
+| `CompactingProvider::stream` unimplemented | False. Production delegates after compaction; `unimplemented!()` hits are test doubles. |
+| `todo!()` in council trigger is live | False. It is text inside a test prompt fixture. |
+| `role_custom` unused | False. It is merged into the live operator-facts prompt path. |
+| “provider on no slot” production gap | False. It is a unit-test comment about expected empty binding. |
+| OBS password still passed in argv | False. The unsafe helper was removed; the source documents the safer future path. |
+| Webhook DNS-rebind pin missing | False. `resolve_to_addrs` pinning and no-redirect behavior are implemented. B10 only fixes validator normalization and secret leakage. |
+| Foreign savepoint/marker crash atomicity absent | False. The savepoint is real. B03 fixes wrong identity and error classification, not savepoint existence. |
+| MCP schema descriptions wholly unsanitized | Too broad. Description values are recursively sanitized; B02 targets raw structural metadata and Markdown/control characters. |
+| `neoth eval` shell verifier is remote command injection | False. It is an explicit local dev-tool contract. B16 is timeout/honesty hardening only. |
+
+### Verification gates and expected evidence
+
+Run the cheapest gates first on this Windows host:
+
+```powershell
+git diff --check
+cargo metadata --manifest-path SRC\Cargo.toml --no-deps --format-version 1
+```
+
+Then use the repo's VS-environment wrappers with one build job for the named filters; do not launch a broad duplicate build while another batch is compiling:
+
+```powershell
+cmd.exe /d /s /c "set CARGO_BUILD_JOBS=1&& call SRC\_check.bat"
+cmd.exe /d /s /c "set CARGO_BUILD_JOBS=1&& call SRC\_test.bat <filter>"
+```
+
+Minimum filters by batch:
+
+| Batch | Focused filters / build matrix |
+|---|---|
+| B01/B15 | `self_improve`; default check |
+| B02 | `mcp::catalogue`, `mcp::gate`, `mcp::sanitizer`; default check |
+| B03 | `foreign_indexer`; default and `--features cluster` check |
+| B04/B05/B13 | `preload`, `groundtruth`, `permissions`, `doctor`; default check |
+| B06 | `quota`, `memory::indexer`, `wal::scan`; default check |
+| B07/B08/B14 | `credentials`, `cron_fleet`, `serve_tasks`; default and cluster check where cfg-gated |
+| B09 | `mcp::transport`, `mcp::client` |
+| B10 | `webhook_manager` |
+| B11 | `emit_council_transcripts`, `document`, `web_fetch`, `eval`, `render_diagnostic`, `compactor` |
+| B12 | `n8n_api`, `companion` |
+| B16 | `cli::eval` on Windows; Unix CI counterpart |
+
+For each closed checkbox, append: exact HEAD, scoped diffstat, regression test names/pass counts, default/feature build results, remaining manual/environment limitations, and any status/doctor screenshot or command output required by ADR-008. **Do not mark a batch DONE when verification timed out, when only mocks cover the effect boundary, or when the implementation exists without a live caller.**

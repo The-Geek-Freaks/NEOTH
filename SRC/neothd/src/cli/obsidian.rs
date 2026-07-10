@@ -2249,6 +2249,15 @@ async fn fetch_and_write_source(
     })
 }
 
+/// Shared test helper — used by `tests`, `mirror_tests`, and the
+/// restricted-index tests, so it lives at module level (test builds only).
+#[cfg(test)]
+fn write_template_file(root: &Path, rel: &str, body: &str) {
+    let path = root.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2451,12 +2460,6 @@ mod tests {
             err.to_string().contains("invalid sync subdir"),
             "expected traversal rejection, got: {err}"
         );
-    }
-
-    fn write_template_file(root: &Path, rel: &str, body: &str) {
-        let path = root.join(rel);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, body).unwrap();
     }
 
     fn write_preload_manifest(root: &Path) {

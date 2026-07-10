@@ -550,7 +550,7 @@ pub fn count_active(conn: &Connection) -> Result<i64> {
 // boundary is maintained here at the SQL query layer.
 
 /// One row from `idx_restricted`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RestrictedChunk {
     pub id: i64,
     pub statement: String,

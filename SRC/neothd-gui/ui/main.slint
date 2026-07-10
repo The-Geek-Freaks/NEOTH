@@ -81,6 +81,9 @@ export enum WizardStep {
     welcome,
     license,
     identity,
+    /// ZF-05 — preset picker inserted after Identity. A non-custom preset
+    /// triggers express mode: straight to done, skipping detail screens.
+    preset-picker,
     /// GOLD-ADAPT-AOS-03 — optional project-context capture (agent-os
     /// plan-product): what you're building / domain / stack. Skippable;
     /// feeds the sidebar operator card + ~/.neoth/.project-context.
@@ -93,6 +96,16 @@ export enum WizardStep {
     /// between Channels and Keys.
     cluster,
     keys,
+    /// ZF-05 parity — HMAC / outbound-webhook signing key.
+    hmac-setup,
+    /// ZF-05 parity — Obsidian vault path + reader toggle.
+    obsidian-setup,
+    /// ZF-05 parity — n8n API enable + port.
+    n8n-setup,
+    /// ZF-05 parity — Keet pairing info screen (no YAML write).
+    keet-tip,
+    /// ZF-05 parity — WASM plugin host enable/disable.
+    wasm-setup,
     done,
     /// Post-onboarding settings surface — Pick #32. Renders the
     /// `SettingsView` tab layout. Operators reach this screen by
@@ -219,6 +232,25 @@ export component MainWindow inherits Window {
     in-out property <string> project-domain: "";
     in-out property <string> project-stack: "";
     callback project-context-set(string, string, string);
+    // ── ZF-05 wizard parity properties ───────────────────────────────
+    // wizard-preset-choice: "" = not reached; "custom" = custom path;
+    // "full-auto"/"balanced"/"essentials"/"local-sovereign" = express.
+    in-out property <string> wizard-preset-choice: "";
+    // HMAC / outbound-webhook screen
+    in-out property <bool> wz-hmac-enabled: false;
+    in-out property <string> wz-hmac-webhook-url: "";
+    in-out property <string> wz-hmac-webhook-secret: "";
+    // Obsidian vault screen
+    in-out property <string> wz-obsidian-vault: "";
+    in-out property <string> wz-obsidian-subdir: "NEOTH-sessions";
+    in-out property <bool> wz-obsidian-reader: false;
+    // n8n screen
+    in-out property <bool> wz-n8n-enabled: false;
+    in-out property <string> wz-n8n-port: "9744";
+    // WASM screen
+    in-out property <bool> wz-wasm-enabled: false;
+    // Folder-picker for the wizard Obsidian vault field (rfd dialog in Rust).
+    callback wz-obsidian-browse-clicked();
     // GOLD-ADAPT-OH-12 — first-run tour overlay (chat surface only).
     // Rust arms it when ~/.neoth/.gui-tour-done is absent; dismiss/finish
     // writes the marker.
@@ -239,33 +271,53 @@ export component MainWindow inherits Window {
     /// operator picked claude_cli + no channels — visibly confusing.
     /// When keys is skipped, current-step jumps from 6 (Channels) to
     /// 8 (Summary), which the bar fills smoothly.
-    // AOS-03: project-context step inserted after Identity → 10 total.
-    out property <int> total-steps: 10;
+    // ZF-05: express path = 5 steps (Welcome/License/Identity/Preset/Done);
+    // custom path = 16 steps (adds ProjectContext..WasmSetup).
+    // wizard-preset-choice is empty until preset-picker is reached, so the
+    // denominator starts at 16 (custom) and flips to 5 on express choice.
+    out property <bool> wz-is-express:
+        root.wizard-preset-choice != "" && root.wizard-preset-choice != "custom";
+    out property <int> total-steps: root.wz-is-express ? 5 : 16;
     out property <int> current-step:
-        root.step == WizardStep.welcome  ? 1 :
-        root.step == WizardStep.license  ? 2 :
-        root.step == WizardStep.identity ? 3 :
-        root.step == WizardStep.project-context ? 4 :
-        root.step == WizardStep.provider ? 5 :
-        root.step == WizardStep.autonomy ? 6 :
-        root.step == WizardStep.channels ? 7 :
-        root.step == WizardStep.cluster  ? 8 :
-        root.step == WizardStep.keys     ? 9 :
-        root.step == WizardStep.done     ? 10 :
+        root.step == WizardStep.welcome         ? 1 :
+        root.step == WizardStep.license         ? 2 :
+        root.step == WizardStep.identity        ? 3 :
+        root.step == WizardStep.preset-picker   ? 4 :
+        // Express terminates here
+        (root.wz-is-express && root.step == WizardStep.done) ? 5 :
+        // Custom path continues from slot 5
+        root.step == WizardStep.project-context ? 5 :
+        root.step == WizardStep.provider        ? 6 :
+        root.step == WizardStep.autonomy        ? 7 :
+        root.step == WizardStep.channels        ? 8 :
+        root.step == WizardStep.cluster         ? 9 :
+        root.step == WizardStep.keys            ? 10 :
+        root.step == WizardStep.hmac-setup      ? 11 :
+        root.step == WizardStep.obsidian-setup  ? 12 :
+        root.step == WizardStep.n8n-setup       ? 13 :
+        root.step == WizardStep.keet-tip        ? 14 :
+        root.step == WizardStep.wasm-setup      ? 15 :
+        root.step == WizardStep.done            ? 16 :
         0;
     // G-23 fix: removed dead `mode-selection` branch — the progress
     // indicator is hidden on that screen so the label is never read.
     out property <string> step-label:
-        root.step == WizardStep.welcome  ? "Welcome" :
-        root.step == WizardStep.license  ? "License" :
-        root.step == WizardStep.identity ? "Identity" :
+        root.step == WizardStep.welcome         ? "Welcome" :
+        root.step == WizardStep.license         ? "License" :
+        root.step == WizardStep.identity        ? "Identity" :
+        root.step == WizardStep.preset-picker   ? "Preset" :
         root.step == WizardStep.project-context ? "Project" :
-        root.step == WizardStep.provider ? "Provider" :
-        root.step == WizardStep.autonomy ? "Autonomy" :
-        root.step == WizardStep.channels ? "Channels" :
-        root.step == WizardStep.cluster  ? "Cluster" :
-        root.step == WizardStep.keys     ? "API Keys" :
-                                            "Summary";
+        root.step == WizardStep.provider        ? "Provider" :
+        root.step == WizardStep.autonomy        ? "Autonomy" :
+        root.step == WizardStep.channels        ? "Channels" :
+        root.step == WizardStep.cluster         ? "Cluster" :
+        root.step == WizardStep.keys            ? "API Keys" :
+        root.step == WizardStep.hmac-setup      ? "Webhook" :
+        root.step == WizardStep.obsidian-setup  ? "Obsidian" :
+        root.step == WizardStep.n8n-setup       ? "n8n" :
+        root.step == WizardStep.keet-tip        ? "Keet" :
+        root.step == WizardStep.wasm-setup      ? "Plugins" :
+                                                  "Summary";
     /// `true` only when the persistent ProgressIndicator should
     /// render the step counter + bar. Mode-selection + Settings are
     /// stand-alone screens — operator isn't in the numbered flow,
@@ -1414,7 +1466,211 @@ export component MainWindow inherits Window {
                 NeothButton {
                     label: "Continue →";
                     enabled: root.operator-id-valid;
-                    clicked => { root.step = WizardStep.project-context; }
+                    clicked => { root.step = WizardStep.preset-picker; }
+                }
+            }
+        }
+
+        // ── Preset Picker (ZF-05) ───────────────────────────────────────
+        // Operator chooses a built-in preset (express path → Done) or
+        // "custom" (walks every detail screen). Non-custom preset writes
+        // wizard-preset-choice and jumps straight to done; custom sets
+        // wizard-preset-choice = "custom" and continues to project-context.
+        if root.step == WizardStep.preset-picker: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Choose a preset";
+                subtitle: "Built-in presets apply your autonomy, provider, and channel settings in one click — fine-tune everything later in Settings. Choose Custom to walk each screen now.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+
+                    // ── full-auto ─────────────────────────────────────
+                    TouchArea {
+                        height: 60px;
+                        clicked => {
+                            root.wizard-preset-choice = "full-auto";
+                            root.step = WizardStep.done;
+                        }
+                        Rectangle {
+                            background: root.wizard-preset-choice == "full-auto" ? Theme.green-tint : transparent;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding: Theme.space-base;
+                                spacing: Theme.space-base;
+                                alignment: start;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "full-auto";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-body;
+                                        font-weight: Theme.weight-medium;
+                                        color: Theme.accent-green;
+                                    }
+                                    Text {
+                                        text: "Full autonomous — acts on its own, asks rarely. For solo power-users.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── balanced ──────────────────────────────────────
+                    TouchArea {
+                        height: 60px;
+                        clicked => {
+                            root.wizard-preset-choice = "balanced";
+                            root.step = WizardStep.done;
+                        }
+                        Rectangle {
+                            background: root.wizard-preset-choice == "balanced" ? Theme.green-tint : transparent;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding: Theme.space-base;
+                                spacing: Theme.space-base;
+                                alignment: start;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "balanced";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-body;
+                                        font-weight: Theme.weight-medium;
+                                        color: Theme.accent-green;
+                                    }
+                                    Text {
+                                        text: "Balanced — confirms before writes outside ~/.neoth. Default for most.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── essentials ────────────────────────────────────
+                    TouchArea {
+                        height: 60px;
+                        clicked => {
+                            root.wizard-preset-choice = "essentials";
+                            root.step = WizardStep.done;
+                        }
+                        Rectangle {
+                            background: root.wizard-preset-choice == "essentials" ? Theme.green-tint : transparent;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding: Theme.space-base;
+                                spacing: Theme.space-base;
+                                alignment: start;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "essentials";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-body;
+                                        font-weight: Theme.weight-medium;
+                                        color: Theme.accent-green;
+                                    }
+                                    Text {
+                                        text: "Essentials — minimal feature set, no cloud channels, local-first.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── local-sovereign ───────────────────────────────
+                    TouchArea {
+                        height: 60px;
+                        clicked => {
+                            root.wizard-preset-choice = "local-sovereign";
+                            root.step = WizardStep.done;
+                        }
+                        Rectangle {
+                            background: root.wizard-preset-choice == "local-sovereign" ? Theme.green-tint : transparent;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding: Theme.space-base;
+                                spacing: Theme.space-base;
+                                alignment: start;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "local-sovereign";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-body;
+                                        font-weight: Theme.weight-medium;
+                                        color: Theme.accent-green;
+                                    }
+                                    Text {
+                                        text: "Local-sovereign — air-gapped, Ollama-only, no outbound traffic.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                    // ── custom ────────────────────────────────────────
+                    TouchArea {
+                        height: 60px;
+                        clicked => {
+                            root.wizard-preset-choice = "custom";
+                            root.step = WizardStep.project-context;
+                        }
+                        Rectangle {
+                            background: root.wizard-preset-choice == "custom" ? Theme.green-tint : transparent;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding: Theme.space-base;
+                                spacing: Theme.space-base;
+                                alignment: start;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "custom";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-body;
+                                        font-weight: Theme.weight-medium;
+                                        color: Theme.text-primary;
+                                    }
+                                    Text {
+                                        text: "Walk every setup screen and pick each option yourself.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.identity; }
                 }
             }
         }
@@ -1452,7 +1708,7 @@ export component MainWindow inherits Window {
                 NeothButton {
                     label: "← Back";
                     primary: false;
-                    clicked => { root.step = WizardStep.identity; }
+                    clicked => { root.step = WizardStep.preset-picker; }
                 }
                 HorizontalLayout {
                     spacing: Theme.space-base;
@@ -1816,11 +2072,11 @@ export component MainWindow inherits Window {
                     label: "Continue →";
                     clicked => {
                         // Skip the keys screen when nothing needs a
-                        // secret — operator goes straight to Summary.
+                        // secret — operator goes straight to HMAC setup.
                         if (root.need-keys-step) {
                             root.step = WizardStep.keys;
                         } else {
-                            root.step = WizardStep.done;
+                            root.step = WizardStep.hmac-setup;
                         }
                     }
                 }
@@ -1878,6 +2134,269 @@ export component MainWindow inherits Window {
                     label: "← Back";
                     primary: false;
                     clicked => { root.step = WizardStep.cluster; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.hmac-setup; }
+                }
+            }
+        }
+
+        // ── HMAC / Outbound Webhook (ZF-05) ────────────────────────────
+        if root.step == WizardStep.hmac-setup: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Outbound webhook signing";
+                subtitle: "Optional. NEOTH can sign outbound webhook payloads with an HMAC-SHA256 secret so your endpoint can verify they came from your instance. Leave blank to skip — configure any time in Settings → Security.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    CheckBox {
+                        text: "Enable outbound webhook signing";
+                        checked <=> root.wz-hmac-enabled;
+                    }
+                    if root.wz-hmac-enabled: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Webhook endpoint URL";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        LineEdit {
+                            placeholder-text: "https://example.com/neoth-hook";
+                            text <=> root.wz-hmac-webhook-url;
+                        }
+                        Text {
+                            text: "Shared HMAC secret";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        LineEdit {
+                            placeholder-text: "secret string — keep this safe";
+                            input-type: password;
+                            text <=> root.wz-hmac-webhook-secret;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => {
+                        if (root.need-keys-step) {
+                            root.step = WizardStep.keys;
+                        } else {
+                            root.step = WizardStep.cluster;
+                        }
+                    }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.obsidian-setup; }
+                }
+            }
+        }
+
+        // ── Obsidian Vault (ZF-05) ─────────────────────────────────────
+        if root.step == WizardStep.obsidian-setup: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Obsidian vault";
+                subtitle: "Optional. Point NEOTH at an Obsidian vault folder so it can index your notes and write session summaries there. Skip freely — wire it up later in Settings → Integrations → Obsidian.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        LineEdit {
+                            placeholder-text: "/home/you/Obsidian/MyVault";
+                            text <=> root.wz-obsidian-vault;
+                            horizontal-stretch: 1;
+                        }
+                        NeothButton {
+                            label: "Browse…";
+                            primary: false;
+                            clicked => { root.wz-obsidian-browse-clicked(); }
+                        }
+                    }
+                    if root.wz-obsidian-vault != "": VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Session subfolder inside vault";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        LineEdit {
+                            placeholder-text: "NEOTH-sessions";
+                            text <=> root.wz-obsidian-subdir;
+                        }
+                        CheckBox {
+                            text: "Enable vault reader (lets NEOTH search your notes)";
+                            checked <=> root.wz-obsidian-reader;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.hmac-setup; }
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-base;
+                    NeothButton {
+                        label: "Skip";
+                        primary: false;
+                        clicked => { root.step = WizardStep.n8n-setup; }
+                    }
+                    NeothButton {
+                        label: "Continue →";
+                        clicked => { root.step = WizardStep.n8n-setup; }
+                    }
+                }
+            }
+        }
+
+        // ── n8n (ZF-05) ────────────────────────────────────────────────
+        if root.step == WizardStep.n8n-setup: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "n8n automation";
+                subtitle: "Optional. Connect NEOTH to a local n8n instance so it can trigger and receive workflows. Leave disabled to skip — enable any time in Settings → Integrations → n8n.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    CheckBox {
+                        text: "Enable n8n integration";
+                        checked <=> root.wz-n8n-enabled;
+                    }
+                    if root.wz-n8n-enabled: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "n8n API port (default 9744)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        LineEdit {
+                            placeholder-text: "9744";
+                            text <=> root.wz-n8n-port;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.obsidian-setup; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.keet-tip; }
+                }
+            }
+        }
+
+        // ── Keet Tip (ZF-05) ───────────────────────────────────────────
+        if root.step == WizardStep.keet-tip: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Keet P2P messaging";
+                subtitle: "NEOTH supports Keet (Holepunch) as a decentralised, end-to-end encrypted companion channel. No account, no server — your device is the relay.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: "Pairing happens at runtime — not during setup.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-primary;
+                    }
+                    Text {
+                        text: "After you finish the wizard and NEOTH is running, open a terminal and run:\n\n  neoth keet pair\n\nThis prints a pairing code. Scan it with the Keet app on your phone to link your devices. The seed phrase is stored in ~/.neoth/credentials.yaml (never in freedom.yaml).";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "Install Keet: https://keet.io";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.accent-green;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.n8n-setup; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.wasm-setup; }
+                }
+            }
+        }
+
+        // ── WASM Plugin Host (ZF-05) ───────────────────────────────────
+        if root.step == WizardStep.wasm-setup: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "WASM plugin host";
+                subtitle: "Optional. Enable the built-in WASM runtime so you can load compiled plugin modules (.wasm files) that extend NEOTH with custom tools and skills. Disable if you never plan to install plugins — saves a few MB of memory.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    CheckBox {
+                        text: "Enable WASM plugin host";
+                        checked <=> root.wz-wasm-enabled;
+                    }
+                    Text {
+                        text: "Plugins are loaded from ~/.neoth/plugins/ by default. You can install plugins later with `neoth plugin install <path>` or from Settings → Plugins.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.keet-tip; }
                 }
                 NeothButton {
                     label: "Continue →";
@@ -2006,6 +2525,59 @@ export component MainWindow inherits Window {
                 color: Theme.text-muted;
                 wrap: word-wrap;
             }
+            // ZF-05: express-path post-setup tips — shows when a built-in
+            // preset was chosen so the operator knows what was skipped and
+            // how to configure those areas later.
+            if root.wz-is-express: Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: "Express preset applied — skipped areas";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: Theme.letter-spacing-wide;
+                        color: Theme.accent-green;
+                    }
+                    Text {
+                        text: "These features were skipped. Configure them later in Settings:";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                    }
+                    Text {
+                        text: "· Outbound webhook signing  →  Settings → Security";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-primary;
+                    }
+                    Text {
+                        text: "· Obsidian vault reader     →  Settings → Integrations → Obsidian";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-primary;
+                    }
+                    Text {
+                        text: "· n8n automation            →  Settings → Integrations → n8n";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-primary;
+                    }
+                    Text {
+                        text: "· Keet P2P channel          →  run `neoth keet pair` in a terminal";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-primary;
+                    }
+                    Text {
+                        text: "· WASM plugins              →  Settings → Plugins";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-primary;
+                    }
+                }
+            }
             // G-19 fix: three-button row clipped on narrow windows.
             // Primary actions (Back / Finish) stay in the bottom row;
             // re-entry shortcut "Open Settings →" gets its own line
@@ -2024,10 +2596,14 @@ export component MainWindow inherits Window {
                     label: "← Back";
                     primary: false;
                     clicked => {
-                        if (root.need-keys-step) {
-                            root.step = WizardStep.keys;
+                        // ZF-05: express path goes back to preset-picker;
+                        // custom path goes back to wasm-setup (last parity screen).
+                        if (root.wz-is-express) {
+                            root.step = WizardStep.preset-picker;
+                        } else if (root.need-keys-step) {
+                            root.step = WizardStep.wasm-setup;
                         } else {
-                            root.step = WizardStep.channels;
+                            root.step = WizardStep.wasm-setup;
                         }
                     }
                 }

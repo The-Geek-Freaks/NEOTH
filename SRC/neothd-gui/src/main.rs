@@ -28,6 +28,7 @@ static FREEDOM_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// complexity level.
 mod buddy_activity;
 mod panel_logic;
+mod wizard_logic;
 
 use buddy_activity::GuiActivity;
 
@@ -4811,6 +4812,36 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── ZF-05 wizard parity callbacks ────────────────────────────────────────
+    //
+    // These callbacks wire the new wizard parity screens (preset-picker,
+    // hmac-setup, obsidian-setup, n8n-setup, keet-tip, wasm-setup).
+    // Fields are stored in Slint wz-* properties and flushed to freedom.yaml
+    // by write_zf05_fields() inside on_finish_clicked.
+    {
+        // wz-obsidian-browse-clicked: opens an rfd folder dialog and writes
+        // the chosen path back to wz-obsidian-vault (same pattern as on_obs_browse_clicked).
+        let weak_wz_obs = window.as_weak();
+        window.on_wz_obsidian_browse_clicked(move || {
+            use rfd::FileDialog;
+            let weak2 = weak_wz_obs.clone();
+            std::thread::spawn(move || {
+                if let Some(path) = FileDialog::new()
+                    .set_title("Select Obsidian vault folder")
+                    .pick_folder()
+                {
+                    let s: slint::SharedString = path.to_string_lossy().into_owned().into();
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(w) = weak2.upgrade() {
+                            w.set_wz_obsidian_vault(s);
+                        }
+                    })
+                    .ok();
+                }
+            });
+        });
+    }
+
     // Pick #32 — Settings panel "Re-run wizard". Reset the wizard
     // state back to mode-selection so the operator walks the flow
     // fresh.
@@ -4821,6 +4852,17 @@ fn main() -> Result<()> {
             w.set_step(WizardStep::ModeSelection);
             w.set_license_accepted(false);
             w.set_operator_id("".into());
+            // ZF-05: reset express/parity state so a re-run starts fresh.
+            w.set_wizard_preset_choice("".into());
+            w.set_wz_hmac_enabled(false);
+            w.set_wz_hmac_webhook_url("".into());
+            w.set_wz_hmac_webhook_secret("".into());
+            w.set_wz_obsidian_vault("".into());
+            w.set_wz_obsidian_subdir("NEOTH-sessions".into());
+            w.set_wz_obsidian_reader(false);
+            w.set_wz_n8n_enabled(false);
+            w.set_wz_n8n_port("9744".into());
+            w.set_wz_wasm_enabled(false);
             w.set_status_line(
                 "Wizard reset. Re-walking the flow will overwrite existing freedom.yaml at Finish."
                     .into(),
@@ -4964,10 +5006,28 @@ fn main() -> Result<()> {
                 provider_key: w.get_provider_key().to_string(),
                 telegram_token: w.get_telegram_token().to_string(),
                 cluster_discovery_disabled: w.get_cluster_discovery_disabled(),
+                // ZF-05 parity fields
+                wizard_preset_choice: w.get_wizard_preset_choice().to_string(),
+                wz_hmac_enabled: w.get_wz_hmac_enabled(),
+                wz_hmac_webhook_url: w.get_wz_hmac_webhook_url().to_string(),
+                wz_hmac_webhook_secret: w.get_wz_hmac_webhook_secret().to_string(),
+                wz_obsidian_vault: w.get_wz_obsidian_vault().to_string(),
+                wz_obsidian_subdir: w.get_wz_obsidian_subdir().to_string(),
+                wz_obsidian_reader_enabled: w.get_wz_obsidian_reader(),
+                wz_n8n_enabled: w.get_wz_n8n_enabled(),
+                wz_n8n_port: w.get_wz_n8n_port().to_string(),
+                wz_wasm_enabled: w.get_wz_wasm_enabled(),
             };
             match finish(&state) {
                 Ok(report) => {
                     info!(?report.freedom_path, ?report.credentials_path, "wizard finished");
+                    // ZF-05: write parity fields into the freshly-created
+                    // freedom.yaml using set_nested_in_freedom so they coexist
+                    // with the base config written by write_freedom_yaml.
+                    let neoth_dir = default_neoth_home();
+                    let fp = neoth_dir.join("freedom.yaml");
+                    let rd = neoth_dir.join(".reload-requested");
+                    write_zf05_fields(&fp, &rd, &state);
                     w.set_status_line(report.message().into());
                 }
                 Err(e) => {
@@ -5144,6 +5204,7 @@ fn main() -> Result<()> {
 /// Plain-data snapshot the wizard hands off to disk. Keeps the Slint
 /// type surface separate from the on-disk schema so future schema
 /// bumps stay loosely coupled to the UI.
+#[derive(Default)]
 struct WizardSnapshot {
     operator_id: String,
     provider_kind: String,
@@ -5157,6 +5218,19 @@ struct WizardSnapshot {
     /// false (default) means mDNS discovery stays ON per the
     /// noob-wizard "default ON in release" hard rule.
     cluster_discovery_disabled: bool,
+    // ── ZF-05 parity fields ────────────────────────────────────────────────
+    /// Which preset was chosen on the preset-picker screen ("" = not reached,
+    /// "custom" = custom path, anything else = express path).
+    wizard_preset_choice: String,
+    wz_hmac_enabled: bool,
+    wz_hmac_webhook_url: String,
+    wz_hmac_webhook_secret: String,
+    wz_obsidian_vault: String,
+    wz_obsidian_subdir: String,
+    wz_obsidian_reader_enabled: bool,
+    wz_n8n_enabled: bool,
+    wz_n8n_port: String,
+    wz_wasm_enabled: bool,
 }
 
 /// What `finish()` returns. `credentials_path` is `None` when no secret
@@ -5524,6 +5598,118 @@ fn validate_autonomy(level: &str) -> Result<()> {
     match level {
         "strict" | "standard" | "elevated" | "full" | "custom" => Ok(()),
         other => anyhow::bail!("unrecognised autonomy level '{other}'"),
+    }
+}
+
+// ── ZF-05 parity writer ───────────────────────────────────────────────────
+//
+// Called from on_finish_clicked after write_freedom_yaml has created the base
+// freedom.yaml. Patches the parity fields using set_nested_in_freedom so the
+// rest of the config is preserved. Runs on the UI thread (inside the callback);
+// we tolerate the brief blocking because this is a once-per-wizard operation
+// and the file was just created so I/O should be fast.
+
+/// Write the ZF-05 parity fields from the wizard into an already-existing
+/// freedom.yaml. Idempotent: if a field is blank / false / default-port it
+/// is skipped to avoid cluttering a fresh config with empty strings.
+fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
+    let write = |key: &str, val: serde_yaml::Value| {
+        if let Err(e) = set_nested_in_freedom(fp, key, val) {
+            tracing::warn!(key, error = %e, "ZF-05: failed to write parity field");
+        }
+    };
+
+    // Preset — apply through the real consent path (`neoth preset apply`),
+    // NOT a bare yaml key: FreedomConfig has no `preset` field, so writing one
+    // would silently do nothing. full-auto needs the token ceremony route.
+    if wizard_logic::preset_is_express(&state.wizard_preset_choice) {
+        let known = wizard_logic::BUILTIN_PRESETS
+            .iter()
+            .any(|(n, _)| *n == state.wizard_preset_choice);
+        if known {
+            let status = if state.wizard_preset_choice == "full-auto" {
+                apply_preset_with_fullauto_token(&state.wizard_preset_choice)
+            } else {
+                apply_preset_direct(&state.wizard_preset_choice)
+            };
+            tracing::info!(
+                preset = %state.wizard_preset_choice,
+                %status,
+                "ZF-05: wizard express preset applied"
+            );
+        } else {
+            tracing::warn!(
+                preset = %state.wizard_preset_choice,
+                "ZF-05: unknown preset name from wizard — apply skipped"
+            );
+        }
+    }
+
+    // HMAC / outbound webhook — only when the operator enabled it.
+    if state.wz_hmac_enabled {
+        write("webhook_manager.enabled", serde_yaml::Value::from(true));
+        if !state.wz_hmac_webhook_url.is_empty() {
+            // First endpoint entry: write as a single-element list of mappings.
+            let mut ep = serde_yaml::Mapping::new();
+            ep.insert(
+                serde_yaml::Value::from("url"),
+                serde_yaml::Value::from(state.wz_hmac_webhook_url.as_str()),
+            );
+            if !state.wz_hmac_webhook_secret.is_empty() {
+                ep.insert(
+                    serde_yaml::Value::from("secret"),
+                    serde_yaml::Value::from(state.wz_hmac_webhook_secret.as_str()),
+                );
+            }
+            write(
+                "webhook_manager.endpoints",
+                serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(ep)]),
+            );
+        }
+    }
+
+    // Obsidian vault — only when a path was entered.
+    if !state.wz_obsidian_vault.is_empty() {
+        write("obsidian_vault", serde_yaml::Value::from(state.wz_obsidian_vault.as_str()));
+        let subdir = if state.wz_obsidian_subdir.is_empty() {
+            "NEOTH-sessions"
+        } else {
+            state.wz_obsidian_subdir.as_str()
+        };
+        write("obsidian_subdir", serde_yaml::Value::from(subdir));
+        if state.wz_obsidian_reader_enabled {
+            write("obsidian_vault_reader_enabled", serde_yaml::Value::from(true));
+        }
+    }
+
+    // n8n — only when enabled.
+    if state.wz_n8n_enabled {
+        write("n8n_api.enabled", serde_yaml::Value::from(true));
+        // Parse as u16 so an out-of-range entry ("99999") falls back to the
+        // default instead of writing a port the daemon cannot deserialize.
+        let port = if state.wz_n8n_port.is_empty() {
+            9744u16
+        } else {
+            match state.wz_n8n_port.parse::<u16>() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!(raw = %state.wz_n8n_port, "ZF-05: invalid n8n port — using default 9744");
+                    9744
+                }
+            }
+        };
+        write("n8n_api.port", serde_yaml::Value::from(u64::from(port)));
+    }
+
+    // WASM plugin host — only when enabled.
+    if state.wz_wasm_enabled {
+        write("plugins.wasm.enabled", serde_yaml::Value::from(true));
+    }
+
+    // ONE reload signal after all fields are written — the daemon reloads a
+    // complete config instead of racing seven partial writes.
+    if let Err(e) = std::fs::write(rd, b"reload\n") {
+        tracing::warn!(error = %e, "ZF-05: failed to write reload signal");
     }
 }
 
@@ -9589,10 +9775,7 @@ mod tests {
             provider_kind: "claude_cli".into(),
             autonomy: "standard".into(),
             license_accepted: true,
-            enable_telegram: false,
-            provider_key: String::new(),
-            telegram_token: String::new(),
-            cluster_discovery_disabled: false,
+            ..WizardSnapshot::default()
         }
     }
 
@@ -10245,10 +10428,7 @@ mod gui_bug_regression_tests {
             provider_kind: "claude_cli".into(),
             autonomy: "standard".into(),
             license_accepted: true,
-            enable_telegram: false,
-            provider_key: String::new(),
-            telegram_token: String::new(),
-            cluster_discovery_disabled: false,
+            ..WizardSnapshot::default()
         }
     }
 
