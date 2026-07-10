@@ -180,12 +180,19 @@ pub(crate) fn do_ping(
                     .to_string()
             };
             let url = format!("{base}/chat/completions", base = default_base);
-            client
+            let req = client
                 .post(&url)
-                .bearer_auth(key)
                 .header("content-type", "application/json")
-                .body(r#"{"model":"gpt-4o-mini","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#)
-                .send()
+                .body(r#"{"model":"gpt-4o-mini","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#);
+            // Azure OpenAI authenticates an API key via the `api-key` header;
+            // `Authorization: Bearer` is only for AAD tokens, so a valid Azure
+            // key sent as Bearer 401s and the wizard would falsely show ✗.
+            let req = if matches!(kind, ProviderKind::AzureOpenAi) {
+                req.header("api-key", key)
+            } else {
+                req.bearer_auth(key)
+            };
+            req.send()
         }
         ProviderKind::GeminiApi => {
             // Gemini accepts the key via the `x-goog-api-key` header — used

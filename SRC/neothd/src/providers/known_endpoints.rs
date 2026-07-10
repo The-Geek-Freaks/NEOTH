@@ -285,6 +285,12 @@ pub(crate) fn is_non_public_endpoint(endpoint: &str) -> bool {
             ip.is_private() || ip.is_link_local() || ip.is_loopback() || ip.is_unspecified()
         }
         Some(std::net::IpAddr::V6(ip)) => {
+            // An IPv4-mapped address (`::ffff:a.b.c.d`) must be judged by its
+            // embedded IPv4 — otherwise `::ffff:192.168.1.1` or the mapped IMDS
+            // `::ffff:169.254.169.254` would sail past the pure-IPv6 checks below.
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return v4.is_private() || v4.is_link_local() || v4.is_loopback() || v4.is_unspecified();
+            }
             let seg0 = ip.segments()[0];
             ip.is_loopback()
                 || ip.is_unspecified()
@@ -473,6 +479,11 @@ mod tests {
             "http://user:pass@10.1.2.3:9000/v1",
             "https://[fc00::1]:8080/v1",   // ULA
             "https://[fe80::1]:8080/v1",   // link-local
+            // Wave-19: IPv4-mapped forms of private / IMDS addresses.
+            "https://[::ffff:192.168.1.100]:8080/v1",
+            "https://[::ffff:10.0.0.5]/v1",
+            "https://[::ffff:169.254.169.254]/latest/meta-data",
+            "https://[::ffff:127.0.0.1]:8080/v1",
         ] {
             assert!(is_non_public_endpoint(e), "must be blocked: {e}");
         }
