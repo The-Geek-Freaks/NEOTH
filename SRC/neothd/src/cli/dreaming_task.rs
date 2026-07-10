@@ -126,6 +126,14 @@ async fn run(
                         path = %report.path.display(),
                         "dreaming task wrote dream batch",
                     );
+                    // OBSIDIAN-DREAMING-01 — push the just-composed day into the
+                    // operator's vault so the Dreams folder stays fresh without a
+                    // manual sync. Gate: a configured `obsidian_vault` IS the
+                    // operator's vault opt-in. Dreams land only as bounded
+                    // markdown under `<vault>/<subdir>/Dreams/` — they never
+                    // re-enter recall/groundtruth, so no preload poisoning.
+                    // Best-effort: a sync miss never fails the pass.
+                    sync_day_to_obsidian(&home, &report).await;
                 }
             }
             Err(e) => {
@@ -139,6 +147,66 @@ async fn run(
         // `accept`. Daemon-cron only — `neoth dream now` calls run_one_pass
         // directly and never triggers this. Best-effort: any miss logs + skips.
         self_improve_auto_pass(&home).await;
+    }
+}
+
+/// Resolve the vault opt-in: a non-blank `obsidian_vault` gates the sync;
+/// `obsidian_subdir` falls back to the default. Returns `None` when no vault
+/// is configured (the operator has not opted into a vault).
+fn resolve_obsidian_target(
+    vault: Option<String>,
+    subdir: Option<String>,
+) -> Option<(String, String)> {
+    let vault = vault.filter(|v| !v.trim().is_empty())?;
+    let subdir = subdir
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "NEOTH-sessions".to_string());
+    Some((vault, subdir))
+}
+
+/// OBSIDIAN-DREAMING-01 — push the day a dream batch just landed in into the
+/// operator's Obsidian vault. No-op when no `obsidian_vault` is configured.
+/// The day is taken from the pass report's JSONL filename stem so the exact
+/// composed day is synced (never a midnight-rollover mismatch). Runs the
+/// blocking file write off the async runtime; every failure logs and is
+/// swallowed (the dreams are already persisted to `~/.neoth/dreams`).
+async fn sync_day_to_obsidian(home: &Path, report: &PassReport) {
+    let cfg = match crate::config::FreedomConfig::load_from_default_path() {
+        Ok(c) => c,
+        Err(_) => return, // no config → no vault → nothing to sync
+    };
+    let Some((vault, subdir)) = resolve_obsidian_target(cfg.obsidian_vault, cfg.obsidian_subdir)
+    else {
+        return; // vault not configured → operator has not opted into a vault
+    };
+    let Some(day) = report
+        .path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let home = home.to_path_buf();
+    let join = tokio::task::spawn_blocking(move || {
+        crate::daemon::dreaming::sync_dreams_to_obsidian(
+            &home,
+            std::path::Path::new(&vault),
+            &subdir,
+            &day,
+        )
+    })
+    .await;
+    match join {
+        Ok(Ok(outcome)) if outcome.written => info!(
+            day = %outcome.day,
+            dreams = outcome.dream_count,
+            path = %outcome.target_path.display(),
+            "dreaming task synced day to Obsidian vault",
+        ),
+        Ok(Ok(_)) => {} // empty day → no file written, nothing to report
+        Ok(Err(e)) => warn!(error = %e, "dream→Obsidian sync failed (dreams still persisted locally)"),
+        Err(e) => warn!(error = %e, "dream→Obsidian sync task join failed"),
     }
 }
 
@@ -704,6 +772,27 @@ mod tests {
         assert_eq!(
             report.events_considered, 1,
             "window excludes the 24h-ago row"
+        );
+    }
+
+    #[test]
+    fn resolve_obsidian_target_gates_on_vault_and_defaults_subdir() {
+        // No vault → None (operator has not opted in).
+        assert!(resolve_obsidian_target(None, None).is_none());
+        assert!(resolve_obsidian_target(Some("   ".into()), None).is_none());
+        // Vault set, no subdir → default subdir.
+        assert_eq!(
+            resolve_obsidian_target(Some("/vault".into()), None),
+            Some(("/vault".into(), "NEOTH-sessions".into()))
+        );
+        // Vault + blank subdir → default; explicit subdir honoured.
+        assert_eq!(
+            resolve_obsidian_target(Some("/vault".into()), Some("  ".into())),
+            Some(("/vault".into(), "NEOTH-sessions".into()))
+        );
+        assert_eq!(
+            resolve_obsidian_target(Some("/vault".into()), Some("Dreams-Custom".into())),
+            Some(("/vault".into(), "Dreams-Custom".into()))
         );
     }
 
