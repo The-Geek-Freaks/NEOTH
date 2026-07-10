@@ -720,3 +720,4 @@ neoth channel remove telegram   -- delete from credentials/channels.yaml + freed
 - `neoth init --import-jarvis`: migration from OpenClaw/Jarvis config format
 - Multi-operator: `neoth init --operator <id>` for secondary operators on same machine
 - `neoth telemetry on`: opt-in anonymous version-check ping (Phase 3+)
+- `neoth run-wizard offline-datasets`: Interactive CLI prompt during or post-onboarding allowing the operator to selectively download and index massive macro-datasets (Kiwix ZIM, PubMed SQLite, Gutenberg) to local storage (`~/.neoth/offline_data`) für volle Offline-Autonomie.
