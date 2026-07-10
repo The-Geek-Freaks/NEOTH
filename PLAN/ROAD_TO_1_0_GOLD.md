@@ -1524,24 +1524,24 @@ Scope note: this is the post-recovery backlog from the interrupted NEOTH session
 
 ### Raw recovered backlog (preserved verbatim)
 
-- [ ] WS-Z: Remove global `#![allow(dead_code)]` from `SRC/neothd/src/lib.rs:55` and properly annotate or wire the roughly 20 hidden dead items.
-- [ ] WS-Z: Wire SSH Tunnel (`spawn_tunnel`). Implement `transport.ssh_tunnels` config field in `serve.rs` to fix false-positive `GOLD-ADAPT-TERMIX-01` wiring claim.
-- [ ] WS-Z: Wire mDNS Announcer (spawn_announcer). Spawn it alongside the DHT transport when clustering is enabled to fix the dead LAN discovery announce side.
-- [ ] WS-Z: Revisit or remove dead helpers like `build_judge_prompt` and `spawn_discovery` that were superseded.
-- [ ] GUI-DES: DES-08 Plugins/Skills add/remove in GUI. Enable UI to add a skill via path or chat.
-- [ ] GUI-DES: DES-09 Make all settings GUI-editable.
-- [ ] GUI-DES: DES-10 Implement live Channel-Watch tailing in the GUI.
-- [ ] GUI-DES: DES-11 Self-Reprogramming-Tab in GUI (blocked by FEAT-05).
-- [ ] GUI-DES: DES-12 Dispatch Plugin-provided Tabs via WASM manifest.
-- [ ] GUI-DES: DES-13 Mesh Full-Failover data redundancy (foreign-indexer).
-- [ ] WS-Z: Wire `stream` function in `providers/compactor.rs` (currently `unimplemented!()`).
-- [ ] WS-Z: Clean up `#[allow(dead_code)]` in `providers/ouro/forward.rs`, `providers/ouro/model_trait.rs`, and `slash/builtins.rs`.
-- [ ] WS-Z: Wire `handle(req: Request) -> Response` in `council/trigger.rs:535` (`todo!()`).
-- [ ] WS-Z: Wire logic for `providers/compactor.rs:601` and `756` (`unimplemented!()`).
-- [ ] WS-Z: Close the unwired gap where the wizard captures `role_custom` (`cli/chat.rs:5658`).
-- [ ] WS-Z: Implement logic for provider on no slot is unwired (`cli/providers.rs:364`).
-- [ ] WS-Z: Wire OBS password logic securely (`installers/obs.rs:147`).
-- [ ] WS-Z: Remove local `#[allow(dead_code)]` in `channels/discord_gateway.rs`, `channels/whatsapp.rs`, `cli/obsidian.rs`, `cluster/foreign_indexer.rs`, `coding/dispatcher.rs`, `coding/feed.rs`, `daemon/auto_update.rs`, `daemon/isolation.rs`, `mcp/smart_approve.rs`, and `media/audio.rs` and properly wire or annotate the dead code.
+- [x] WS-Z: ~~Remove global `#![allow(dead_code)]` from `SRC/neothd/src/lib.rs:55`~~ — STALE (verified 2026-07-10): the attribute no longer exists in lib.rs; only clippy suppressors remain (`#![allow(clippy::manual_non_exhaustive)]` L53).
+- [x] WS-Z: ~~Wire SSH Tunnel (`spawn_tunnel`)~~ — STALE (verified 2026-07-10): fully wired. `config/mod.rs:368` `pub ssh_tunnels: Vec<SshTunnelConfig>`; `serve.rs:527` spawns per config entry; `serve_tasks.rs:4796` joins handles. GOLD-ADAPT-TERMIX-01 claim was NOT false-positive.
+- [x] WS-Z: ~~Wire mDNS Announcer (spawn_announcer)~~ — STALE (verified 2026-07-10): `serve.rs:1570` calls `cluster::mdns::spawn_announcer(&mdns_id)` gated on `cluster.mdns.enabled`; daemon handle kept in BackgroundHandles (`serve.rs:1997`).
+- [x] WS-Z: Dead helpers — resolved (2026-07-10): `spawn_discovery` never existed (stale doc comments in `hyperswarm.rs:192`/`cluster/mod.rs:96` fixed to reference `spawn_discovery_with_wal`); `build_judge_prompt`/`parse_judge_response` (`mcp/smart_approve.rs:178/211`) are documented forward-infra with concrete consumer (ADOPT-22 F3 judge path), test-covered, deliberately unwired.
+- [x] GUI-DES: DES-08 — SHIPPED (verified 2026-07-10): `main.rs:3368` on_plugin_install (folder picker → `neoth plugin install`), `:3411` on_plugin_remove, `:3240` on_skill_install, `:3281` on_skill_uninstall; Plugins nav in `app_shell.slint:215`.
+- [x] GUI-DES: DES-09 — SHIPPED (verified 2026-07-10): `main.rs:535` populates all editable settings; write-back waves A/B/C/E (`main.rs:4410/4604`); lossless nested-key writer `main.rs:5436` + coalescing writer `:5512`. Preload-field visibility tracked separately in GUI-DES-SETTINGS-PRELOAD-01.
+- [x] GUI-DES: DES-10 — SHIPPED (verified 2026-07-10): live channel-activity ring (`main.rs:7120` struct, `:7250` push-line intercept, `:3893` drain → 60-row capped display).
+- [ ] GUI-DES: DES-11 Self-Reprogramming-Tab in GUI (blocked by FEAT-05) — duplicate of GUI-DES-SELFDEV-APPLY-01 below (v1.1); consent-only review UI is shipped.
+- [x] GUI-DES: DES-12 — SHIPPED (verified 2026-07-10): `ui_surface` manifest field parsed (`panel_logic.rs:849-894` + test :3528), `has_ui_surface` threaded to window (`main.rs:6405`), plugin WAL-feed detail pane (`main.rs:3444`).
+- [x] GUI-DES: DES-13 foreign-indexer slice — SHIPPED (2026-07-10 Wave-0 commit): `cluster/foreign_indexer.rs` polls `idx_foreign_events`, applies 0x90/0x91 boost + 0x92 floor-decay, marker table `idx_foreign_indexed_events`, 8 unit tests, clean shutdown via BackgroundHandles. Auto-merge restore remains in DES-13-AUTO-RESTORE-01.
+- [x] WS-Z: ~~Wire `stream` in `providers/compactor.rs`~~ — STALE (verified 2026-07-10): real `CompactingProvider::stream` is implemented (`compactor.rs:517`, compact-then-delegate); the `unimplemented!()` hits are `#[cfg(test)]` stubs only (L601/L756/L1112).
+- [x] WS-Z: `#[allow(dead_code)]` in ouro/builtins — resolved as justified (verified 2026-07-10): `ouro/forward.rs:252/257` are commented Bite-3 import keep-alives; `ouro/model_trait.rs:29` documents dead_code as expected state; `slash/builtins.rs:318` is a commented anchor. Each carries its consumer/gate note in-code.
+- [x] WS-Z: ~~`todo!()` in `council/trigger.rs:535`~~ — STALE (verified 2026-07-10): the `todo!()` is inside a **string literal** prompt fixture of test `high_complexity_branch_respects_opt_out_flag`; no production fn `handle` exists.
+- [x] WS-Z: ~~`compactor.rs:601`/`756` `unimplemented!()`~~ — STALE: same finding as the stream line above; test-stub-only.
+- [x] WS-Z: ~~`role_custom` unwired (`cli/chat.rs:5658`)~~ — STALE (verified 2026-07-10): `merge_operator_facts` (chat.rs:5665) consumes `config.role_custom` via `operator_role_label()` and is called from the live prompt pipeline (chat.rs:362).
+- [x] WS-Z: ~~provider on no slot (`cli/providers.rs:364`)~~ — STALE (verified 2026-07-10): the phrase is a unit-test comment documenting expected empty-binding behavior, not a production gap.
+- [x] WS-Z: ~~OBS password (`installers/obs.rs:147`)~~ — STALE (verified 2026-07-10): the insecure argv path was REMOVED per GOLD-SEC-23/GR-145; obs.rs:147-163 is the removal comment documenting the 0600-config-file alternative.
+- [x] WS-Z: local `#[allow(dead_code)]` sweep — resolved (2026-07-10): `cluster/foreign_indexer.rs` 8 unused serde Option fields DELETED (serde ignores unknown fields); `daemon/auto_update.rs` + `daemon/isolation.rs` have NO allows (stale claim); remaining allows are justified in-code: discord opcode/intents const modules (protocol reference), whatsapp `verify_token` (webhook handshake), obsidian `is_identical` (IGNIS-01 reference helper), dispatcher/feed serde id fields + `_arc_alive` (payload docs/keep-alive), smart_approve (ADOPT-22 F3), audio `whisper_cache_dir` (candle cross-ref).
 
 ### Recovery / Validation Hygiene
 
@@ -1559,7 +1559,7 @@ Scope note: this is the post-recovery backlog from the interrupted NEOTH session
 - [ ] **DES-13-FOREIGN-INDEXER-01** Finish the recovered foreign-event indexer slice. *Current state:* untracked `SRC/neothd/src/cluster/foreign_indexer.rs` plus serve wiring polls `idx_foreign_events` and marks processed rows in `idx_foreign_indexed_events`. *Remaining work:* review/validate that serve passes the active runtime home instead of blindly using `FreedomConfig::default_neoth_home()`, compile-check feature-gated struct fields and literals with and without `cluster`, preserve `idx_foreign_events` as immutable backup, and keep accepted peer effects narrow (`0x90`/`0x91` boost existing local episodes, `0x92` decay with floor, `0x98`/unknown/malformed indexed-but-noop). *Done when:* idempotency, malformed payload, missing local episode, clamp/floor, and second-pass-noop tests pass under a narrow job-limited gate.
 - [ ] **DES-13-AUTO-RESTORE-01** Implement the real mesh full-failover remainder: foreign-to-local auto-merge restore plus conflict resolution. *Current state:* backup-at-rest, foreign persistence, iroh persist parity, and export exist; one-click restore does not. *Implementation shape:* design conflict policy before code; local IDs are not peer-stable, so restore must map by stable peer/origin keys and never blindly create privileged facts. *Done when:* a node can import a peer backup into local recall safely with deterministic conflict outcomes and an audit trail.
 - [ ] **D101-PEARS-BRIDGE-01** Test the minimal Pears HTTP bridge client before bundling K-3 pairing UX. *Problem:* Pears is intended as a lightweight bridge for Keet/cluster flows, but the reqwest client path needs proof before exposing the 24-word seed + GUI pairing path. *Done when:* fixture/mock Pears endpoint tests cover success, timeout, malformed response, and consent/error messaging.
-- [ ] **CLUSTER-MDNS-ANNOUNCE-01** Wire the mDNS announcer side or delete the dead announce path. *Problem:* mDNS browsing exists, but `spawn_announcer` is unused, so LAN discovery of the host node can be silently absent. *Done when:* announcer starts/stops with cluster enablement and teardown, or the stale module/docs are removed.
+- [x] **CLUSTER-MDNS-ANNOUNCE-01** — STALE (verified 2026-07-10): `spawn_announcer` IS wired — `serve.rs:1570` spawns it gated on `cluster.mdns.enabled`, identity via `build_announce_identity` (serve.rs:1564), daemon handle held in BackgroundHandles (serve.rs:1997) for teardown. Announce side live, not dead.
 
 ### GUI / Desktop Residuals
 
@@ -1581,8 +1581,8 @@ Scope note: this is the post-recovery backlog from the interrupted NEOTH session
 
 - [ ] **D003-KEYCHAIN-01** Add OS keychain integration for secrets at rest. *Current state:* `freedom.yaml`/`credentials.yaml` use owner-only files and encrypted-at-rest paths where implemented, but OS keychain storage is still a stronger default for desktop installs. *Scope:* Windows Credential Manager first on this machine, with macOS Keychain/Linux Secret Service design notes. *Done when:* credentials can be stored/retrieved without plaintext config exposure and migration keeps existing installs working.
 - [ ] **D008-WINDOWS-WAL-01** Harden Windows WAL behavior. *Remaining work:* verify `SetNamedSecurityInfoW` DACL restrictions on WAL segments and measure `FILE_FLAG_WRITE_THROUGH` latency impact. *Done when:* Windows reliability guidance is based on measurements, not assumption; failure modes are fail-closed for sensitive files.
-- [ ] **DEADCODE-LIB-ALLOW-01** Remove global `#![allow(dead_code)]` from `SRC/neothd/src/lib.rs:55` and properly annotate, wire, or delete the hidden unused items it masks. *Done when:* dark code is visible to normal checks and intentional forward-infra has narrow local `allow` comments.
-- [ ] **TERMIX-SSH-TUNNEL-01** Wire SSH tunnel config or correct the shipped-claim. *Problem:* `spawn_tunnel` is marked complete in the TERMIX line but has no live caller/config. *Done when:* `transport.ssh_tunnels` exists and serve spawns configured tunnels, or the completion claim is downgraded.
-- [ ] **DEAD-HELPERS-01** Revisit or remove superseded helpers such as `build_judge_prompt` and stale discovery helpers. *Done when:* each helper is either wired, documented as forward-infra with a concrete future consumer, or deleted.
-- [ ] **COMPACTOR-STREAM-01** Wire or remove `providers/compactor.rs::stream` if it is still `unimplemented!()`. *Done when:* streaming compactor path has a caller and tests, or the trait/API no longer advertises unsupported streaming.
-- [ ] **LOCAL-DEADCODE-CLEANUP-01** Clean targeted `#[allow(dead_code)]` in `providers/ouro/forward.rs`, `providers/ouro/model_trait.rs`, and `slash/builtins.rs`. *Done when:* each allow is gone or locally justified with the consumer/gate that will activate it.
+- [x] **DEADCODE-LIB-ALLOW-01** — STALE (verified 2026-07-10): no `#![allow(dead_code)]` exists in lib.rs; both `cargo check` (default + `--features cluster`) pass warning-free. See WS-Z flips above.
+- [x] **TERMIX-SSH-TUNNEL-01** — STALE (verified 2026-07-10): `ssh_tunnels: Vec<SshTunnelConfig>` exists (config/mod.rs:368), serve spawns configured tunnels (serve.rs:527), handles joined (serve_tasks.rs:4796). Completion claim was correct.
+- [x] **DEAD-HELPERS-01** — resolved (2026-07-10): `spawn_discovery` never existed — stale doc references fixed (hyperswarm.rs, cluster/mod.rs); `build_judge_prompt`/`parse_judge_response` documented forward-infra with concrete consumer (ADOPT-22 F3), test-covered.
+- [x] **COMPACTOR-STREAM-01** — STALE (verified 2026-07-10): `CompactingProvider::stream` fully implemented (compactor.rs:517); `unimplemented!()` only in `#[cfg(test)]` stub providers.
+- [x] **LOCAL-DEADCODE-CLEANUP-01** — resolved as justified (2026-07-10): all three files carry in-code consumer/gate comments (Bite-3 keep-alives, trait-bound note, builtin anchor). foreign_indexer's 8 unused serde fields deleted outright.

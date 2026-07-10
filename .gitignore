@@ -127,3 +127,10 @@ SRC/neothd/check_msvc.bat
 SRC/**/*.bat
 # Tracked MSVC wrapper used by VSCode tasks and coding agents.
 !SRC/_run.bat
+
+# Python bytecode caches (plugin-sdk examples)
+__pycache__/
+*.pyc
+
+# Agent scratch logs at repo root
+/check_output.txt
