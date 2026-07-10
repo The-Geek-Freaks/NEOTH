@@ -241,7 +241,18 @@ pub async fn run_pipeline(
     // provider-error sites), emit a `0xB9 PROFILE_EXTRACT_SKIPPED` audit
     // frame, and return `Ok(Skipped)` so the cron / chat-tail caller
     // treats this as a clean "try again later" outcome.
-    let mut delta: ProfileDelta = match extract_delta(provider, &attributed).await {
+    // PROFILE-LOCAL-EXTRACT-01: pass the window-char budget so local models
+    // with small context windows receive a trimmed prompt. Uses the module
+    // constant — callers who read from `ProfileConfig.extract_window_chars`
+    // can pass their configured value here in the future once the
+    // too-many-args refactor (see TODO above) lands a RunPipelineInputs struct.
+    let mut delta: ProfileDelta = match extract_delta(
+        provider,
+        &attributed,
+        crate::profile::extract::DEFAULT_WINDOW_CHARS,
+    )
+    .await
+    {
         Ok(d) => d,
         Err(e) => {
             if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {

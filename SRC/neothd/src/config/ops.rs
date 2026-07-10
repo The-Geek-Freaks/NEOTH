@@ -654,6 +654,19 @@ pub struct ProfileConfig {
     /// counterpart.
     #[serde(default)]
     pub pii_categories_disabled: Vec<String>,
+    /// PROFILE-LOCAL-EXTRACT-01: character budget for the segment-content
+    /// portion of the extractor LLM prompt. Segments are trimmed to the
+    /// most-recent N chars so local models with small context windows
+    /// (e.g. Qwen3-4B-INT4 ≈ 4 K tokens after system-prompt overhead)
+    /// don't OOM or silently truncate. 32 000 chars ≈ 8 K tokens at
+    /// 4 chars/token — fits every supported local backend; operators on
+    /// 4 K-context builds should lower this to ~12 000.
+    ///
+    /// Serde default = 32 000. Existing freedom.yaml files without this
+    /// field inherit the default, which is large enough that typical
+    /// 2-turn windows (≤ 5 K chars) see no behavioral change.
+    #[serde(default = "default_profile_extract_window_chars")]
+    pub extract_window_chars: usize,
 }
 
 impl Default for ProfileConfig {
@@ -665,6 +678,7 @@ impl Default for ProfileConfig {
             allow_cloud_fallback: default_profile_allow_cloud_fallback(),
             require_approval: default_profile_require_approval(),
             pii_categories_disabled: Vec::new(),
+            extract_window_chars: default_profile_extract_window_chars(),
         }
     }
 }
@@ -695,4 +709,14 @@ fn default_profile_learn_provider() -> Option<String> {
 /// fallback for profile-learning flip this to `true`.
 fn default_profile_allow_cloud_fallback() -> bool {
     false
+}
+
+/// PROFILE-LOCAL-EXTRACT-01: 32 000 chars ≈ 8 K tokens at 4 chars/token.
+/// Large enough that typical 2-turn windows (≤ 5 K chars) are never
+/// trimmed with the default config; small enough that quantized local
+/// models with 8 K context (Qwen3-8B-INT4, Mistral-7B-INT4, etc.) fit
+/// without OOM. Operators on 4 K-context builds should set
+/// `profile.extract_window_chars: 12000` in freedom.yaml.
+fn default_profile_extract_window_chars() -> usize {
+    32_000
 }
