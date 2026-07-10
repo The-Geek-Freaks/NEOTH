@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use base64::Engine;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -61,6 +61,13 @@ use crate::wal::writer::WalWriterHandle;
 /// be short-lived (a single usage session); 24h balances convenience against
 /// exposure window. Configurable via `companion.token_ttl_secs` in the future.
 const TOKEN_TTL_SECS: u64 = 86_400;
+
+/// Maximum request body accepted by the `/api/v1/companion/pair` endpoint.
+/// The payload is a small JSON object `{"session_id": "<UUID>"}` — 16 KiB is
+/// an order of magnitude more than any valid pairing request will ever send.
+/// `Limited` from `http_body_util` enforces this cap during streaming so the
+/// allocator is bounded before `.collect()` returns.
+const COMPANION_BODY_LIMIT_BYTES: usize = 16_384;
 
 // ── Token store ──────────────────────────────────────────────────────────────
 
@@ -348,19 +355,25 @@ async fn handle_pair(
         return plain_response(StatusCode::FORBIDDEN, "forbidden: cross-origin request");
     }
 
-    // Read the body (bounded: 16 KiB max — session_id is a short UUID).
-    use http_body_util::BodyExt;
-    let body_bytes = match req.collect().await {
-        Ok(b) => b.to_bytes(),
-        Err(e) => {
-            warn!(error = %e, "companion: body read error");
-            return plain_response(StatusCode::BAD_REQUEST, "bad request: body read error");
+    // Read the body, capped at COMPANION_BODY_LIMIT_BYTES (16 KiB) BEFORE
+    // allocation. Security fix (NEOTH-AUDIT-HTTP-BODY-LIMITS-01): the previous
+    // code called `.collect()` on the unbounded Incoming body and checked
+    // `.len() > 16_384` only after the full payload was already in memory.
+    // `Limited` stops streaming at the byte cap and errors before the allocator
+    // exceeds COMPANION_BODY_LIMIT_BYTES — mirrors `channels/webhook_listener.rs`.
+    let body_bytes = match Limited::new(req.into_body(), COMPANION_BODY_LIMIT_BYTES)
+        .collect()
+        .await
+    {
+        Ok(c) => c.to_bytes(),
+        Err(_) => {
+            warn!(
+                cap = COMPANION_BODY_LIMIT_BYTES,
+                "companion: body exceeds cap or read error"
+            );
+            return plain_response(StatusCode::PAYLOAD_TOO_LARGE, "payload too large");
         }
     };
-
-    if body_bytes.len() > 16_384 {
-        return plain_response(StatusCode::PAYLOAD_TOO_LARGE, "payload too large");
-    }
 
     // Parse JSON body: {"session_id": "<...>"}
     let parsed: serde_json::Value = match serde_json::from_slice(&body_bytes) {
@@ -1350,5 +1363,74 @@ mod tests {
         // pairing URL ⇒ the daemon drives the very invite the CLI minted.
         let rebuilt = CompanionInvite::from_hex(topic_hex.to_string(), psk_hex.to_string());
         assert_eq!(inv.pairing_url(300), rebuilt.pairing_url(300));
+    }
+
+    // ── NEOTH-AUDIT-HTTP-BODY-LIMITS-01: Limited body cap ───────────────────────
+    //
+    // Unit tests for the `Limited` wrapper used in `handle_pair`. Verify that
+    // `Limited` errors before the allocator exceeds COMPANION_BODY_LIMIT_BYTES and
+    // passes bodies at or under the cap. The integration test below verifies the
+    // full HTTP path returns 413.
+
+    #[tokio::test]
+    async fn limited_rejects_body_one_byte_over_companion_cap() {
+        use http_body_util::{BodyExt, Full, Limited};
+        use hyper::body::Bytes;
+        let oversized = Full::new(Bytes::from(vec![0u8; COMPANION_BODY_LIMIT_BYTES + 1]));
+        let limited = Limited::new(oversized, COMPANION_BODY_LIMIT_BYTES);
+        assert!(
+            limited.collect().await.is_err(),
+            "Limited must error on a body 1 byte over the {} cap",
+            COMPANION_BODY_LIMIT_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn limited_passes_body_at_exact_companion_cap() {
+        use http_body_util::{BodyExt, Full, Limited};
+        use hyper::body::Bytes;
+        let at_cap = Full::new(Bytes::from(vec![0u8; COMPANION_BODY_LIMIT_BYTES]));
+        let limited = Limited::new(at_cap, COMPANION_BODY_LIMIT_BYTES);
+        assert!(
+            limited.collect().await.is_ok(),
+            "Limited must allow a body at exactly the {} byte cap",
+            COMPANION_BODY_LIMIT_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn companion_pair_rejects_oversized_body_with_413() {
+        // Integration test: send a body > COMPANION_BODY_LIMIT_BYTES to the real
+        // server and assert 413 Payload Too Large comes back — the Limited path in
+        // handle_pair rejects BEFORE the full body is buffered.
+        let shutdown = Arc::new(Notify::new());
+        let (writer, _wal_join, _wal_dir) = temp_writer();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let state = Arc::new(CompanionState::new(writer, port));
+        let srv_shutdown = Arc::clone(&shutdown);
+        let srv_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            run_companion_server(listener, srv_state, srv_shutdown).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let client = reqwest::Client::new();
+        let big_body = vec![b'A'; COMPANION_BODY_LIMIT_BYTES + 1];
+        let resp = client
+            .post(format!("http://127.0.0.1:{port}/api/v1/companion/pair"))
+            .header("Content-Type", "application/json")
+            .body(big_body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            413,
+            "oversized body must return 413 Payload Too Large"
+        );
+
+        shutdown.notify_waiters();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }

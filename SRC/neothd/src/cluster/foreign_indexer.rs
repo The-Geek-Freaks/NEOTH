@@ -6,8 +6,13 @@
 //! `idx_foreign_indexed_events` and never deletes or mutates foreign rows.
 //!
 //! Applied effects are deliberately narrow:
-//! - `0x90` / `0x91`: boost an existing local episode's importance.
-//! - `0x92`: soft-decay an existing local episode, floored at `0.10`.
+//! - `0x90` / `0x91`: NO-OP in the gossip path — peer `event_id` fields are the
+//!   peer's own local SQLite autoincrements and have no stable mapping to our
+//!   `idx_episode.event_id` (also a local autoincrement). `idx_episode` carries no
+//!   `origin_peer_pk` column, so option (i) provenance-gated lookup is impossible.
+//!   Option (ii) chosen: log and skip rather than mutate an unrelated local row.
+//!   (Fix: NEOTH-AUDIT-MESH-IDENTITY-RETRY-01.)
+//! - `0x92`: same NO-OP rationale as 0x90/0x91.
 //! - `0x98`: in the gossip indexer loop, skipped (groundtruth IDs are local
 //!   SQLite autoincrements, not peer-stable). The same-origin restore path
 //!   (`DES-13-AUTO-RESTORE-01`) uses `apply_groundtruth_revoke` directly.
@@ -66,22 +71,44 @@ pub(crate) struct GroundtruthRevokedPayload {
 struct PendingRow {
     id: i64,
     event_type: u8,
+    /// Frame body. Currently unused: the cross-peer episode boost/decay handlers
+    /// are NO-OPs (MESH-IDENTITY-RETRY-01 — a peer's numeric episode id can't be
+    /// safely resolved to a local row). Retained on the row so the payload is
+    /// available once a peer→local episode mapping lands and the handlers can
+    /// decode it again.
+    #[allow(dead_code)]
     payload: Vec<u8>,
+    /// Peer that produced this event (`idx_foreign_events.origin_peer_pk`).
+    /// Threaded through for log messages when skipping cross-peer episode ops.
+    origin_peer_pk: String,
 }
 
 /// Apply up to 64 not-yet-indexed foreign events to local recall surfaces.
 ///
-/// Returns number of rows marked indexed in this pass. Per-row dispatch errors
-/// are logged and still marked indexed so one bad peer payload cannot wedge the
-/// queue.
+/// Returns the number of rows marked indexed in this pass.
+///
+/// Fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 (b): retryable per-row errors are
+/// logged and the row is left unprocessed so it will be re-fetched next tick.
+/// Terminal no-ops (unknown type, malformed payload, cross-peer episode ops)
+/// return `Ok(())` from dispatch and are always marked indexed.
 pub fn process_pending(conn: &Connection) -> Result<usize> {
     ensure_marker_table(conn)?;
     let rows = fetch_pending(conn)?;
     let mut processed = 0usize;
 
     for row in rows {
-        process_one(conn, &row)?;
-        processed += 1;
+        match process_one(conn, &row) {
+            Ok(()) => processed += 1,
+            Err(e) => {
+                warn!(
+                    foreign_event_id = row.id,
+                    event_type = row.event_type,
+                    error = %e,
+                    "foreign_indexer: retryable error — row left unprocessed for next tick"
+                );
+                // Do NOT increment `processed`; row will be re-fetched next tick.
+            }
+        }
     }
 
     Ok(processed)
@@ -102,7 +129,7 @@ fn ensure_marker_table(conn: &Connection) -> Result<()> {
 fn fetch_pending(conn: &Connection) -> Result<Vec<PendingRow>> {
     let mut stmt = conn
         .prepare_cached(
-            "SELECT e.id, e.event_type, e.payload \
+            "SELECT e.id, e.event_type, e.payload, e.origin_peer_pk \
              FROM idx_foreign_events e \
              LEFT JOIN idx_foreign_indexed_events i \
                ON i.foreign_event_id = e.id \
@@ -118,6 +145,7 @@ fn fetch_pending(conn: &Connection) -> Result<Vec<PendingRow>> {
             id: r.get(0)?,
             event_type: u8::try_from(raw_event_type).unwrap_or(u8::MAX),
             payload: r.get(2)?,
+            origin_peer_pk: r.get(3)?,
         })
     })
     .context("foreign_indexer: query fetch_pending")?
@@ -147,14 +175,12 @@ fn process_one_inner(conn: &Connection, row: &PendingRow) -> Result<()> {
         return Ok(());
     }
 
-    if let Err(e) = dispatch_foreign_row(conn, row) {
-        warn!(
-            foreign_event_id = row.id,
-            event_type = row.event_type,
-            error = %e,
-            "foreign_indexer: dispatch error; marking indexed to unblock queue"
-        );
-    }
+    // Fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 (b): do NOT mark processed on Err.
+    // dispatch_foreign_row returns Ok(()) for all terminal no-ops (unknown type,
+    // malformed payload, or skipped cross-peer operations). It propagates Err only
+    // for retryable infrastructure failures (e.g. SQLite busy/locked).
+    // Marking processed on a retryable Err would permanently suppress the row.
+    dispatch_foreign_row(conn, row)?;
 
     conn.execute(
         "INSERT OR IGNORE INTO idx_foreign_indexed_events \
@@ -216,53 +242,44 @@ fn dispatch_foreign_row(conn: &Connection, row: &PendingRow) -> Result<()> {
     }
 }
 
-fn foreign_frame_payload(row: &PendingRow) -> Result<&[u8]> {
-    let decoded = crate::wal::frame::decode_frame(&row.payload)
-        .context("foreign_indexer: decode stored WAL frame")?;
-    anyhow::ensure!(
-        decoded.header.event_type == row.event_type,
-        "foreign_indexer: stored event_type mismatch for foreign_event_id={} \
-         row_type={} frame_type={}",
-        row.id,
-        row.event_type,
-        decoded.header.event_type
+// foreign_frame_payload removed: all gossip-path episode handlers now skip
+// frame decoding (they are NO-OPs; see fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 a).
+
+fn handle_episode_consolidated(_conn: &Connection, row: &PendingRow) -> Result<()> {
+    // Fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 (a).
+    //
+    // `EpisodeConsolidatedPayload.event_id` is the PEER's local SQLite autoincrement.
+    // It has no stable relationship to our `idx_episode.event_id` (our own autoincrement).
+    // Applying a boost with the peer's numeric id would mutate an UNRELATED local row.
+    //
+    // Option (ii) chosen: skip cross-peer boost; log and return Ok(()).
+    // Option (i) (provenance-gated lookup via origin_peer_pk) is not possible because
+    // `idx_episode` has no `origin_peer_pk` column — there is no join path from a peer
+    // episode id to the local row that originated from that same peer.
+    //
+    // A skipped mutation is safe; a wrong mutation is data corruption.
+    trace!(
+        foreign_event_id = row.id,
+        origin_peer_pk = %row.origin_peer_pk,
+        "foreign_indexer: EPISODE_CONSOLIDATED skipped — peer episode_id not resolvable to local idx_episode row"
     );
-    Ok(decoded.payload)
+    Ok(())
 }
 
-fn handle_episode_consolidated(conn: &Connection, row: &PendingRow) -> Result<()> {
-    let frame_payload = foreign_frame_payload(row)?;
-    let payload: EpisodeConsolidatedPayload = match serde_json::from_slice(frame_payload) {
-        Ok(p) => p,
-        Err(e) => {
-            trace!(
-                foreign_event_id = row.id,
-                error = %e,
-                "foreign_indexer: malformed episode payload"
-            );
-            return Ok(());
-        }
-    };
-
-    boost_episode_importance(conn, row, payload.event_id, payload.importance)
+fn handle_episode_promoted(_conn: &Connection, row: &PendingRow) -> Result<()> {
+    // Same rationale as handle_episode_consolidated (fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 a).
+    // Peer event_id is not resolvable to a local idx_episode row.
+    trace!(
+        foreign_event_id = row.id,
+        origin_peer_pk = %row.origin_peer_pk,
+        "foreign_indexer: EPISODE_PROMOTED skipped — peer episode_id not resolvable to local idx_episode row"
+    );
+    Ok(())
 }
 
-fn handle_episode_promoted(conn: &Connection, row: &PendingRow) -> Result<()> {
-    let frame_payload = foreign_frame_payload(row)?;
-    let payload: EpisodePromotedPayload = match serde_json::from_slice(frame_payload) {
-        Ok(p) => p,
-        Err(e) => {
-            trace!(
-                foreign_event_id = row.id,
-                error = %e,
-                "foreign_indexer: malformed episode promoted payload"
-            );
-            return Ok(());
-        }
-    };
-
-    boost_episode_importance(conn, row, payload.event_id, payload.to_importance)
-}
+// boost_episode_importance (private trace wrapper) removed: no longer called
+// from any gossip-path handler. apply_episode_boost is still pub(crate) and
+// used by the restore path (DES-13-AUTO-RESTORE-01).
 
 // ---------------------------------------------------------------------------
 // pub(crate) conflict helpers — shared by gossip indexer AND restore path
@@ -317,34 +334,6 @@ pub(crate) fn apply_episode_boost(
     Ok(BoostOutcome::Applied)
 }
 
-fn boost_episode_importance(
-    conn: &Connection,
-    row: &PendingRow,
-    event_id: i64,
-    peer_importance: f64,
-) -> Result<()> {
-    match apply_episode_boost(conn, event_id, peer_importance)? {
-        BoostOutcome::Applied => trace!(
-            foreign_event_id = row.id,
-            episode_event_id = event_id,
-            peer_importance,
-            "foreign_indexer: episode importance boost applied"
-        ),
-        BoostOutcome::Idempotent => trace!(
-            foreign_event_id = row.id,
-            episode_event_id = event_id,
-            peer_importance,
-            "foreign_indexer: boost no-op (local >= peer or non-finite)"
-        ),
-        BoostOutcome::Missing => trace!(
-            foreign_event_id = row.id,
-            episode_event_id = event_id,
-            "foreign_indexer: boost skipped — no local episode row"
-        ),
-    }
-    Ok(())
-}
-
 /// Soft-decay a local episode's importance, floored at [`DECAY_FLOOR`].
 ///
 /// Returns `true` when the local row was found and SQL executed,
@@ -370,26 +359,13 @@ pub(crate) fn apply_episode_decay_sql(conn: &Connection, event_id: i64) -> Resul
     Ok(true)
 }
 
-fn handle_episode_decay(conn: &Connection, row: &PendingRow) -> Result<()> {
-    let frame_payload = foreign_frame_payload(row)?;
-    let payload: EpisodeArchivedPayload = match serde_json::from_slice(frame_payload) {
-        Ok(p) => p,
-        Err(e) => {
-            trace!(
-                foreign_event_id = row.id,
-                error = %e,
-                "foreign_indexer: malformed episode archived payload"
-            );
-            return Ok(());
-        }
-    };
-    let found = apply_episode_decay_sql(conn, payload.event_id)?;
+fn handle_episode_decay(_conn: &Connection, row: &PendingRow) -> Result<()> {
+    // Same rationale as handle_episode_consolidated (fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 a).
+    // Peer event_id is not resolvable to a local idx_episode row.
     trace!(
         foreign_event_id = row.id,
-        episode_event_id = payload.event_id,
-        decay_floor = DECAY_FLOOR,
-        "foreign_indexer: episode soft decay {}",
-        if found { "applied" } else { "skipped (row missing)" }
+        origin_peer_pk = %row.origin_peer_pk,
+        "foreign_indexer: EPISODE_ARCHIVED skipped — peer episode_id not resolvable to local idx_episode row"
     );
     Ok(())
 }
@@ -582,8 +558,11 @@ mod tests {
         assert_eq!(indexed_count(&conn), 0);
     }
 
+    // Fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 (a): cross-peer episode events must NOT
+    // mutate local idx_episode rows. The peer's event_id is the peer's own SQLite
+    // autoincrement and has no mapping to our idx_episode.event_id.
     #[test]
-    fn episode_consolidated_boosts_existing_local_importance() {
+    fn cross_peer_episode_consolidated_is_noop_local_importance_unchanged() {
         let conn = open_test_db();
         conn.execute(
             "INSERT INTO idx_episode (event_id, importance) VALUES (42, 0.4)",
@@ -606,7 +585,8 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!((importance - 0.8).abs() < 1e-9);
+        // Must remain 0.4 — gossip boost must NOT apply the peer's 0.8 to our row.
+        assert!((importance - 0.4).abs() < 1e-9, "cross-peer boost must not mutate local row");
         assert_eq!(indexed_count(&conn), 1);
     }
 
@@ -634,7 +614,7 @@ mod tests {
     }
 
     #[test]
-    fn episode_promoted_uses_to_importance_for_boost() {
+    fn cross_peer_episode_promoted_is_noop_local_importance_unchanged() {
         let conn = open_test_db();
         conn.execute(
             "INSERT INTO idx_episode (event_id, importance) VALUES (77, 0.3)",
@@ -662,11 +642,13 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!((importance - 0.95).abs() < 1e-9);
+        // Must remain 0.3 — gossip promote must NOT apply the peer's 0.95 to our row.
+        assert!((importance - 0.3).abs() < 1e-9, "cross-peer promote must not mutate local row");
     }
 
     #[test]
-    fn large_peer_importance_is_clamped() {
+    fn cross_peer_episode_consolidated_out_of_range_importance_is_noop() {
+        // Even an out-of-range peer importance must not mutate the local row.
         let conn = open_test_db();
         conn.execute(
             "INSERT INTO idx_episode (event_id, importance) VALUES (10, 0.4)",
@@ -689,11 +671,13 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!((importance - 1.0).abs() < 1e-9);
+        // Must remain 0.4 — gossip handler is a NO-OP regardless of payload value.
+        assert!((importance - 0.4).abs() < 1e-9, "cross-peer event must not mutate local row");
     }
 
     #[test]
-    fn decay_floors_and_second_pass_does_not_reapply() {
+    fn cross_peer_episode_archived_is_noop_local_importance_unchanged() {
+        // Cross-peer EPISODE_ARCHIVED events must not decay local episodes.
         let conn = open_test_db();
         conn.execute(
             "INSERT INTO idx_episode (event_id, importance) VALUES (30, 0.5)",
@@ -716,24 +700,18 @@ mod tests {
         }
 
         assert_eq!(process_pending(&conn).unwrap(), 10);
-        let first_importance: f64 = conn
+        let importance: f64 = conn
             .query_row(
                 "SELECT importance FROM idx_episode WHERE event_id = 30",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(first_importance >= DECAY_FLOOR - 1e-9);
+        // Must remain 0.5 — gossip decay must NOT mutate the local row.
+        assert!((importance - 0.5).abs() < 1e-9, "cross-peer decay must not mutate local row");
 
+        // Second pass: all rows already indexed, nothing new to process.
         assert_eq!(process_pending(&conn).unwrap(), 0);
-        let second_importance: f64 = conn
-            .query_row(
-                "SELECT importance FROM idx_episode WHERE event_id = 30",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert!((second_importance - first_importance).abs() < 1e-9);
     }
 
     #[test]
@@ -811,6 +789,146 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_episode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(episodes, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix NEOTH-AUDIT-MESH-IDENTITY-RETRY-01 invariant tests
+    // -----------------------------------------------------------------------
+
+    /// Core invariant (fix a): a peer boost/decay event whose numeric event_id
+    /// happens to match a local idx_episode row must NOT alter that local row.
+    /// The match is coincidental — they are independent autoincrements.
+    #[test]
+    fn peer_episode_event_id_collision_does_not_mutate_local_row() {
+        let conn = open_test_db();
+        // Local episode with event_id = 1 (first autoincrement in our DB).
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (1, 0.6)",
+            [],
+        )
+        .unwrap();
+        // Peer sends CONSOLIDATED with event_id = 1 (its own first autoincrement).
+        // The numeric id collides, but the peer's row is unrelated to ours.
+        let boost_payload =
+            serde_json::json!({"event_id": 1, "importance": 0.99, "ts": 1000}).to_string();
+        insert_foreign_event(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            boost_payload.as_bytes(),
+        );
+        // Peer sends PROMOTED with event_id = 1.
+        let promote_payload =
+            serde_json::json!({"event_id": 1, "from_importance": 0.6, "to_importance": 0.99, "ts": 1001})
+                .to_string();
+        insert_foreign_event(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED,
+            promote_payload.as_bytes(),
+        );
+        // Peer sends ARCHIVED (decay) with event_id = 1.
+        let decay_payload =
+            serde_json::json!({"event_id": 1, "reason": "archived", "ts": 1002}).to_string();
+        insert_foreign_event(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED,
+            decay_payload.as_bytes(),
+        );
+
+        assert_eq!(process_pending(&conn).unwrap(), 3);
+
+        let importance: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // Must remain exactly 0.6 — no gossip event mutated it.
+        assert!(
+            (importance - 0.6).abs() < 1e-9,
+            "local episode importance must be unchanged after cross-peer events; got {importance}"
+        );
+        assert_eq!(indexed_count(&conn), 3, "all three rows must be marked indexed");
+    }
+
+    /// Fix (b): a retryable error from process_one must leave the row in
+    /// idx_foreign_events unprocessed so it is re-fetched on the next tick.
+    ///
+    /// We simulate a retryable infrastructure failure by dropping
+    /// idx_foreign_indexed_events AFTER ensure_marker_table ran, which causes
+    /// marker_exists to fail with "no such table" — an Err that must NOT mark
+    /// the row processed.
+    #[test]
+    fn retryable_error_leaves_row_unprocessed() {
+        let conn = open_test_db();
+        ensure_marker_table(&conn).unwrap();
+
+        let payload =
+            serde_json::json!({"event_id": 5, "importance": 0.7, "ts": 1000}).to_string();
+        let fid = insert_foreign_event(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            payload.as_bytes(),
+        );
+
+        // Simulate a retryable infrastructure error: drop the marker table so
+        // marker_exists returns Err("no such table"). process_one must propagate
+        // this Err without running the INSERT OR IGNORE that marks the row.
+        conn.execute_batch("DROP TABLE idx_foreign_indexed_events").unwrap();
+
+        let row = PendingRow {
+            id: fid,
+            event_type: crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            payload: conn
+                .query_row(
+                    "SELECT payload FROM idx_foreign_events WHERE id = ?1",
+                    [fid],
+                    |r| r.get(0),
+                )
+                .unwrap(),
+            origin_peer_pk: "peer1".to_string(),
+        };
+
+        // process_one must return Err (marker table gone → Err propagates).
+        let result = process_one(&conn, &row);
+        assert!(result.is_err(), "expected Err when marker table is missing");
+
+        // Recreate the marker table and verify the row is NOT marked processed.
+        conn.execute_batch(
+            "CREATE TABLE idx_foreign_indexed_events (
+                foreign_event_id INTEGER PRIMARY KEY,
+                indexed_at       INTEGER NOT NULL
+            )",
+        )
+        .unwrap();
+        assert_eq!(
+            indexed_count(&conn),
+            0,
+            "row must not be marked processed after a retryable error"
+        );
+    }
+
+    /// Fix (b): terminal no-ops (unknown type, groundtruth skip, etc.) must be
+    /// marked processed so they do not block the queue on the next tick.
+    #[test]
+    fn terminal_noop_outcome_marks_row_processed() {
+        let conn = open_test_db();
+        // Unknown event type → terminal no-op.
+        insert_foreign_event(&conn, 0xAB, b"{\"whatever\":true}");
+        // GROUNDTRUTH_REVOKED → skipped (local-id-only), but still terminal no-op.
+        let gt_payload =
+            serde_json::json!({"id": 1, "ts": 0}).to_string();
+        insert_foreign_event(
+            &conn,
+            crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED,
+            gt_payload.as_bytes(),
+        );
+
+        assert_eq!(process_pending(&conn).unwrap(), 2);
+        assert_eq!(indexed_count(&conn), 2, "terminal no-ops must be marked processed");
+
+        // Second pass: both rows already indexed, nothing new.
+        assert_eq!(process_pending(&conn).unwrap(), 0);
     }
 
     // -----------------------------------------------------------------------

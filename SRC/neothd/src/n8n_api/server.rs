@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -381,25 +381,27 @@ async fn serve(
 }
 
 async fn read_body_capped(req: Request<Incoming>) -> Result<Vec<u8>, HandlerOutcome> {
-    let collected = req.into_body().collect().await.map_err(|e| {
-        HandlerOutcome::error(
-            ApiErrorCode::BadRequest,
-            format!("body read failed: {e}"),
-            "retry with a smaller payload or check network",
-        )
-    })?;
-    let bytes = collected.to_bytes();
-    if bytes.len() > REQUEST_BODY_LIMIT_BYTES {
-        return Err(HandlerOutcome::error(
-            ApiErrorCode::BadRequest,
-            format!(
-                "request body {} bytes exceeds cap {}",
-                bytes.len(),
-                REQUEST_BODY_LIMIT_BYTES
-            ),
-            "shrink the payload — the workflow JSON likely embeds a huge field",
-        ));
-    }
+    // Security fix (NEOTH-AUDIT-HTTP-BODY-LIMITS-01): wrap the Incoming body with
+    // `Limited` BEFORE `.collect()` so the allocator never grows past
+    // REQUEST_BODY_LIMIT_BYTES. The previous pattern called `.collect()` first and
+    // only checked the length afterwards — a single oversized POST would fully
+    // allocate in memory before being rejected. `Limited` from `http_body_util`
+    // stops reading at the byte cap and returns an error before any further
+    // allocation. Mirrors the established pattern in `channels/webhook_listener.rs`.
+    let limited = Limited::new(req.into_body(), REQUEST_BODY_LIMIT_BYTES);
+    let bytes = match limited.collect().await {
+        Ok(c) => c.to_bytes(),
+        Err(_) => {
+            return Err(HandlerOutcome::error(
+                ApiErrorCode::BadRequest,
+                format!(
+                    "request body exceeds cap {} bytes",
+                    REQUEST_BODY_LIMIT_BYTES
+                ),
+                "shrink the payload — the workflow JSON likely embeds a huge field",
+            ));
+        }
+    };
     Ok(bytes.to_vec())
 }
 
@@ -566,5 +568,38 @@ mod tests {
         assert_eq!(required_scope_for("POST", "/api/unknown"), None);
         assert_eq!(required_scope_for("DELETE", "/api/health"), None);
         assert_eq!(required_scope_for("GET", "/"), None);
+    }
+
+    // ── NEOTH-AUDIT-HTTP-BODY-LIMITS-01: Limited body cap ───────────────────────
+    //
+    // Verify that `http_body_util::Limited` — the same wrapper used by
+    // `read_body_capped` — rejects bodies exceeding the cap BEFORE the
+    // allocator grows past that limit, and passes bodies at/under the cap.
+
+    #[tokio::test]
+    async fn limited_rejects_body_one_byte_over_cap() {
+        use http_body_util::{BodyExt, Full, Limited};
+        use hyper::body::Bytes;
+        let oversized = Full::new(Bytes::from(vec![0u8; REQUEST_BODY_LIMIT_BYTES + 1]));
+        let limited = Limited::new(oversized, REQUEST_BODY_LIMIT_BYTES);
+        assert!(
+            limited.collect().await.is_err(),
+            "Limited must error on a body {} bytes over the {} cap",
+            1,
+            REQUEST_BODY_LIMIT_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn limited_passes_body_at_exact_cap() {
+        use http_body_util::{BodyExt, Full, Limited};
+        use hyper::body::Bytes;
+        let at_cap = Full::new(Bytes::from(vec![0u8; REQUEST_BODY_LIMIT_BYTES]));
+        let limited = Limited::new(at_cap, REQUEST_BODY_LIMIT_BYTES);
+        assert!(
+            limited.collect().await.is_ok(),
+            "Limited must allow a body at exactly the {} byte cap",
+            REQUEST_BODY_LIMIT_BYTES
+        );
     }
 }
