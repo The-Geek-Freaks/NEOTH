@@ -200,7 +200,28 @@ gchat-channel = ["dep:jsonwebtoken"]
 # compiles in every build — only the live adapter is feature-gated).
 recursive-mas = []
 
+# GOLD-ADAPT-HASH-01 — opt-in microbench for opthash (ElasticHashMap /
+# FunnelHashMap) vs std::HashMap on a NEOTH sender-id key shape.
+# Council verdict: NO production default; evaluation only. The dep and all
+# bench code are completely absent from the default build.
+#
+# Requires rustc >= 1.88 (opthash 0.10.x MSRV) — users running the bench
+# must have a recent toolchain; the package's own rust-version = "1.86" pin
+# only constrains the production code paths.
+#
+# Run the bench:
+#   cargo test --features hash-bench -- bench_hash_backends --ignored --nocapture
+hash-bench = ["dep:opthash"]
+
 [dependencies]
+# GOLD-ADAPT-HASH-01 — ElasticHashMap + FunnelHashMap bench spike.
+# Optional, default-OFF; never present in a release binary. Pulled only when
+# the `hash-bench` feature is active. opthash 0.10.x MSRV = 1.88 — that
+# constraint only applies to the bench-enabled build, not the default path.
+# default-features keeps the `foldhash` DefaultHashBuilder active (realistic
+# production hasher; disabling it would skew the bench toward a slower fallback).
+opthash = { version = "0.10", optional = true }
+
 # GOLD-FEAT-10 — IRC channel (optional, behind `irc-channel`). Tokio-native,
 # owns the IRC wire protocol + PING/PONG + reconnect. rustls TLS (no system lib).
 irc = { version = "1", default-features = false, features = ["tls-rust"], optional = true }

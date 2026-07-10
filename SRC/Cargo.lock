@@ -7267,6 +7267,7 @@ dependencies = [
  "notify",
  "num_enum",
  "opendal",
+ "opthash",
  "pbkdf2 0.12.2",
  "pdf-extract",
  "pdfium-render",
@@ -8483,6 +8484,18 @@ name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+
+[[package]]
+name = "opthash"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ee276132de2e74aa46614e56a0418820ff13e60ab0fa7b5452b9dc383003213"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+ "libm",
+]
 
 [[package]]
 name = "option-ext"
