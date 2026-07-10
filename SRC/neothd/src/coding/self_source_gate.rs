@@ -34,13 +34,25 @@
 //! src/permissions/     (the permission evaluator — no self-weakening the gate)
 //! src/coding/self_source_gate.rs   (this file — gates may not self-modify)
 //! src/coding/self_source.rs        (companion engine)
+//! src/cli/self_edit.rs             (CLI orchestrator — could hardcode the ack)
+//! src/coding/worktree.rs           (layer 4+5 enforcement infrastructure)
+//! src/coding/mod.rs
 //! ```
 //!
 //! Additionally the following are denied by pattern:
 //! - `freedom.yaml` (the config that holds the kill-switch)
 //! - `.github/` (CI / release pipelines)
+//! - `build.rs`, `Cargo.toml`, `Cargo.lock`, `.cargo/` (layer 5's `cargo
+//!   check` EXECUTES build scripts and proc macros — these paths are
+//!   build-time code execution on the host)
 //! - Any path matching `*secret*`, `*credential*`, `*token*`, `*password*`,
 //!   `*private_key*`, `*.pem`, `*.key` (secrets patterns)
+//!
+//! ## Reentrancy
+//!
+//! A cross-process lock (one self-edit per source root at a time) refuses
+//! nested self-edits — nothing spawned by layer 5's build can start another
+//! self-edit while one is in flight.
 
 use std::path::{Path, PathBuf};
 
@@ -80,13 +92,33 @@ static HARD_DENY_PREFIXES: &[&str] = &[
     // The gate's own source — self-edit may never rewrite the gate.
     "src/coding/self_source_gate.rs",
     "src/coding/self_source.rs",
+    // The CLI orchestrator: editable via a `src/cli` allowlist entry, it could
+    // hardcode operator_acked=true / skip the WAL requirement — same class of
+    // gate-weakening as editing the gate itself.
+    "src/cli/self_edit.rs",
+    // Layer 4+5 enforcement infrastructure: a rewritten
+    // `apply_patch_in_worktree` / `run_cargo_check_json` that always returns
+    // success hollows both layers after the next rebuild.
+    "src/coding/worktree.rs",
+    "src/coding/mod.rs",
 ];
 
 /// Exact filenames / path fragments that are hard-denied regardless of
-/// directory: config, CI pipelines, secrets.
+/// directory: build-time code execution, config, CI pipelines, secrets.
+///
+/// Matched via case-insensitive `contains` — deliberately over-broad
+/// (e.g. `rebuild.rs` also trips `build.rs`): the deny side may false-positive,
+/// never false-negative.
 static HARD_DENY_FRAGMENTS: &[&str] = &[
     "freedom.yaml",
     ".github/",
+    // `cargo check` (layer 5) COMPILES the worktree: build scripts and proc
+    // macros EXECUTE during it. A diff adding/altering any of these gets
+    // arbitrary code execution on the host before the live apply is decided.
+    "build.rs",
+    "cargo.toml",
+    "cargo.lock",
+    ".cargo/",
 ];
 
 /// Lowercase substrings that match secret-pattern filenames.
@@ -159,8 +191,9 @@ pub struct SelfEditOutcome {
 /// Run all five gates for a self-source edit request.
 ///
 /// Parameters:
-/// - `diff_text`: the unified-diff text to evaluate.
-/// - `diff_path`: the `.patch` / `.diff` file on disk (may be a temp file).
+/// - `diff_text`: the unified-diff text to evaluate. Every downstream step
+///   (worktree apply, live apply, hash) uses THESE bytes — the gate never
+///   re-reads a diff file from disk, so there is no validate-then-swap window.
 /// - `cfg`: loaded `FreedomConfig` (used for autonomy level + `coding.self_edit`).
 /// - `dry_run`: when `true`, all five gates still run but the diff is NOT
 ///   applied to the live tree and no `SelfEditApplied` WAL frame is emitted.
@@ -168,7 +201,6 @@ pub struct SelfEditOutcome {
 ///   a warning is logged and the gates proceed (WAL is audit, not security).
 pub async fn run_gate_stack(
     diff_text: &str,
-    diff_path_on_disk: &Path,
     cfg: &FreedomConfig,
     dry_run: bool,
     operator_acked: bool,
@@ -244,33 +276,60 @@ pub async fn run_gate_stack(
             GateError::Worktree(reason)
         })?;
 
+    // Reentrancy guard: a self-edit may never trigger further self-edits.
+    // Layer 5 executes `cargo check` (build scripts run!) — if anything in
+    // that process tree invokes `neoth self-edit` again, the lock refuses it.
+    // File-based so it holds across processes; Drop releases it.
+    let _reentrancy_lock = SelfEditLock::acquire(&source_root).map_err(|reason| {
+        audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
+        GateError::Worktree(reason)
+    })?;
+
     // Use a pseudo-task-id derived from the diff hash (low bits) to get a
     // unique worktree path without requiring a real kanban task.
     let pseudo_id = pseudo_task_id(&diff_hash);
-    let worktree = layer4_worktree(&source_root, diff_path_on_disk, pseudo_id)
-        .map_err(|reason| {
-            audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
-            GateError::Worktree(reason)
-        })?;
+    let worktree = {
+        // git subprocess spawns block; keep them off the async executor.
+        let sr = source_root.clone();
+        let dt = diff_text.to_string();
+        tokio::task::spawn_blocking(move || layer4_worktree(&sr, &dt, pseudo_id))
+            .await
+            .map_err(|e| GateError::Worktree(format!("worktree task panicked: {e}")))?
+            .map_err(|reason| {
+                audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
+                GateError::Worktree(reason)
+            })?
+    };
+    // RAII: from here the worktree is cleaned up on EVERY exit — error return,
+    // panic unwind, and async cancellation (future dropped mid-await) alike.
+    let _worktree_guard = WorktreeGuard::new(source_root.clone(), worktree.clone());
 
     audit.layer4_worktree = LayerOutcome::Pass;
 
     // ── Layer 5: green-test gate (cargo check) ────────────────────────────────
     if self_edit_cfg.require_green_tests {
-        match layer5_green_test(&source_root, &worktree) {
+        let wt = worktree.clone();
+        let outcome = tokio::task::spawn_blocking(move || layer5_green_test(&wt))
+            .await
+            .map_err(|e| GateError::GreenTest(format!("green-test task panicked: {e}")))?;
+        match outcome {
             Ok(()) => {
                 audit.layer5_green_test = LayerOutcome::Pass;
             }
             Err(reason) => {
                 audit.layer5_green_test = LayerOutcome::Fail(reason.clone());
-                // Always clean up the worktree on failure.
-                let _ = cleanup_worktree(&source_root, &worktree, true);
                 info!(reason, "self_edit gate: layer5 green-test refused");
                 return Err(GateError::GreenTest(reason));
             }
         }
     } else {
         audit.layer5_green_test = LayerOutcome::Skipped;
+        if !dry_run {
+            warn!(
+                "self_edit: require_green_tests=false — layer 5 SKIPPED for a \
+                 LIVE apply (development setting; re-enable for production)"
+            );
+        }
     }
 
     // ── All gates passed — apply to live tree (unless --dry-run) ─────────────
@@ -278,10 +337,12 @@ pub async fn run_gate_stack(
         // Apply the SAME in-memory bytes the gates validated (piped via stdin),
         // NOT a re-read of the on-disk file — closes the TOCTOU where the diff
         // file could be swapped between validation and the live apply.
-        if let Err(e) = apply_to_live_tree(&source_root, diff_text) {
-            // Clean up the worktree on the apply-failure path too (the `?`
-            // early-return used to leak it).
-            let _ = cleanup_worktree(&source_root, &worktree, true);
+        let sr = source_root.clone();
+        let dt = diff_text.to_string();
+        let applied = tokio::task::spawn_blocking(move || apply_to_live_tree(&sr, &dt))
+            .await
+            .map_err(|e| GateError::Worktree(format!("live-apply task panicked: {e}")))?;
+        if let Err(e) = applied {
             return Err(GateError::Worktree(format!("live-tree apply failed: {e}")));
         }
 
@@ -301,14 +362,96 @@ pub async fn run_gate_stack(
         );
     }
 
-    // Always clean up the worktree after use.
-    let _ = cleanup_worktree(&source_root, &worktree, true);
-
     Ok(SelfEditOutcome {
         target_paths,
         diff_hash,
         dry_run,
     })
+}
+
+// ── RAII guards ───────────────────────────────────────────────────────────────
+
+/// Removes the worktree on drop — covers error returns, panics, and async
+/// cancellation in one place instead of per-exit-path cleanup calls.
+/// `git worktree remove` is a short blocking call; acceptable in Drop.
+struct WorktreeGuard {
+    source_root: PathBuf,
+    path: PathBuf,
+}
+
+impl WorktreeGuard {
+    fn new(source_root: PathBuf, path: PathBuf) -> Self {
+        Self { source_root, path }
+    }
+}
+
+impl Drop for WorktreeGuard {
+    fn drop(&mut self) {
+        if let Err(e) = cleanup_worktree(&self.source_root, &self.path, true) {
+            warn!(
+                error = %e,
+                path = %self.path.display(),
+                "self_edit: worktree cleanup failed — run `git worktree prune` manually"
+            );
+        }
+    }
+}
+
+/// Cross-process reentrancy guard: one self-edit at a time per source root.
+///
+/// Lock file lives in the OS temp dir keyed by the source-root hash; `Drop`
+/// releases it. A crash leaves a stale file, so acquisition steals locks
+/// older than [`Self::STALE_AFTER`].
+#[derive(Debug)]
+struct SelfEditLock {
+    path: PathBuf,
+}
+
+impl SelfEditLock {
+    const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+    fn acquire(source_root: &Path) -> Result<Self, String> {
+        let key = diff_sha256(source_root.to_string_lossy().as_bytes());
+        let path = std::env::temp_dir().join(format!("neoth_self_edit_{}.lock", &key[..16]));
+        match Self::try_create(&path) {
+            Ok(lock) => Ok(lock),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_none_or(|age| age > Self::STALE_AFTER);
+                if stale {
+                    let _ = std::fs::remove_file(&path);
+                    Self::try_create(&path)
+                        .map_err(|e| format!("self-edit lock re-acquire failed: {e}"))
+                } else {
+                    Err(
+                        "another self-edit is already in progress for this source root \
+                         (reentrancy guard) — a self-edit may not trigger further self-edits"
+                            .into(),
+                    )
+                }
+            }
+            Err(e) => Err(format!("self-edit lock create failed: {e}")),
+        }
+    }
+
+    fn try_create(path: &Path) -> std::io::Result<Self> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map(|_| Self {
+                path: path.to_path_buf(),
+            })
+    }
+}
+
+impl Drop for SelfEditLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 // ── Layer implementations ─────────────────────────────────────────────────────
@@ -401,11 +544,19 @@ fn layer2_allowlist(
         // Segment-aware prefix match: `src/cli` must NOT match `src/clitrap`.
         // A path is covered only if it equals the prefix or sits under it as a
         // directory (`<prefix>/…`). Trailing slashes in the config are
-        // tolerated.
+        // tolerated. An explicit "." opts into the whole tree; "" and "/" are
+        // REFUSED (too easy to write intending whole-tree and silently get an
+        // allow-all — spell it "." if that is really wanted).
         let allowed = cfg.allowed_modules.iter().any(|prefix| {
             let p = prefix.as_str().trim_end_matches('/');
-            !p.is_empty() && (path == p || path.starts_with(&format!("{p}/")))
-                || p.is_empty() // an explicit "." / "" prefix means whole-tree
+            if p.is_empty() {
+                return false;
+            }
+            if p == "." {
+                return true;
+            }
+            path.starts_with(p)
+                && (path.len() == p.len() || path.as_bytes().get(p.len()) == Some(&b'/'))
         });
         if !allowed {
             return Err(format!(
@@ -458,19 +609,31 @@ fn layer3_permission(
 /// Layer 4: apply the diff in an isolated `git worktree`.
 ///
 /// Creates a new worktree as a sibling of the source root using the existing
-/// `coding::worktree` infrastructure. The diff is applied to the worktree
-/// copy; the live tree is NEVER touched during this step.
+/// `coding::worktree` infrastructure, stages the VALIDATED in-memory diff
+/// bytes as a file INSIDE that fresh worktree, and applies it there. The
+/// caller's original diff file on disk is never re-read — a post-validation
+/// swap of that file cannot reach the worktree (or, later, the live tree).
 ///
-/// Returns the worktree path on success (caller must call `cleanup_worktree`).
+/// Returns the worktree path on success (caller owns cleanup via guard).
 fn layer4_worktree(
     source_root: &Path,
-    diff_file: &Path,
+    diff_text: &str,
     task_id: KanbanTaskId,
 ) -> Result<PathBuf, String> {
     let worktree = create_task_worktree(source_root, task_id)
         .map_err(|e| format!("failed to create worktree: {e}"))?;
 
-    match apply_patch_in_worktree(&worktree, diff_file) {
+    let patch_file = worktree.join(".neoth_self_edit.patch");
+    if let Err(e) = std::fs::write(&patch_file, diff_text.as_bytes()) {
+        let _ = cleanup_worktree(source_root, &worktree, true);
+        return Err(format!("failed to stage patch in worktree: {e}"));
+    }
+
+    let outcome = apply_patch_in_worktree(&worktree, &patch_file);
+    // Drop the staged patch so layer 5's cargo check sees only the applied diff.
+    let _ = std::fs::remove_file(&patch_file);
+
+    match outcome {
         Ok(PatchApplyOutcome::Applied { .. }) => Ok(worktree),
         Ok(PatchApplyOutcome::Rejected { stderr }) => {
             let _ = cleanup_worktree(source_root, &worktree, true);
@@ -484,7 +647,7 @@ fn layer4_worktree(
 }
 
 /// Layer 5: run `cargo check` in the worktree and require a zero exit.
-fn layer5_green_test(source_root: &Path, worktree: &Path) -> Result<(), String> {
+fn layer5_green_test(worktree: &Path) -> Result<(), String> {
     use std::time::Duration;
 
     // 5-minute timeout matches the default `test_timeout_secs`.
@@ -505,7 +668,6 @@ fn layer5_green_test(source_root: &Path, worktree: &Path) -> Result<(), String> 
             .take(5)
             .map(|d| d.message.as_str())
             .collect();
-        let _ = source_root; // suppress unused warning
         Err(format!(
             "cargo check failed with {} error(s): {}",
             check_run.diagnostics.iter().filter(|d| d.level == "error").count(),
@@ -648,8 +810,10 @@ mod tests {
 
     #[test]
     fn layer2_passes_allowed_path() {
+        // NOTE: src/cli/self_edit.rs is deliberately NOT usable here — the
+        // orchestrator is hard-denied (gate-weakening class).
         let cfg = cfg_enabled(&["src/cli"]);
-        let paths = vec!["src/cli/self_edit.rs".to_string()];
+        let paths = vec!["src/cli/chat.rs".to_string()];
         assert!(layer2_allowlist(&cfg, &paths, 0).is_ok());
     }
 
@@ -797,6 +961,157 @@ mod tests {
         // Policy: NEVER auto-apply, even at Full.
         assert!(layer3_permission(AutonomyLevel::Full, &paths, false).is_err());
         assert!(layer3_permission(AutonomyLevel::Full, &paths, true).is_ok());
+    }
+
+    #[test]
+    fn layer2_rejects_build_time_execution_paths() {
+        // Layer 5's `cargo check` EXECUTES build scripts / proc macros — any
+        // path that shapes the build is host code execution and hard-denied.
+        let cfg = cfg_enabled(&["src/cli", "."]);
+        for p in [
+            "src/cli/build.rs",
+            "build.rs",
+            "Cargo.toml",
+            "neothd/Cargo.toml",
+            "Cargo.lock",
+            ".cargo/config.toml",
+        ] {
+            let err = layer2_allowlist(&cfg, &[p.to_string()], 1).unwrap_err();
+            assert!(err.contains("hard-deny"), "path {p} not denied: {err}");
+        }
+    }
+
+    #[test]
+    fn layer2_rejects_gate_orchestrator_and_worktree_infra() {
+        // Editing the CLI orchestrator or the layer-4/5 infrastructure is the
+        // same class of gate-weakening as editing the gate itself.
+        let cfg = cfg_enabled(&["src/cli", "src/coding"]);
+        for p in [
+            "src/cli/self_edit.rs",
+            "src/coding/worktree.rs",
+            "src/coding/mod.rs",
+        ] {
+            let err = layer2_allowlist(&cfg, &[p.to_string()], 1).unwrap_err();
+            assert!(err.contains("hard-deny"), "path {p} not denied: {err}");
+        }
+    }
+
+    #[test]
+    fn layer2_empty_or_slash_prefix_is_not_allow_all() {
+        // "" / "/" used to short-circuit the allowlist to allow-everything
+        // (operator-precedence bug) — both must now cover NOTHING.
+        for prefix in ["", "/"] {
+            let cfg = cfg_enabled(&[prefix]);
+            let err = layer2_allowlist(&cfg, &["src/tools/foo.rs".to_string()], 1).unwrap_err();
+            assert!(err.contains("not covered"), "prefix {prefix:?} acted as allow-all: {err}");
+        }
+    }
+
+    #[test]
+    fn layer2_dot_prefix_means_whole_tree() {
+        let cfg = cfg_enabled(&["."]);
+        assert!(layer2_allowlist(&cfg, &["src/tools/foo.rs".to_string()], 1).is_ok());
+    }
+
+    // ── Reentrancy lock ──────────────────────────────────────────────────────
+
+    #[test]
+    fn self_edit_lock_blocks_reentry_until_released() {
+        let root = std::env::temp_dir().join(format!(
+            "neoth_self_edit_lock_test_{}",
+            std::process::id()
+        ));
+        let first = SelfEditLock::acquire(&root).expect("first acquire");
+        let second = SelfEditLock::acquire(&root);
+        assert!(second.is_err(), "reentry must be refused while lock held");
+        assert!(second.unwrap_err().contains("already in progress"));
+        drop(first);
+        // Drop released the lock file — a fresh acquire succeeds.
+        let third = SelfEditLock::acquire(&root).expect("re-acquire after release");
+        drop(third);
+    }
+
+    // ── End-to-end acceptance (spec: dummy.rs comment addition passes) ──────
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn init_fixture_repo(dir: &Path) {
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            assert!(ok, "git {args:?} failed in fixture repo");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "neoth-test@example.com"]);
+        git(&["config", "user.name", "neoth-test"]);
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        std::fs::create_dir_all(dir.join("src/cli")).unwrap();
+        std::fs::write(dir.join("src/cli/dummy.rs"), "fn dummy() {}\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+    }
+
+    #[tokio::test]
+    async fn dummy_comment_addition_passes_all_gates_and_applies() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping e2e gate test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        let diff = "--- a/src/cli/dummy.rs\n\
+                    +++ b/src/cli/dummy.rs\n\
+                    @@ -1 +1,2 @@\n \
+                    fn dummy() {}\n\
+                    +// self-edit acceptance comment\n";
+
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        cfg.coding.self_edit.enabled = true;
+        cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
+        // The fixture repo has no compilable crate — layer 5's cargo plumbing
+        // is covered by worktree.rs's run_cargo_check_json tests; skip it here.
+        cfg.coding.self_edit.require_green_tests = false;
+        cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+
+        let outcome = run_gate_stack(diff, &cfg, false, true, None)
+            .await
+            .expect("dummy.rs comment addition must pass all gates");
+        assert_eq!(outcome.target_paths, vec!["src/cli/dummy.rs".to_string()]);
+        assert!(!outcome.dry_run);
+
+        let body = std::fs::read_to_string(tmp.path().join("src/cli/dummy.rs")).unwrap();
+        assert!(
+            body.contains("self-edit acceptance comment"),
+            "live tree must contain the applied edit, got: {body}"
+        );
+
+        // The RAII guard must have removed the gate's worktree — only the
+        // main tree remains in `git worktree list`.
+        let list = std::process::Command::new("git")
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        let listing = String::from_utf8_lossy(&list.stdout);
+        assert_eq!(
+            listing.matches("worktree ").count(),
+            1,
+            "gate worktree leaked: {listing}"
+        );
     }
 
     // ── Pseudo task ID ───────────────────────────────────────────────────────

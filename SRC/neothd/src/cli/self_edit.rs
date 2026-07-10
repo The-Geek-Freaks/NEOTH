@@ -129,8 +129,8 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
     // silently mutate the source tree with no forensic record. Dry-run (no
     // apply) may proceed without it.
     let wal_dir = FreedomConfig::default_wal_dir();
-    let wal_handle = open_audit_wal(&wal_dir);
-    if wal_handle.is_none() {
+    let wal = open_audit_wal(&wal_dir);
+    if wal.is_none() {
         if args.dry_run {
             warn!("self_edit: WAL writer unavailable — dry-run proceeds without audit");
         } else {
@@ -142,21 +142,28 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
             );
         }
     }
+    let (wal_handle, wal_join) = match wal {
+        Some((handle, join)) => (Some(handle), Some(join)),
+        None => (None, None),
+    };
 
     // 5. Run all five gates. `args.yes` is the operator's explicit acknowledgement
     // that Layer 3 requires before applying a Confirm-level self-edit.
-    let result = run_gate_stack(
-        &diff_text,
-        &diff_path,
-        &cfg,
-        args.dry_run,
-        args.yes,
-        wal_handle.as_ref(),
-    )
-    .await;
+    let result = run_gate_stack(&diff_text, &cfg, args.dry_run, args.yes, wal_handle.as_ref()).await;
 
-    // WAL writer dropped here; background task flushes on drop.
+    // Drop the handle (closes the writer channel), then AWAIT the writer task
+    // so every audit frame — especially SelfEditApplied — is durably flushed
+    // before the process can exit. A kill between apply and flush would
+    // otherwise leave a live-tree mutation with no `applied` forensic record.
     drop(wal_handle);
+    if let Some(join) = wal_join {
+        if tokio::time::timeout(std::time::Duration::from_secs(5), join)
+            .await
+            .is_err()
+        {
+            warn!("self_edit: WAL writer did not flush within 5s — audit frame may be incomplete");
+        }
+    }
 
     match result {
         Ok(outcome) => {
@@ -216,16 +223,23 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
 
 /// Try to open a short-lived WAL writer at `<wal_dir>/self_edit_audit.wal`.
 ///
+/// Returns the writer handle AND its task `JoinHandle` — the caller must await
+/// the join after dropping the handle so audit frames are flushed before exit.
 /// Returns `None` on failure — the caller logs a warning and continues without
 /// WAL (gates provide the security; WAL is best-effort audit trail).
-fn open_audit_wal(wal_dir: &std::path::Path) -> Option<crate::wal::writer::WalWriterHandle> {
+type AuditWal = (
+    crate::wal::writer::WalWriterHandle,
+    tokio::task::JoinHandle<()>,
+);
+
+fn open_audit_wal(wal_dir: &std::path::Path) -> Option<AuditWal> {
     if let Err(e) = std::fs::create_dir_all(wal_dir) {
         warn!(error = %e, dir = %wal_dir.display(), "self_edit: cannot create WAL dir");
         return None;
     }
     let segment = wal_dir.join("self_edit_audit.wal");
     match crate::wal::writer::spawn(segment) {
-        Ok((handle, _join)) => Some(handle),
+        Ok((handle, join)) => Some((handle, join)),
         Err(e) => {
             warn!(error = %e, "self_edit: cannot open WAL writer");
             None

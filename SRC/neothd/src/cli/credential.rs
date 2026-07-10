@@ -483,7 +483,7 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
                 .iter()
                 .filter(|key| {
                     let k = serde_yaml::Value::String((*key).clone());
-                    !map.get(&k).and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty())
+                    map.get(&k).and_then(|v| v.as_str()).is_none_or(|s| s.is_empty())
                 })
                 .collect();
             if !missing.is_empty() {

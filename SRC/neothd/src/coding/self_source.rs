@@ -28,12 +28,9 @@ pub fn neoth_source_root(
     cfg_root: &Option<PathBuf>,
 ) -> Result<PathBuf> {
     if let Some(root) = cfg_root {
-        let root = root
-            .canonicalize()
-            .with_context(|| format!(
-                "canonicalize source_root override {}",
-                root.display()
-            ))?;
+        let root = strip_verbatim(root.canonicalize().with_context(|| {
+            format!("canonicalize source_root override {}", root.display())
+        })?);
         validate_source_root(&root)?;
         return Ok(root);
     }
@@ -62,6 +59,22 @@ pub fn neoth_source_root(
          set freedom.yaml::coding.self_edit.source_root explicitly",
         exe.display()
     )
+}
+
+/// Strip Windows' verbatim prefix (`\\?\C:\…` → `C:\…`) from a canonicalized
+/// path. `std::fs::canonicalize` returns verbatim paths on Windows, which
+/// `git` (MSYS-based) rejects with "could not create leading directories".
+/// UNC verbatim paths (`\\?\UNC\…`) are left untouched.
+fn strip_verbatim(p: PathBuf) -> PathBuf {
+    if cfg!(windows) {
+        let s = p.display().to_string();
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            if !rest.starts_with("UNC") {
+                return PathBuf::from(rest);
+            }
+        }
+    }
+    p
 }
 
 /// Validate that `root` is a Rust workspace that lives inside a git repo.
@@ -119,8 +132,18 @@ fn validate_diff_path(path: &str) -> Result<()> {
     if path.as_bytes().get(1) == Some(&b':') {
         anyhow::bail!("diff path '{path}' has a drive prefix — only repo-relative paths are allowed");
     }
-    if path.split('/').any(|component| component == "..") {
-        anyhow::bail!("diff path '{path}' contains a '..' traversal component");
+    // Any other colon: NTFS alternate data streams (`mod.rs:stream`) attach to
+    // an EXISTING file under a colon-suffixed name, bypassing prefix denies.
+    if path.contains(':') {
+        anyhow::bail!(
+            "diff path '{path}' contains ':' — NTFS alternate data streams are not permitted"
+        );
+    }
+    // `.` components survive the string-prefix deny check unchanged but the OS
+    // resolves them away (`src/./wal/x` opens `src/wal/x`) — reject alongside
+    // `..` so every gate layer sees the canonical spelling.
+    if path.split('/').any(|component| component == ".." || component == ".") {
+        anyhow::bail!("diff path '{path}' contains a '.' or '..' traversal component");
     }
     Ok(())
 }
@@ -273,6 +296,21 @@ mod tests {
             assert!(
                 diff_paths(bad).is_err(),
                 "expected rejection for malformed path in: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn diff_paths_rejects_dot_component_and_ads_colon() {
+        // `src/./wal/x` resolves to `src/wal/x` at the OS level but evades a
+        // string-prefix deny; `mod.rs:stream` is an NTFS alternate data stream.
+        for bad in [
+            "--- a/src/./wal/mod.rs\n+++ b/src/./wal/mod.rs\n@@ -1 +1 @@\n-x\n+y\n",
+            "--- a/src/cli/mod.rs:stream\n+++ b/src/cli/mod.rs:stream\n@@ -1 +1 @@\n-x\n+y\n",
+        ] {
+            assert!(
+                diff_paths(bad).is_err(),
+                "expected rejection for non-canonical path in: {bad:?}"
             );
         }
     }
