@@ -61,6 +61,13 @@ pub mod wal_sync;
 /// into narrow local recall effects without mutating the foreign backup table.
 pub mod foreign_indexer;
 
+/// GOLD-FEAT-06 — per-node resource snapshot types + in-memory swarm dashboard.
+/// [`swarm::NodeResourceSnapshot`] is the WAL payload for EXTENDED/LocalSnapshot (0x04)
+/// and EXTENDED/SwarmResourceSnapshot (0x03) frames emitted by the resource-snapshot
+/// cron and read by `neoth cluster swarm`.
+#[cfg(feature = "cluster")]
+pub mod swarm;
+
 /// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
 /// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
 /// Phase 6 gossip refreshes `last_seen_unix` on each authenticated

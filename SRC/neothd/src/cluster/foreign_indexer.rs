@@ -8,11 +8,19 @@
 //! Applied effects are deliberately narrow:
 //! - `0x90` / `0x91`: boost an existing local episode's importance.
 //! - `0x92`: soft-decay an existing local episode, floored at `0.10`.
-//! - `0x98`: skipped on current main because groundtruth IDs are local SQLite
-//!   autoincrements, not stable peer-wide identifiers.
+//! - `0x98`: in the gossip indexer loop, skipped (groundtruth IDs are local
+//!   SQLite autoincrements, not peer-stable). The same-origin restore path
+//!   (`DES-13-AUTO-RESTORE-01`) uses `apply_groundtruth_revoke` directly.
 //! - `0x94`, `0x13`, unknown, malformed payloads: mark indexed, no local write.
 //!
 //! Foreign events never create local episodes or groundtruth facts.
+//!
+//! # pub(crate) conflict helpers
+//!
+//! `apply_episode_boost`, `apply_episode_decay_sql`, and `apply_groundtruth_revoke`
+//! are extracted as `pub(crate)` so the restore path in `cli/cluster.rs` (via
+//! `cluster::wal_sync::apply_restore_frame`) can reuse the same SQL logic without
+//! duplication.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -30,21 +38,28 @@ const DECAY_FLOOR: f64 = 0.10;
 
 // Peer payloads carry more fields (kind/day/ts/from_importance/reason/…);
 // serde ignores unknown fields, so only what the indexer consumes is declared.
+// pub(crate) so the restore path in wal_sync.rs can deserialize the same shapes.
 #[derive(Debug, Deserialize)]
-struct EpisodeConsolidatedPayload {
-    event_id: i64,
-    importance: f64,
+pub(crate) struct EpisodeConsolidatedPayload {
+    pub(crate) event_id: i64,
+    pub(crate) importance: f64,
 }
 
 #[derive(Debug, Deserialize)]
-struct EpisodePromotedPayload {
-    event_id: i64,
-    to_importance: f64,
+pub(crate) struct EpisodePromotedPayload {
+    pub(crate) event_id: i64,
+    pub(crate) to_importance: f64,
 }
 
 #[derive(Debug, Deserialize)]
-struct EpisodeArchivedPayload {
-    event_id: i64,
+pub(crate) struct EpisodeArchivedPayload {
+    pub(crate) event_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GroundtruthRevokedPayload {
+    /// Local SQLite rowid in `idx_groundtruth` of the fact to revoke.
+    pub(crate) id: i64,
 }
 
 #[derive(Debug)]
@@ -249,39 +264,110 @@ fn handle_episode_promoted(conn: &Connection, row: &PendingRow) -> Result<()> {
     boost_episode_importance(conn, row, payload.event_id, payload.to_importance)
 }
 
+// ---------------------------------------------------------------------------
+// pub(crate) conflict helpers — shared by gossip indexer AND restore path
+// ---------------------------------------------------------------------------
+
+/// Outcome of applying a peer importance boost to a local episode.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum BoostOutcome {
+    /// Local importance was raised to the peer value.
+    Applied,
+    /// Local importance was already >= peer value; no write performed.
+    Idempotent,
+    /// No `idx_episode` row exists for `event_id`.
+    Missing,
+}
+
+/// Boost a local episode's importance with the MAX rule.
+///
+/// Uses read-then-conditional-write so callers (gossip loop and restore path)
+/// can distinguish Applied/Idempotent/Missing for dry-run reporting without a
+/// second SELECT. Single-threaded CLI invocation makes this safe.
+pub(crate) fn apply_episode_boost(
+    conn: &Connection,
+    event_id: i64,
+    peer_importance: f64,
+) -> Result<BoostOutcome> {
+    if !peer_importance.is_finite() {
+        return Ok(BoostOutcome::Idempotent);
+    }
+    let importance = peer_importance.clamp(IMPORTANCE_MIN, IMPORTANCE_MAX);
+    let local_imp: Option<f64> = match conn.query_row(
+        "SELECT importance FROM idx_episode WHERE event_id = ?1",
+        [event_id],
+        |r| r.get::<_, f64>(0),
+    ) {
+        Ok(v) => Some(v),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(anyhow::anyhow!("apply_episode_boost: {e}")),
+    };
+    let local = match local_imp {
+        None => return Ok(BoostOutcome::Missing),
+        Some(v) => v,
+    };
+    if local >= importance {
+        return Ok(BoostOutcome::Idempotent);
+    }
+    conn.execute(
+        "UPDATE idx_episode SET importance = ?1 WHERE event_id = ?2",
+        rusqlite::params![importance, event_id],
+    )
+    .context("apply_episode_boost: update importance")?;
+    Ok(BoostOutcome::Applied)
+}
+
 fn boost_episode_importance(
     conn: &Connection,
     row: &PendingRow,
     event_id: i64,
     peer_importance: f64,
 ) -> Result<()> {
-    if !peer_importance.is_finite() {
-        trace!(
+    match apply_episode_boost(conn, event_id, peer_importance)? {
+        BoostOutcome::Applied => trace!(
             foreign_event_id = row.id,
             episode_event_id = event_id,
             peer_importance,
-            "foreign_indexer: non-finite importance skipped"
-        );
-        return Ok(());
+            "foreign_indexer: episode importance boost applied"
+        ),
+        BoostOutcome::Idempotent => trace!(
+            foreign_event_id = row.id,
+            episode_event_id = event_id,
+            peer_importance,
+            "foreign_indexer: boost no-op (local >= peer or non-finite)"
+        ),
+        BoostOutcome::Missing => trace!(
+            foreign_event_id = row.id,
+            episode_event_id = event_id,
+            "foreign_indexer: boost skipped — no local episode row"
+        ),
     }
+    Ok(())
+}
 
-    let importance = peer_importance.clamp(IMPORTANCE_MIN, IMPORTANCE_MAX);
+/// Soft-decay a local episode's importance, floored at [`DECAY_FLOOR`].
+///
+/// Returns `true` when the local row was found and SQL executed,
+/// `false` when no row exists for `event_id`.
+pub(crate) fn apply_episode_decay_sql(conn: &Connection, event_id: i64) -> Result<bool> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
+            [event_id],
+            |r| r.get(0),
+        )
+        .context("apply_episode_decay_sql: check existence")?;
+    if count == 0 {
+        return Ok(false);
+    }
     conn.execute(
         "UPDATE idx_episode \
-         SET importance = MAX(importance, ?1) \
+         SET importance = MIN(importance, MAX(importance * 0.5, ?1)) \
          WHERE event_id = ?2",
-        rusqlite::params![importance, event_id],
+        rusqlite::params![DECAY_FLOOR, event_id],
     )
-    .context("foreign_indexer: episode importance boost")?;
-
-    trace!(
-        foreign_event_id = row.id,
-        episode_event_id = event_id,
-        peer_importance,
-        clamped_importance = importance,
-        "foreign_indexer: episode importance boost applied"
-    );
-    Ok(())
+    .context("apply_episode_decay_sql: update")?;
+    Ok(true)
 }
 
 fn handle_episode_decay(conn: &Connection, row: &PendingRow) -> Result<()> {
@@ -297,22 +383,77 @@ fn handle_episode_decay(conn: &Connection, row: &PendingRow) -> Result<()> {
             return Ok(());
         }
     };
-
-    conn.execute(
-        "UPDATE idx_episode \
-         SET importance = MIN(importance, MAX(importance * 0.5, ?1)) \
-         WHERE event_id = ?2",
-        rusqlite::params![DECAY_FLOOR, payload.event_id],
-    )
-    .context("foreign_indexer: episode soft decay")?;
-
+    let found = apply_episode_decay_sql(conn, payload.event_id)?;
     trace!(
         foreign_event_id = row.id,
         episode_event_id = payload.event_id,
         decay_floor = DECAY_FLOOR,
-        "foreign_indexer: episode soft decay applied"
+        "foreign_indexer: episode soft decay {}",
+        if found { "applied" } else { "skipped (row missing)" }
     );
     Ok(())
+}
+
+/// Outcome of applying a groundtruth revocation.
+///
+/// Used by the restore path (`DES-13-AUTO-RESTORE-01`). The gossip indexer
+/// loop does NOT invoke this — 0x98 events are skipped there because
+/// groundtruth IDs are local SQLite autoincrements.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum GroundtruthRevokeOutcome {
+    /// `revoked_at` was set on the matching row.
+    Applied,
+    /// No `idx_groundtruth` row with the given id.
+    Missing,
+    /// Row already has `revoked_at IS NOT NULL`.
+    AlreadyRevoked,
+    /// Row has `fact_state = 'contradicted'` — closed fact, skip per conflict matrix.
+    Contradicted,
+}
+
+/// Revoke a groundtruth fact by setting `revoked_at` if the row is eligible.
+///
+/// Eligibility (conflict matrix):
+/// - Row must exist.
+/// - `revoked_at` must be NULL.
+/// - `fact_state` must NOT be `'contradicted'`.
+///
+/// Never creates new rows. Hard constraint: 0x98 may only SET `revoked_at`
+/// on an existing row where `revoked_at IS NULL`.
+pub(crate) fn apply_groundtruth_revoke(
+    conn: &Connection,
+    gt_row_id: i64,
+    received_at: i64,
+) -> Result<GroundtruthRevokeOutcome> {
+    let row = conn.query_row(
+        "SELECT revoked_at, fact_state FROM idx_groundtruth WHERE id = ?1",
+        [gt_row_id],
+        |r| {
+            let revoked_at: Option<i64> = r.get(0)?;
+            let fact_state: String = r.get(1)?;
+            Ok((revoked_at, fact_state))
+        },
+    );
+    let (revoked_at, fact_state) = match row {
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            return Ok(GroundtruthRevokeOutcome::Missing);
+        }
+        Err(e) => return Err(anyhow::anyhow!("apply_groundtruth_revoke: {e}")),
+        Ok(pair) => pair,
+    };
+    if revoked_at.is_some() {
+        return Ok(GroundtruthRevokeOutcome::AlreadyRevoked);
+    }
+    if fact_state == "contradicted" {
+        return Ok(GroundtruthRevokeOutcome::Contradicted);
+    }
+    conn.execute(
+        "UPDATE idx_groundtruth SET revoked_at = ?1 \
+         WHERE id = ?2 AND revoked_at IS NULL",
+        rusqlite::params![received_at, gt_row_id],
+    )
+    .context("apply_groundtruth_revoke: set revoked_at")?;
+    Ok(GroundtruthRevokeOutcome::Applied)
 }
 
 /// Spawn the foreign-event indexer loop.
@@ -392,7 +533,8 @@ mod tests {
 
             CREATE TABLE IF NOT EXISTS idx_groundtruth (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                revoked_at INTEGER
+                revoked_at INTEGER,
+                fact_state TEXT NOT NULL DEFAULT 'verified'
             );
             "#,
         )
@@ -669,5 +811,121 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_episode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(episodes, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Unit tests for pub(crate) conflict helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_episode_boost_applied_when_peer_higher() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (1, 0.3)",
+            [],
+        )
+        .unwrap();
+        let outcome = apply_episode_boost(&conn, 1, 0.8).unwrap();
+        assert_eq!(outcome, BoostOutcome::Applied);
+        let imp: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert!((imp - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn apply_episode_boost_idempotent_when_local_equal_or_higher() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (2, 0.9)",
+            [],
+        )
+        .unwrap();
+        let outcome = apply_episode_boost(&conn, 2, 0.7).unwrap();
+        assert_eq!(outcome, BoostOutcome::Idempotent);
+        // value unchanged
+        let imp: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 2", [], |r| r.get(0))
+            .unwrap();
+        assert!((imp - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn apply_episode_boost_missing_when_no_row() {
+        let conn = open_test_db();
+        let outcome = apply_episode_boost(&conn, 999, 0.5).unwrap();
+        assert_eq!(outcome, BoostOutcome::Missing);
+    }
+
+    #[test]
+    fn apply_episode_decay_sql_found_and_not_found() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (5, 0.8)",
+            [],
+        )
+        .unwrap();
+        let found = apply_episode_decay_sql(&conn, 5).unwrap();
+        assert!(found);
+        let imp: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 5", [], |r| r.get(0))
+            .unwrap();
+        // 0.8 * 0.5 = 0.4, above DECAY_FLOOR
+        assert!((imp - 0.4).abs() < 1e-9);
+
+        let not_found = apply_episode_decay_sql(&conn, 888).unwrap();
+        assert!(!not_found);
+    }
+
+    #[test]
+    fn apply_groundtruth_revoke_applied() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, revoked_at, fact_state) VALUES (10, NULL, 'verified')",
+            [],
+        )
+        .unwrap();
+        let outcome = apply_groundtruth_revoke(&conn, 10, 1_700_000_000).unwrap();
+        assert_eq!(outcome, GroundtruthRevokeOutcome::Applied);
+        let ra: Option<i64> = conn
+            .query_row("SELECT revoked_at FROM idx_groundtruth WHERE id = 10", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ra, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn apply_groundtruth_revoke_missing() {
+        let conn = open_test_db();
+        let outcome = apply_groundtruth_revoke(&conn, 99, 0).unwrap();
+        assert_eq!(outcome, GroundtruthRevokeOutcome::Missing);
+    }
+
+    #[test]
+    fn apply_groundtruth_revoke_already_revoked() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, revoked_at, fact_state) VALUES (11, 12345, 'verified')",
+            [],
+        )
+        .unwrap();
+        let outcome = apply_groundtruth_revoke(&conn, 11, 99999).unwrap();
+        assert_eq!(outcome, GroundtruthRevokeOutcome::AlreadyRevoked);
+    }
+
+    #[test]
+    fn apply_groundtruth_revoke_contradicted() {
+        let conn = open_test_db();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, revoked_at, fact_state) VALUES (12, NULL, 'contradicted')",
+            [],
+        )
+        .unwrap();
+        let outcome = apply_groundtruth_revoke(&conn, 12, 0).unwrap();
+        assert_eq!(outcome, GroundtruthRevokeOutcome::Contradicted);
+        // revoked_at must remain NULL
+        let ra: Option<i64> = conn
+            .query_row("SELECT revoked_at FROM idx_groundtruth WHERE id = 12", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ra, None);
     }
 }

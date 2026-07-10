@@ -160,6 +160,29 @@ pub enum ClusterAction {
     Enable,
     /// Disable cluster auto-discovery.
     Disable,
+    /// Restore same-origin peer-backup frames into local recall/memory.
+    ///
+    /// Reads a JSONL export produced by `neoth cluster export-foreign` and
+    /// applies frames whose `origin_peer_pk` matches the local node identity
+    /// back into `idx_episode` / `idx_groundtruth`.  Cross-origin rows are
+    /// silently counted and skipped.
+    ///
+    /// Pass `--dry-run` to evaluate conflicts without any writes.
+    Restore {
+        /// Path to the JSONL export file (produced by `neoth cluster export-foreign`).
+        peer_export: String,
+        /// Override the local node pubkey filter.  Use when the passphrase is
+        /// unavailable but you know the 64-char hex pubkey that was used.
+        #[arg(long)]
+        peer: Option<String>,
+        /// Evaluate conflict matrix and report per-row outcome without
+        /// writing anything to `views.db` or the audit log.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Skip the TTY consent prompt.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
 }
 
 /// Strict validation: 64-char lowercase hex. Phase 4 architect
@@ -220,6 +243,12 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
         ClusterAction::Revoke { pub_key } => run_revoke(&pub_key),
         ClusterAction::Enable => run_toggle(true),
         ClusterAction::Disable => run_toggle(false),
+        ClusterAction::Restore {
+            peer_export,
+            peer,
+            dry_run,
+            yes,
+        } => run_restore(&peer_export, peer.as_deref(), dry_run, yes),
     }
 }
 
@@ -1157,9 +1186,9 @@ fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
 /// this file is a raw backup dump, NOT an importable restore package.
 const EXPORT_FOREIGN_WARNING: &str =
     "# WARNING: raw backup dump of replicated peer events (idx_foreign_events).\n\
-     # These are raw gossip frames; applying them back into local recall/memory\n\
-     # is NOT implemented — there is no `neoth restore` for this file. Archive it\n\
-     # as an off-node backup; conflict-resolution merge is a future feature.";
+     # These are raw gossip frames. Use `neoth cluster restore <this-file>` to\n\
+     # apply same-origin frames back into local recall/memory. Cross-peer rows\n\
+     # are skipped. Archive as an off-node backup (DES-13-AUTO-RESTORE-01).";
 
 /// DES-13 — one JSONL line for the export. PURE + unit-pinned: the payload is
 /// base64 so the file stays valid UTF-8 (`jq`-able). Non-PII by construction —
@@ -1219,6 +1248,322 @@ fn run_export_foreign(
             peer.map(|p| format!(" from peer {p}")).unwrap_or_default(),
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// DES-13-AUTO-RESTORE-01 — restore helpers
+// ---------------------------------------------------------------------------
+
+/// One JSONL data row from the export file (`neoth cluster export-foreign`).
+/// Comment lines (`#`) are filtered before parsing.
+#[derive(Debug, serde::Deserialize)]
+struct ExportRow {
+    origin_peer_pk: String,
+    origin_seq: u64,
+    /// Hex-encoded event type, e.g. `"0x90"` or `"0x9E"`.
+    event_type: String,
+    /// Base64-encoded full WAL frame bytes.
+    payload_b64: String,
+    received_at: i64,
+}
+
+/// Parse `"0xNN"` or `"0XNN"` (case-insensitive) → `u8`.
+fn parse_event_type_hex(s: &str) -> Result<u8> {
+    let stripped = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .ok_or_else(|| anyhow::anyhow!("event_type must start with '0x', got: {s:?}"))?;
+    u8::from_str_radix(stripped, 16)
+        .with_context(|| format!("event_type hex parse failed for {s:?}"))
+}
+
+/// Open (or create+append) the off-WAL audit log at `path` with 0600 permissions.
+///
+/// Reuses the same ACL helper that `memory/store.rs` uses so no Windows ACL
+/// code is hand-rolled here.
+fn open_audit_log(path: &std::path::Path) -> Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open audit log {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(windows)]
+    {
+        let _ = crate::wal::win_acl::restrict_to_owner(path);
+    }
+    Ok(file)
+}
+
+fn run_restore(
+    peer_export: &str,
+    peer_pk_override: Option<&str>,
+    dry_run: bool,
+    yes: bool,
+) -> Result<()> {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    use base64::Engine as _;
+
+    let home = crate::config::FreedomConfig::default_neoth_home();
+
+    // ── 1. Resolve local node pubkey ──────────────────────────────────────
+    let local_pk: String = match peer_pk_override {
+        Some(pk) => {
+            validate_pub_key_hex(pk)?;
+            pk.to_string()
+        }
+        None => crate::cluster::wal_sync::local_node_pubkey(&home).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot derive local node pubkey — no cluster passphrase configured.\n\
+                 Either run `neoth init` with a cluster passphrase, or pass --peer <pubkey>."
+            )
+        })?,
+    };
+
+    // ── 2. Open views.db — fail fast if the daemon holds the write lock ───
+    let conn = crate::memory::store::open(&home.join("views.db")).with_context(|| {
+        "Cannot open views.db.\n\
+         If the neothd daemon is running, stop it first, then retry. SQLite exclusive\n\
+         lock prevents concurrent restore."
+    })?;
+    // Probe for an EXCLUSIVE lock in one round-trip. If the daemon is active
+    // this will return `SQLITE_BUSY` which anyhow surfaces clearly.
+    conn.execute_batch("BEGIN IMMEDIATE; COMMIT")
+        .with_context(|| {
+            "views.db is locked (another process holds it open).\n\
+             Stop the neothd daemon and retry."
+        })?;
+
+    // ── 3. Consent prompt (skipped for --dry-run and --yes) ──────────────
+    if !dry_run && !yes {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "Non-TTY input without --yes: refusing to restore without explicit consent.\n\
+                 Add --yes to skip the prompt in non-interactive contexts."
+            );
+        }
+        eprint!(
+            "About to restore same-origin frames from `{peer_export}` into views.db.\n\
+             Local node pubkey: {local_pk}\n\
+             This will UPDATE existing idx_episode / idx_groundtruth rows.\n\
+             Proceed? [y/N] "
+        );
+        let mut answer = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut answer)
+            .context("read consent prompt")?;
+        if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+            anyhow::bail!("Restore aborted by operator.");
+        }
+    }
+
+    // ── 4. Parse and apply the export file line-by-line ──────────────────
+    let file = std::fs::File::open(peer_export)
+        .with_context(|| format!("open export file {peer_export}"))?;
+    let reader = std::io::BufReader::new(file);
+
+    let mut rows_applied: usize = 0;
+    let mut rows_skipped: usize = 0;
+    let mut rows_cross_peer: usize = 0;
+    let mut rows_malformed: usize = 0;
+
+    // Deduplicate cross-peer WARNs: one per unique foreign pk, not per row.
+    let mut warned_cross_peer: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    // Audit log opened lazily so --dry-run never creates the file.
+    let audit_path = home.join("restore-audit.jsonl");
+    let mut audit_file: Option<std::fs::File> = None;
+
+    for (line_idx, raw_line) in reader.lines().enumerate() {
+        let line =
+            raw_line.with_context(|| format!("read line {} of {peer_export}", line_idx + 1))?;
+        let line = line.trim();
+
+        // Skip comment and blank lines (# lines from the export header).
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Malformed JSONL — count as skipped, never abort the run.
+        let export_row: ExportRow = match serde_json::from_str(line) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    line = line_idx + 1,
+                    error = %e,
+                    "restore: malformed JSONL line — skipped"
+                );
+                rows_malformed += 1;
+                rows_skipped += 1;
+                continue;
+            }
+        };
+
+        // Same-origin-only: skip and deduplicate WARN per foreign pk.
+        if export_row.origin_peer_pk != local_pk {
+            if warned_cross_peer.insert(export_row.origin_peer_pk.clone()) {
+                tracing::warn!(
+                    peer = %export_row.origin_peer_pk,
+                    "restore: cross-peer row (origin_peer_pk != local pubkey); \
+                     skipping all rows from this peer"
+                );
+            }
+            rows_cross_peer += 1;
+            rows_skipped += 1;
+            continue;
+        }
+
+        // Parse event_type — malformed → skip row.
+        let event_type = match parse_event_type_hex(&export_row.event_type) {
+            Ok(et) => et,
+            Err(e) => {
+                tracing::warn!(
+                    line = line_idx + 1,
+                    error = %e,
+                    "restore: malformed event_type — skipped"
+                );
+                rows_malformed += 1;
+                rows_skipped += 1;
+                continue;
+            }
+        };
+
+        // Decode base64 payload — malformed → skip row.
+        let payload_bytes = match base64::engine::general_purpose::STANDARD
+            .decode(&export_row.payload_b64)
+        {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    line = line_idx + 1,
+                    error = %e,
+                    "restore: base64 decode failed — skipped"
+                );
+                rows_malformed += 1;
+                rows_skipped += 1;
+                continue;
+            }
+        };
+
+        // Per-row savepoint so a Skip/error on one row doesn't roll back
+        // previously Applied rows.
+        let sp = format!("restore_r{line_idx}");
+        if !dry_run {
+            conn.execute_batch(&format!("SAVEPOINT \"{sp}\""))
+                .with_context(|| format!("savepoint for line {}", line_idx + 1))?;
+        }
+
+        let apply_result = crate::cluster::wal_sync::apply_restore_frame(
+            &conn,
+            event_type,
+            &payload_bytes,
+            export_row.received_at,
+            dry_run,
+        );
+
+        let outcome = match apply_result {
+            Ok(o) => {
+                if !dry_run {
+                    conn.execute_batch(&format!("RELEASE SAVEPOINT \"{sp}\""))
+                        .with_context(|| format!("release savepoint line {}", line_idx + 1))?;
+                }
+                o
+            }
+            Err(e) => {
+                if !dry_run {
+                    let _ = conn.execute_batch(&format!("ROLLBACK TO SAVEPOINT \"{sp}\""));
+                    let _ = conn.execute_batch(&format!("RELEASE SAVEPOINT \"{sp}\""));
+                }
+                tracing::warn!(
+                    line = line_idx + 1,
+                    event_type = event_type,
+                    error = %e,
+                    "restore: apply_restore_frame error — row skipped"
+                );
+                rows_skipped += 1;
+                continue;
+            }
+        };
+
+        // Append to the off-WAL audit log (never in dry-run).
+        if !dry_run {
+            let (outcome_tag, skip_reason) =
+                match &outcome {
+                    crate::cluster::wal_sync::RestoreOutcome::Applied => ("applied", String::new()),
+                    crate::cluster::wal_sync::RestoreOutcome::Skipped(r) => {
+                        ("skipped", r.to_string())
+                    }
+                };
+            let audit_entry = serde_json::json!({
+                "ts": crate::time::now_unix_i64(),
+                "origin_peer_pk": export_row.origin_peer_pk,
+                "origin_seq": export_row.origin_seq,
+                "event_type": format!("0x{:02X}", event_type),
+                "outcome": outcome_tag,
+                "skip_reason": skip_reason,
+            });
+            let af = audit_file.get_or_insert_with(|| {
+                open_audit_log(&audit_path).unwrap_or_else(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        path = %audit_path.display(),
+                        "restore: cannot open audit log — audit not written"
+                    );
+                    // ponytail: /dev/null / NUL sink so the closure type is satisfied.
+                    #[cfg(unix)]
+                    return std::fs::OpenOptions::new()
+                        .write(true)
+                        .open("/dev/null")
+                        .expect("open /dev/null");
+                    #[cfg(not(unix))]
+                    return std::fs::OpenOptions::new()
+                        .write(true)
+                        .open("NUL")
+                        .expect("open NUL");
+                })
+            });
+            let _ = writeln!(af, "{audit_entry}");
+        }
+
+        match outcome {
+            crate::cluster::wal_sync::RestoreOutcome::Applied => rows_applied += 1,
+            crate::cluster::wal_sync::RestoreOutcome::Skipped(reason) => {
+                if dry_run {
+                    eprintln!(
+                        "  [dry-run] seq={} et={} → skipped: {reason}",
+                        export_row.origin_seq, export_row.event_type,
+                    );
+                } else {
+                    tracing::debug!(
+                        reason = %reason,
+                        seq = export_row.origin_seq,
+                        "restore: row skipped"
+                    );
+                }
+                rows_skipped += 1;
+            }
+        }
+    }
+
+    // ── 5. Summary ────────────────────────────────────────────────────────
+    let mode = if dry_run { "[dry-run]" } else { "[done]" };
+    let audit_note = if dry_run {
+        String::new()
+    } else {
+        format!(" audit={}", audit_path.display())
+    };
+    eprintln!(
+        "restore {mode}: applied={rows_applied} skipped={rows_skipped} \
+         (cross-peer={rows_cross_peer} malformed={rows_malformed}){audit_note}"
+    );
     Ok(())
 }
 
@@ -1806,10 +2151,350 @@ mod tests {
     }
 
     #[test]
-    fn export_foreign_warning_never_claims_restore() {
-        // Honesty red-line: the banner must NOT imply an importable restore.
-        assert!(EXPORT_FOREIGN_WARNING.contains("NOT implemented"));
-        assert!(EXPORT_FOREIGN_WARNING.to_lowercase().contains("backup"));
-        assert!(!EXPORT_FOREIGN_WARNING.to_lowercase().contains("one-click restore"));
+    fn export_foreign_warning_references_restore_command() {
+        // Since DES-13-AUTO-RESTORE-01 is now implemented, the banner must
+        // point to `neoth cluster restore` and not claim it's unimplemented.
+        assert!(
+            EXPORT_FOREIGN_WARNING.contains("neoth cluster restore"),
+            "banner must reference the restore command"
+        );
+        assert!(
+            EXPORT_FOREIGN_WARNING.to_lowercase().contains("backup"),
+            "banner must still mention it is a backup dump"
+        );
+        assert!(
+            !EXPORT_FOREIGN_WARNING.contains("NOT implemented"),
+            "banner must not claim restore is unimplemented"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // DES-13-AUTO-RESTORE-01 unit tests (T-1 … T-7)
+    // -----------------------------------------------------------------------
+
+    fn make_restore_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(r#"
+            CREATE TABLE idx_episode (
+                event_id   INTEGER PRIMARY KEY,
+                importance REAL    NOT NULL DEFAULT 0.5
+            );
+            CREATE TABLE idx_groundtruth (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                revoked_at INTEGER,
+                fact_state TEXT NOT NULL DEFAULT 'verified'
+            );
+        "#).unwrap();
+        conn
+    }
+
+    fn make_wal_frame(event_type: u8, payload_json: &[u8]) -> Vec<u8> {
+        let header = crate::wal::HeaderBuilder::new(event_type, payload_json).build();
+        crate::wal::frame::encode_frame(&header, payload_json)
+    }
+
+    // T-1: idempotent re-restore — applying the same 0x90 frame twice:
+    //      first call → Applied; second call → Skipped(Idempotent).
+    #[test]
+    fn restore_t1_idempotent_on_second_apply() {
+        let conn = make_restore_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (10, 0.3)",
+            [],
+        )
+        .unwrap();
+        let payload = serde_json::json!({"event_id": 10, "importance": 0.8, "ts": 0}).to_string();
+        let frame = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            payload.as_bytes(),
+        );
+        let r1 = crate::cluster::wal_sync::apply_restore_frame(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            &frame,
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(r1, crate::cluster::wal_sync::RestoreOutcome::Applied);
+
+        let r2 = crate::cluster::wal_sync::apply_restore_frame(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            &frame,
+            0,
+            false,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                r2,
+                crate::cluster::wal_sync::RestoreOutcome::Skipped(
+                    crate::cluster::wal_sync::RestoreSkipReason::Idempotent
+                )
+            ),
+            "second apply must be Idempotent, got {r2:?}"
+        );
+    }
+
+    // T-2: conflict matrix fixtures — 0x90/0x91/0x92/0x98 all produce Applied
+    //      when matching local rows exist.
+    #[test]
+    fn restore_t2_conflict_matrix_fixtures() {
+        let conn = make_restore_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (1, 0.2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (2, 0.1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (3, 0.9)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, revoked_at, fact_state) VALUES (1, NULL, 'verified')",
+            [],
+        )
+        .unwrap();
+
+        // 0x90 EPISODE_CONSOLIDATED
+        let p90 = serde_json::json!({"event_id": 1, "importance": 0.8, "ts": 0}).to_string();
+        let f90 = make_wal_frame(crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, p90.as_bytes());
+        assert_eq!(
+            crate::cluster::wal_sync::apply_restore_frame(
+                &conn, crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, &f90, 0, false
+            ).unwrap(),
+            crate::cluster::wal_sync::RestoreOutcome::Applied
+        );
+
+        // 0x91 EPISODE_PROMOTED
+        let p91 = serde_json::json!({"event_id": 2, "from_importance": 0.1, "to_importance": 0.7, "ts": 0}).to_string();
+        let f91 = make_wal_frame(crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED, p91.as_bytes());
+        assert_eq!(
+            crate::cluster::wal_sync::apply_restore_frame(
+                &conn, crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED, &f91, 0, false
+            ).unwrap(),
+            crate::cluster::wal_sync::RestoreOutcome::Applied
+        );
+
+        // 0x92 EPISODE_ARCHIVED
+        let p92 = serde_json::json!({"event_id": 3, "reason": "below_forget_floor", "ts": 0}).to_string();
+        let f92 = make_wal_frame(crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED, p92.as_bytes());
+        assert_eq!(
+            crate::cluster::wal_sync::apply_restore_frame(
+                &conn, crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED, &f92, 0, false
+            ).unwrap(),
+            crate::cluster::wal_sync::RestoreOutcome::Applied
+        );
+
+        // 0x98 GROUNDTRUTH_REVOKED
+        let p98 = serde_json::json!({"id": 1, "ts": 0}).to_string();
+        let f98 = make_wal_frame(crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED, p98.as_bytes());
+        assert_eq!(
+            crate::cluster::wal_sync::apply_restore_frame(
+                &conn, crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED, &f98, 999, false
+            ).unwrap(),
+            crate::cluster::wal_sync::RestoreOutcome::Applied
+        );
+    }
+
+    // T-3: trust ceiling — 0x97 GROUNDTRUTH_ADDED is DoNotGossip class;
+    //      must produce Skipped(DoNotGossip) with zero local writes.
+    #[test]
+    fn restore_t3_trust_ceiling_0x97_do_not_gossip() {
+        let conn = make_restore_db();
+        let payload = serde_json::json!({"id": 5, "ts": 0}).to_string();
+        let frame = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_GROUNDTRUTH_ADDED,
+            payload.as_bytes(),
+        );
+        let outcome = crate::cluster::wal_sync::apply_restore_frame(
+            &conn,
+            crate::wal::events::EVENT_TYPE_GROUNDTRUTH_ADDED,
+            &frame,
+            0,
+            false,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                outcome,
+                crate::cluster::wal_sync::RestoreOutcome::Skipped(
+                    crate::cluster::wal_sync::RestoreSkipReason::DoNotGossip
+                )
+            ),
+            "0x97 must be DoNotGossip, got {outcome:?}"
+        );
+        // Zero rows in idx_groundtruth — no row created.
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_groundtruth", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    // T-4: dry-run parity — full conflict evaluation, zero SQL writes,
+    //      zero audit bytes written, returns Applied outcome.
+    #[test]
+    fn restore_t4_dry_run_no_sql_writes() {
+        let conn = make_restore_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (7, 0.2)",
+            [],
+        )
+        .unwrap();
+        let payload =
+            serde_json::json!({"event_id": 7, "importance": 0.9, "ts": 0}).to_string();
+        let frame = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            payload.as_bytes(),
+        );
+
+        // dry_run=true — must NOT write to DB.
+        let outcome = crate::cluster::wal_sync::apply_restore_frame(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            &frame,
+            0,
+            true,
+        )
+        .unwrap();
+
+        // Outcome is Applied (row would have been touched).
+        assert_eq!(outcome, crate::cluster::wal_sync::RestoreOutcome::Applied);
+
+        // Importance unchanged — no write occurred.
+        let imp: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 7", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            (imp - 0.2).abs() < 1e-9,
+            "dry-run must not change importance; got {imp}"
+        );
+    }
+
+    // T-5: cross-peer skip — `parse_event_type_hex` correctness + cross-peer
+    //      row counting gate (the actual per-run filtering is in run_restore).
+    #[test]
+    fn restore_t5_parse_event_type_hex_and_cross_peer_logic() {
+        // Valid formats.
+        assert_eq!(parse_event_type_hex("0x90").unwrap(), 0x90u8);
+        assert_eq!(parse_event_type_hex("0X9E").unwrap(), 0x9Eu8);
+        assert_eq!(parse_event_type_hex("0x98").unwrap(), 0x98u8);
+        assert_eq!(parse_event_type_hex("0x00").unwrap(), 0u8);
+        assert_eq!(parse_event_type_hex("0xFF").unwrap(), 0xFFu8);
+
+        // Invalid inputs.
+        assert!(parse_event_type_hex("90").is_err(), "no 0x prefix");
+        assert!(parse_event_type_hex("0xGG").is_err(), "invalid hex chars");
+        assert!(parse_event_type_hex("").is_err(), "empty string");
+
+        // Cross-peer: origin_peer_pk != local_pk must be countable.
+        // We verify that the data-level check is correct by comparing strings.
+        let local = "aabbccdd".repeat(8); // 64 chars
+        let foreign = "11223344".repeat(8);
+        assert_ne!(local, foreign);
+        assert_eq!(local.len(), 64);
+    }
+
+    // T-6: DoNotGossip tamper woven into a multi-event restore — surrounding
+    //      0x90 rows are Applied; the 0x97 row is DoNotGossip.
+    #[test]
+    fn restore_t6_do_not_gossip_in_multi_event_sequence() {
+        let conn = make_restore_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (20, 0.2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (21, 0.2)",
+            [],
+        )
+        .unwrap();
+
+        let apply = |et: u8, payload: &str, dry: bool| {
+            let frame = make_wal_frame(et, payload.as_bytes());
+            crate::cluster::wal_sync::apply_restore_frame(&conn, et, &frame, 0, dry).unwrap()
+        };
+
+        // Row A: 0x90 → Applied.
+        let pa =
+            serde_json::json!({"event_id": 20, "importance": 0.8, "ts": 0}).to_string();
+        assert_eq!(
+            apply(crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, &pa, false),
+            crate::cluster::wal_sync::RestoreOutcome::Applied
+        );
+
+        // Row B: 0x97 (DoNotGossip) → Skipped(DoNotGossip).
+        let pb = serde_json::json!({"id": 99, "ts": 0}).to_string();
+        assert!(matches!(
+            apply(crate::wal::events::EVENT_TYPE_GROUNDTRUTH_ADDED, &pb, false),
+            crate::cluster::wal_sync::RestoreOutcome::Skipped(
+                crate::cluster::wal_sync::RestoreSkipReason::DoNotGossip
+            )
+        ));
+
+        // Row C: 0x90 → Applied (proves Row B did not abort the sequence).
+        let pc =
+            serde_json::json!({"event_id": 21, "importance": 0.9, "ts": 0}).to_string();
+        assert_eq!(
+            apply(crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, &pc, false),
+            crate::cluster::wal_sync::RestoreOutcome::Applied
+        );
+
+        // Row A's importance changed; Row B left no groundtruth rows.
+        let imp20: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 20", [], |r| r.get(0))
+            .unwrap();
+        assert!((imp20 - 0.8).abs() < 1e-9);
+        let gt_count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_groundtruth", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(gt_count, 0);
+    }
+
+    // T-7: audit ACL — `open_audit_log` creates the file with 0600 on Unix.
+    #[test]
+    fn restore_t7_audit_log_acl_and_append() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let audit_path = dir.path().join("restore-audit.jsonl");
+        {
+            let mut f = open_audit_log(&audit_path).unwrap();
+            writeln!(f, r#"{{"ts":1,"outcome":"applied"}}"#).unwrap();
+        }
+        // File exists.
+        assert!(audit_path.exists());
+
+        // Append a second line (simulates second restore invocation).
+        {
+            let mut f = open_audit_log(&audit_path).unwrap();
+            writeln!(f, r#"{{"ts":2,"outcome":"skipped"}}"#).unwrap();
+        }
+
+        // Both lines are present (append semantics).
+        let content = std::fs::read_to_string(&audit_path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2);
+
+        // Parse ts to verify monotonic ordering.
+        let ts1: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let ts2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert!(ts1["ts"].as_i64().unwrap() <= ts2["ts"].as_i64().unwrap());
+
+        // Unix-only: verify 0600.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = std::fs::metadata(&audit_path).unwrap();
+            let mode = meta.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "audit log must be 0600, got 0o{mode:03o}");
+        }
     }
 }

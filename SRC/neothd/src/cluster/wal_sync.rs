@@ -621,6 +621,301 @@ fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ForeignEventRow> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// DES-13-AUTO-RESTORE-01 — per-row restore engine
+// ---------------------------------------------------------------------------
+
+/// Per-row outcome reported by [`apply_restore_frame`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreOutcome {
+    /// A local row was found and updated.
+    Applied,
+    /// Row was evaluated but not written (see [`RestoreSkipReason`]).
+    Skipped(RestoreSkipReason),
+}
+
+/// Why a single restore row was skipped without a local write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreSkipReason {
+    /// No matching local row (episode or groundtruth) — cannot restore.
+    LocalRowMissing,
+    /// Local state is already at or above peer state — idempotent.
+    Idempotent,
+    /// Groundtruth row already has `revoked_at IS NOT NULL`.
+    AlreadyRevoked,
+    /// Groundtruth row has `fact_state = 'contradicted'` — closed fact, skip.
+    Contradicted,
+    /// Replicate-class aggregate event (0x94 / 0x13) with no local apply effect.
+    NoiseEventType,
+    /// DoNotGossip event type — should not appear in a valid same-origin export.
+    DoNotGossip,
+    /// WAL frame decode failed or outer/inner event_type mismatch.
+    MalformedPayload,
+    /// Inner JSON payload failed to deserialize.
+    MalformedInnerPayload,
+}
+
+impl std::fmt::Display for RestoreSkipReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LocalRowMissing => f.write_str("local row missing"),
+            Self::Idempotent => f.write_str("idempotent (local >= peer)"),
+            Self::AlreadyRevoked => f.write_str("already revoked"),
+            Self::Contradicted => f.write_str("contradicted (closed fact)"),
+            Self::NoiseEventType => f.write_str("noise event type (aggregate, no apply effect)"),
+            Self::DoNotGossip => f.write_str("DoNotGossip event type in export"),
+            Self::MalformedPayload => f.write_str("malformed WAL frame or event_type mismatch"),
+            Self::MalformedInnerPayload => f.write_str("malformed inner JSON payload"),
+        }
+    }
+}
+
+/// Apply a single restored foreign frame to local recall surfaces.
+///
+/// # Parameters
+/// - `event_type` — the parsed `event_type` byte from the export JSONL line.
+/// - `payload_bytes` — the full WAL frame bytes (base64-decoded from `payload_b64`).
+/// - `received_at` — the `received_at` timestamp from the export line (used for
+///   groundtruth revocation timestamp).
+/// - `dry_run` — when `true`, full conflict evaluation runs but no SQL writes are
+///   performed and no audit events are written.
+///
+/// # Conflict matrix (DES-13-AUTO-RESTORE-01 §3)
+///
+/// | event_type | effect | skip conditions |
+/// |---|---|---|
+/// | 0x90 / 0x91 | `MAX(importance, peer)` on local episode | Missing / Idempotent |
+/// | 0x92 | `* 0.5, floor DECAY_FLOOR` on local episode | Missing |
+/// | 0x98 | SET `revoked_at` on local groundtruth | Missing / AlreadyRevoked / Contradicted |
+/// | 0x94 / 0x13 | no local effect (aggregate / capability) | NoiseEventType |
+/// | 0x97 / 0x93 / 0x12 / other DoNotGossip | reject | DoNotGossip |
+///
+/// # Savepoints
+/// The caller is responsible for wrapping each call in its own SQLite
+/// savepoint so a conflict-matrix Skip on one row does not roll back the
+/// entire restore session.
+pub fn apply_restore_frame(
+    conn: &rusqlite::Connection,
+    event_type: u8,
+    payload_bytes: &[u8],
+    received_at: i64,
+    dry_run: bool,
+) -> anyhow::Result<RestoreOutcome> {
+    use crate::wal::events::{
+        EVENT_TYPE_CONSOLIDATION_PASS, EVENT_TYPE_EPISODE_ARCHIVED,
+        EVENT_TYPE_EPISODE_CONSOLIDATED, EVENT_TYPE_EPISODE_PROMOTED,
+        EVENT_TYPE_GROUNDTRUTH_REVOKED, EVENT_TYPE_UPDATE_RAN,
+    };
+    use crate::cluster::foreign_indexer::{
+        apply_episode_boost, apply_episode_decay_sql, apply_groundtruth_revoke,
+        BoostOutcome, GroundtruthRevokeOutcome,
+        EpisodeConsolidatedPayload, EpisodePromotedPayload,
+        EpisodeArchivedPayload, GroundtruthRevokedPayload,
+    };
+
+    // Noise / DoNotGossip guard: no need to decode the frame for these.
+    match classify_event(event_type) {
+        ReplicationClass::DoNotGossip => {
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::DoNotGossip));
+        }
+        ReplicationClass::Replicate
+            if event_type == EVENT_TYPE_CONSOLIDATION_PASS
+                || event_type == EVENT_TYPE_UPDATE_RAN =>
+        {
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::NoiseEventType));
+        }
+        _ => {}
+    }
+
+    // Decode the WAL frame; outer event_type must match inner header.
+    let decoded = match crate::wal::frame::decode_frame(payload_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(
+                event_type = event_type,
+                error = %e,
+                "restore: WAL frame decode failed"
+            );
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedPayload));
+        }
+    };
+    if decoded.header.event_type != event_type {
+        tracing::warn!(
+            outer = event_type,
+            inner = decoded.header.event_type,
+            "restore: event_type mismatch between export line and WAL frame header"
+        );
+        return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedPayload));
+    }
+    let inner = decoded.payload;
+
+    match event_type {
+        EVENT_TYPE_EPISODE_CONSOLIDATED => {
+            let p: EpisodeConsolidatedPayload = match serde_json::from_slice(inner) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "restore: malformed 0x90 payload");
+                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                }
+            };
+            if dry_run {
+                // Evaluate only — check existence/idempotency but skip write.
+                let exists: i64 = conn.query_row(
+                    "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
+                    [p.event_id],
+                    |r| r.get(0),
+                ).context("restore dry-run: check episode existence")?;
+                return Ok(if exists == 0 {
+                    RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
+                } else {
+                    RestoreOutcome::Applied
+                });
+            }
+            match apply_episode_boost(conn, p.event_id, p.importance)? {
+                BoostOutcome::Applied => Ok(RestoreOutcome::Applied),
+                BoostOutcome::Idempotent => {
+                    Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent))
+                }
+                BoostOutcome::Missing => {
+                    Ok(RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing))
+                }
+            }
+        }
+        EVENT_TYPE_EPISODE_PROMOTED => {
+            let p: EpisodePromotedPayload = match serde_json::from_slice(inner) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "restore: malformed 0x91 payload");
+                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                }
+            };
+            if dry_run {
+                let exists: i64 = conn.query_row(
+                    "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
+                    [p.event_id],
+                    |r| r.get(0),
+                ).context("restore dry-run: check episode existence")?;
+                return Ok(if exists == 0 {
+                    RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
+                } else {
+                    RestoreOutcome::Applied
+                });
+            }
+            match apply_episode_boost(conn, p.event_id, p.to_importance)? {
+                BoostOutcome::Applied => Ok(RestoreOutcome::Applied),
+                BoostOutcome::Idempotent => {
+                    Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent))
+                }
+                BoostOutcome::Missing => {
+                    Ok(RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing))
+                }
+            }
+        }
+        EVENT_TYPE_EPISODE_ARCHIVED => {
+            let p: EpisodeArchivedPayload = match serde_json::from_slice(inner) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "restore: malformed 0x92 payload");
+                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                }
+            };
+            if dry_run {
+                let exists: i64 = conn.query_row(
+                    "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
+                    [p.event_id],
+                    |r| r.get(0),
+                ).context("restore dry-run: check episode existence")?;
+                return Ok(if exists == 0 {
+                    RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
+                } else {
+                    RestoreOutcome::Applied
+                });
+            }
+            let found = apply_episode_decay_sql(conn, p.event_id)?;
+            Ok(if found {
+                RestoreOutcome::Applied
+            } else {
+                RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
+            })
+        }
+        EVENT_TYPE_GROUNDTRUTH_REVOKED => {
+            let p: GroundtruthRevokedPayload = match serde_json::from_slice(inner) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "restore: malformed 0x98 payload");
+                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                }
+            };
+            if dry_run {
+                // Still run the full conflict check — just skip the write.
+                let row = conn.query_row(
+                    "SELECT revoked_at, fact_state FROM idx_groundtruth WHERE id = ?1",
+                    [p.id],
+                    |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, String>(1)?)),
+                );
+                return Ok(match row {
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("restore dry-run 0x98: {e}"));
+                    }
+                    Ok((Some(_), _)) => {
+                        RestoreOutcome::Skipped(RestoreSkipReason::AlreadyRevoked)
+                    }
+                    Ok((None, fs)) if fs == "contradicted" => {
+                        RestoreOutcome::Skipped(RestoreSkipReason::Contradicted)
+                    }
+                    Ok((None, _)) => RestoreOutcome::Applied,
+                });
+            }
+            match apply_groundtruth_revoke(conn, p.id, received_at)? {
+                GroundtruthRevokeOutcome::Applied => Ok(RestoreOutcome::Applied),
+                GroundtruthRevokeOutcome::Missing => {
+                    Ok(RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing))
+                }
+                GroundtruthRevokeOutcome::AlreadyRevoked => {
+                    Ok(RestoreOutcome::Skipped(RestoreSkipReason::AlreadyRevoked))
+                }
+                GroundtruthRevokeOutcome::Contradicted => {
+                    Ok(RestoreOutcome::Skipped(RestoreSkipReason::Contradicted))
+                }
+            }
+        }
+        _ => {
+            // RawIngressGated land here — shouldn't appear in a same-origin
+            // export, but treat gracefully.
+            Ok(RestoreOutcome::Skipped(RestoreSkipReason::DoNotGossip))
+        }
+    }
+}
+
+/// Derive the stable local node pubkey from the cluster passphrase stored in
+/// `home/credentials.yaml`. Returns `None` when no cluster identity is
+/// configured (no passphrase or no cluster name in freedom.yaml).
+///
+/// The pubkey is the 64-character lowercase hex encoding of the 32-byte
+/// `ClusterKey` (HMAC of the passphrase). This is the same value stored in
+/// `origin_peer_pk` when this node exports its own foreign events.
+pub fn local_node_pubkey(home: &std::path::Path) -> Option<String> {
+    let freedom =
+        crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok()?;
+    let creds =
+        crate::config::credentials::Credentials::load_or_default(
+            &home.join("credentials.yaml"),
+        )
+        .ok()?;
+    let identity =
+        crate::cluster::identity::resolve_cluster_identity(&freedom, &creds)?;
+    let hex = identity
+        .key
+        .0
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+    Some(hex)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -148,6 +148,35 @@ even 'defer indefinitely' counts") closed by the Status table.
 
 ---
 
+## D-009 WAL opcode space exhaustion — u8 extension track
+
+**Status:** OPEN (filed 2026-07-10, DES-13-AUTO-RESTORE-01 implementation)
+
+**Context:** The WAL opcode space is a `u8` (0x00–0xFF = 256 slots). As of
+`SRC/neothd/src/wal/events.rs`, all 256 values are assigned or reserved.
+`classify_event` in `wal_sync.rs` uses `u8` throughout. `idx_foreign_events`
+stores `event_type` as `INTEGER` (SQLite, no width limit), so the wire format
+could accommodate wider types without schema migration if the encoding layer
+changes.
+
+**Options:**
+
+| Option | Pros | Cons |
+|--------|------|------|
+| A. Reserve 0xF0–0xFF as a 2-byte escape prefix (next byte = extended opcode) | Backward-compatible, incremental | Complicates `decode_frame` / `classify_event`; escape-prefix collisions with current `0xF*` WAL-structure events |
+| B. Bump opcode width to u16 in a new WAL version (WAL v2) | Clean design, 65535 opcodes | Full WAL-layer version bump; all tools must migrate; `event_type INTEGER NOT NULL` column stays compatible but all Rust code changes |
+| C. Band reservation: stop allocating below 0xFF; create semantic bands above 0xFF using the u16 path | Keeps u8 stable for existing events; new events use u16 | Requires B first |
+| D. Emit a structured audit/deprecation log when 90% capacity is reached; freeze opcode alloc until B is shipped | Buys time, no breaking change | Temporary workaround |
+
+**REC:** **D short-term** (freeze new opcode allocation; track usage at 80%+).
+**B medium-term** for v1.1 — WAL v2 with `event_type: u16` in the 96-byte
+header body (currently only 1 byte of the 96 is used for event_type; a 2-byte
+extension fits the existing header layout). Integration point:
+`SRC/neothd/src/wal/header.rs` `EventHeaderV2.event_type` field + `frame.rs`
+encode/decode + `wal_sync.rs` `classify_event` + `idx_foreign_events` schema.
+
+---
+
 ## Decision template (for your responses)
 
 ```
