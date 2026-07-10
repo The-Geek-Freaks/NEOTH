@@ -1069,7 +1069,15 @@ mod tests {
         git(&["init", "-q"]);
         git(&["config", "user.email", "neoth-test@example.com"]);
         git(&["config", "user.name", "neoth-test"]);
-        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        // SourceRoots model: the crate dir must have BOTH `[package]` (so
+        // `validate_crate_dir` accepts it) and a `src/` dir. `[workspace]` in the
+        // same manifest makes git_root == crate_dir == workspace_dir for this
+        // flat single-crate fixture.
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"self-edit-fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(dir.join("src/cli")).unwrap();
         std::fs::write(dir.join("src/cli/dummy.rs"), "fn dummy() {}\n").unwrap();
         git(&["add", "."]);

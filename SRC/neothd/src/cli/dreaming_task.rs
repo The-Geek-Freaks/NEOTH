@@ -152,7 +152,8 @@ async fn run(
 
 /// Resolve the vault opt-in: a non-blank `obsidian_vault` gates the sync;
 /// `obsidian_subdir` falls back to the default. Returns `None` when no vault
-/// is configured (the operator has not opted into a vault).
+/// is configured (the operator has not opted into a vault) OR when the subdir
+/// fails the path-traversal guard.
 fn resolve_obsidian_target(
     vault: Option<String>,
     subdir: Option<String>,
@@ -161,6 +162,18 @@ fn resolve_obsidian_target(
     let subdir = subdir
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "NEOTH-sessions".to_string());
+    // P2 guard: reuse the same validate_subdir() used by the normal Obsidian sync
+    // path (cli::obsidian). Rejects `..` traversal, absolute paths, null bytes,
+    // colons, backslashes, and multi-component values. Fail-closed: never write
+    // outside the vault — log the bad value and return None (no panic, no sync).
+    if let Err(e) = crate::cli::obsidian::validate_subdir(std::path::Path::new(&subdir)) {
+        warn!(
+            subdir = %subdir,
+            error = %e,
+            "dreaming: obsidian_subdir rejected by path-traversal guard; skipping vault sync"
+        );
+        return None;
+    }
     Some((vault, subdir))
 }
 
@@ -793,6 +806,25 @@ mod tests {
         assert_eq!(
             resolve_obsidian_target(Some("/vault".into()), Some("Dreams-Custom".into())),
             Some(("/vault".into(), "Dreams-Custom".into()))
+        );
+    }
+
+    #[test]
+    fn resolve_obsidian_target_rejects_traversal_subdirs() {
+        // Traversal inputs must be rejected fail-closed (no write outside vault).
+        for bad in &["../../escape", "..", "/abs/path"] {
+            assert!(
+                resolve_obsidian_target(Some("/vault".into()), Some((*bad).into())).is_none(),
+                "expected None for bad subdir {bad:?}"
+            );
+        }
+        // Clean single-component names are still accepted.
+        assert!(
+            resolve_obsidian_target(Some("/vault".into()), Some("NEOTH-sessions".into()))
+                .is_some()
+        );
+        assert!(
+            resolve_obsidian_target(Some("/vault".into()), Some("Dreams-Custom".into())).is_some()
         );
     }
 
