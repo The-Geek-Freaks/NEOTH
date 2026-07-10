@@ -173,6 +173,11 @@ pub enum GateError {
     Worktree(String),
     #[error("Layer 5 (green-test): {0}")]
     GreenTest(String),
+    /// The live tree WAS mutated but the REQUIRED `SelfEditApplied` audit frame
+    /// could not be written — an inconsistent state the operator must reconcile.
+    /// Never reported as clean success.
+    #[error("INCONSISTENT: edit applied to the live tree but the required audit frame failed: {0}")]
+    AuditFailedAfterApply(String),
     #[error("audit / WAL error: {0}")]
     Audit(#[from] anyhow::Error),
 }
@@ -231,7 +236,19 @@ pub async fn run_gate_stack(
     };
 
     // Emit PROPOSED frame BEFORE any gate runs (audit trail of all attempts).
-    emit_wal(wal, ExtendedSubtype::SelfEditProposed, &audit).await;
+    // Best-effort: a proposal-audit miss must not block the gate evaluation.
+    let _ = emit_wal(wal, ExtendedSubtype::SelfEditProposed, &audit).await;
+
+    // A gate refusal emits a REFUSED frame carrying the full per-layer status
+    // (which layer blocked + why) so the WAL shows the real block reason, not an
+    // unresolved `proposed` frame. Best-effort (a refusal-audit miss never
+    // changes the refusal outcome).
+    macro_rules! refuse {
+        ($audit:expr, $err:expr) => {{
+            let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &$audit).await;
+            return Err($err);
+        }};
+    }
 
     // ── Layer 1: kill-switch ──────────────────────────────────────────────────
     match layer1_kill_switch(self_edit_cfg) {
@@ -241,7 +258,7 @@ pub async fn run_gate_stack(
         Err(reason) => {
             audit.layer1_kill_switch = LayerOutcome::Fail(reason.clone());
             info!(reason, "self_edit gate: layer1 kill-switch refused");
-            return Err(GateError::KillSwitch(reason));
+            refuse!(audit, GateError::KillSwitch(reason));
         }
     }
 
@@ -253,7 +270,7 @@ pub async fn run_gate_stack(
         Err(reason) => {
             audit.layer2_allowlist = LayerOutcome::Fail(reason.clone());
             info!(reason, "self_edit gate: layer2 allowlist refused");
-            return Err(GateError::Allowlist(reason));
+            refuse!(audit, GateError::Allowlist(reason));
         }
     }
 
@@ -266,48 +283,83 @@ pub async fn run_gate_stack(
         Err(reason) => {
             audit.layer3_permission = LayerOutcome::Fail(reason.clone());
             info!(reason, "self_edit gate: layer3 permission refused");
-            return Err(GateError::Permission(reason));
+            refuse!(audit, GateError::Permission(reason));
         }
     }
 
     // ── Layer 4: worktree isolation ───────────────────────────────────────────
-    let roots = neoth_source_root(&self_edit_cfg.source_root)
-        .map_err(|e| {
+    let roots = match neoth_source_root(&self_edit_cfg.source_root) {
+        Ok(r) => r,
+        Err(e) => {
             let reason = format!("source root detection failed: {e}");
             audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
-            GateError::Worktree(reason)
-        })?;
+            refuse!(audit, GateError::Worktree(reason));
+        }
+    };
 
     // Reentrancy guard: a self-edit may never trigger further self-edits.
     // Layer 5 executes `cargo check` (build scripts run!) — if anything in
     // that process tree invokes `neoth self-edit` again, the lock refuses it.
     // File-based so it holds across processes; Drop releases it. Keyed on the
     // git root (one self-edit at a time per repo).
-    let _reentrancy_lock = SelfEditLock::acquire(&roots.git_root).map_err(|reason| {
-        audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
-        GateError::Worktree(reason)
-    })?;
+    let _reentrancy_lock = match SelfEditLock::acquire(&roots.git_root) {
+        Ok(l) => l,
+        Err(reason) => {
+            audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
+            refuse!(audit, GateError::Worktree(reason));
+        }
+    };
 
     // Use a pseudo-task-id derived from the diff hash (low bits) to get a
     // unique worktree path without requiring a real kanban task.
     let pseudo_id = pseudo_task_id(&diff_hash);
+    // git subprocess spawns block; keep them off the async executor.
     let worktree = {
-        // git subprocess spawns block; keep them off the async executor.
         let r = roots.clone();
         let dt = diff_text.to_string();
-        tokio::task::spawn_blocking(move || layer4_worktree(&r, &dt, pseudo_id))
-            .await
-            .map_err(|e| GateError::Worktree(format!("worktree task panicked: {e}")))?
-            .map_err(|reason| {
+        match tokio::task::spawn_blocking(move || layer4_worktree(&r, &dt, pseudo_id)).await {
+            Ok(Ok(wt)) => wt,
+            Ok(Err(reason)) => {
                 audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
-                GateError::Worktree(reason)
-            })?
+                refuse!(audit, GateError::Worktree(reason));
+            }
+            Err(e) => {
+                let reason = format!("worktree task panicked: {e}");
+                audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
+                refuse!(audit, GateError::Worktree(reason));
+            }
+        }
     };
     // RAII: from here the worktree is cleaned up on EVERY exit — error return,
     // panic unwind, and async cancellation (future dropped mid-await) alike.
     // Cleanup is a `git worktree remove` run from the git root.
     let _worktree_guard = WorktreeGuard::new(roots.git_root.clone(), worktree.clone());
 
+    // ── Layer 4b: git-truth path differential ─────────────────────────────────
+    // Re-validate against GIT's actual changed paths + modes, not the vendored
+    // `---/+++` parser (renames/binary/mode/symlink/second-file smuggling).
+    let real_paths = {
+        let r = roots.clone();
+        let wt = worktree.clone();
+        let cfg2 = self_edit_cfg.clone();
+        let cl = diff_line_count(diff_text);
+        match tokio::task::spawn_blocking(move || verify_git_truth(&r, &wt, &cfg2, cl)).await {
+            Ok(Ok(paths)) => paths,
+            Ok(Err(reason)) => {
+                audit.layer2_allowlist = LayerOutcome::Fail(reason.clone());
+                info!(reason, "self_edit gate: layer4b git-truth differential refused");
+                refuse!(audit, GateError::Allowlist(reason));
+            }
+            Err(e) => {
+                let reason = format!("git-truth task panicked: {e}");
+                audit.layer4_worktree = LayerOutcome::Fail(reason.clone());
+                refuse!(audit, GateError::Worktree(reason));
+            }
+        }
+    };
+    // Record git's authoritative path set in the audit (may differ from / be a
+    // superset of the parser's `target_paths`).
+    audit.target_paths = real_paths.clone();
     audit.layer4_worktree = LayerOutcome::Pass;
 
     // ── Layer 5: green-test gate (cargo check) ────────────────────────────────
@@ -315,9 +367,14 @@ pub async fn run_gate_stack(
         // cargo check runs in the WORKSPACE dir inside the worktree so the whole
         // workspace resolves (NEOTH's workspace is a subdir of the git root).
         let wt = worktree.join(roots.workspace_rel());
-        let outcome = tokio::task::spawn_blocking(move || layer5_green_test(&wt))
-            .await
-            .map_err(|e| GateError::GreenTest(format!("green-test task panicked: {e}")))?;
+        let outcome = match tokio::task::spawn_blocking(move || layer5_green_test(&wt)).await {
+            Ok(o) => o,
+            Err(e) => {
+                let reason = format!("green-test task panicked: {e}");
+                audit.layer5_green_test = LayerOutcome::Fail(reason.clone());
+                refuse!(audit, GateError::GreenTest(reason));
+            }
+        };
         match outcome {
             Ok(()) => {
                 audit.layer5_green_test = LayerOutcome::Pass;
@@ -325,7 +382,7 @@ pub async fn run_gate_stack(
             Err(reason) => {
                 audit.layer5_green_test = LayerOutcome::Fail(reason.clone());
                 info!(reason, "self_edit gate: layer5 green-test refused");
-                return Err(GateError::GreenTest(reason));
+                refuse!(audit, GateError::GreenTest(reason));
             }
         }
     } else {
@@ -353,13 +410,25 @@ pub async fn run_gate_stack(
             return Err(GateError::Worktree(format!("live-tree apply failed: {e}")));
         }
 
-        // Update audit timestamp to reflect the actual apply moment.
+        // Update audit timestamp to reflect the actual apply moment. The
+        // SelfEditApplied frame is a REQUIRED audit WHEN a writer is present:
+        // propagate a write failure as AuditFailedAfterApply so the CLI never
+        // reports clean success on a live mutation with no forensic record. A
+        // `None` writer is the caller's explicit opt-out (the CLI gates WAL
+        // presence for real applies separately at `cli/self_edit.rs`); it is
+        // not an inconsistent-state error, so only a real write failure with a
+        // PRESENT writer is fatal here.
         audit.ts_unix = crate::time::now_unix_i64();
-        emit_wal(wal, ExtendedSubtype::SelfEditApplied, &audit).await;
+        let audit_result = emit_wal(wal, ExtendedSubtype::SelfEditApplied, &audit).await;
+        if wal.is_some() {
+            if let Err(e) = audit_result {
+                return Err(GateError::AuditFailedAfterApply(e));
+            }
+        }
         info!(
-            paths = ?target_paths,
+            paths = ?real_paths,
             diff_hash,
-            "self_edit gate: all 5 gates passed — diff applied to live tree"
+            "self_edit gate: all gates passed — diff applied to live tree"
         );
     } else {
         info!(
@@ -730,39 +799,174 @@ fn apply_to_live_tree(source_root: &Path, diff_text: &str) -> anyhow::Result<()>
     }
 }
 
+// ── Layer 4b: git-truth path differential guard ───────────────────────────────
+
+/// After the patch is applied in the worktree, ask GIT ITSELF for the exact set
+/// of changed paths + modes and re-validate them — instead of trusting the
+/// vendored `--- a/ +++ b/` parser (`diff_paths`), which cannot see renames,
+/// copies, binary hunks, mode changes, symlink/submodule creations, or a second
+/// file smuggled into a combined patch. Without this, the hard-deny list is only
+/// as strong as the incomplete pre-parser: a patch could modify an allowed text
+/// file via `---/+++` (the only path in `target_paths`) AND rewrite a protected
+/// file via a rename/binary hunk that git happily applies.
+///
+/// Policy (v1, deliberately strict — fail-closed):
+/// - reject symlink (`120000`), submodule/gitlink (`160000`) creations,
+/// - reject file-mode changes (e.g. chmod +x on a script),
+/// - reject rename/copy/type-change statuses (`R`/`C`/`T`),
+/// - reject binary hunks,
+/// - reject any changed path that escapes the crate dir,
+/// - re-run the full Layer-2 deny/allowlist against every real changed path.
+fn verify_git_truth(
+    roots: &SourceRoots,
+    worktree: &Path,
+    cfg: &SelfEditConfig,
+    changed_lines: usize,
+) -> Result<Vec<String>, String> {
+    let run_git = |args: &[&str]| -> Result<std::process::Output, String> {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(args)
+            .output()
+            .map_err(|e| format!("git {args:?} failed to launch: {e}"))
+    };
+
+    // Stage every applied change so a single `diff --cached` sees the full set
+    // (incl. new files) with mode + status classification.
+    let add = run_git(&["add", "-A"])?;
+    if !add.status.success() {
+        return Err(format!(
+            "git add -A in worktree failed: {}",
+            String::from_utf8_lossy(&add.stderr).trim()
+        ));
+    }
+
+    // `--raw -z`: one record per change = `:<oldmode> <newmode> <sha1> <sha2> <status>\0<path>\0`.
+    // `--no-renames` expands a rename into DELETE(old)+ADD(new) so BOTH paths are
+    // seen (a rename INTO a protected path can't hide behind rename detection).
+    let raw = run_git(&["diff", "--cached", "--no-renames", "--raw", "-z"])?;
+    if !raw.status.success() {
+        return Err(format!(
+            "git diff --raw in worktree failed: {}",
+            String::from_utf8_lossy(&raw.stderr).trim()
+        ));
+    }
+    let raw_str = String::from_utf8_lossy(&raw.stdout);
+    let fields: Vec<&str> = raw_str.split('\0').filter(|s| !s.is_empty()).collect();
+
+    // Binary detection via numstat: a binary change renders as `-\t-\t<path>`.
+    let numstat = run_git(&["diff", "--cached", "--numstat", "-z"])?;
+    let numstat_str = String::from_utf8_lossy(&numstat.stdout);
+    let binary_paths: std::collections::BTreeSet<&str> = numstat_str
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .filter_map(|rec| rec.strip_prefix("-\t-\t"))
+        .collect();
+
+    let crate_rel = roots.crate_rel();
+    let crate_prefix = {
+        let p = crate_rel.to_string_lossy().replace('\\', "/");
+        if p == "." { String::new() } else { format!("{}/", p.trim_end_matches('/')) }
+    };
+
+    let mut real_paths: Vec<String> = Vec::new();
+    // Records come in (meta, path) pairs.
+    let mut i = 0;
+    while i + 1 < fields.len() {
+        let meta = fields[i];
+        let repo_path = fields[i + 1];
+        i += 2;
+
+        // meta = ":100644 100755 sha1 sha2 M"
+        let parts: Vec<&str> = meta.trim_start_matches(':').split(' ').collect();
+        if parts.len() < 5 {
+            return Err(format!("unparseable git raw record '{meta}'"));
+        }
+        let old_mode = parts[0];
+        let new_mode = parts[1];
+        let status = parts[4];
+
+        if new_mode == "120000" {
+            return Err(format!("symlink change to '{repo_path}' is refused"));
+        }
+        if new_mode == "160000" || old_mode == "160000" {
+            return Err(format!("submodule/gitlink change to '{repo_path}' is refused"));
+        }
+        if old_mode != "000000" && new_mode != "000000" && old_mode != new_mode {
+            return Err(format!(
+                "file-mode change ({old_mode}->{new_mode}) on '{repo_path}' is refused"
+            ));
+        }
+        if matches!(status, "R" | "C" | "T") || status.starts_with('R') || status.starts_with('C') {
+            return Err(format!("rename/copy/type-change ('{status}') on '{repo_path}' is refused"));
+        }
+        if binary_paths.contains(repo_path) {
+            return Err(format!("binary change to '{repo_path}' is refused"));
+        }
+
+        // Map the repo-root-relative path back to a crate-relative path. A path
+        // that does not live under the crate dir has escaped the self-edit
+        // surface entirely — refuse.
+        let crate_path = if crate_prefix.is_empty() {
+            repo_path.to_string()
+        } else if let Some(stripped) = repo_path.strip_prefix(&crate_prefix) {
+            stripped.to_string()
+        } else {
+            return Err(format!(
+                "changed path '{repo_path}' is outside the crate dir '{crate_prefix}' — refused"
+            ));
+        };
+        real_paths.push(crate_path);
+    }
+
+    if real_paths.is_empty() {
+        return Err("git reports no changes after apply — refusing (nothing to audit)".into());
+    }
+
+    // The authoritative re-check: git's REAL paths through the full Layer-2 gate.
+    layer2_allowlist(cfg, &real_paths, changed_lines)?;
+    Ok(real_paths)
+}
+
 // ── WAL emit helper ───────────────────────────────────────────────────────────
 
-/// Emit a `EXTENDED/<subtype>` WAL frame. Best-effort: logs a warning on
-/// failure but does NOT propagate the error (WAL is audit trail, not security).
+/// Emit a `EXTENDED/<subtype>` WAL frame. Returns `Err` on a genuine write
+/// failure (serialize / closed writer / append) so callers that REQUIRE the
+/// audit (the post-apply `SelfEditApplied` frame) can surface an inconsistent
+/// state instead of reporting clean success. Refusal/proposal frames call this
+/// best-effort (they ignore the `Err`).
 async fn emit_wal(
     wal: Option<&WalWriterHandle>,
     subtype: ExtendedSubtype,
     audit: &SelfEditAudit,
-) {
+) -> Result<(), String> {
     let Some(writer) = wal else {
         warn!(
             subtype = subtype.name(),
             "self_edit: no WAL writer available — audit frame skipped"
         );
-        return;
+        return Err("no WAL writer available".into());
     };
 
-    let payload = match serde_json::to_vec(audit) {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(error = %e, "self_edit: failed to serialize audit payload; WAL frame skipped");
-            return;
-        }
-    };
+    let payload = serde_json::to_vec(audit).map_err(|e| {
+        warn!(error = %e, "self_edit: failed to serialize audit payload; WAL frame skipped");
+        format!("serialize audit payload: {e}")
+    })?;
 
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(subtype as u8)
         .flags(EventFlags::empty())
         .build();
 
-    if let Err(e) = writer.append(header, payload).await {
-        warn!(error = %e, "self_edit: WAL append failed");
-    }
+    writer
+        .append(header, payload)
+        .await
+        .map(|_| ())
+        .map_err(|e| {
+            warn!(error = %e, "self_edit: WAL append failed");
+            format!("WAL append: {e}")
+        })
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -1133,6 +1337,48 @@ mod tests {
             listing.matches("worktree ").count(),
             1,
             "gate worktree leaked: {listing}"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_truth_refuses_rename_into_protected_path_the_parser_cannot_see() {
+        // #1 git-parser-differential: a PURE RENAME patch has no `--- a/ +++ b/`
+        // hunk lines, so the vendored `diff_paths` parser extracts ZERO paths and
+        // Layer 2 passes vacuously. git still performs the rename. Layer 4b asks
+        // git for the REAL changed paths and re-runs Layer 2 → the new path under
+        // `src/wal/` (hard-denied) is caught. Without 4b this edit would apply.
+        if !git_available() {
+            eprintln!("git not on PATH — skipping git-truth differential test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        // 100% rename of the allowed dummy.rs INTO the hard-denied src/wal/ tree.
+        let diff = "diff --git a/src/cli/dummy.rs b/src/wal/evil.rs\n\
+                    similarity index 100%\n\
+                    rename from src/cli/dummy.rs\n\
+                    rename to src/wal/evil.rs\n";
+
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        cfg.coding.self_edit.enabled = true;
+        cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
+        cfg.coding.self_edit.require_green_tests = false;
+        cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+
+        let err = run_gate_stack(diff, &cfg, false, true, None)
+            .await
+            .expect_err("rename into src/wal/ must be refused by the git-truth guard");
+        // Refused at the allowlist layer on git's REAL path set.
+        assert!(
+            matches!(err, GateError::Allowlist(_)),
+            "expected Allowlist refusal, got: {err:?}"
+        );
+        // The protected file must NOT exist in the live tree.
+        assert!(
+            !tmp.path().join("src/wal/evil.rs").exists(),
+            "the rename must have been refused before touching the live tree"
         );
     }
 

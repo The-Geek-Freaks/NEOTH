@@ -213,6 +213,15 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
         Err(GateError::GreenTest(reason)) => {
             anyhow::bail!("REFUSED (layer 5 green-test): {reason}")
         }
+        Err(GateError::AuditFailedAfterApply(reason)) => {
+            // The live tree WAS mutated but the required audit frame failed — an
+            // inconsistent state. Surface it loudly; never report clean success.
+            anyhow::bail!(
+                "INCONSISTENT: the edit was applied to the live source tree but the required \
+                 audit frame could not be written ({reason}). Verify the working tree with \
+                 `git status`/`git diff` and check the WAL — the change is NOT audited."
+            )
+        }
         Err(GateError::Audit(e)) => {
             anyhow::bail!("GATE ERROR (audit): {e}")
         }

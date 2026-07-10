@@ -74,6 +74,10 @@ pub enum ExtendedSubtype {
     SwarmResourceSnapshot = 0x03,
     /// GOLD-FEAT-06 — this node sampled its own resource snapshot.
     LocalSnapshot = 0x04,
+    /// GOLD-FEAT-05 — a self-source edit was REFUSED by a gate. Carries the
+    /// full per-layer gate status (which layer blocked + why) so the WAL shows
+    /// the actual block reason, not just an unresolved `proposed` frame.
+    SelfEditRefused = 0x05,
 }
 
 impl ExtendedSubtype {
@@ -84,6 +88,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::SelfEditApplied => "self_edit_applied",
             ExtendedSubtype::SwarmResourceSnapshot => "swarm_resource_snapshot",
             ExtendedSubtype::LocalSnapshot => "local_snapshot",
+            ExtendedSubtype::SelfEditRefused => "self_edit_refused",
         }
     }
 
@@ -94,6 +99,7 @@ impl ExtendedSubtype {
             0x02 => Some(ExtendedSubtype::SelfEditApplied),
             0x03 => Some(ExtendedSubtype::SwarmResourceSnapshot),
             0x04 => Some(ExtendedSubtype::LocalSnapshot),
+            0x05 => Some(ExtendedSubtype::SelfEditRefused),
             _ => None,
         }
     }

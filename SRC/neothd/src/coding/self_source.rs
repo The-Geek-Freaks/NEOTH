@@ -77,11 +77,20 @@ pub fn neoth_source_root(cfg_root: &Option<PathBuf>) -> Result<SourceRoots> {
             format!("canonicalize source_root override {}", root.display())
         })?),
         None => {
+            // Auto-detect uses the COMPILE-TIME crate dir. This works for a
+            // binary built from a local checkout, but a binary downloaded from
+            // GitHub Releases carries the CI runner's build path, which does not
+            // exist on the operator's machine → canonicalize fails here. That is
+            // expected: a distributed binary MUST set an explicit source_root.
             let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             strip_verbatim(manifest.canonicalize().with_context(|| {
                 format!(
-                    "canonicalize compile-time crate dir {} — set \
-                     freedom.yaml::coding.self_edit.source_root if the source moved",
+                    "self-edit source-root auto-detect failed: the compile-time crate dir \
+                     '{}' does not exist on this machine. This is normal for a downloaded \
+                     release binary (the path points to the CI build machine). Set \
+                     `coding.self_edit.source_root` in freedom.yaml to your local NEOTH \
+                     crate checkout (the dir containing Cargo.toml + src/, e.g. \
+                     C:\\path\\to\\NEOTH\\SRC\\neothd).",
                     manifest.display()
                 )
             })?)
