@@ -54,8 +54,12 @@ pub mod executor;
 
 /// SL-01b cluster WAL gossip — band-filter ACL (the security boundary) +
 /// anti-entropy state (VectorClock + dedup) that make the gossip primitives
-/// live on the transport. Foreign-event ingestion into memory is deferred.
+/// live on the transport.
 pub mod wal_sync;
+
+/// Foreign-event indexer — drains accepted gossip rows from `idx_foreign_events`
+/// into narrow local recall effects without mutating the foreign backup table.
+pub mod foreign_indexer;
 
 /// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
 /// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
@@ -89,7 +93,7 @@ pub mod audit_sidecar;
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version
 /// handshake on connect. Connection-loop integration into
-/// hyperswarm::spawn_discovery lands as a follow-up.
+/// hyperswarm::spawn_discovery_with_wal lands as a follow-up.
 pub mod heartbeat;
 
 /// Phase 6 gossip state-sync primitives — `GossipTag` (per-event

@@ -1412,6 +1412,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let cluster_audit_task = crate::cli::serve_tasks::spawn_cluster_audit_ingester(&writer);
     #[cfg(feature = "cluster")]
     info!("cluster audit sidecar ingester spawned (5s tick)");
+    #[cfg(feature = "cluster")]
+    let cluster_foreign_indexer_task = crate::cli::serve_tasks::spawn_foreign_indexer();
 
     // ── SL-00(1b) Cluster transport activation (Hyperswarm DHT) ────────────
     // The live-network flip. Brought up ONLY when BOTH gates are open:
@@ -1985,6 +1987,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         catalog_task,
         #[cfg(feature = "cluster")]
         cluster_audit_task,
+        #[cfg(feature = "cluster")]
+        cluster_foreign_indexer_task,
         #[cfg(feature = "cluster")]
         cluster_gossip_task,
         #[cfg(feature = "cluster")]

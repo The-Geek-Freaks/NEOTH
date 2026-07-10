@@ -3103,6 +3103,18 @@ pub(crate) fn spawn_cluster_audit_ingester(writer: &WalWriterHandle) -> JoinHand
     })
 }
 
+/// Foreign-event indexer (cluster feature only). Polls `views.db` every 30s and
+/// applies accepted peer signals from `idx_foreign_events` to local recall rows.
+/// WAL-free; the indexer keeps its own marker table and preserves the foreign
+/// event backup table.
+#[cfg(feature = "cluster")]
+pub(crate) fn spawn_foreign_indexer() -> crate::cluster::foreign_indexer::ForeignIndexerHandle {
+    let handle =
+        crate::cluster::foreign_indexer::spawn_foreign_indexer(FreedomConfig::default_neoth_home());
+    info!("cluster foreign-event indexer spawned (30s tick)");
+    handle
+}
+
 /// Spawn a `Channel::run` adapter loop into `channel_tasks` (Telegram / Slack
 /// socket-mode — every adapter whose receive loop is `Channel::run`, NOT the
 /// WhatsApp webhook listener which uses `webhook_listener::serve`). `label` is
@@ -4321,6 +4333,8 @@ pub(crate) struct BackgroundHandles {
     #[cfg(feature = "cluster")]
     pub cluster_audit_task: JoinHandle<()>,
     #[cfg(feature = "cluster")]
+    pub cluster_foreign_indexer_task: crate::cluster::foreign_indexer::ForeignIndexerHandle,
+    #[cfg(feature = "cluster")]
     pub cluster_gossip_task: Option<JoinHandle<()>>,
     #[cfg(feature = "cluster")]
     pub cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle>,
@@ -4431,6 +4445,8 @@ pub(crate) async fn shutdown_background_tasks(
         catalog_task,
         #[cfg(feature = "cluster")]
         cluster_audit_task,
+        #[cfg(feature = "cluster")]
+        cluster_foreign_indexer_task,
         #[cfg(feature = "cluster")]
         cluster_gossip_task,
         #[cfg(feature = "cluster")]
@@ -4584,6 +4600,7 @@ pub(crate) async fn shutdown_background_tasks(
     #[cfg(feature = "cluster")]
     {
         crate::cli::serve_tasks::abort_join(cluster_audit_task).await;
+        cluster_foreign_indexer_task.shutdown().await;
 
         // SL-01b: stop the gossip send-tick before tearing the transport down.
         crate::cli::serve_tasks::abort_optional(cluster_gossip_task).await;

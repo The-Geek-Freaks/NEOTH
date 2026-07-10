@@ -188,8 +188,8 @@ impl Drop for SwarmHandle {
 /// Bring up a peeroxide swarm, join the cluster's topic, and thread a live
 /// `WalWriterHandle` into every per-peer task so cluster
 /// lifecycle events emit `0xE0..=0xE5` frames. Used by
-/// `cli::serve` which holds the writer; CLI one-shots call
-/// [`spawn_discovery`] (no writer).
+/// `cli::serve`, which holds the writer. This is the only
+/// discovery entry point — a WAL-free variant was never built.
 pub async fn spawn_discovery_with_wal(
     cluster_name: &str,
     // SL-00(1b): the shared cluster_key. `Some` enforces the cluster_key
