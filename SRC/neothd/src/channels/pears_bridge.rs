@@ -70,6 +70,14 @@ pub enum PearsBridgeError {
     /// operator debugging.
     #[error("Pears bridge returned HTTP {status}: {body}")]
     Http { status: u16, body: String },
+    /// `pear` rejected the request as unauthorized (HTTP 401). This almost
+    /// always means the bearer token doesn't match what `pear` expects.
+    /// Check `bridge_token` in freedom.yaml and ensure it matches the token
+    /// the `pear` process was started with.
+    #[error(
+        "Pears bridge returned HTTP 401 Unauthorized — check `bridge_token` in freedom.yaml: {body}"
+    )]
+    Unauthorized { body: String },
     /// Response body wasn't valid JSON or didn't match the expected
     /// shape.
     #[error("Pears bridge JSON decode failed: {0}")]
@@ -79,7 +87,6 @@ pub enum PearsBridgeError {
 /// HTTP client for the local `pear` runtime. Holds a `reqwest::Client`
 /// configured with a per-request timeout + the base URL (already
 /// validated as localhost at construction).
-#[derive(Debug)]
 pub struct PearsBridge {
     base_url: String,
     client: reqwest::Client,
@@ -87,6 +94,21 @@ pub struct PearsBridge {
     /// generates one at startup. None during early K-2 testing so
     /// `curl` operators can poke the bridge without auth.
     bearer_token: Option<String>,
+}
+
+impl std::fmt::Debug for PearsBridge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PearsBridge")
+            .field("base_url", &self.base_url)
+            .field("client", &self.client)
+            // Redact so the token never lands in logs, crash reports, or
+            // operator-visible debug output — K-3 TODO: use SecretString.
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl PearsBridge {
@@ -143,6 +165,9 @@ impl PearsBridge {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            if status.as_u16() == 401 {
+                return Err(PearsBridgeError::Unauthorized { body });
+            }
             return Err(PearsBridgeError::Http {
                 status: status.as_u16(),
                 body,
@@ -181,6 +206,9 @@ impl PearsBridge {
                 body = %body_text,
                 "Pears bridge: post_message failed"
             );
+            if status.as_u16() == 401 {
+                return Err(PearsBridgeError::Unauthorized { body: body_text });
+            }
             return Err(PearsBridgeError::Http {
                 status: status.as_u16(),
                 body: body_text,
@@ -191,6 +219,28 @@ impl PearsBridge {
             .await
             .map_err(PearsBridgeError::Transport)?;
         Ok(payload)
+    }
+}
+
+#[cfg(test)]
+impl PearsBridge {
+    /// Test seam: construct with a custom per-request timeout so timeout
+    /// tests don't block for the full [`DEFAULT_REQUEST_TIMEOUT`] default.
+    fn new_with_timeout(
+        base_url: impl Into<String>,
+        timeout: Duration,
+    ) -> Result<Self, PearsBridgeError> {
+        let base_url = base_url.into();
+        let normalised = normalise_localhost_url(&base_url)?;
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(PearsBridgeError::Transport)?;
+        Ok(Self {
+            base_url: normalised,
+            client,
+            bearer_token: None,
+        })
     }
 }
 
@@ -435,6 +485,251 @@ mod tests {
         let s = render_freedom_yaml_snippet(9100, false);
         assert!(s.contains("# bridge_token"));
         assert!(s.contains("wizard generates"));
+    }
+
+    // ── Wiremock mock-server tests (D101 done-criteria) ──────────────────
+    // No real network — MockServer binds 127.0.0.1 on an ephemeral port.
+    // All async tests use #[tokio::test].
+
+    #[tokio::test]
+    async fn mock_health_success_returns_parsed_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let expected = HealthResponse {
+            version: "1.2.3".into(),
+            peers: 5,
+            topics: 2,
+        };
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&expected))
+            .mount(&mock_server)
+            .await;
+
+        let bridge = PearsBridge::new(mock_server.uri()).unwrap();
+        let resp = bridge.health().await.expect("health should succeed on 200");
+        assert_eq!(resp.version, "1.2.3");
+        assert_eq!(resp.peers, 5);
+        assert_eq!(resp.topics, 2);
+    }
+
+    #[tokio::test]
+    async fn mock_post_message_success_returns_parsed_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let expected = PostMessageResponse {
+            message_id: "msg_xyz789".into(),
+            delivered_to_peers: 3,
+        };
+        Mock::given(method("POST"))
+            .and(path("/topics/my-topic/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&expected))
+            .mount(&mock_server)
+            .await;
+
+        let bridge = PearsBridge::new(mock_server.uri()).unwrap();
+        let req = PostMessageRequest {
+            text: "hello pears".into(),
+            attachment_b64: None,
+            attachment_mime: None,
+        };
+        let resp = bridge
+            .post_message("my-topic", &req)
+            .await
+            .expect("post_message should succeed on 200");
+        assert_eq!(resp.message_id, "msg_xyz789");
+        assert_eq!(resp.delivered_to_peers, 3);
+    }
+
+    /// Timeout: mock delays 300 ms; client timeout is 100 ms → Transport error.
+    /// The error message must be operator-actionable (mention "bridge" or
+    /// "transport") so operators know where to look in the stack.
+    #[tokio::test]
+    async fn mock_post_message_timeout_returns_transport_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/topics/slow-topic/messages"))
+            .respond_with(
+                ResponseTemplate::new(200).set_delay(Duration::from_millis(300)),
+            )
+            .mount(&mock_server)
+            .await;
+
+        // 100 ms timeout < 300 ms mock delay → guaranteed timeout.
+        let bridge =
+            PearsBridge::new_with_timeout(mock_server.uri(), Duration::from_millis(100))
+                .unwrap();
+        let req = PostMessageRequest {
+            text: "will timeout".into(),
+            attachment_b64: None,
+            attachment_mime: None,
+        };
+        let result = bridge.post_message("slow-topic", &req).await;
+        assert!(
+            matches!(result, Err(PearsBridgeError::Transport(_))),
+            "expected Transport error on timeout; got {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("transport") || msg.contains("bridge"),
+            "timeout error must mention 'transport' or 'bridge' for operator actionability; got: {msg}"
+        );
+    }
+
+    /// Malformed response: 200 with non-JSON body → Err, no panic.
+    #[tokio::test]
+    async fn mock_post_message_malformed_json_returns_error_without_panic() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/topics/bad-json/messages"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("not valid json }{garbage"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let bridge = PearsBridge::new(mock_server.uri()).unwrap();
+        let req = PostMessageRequest {
+            text: "test".into(),
+            attachment_b64: None,
+            attachment_mime: None,
+        };
+        let result = bridge.post_message("bad-json", &req).await;
+        // reqwest's .json() decode failure surfaces as a reqwest::Error
+        // (is_decode() == true), mapped to Transport.
+        assert!(
+            matches!(result, Err(PearsBridgeError::Transport(_))),
+            "malformed JSON body should produce Transport error; got {result:?}"
+        );
+    }
+
+    /// HTTP 500 → Http error with status code in message for triage.
+    #[tokio::test]
+    async fn mock_post_message_http_500_returns_http_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/topics/boom/messages"))
+            .respond_with(
+                ResponseTemplate::new(500).set_body_string("internal pear error"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let bridge = PearsBridge::new(mock_server.uri()).unwrap();
+        let req = PostMessageRequest {
+            text: "test".into(),
+            attachment_b64: None,
+            attachment_mime: None,
+        };
+        let result = bridge.post_message("boom", &req).await;
+        match result {
+            Err(PearsBridgeError::Http { status, ref body }) => {
+                assert_eq!(status, 500, "status must be 500");
+                assert!(
+                    body.contains("internal pear error"),
+                    "body must be forwarded for operator debugging"
+                );
+            }
+            other => panic!("expected Http {{ status: 500 }}; got {other:?}"),
+        }
+    }
+
+    /// HTTP 401 → Unauthorized error whose message explicitly references
+    /// `bridge_token` so operators know exactly what to fix in freedom.yaml.
+    #[tokio::test]
+    async fn mock_post_message_http_401_hints_bridge_token() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/topics/locked/messages"))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_string("unauthorized"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let bridge = PearsBridge::new(mock_server.uri()).unwrap();
+        let req = PostMessageRequest {
+            text: "test".into(),
+            attachment_b64: None,
+            attachment_mime: None,
+        };
+        let result = bridge.post_message("locked", &req).await;
+        assert!(
+            matches!(result, Err(PearsBridgeError::Unauthorized { .. })),
+            "HTTP 401 must produce Unauthorized error; got {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("bridge_token"),
+            "401 error message must mention 'bridge_token' for operator actionability; got: {msg}"
+        );
+    }
+
+    /// Bearer token: the Authorization header actually arrives at the mock
+    /// when the bridge was built via `with_bearer_token`.
+    /// Strategy: mount a mock that only matches when the correct
+    /// Authorization header is present; missing/wrong header → 404 → test fails.
+    #[tokio::test]
+    async fn mock_bearer_token_sent_in_authorization_header() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .and(header("authorization", "Bearer session-tok-abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&HealthResponse {
+                version: "2.0.0".into(),
+                peers: 0,
+                topics: 0,
+            }))
+            .mount(&mock_server)
+            .await;
+
+        let bridge = PearsBridge::new(mock_server.uri())
+            .unwrap()
+            .with_bearer_token("session-tok-abc");
+        let result = bridge.health().await;
+        assert!(
+            result.is_ok(),
+            "health with correct bearer token should succeed; \
+             if the header were missing the mock returns 404 → Http error; got {result:?}"
+        );
+    }
+
+    /// Bearer token must NOT appear verbatim in `Debug` output so it
+    /// can't leak into logs, crash reports, or operator-visible traces.
+    #[test]
+    fn bearer_token_not_exposed_in_debug_output() {
+        let secret = "very-secret-bearer-token-12345";
+        let bridge = PearsBridge::local().unwrap().with_bearer_token(secret);
+        let debug_str = format!("{bridge:?}");
+        assert!(
+            !debug_str.contains(secret),
+            "bearer token must not appear verbatim in Debug output; got: {debug_str}"
+        );
+        // The redacted placeholder must be present so operators can see
+        // the field exists without exposing its value.
+        assert!(
+            debug_str.contains("redacted"),
+            "expected '<redacted>' placeholder in Debug output; got: {debug_str}"
+        );
     }
 
     // ── Live bridge tests (require pear runtime — skipped in CI) ────────
