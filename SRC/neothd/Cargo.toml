@@ -679,7 +679,8 @@ libc        = "0.2"
 # Win32_Security_Cryptography: K-Sec-4 DPAPI wrap for HMAC key (2026-05-22).
 # Win32_Security_Authorization: E-11 SetEntriesInAclW + SetNamedSecurityInfoW + BuildExplicitAccessWithNameW (2026-05-24).
 # Win32_Storage_FileSystem: E-12 FlushFileBuffers WAL durability (2026-05-24).
-windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_Security_Credentials"] }
+# Win32_System_JobObjects: NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 residual-2 — Job Object process-tree containment for the shell verifier sandbox (2026-07-10).
+windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_Security_Credentials", "Win32_System_JobObjects"] }
 # Win32_Security_Credentials: D003-KEYCHAIN-01 CredWriteW/CredReadW/CredDeleteW (2026-07-10).
 
 # C-03b Linux (Session 28) — Secret Service (DBus) client for Chrome's
