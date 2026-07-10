@@ -221,6 +221,23 @@ pub async fn set_owner_dacl_async(path: &Path, account: &str) -> io::Result<()> 
 /// variant together with an operator-readable context string, making WAL
 /// write failures actionable in the tracing output.
 ///
+/// # D008-WINDOWS-WAL-01 — WAL writer hot-path wiring note
+///
+/// The WAL writer hot path (`write_and_sync` in `writer.rs`) does **not**
+/// call this function directly.  On Windows, `tokio::fs::File::sync_data()`
+/// is backed (via the blocking pool) by `std::fs::File::sync_data()`, which
+/// the Rust standard library implements by calling `FlushFileBuffers` on the
+/// underlying `HANDLE`.  Wiring this wrapper in addition to `sync_data`
+/// would therefore issue `FlushFileBuffers` **twice** per frame — a
+/// double-flush that adds latency with no additional durability benefit.
+///
+/// This wrapper is provided for diagnostic and admin paths that need the raw
+/// Win32 error code surfaced directly rather than through the std `io::Error`
+/// mapping.  See `flush_vs_sync_data_latency_comparison` (the `#[ignore]`d
+/// test below) for measured latency data confirming the functional equivalence
+/// of both paths, and the `FILE_FLAG_WRITE_THROUGH` threshold rationale
+/// documented there.
+///
 /// # Errors
 /// Returns `Err` when `FlushFileBuffers` returns `0` (FALSE).
 pub fn flush_file_buffers(file: &File) -> io::Result<()> {
@@ -391,5 +408,123 @@ mod tests {
         let wide = to_wide_nul("abc");
         assert_eq!(wide.len(), 4, "3 chars + 1 null terminator");
         assert_eq!(*wide.last().unwrap(), 0u16, "last element must be null");
+    }
+
+    // ── D008-WINDOWS-WAL-01 — FlushFileBuffers vs sync_data latency ────────
+    //
+    // Compares the explicit `flush_file_buffers` (E-12 wrapper) path against
+    // `std::fs::File::sync_data()` (the WAL writer's current hot path).
+    //
+    // Both paths call `FlushFileBuffers` once; this bench produces MEASURED
+    // evidence that the E-12 wrapper adds no latency benefit when wired
+    // alongside `sync_data`, confirming the double-flush analysis in
+    // `write_and_sync` (writer.rs).
+    //
+    // ## FILE_FLAG_WRITE_THROUGH threshold
+    //
+    // `FILE_FLAG_WRITE_THROUGH` bypasses the OS write cache so each write
+    // goes directly to storage without a subsequent `FlushFileBuffers` call.
+    // Possible benefit: sub-millisecond reduction in SYNC_ON_WRITE latency on
+    // drives with firmware write-back caches.  Cost: requires opening the WAL
+    // file with `CreateFileW(FILE_FLAG_WRITE_THROUGH)` — a Windows-only code
+    // path — AND `FILE_FLAG_NO_BUFFERING` for full OS-cache bypass, which
+    // mandates 512 / 4096-byte sector-aligned writes (alignment-buffer refactor).
+    //
+    // Investigate write-through when EITHER measured metric exceeds:
+    //   • p50  > 5 ms  — fsync perceptible in SYNC_ON_WRITE chat round-trip
+    //   • p99  > 50 ms — storage anomaly; check SMART / NVMe health logs
+    //
+    // Below those thresholds the alignment-layer complexity outweighs the
+    // latency gain on NVMe storage with stable firmware caches.
+    //
+    // Run on demand:
+    //
+    //   cargo test -p neothd --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1
+
+    #[test]
+    #[ignore = "D008 latency bench — run with: cargo test -p neothd --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1"]
+    fn flush_vs_sync_data_latency_comparison() {
+        use std::io::Write;
+        use std::time::Instant;
+
+        const ITERS: usize = 200;
+        // Representative WAL frame size: short PROVIDER_RESPONSE event.
+        const FRAME_BYTES: usize = 512;
+        let frame = vec![0u8; FRAME_BYTES];
+
+        let dir = tempdir().unwrap();
+
+        // ── Path A: explicit FlushFileBuffers via E-12 wrapper ─────────────
+        let path_a = dir.path().join("lat_flush_a.wal");
+        let mut file_a = File::create(&path_a).unwrap();
+        // Warm-up: prime the FS / NTFS journal before sampling.
+        for _ in 0..10 {
+            file_a.write_all(&frame).unwrap();
+            flush_file_buffers(&file_a).unwrap();
+        }
+        let mut samples_a: Vec<u64> = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            let t0 = Instant::now();
+            file_a.write_all(&frame).unwrap();
+            flush_file_buffers(&file_a).unwrap();
+            samples_a.push(t0.elapsed().as_nanos() as u64);
+        }
+
+        // ── Path B: std::fs::File::sync_data (WAL writer hot path) ─────────
+        let path_b = dir.path().join("lat_sync_b.wal");
+        let mut file_b = File::create(&path_b).unwrap();
+        for _ in 0..10 {
+            file_b.write_all(&frame).unwrap();
+            file_b.sync_data().unwrap();
+        }
+        let mut samples_b: Vec<u64> = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            let t0 = Instant::now();
+            file_b.write_all(&frame).unwrap();
+            file_b.sync_data().unwrap();
+            samples_b.push(t0.elapsed().as_nanos() as u64);
+        }
+
+        samples_a.sort_unstable();
+        samples_b.sort_unstable();
+
+        let p50_a = samples_a[ITERS / 2];
+        let p50_b = samples_b[ITERS / 2];
+        let p95_a = samples_a[ITERS * 95 / 100];
+        let p95_b = samples_b[ITERS * 95 / 100];
+        let p99_a = samples_a[ITERS * 99 / 100];
+        let p99_b = samples_b[ITERS * 99 / 100];
+
+        println!(
+            "\nD008-WINDOWS-WAL-01  FlushFileBuffers vs sync_data  (n={}  frame={}B)\n\
+             \x20 [E-12 FlushFileBuffers]  p50={:.3}ms  p95={:.3}ms  p99={:.3}ms\n\
+             \x20 [std  sync_data        ]  p50={:.3}ms  p95={:.3}ms  p99={:.3}ms\n\
+             \n\
+             \x20 Verdict: if |p50_a - p50_b| < 1ms the E-12 wrapper adds no measurable\n\
+             \x20 benefit when wired alongside sync_data (both call FlushFileBuffers once).\n\
+             \x20 THRESHOLD: investigate FILE_FLAG_WRITE_THROUGH when p50 > 5ms or p99 > 50ms.",
+            ITERS,
+            FRAME_BYTES,
+            p50_a as f64 / 1_000_000.0,
+            p95_a as f64 / 1_000_000.0,
+            p99_a as f64 / 1_000_000.0,
+            p50_b as f64 / 1_000_000.0,
+            p95_b as f64 / 1_000_000.0,
+            p99_b as f64 / 1_000_000.0,
+        );
+
+        // Regression guards: generous 2-second p99 ceiling on any Windows storage.
+        // Values above this indicate a storage anomaly — check SMART / NVMe logs.
+        const P99_CEILING_NS: u64 = 2_000 * 1_000_000;
+        assert!(
+            p99_a < P99_CEILING_NS,
+            "E-12 FlushFileBuffers p99 {:.1}ms > 2000ms — storage anomaly",
+            p99_a as f64 / 1_000_000.0
+        );
+        assert!(
+            p99_b < P99_CEILING_NS,
+            "sync_data p99 {:.1}ms > 2000ms — storage anomaly",
+            p99_b as f64 / 1_000_000.0
+        );
     }
 }

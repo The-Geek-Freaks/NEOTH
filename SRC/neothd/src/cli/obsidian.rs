@@ -1346,21 +1346,119 @@ fn preload_statement(
     )
 }
 
-fn revoke_existing_preload_chunks(
+/// Create `idx_preload_meta` if it does not exist.
+///
+/// Stores typed provenance columns — `rel_key` (source-file path), `scope`,
+/// `content_hash`, `ingested_at`, and a backlink `groundtruth_id` — so
+/// revocation and startup reconciliation can use parameterised SQL queries
+/// instead of scanning statement text.
+fn ensure_preload_meta_table(conn: &rusqlite::Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS idx_preload_meta (
+             id             INTEGER PRIMARY KEY,
+             groundtruth_id INTEGER NOT NULL,
+             rel_key        TEXT    NOT NULL,
+             scope          TEXT    NOT NULL,
+             content_hash   TEXT    NOT NULL,
+             ingested_at    INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_preload_meta_lookup
+             ON idx_preload_meta (rel_key, scope);",
+    )
+    .context("ensure idx_preload_meta")
+}
+
+/// Insert one provenance record for a just-written preload groundtruth chunk.
+///
+/// `rel_key` is the source-file path stored as a typed column, not embedded
+/// in the statement string, so the next revocation pass can find it via SQL.
+fn upsert_preload_meta(
+    conn: &rusqlite::Connection,
+    groundtruth_id: i64,
+    rel_key: &str,
+    scope: &str,
+    content_hash: &str,
+    ingested_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO idx_preload_meta \
+             (groundtruth_id, rel_key, scope, content_hash, ingested_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![groundtruth_id, rel_key, scope, content_hash, ingested_at],
+    )
+    .context("upsert_preload_meta")?;
+    Ok(())
+}
+
+/// Revoke all active groundtruth chunks for `(rel_key, scope)`.
+///
+/// Primary path: queries `idx_preload_meta` by structured columns — no
+/// statement-text scanning.  Legacy fallback: for rows ingested before
+/// `idx_preload_meta` shipped, falls back to the old text-marker scan so
+/// existing vaults are not left with un-revokable orphan groundtruth rows.
+fn revoke_preload_meta(
     conn: &rusqlite::Connection,
     scope: &str,
     rel_key: &str,
     now_ns: i64,
 ) -> Result<usize> {
-    let marker = format!("source_path={rel_key} ");
+    // Primary: structured lookup via typed columns.
+    let ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT groundtruth_id FROM idx_preload_meta \
+                 WHERE rel_key = ?1 AND scope = ?2",
+            )
+            .context("prepare idx_preload_meta lookup")?;
+        stmt.query_map(rusqlite::params![rel_key, scope], |r| r.get(0))
+            .context("query idx_preload_meta")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect idx_preload_meta ids")?
+    };
+
     let mut revoked = 0usize;
-    for row in crate::memory::groundtruth::list_for_scope(conn, scope)? {
-        if row.revoked_at.is_none() && row.statement.contains(&marker) {
-            crate::memory::groundtruth::revoke(conn, row.id, now_ns)?;
+    for id in &ids {
+        if crate::memory::groundtruth::revoke(conn, *id, now_ns)? {
             revoked += 1;
         }
     }
+
+    // Remove meta rows — fresh ones will be inserted with the new groundtruth ids.
+    conn.execute(
+        "DELETE FROM idx_preload_meta WHERE rel_key = ?1 AND scope = ?2",
+        rusqlite::params![rel_key, scope],
+    )
+    .context("delete stale idx_preload_meta rows")?;
+
+    // Legacy fallback: text-marker scan for rows that pre-date idx_preload_meta.
+    // Only triggered when the structured lookup found nothing.
+    if ids.is_empty() {
+        let marker = format!("source_path={rel_key} ");
+        for row in crate::memory::groundtruth::list_for_scope(conn, scope)? {
+            if row.statement.contains(&marker) {
+                crate::memory::groundtruth::revoke(conn, row.id, now_ns)?;
+                revoked += 1;
+            }
+        }
+    }
+
     Ok(revoked)
+}
+
+/// Idempotent startup reconciliation: remove `idx_preload_meta` rows pointing
+/// to groundtruth IDs that no longer exist or have been revoked.
+///
+/// The SAVEPOINT wrapping each file's update rolls back on a crash, so no
+/// dangling meta rows are normally created.  This pass catches edge cases such
+/// as an external revocation that left its meta backlink stale.
+fn reconcile_preload_meta(conn: &rusqlite::Connection) -> Result<()> {
+    conn.execute_batch(
+        "DELETE FROM idx_preload_meta \
+         WHERE groundtruth_id NOT IN ( \
+             SELECT id FROM idx_groundtruth WHERE revoked_at IS NULL \
+         );",
+    )
+    .context("reconcile idx_preload_meta")
 }
 
 /// Open (or create+append) a 0600 audit log at `path`.
@@ -1486,6 +1584,14 @@ pub async fn preload_template(
         None
     };
     let now_ns = crate::time::now_unix_ns_i64();
+    // Ensure the structured provenance index exists and is consistent before
+    // writing any new data.  Must run before the file loop.
+    if let Some(conn) = conn.as_ref() {
+        ensure_preload_meta_table(conn)
+            .context("ensure idx_preload_meta on preload open")?;
+        reconcile_preload_meta(conn)
+            .context("reconcile idx_preload_meta on preload open")?;
+    }
 
     for file in &files {
         if file.policy.restricted {
@@ -1518,17 +1624,61 @@ pub async fn preload_template(
                 }
                 let scope = preload_scope(&file.policy);
                 if let Some(conn) = conn.as_ref() {
-                    stats.revoked_chunks +=
-                        revoke_existing_preload_chunks(conn, &scope, &file.rel_key, now_ns)?;
-                    for (heading, chunk) in chunks {
-                        crate::memory::groundtruth::insert(
-                            conn,
-                            &preload_statement(&file.rel_key, &file.policy, &heading, &chunk),
-                            &crate::memory::groundtruth::Source::ImportObsidian,
-                            &scope,
-                            now_ns,
-                        )?;
-                        stats.ingested_chunks += 1;
+                    // SAVEPOINT: revoke-old + insert-new + meta-write are
+                    // crash-atomic.  A mid-flight interrupt rolls back all
+                    // three; next startup re-processes (state hash won't
+                    // match → full re-ingest for this file).
+                    conn.execute("SAVEPOINT preload_ingest", [])
+                        .context("begin preload_ingest savepoint")?;
+                    let ingest_result: Result<(usize, usize)> = (|| {
+                        let revoked =
+                            revoke_preload_meta(conn, &scope, &file.rel_key, now_ns)?;
+                        let mut inserted = 0usize;
+                        for (heading, chunk) in &chunks {
+                            let gt_id = crate::memory::groundtruth::insert(
+                                conn,
+                                &preload_statement(
+                                    &file.rel_key,
+                                    &file.policy,
+                                    heading,
+                                    chunk,
+                                ),
+                                &crate::memory::groundtruth::Source::ImportObsidian,
+                                &scope,
+                                now_ns,
+                            )?;
+                            // Store provenance as typed fields (rel_key,
+                            // content_hash, ingested_at) in idx_preload_meta —
+                            // NOT re-parsed from the statement text on the next
+                            // revocation pass.
+                            upsert_preload_meta(
+                                conn,
+                                gt_id,
+                                &file.rel_key,
+                                &scope,
+                                &file.hash,
+                                now_ns,
+                            )?;
+                            inserted += 1;
+                        }
+                        Ok((revoked, inserted))
+                    })();
+                    match ingest_result {
+                        Ok((revoked, inserted)) => {
+                            conn.execute("RELEASE SAVEPOINT preload_ingest", [])
+                                .context("release preload_ingest savepoint")?;
+                            stats.revoked_chunks += revoked;
+                            stats.ingested_chunks += inserted;
+                        }
+                        Err(e) => {
+                            // Best-effort rollback — savepoint unwinds on
+                            // connection close even if this fails.
+                            let _ = conn
+                                .execute("ROLLBACK TO SAVEPOINT preload_ingest", []);
+                            let _ =
+                                conn.execute("RELEASE SAVEPOINT preload_ingest", []);
+                            return Err(e);
+                        }
                     }
                 }
                 state
@@ -2894,6 +3044,204 @@ sections:
             !knowledge_root_has_manifest(dir.path()),
             "must return false when preload_manifest.yaml is absent",
         );
+    }
+
+    // ── NEOTH-AUDIT-PRELOAD-PROVENANCE-RECOVERY-01 ────────────────────────────
+
+    /// (a) Structured-provenance round-trip: after a normal preload run,
+    /// `idx_preload_meta` must contain typed columns (rel_key, scope,
+    /// content_hash, ingested_at, groundtruth_id).  Revocation of the same
+    /// file on a second run must proceed via a parameterised SQL lookup — not
+    /// by text-scanning the statement.  Verified by checking that zero rows
+    /// remain for the old groundtruth id after the second run.
+    #[tokio::test]
+    async fn preload_provenance_stored_as_structured_fields_not_text_parse() {
+        let dir = tempdir().unwrap();
+        let template = dir.path().join("template");
+        let vault = dir.path().join("vault");
+        let state = dir.path().join("state.json");
+        let views_db = dir.path().join("views.db");
+        write_preload_manifest(&template);
+        write_template_file(&template, "wiki/a.md", "# Alpha\n\nBody one.");
+
+        // First run: ingest.
+        preload_template(
+            &template,
+            &vault,
+            &std::path::PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+
+        let conn = crate::memory::store::open(&views_db).unwrap();
+
+        // Verify structured provenance: idx_preload_meta has typed columns.
+        let (gt_id, rel_key, scope, content_hash, ingested_at): (i64, String, String, String, i64) =
+            conn.query_row(
+                "SELECT groundtruth_id, rel_key, scope, content_hash, ingested_at \
+                 FROM idx_preload_meta LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .expect("idx_preload_meta must have at least one row after ingest");
+
+        assert_eq!(rel_key, "wiki/a.md", "rel_key stored as typed column");
+        assert_eq!(scope, "neoth-preload:l6-wiki", "scope stored as typed column");
+        assert!(!content_hash.is_empty(), "content_hash stored as typed column");
+        assert!(ingested_at > 0, "ingested_at stored as typed column");
+        assert!(gt_id > 0, "groundtruth_id references a real row");
+
+        // Verify backlink: the groundtruth_id actually exists and is active.
+        let gt_active: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_groundtruth \
+                 WHERE id = ?1 AND revoked_at IS NULL",
+                rusqlite::params![gt_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(gt_active, 1, "groundtruth row must be active");
+        drop(conn);
+
+        // Second run with changed content: the old chunk must be revoked via
+        // the structured path (no text scanning).
+        write_template_file(&template, "wiki/a.md", "# Alpha\n\nBody two (changed).");
+        std::fs::remove_file(&state).unwrap(); // force re-ingest
+        preload_template(
+            &template,
+            &vault,
+            &std::path::PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+
+        let conn = crate::memory::store::open(&views_db).unwrap();
+        // Old groundtruth_id must now be revoked.
+        let old_active: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_groundtruth \
+                 WHERE id = ?1 AND revoked_at IS NULL",
+                rusqlite::params![gt_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_active, 0, "old chunk must be revoked after content change");
+
+        // Exactly one active chunk for the file after re-ingest (not double-indexed).
+        let active_chunks: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_preload_meta \
+                 WHERE rel_key = 'wiki/a.md' AND scope = 'neoth-preload:l6-wiki'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_chunks, 1, "exactly one active meta row after re-ingest");
+    }
+
+    /// (b) Partial-write reconciliation: simulate a crash between SAVEPOINT
+    /// revoke and RELEASE by manually revoking a groundtruth row and leaving
+    /// its idx_preload_meta entry stale.  `reconcile_preload_meta` must remove
+    /// the dangling row.  A subsequent preload run must re-ingest cleanly —
+    /// exactly one active chunk, not double-indexed.
+    #[tokio::test]
+    async fn preload_reconciliation_removes_dangling_meta_and_reingest_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let template = dir.path().join("template");
+        let vault = dir.path().join("vault");
+        let state = dir.path().join("state.json");
+        let views_db = dir.path().join("views.db");
+        write_preload_manifest(&template);
+        write_template_file(&template, "wiki/a.md", "# Alpha\n\nBody one.");
+
+        // Normal first run.
+        preload_template(
+            &template,
+            &vault,
+            &std::path::PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+
+        // Retrieve the groundtruth_id from the structured provenance index.
+        let conn = crate::memory::store::open(&views_db).unwrap();
+        let gt_id: i64 = conn
+            .query_row(
+                "SELECT groundtruth_id FROM idx_preload_meta \
+                 WHERE rel_key = 'wiki/a.md' LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .expect("idx_preload_meta must have a row after ingest");
+
+        // Simulate partial crash: revoke the groundtruth row but leave the
+        // meta row pointing to it (as if the SAVEPOINT was rolled back after
+        // the revoke but before the new insert, and the meta row was orphaned).
+        crate::memory::groundtruth::revoke(&conn, gt_id, 9_000_000_000).unwrap();
+        drop(conn);
+
+        // Verify dangling meta row exists before reconciliation.
+        let conn = crate::memory::store::open(&views_db).unwrap();
+        let dangling: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_preload_meta WHERE groundtruth_id = ?1",
+                rusqlite::params![gt_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 1, "dangling meta row must exist before reconciliation");
+
+        // Run reconciliation directly (as preload_template would on next startup).
+        reconcile_preload_meta(&conn).unwrap();
+
+        let after: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_preload_meta WHERE groundtruth_id = ?1",
+                rusqlite::params![gt_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, 0, "reconciliation must remove dangling meta row");
+        drop(conn);
+
+        // Next preload run must re-ingest cleanly: exactly one active chunk,
+        // not double-indexed even though a revoked row exists.
+        std::fs::remove_file(&state).unwrap(); // force re-ingest
+        let stats = preload_template(
+            &template,
+            &vault,
+            &std::path::PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+        assert!(stats.ingested_chunks >= 1, "must re-ingest after reconciliation");
+
+        let conn = crate::memory::store::open(&views_db).unwrap();
+        let active: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_groundtruth \
+                 WHERE scope = 'neoth-preload:l6-wiki' AND revoked_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active, 1, "exactly one active groundtruth row — not double-indexed");
     }
 }
 

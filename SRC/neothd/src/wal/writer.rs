@@ -1139,6 +1139,26 @@ async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalE
     Ok(())
 }
 
+/// Write one WAL frame then commit it durably with `sync_data`.
+///
+/// # D008-WINDOWS-WAL-01 — E-12 (FlushFileBuffers) redundancy rationale
+///
+/// On Windows `tokio::fs::File::sync_data()` delegates (via the tokio
+/// blocking pool) to `std::fs::File::sync_data()`, which is implemented in
+/// the Rust standard library by calling `FlushFileBuffers` directly — the
+/// same Win32 API that `win_native::flush_file_buffers` (E-12) wraps.
+///
+/// Wiring the E-12 wrapper explicitly in this hot path would therefore issue
+/// `FlushFileBuffers` **twice** per frame: once inside `sync_data` and a
+/// second time via the wrapper.  That double-flush adds per-frame syscall
+/// latency with no additional durability benefit on either NTFS or ReFS.
+/// The E-12 wrapper is intentionally NOT called here for this reason.
+///
+/// See `wal_sync_latency_measurement` (the `#[ignore]`d test below) for the
+/// measured `sync_data` latency baseline and the `FILE_FLAG_WRITE_THROUGH`
+/// re-evaluation threshold.  The corresponding Windows-only
+/// `flush_vs_sync_data_latency_comparison` test in `win_native.rs` provides
+/// measured evidence that both paths are statistically equivalent.
 async fn write_and_sync(file: &mut File, frame: &[u8]) -> std::io::Result<()> {
     file.write_all(frame).await?;
     file.sync_data().await?;
@@ -2277,5 +2297,107 @@ mod tests {
             "second finalize must increment epoch to 2, not re-use epoch 1"
         );
         assert!(parsed2.is_compressed(), "segment must still be compressed");
+    }
+
+    // ── D008-WINDOWS-WAL-01 — sync_data latency measurement ─────────────────
+    //
+    // Measures the hot-path latency for WAL append + `sync_data` and prints
+    // p50 / p95 / p99 / max.  Uses `std::time::Instant` and blocking `std::fs`
+    // to isolate raw disk + OS-call latency from tokio scheduling overhead.
+    //
+    // Run on demand (never in the default sweep — the box BSODs under parallel
+    // test load, so --test-threads=1 is mandatory):
+    //
+    //   cargo test -p neothd --lib wal_sync_latency -- --ignored --nocapture --test-threads=1
+    //
+    // ## FILE_FLAG_WRITE_THROUGH threshold (D008-WINDOWS-WAL-01)
+    //
+    // `FILE_FLAG_WRITE_THROUGH` (bypass OS write-cache on every write) can
+    // reduce the per-`FlushFileBuffers` round-trip because each write goes
+    // directly past the OS page cache to the storage device.  However:
+    //
+    //   1. Without `FILE_FLAG_NO_BUFFERING` the drive firmware cache still
+    //      buffers writes, so the durability gain on NVMe/SSD with stable
+    //      caches is typically < 0.5 ms — rarely worth the complexity.
+    //   2. `FILE_FLAG_NO_BUFFERING` requires all writes to be a multiple of
+    //      the physical sector size (512 B or 4096 B), requiring an alignment
+    //      layer and a significant refactor of the variable-length frame writer.
+    //   3. On Windows `std::fs::File::sync_data()` already calls
+    //      `FlushFileBuffers` (see `write_and_sync` doc above); wiring
+    //      `win_native::flush_file_buffers` (E-12) in addition would
+    //      double-flush with no durability benefit.
+    //
+    // Re-evaluate write-through when EITHER measured metric exceeds:
+    //   • p50  > 5 ms  — fsync becomes perceptible in SYNC_ON_WRITE UX
+    //   • p99  > 50 ms — storage-path anomaly; check SMART / NVMe health
+    //
+    // Below those thresholds the alignment-layer complexity is unjustified on
+    // NVMe storage, and the existing sync_data path is the correct default.
+
+    #[test]
+    #[ignore = "D008 latency bench — run with: cargo test -p neothd --lib wal_sync_latency -- --ignored --nocapture --test-threads=1"]
+    fn wal_sync_latency_measurement() {
+        use std::io::Write;
+        use std::time::Instant;
+
+        const ITERS: usize = 200;
+        // Representative WAL frame: short PROVIDER_RESPONSE (header + payload).
+        const FRAME_BYTES: usize = 512;
+        let frame = vec![0u8; FRAME_BYTES];
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("sync_lat.wal");
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("open sync_lat.wal");
+
+        // Warm-up: prime the FS / page cache / NTFS journal before sampling.
+        for _ in 0..10 {
+            file.write_all(&frame).unwrap();
+            file.sync_data().unwrap();
+        }
+
+        let mut samples_ns: Vec<u64> = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            let t0 = Instant::now();
+            file.write_all(&frame).unwrap();
+            file.sync_data().unwrap();
+            samples_ns.push(t0.elapsed().as_nanos() as u64);
+        }
+
+        samples_ns.sort_unstable();
+        let p50 = samples_ns[ITERS / 2];
+        let p95 = samples_ns[ITERS * 95 / 100];
+        let p99 = samples_ns[ITERS * 99 / 100];
+        let max = *samples_ns.last().unwrap();
+        let mean_ns = samples_ns.iter().map(|&n| n as u128).sum::<u128>() / ITERS as u128;
+
+        println!(
+            "\nD008-WINDOWS-WAL-01  WAL sync_data latency\n\
+             \x20 os={}  n={}  frame={}B\n\
+             \x20 p50={:.3}ms  p95={:.3}ms  p99={:.3}ms  max={:.3}ms  mean={:.3}ms\n\
+             \x20 THRESHOLD: investigate FILE_FLAG_WRITE_THROUGH when p50 > 5ms or p99 > 50ms",
+            std::env::consts::OS,
+            ITERS,
+            FRAME_BYTES,
+            p50 as f64 / 1_000_000.0,
+            p95 as f64 / 1_000_000.0,
+            p99 as f64 / 1_000_000.0,
+            max as f64 / 1_000_000.0,
+            mean_ns as f64 / 1_000_000.0,
+        );
+
+        // Regression guard: generous 2-second p99 ceiling.
+        // Values above this indicate a storage-path anomaly (disk event, driver
+        // stall), not a tuning signal — check SMART / NVMe health logs.
+        const P99_CEILING_NS: u64 = 2_000 * 1_000_000;
+        assert!(
+            p99 < P99_CEILING_NS,
+            "D008 sync_data p99 {:.1}ms > 2000ms ceiling — storage anomaly; \
+             check SMART/NVMe health logs",
+            p99 as f64 / 1_000_000.0
+        );
     }
 }

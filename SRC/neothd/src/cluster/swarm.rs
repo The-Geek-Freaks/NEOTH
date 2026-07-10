@@ -7,13 +7,13 @@
 //! per node — it has no I/O of its own and is rebuilt from WAL frames on every
 //! `neoth cluster swarm` invocation.
 //!
-//! # Gossip replication (deferred — TODO DES-14)
-//! `wal_sync::classify_event` keys on the `event_type` byte only (0x00 for all
-//! EXTENDED frames). It cannot distinguish `LocalSnapshot` (subtype 0x04) from
-//! `SwarmResourceSnapshot` (subtype 0x03) without a protocol extension. Until
-//! that extension lands, LocalSnapshot frames are written but NOT gossip-replicated
-//! to peers. The shippable core is: local WAL emission + `neoth cluster swarm`
-//! reads those frames. Do NOT edit `wal_sync.rs` (hot file, parallel session).
+//! # Gossip replication (GOLD-FEAT-06 gossip-piggyback)
+//! `wal_sync::classify_event_ext` now keys on `(event_type, event_subtype)`.
+//! `SwarmResourceSnapshot` (0x03) frames are `Replicate`; `LocalSnapshot` (0x04)
+//! frames remain `DoNotGossip`. The heartbeat loop in `hyperswarm` piggybacks a
+//! minimal snapshot on every heartbeat using [`encode_snapshot_gossip_payload`];
+//! the receive path decodes it with [`decode_snapshot_gossip_payload`] and writes
+//! it to the local WAL so `neoth cluster swarm` shows peer rows.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -81,6 +81,58 @@ impl NodeResourceSnapshot {
             ts_unix,
         }
     }
+}
+
+// ── Gossip wire helpers (GOLD-FEAT-06 gossip-piggyback) ─────────────────────
+
+/// Size of the synthetic gossip header prepended to every gossip payload.
+///
+/// Matches `WAL_HEADER_MIN` in `wal_sync` (the 96-byte `EventHeaderV2` body
+/// WITHOUT the 4-byte MAGIC preamble). `neoth cluster swarm` reads LOCAL WAL
+/// frames with `decode_frame` (full MAGIC + header); the gossip wire format
+/// uses this stripped header so peeroxide's `SecretStream` message framing is
+/// not confused with WAL file framing.
+pub const GOSSIP_HEADER_SIZE: usize = 96;
+
+/// `EVENT_TYPE_EXTENDED` byte for EXTENDED gossip frames.
+const GOSSIP_ET_EXTENDED: u8 = 0x00;
+
+/// Subtype byte for `SwarmResourceSnapshot` on the gossip wire.
+const GOSSIP_SUB_SWARM_SNAP: u8 = 0x03; // matches ExtendedSubtype::SwarmResourceSnapshot
+
+/// Encode a [`NodeResourceSnapshot`] into a raw gossip payload.
+///
+/// Layout: 96-byte synthetic header (byte 2 = 0x00, byte 3 = 0x03, bytes
+/// 9..13 = total_len LE u32) + JSON-serialized snapshot. Returns `None` if
+/// serde_json serialization fails (never expected in practice).
+///
+/// The receiver reconstructs the snapshot with [`decode_snapshot_gossip_payload`]
+/// and writes a full EXTENDED/SwarmResourceSnapshot WAL frame to the local WAL
+/// so `neoth cluster swarm` can display peer rows.
+pub fn encode_snapshot_gossip_payload(snap: &NodeResourceSnapshot) -> Option<Vec<u8>> {
+    let json = serde_json::to_vec(snap).ok()?;
+    let total_len = (GOSSIP_HEADER_SIZE + json.len()) as u32;
+    let mut payload = vec![0u8; GOSSIP_HEADER_SIZE];
+    payload[2] = GOSSIP_ET_EXTENDED;
+    payload[3] = GOSSIP_SUB_SWARM_SNAP;
+    payload[9..13].copy_from_slice(&total_len.to_le_bytes());
+    payload.extend_from_slice(&json);
+    Some(payload)
+}
+
+/// Decode a gossip payload previously produced by [`encode_snapshot_gossip_payload`].
+///
+/// Validates the synthetic header bytes (event_type == 0x00, subtype == 0x03)
+/// and attempts JSON deserialization of the JSON portion. Returns `None` on any
+/// mismatch or parse error.
+pub fn decode_snapshot_gossip_payload(payload: &[u8]) -> Option<NodeResourceSnapshot> {
+    if payload.len() <= GOSSIP_HEADER_SIZE {
+        return None;
+    }
+    if payload[2] != GOSSIP_ET_EXTENDED || payload[3] != GOSSIP_SUB_SWARM_SNAP {
+        return None;
+    }
+    serde_json::from_slice(&payload[GOSSIP_HEADER_SIZE..]).ok()
 }
 
 // ── SwarmTable ───────────────────────────────────────────────────────────────
@@ -309,5 +361,119 @@ mod tests {
         assert_eq!(cfg.interval_secs, 30);
         assert_eq!(cfg.stale_after_secs, 300);
         assert_eq!(cfg.interval_duration(), Duration::from_secs(30));
+    }
+
+    // ── Gossip wire encode / decode (GOLD-FEAT-06 gossip-piggyback) ───────
+
+    fn peer_snap(node_id: &str) -> NodeResourceSnapshot {
+        NodeResourceSnapshot::new(
+            node_id.to_string(),
+            "peer-host".to_string(),
+            37.5,
+            2048,
+            8192,
+            Some(512),
+            Some(4096),
+            1_700_000_000,
+        )
+    }
+
+    #[test]
+    fn encode_decode_snapshot_roundtrip() {
+        let original = peer_snap("peer-deadbeef");
+        let encoded = encode_snapshot_gossip_payload(&original)
+            .expect("encode must not fail");
+
+        // Header size check.
+        assert!(
+            encoded.len() > GOSSIP_HEADER_SIZE,
+            "encoded payload must be longer than the header"
+        );
+        // Header bytes: event_type=0x00, subtype=0x03.
+        assert_eq!(encoded[2], 0x00, "byte 2 must be EVENT_TYPE_EXTENDED");
+        assert_eq!(encoded[3], 0x03, "byte 3 must be SWARM_SNAPSHOT_SUBTYPE");
+        // total_len field must match the actual buffer length.
+        let total_len =
+            u32::from_le_bytes([encoded[9], encoded[10], encoded[11], encoded[12]]) as usize;
+        assert_eq!(total_len, encoded.len(), "total_len must equal encoded.len()");
+
+        let decoded = decode_snapshot_gossip_payload(&encoded)
+            .expect("decode must succeed on a valid payload");
+        assert_eq!(decoded, original, "decoded snapshot must match original");
+    }
+
+    #[test]
+    fn decode_rejects_wrong_event_type() {
+        let original = peer_snap("x");
+        let mut encoded = encode_snapshot_gossip_payload(&original).unwrap();
+        encoded[2] = 0x90; // tamper: wrong event_type
+        assert!(decode_snapshot_gossip_payload(&encoded).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_wrong_subtype() {
+        let original = peer_snap("x");
+        let mut encoded = encode_snapshot_gossip_payload(&original).unwrap();
+        encoded[3] = 0x04; // tamper: LocalSnapshot subtype (not a peer snapshot)
+        assert!(decode_snapshot_gossip_payload(&encoded).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_too_short_payload() {
+        assert!(decode_snapshot_gossip_payload(&[0u8; GOSSIP_HEADER_SIZE]).is_none());
+        assert!(decode_snapshot_gossip_payload(&[]).is_none());
+    }
+
+    /// Core correctness test for GOLD-FEAT-06 gossip-piggyback: a received
+    /// peer snapshot encoded with [`encode_snapshot_gossip_payload`] round-trips
+    /// through [`decode_snapshot_gossip_payload`] and lands in the local
+    /// [`SwarmTable`] via `upsert`, with stale-prune leaving a fresh entry intact.
+    #[test]
+    fn received_peer_snapshot_upserts_into_swarm_table() {
+        // Simulate: peer sends a SwarmResourceSnapshot gossip frame.
+        let peer_snap_in = peer_snap("peer-aabbccdd");
+        let payload = encode_snapshot_gossip_payload(&peer_snap_in)
+            .expect("encode");
+
+        // Receive path: decode + upsert.
+        let decoded = decode_snapshot_gossip_payload(&payload)
+            .expect("receive path must decode the payload");
+        let mut table = SwarmTable::new();
+        table.upsert(decoded.clone());
+
+        assert_eq!(table.len(), 1, "peer snapshot must appear in the table");
+        let row = table.rows()[0];
+        assert_eq!(row.node_id, "peer-aabbccdd");
+        assert_eq!(row.hostname, "peer-host");
+        assert_eq!(row.cpu_pct, 37.5);
+
+        // A second snapshot from the same peer overwrites (fresher wins). Use a
+        // real "now" ts so the 1-second prune below keeps it (prune compares
+        // against crate::time::now_unix_i64(), not the fixture epoch).
+        let fresher = NodeResourceSnapshot::new(
+            "peer-aabbccdd".to_string(),
+            "peer-host-v2".to_string(),
+            55.0,
+            3000,
+            8192,
+            None,
+            None,
+            crate::time::now_unix_i64(),
+        );
+        table.upsert(fresher);
+        assert_eq!(table.len(), 1, "upsert must not grow the table for same node_id");
+        assert_eq!(table.rows()[0].hostname, "peer-host-v2");
+
+        // Stale-prune must evict a snapshot whose ts_unix is 0 (50 years ago).
+        let stale = NodeResourceSnapshot::new(
+            "stale-peer".to_string(),
+            "old".to_string(),
+            0.0, 0, 0, None, None, 0,
+        );
+        table.upsert(stale);
+        assert_eq!(table.len(), 2);
+        table.prune(1); // 1 second stale window
+        assert_eq!(table.len(), 1, "stale entry must be pruned");
+        assert_eq!(table.rows()[0].node_id, "peer-aabbccdd");
     }
 }

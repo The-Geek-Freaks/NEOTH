@@ -130,6 +130,49 @@ pub fn is_replicable(event_type: u8, policy: &GossipPolicy) -> bool {
     }
 }
 
+/// Subtype byte for `SwarmResourceSnapshot` EXTENDED frames (event_type=0x00).
+///
+/// A peer-emitted resource snapshot uses this subtype on the gossip wire so
+/// [`classify_event_ext`] can gate it for replication while keeping
+/// `LocalSnapshot` (subtype 0x04, written only to the local WAL) out of the
+/// gossip band. Matches `crate::wal::events::ExtendedSubtype::SwarmResourceSnapshot`.
+pub const SWARM_SNAPSHOT_SUBTYPE: u8 = 0x03;
+
+/// Extended band-filter ACL that keys on `(event_type, event_subtype)`.
+///
+/// For `EVENT_TYPE_EXTENDED` (0x00) frames the top-level byte alone cannot
+/// distinguish a peer-emitted `SwarmResourceSnapshot` (subtype 0x03) from a
+/// locally-written `LocalSnapshot` (subtype 0x04). This function applies the
+/// subtype gate so ONLY the former crosses the gossip wire.
+///
+/// - `(0x00, 0x03)` → `Replicate` (SwarmResourceSnapshot — peer resource data)
+/// - `(0x00, _)` → `DoNotGossip` (LocalSnapshot and any future 0x00/* subtypes)
+/// - other types → delegated to [`classify_event`] (the non-EXTENDED ACL)
+pub fn classify_event_ext(event_type: u8, event_subtype: u8) -> ReplicationClass {
+    if event_type == 0x00 {
+        if event_subtype == SWARM_SNAPSHOT_SUBTYPE {
+            ReplicationClass::Replicate
+        } else {
+            ReplicationClass::DoNotGossip
+        }
+    } else {
+        classify_event(event_type)
+    }
+}
+
+/// Like [`is_replicable`] but keys on `(event_type, event_subtype)`.
+///
+/// Use on both the emit and receive paths wherever the subtype byte is
+/// available — [`collect_gossipable_frames`], [`GossipState::build_outbound`],
+/// [`GossipState::accept_inbound`].
+pub fn is_replicable_ext(event_type: u8, event_subtype: u8, policy: &GossipPolicy) -> bool {
+    match classify_event_ext(event_type, event_subtype) {
+        ReplicationClass::Replicate => true,
+        ReplicationClass::RawIngressGated => policy.replicate_raw_ingress,
+        ReplicationClass::DoNotGossip => false,
+    }
+}
+
 /// Per-node anti-entropy state. In-memory for SL-01b (rebuilds from inbound
 /// frames via `merge` after a restart; persistence is a follow-on once
 /// ingestion lands and replays become meaningful).
@@ -152,15 +195,20 @@ impl GossipState {
     /// Build an outbound [`GossipFrame`] for a local WAL frame, or `None` when
     /// the event is NOT replicable (the send-side band-filter ACL). `self_id`
     /// is this node's cluster identity (`PairedPeer::pub_key_hex`).
+    ///
+    /// `event_subtype` must be 0 for all non-EXTENDED (`event_type != 0x00`)
+    /// frames; for EXTENDED frames pass the subtype byte (e.g.
+    /// [`SWARM_SNAPSHOT_SUBTYPE`] for a peer snapshot gossip frame).
     pub fn build_outbound(
         &mut self,
         self_id: &PeerPubkey,
         event_type: u8,
+        event_subtype: u8,
         payload: Vec<u8>,
         timestamp_unix: i64,
         policy: &GossipPolicy,
     ) -> Option<GossipFrame> {
-        if !is_replicable(event_type, policy) {
+        if !is_replicable_ext(event_type, event_subtype, policy) {
             return None;
         }
         self.vc.tick(self_id);
@@ -189,10 +237,14 @@ impl GossipState {
     /// advancing the dedup high-water (and merging the sender's VC) before
     /// persistence made a failed INSERT a permanent loss: the peer's
     /// anti-entropy considered the event delivered and never re-sent it.
+    ///
+    /// `payload_event_subtype` is the subtype byte (WAL header byte 3) for
+    /// EXTENDED frames, or `None` / `Some(0)` for all other event types.
     pub fn accept_inbound(
         &mut self,
         frame: &GossipFrame,
         payload_event_type: Option<u8>,
+        payload_event_subtype: Option<u8>,
         policy: &GossipPolicy,
         now_ts_unix: i64,
     ) -> GossipAcceptance {
@@ -204,10 +256,16 @@ impl GossipState {
         }
         // Defence-in-depth: the emit-side ACL should already have dropped a
         // non-replicable event, but re-classify the payload's real event_type
-        // so a mis-tagged frame can't smuggle a DoNotGossip band across.
+        // (+ subtype for EXTENDED frames) so a mis-tagged frame can't smuggle
+        // a DoNotGossip band across.
         match payload_event_type {
-            Some(et) if is_replicable(et, policy) => {}
-            _ => return GossipAcceptance::DroppedDoNotGossipTag,
+            Some(et) => {
+                let sub = payload_event_subtype.unwrap_or(0);
+                if !is_replicable_ext(et, sub, policy) {
+                    return GossipAcceptance::DroppedDoNotGossipTag;
+                }
+            }
+            None => return GossipAcceptance::DroppedDoNotGossipTag,
         }
         GossipAcceptance::Accept
     }
@@ -258,6 +316,8 @@ pub fn collect_gossipable_frames(
     let mut cursor = from_offset.min(body.len());
     while cursor + WAL_HEADER_MIN <= body.len() && out.len() < max {
         let event_type = body[cursor + 2];
+        // Byte 3 is the event_subtype for EXTENDED (0x00) frames; 0 for others.
+        let event_subtype = body[cursor + 3];
         let total_len = u32::from_le_bytes([
             body[cursor + 9],
             body[cursor + 10],
@@ -268,7 +328,9 @@ pub fn collect_gossipable_frames(
         if total_len < WAL_HEADER_MIN || cursor + total_len > body.len() {
             break;
         }
-        if is_replicable(event_type, policy) {
+        // Use ext classifier so SwarmResourceSnapshot (0x00/0x03) is included
+        // and LocalSnapshot (0x00/0x04) is correctly excluded.
+        if is_replicable_ext(event_type, event_subtype, policy) {
             out.push((event_type, body[cursor..cursor + total_len].to_vec()));
         }
         cursor += total_len;
@@ -354,7 +416,10 @@ pub fn spawn_gossip_tick(
             let frame_count = frames.len();
             for (event_type, raw) in frames {
                 let ts = now_unix_secs();
-                if let Some(gframe) = state.build_outbound(&self_id, event_type, raw, ts, &policy) {
+                // Byte 3 of the raw frame body is the event_subtype for EXTENDED
+                // frames; 0 for all other types (ignored by classify_event_ext).
+                let event_subtype = raw.get(3).copied().unwrap_or(0);
+                if let Some(gframe) = state.build_outbound(&self_id, event_type, event_subtype, raw, ts, &policy) {
                     let wf = WireFrame {
                         kind: FrameKind::Gossip,
                         sequence: gframe.event_seq,
@@ -1061,22 +1126,58 @@ mod tests {
         let mut st = GossipState::new();
         // A permission event is never wrapped.
         assert!(
-            st.build_outbound(&self_pk(), 0xA0, vec![1, 2, 3], 1000, &p)
+            st.build_outbound(&self_pk(), 0xA0, 0, vec![1, 2, 3], 1000, &p)
                 .is_none()
         );
         // A cluster-topology event (0xE6 leaks addr/autonomy) is NOT wrapped.
         assert!(
-            st.build_outbound(&self_pk(), 0xE6, vec![9], 1000, &p)
+            st.build_outbound(&self_pk(), 0xE6, 0, vec![9], 1000, &p)
                 .is_none()
         );
         // A verified-clean memory-tier transition is wrapped + VC advances.
         let f = st
-            .build_outbound(&self_pk(), 0x90, vec![9], 1000, &p)
+            .build_outbound(&self_pk(), 0x90, 0, vec![9], 1000, &p)
             .expect("safe event wraps");
         assert_eq!(f.origin, self_pk());
         assert_eq!(f.event_seq, 1);
         assert_eq!(f.tag, GossipTag::Replicate);
         assert!(f.vector_clock.get(&self_pk()) >= 1);
+    }
+
+    #[test]
+    fn classify_event_ext_distinguishes_swarm_snapshot_from_local_snapshot() {
+        let p = GossipPolicy::default();
+        // 0x00/0x03 = SwarmResourceSnapshot → Replicate (the gossip-wire subtype).
+        assert_eq!(
+            classify_event_ext(0x00, SWARM_SNAPSHOT_SUBTYPE),
+            ReplicationClass::Replicate,
+            "SwarmResourceSnapshot (0x00/0x03) must be Replicate"
+        );
+        assert!(
+            is_replicable_ext(0x00, SWARM_SNAPSHOT_SUBTYPE, &p),
+            "SwarmResourceSnapshot must pass the ACL gate"
+        );
+        // 0x00/0x04 = LocalSnapshot → DoNotGossip (written locally, never replicated).
+        assert_eq!(
+            classify_event_ext(0x00, 0x04),
+            ReplicationClass::DoNotGossip,
+            "LocalSnapshot (0x00/0x04) must NOT replicate"
+        );
+        assert!(
+            !is_replicable_ext(0x00, 0x04, &p),
+            "LocalSnapshot must be rejected by the ACL gate"
+        );
+        // All other 0x00/* subtypes are DoNotGossip by default-deny.
+        for sub in [0x00u8, 0x01, 0x02, 0x05, 0xFF] {
+            assert_eq!(
+                classify_event_ext(0x00, sub),
+                ReplicationClass::DoNotGossip,
+                "unknown EXTENDED subtype 0x{sub:02X} must DoNotGossip"
+            );
+        }
+        // Non-EXTENDED types delegate to classify_event — no regression.
+        assert!(is_replicable_ext(0x90, 0, &p), "0x90 still replicates via classify_event");
+        assert!(!is_replicable_ext(0xA0, 0, &p), "0xA0 still DoNotGossip via classify_event");
     }
 
     #[test]
@@ -1099,7 +1200,7 @@ mod tests {
         // nothing is recorded until the caller confirms persistence
         // (G02-CLUSTER-02 persist-then-dedup).
         assert_eq!(
-            st.accept_inbound(&frame, Some(0x90), &p, now),
+            st.accept_inbound(&frame, Some(0x90), None, &p, now),
             GossipAcceptance::Accept
         );
         assert_eq!(
@@ -1110,7 +1211,7 @@ mod tests {
         // Re-delivery BEFORE commit is still Accept (DB INSERT OR IGNORE
         // absorbs the double-persist) — the crash-window contract.
         assert_eq!(
-            st.accept_inbound(&frame, Some(0x90), &p, now),
+            st.accept_inbound(&frame, Some(0x90), None, &p, now),
             GossipAcceptance::Accept
         );
         // After confirmed persistence the caller commits: high-water + VC.
@@ -1119,7 +1220,7 @@ mod tests {
         assert!(st.vc.get(&peer) >= 1, "receiver VC converged on sender");
         // Re-delivery (<= last seq) after commit ⇒ duplicate drop.
         assert!(matches!(
-            st.accept_inbound(&frame, Some(0x90), &p, now),
+            st.accept_inbound(&frame, Some(0x90), None, &p, now),
             GossipAcceptance::DroppedDuplicate { .. }
         ));
         // Defence-in-depth: a frame whose payload is actually a DoNotGossip
@@ -1135,9 +1236,42 @@ mod tests {
             payload: vec![0],
         };
         assert_eq!(
-            st.accept_inbound(&smuggle, Some(0xA0), &p, now),
+            st.accept_inbound(&smuggle, Some(0xA0), None, &p, now),
             GossipAcceptance::DroppedDoNotGossipTag,
             "a payload in the permissions band must be dropped on receive"
+        );
+        // A SwarmResourceSnapshot (0x00/0x03) must be accepted — the key
+        // correctness assertion for GOLD-FEAT-06 gossip-piggyback.
+        let mut vc3 = VectorClock::new();
+        vc3.tick(&peer);
+        let snap_frame = GossipFrame {
+            vector_clock: vc3,
+            origin: peer.clone(),
+            event_seq: 7,
+            timestamp_unix: 2_000_000_000,
+            tag: GossipTag::Replicate,
+            payload: vec![0],
+        };
+        assert_eq!(
+            st.accept_inbound(&snap_frame, Some(0x00), Some(SWARM_SNAPSHOT_SUBTYPE), &p, now),
+            GossipAcceptance::Accept,
+            "SwarmResourceSnapshot (0x00/0x03) must be accepted by the receive ACL"
+        );
+        // LocalSnapshot (0x00/0x04) must be dropped even from a trusted peer.
+        let mut vc4 = VectorClock::new();
+        vc4.tick(&peer);
+        let local_snap_frame = GossipFrame {
+            vector_clock: vc4,
+            origin: peer.clone(),
+            event_seq: 8,
+            timestamp_unix: 2_000_000_000,
+            tag: GossipTag::Replicate,
+            payload: vec![0],
+        };
+        assert_eq!(
+            st.accept_inbound(&local_snap_frame, Some(0x00), Some(0x04), &p, now),
+            GossipAcceptance::DroppedDoNotGossipTag,
+            "LocalSnapshot (0x00/0x04) must be rejected — it is local-only"
         );
     }
 
@@ -1179,7 +1313,7 @@ mod tests {
         };
         let now = 2_000_000_001;
         assert_eq!(
-            st.accept_inbound(&frame, Some(0x90), &policy, now),
+            st.accept_inbound(&frame, Some(0x90), None, &policy, now),
             GossipAcceptance::Accept
         );
         // VC merge happens at commit (post-persist), not at accept.

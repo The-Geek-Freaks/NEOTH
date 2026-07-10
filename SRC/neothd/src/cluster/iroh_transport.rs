@@ -447,11 +447,13 @@ pub fn gossip_handler(
         // payload's own event_type = byte 2 of the inner WAL header (foreign
         // frame → read without HMAC, exactly like the peeroxide loop).
         let payload_et = frame.payload.get(2).copied();
+        // Byte 3 = event_subtype for EXTENDED (0x00) frames.
+        let payload_sub = frame.payload.get(3).copied();
         let now = crate::time::now_unix_i64();
         let origin = frame.origin.as_str().to_string();
         let verdict = {
             let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
-            let v = g.accept_inbound(&frame, payload_et, &policy, now);
+            let v = g.accept_inbound(&frame, payload_et, payload_sub, &policy, now);
             if matches!(v, GossipAcceptance::Accept) {
                 match &persist_tx {
                     // DES-13: persist-then-commit. Submit the accepted frame to
@@ -562,9 +564,11 @@ pub fn spawn_gossip_broadcast(
                 // F56 — build_outbound ticks + reads the SHARED vector clock.
                 // Scope the std Mutex guard so it drops BEFORE the broadcast
                 // await (a std guard is !Send and must never cross an await).
+                // Byte 3 of the raw frame is event_subtype for EXTENDED frames.
+                let event_subtype = raw.get(3).copied().unwrap_or(0);
                 let gframe_opt = {
                     let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
-                    g.build_outbound(&self_id, event_type, raw, ts, &policy)
+                    g.build_outbound(&self_id, event_type, event_subtype, raw, ts, &policy)
                 };
                 if let Some(gframe) = gframe_opt {
                     if let Ok(wire) = serde_json::to_vec(&gframe) {

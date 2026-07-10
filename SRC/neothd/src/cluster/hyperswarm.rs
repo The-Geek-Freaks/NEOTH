@@ -86,8 +86,9 @@ use super::heartbeat::{
 use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
-use super::wal_sync::GossipState;
-use super::{PeerLoad, PeerLoadRegistry, PeerSessionId};
+use super::swarm::{encode_snapshot_gossip_payload, NodeResourceSnapshot};
+use super::wal_sync::{GossipState, SWARM_SNAPSHOT_SUBTYPE};
+use super::{PeerLoad, PeerLoadRegistry, PeerPubkey, PeerSessionId};
 use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
 
@@ -647,6 +648,60 @@ async fn handle_peeroxide_connection(
                             emit_heartbeat_sent_wal(wal_writer.as_deref(), &peer_id, body);
                         }
                     }
+                    // GOLD-FEAT-06 gossip-piggyback (a): send a minimal
+                    // SwarmResourceSnapshot alongside the heartbeat so peers can
+                    // populate their local SwarmTable. Resource fields (CPU/RAM/VRAM)
+                    // are zeros here — the resource_snapshot_cron writes accurate
+                    // LocalSnapshot (0x04) frames to the LOCAL WAL; this piggyback
+                    // only establishes peer presence so `neoth cluster swarm` shows
+                    // rows. The node_id is the Noise static pubkey hex (stable per node).
+                    let snap = NodeResourceSnapshot::new(
+                        hex_encode(&own_noise_pk),
+                        hex_encode(&own_noise_pk),
+                        0.0,
+                        0,
+                        0,
+                        None,
+                        None,
+                        crate::time::now_unix_i64(),
+                    );
+                    if let Some(gossip_payload) = encode_snapshot_gossip_payload(&snap) {
+                        let self_pk = PeerPubkey::new(own_peer_id.clone());
+                        if let Some(gframe) = gossip_state.build_outbound(
+                            &self_pk,
+                            0x00,
+                            SWARM_SNAPSHOT_SUBTYPE,
+                            gossip_payload,
+                            crate::time::now_unix_i64(),
+                            &gossip_policy,
+                        ) {
+                            let snap_wf = WireFrame {
+                                kind: FrameKind::Gossip,
+                                sequence: gframe.event_seq,
+                                sent_unix_ms: now_unix_ms(),
+                                peer_id: own_peer_id.clone(),
+                                body: FrameBody::Gossip(gframe),
+                            };
+                            match heartbeat::encode_frame(&snap_wf) {
+                                Ok(b) => {
+                                    if let Err(e) = stream.write(&b).await {
+                                        tracing::debug!(
+                                            peer_id = %peer_id,
+                                            error = %e,
+                                            "hyperswarm: snapshot gossip write failed (non-fatal)"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::debug!(
+                                        peer_id = %peer_id,
+                                        error = %e,
+                                        "hyperswarm: snapshot gossip encode failed (non-fatal)"
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 // Encode failure is a local bug, not a peer fault — skip this
                 // tick rather than tearing down the connection.
@@ -761,8 +816,16 @@ async fn handle_peeroxide_connection(
         if frame.kind == FrameKind::Gossip {
             if let FrameBody::Gossip(gframe) = frame.body {
                 let payload_et = gframe.payload.get(2).copied();
+                // Byte 3 is the subtype for EXTENDED (0x00) frames.
+                let payload_sub = gframe.payload.get(3).copied();
                 let now = now_unix_secs() as i64;
-                match gossip_state.accept_inbound(&gframe, payload_et, &gossip_policy, now) {
+                match gossip_state.accept_inbound(
+                    &gframe,
+                    payload_et,
+                    payload_sub,
+                    &gossip_policy,
+                    now,
+                ) {
                     GossipAcceptance::Accept => {
                         emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
                         // G02-CLUSTER-02 persist-then-dedup: INSERT into
@@ -797,7 +860,22 @@ async fn handle_peeroxide_connection(
                             Err(anyhow::anyhow!("ingest task panicked: {join_err}"))
                         });
                         match persisted {
-                            Ok(()) => gossip_state.commit_inbound(&gframe),
+                            Ok(()) => {
+                                gossip_state.commit_inbound(&gframe);
+                                // GOLD-FEAT-06 gossip-piggyback (b): write a
+                                // peer SwarmResourceSnapshot (0x00/0x03) to the
+                                // LOCAL WAL so `neoth cluster swarm` shows it.
+                                // The foreign-event store holds the raw bytes;
+                                // this WAL write is what the swarm scanner reads.
+                                if payload_et == Some(0x00)
+                                    && payload_sub == Some(SWARM_SNAPSHOT_SUBTYPE)
+                                {
+                                    emit_peer_snapshot_to_wal(
+                                        wal_writer.as_deref(),
+                                        &gframe.payload,
+                                    );
+                                }
+                            }
                             Err(e) => {
                                 // High-water NOT advanced, VC NOT merged: the
                                 // peer's anti-entropy will re-send this event.
@@ -1430,6 +1508,35 @@ fn emit_gossip_dropped_wal(
         crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_DROPPED,
         payload,
     );
+}
+
+/// GOLD-FEAT-06 gossip-piggyback: write a received peer `SwarmResourceSnapshot`
+/// gossip payload into the local WAL as an `EXTENDED/SwarmResourceSnapshot`
+/// (0x00/0x03) frame so `neoth cluster swarm` can display peer rows.
+///
+/// The gossip payload has a 96-byte synthetic header (no MAGIC preamble) +
+/// JSON. We write a proper WAL frame (with MAGIC) via `HeaderBuilder` so the
+/// existing `cluster_swarm` scanner (`decode_frame`) can read it.
+fn emit_peer_snapshot_to_wal(writer: Option<&WalWriterHandle>, gossip_payload: &[u8]) {
+    use super::swarm::GOSSIP_HEADER_SIZE;
+    let Some(w) = writer else { return };
+    // Extract JSON body from the gossip payload (after the 96-byte synthetic header).
+    let json_bytes = match gossip_payload.get(GOSSIP_HEADER_SIZE..) {
+        Some(b) if !b.is_empty() => b,
+        _ => return,
+    };
+    let header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        json_bytes,
+    )
+    .event_subtype(crate::wal::events::ExtendedSubtype::SwarmResourceSnapshot as u8)
+    .build();
+    if let Err(e) = w.try_append_sync(header, json_bytes.to_vec()) {
+        tracing::debug!(
+            error = %e,
+            "hyperswarm: peer snapshot WAL write failed (non-fatal, peer will re-send)"
+        );
+    }
 }
 
 // ── Connection-loop primitives (testable against tokio::io::duplex) ────────
