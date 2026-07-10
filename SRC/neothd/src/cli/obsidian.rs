@@ -169,6 +169,9 @@ pub struct PreloadStats {
     pub skipped_identical: usize,
     pub skipped_dry_run: usize,
     pub skipped_policy: usize,
+    /// Files whose write target canonicalized to a path outside the vault root
+    /// (symlink/junction escape caught by the central containment guard).
+    pub skipped_containment: usize,
     pub restricted_files: usize,
     pub ingest_candidates: usize,
     pub ingested_chunks: usize,
@@ -1526,6 +1529,35 @@ fn promote_cmd(
     Ok(())
 }
 
+/// Central vault-containment guard applied to every preload write target.
+///
+/// Creates `parent` (fail-closed on mkdir failure), resolves its real path
+/// via [`std::fs::canonicalize`], and verifies the result is a descendant of
+/// `canonical_vault`.  Catches pre-existing symlinks and Windows junctions
+/// anywhere in the destination tree — including those present between a prior
+/// `validate_subdir` name-check and the actual write.
+///
+/// Called once per file from [`preload_template`] so ALL callers — the CLI
+/// `Preload` arm, the daemon autorun primary template, `knowledge_preload_dirs`
+/// entries, and manifest-derived subdirs — share this single centralized
+/// boundary check.  Fail-closed: mkdir failure and canonicalize failure both
+/// return `Err`.
+fn assert_target_within_vault(canonical_vault: &Path, parent: &Path) -> Result<()> {
+    std::fs::create_dir_all(parent).with_context(|| {
+        format!("create preload target dir {}", parent.display())
+    })?;
+    let real = std::fs::canonicalize(parent).with_context(|| {
+        format!("canonicalize preload target {}", parent.display())
+    })?;
+    if !real.starts_with(canonical_vault) {
+        anyhow::bail!(
+            "preload write target resolves outside vault root \
+             (symlink/junction escape detected); write refused (fail-closed)"
+        );
+    }
+    Ok(())
+}
+
 pub async fn preload_template(
     template: &Path,
     vault: &Path,
@@ -1572,6 +1604,21 @@ pub async fn preload_template(
         ..PreloadStats::default()
     };
 
+    // Canonicalize the vault root once before the file loop so per-file
+    // boundary checks operate on a stable baseline.  Vault creation is skipped
+    // on dry-run (no writes happen there); on a real run, create_dir_all here
+    // is idempotent with the later coalescer flush.
+    let canonical_vault: Option<PathBuf> = if !dry_run {
+        std::fs::create_dir_all(vault)
+            .with_context(|| format!("create vault dir {}", vault.display()))?;
+        Some(
+            std::fs::canonicalize(vault)
+                .with_context(|| format!("canonicalize vault root {}", vault.display()))?,
+        )
+    } else {
+        None
+    };
+
     let mut coalescer = WriteCoalescer::new();
     let conn = if ingest && !dry_run {
         let db_path = views_db_override
@@ -1601,13 +1648,38 @@ pub async fn preload_template(
         if dry_run {
             stats.skipped_dry_run += 1;
         } else {
+            // Vault-containment guard: canonicalize the target's parent and
+            // verify it resolves INSIDE the vault root.  Catches pre-existing
+            // symlinks/junctions in the destination tree that could otherwise
+            // redirect writes outside the vault — even when the subdir name
+            // and the file's template-relative path are individually safe.
+            // Fail-closed: skip the file on any error or boundary violation.
+            let parent = dst.parent().unwrap_or(vault);
+            if let Some(cv) = &canonical_vault {
+                if let Err(e) = assert_target_within_vault(cv, parent) {
+                    tracing::warn!(
+                        file = %file.rel.display(),
+                        error = %e,
+                        "preload: skipping file — write target escapes vault boundary"
+                    );
+                    stats.skipped_containment += 1;
+                    continue;
+                }
+            }
             coalescer.push(dst, file.bytes.clone());
             state
                 .copied_hashes
                 .insert(file.rel_key.clone(), file.hash.clone());
         }
 
-        if file.is_markdown && file.policy.ingest {
+        // RESTRICTED-GROUNDTRUTH-ISOLATION-01: a file with `policy.restricted = true`
+        // must NEVER enter idx_groundtruth regardless of the `ingest` flag.
+        // Restricted content routes exclusively through the `insert_restricted` branch
+        // below.  Without this guard, setting both `ingest = true` and
+        // `restricted = true` in a preload manifest caused the same chunk to be
+        // written to BOTH tables — violating the "never to idx_groundtruth" comment
+        // that precedes the restricted branch.
+        if file.is_markdown && file.policy.ingest && !file.policy.restricted {
             stats.ingest_candidates += 1;
             if ingest && !dry_run {
                 let old_hash = state.ingested_hashes.get(&file.rel_key);
@@ -1737,12 +1809,13 @@ fn render_preload(stats: PreloadStats, output: OutputFormat) {
                 "preload"
             };
             println!(
-                "obsidian {mode}: {} considered, {} copied, {} unchanged, {} dry-run, {} policy-skipped, {} restricted ({} restricted-ingested), {} ingest-candidate, {} ingested chunk(s), {} revoked chunk(s)",
+                "obsidian {mode}: {} considered, {} copied, {} unchanged, {} dry-run, {} policy-skipped, {} containment-blocked, {} restricted ({} restricted-ingested), {} ingest-candidate, {} ingested chunk(s), {} revoked chunk(s)",
                 stats.files_considered,
                 stats.files_copied,
                 stats.skipped_identical,
                 stats.skipped_dry_run,
                 stats.skipped_policy,
+                stats.skipped_containment,
                 stats.restricted_files,
                 stats.restricted_ingested_chunks,
                 stats.ingest_candidates,
@@ -3242,6 +3315,57 @@ sections:
             )
             .unwrap();
         assert_eq!(active, 1, "exactly one active groundtruth row — not double-indexed");
+    }
+
+    // ── PRELOAD-CONTAINMENT-CENTRAL-01 ───────────────────────────────────────
+
+    /// Platform-agnostic: a path that resolves outside the vault is refused;
+    /// an in-vault nested path is accepted.
+    ///
+    /// `assert_target_within_vault` is called for every file target inside
+    /// `preload_template`, so confirming the guard here proves the fix covers
+    /// all callers: the CLI `Preload` arm, the autorun primary template,
+    /// `knowledge_preload_dirs` entries, and manifest-derived subdirs.
+    #[test]
+    fn preload_containment_guard_rejects_outside_target_and_accepts_inside() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let canonical_vault = std::fs::canonicalize(&vault).unwrap();
+
+        // An in-vault nested path succeeds.
+        let inside = vault.join("NEOTH-Preload").join("wiki");
+        assert!(
+            assert_target_within_vault(&canonical_vault, &inside).is_ok(),
+            "in-vault target must be accepted"
+        );
+
+        // A path that physically resolves outside the vault is refused —
+        // canonicalize(outside) will not start_with canonical_vault.
+        let err = assert_target_within_vault(&canonical_vault, &outside);
+        assert!(err.is_err(), "outside path must be rejected; got: {err:?}");
+    }
+
+    /// Unix-only: a symlink inside the vault pointing outside is refused by
+    /// the containment guard — this is the primary symlink-escape vector.
+    #[test]
+    #[cfg(unix)]
+    fn preload_containment_guard_rejects_symlink_escape_unix() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let canonical_vault = std::fs::canonicalize(&vault).unwrap();
+
+        // Symlink inside the vault that resolves to a directory outside it.
+        let evil_link = vault.join("evil");
+        std::os::unix::fs::symlink(&outside, &evil_link).unwrap();
+
+        let err = assert_target_within_vault(&canonical_vault, &evil_link);
+        assert!(err.is_err(), "symlink escape must be refused: {err:?}");
     }
 }
 

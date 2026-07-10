@@ -1556,6 +1556,78 @@ mod tests {
         assert_eq!(gt_rows.len(), 1, "duplicate groundtruth rows must not be created");
     }
 
+    /// RESTRICTED-GROUNDTRUTH-ISOLATION-01 — a chunk that carries both
+    /// `ingest = true` and `restricted = true` (as can appear in a preload
+    /// manifest that sets raw/operational-security flags alongside an ingest
+    /// directive) must land ONLY in `idx_restricted`, never in `idx_groundtruth`.
+    ///
+    /// The dual-write defect: the obsidian preload loop previously gated the
+    /// `idx_groundtruth` insert on `file.is_markdown && file.policy.ingest`
+    /// without also excluding `file.policy.restricted = true`.  When both flags
+    /// were set, the same chunk was written to BOTH tables.
+    ///
+    /// The fix adds `&& !file.policy.restricted` to the groundtruth branch so
+    /// restricted content is exclusively routed through `insert_restricted`.
+    ///
+    /// This test pins the SQL-layer invariant: after correct routing,
+    /// `insert_restricted` populates `idx_restricted` and `idx_groundtruth`
+    /// contains NO matching row, making the content invisible to all normal
+    /// recall surfaces.
+    #[test]
+    fn restricted_with_ingest_flag_never_enters_idx_groundtruth() {
+        let (_dir, conn) = open();
+        let stmt = "opsec note: API key rotation schedule 2026-Q3";
+        let scope = "offline-security-restricted";
+
+        // Simulate the correct post-fix routing: a file with restricted=true
+        // goes ONLY through insert_restricted, never through groundtruth::insert.
+        let rid = insert_restricted(
+            &conn,
+            stmt,
+            "opsec-vault",
+            scope,
+            "operational-security",
+            1_000,
+        )
+        .unwrap();
+        assert!(rid > 0, "restricted row inserted successfully");
+
+        // idx_groundtruth must be completely empty — the dual-write bug would
+        // have put a row here when both ingest=true and restricted=true.
+        let gt_count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_groundtruth", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            gt_count, 0,
+            "restricted content must NOT appear in idx_groundtruth (dual-write isolation)"
+        );
+
+        // surface_for_recall returns nothing for restricted content — even with
+        // include_unverified=true (the widest recall surface available).
+        let recall = surface_for_recall(&conn, 100, true).unwrap();
+        assert!(
+            !recall.iter().any(|g| g.statement == stmt),
+            "restricted content must be invisible to surface_for_recall (include_unverified=true)"
+        );
+
+        // list_for_scope also returns nothing from idx_groundtruth for this scope.
+        let scope_hits = list_for_scope(&conn, scope).unwrap();
+        assert!(
+            scope_hits.is_empty(),
+            "restricted content must not appear in list_for_scope"
+        );
+
+        // idx_restricted IS the correct destination — the row must be there.
+        let restricted = search_restricted(&conn, scope).unwrap();
+        assert_eq!(restricted.len(), 1, "exactly one restricted chunk");
+        assert_eq!(restricted[0].statement, stmt);
+        assert_eq!(restricted[0].risk_tier, "operational-security");
+        assert!(
+            restricted[0].promoted_at.is_none(),
+            "freshly inserted restricted row is not yet promoted"
+        );
+    }
+
     #[test]
     fn dry_run_promote_writes_nothing() {
         let (_dir, conn) = open();

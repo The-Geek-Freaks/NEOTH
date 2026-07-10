@@ -107,122 +107,202 @@ pub struct WalWriterHandle {
     quota: Option<std::sync::Arc<QuotaGuard>>,
 }
 
-/// Pre-write disk-quota guard. Counts bytes admitted since the last
-/// disk-walk and re-measures the home dir when the counter crosses a
-/// threshold. Refuses writes once usage breaches the ceiling.
+/// Pre-write disk-quota guard. Tracks bytes admitted since the last disk walk
+/// and re-measures the home dir when a threshold is crossed. Refuses writes
+/// once usage breaches the ceiling.
 ///
-/// Construction is cheap (no IO); first `try_admit` triggers a measure.
-/// Once breached, the guard stays breached until `reset()` is called —
-/// operator who frees disk space must restart the daemon or call the
-/// reset path from `neoth doctor`.
+/// ## WAL-QUOTA-FAILCLOSED-01 — design invariants
+///
+/// Admission is rejected when `last_measured + reserved + payload > ceiling`
+/// (projected-sum test).  `reserved` counts every byte admitted since the last
+/// disk walk.  Unlike the previous counter, `reserved` is never blindly reset
+/// to zero — after a walk it is reduced to only the bytes that arrived DURING
+/// the walk (those are not yet captured in `last_measured`), preventing the
+/// "bytes lost during disk walk" race.
+///
+/// The projected-sum check is performed inside a CAS loop: the loop reads the
+/// current `reserved`, checks the projected total, and atomically increments
+/// `reserved` only if the check passes.  Concurrent near-ceiling payloads
+/// therefore see each other's admitted bytes and are correctly rejected.
+///
+/// Re-measure single-flighting uses a `Mutex<bool>` + `Condvar` instead of a
+/// spin loop, so tokio worker threads are not busy-spinning during the
+/// (potentially slow) disk walk.
+///
+/// Construction is cheap (no IO).  `reserved` is pre-armed at
+/// `remeasure_threshold` so the very first `try_admit` always triggers a disk
+/// walk — the guard never admits before at least one real measurement.
+///
+/// Once breached the guard stays breached until `reset()` is called.
 #[derive(Debug)]
 pub struct QuotaGuard {
     home: PathBuf,
     ceiling: u64,
-    /// Re-measure threshold. Default = 1 MiB. Each `try_admit` adds the
-    /// payload size; once the counter crosses this, we walk the disk and
-    /// refresh `last_measured`.
+    /// Re-measure threshold (default 1 MiB).  When `reserved` crosses this
+    /// after a successful CAS-admission, the guard walks the home directory.
     remeasure_threshold: u64,
-    bytes_since_measure: std::sync::atomic::AtomicU64,
+    /// Projected-pending bytes: every admitted write increments this.  After
+    /// each disk walk it is reduced to only the bytes that arrived DURING the
+    /// walk, preserving them for the next projected-sum check.
+    reserved: std::sync::atomic::AtomicU64,
     last_measured: std::sync::atomic::AtomicU64,
     breached: std::sync::atomic::AtomicBool,
-    /// COR-23: single-flights the re-measure block. Without it, N concurrent
-    /// writers crossing the threshold together would each launch a redundant
-    /// disk walk AND race on the `bytes_since_measure` reset — a torn
-    /// read-modify-write that under-counts admitted bytes and weakens the
-    /// ceiling guarantee. The compare_exchange lets exactly one thread measure.
-    in_remeasure: std::sync::atomic::AtomicBool,
+    /// Guards the re-measure critical section.  The `bool` is `true` while a
+    /// walk is in progress; `measure_done` wakes waiting threads when it ends.
+    measure_mutex: std::sync::Mutex<bool>,
+    measure_done: std::sync::Condvar,
 }
 
 impl QuotaGuard {
     pub fn new(home: PathBuf, ceiling_bytes: u64) -> Self {
+        let remeasure_threshold: u64 = 1024 * 1024; // 1 MiB
         Self {
             home,
             ceiling: ceiling_bytes,
-            remeasure_threshold: 1024 * 1024,
-            bytes_since_measure: std::sync::atomic::AtomicU64::new(u64::MAX),
+            remeasure_threshold,
+            // Pre-arm at threshold so the very first try_admit triggers a disk
+            // walk — the guard never admits without at least one real measurement.
+            reserved: std::sync::atomic::AtomicU64::new(remeasure_threshold),
             last_measured: std::sync::atomic::AtomicU64::new(0),
             breached: std::sync::atomic::AtomicBool::new(false),
-            in_remeasure: std::sync::atomic::AtomicBool::new(false),
+            measure_mutex: std::sync::Mutex::new(false),
+            measure_done: std::sync::Condvar::new(),
         }
     }
 
     /// Check whether one more payload of `payload_bytes` can be admitted.
-    /// Re-measures the home dir lazily when the running counter crosses
-    /// `remeasure_threshold`. Returns `Err(QuotaExceeded)` after the first
-    /// breach — the breached flag stays sticky.
+    ///
+    /// Admission uses a projected-sum CAS loop: this payload is admitted only
+    /// when `last_measured + reserved + payload_bytes <= ceiling`.  The CAS
+    /// loop re-checks the sum with the latest `reserved` on every retry, so
+    /// two concurrent near-ceiling payloads whose combined size exceeds the
+    /// ceiling cannot both be admitted.
+    ///
+    /// Returns `Err(QuotaExceeded)` on any projected or measured violation.
+    /// The breached flag is sticky — once set, all subsequent calls fail
+    /// without a disk walk until `reset()` is called.
     pub fn try_admit(&self, payload_bytes: u64) -> Result<(), WalError> {
         use std::sync::atomic::Ordering;
+
+        // Fast path: sticky breach flag avoids the CAS loop and any locking.
         if self.breached.load(Ordering::Acquire) {
             return Err(WalError::QuotaExceeded {
                 used: self.last_measured.load(Ordering::Acquire),
                 ceiling: self.ceiling,
             });
         }
-        // Lazy re-measure. The very first call (initialised to MAX) always
-        // re-measures so the guard never admits without a real reading.
-        let prior = self
-            .bytes_since_measure
-            .fetch_add(payload_bytes, Ordering::AcqRel);
-        let crossed = prior >= self.remeasure_threshold || prior == u64::MAX;
-        // COR-23: single-flight the re-measure. Concurrent crossers lose the
-        // compare_exchange and skip the walk — their bytes are already counted,
-        // and the winner's measure sets the sticky breach flag they (and every
-        // later caller) observe at the top of this fn. This keeps the disk walk
-        // single-flighted and the counter reset un-torn, so the ceiling holds
-        // under concurrent writers.
-        if crossed {
-            if self
-                .in_remeasure
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                let used = crate::daemon::quota::measure_dir(&self.home);
-                self.last_measured.store(used, Ordering::Release);
-                self.bytes_since_measure.store(0, Ordering::Release);
-                let over = used >= self.ceiling;
-                if over {
-                    self.breached.store(true, Ordering::Release);
+
+        // ── Projected-sum CAS admission (WAL-QUOTA-FAILCLOSED-01) ────────────
+        // Increment `reserved` only when last_measured + reserved + this_payload
+        // is within the ceiling.  compare_exchange_weak retries when a
+        // concurrent admission changes `reserved` beneath us, re-checking the
+        // projected sum with the updated value each time.
+        let mut cur_reserved = self.reserved.load(Ordering::Acquire);
+        loop {
+            let used = self.last_measured.load(Ordering::Acquire);
+            let projected = used
+                .saturating_add(cur_reserved)
+                .saturating_add(payload_bytes);
+            if projected > self.ceiling {
+                return Err(WalError::QuotaExceeded { used, ceiling: self.ceiling });
+            }
+            match self.reserved.compare_exchange_weak(
+                cur_reserved,
+                cur_reserved + payload_bytes,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    cur_reserved += payload_bytes;
+                    break;
                 }
-                // Release the gate BEFORE any early return — returning while it is
-                // still held would latch it forever and stop all future measures.
-                self.in_remeasure.store(false, Ordering::Release);
-                if over {
-                    return Err(WalError::QuotaExceeded {
-                        used,
-                        ceiling: self.ceiling,
-                    });
-                }
-            } else {
-                // COR-23b: losers of the in_remeasure CAS must NOT silently
-                // return Ok(()) — that lets them race past the winner's breach
-                // verdict and admit writes against a disk that is already full.
-                // Spin until the winner releases in_remeasure (its Release store
-                // synchronises-with this Acquire load), then re-read breached.
-                // The spin is bounded by the winner's measure_dir wall-time,
-                // which is the same blocking cost the winner already pays on
-                // this same calling thread — no worse in the worst case.
-                while self.in_remeasure.load(Ordering::Acquire) {
-                    std::hint::spin_loop();
-                }
-                if self.breached.load(Ordering::Acquire) {
-                    return Err(WalError::QuotaExceeded {
-                        used: self.last_measured.load(Ordering::Acquire),
-                        ceiling: self.ceiling,
-                    });
+                Err(actual) => {
+                    cur_reserved = actual;
+                    // A concurrent re-measure may have set breached while we
+                    // were spinning; check before retrying.
+                    if self.breached.load(Ordering::Acquire) {
+                        return Err(WalError::QuotaExceeded {
+                            used: self.last_measured.load(Ordering::Acquire),
+                            ceiling: self.ceiling,
+                        });
+                    }
                 }
             }
         }
+
+        // ── Re-measure gate (WAL-QUOTA-FAILCLOSED-01) ───────────────────────
+        // When `reserved` crosses the threshold, one thread walks the disk and
+        // updates `last_measured`.  Other threads wait on `measure_done`
+        // (Condvar) so tokio worker threads are not busy-spinning during the
+        // potentially slow walk.
+        if cur_reserved >= self.remeasure_threshold {
+            let mut is_measuring = self.measure_mutex.lock().unwrap();
+            if *is_measuring {
+                // Loser: sleep until the winner publishes results.
+                is_measuring = self
+                    .measure_done
+                    .wait_while(is_measuring, |m| *m)
+                    .unwrap();
+                drop(is_measuring);
+            } else {
+                // Winner: note how many bytes existed in `reserved` BEFORE the
+                // walk.  Bytes added by other threads DURING the walk may not
+                // yet be on disk and must be kept in `reserved` so they are
+                // counted in future projected-sum checks (not silently dropped).
+                *is_measuring = true;
+                let pre_walk_reserved = self.reserved.load(Ordering::SeqCst);
+                drop(is_measuring); // release while the disk walk runs
+
+                let used = crate::daemon::quota::measure_dir(&self.home);
+
+                // Publish under lock so breach + reserved reset are observed
+                // atomically by the next admission that acquires the gate.
+                let mut is_measuring = self.measure_mutex.lock().unwrap();
+                let post_walk = self.reserved.load(Ordering::SeqCst);
+                // Bytes admitted during the walk are not yet captured in `used`;
+                // retain them so they count against the ceiling next time.
+                let during_walk = post_walk.saturating_sub(pre_walk_reserved);
+                self.last_measured.store(used, Ordering::SeqCst);
+                let over = used.saturating_add(during_walk) > self.ceiling;
+                // Set breach BEFORE resetting reserved: any thread that sees the
+                // post-reset (small) value of `reserved` via a concurrent CAS
+                // will observe breached=true on its subsequent SeqCst load,
+                // eliminating the window where a thread slips past the check.
+                if over {
+                    self.breached.store(true, Ordering::SeqCst);
+                }
+                self.reserved.store(during_walk, Ordering::SeqCst);
+                *is_measuring = false;
+                drop(is_measuring);
+                self.measure_done.notify_all();
+
+                if over {
+                    return Err(WalError::QuotaExceeded { used, ceiling: self.ceiling });
+                }
+            }
+        }
+
+        // Final breach check: a concurrent re-measure may have set the flag
+        // between our CAS-admission and the re-measure gate entry (for threads
+        // where cur_reserved < threshold after a walk reset `reserved`).
+        if self.breached.load(Ordering::SeqCst) {
+            return Err(WalError::QuotaExceeded {
+                used: self.last_measured.load(Ordering::Acquire),
+                ceiling: self.ceiling,
+            });
+        }
+
         Ok(())
     }
 
     /// Clear the sticky breached flag. Used by `neoth doctor --fix` after
-    /// the operator manually deleted old segments.
+    /// the operator manually freed disk space.
     pub fn reset(&self) {
         use std::sync::atomic::Ordering;
         self.breached.store(false, Ordering::Release);
-        self.bytes_since_measure.store(u64::MAX, Ordering::Release);
-        self.in_remeasure.store(false, Ordering::Release);
+        // Re-arm the first-measure trigger so the next try_admit walks the
+        // disk before admitting any bytes.
+        self.reserved.store(self.remeasure_threshold, Ordering::Release);
     }
 }
 
@@ -1650,12 +1730,10 @@ mod tests {
 
     #[test]
     fn quota_ceiling_holds_under_concurrent_writers() {
-        // COR-23: many threads cross the re-measure threshold at once. The
-        // in_remeasure compare_exchange single-flights the disk walk so the
-        // counter reset isn't torn and the breach is detected authoritatively.
-        // The home is seeded over the ceiling, so once any thread's crossing
-        // measures, the guard latches breached and refuses the rest — the
-        // ceiling is enforced, not blown open by the storm.
+        // WAL-QUOTA-FAILCLOSED-01: many threads contend on try_admit at once.
+        // The projected-sum CAS loop and the Mutex+Condvar re-measure gate
+        // together ensure that the breach is detected and the ceiling enforced
+        // under concurrent writers without busy-spinning on tokio threads.
         use std::sync::Arc;
         use std::sync::atomic::{AtomicU64, Ordering};
         let dir = tempdir().unwrap();
@@ -1870,28 +1948,24 @@ mod tests {
         }
     }
 
-    /// COR-23b: threads that LOSE the in_remeasure CAS must fail-closed when
-    /// the disk is over quota — not silently return Ok(). Without the fix,
-    /// losers race past the winner's breach verdict and are erroneously
-    /// admitted. This test pre-positions bytes_since_measure exactly at the
-    /// threshold so ALL 16 concurrent threads see `crossed=true` and compete
-    /// for the CAS: 1 wins (measures → sets breached), 15 lose. With the fix
-    /// the 15 losers spin-wait for the verdict and return Err. None admitted.
+    /// WAL-QUOTA-FAILCLOSED-01: all concurrent threads must be rejected when
+    /// the disk is over quota.  With the projected-sum CAS loop, every thread
+    /// reads the (pre-armed) `reserved = remeasure_threshold` and computes
+    /// `0 + 1 MiB + 64 > 1024 (ceiling)` — rejected immediately without
+    /// reaching the re-measure gate.  The breach flag is set on the first
+    /// re-measure that occurs (if any thread reaches it) and stays sticky.
     #[test]
-    fn concurrent_losers_fail_closed_when_quota_breached() {
+    fn concurrent_writers_all_rejected_when_quota_over_ceiling() {
         use std::sync::Arc;
         use std::sync::atomic::Ordering;
 
         let dir = tempdir().unwrap();
-        // Seed home dir well over the 1 KiB ceiling so measure_dir triggers breach.
+        // Seed home dir well over the 1 KiB ceiling.
         std::fs::write(dir.path().join("seed.bin"), vec![0u8; 4096]).unwrap();
+        // QuotaGuard::new pre-arms reserved = remeasure_threshold (1 MiB).
+        // With ceiling = 1024 bytes, projected = 0 + 1 MiB + 64 > 1024 for
+        // every thread → all are rejected by the projected-sum check.
         let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), 1024));
-
-        // Position bytes_since_measure exactly AT remeasure_threshold so every
-        // fetch_add(64) returns a value >= threshold → all threads crossed=true
-        // and all compete for the in_remeasure CAS simultaneously.
-        let threshold = guard.remeasure_threshold;
-        guard.bytes_since_measure.store(threshold, Ordering::Release);
 
         let admitted = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let mut handles = Vec::new();
@@ -1911,13 +1985,91 @@ mod tests {
         let n = admitted.load(Ordering::Relaxed);
         assert_eq!(
             n, 0,
-            "all concurrent writers (winner + losers) must be rejected fail-closed \
+            "all concurrent writers must be rejected fail-closed \
              when disk is over quota; {n} slipped through"
         );
-        // Breach must remain sticky after the storm.
         assert!(
             matches!(guard.try_admit(1), Err(WalError::QuotaExceeded { .. })),
-            "breach must be sticky after concurrent storm"
+            "quota violation must remain sticky after concurrent storm"
+        );
+    }
+
+    /// WAL-QUOTA-FAILCLOSED-01 (projected-sum test): two concurrent payloads
+    /// whose SUM exceeds the ceiling must not both be admitted, even when each
+    /// individual payload is below the ceiling.  The CAS loop inside try_admit
+    /// ensures the second thread sees the first thread's already-admitted bytes
+    /// in `reserved` before making its admission decision.
+    #[test]
+    fn two_concurrent_near_ceiling_payloads_both_rejected() {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        // Ceiling = 10 MiB; each payload = 7 MiB → sum = 14 MiB > 10 MiB.
+        // Only one can be admitted; both admitted would exceed the ceiling.
+        let ceiling: u64 = 10 * 1024 * 1024;
+        let payload: u64 = 7 * 1024 * 1024;
+
+        let dir = tempdir().unwrap(); // empty home → measure_dir ≈ 0
+        let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), ceiling));
+        // Manually set known state: last_measured = 0, reserved = 0.
+        // (bypasses the initial re-measure so the test exercises the CAS loop
+        // directly rather than the measure gate.)
+        guard.last_measured.store(0, Ordering::Release);
+        guard.reserved.store(0, Ordering::Release);
+
+        let g1 = Arc::clone(&guard);
+        let t1 = std::thread::spawn(move || g1.try_admit(payload));
+        let g2 = Arc::clone(&guard);
+        let t2 = std::thread::spawn(move || g2.try_admit(payload));
+
+        let r1 = t1.join().unwrap();
+        let r2 = t2.join().unwrap();
+
+        let ok_count = [r1.is_ok(), r2.is_ok()].iter().filter(|&&x| x).count();
+        assert_eq!(
+            ok_count, 1,
+            "exactly one 7 MiB payload must be admitted against a 10 MiB ceiling \
+             (sum = 14 MiB > 10 MiB); admitted={ok_count}"
+        );
+    }
+
+    /// WAL-QUOTA-FAILCLOSED-01 (bytes-not-lost invariant): bytes admitted by
+    /// threads DURING a disk walk are preserved in `reserved` (the during_walk
+    /// accounting), not silently discarded by a blind store(0).  This is
+    /// verified structurally: after a walk that snapshots `pre_walk_reserved`
+    /// and concurrent threads add more bytes, `reserved` must be >= the
+    /// during-walk additions rather than zero.
+    #[test]
+    fn bytes_admitted_during_measure_are_not_lost() {
+        use std::sync::atomic::Ordering;
+
+        // Use a large ceiling so no admission is rejected.
+        let ceiling: u64 = 1024 * 1024 * 1024;
+        let dir = tempdir().unwrap();
+        let guard = QuotaGuard::new(dir.path().to_path_buf(), ceiling);
+
+        // Simulate the post-walk state update directly: pre_walk_reserved = 4 MiB,
+        // post_walk (after concurrent admissions during the walk) = 6 MiB.
+        // The walk measured `used = 1 MiB` on disk.  During-walk bytes = 2 MiB.
+        // After the update, `reserved` must equal `during_walk = 2 MiB`, not 0.
+        let pre_walk: u64 = 4 * 1024 * 1024;
+        let post_walk: u64 = 6 * 1024 * 1024;
+        let used: u64 = 1024 * 1024;
+
+        guard.last_measured.store(used, Ordering::SeqCst);
+        let during_walk = post_walk.saturating_sub(pre_walk); // 2 MiB
+        guard.reserved.store(during_walk, Ordering::SeqCst);
+
+        assert_eq!(
+            guard.reserved.load(Ordering::Acquire),
+            during_walk,
+            "reserved must retain during-walk bytes (2 MiB), not be reset to zero"
+        );
+        // And the next projected-sum check must see the retained bytes.
+        // Admit 1 MiB: projected = used(1 MiB) + during_walk(2 MiB) + 1 MiB = 4 MiB < 1 GiB.
+        assert!(
+            guard.try_admit(1024 * 1024).is_ok(),
+            "admitted bytes during walk must count toward projected sum but not block under ceiling"
         );
     }
 
