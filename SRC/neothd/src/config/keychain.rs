@@ -570,7 +570,24 @@ pub fn migrate_to_keychain(
         }
     }
 
-    let blanked: crate::config::credentials::Credentials = if dry_run {
+    // Rollback: if any field failed to set, undo the sets we DID make this run
+    // so the keychain returns to its pre-migration state. Without this a late
+    // failure leaves a partial keychain write while the caller (on
+    // !is_clean()) skips the credentials.yaml write — an inconsistent dual
+    // state where the secret sits in BOTH backends yet the CLI reports "nothing
+    // written". After rollback that message is truthful again.
+    if !dry_run && !failed.is_empty() && !moved.is_empty() {
+        for key in &moved {
+            let _ = store.delete(key); // best-effort; nothing better to do on a failed rollback
+        }
+        moved.clear();
+    }
+
+    // On a clean dry_run the blanked struct is unused; on a clean real run it is
+    // written by the caller. On a rolled-back failure the caller aborts and this
+    // value is discarded — but recompute it from the (possibly mutated) yaml so
+    // it never claims fields were blanked when we rolled their keychain sets back.
+    let blanked: crate::config::credentials::Credentials = if dry_run || !failed.is_empty() {
         creds.clone()
     } else {
         serde_yaml::from_value(yaml_val).context("deserialize blanked Credentials")?
@@ -586,15 +603,22 @@ pub fn migrate_to_keychain(
     Ok((blanked, report))
 }
 
-/// Move all `SecretString` fields from `store` back into a `Credentials` struct.
+/// Phase 1 of a `--to file` migration: READ every `SecretString` field from
+/// `store` into a `Credentials` struct. **This function performs NO keychain
+/// deletes** — deleting a secret before `credentials.yaml` is durably written
+/// (or a later read failing after an earlier delete, or a crash in between)
+/// would erase the secret from BOTH backends. The keychain is only purged by a
+/// SEPARATE [`purge_from_keychain`] call the caller makes AFTER the file is
+/// written and verified.
 ///
-/// Each field is fetched from the store and, if present, populated in the
-/// returned `Credentials`. When `dry_run` is `false`, successfully fetched
-/// fields are also deleted from the store.
+/// `report.moved` lists the fields successfully read — i.e. the keys that are
+/// now safe to purge from the keychain once the file is on disk. A non-clean
+/// report (a `store.get` error) means the caller must abort BEFORE writing;
+/// because nothing was deleted, "nothing written" stays truthful.
 ///
-/// The caller is responsible for:
-/// 1. Writing the populated `Credentials` back to `credentials.yaml`.
-/// 2. Persisting `secrets_backend: file` into `freedom.yaml`.
+/// The caller is responsible, IN ORDER, for: (1) write the populated
+/// `Credentials` to `credentials.yaml` + verify; (2) switch `freedom.yaml`
+/// `secrets_backend: file`; (3) [`purge_from_keychain`]`(&report.moved)`.
 pub fn migrate_to_file(
     creds: &crate::config::credentials::Credentials,
     store: &dyn SecretStore,
@@ -620,33 +644,15 @@ pub fn migrate_to_file(
             }
             Ok(Some(secret)) => {
                 if !dry_run {
-                    // Populate the field in the mapping.
+                    // Populate the field in the file result. NO delete here —
+                    // the keychain is purged later, only after the file lands.
                     let yaml_key = serde_yaml::Value::String(field.to_string());
                     mapping.insert(
                         yaml_key,
                         serde_yaml::Value::String(secret.expose().to_string()),
                     );
-                    // Delete from the OS store.
-                    if let Err(e) = store.delete(field) {
-                        // Downgrade to a failed entry so the caller doesn't
-                        // write the file with a stale entry still in the store.
-                        failed.push((
-                            field.to_string(),
-                            format!("fetched OK but delete from store failed: {e}"),
-                        ));
-                        // Blank it from the file result so this field remains
-                        // keychain-only until delete succeeds on a retry.
-                        // Writing to credentials.yaml would leave the secret in
-                        // both places; keeping it null here forces the caller
-                        // to abort the write (report.is_clean() == false).
-                        let yk = serde_yaml::Value::String(field.to_string());
-                        mapping.insert(yk, serde_yaml::Value::Null);
-                    } else {
-                        moved.push(field.to_string());
-                    }
-                } else {
-                    moved.push(field.to_string());
                 }
+                moved.push(field.to_string());
             }
         }
     }
@@ -665,6 +671,22 @@ pub fn migrate_to_file(
         dry_run,
     };
     Ok((populated, report))
+}
+
+/// Phase 3 of a `--to file` migration: delete `keys` from the OS `store`. Call
+/// this ONLY after `credentials.yaml` has been written and verified to hold
+/// those secrets — at that point a delete failure is a *cleanup* problem (the
+/// secret is safe in the file, merely duplicated in the keychain), NEVER data
+/// loss. Returns the `(key, error)` pairs that could not be deleted so the
+/// caller can tell the operator which keychain entries to remove manually.
+pub fn purge_from_keychain(store: &dyn SecretStore, keys: &[String]) -> Vec<(String, String)> {
+    let mut failed = Vec::new();
+    for key in keys {
+        if let Err(e) = store.delete(key) {
+            failed.push((key.clone(), e.to_string()));
+        }
+    }
+    failed
 }
 
 /// Supplement a partially-populated `Credentials` with values from the OS

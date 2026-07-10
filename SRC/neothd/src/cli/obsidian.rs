@@ -1821,11 +1821,13 @@ type MirrorState = BTreeMap<String, MirrorSourceState>;
 /// 3. If the host is a literal IP address, it must not be private, loopback,
 ///    link-local, CGNAT, broadcast, unspecified, or ULA.
 ///
-/// Hostname-based targets whose DNS resolves to a private IP are NOT caught at
-/// validation time (no DNS resolution here). The no-redirect client closes the
-/// remaining gap: a public URL cannot 302 into a private address because
-/// redirects are never followed. This matches the SSRF hardening applied in
-/// commit a44b6a3a ("fix(security): block IPv4-mapped private IPs").
+/// Hostname-based targets whose DNS resolves to a private IP are NOT caught
+/// here (no DNS resolution at validation time). [`guard_resolved_host`] closes
+/// that gap by resolving the host and re-checking every A/AAAA against
+/// [`block_mirror_ip`] immediately before the fetch. The no-redirect client
+/// additionally prevents a public URL from 302-ing into a private address.
+/// This matches the SSRF hardening applied in commit a44b6a3a
+/// ("fix(security): block IPv4-mapped private IPs").
 pub(crate) fn validate_mirror_url(raw: &str) -> Result<url::Url> {
     let url =
         url::Url::parse(raw).with_context(|| format!("invalid mirror URL: {raw}"))?;
@@ -1903,6 +1905,44 @@ fn block_mirror_ip(addr: std::net::IpAddr) -> Result<()> {
                     .with_context(|| format!("IPv4-mapped IPv6 {v6} aliases a blocked range"))?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Resolve `url`'s host and reject if ANY resolved address is a blocked
+/// (loopback/private/link-local/CGNAT/ULA/metadata) IP.
+///
+/// This closes the DNS-rebinding SSRF gap that [`validate_mirror_url`] cannot
+/// see: a public hostname whose DNS points at a private address (e.g.
+/// `metadata.google.internal` → `169.254.169.254`, or an attacker-controlled
+/// `evil.example` → `127.0.0.1`). Literal-IP URLs are already vetted up front,
+/// so this is a no-op for them.
+///
+/// Called immediately before the fetch to keep the resolve→connect window
+/// minimal.
+/// ponytail: resolve-then-connect still leaves a narrow TOCTOU window — DNS
+/// could rebind to a private IP between this lookup and reqwest's own
+/// resolution at connect. Full closure needs pinning the vetted IP via
+/// `ClientBuilder::resolve(host, ip)` (not possible on the shared client used
+/// here without a per-source client rebuild).
+async fn guard_resolved_host(url: &url::Url) -> Result<()> {
+    let host = match url.host() {
+        Some(url::Host::Domain(h)) => h.to_string(),
+        // Literal IPs are already vetted by validate_mirror_url.
+        _ => return Ok(()),
+    };
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .with_context(|| format!("resolve mirror host {host:?}"))?
+        .collect();
+    if addrs.is_empty() {
+        anyhow::bail!("mirror host {host:?} resolved to no addresses");
+    }
+    for sa in addrs {
+        block_mirror_ip(sa.ip()).with_context(|| {
+            format!("SSRF guard rejected resolved IP {} for mirror host {host:?}", sa.ip())
+        })?;
     }
     Ok(())
 }
@@ -2137,6 +2177,11 @@ async fn fetch_and_write_source(
     dest_dir: &Path,
     now_secs: i64,
 ) -> Result<MirrorSourceState> {
+    // Re-check the resolved IP(s) immediately before connecting. validate_mirror_url
+    // only vets literal-IP hosts; a hostname could resolve to a private address
+    // (DNS-rebinding SSRF, e.g. metadata.google.internal → 169.254.169.254).
+    guard_resolved_host(url).await?;
+
     let resp = client
         .get(url.as_str())
         .header("User-Agent", "neoth-mirror/1 (offline source pinning)")
@@ -2963,6 +3008,33 @@ mod mirror_tests {
             "https://raw.githubusercontent.com/foo/bar/main/README.md",
         );
         assert!(result.is_ok(), "public hostname must pass: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn ssrf_guard_rejects_hostname_resolving_to_loopback() {
+        // `localhost` resolves to 127.0.0.1 / ::1 through the system resolver
+        // (hosts file — no network needed). validate_mirror_url passes it (the
+        // Domain arm is a no-op), but guard_resolved_host must reject it once
+        // it sees the resolved loopback address. This is the DNS-rebinding case.
+        let url = validate_mirror_url("https://localhost/readme.md")
+            .expect("localhost passes literal-IP validation");
+        let e = guard_resolved_host(&url)
+            .await
+            .expect_err("loopback-resolving host must be rejected");
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("loopback") || msg.contains("SSRF"),
+            "got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ssrf_guard_noop_for_literal_public_ip_free_path() {
+        // A literal-IP URL never reaches the resolver arm (already vetted by
+        // validate_mirror_url), so the guard is a no-op that returns Ok even
+        // offline. Use a documentation-range IP to avoid any real connect.
+        let url = url::Url::parse("https://203.0.113.7/readme.md").unwrap();
+        assert!(guard_resolved_host(&url).await.is_ok());
     }
 
     // ── Manifest parse — name/url/policy fields ───────────────────────────────

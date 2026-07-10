@@ -79,8 +79,21 @@ pub async fn run_cluster_swarm(args: ClusterSwarmArgs) -> Result<()> {
 fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result<()> {
     let mut table = SwarmTable::new();
 
-    // Scan all WAL segments (tolerant — a corrupt segment is skipped).
+    // Only scan segments recent enough to still hold a non-stale snapshot. A
+    // segment last modified before `now - stale_secs - margin` can only contain
+    // frames that prune() would drop, so skipping it never hides a live node.
+    // Bounds the `--watch` rescan to the active tail instead of re-reading the
+    // entire WAL (O(total WAL size)) every 5 s.
+    // ponytail: mtime filter, not a per-segment byte-offset cursor — good
+    // enough while the active window is small; add a read cursor if it grows.
+    let cutoff = crate::time::now_unix_i64()
+        .saturating_sub(stale_secs.saturating_add(SWARM_MTIME_MARGIN_SECS));
+
+    // Scan candidate WAL segments (tolerant — a corrupt segment is skipped).
     for seg_path in sorted_segments(wal_dir) {
+        if !segment_is_live(segment_mtime_unix(&seg_path), cutoff) {
+            continue;
+        }
         if let Err(e) = scan_segment_into_table(&seg_path, &mut table) {
             tracing::warn!(
                 error = %e,
@@ -236,6 +249,28 @@ fn scan_segment_into_table(path: &Path, table: &mut SwarmTable) -> Result<()> {
 }
 
 /// Return sorted `*.wal` paths under `wal_dir`. Empty when the dir is missing.
+/// Clock-skew margin (seconds) added to `stale_secs` when deciding whether a
+/// segment's mtime is too old to hold a live frame. File mtime and the frame's
+/// embedded `ts_unix` can drift slightly; the margin keeps the filter from
+/// dropping a still-live segment on a borderline mtime.
+const SWARM_MTIME_MARGIN_SECS: i64 = 60;
+
+/// File mtime as a Unix timestamp (seconds), or `None` if unreadable.
+fn segment_mtime_unix(path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let dur = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(dur.as_secs() as i64)
+}
+
+/// Whether a segment with the given mtime could still hold a non-stale frame.
+/// `None` (mtime unreadable) is treated as live — never skip on uncertainty.
+fn segment_is_live(mtime_unix: Option<i64>, cutoff: i64) -> bool {
+    match mtime_unix {
+        Some(m) => m >= cutoff,
+        None => true,
+    }
+}
+
 fn sorted_segments(wal_dir: &Path) -> Vec<PathBuf> {
     let mut segs: Vec<PathBuf> = match std::fs::read_dir(wal_dir) {
         Ok(it) => it
@@ -249,9 +284,11 @@ fn sorted_segments(wal_dir: &Path) -> Vec<PathBuf> {
     segs
 }
 
-/// Truncate a string to at most `max` bytes (ASCII-safe).
-fn trunc(s: &str, max: usize) -> &str {
-    &s[..s.len().min(max)]
+/// Truncate a string to at most `max` CHARACTERS. Byte-slicing (`&s[..max]`)
+/// panics when `max` lands inside a multibyte codepoint, and hostnames can
+/// carry Unicode — so truncate on char boundaries.
+fn trunc(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -371,6 +408,26 @@ mod tests {
     fn sorted_segments_empty_when_dir_missing() {
         let segs = sorted_segments(Path::new("/nonexistent/path/wal"));
         assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn segment_is_live_skips_old_keeps_recent_and_unknown() {
+        let cutoff = 1000;
+        assert!(!segment_is_live(Some(999), cutoff)); // older than cutoff → skip
+        assert!(segment_is_live(Some(1000), cutoff)); // exactly cutoff → keep
+        assert!(segment_is_live(Some(2000), cutoff)); // newer → keep
+        assert!(segment_is_live(None, cutoff)); // unknown mtime → keep, never skip on uncertainty
+    }
+
+    #[test]
+    fn segment_mtime_unix_reads_fresh_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("000001.wal");
+        std::fs::write(&p, b"x").unwrap();
+        let mt = segment_mtime_unix(&p).expect("fresh file has readable mtime");
+        // Sanity: a just-written file's mtime is a plausible recent unix time.
+        assert!(mt > 1_000_000_000, "mtime looks wrong: {mt}");
+        assert!(segment_mtime_unix(Path::new("/nonexistent/x.wal")).is_none());
     }
 
     #[test]
