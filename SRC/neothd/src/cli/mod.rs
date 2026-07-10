@@ -33,6 +33,11 @@ pub mod calendar;
 pub mod checkpoint;
 #[cfg(feature = "cluster")]
 pub mod cluster;
+/// GOLD-FEAT-06 — `neoth cluster swarm [--watch] [--output json|table]`
+/// WAL-scan dashboard. Standalone module (cluster.rs is parallel-session-owned).
+/// Wire into ClusterAction::Swarm once cluster.rs is unfrozen — see module doc.
+#[cfg(feature = "cluster")]
+pub mod cluster_swarm;
 pub mod code;
 pub mod code_intel;
 pub mod code_map;

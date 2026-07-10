@@ -376,6 +376,15 @@ Run the routing policy against a synthetic load table to show what `pick_peer` w
 - `--peers <SPEC>` — Synthetic peers: `name:tokens_per_sec,name:tokens_per_sec,...`
 - `--policy <POLICY>` — Policy override for this invocation. `local-only` or `least-loaded`. Defaults to `least-loaded` when peers are supplied, `local-only` otherwise
 
+### `neoth cluster restore`
+
+Restore same-origin peer-backup frames into local recall/memory
+
+- `<PEER_EXPORT>` — Path to the JSONL export file (produced by `neoth cluster export-foreign`)
+- `--peer <PEER>` — Override the local node pubkey filter.  Use when the passphrase is unavailable but you know the 64-char hex pubkey that was used
+- `--dry-run` — Evaluate conflict matrix and report per-row outcome without writing anything to `views.db` or the audit log
+- `--yes` — Skip the TTY consent prompt
+
 ### `neoth cluster revoke`
 
 Remove a confirmed peer by pub_key OR unique prefix
@@ -385,6 +394,13 @@ Remove a confirmed peer by pub_key OR unique prefix
 ### `neoth cluster status`
 
 Print the active policy + known peer state
+
+### `neoth cluster swarm`
+
+GOLD-FEAT-06 — exo-style swarm dashboard: per-node CPU/RAM/VRAM read from the `EXTENDED/LocalSnapshot` + `EXTENDED/SwarmResourceSnapshot` WAL frames the resource-snapshot cron emits. `--watch` refreshes live
+
+- `-w, --watch` — Continuously refresh the dashboard every 5 s. Exit with Ctrl-C
+- `--stale-secs <STALE_SECS>` — Drop nodes whose last snapshot is older than this many seconds
 
 ### `neoth cluster topology`
 
@@ -615,6 +631,13 @@ Merge a credentials.yaml-shaped file into `~/.neoth/credentials.yaml`. Set field
 ### `neoth credential list`
 
 List which credential keys are currently set. Prints KEY NAMES ONLY — never the secret values
+
+### `neoth credential migrate`
+
+Migrate secrets between storage backends
+
+- `--to <TO>` — Target backend: `keychain` or `file`
+- `--dry-run` — Report what would change without writing anything
 
 ### `neoth credential scan`
 
@@ -1757,6 +1780,26 @@ List archive days that have at least one session MD file
 Scaffold a fresh NEOTH-Vault: creates the directory, drops a minimal `.obsidian/` config + a README, and pre-creates the `NEOTH-sessions/` subdir so `sync` lands without operator configuration. Safe to re-run — existing files are left alone
 
 - `--vault <PATH>` — Vault path to create. Defaults to `~/Documents/NEOTH-Vault/` on every platform (the path Obsidian itself uses by default when the operator clicks "Create new vault")
+
+### `neoth obsidian mirror`
+
+Deliberate, consented offline mirror: fetch named remote sources from a YAML manifest and write them to a local directory with provenance frontmatter. SSRF-safe (https-only; private/loopback/link-local IPs blocked). No background fetch, no cron — one-shot operator command only
+
+- `<MANIFEST>` — YAML manifest listing sources to mirror. Accepts `offline_security_sources.yaml` shape directly: `id`/`primary_url`/`mirror_policy` are aliases for `name`/`url`/`policy`. Unknown extra fields are ignored
+- `--dest <DIR>` — Destination directory. Defaults to `<manifest-dir>/mirrored/`
+- `--dry-run` — List what would be fetched; no network I/O
+- `--yes` — Skip the TTY consent prompt. Required for non-TTY / scripted use
+
+### `neoth obsidian preload`
+
+Copy a curated Markdown/YAML vault template into Obsidian and optionally ingest reviewed Markdown notes into NEOTH memory. Raw/restricted source folders stay copy-only unless the manifest explicitly marks them safe
+
+- `<VAULT>` — Obsidian vault root to copy the preload into
+- `--template <DIR>` — Curated vault-template directory. Must contain `preload_manifest.yaml`
+- `--subdir <SUBDIR>` — Subdirectory inside the vault for copied preload files
+- `--dry-run` — Print the plan without writing vault files, state, or memory rows
+- `--ingest` — Also ingest manifest-approved Markdown notes into `idx_groundtruth`
+- `--state <FILE>` — Override the preload hash-state JSON path (mostly for tests)
 
 ### `neoth obsidian status`
 

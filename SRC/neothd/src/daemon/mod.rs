@@ -140,6 +140,11 @@ pub mod reflection_cron;
 /// drift below threshold. Off by default.
 pub mod regression_cron;
 pub mod resource_watch;
+/// GOLD-FEAT-06 — local resource-snapshot cron: samples CPU/RAM/VRAM every
+/// `SwarmConfig::interval_secs` and emits `EXTENDED/LocalSnapshot` WAL frames.
+/// Consumed by `neoth cluster swarm` to build the exo-style dashboard.
+#[cfg(feature = "cluster")]
+pub mod resource_snapshot_cron;
 /// GOLD-ADAPT-VIEW-05 — session-health / outcome cron (A–F daily grade from the
 /// WAL audit trail; alerts on degradation).
 pub mod session_health_cron;

@@ -1676,6 +1676,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
         };
 
+    // ── GOLD-FEAT-06 resource-snapshot cron ──────────────────────────────────
+    // TODO(FEAT-06): read SwarmConfig from FreedomConfig.swarm once config/mod.rs
+    // is unfrozen (currently using default: enabled=true, interval_secs=30).
+    #[cfg(feature = "cluster")]
+    let _ = crate::daemon::resource_snapshot_cron::spawn_resource_snapshot_cron(
+        crate::cluster::swarm::SwarmConfig::default(),
+        writer.clone(),
+    );
+
     // ── W-05d installer_ran sidecar ingester (Session 26) ─────────────────
     // `neoth installer apply --yes` drops `~/.neoth/installer_ran_<ts>.json`
     // after a successful install. This task polls every 5s, reads

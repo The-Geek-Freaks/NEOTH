@@ -108,6 +108,11 @@ pub enum ClusterAction {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
+    /// GOLD-FEAT-06 — exo-style swarm dashboard: per-node CPU/RAM/VRAM read
+    /// from the `EXTENDED/LocalSnapshot` + `EXTENDED/SwarmResourceSnapshot` WAL
+    /// frames the resource-snapshot cron emits. `--watch` refreshes live.
+    #[cfg(feature = "cluster")]
+    Swarm(crate::cli::cluster_swarm::ClusterSwarmArgs),
     /// Confirm a discovered peer + add to the registry. Phase 4
     /// of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface
     /// candidates; this command writes them in atomically.
@@ -218,6 +223,11 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
         ClusterAction::List => run_list(),
         ClusterAction::Topology => run_topology(&args.output),
         ClusterAction::Discover { timeout, force } => run_discover(timeout, force).await,
+        #[cfg(feature = "cluster")]
+        ClusterAction::Swarm(mut a) => {
+            a.output = args.output;
+            crate::cli::cluster_swarm::run_cluster_swarm(a).await
+        }
         ClusterAction::Confirm {
             pub_key,
             label,
