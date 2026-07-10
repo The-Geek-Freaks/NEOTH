@@ -412,13 +412,36 @@ fn vault_subdir_is_contained(
     }
 }
 
-/// WAL-free (writes to views.db and vault files, not the WAL).
-/// Returns `None` when preload is not configured.
+/// WAL-audited (NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01): emits
+/// `EXTENDED/ObsidianPreloadIntent` before the first vault/DB write and
+/// `EXTENDED/ObsidianPreloadResult` on completion. Returns `None` when preload
+/// is not configured or the `ObsidianPreloadWrite` autonomy gate blocks it
+/// (Strict=Confirm → fail-closed in daemon; Standard/Elevated/Full=Allow).
 pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandle<()>> {
     use crate::cli::obsidian::{
         knowledge_root_has_manifest, preload_autorun_decision, preload_state_path_for,
         PreloadDecision,
     };
+
+    // ── ADR-008/009 permission gate ──────────────────────────────────────
+    // ObsidianPreloadWrite: Strict=Confirm (no TTY in daemon → fail-closed),
+    // Standard/Elevated/Full=Allow. A Confirm result here means the daemon has
+    // no TTY to resolve it — skip the unattended preload rather than hang.
+    {
+        let decision = crate::permissions::evaluate(
+            &crate::permissions::Action::ObsidianPreloadWrite,
+            config.autonomy,
+        );
+        if !decision.is_allow() {
+            warn!(
+                autonomy = config.autonomy.as_str(),
+                decision = decision.tag(),
+                "obsidian preload-autorun: permission gate blocked preload \
+                 (Strict requires confirm; daemon has no TTY — fail-closed)"
+            );
+            return None;
+        }
+    }
 
     let (vault, template_dir, subdir) = match preload_autorun_decision(config) {
         PreloadDecision::Skip => {
@@ -463,6 +486,53 @@ pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandl
         let canonical_vault =
             std::fs::canonicalize(&vault).unwrap_or_else(|_| vault.clone());
 
+        // ── WAL intent frame (NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01) ──────
+        // Open a short-lived audit segment; emit the intent frame BEFORE the
+        // first vault/DB write. Best-effort: a WAL open failure must never
+        // block the preload — the permission gate (run synchronously above) is
+        // the security layer; WAL is the audit trail.
+        let wal = {
+            use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
+            use crate::wal::types::EventFlags;
+            let wal_dir = FreedomConfig::default_wal_dir();
+            let wal_opt: Option<(WalWriterHandle, tokio::task::JoinHandle<()>)> =
+                if std::fs::create_dir_all(&wal_dir).is_ok() {
+                    let seg = wal_dir.join("obsidian_preload_audit.wal");
+                    match crate::wal::writer::spawn(seg) {
+                        Ok(pair) => Some(pair),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "obsidian preload: cannot open WAL writer — audit frames skipped"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    warn!("obsidian preload: cannot create WAL dir — audit frames skipped");
+                    None
+                };
+
+            if let Some((ref w, _)) = wal_opt {
+                let ts = crate::time::now_unix_i64();
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "vault": vault.to_string_lossy(),
+                    "knowledge_roots": knowledge_dirs.len(),
+                    "ts_unix": ts,
+                })) {
+                    let header =
+                        crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+                            .event_subtype(ExtendedSubtype::ObsidianPreloadIntent as u8)
+                            .flags(EventFlags::empty())
+                            .build();
+                    let _ = w.append(header, payload).await;
+                }
+            }
+            wal_opt
+        };
+
+        let mut preload_ok = true;
+
         // ── Primary template ─────────────────────────────────────────────
         let state = preload_state_path_for(&template_dir);
         // Containment guard: when subdir is non-empty (the common case), verify
@@ -484,6 +554,7 @@ pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandl
                 "obsidian preload: primary template skipped — \
                  vault/subdir escapes vault root (symlink/junction guard)"
             );
+            preload_ok = false;
         } else {
             match crate::cli::obsidian::preload_template(
                 &template_dir,
@@ -502,11 +573,14 @@ pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandl
                     template = %template_dir.display(),
                     "obsidian preload-autorun: primary template complete"
                 ),
-                Err(e) => warn!(
-                    error = %e,
-                    template = %template_dir.display(),
-                    "obsidian preload-autorun: primary template failed"
-                ),
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        template = %template_dir.display(),
+                        "obsidian preload-autorun: primary template failed"
+                    );
+                    preload_ok = false;
+                }
             }
         }
 
@@ -543,12 +617,37 @@ pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandl
                     files_copied = stats.files_copied,
                     "obsidian preload-autorun: knowledge root complete"
                 ),
-                Err(e) => warn!(
-                    error = %e,
-                    dir = %root.display(),
-                    "obsidian preload-autorun: knowledge root failed — continuing"
-                ),
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        dir = %root.display(),
+                        "obsidian preload-autorun: knowledge root failed — continuing"
+                    );
+                    preload_ok = false;
+                }
             }
+        }
+
+        // ── WAL result frame + flush (best-effort) ────────────────────────
+        if let Some((w, join)) = wal {
+            use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
+            use crate::wal::types::EventFlags;
+            let ts = crate::time::now_unix_i64();
+            if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                "ok": preload_ok,
+                "ts_unix": ts,
+            })) {
+                let header =
+                    crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+                        .event_subtype(ExtendedSubtype::ObsidianPreloadResult as u8)
+                        .flags(EventFlags::empty())
+                        .build();
+                let _ = w.append(header, payload).await;
+            }
+            // Flush: drop the sender so the writer drains, then wait up to 5s.
+            drop(w);
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(5), join).await;
         }
     });
     Some(handle)

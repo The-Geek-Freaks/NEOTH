@@ -634,10 +634,24 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // R4-P1: load credentials once. Used by the Slack/WhatsApp adapters in
     // spawn_channel_adapters below AND by cluster-transport activation later, so
     // it stays in run_serve and is passed by reference (not consumed).
-    let creds = crate::config::credentials::Credentials::load_or_default(
+    // NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01: propagate/log a load failure
+    // instead of silently defaulting. A bad credentials.yaml (parse/IO/keychain
+    // error) at startup is surfaced at warn level so the operator knows the
+    // channels will run credentialless; the daemon still starts (channels that
+    // need the missing cred will fail per-message, not boot-time crash).
+    let creds = match crate::config::credentials::Credentials::load_or_default(
         &crate::config::credentials::default_path(),
-    )
-    .unwrap_or_default();
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "credentials.yaml load failed at startup — channel adapters will start \
+                 without credentials; check file permissions and the keychain encryption key",
+            );
+            crate::config::credentials::Credentials::default()
+        }
+    };
     // GOLD-ADAPT-GOOSE-03: construct the approval bus + drain task BEFORE
     // spawning channel adapters. The drain task reads ConfirmRequests and
     // forwards them as elicitation messages on the operator's primary channel
@@ -749,8 +763,31 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     generation,
                     "config reloaded — respawning channel adapters with fresh credentials"
                 );
-                // 1. Abort + drain the old fleet (frees long-polls,
-                //    webhook binds, WS connections).
+                // 1. NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01 fix: load FRESH
+                //    credentials BEFORE touching the running fleet.  On parse/IO/
+                //    keychain error we keep the old adapters alive and skip this
+                //    reload cycle — tearing down a live fleet and then failing to
+                //    load creds would leave the operator with zero channel coverage
+                //    until the next `neoth reload`.
+                let fresh_creds = match crate::config::credentials::Credentials::load_or_default(
+                    &crate::config::credentials::default_path(),
+                ) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!(
+                            generation,
+                            error = %e,
+                            "credentials.yaml reload failed — preserving running channel \
+                             fleet; fix the credentials file then run `neoth reload` again",
+                        );
+                        continue;
+                    }
+                };
+                let fresh_config = reload_controller.latest();
+                // 2. Abort + drain the old fleet (frees long-polls,
+                //    webhook binds, WS connections).  Credentials are now in
+                //    hand, so a fleet teardown will always be followed by a
+                //    successful respawn.
                 let old: Vec<tokio::task::JoinHandle<()>> = {
                     let mut guard = tasks.lock().expect("channel_tasks mutex poisoned");
                     std::mem::take(&mut *guard)
@@ -761,12 +798,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 for t in old {
                     let _ = t.await;
                 }
-                // 2. Respawn from the LATEST config + fresh credentials.
-                let fresh_config = reload_controller.latest();
-                let fresh_creds = crate::config::credentials::Credentials::load_or_default(
-                    &crate::config::credentials::default_path(),
-                )
-                .unwrap_or_default();
                 let mut new_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
                 crate::cli::serve_tasks::spawn_channel_adapters(
                     &fresh_config,
@@ -1104,6 +1135,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let deps = spawn_deps.clone();
         let ctrl = reload_controller.clone();
         tokio::spawn(async move {
+            // NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01 fix:
+            // Local fingerprint map: tracks a config-spec hash per running key
+            // so a changed interval/path triggers a restart even when the
+            // CronKey itself stays in the desired set.
+            let mut fp_map: std::collections::HashMap<
+                crate::cli::serve_tasks::CronKey,
+                u64,
+            > = std::collections::HashMap::new();
+
             // Seed: spawn all desired crons for the boot config.
             {
                 let boot_cfg = ctrl.latest();
@@ -1115,6 +1155,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             .lock()
                             .expect("cron_fleet mutex poisoned")
                             .insert(*key, handle);
+                        fp_map.insert(*key, cron_spec_fingerprint(*key, &boot_cfg));
                         seeded += 1;
                     }
                 }
@@ -1128,15 +1169,71 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 if gen_rx.changed().await.is_err() {
                     break; // ReloadController dropped → daemon shutting down
                 }
+
+                // ── NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01: is_finished() sweep ──
+                // Reap handles for crons that completed or panicked without
+                // being explicitly stopped. Removing them from the fleet lets
+                // diff_cron_fleet include them in to_start on this pass, so
+                // they are immediately respawned.
+                let finished_keys: Vec<crate::cli::serve_tasks::CronKey> = {
+                    let guard = fleet.lock().expect("cron_fleet mutex poisoned");
+                    guard
+                        .iter()
+                        .filter(|(_, h)| h.is_finished())
+                        .map(|(k, _)| *k)
+                        .collect()
+                };
+                if !finished_keys.is_empty() {
+                    tracing::warn!(
+                        count = finished_keys.len(),
+                        keys = ?finished_keys,
+                        "ZF-06 cron fleet: reaped finished/panicked handles; will respawn",
+                    );
+                    let mut guard = fleet.lock().expect("cron_fleet mutex poisoned");
+                    for k in &finished_keys {
+                        guard.remove(k);
+                        fp_map.remove(k);
+                    }
+                }
+
                 let live_cfg = ctrl.latest();
                 let desired = desired_cron_keys(&live_cfg);
-                let (to_stop, to_start) = {
+
+                // ── NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01: fingerprint-change
+                // detection — keys still present in both running and desired but
+                // whose effective spec (interval, path, flags) changed since they
+                // were last spawned need a restart, not just an enable/disable.
+                let fp_changed: Vec<crate::cli::serve_tasks::CronKey> = {
+                    let guard = fleet.lock().expect("cron_fleet mutex poisoned");
+                    guard
+                        .keys()
+                        .filter(|k| desired.contains(*k))
+                        .filter(|k| {
+                            fp_map.get(*k).copied().unwrap_or(0)
+                                != cron_spec_fingerprint(**k, &live_cfg)
+                        })
+                        .copied()
+                        .collect()
+                };
+
+                let (mut to_stop, mut to_start) = {
                     let guard = fleet.lock().expect("cron_fleet mutex poisoned");
                     let running: std::collections::HashSet<_> =
                         guard.keys().copied().collect();
                     diff_cron_fleet(&running, &desired)
                 };
-                // Abort tasks that are no longer desired.
+                // Merge fingerprint-changed keys: stop the stale task and
+                // restart it with the updated spec.
+                for k in fp_changed {
+                    if !to_stop.contains(&k) {
+                        to_stop.push(k);
+                    }
+                    if !to_start.contains(&k) {
+                        to_start.push(k);
+                    }
+                }
+
+                // Abort tasks that are no longer desired (or whose spec changed).
                 for key in &to_stop {
                     let handle = fleet
                         .lock()
@@ -1146,11 +1243,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         h.abort();
                         let _ = h.await;
                     }
+                    fp_map.remove(key);
                 }
-                // Start newly desired tasks, counting only those that actually
-                // spawned — a desired key whose spawn_* returns None (vault set
-                // but no source_dir) would otherwise be logged as "started" on
-                // every reload forever without ever entering the fleet.
+                // Start newly desired tasks (including spec-change restarts),
+                // counting only those that actually spawned — a desired key
+                // whose spawn_* returns None (vault set but no source_dir)
+                // would otherwise be logged as "started" on every reload
+                // forever without ever entering the fleet.
                 let mut started = 0usize;
                 for key in &to_start {
                     if let Some(handle) = spawn_cron_for_key(*key, &live_cfg, &deps) {
@@ -1158,6 +1257,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             .lock()
                             .expect("cron_fleet mutex poisoned")
                             .insert(*key, handle);
+                        fp_map.insert(*key, cron_spec_fingerprint(*key, &live_cfg));
                         started += 1;
                     }
                 }
@@ -2097,6 +2197,90 @@ pub(crate) async fn emit_required_audit(
 // build_pipeline_header / boot_header migrated to wal::make_header /
 // wal::HeaderBuilder — Phase 33a AU-B3. Local defaults that drifted from the
 // 0.5 baseline (chat=0.6, pipeline=0.6) are now uniform at builder default.
+
+/// NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01: compute a config-spec fingerprint for
+/// a fleet cron key.
+///
+/// Returns a `u64` that changes whenever the config fields driving that cron's
+/// effective behaviour (interval, paths, flags) change, allowing the fleet
+/// supervisor to restart a task whose spec changed even though its `CronKey`
+/// is still in the desired set.
+///
+/// Pure: no I/O, no locking, no side effects. Hashes only the sub-struct that
+/// the corresponding `spawn_cron_for_key` branch reads, so an unrelated config
+/// change (e.g. rotating the Telegram token) does NOT trigger spurious restarts
+/// of unrelated crons.
+pub(crate) fn cron_spec_fingerprint(
+    key: crate::cli::serve_tasks::CronKey,
+    cfg: &crate::config::FreedomConfig,
+) -> u64 {
+    use crate::cli::serve_tasks::CronKey::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut h = DefaultHasher::new();
+
+    // For sub-structs that derive Serialize we hash their JSON representation.
+    // The macro silently skips the hash contribution if serialisation fails
+    // (should never happen in practice — all configs derive Serialize).
+    macro_rules! jh {
+        ($val:expr) => {
+            if let Ok(s) = serde_json::to_string(&$val) {
+                s.hash(&mut h);
+            }
+        };
+    }
+
+    match key {
+        BgMonitor            => jh!(cfg.bg_monitor),
+        DoctorCron           => jh!(cfg.doctor),
+        Babel                => jh!(cfg.babel),
+        WatchdogCron         => jh!(cfg.watchdog),
+        DriftAlert           => jh!(cfg.drift_alert),
+        RecallLatency        => jh!(cfg.recall_latency),
+        ResourceWatch        => jh!(cfg.resource_watch),
+        MonitorCron          => jh!(cfg.monitor),
+        TokenAnomaly         => jh!(cfg.token_anomaly),
+        SessionHealth        => jh!(cfg.session_health),
+        WebhookManager       => jh!(cfg.webhook_manager),
+        SkillCurator         => jh!(cfg.skill_curator),
+        SynthesisCron        => jh!(cfg.synthesis_cron),
+        ConsolidationSweep   => jh!(cfg.consolidation_sweep),
+        SelfWiki             => jh!(cfg.self_wiki),
+        SelfImprovementCollector => jh!(cfg.self_improvement_collector),
+        EcologyCron          => jh!(cfg.ecology),
+        PatternCron          => jh!(cfg.pattern_cron),
+        ContradictionResolve => jh!(cfg.contradiction_resolve),
+        GuidanceCron         => jh!(cfg.guidance_cron),
+        ProfileAdapt         => jh!(cfg.profile_adapt),
+        // Obsidian crons: relevant config is scattered across individual
+        // primitive fields rather than a single sub-struct — hash each directly.
+        ObsidianSync => {
+            cfg.obsidian_vault.hash(&mut h);
+            cfg.obsidian_auto_sync_secs.hash(&mut h);
+            cfg.obsidian_subdir.hash(&mut h);
+        }
+        ObsidianVaultReader => {
+            cfg.obsidian_vault.hash(&mut h);
+            cfg.obsidian_vault_reader_enabled.hash(&mut h);
+            cfg.obsidian_vault_reader_secs.hash(&mut h);
+        }
+        ObsidianWikiRebuild => {
+            cfg.obsidian_vault.hash(&mut h);
+            cfg.obsidian_wiki_rebuild_secs.hash(&mut h);
+            cfg.obsidian_wiki_source_dir.hash(&mut h);
+        }
+        SelfMap => {
+            cfg.self_map_source_dir.hash(&mut h);
+            cfg.self_map_interval_secs.hash(&mut h);
+            cfg.self_map_subdir.hash(&mut h);
+            cfg.self_map_label_enabled.hash(&mut h);
+            cfg.self_map_label_model.hash(&mut h);
+        }
+    }
+
+    h.finish()
+}
 
 /// Pick #37 (Session 14, Agent #4 design-consensus): process a
 /// `~/.neoth/.reload-requested` sentinel. Calls `try_reload` on the

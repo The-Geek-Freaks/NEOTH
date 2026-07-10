@@ -21,16 +21,18 @@
 //!   - `sovereign_buddy` requires the typed-phrase consent ceremony in
 //!     `neoth autonomy sovereign` (bypassing it was an earlier P0 fix; this
 //!     command must never re-introduce that bypass).
-//!   - `smart_approve_any` is a per-MCP-server field; there is no single
-//!     freedom.yaml boolean to toggle.
+//!   - `smart_approve_any` reflects the global master SmartApprove switch
+//!     (`security.smart_approve` in freedom.yaml, GR-018). Toggling it here
+//!     would bypass the security-policy mutation path; use
+//!     `neoth security set smart-approve --enable|--disable` instead.
 //!
-//! ## `smart_approve_any` degradation note
+//! ## `smart_approve_any` source
 //!
-//! Per-server `smart_approve` lives in a separate `mcp_servers.yaml` / MCP
-//! config loader (not in `FreedomConfig`). Wiring that loader here would pull
-//! in heavy MCP dependencies for a read-only field; the current implementation
-//! always returns `false` for `smart_approve_any` and documents the gap.
-//! A follow-on can add the loader once the MCP config surface stabilises.
+//! `status` reports `cfg.security.smart_approve` — the global master switch
+//! (GR-018). Both this master switch AND the per-server `smart_approve` flag
+//! in `mcp_servers.yaml` must be `true` for auto-approve to fire on a given
+//! server. Per-server values are not surfaced here (would require loading the
+//! MCP config; deferred until that surface stabilises).
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -118,9 +120,11 @@ fn run_status(output: OutputFormat) -> Result<()> {
     let sovereign_buddy = cfg.sovereign_buddy;
     let self_activation_enabled = cfg.self_activation.enabled;
     let self_activation_skills = cfg.self_activation.skill_allowlist.clone();
-    // smart_approve_any: per-server field in mcp_servers.yaml — not on
-    // FreedomConfig. Always false until the MCP config loader is wired here.
-    let smart_approve_any = false;
+    // smart_approve_any: global master SmartApprove switch from
+    // FreedomConfig::security.smart_approve (GR-018). The per-server
+    // smart_approve flag in mcp_servers.yaml is an additional AND condition —
+    // both must be true for auto-approve to fire on a specific server.
+    let smart_approve_any = cfg.security.smart_approve;
     let autonomy = cfg.autonomy.as_str().to_owned();
     let proactive_enabled = cfg.proactive.enabled;
 
@@ -145,7 +149,7 @@ fn run_status(output: OutputFormat) -> Result<()> {
                 "self_activation_skills : [{}]",
                 self_activation_skills.join(", ")
             );
-            println!("smart_approve_any      : {smart_approve_any}  (per-server; see mcp_servers.yaml)");
+            println!("smart_approve_any      : {smart_approve_any}  (global master; per-server flag also required — see mcp_servers.yaml)");
             println!("autonomy               : {autonomy}");
             println!("proactive_enabled      : {proactive_enabled}");
         }
@@ -262,7 +266,8 @@ mod tests {
         let sovereign_buddy = cfg.sovereign_buddy;
         let self_activation_enabled = cfg.self_activation.enabled;
         let self_activation_skills = cfg.self_activation.skill_allowlist.clone();
-        let smart_approve_any = false; // degraded — always false
+        // Reads the global master SmartApprove switch, same as run_status.
+        let smart_approve_any = cfg.security.smart_approve;
         let autonomy = cfg.autonomy.as_str().to_owned();
         let proactive_enabled = cfg.proactive.enabled;
 
@@ -299,6 +304,30 @@ mod tests {
         assert_eq!(v["smart_approve_any"], false);
         assert_eq!(v["autonomy"], "standard");
         assert_eq!(v["proactive_enabled"], false);
+    }
+
+    // ── smart_approve_any reflects live security.smart_approve ───────────────
+
+    /// When `security.smart_approve = false` (default), `smart_approve_any`
+    /// must be `false`.  When it is `true`, the value must surface as `true`.
+    /// Guards against the previous hardcoded-`false` regression.
+    #[test]
+    fn smart_approve_any_reflects_live_security_master_switch() {
+        use crate::config::policy::SecurityPolicy;
+
+        let mut cfg_off = make_buddy_cfg();
+        cfg_off.security = SecurityPolicy { smart_approve: false, ..Default::default() };
+        let v_off = json!({
+            "smart_approve_any": cfg_off.security.smart_approve,
+        });
+        assert_eq!(v_off["smart_approve_any"], false, "master OFF → false");
+
+        let mut cfg_on = make_buddy_cfg();
+        cfg_on.security = SecurityPolicy { smart_approve: true, ..Default::default() };
+        let v_on = json!({
+            "smart_approve_any": cfg_on.security.smart_approve,
+        });
+        assert_eq!(v_on["smart_approve_any"], true, "master ON → true (not hardcoded false)");
     }
 
     // ── self-activation toggle round-trip ─────────────────────────────────────

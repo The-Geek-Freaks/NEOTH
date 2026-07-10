@@ -30,7 +30,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::cli::OutputFormat;
-use crate::cluster::swarm::{NodeResourceSnapshot, SwarmTable};
+use crate::cluster::swarm::{NodeResourceSnapshot, SwarmConfig, SwarmTable};
 use crate::config::FreedomConfig;
 use crate::wal::compress::decompress_frames;
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
@@ -47,8 +47,11 @@ pub struct ClusterSwarmArgs {
     pub watch: bool,
 
     /// Drop nodes whose last snapshot is older than this many seconds.
-    #[arg(long, default_value_t = 300)]
-    pub stale_secs: i64,
+    /// Defaults to `SwarmConfig::stale_after_secs` (300) when not supplied.
+    /// Once `freedom.yaml` gains a `swarm` section (TODO FEAT-06), the default
+    /// will be read from config; explicit `--stale-secs` always overrides it.
+    #[arg(long)]
+    pub stale_secs: Option<i64>,
 
     /// Output format (table or json). Populated by the parent command.
     #[arg(skip)]
@@ -62,16 +65,32 @@ pub async fn run_cluster_swarm(args: ClusterSwarmArgs) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let wal_dir = home.join("wal");
 
+    // Wire SwarmConfig.stale_after_secs to the dashboard's prune window.
+    // CLI `--stale-secs` overrides; when absent the value comes from
+    // SwarmConfig (currently always default until freedom.yaml gains a `swarm`
+    // section — TODO FEAT-06 replace with loaded config).
+    let stale_secs = resolve_stale_secs(args.stale_secs);
+
     if args.watch {
         loop {
             // Clear terminal between refreshes.
             print!("\x1B[2J\x1B[H");
-            print_swarm(&wal_dir, args.stale_secs, &args.output)?;
+            print_swarm(&wal_dir, stale_secs, &args.output)?;
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     } else {
-        print_swarm(&wal_dir, args.stale_secs, &args.output)
+        print_swarm(&wal_dir, stale_secs, &args.output)
     }
+}
+
+/// Resolve the effective stale threshold (seconds) for snapshot pruning.
+///
+/// CLI `--stale-secs` overrides `SwarmConfig::stale_after_secs`; when no CLI
+/// arg is supplied, the config field is applied.  Once `FreedomConfig` gains a
+/// `swarm: SwarmConfig` field (TODO FEAT-06), callers may pass the loaded
+/// config value here instead of `SwarmConfig::default()`.
+pub(crate) fn resolve_stale_secs(cli_override: Option<i64>) -> i64 {
+    cli_override.unwrap_or_else(|| SwarmConfig::default().stale_after_secs)
 }
 
 // ── Output ────────────────────────────────────────────────────────────────────
@@ -296,7 +315,35 @@ fn trunc(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::swarm::{NodeResourceSnapshot, SwarmTable};
+    use crate::cluster::swarm::{NodeResourceSnapshot, SwarmConfig, SwarmTable};
+
+    // ── resolve_stale_secs ────────────────────────────────────────────────
+
+    /// No CLI arg → value comes from `SwarmConfig::stale_after_secs` (the
+    /// previously unapplied config field is now the authoritative source).
+    #[test]
+    fn resolve_stale_secs_defaults_to_swarm_config_field() {
+        assert_eq!(
+            resolve_stale_secs(None),
+            SwarmConfig::default().stale_after_secs,
+            "absent CLI arg must apply SwarmConfig.stale_after_secs"
+        );
+    }
+
+    /// Explicit CLI arg must override the config default.
+    #[test]
+    fn resolve_stale_secs_cli_override_wins() {
+        assert_eq!(
+            resolve_stale_secs(Some(60)),
+            60,
+            "explicit CLI arg must override SwarmConfig default"
+        );
+        assert_eq!(
+            resolve_stale_secs(Some(0)),
+            0,
+            "zero override (stale immediately) must be respected"
+        );
+    }
 
     fn make_snap(node_id: &str, ts_unix: i64) -> NodeResourceSnapshot {
         NodeResourceSnapshot::new(

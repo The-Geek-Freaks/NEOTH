@@ -78,6 +78,13 @@ pub enum ExtendedSubtype {
     /// full per-layer gate status (which layer blocked + why) so the WAL shows
     /// the actual block reason, not just an unresolved `proposed` frame.
     SelfEditRefused = 0x05,
+    /// NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01 — the config-driven
+    /// `spawn_obsidian_preload` path is about to write to the Obsidian vault
+    /// + views DB (intent frame, emitted before the first write).
+    ObsidianPreloadIntent = 0x06,
+    /// NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01 — the Obsidian vault preload
+    /// completed (result frame; payload carries ok/err outcome).
+    ObsidianPreloadResult = 0x07,
 }
 
 impl ExtendedSubtype {
@@ -89,6 +96,8 @@ impl ExtendedSubtype {
             ExtendedSubtype::SwarmResourceSnapshot => "swarm_resource_snapshot",
             ExtendedSubtype::LocalSnapshot => "local_snapshot",
             ExtendedSubtype::SelfEditRefused => "self_edit_refused",
+            ExtendedSubtype::ObsidianPreloadIntent => "obsidian_preload_intent",
+            ExtendedSubtype::ObsidianPreloadResult => "obsidian_preload_result",
         }
     }
 
@@ -100,6 +109,8 @@ impl ExtendedSubtype {
             0x03 => Some(ExtendedSubtype::SwarmResourceSnapshot),
             0x04 => Some(ExtendedSubtype::LocalSnapshot),
             0x05 => Some(ExtendedSubtype::SelfEditRefused),
+            0x06 => Some(ExtendedSubtype::ObsidianPreloadIntent),
+            0x07 => Some(ExtendedSubtype::ObsidianPreloadResult),
             _ => None,
         }
     }
@@ -3371,6 +3382,9 @@ mod tests {
             ExtendedSubtype::SelfEditApplied,
             ExtendedSubtype::SwarmResourceSnapshot,
             ExtendedSubtype::LocalSnapshot,
+            // NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01
+            ExtendedSubtype::ObsidianPreloadIntent,
+            ExtendedSubtype::ObsidianPreloadResult,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

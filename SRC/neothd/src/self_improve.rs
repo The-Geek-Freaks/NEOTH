@@ -734,6 +734,172 @@ pub fn run_skillopt_capped(
     })
 }
 
+// ── IMPR-03 (nightly path): orchestrate a SkillOpt run + stage proposal ──────
+//
+// The nightly self-improvement tick calls `run_nightly` / `run_nightly_with_engine`
+// which runs SkillOpt, parses the output, stages any improvement as a Pending
+// proposal, and appends a ledger record. Nothing is auto-accepted — the operator
+// must explicitly `neoth self-improve accept <id>`. The `auto: true` config flag
+// only enables this nightly stage; the review-then-adopt gate is never bypassed.
+
+/// Outcome of a nightly SkillOpt run (IMPR-03 nightly scheduler path).
+#[derive(Debug, Clone, PartialEq)]
+pub enum NightlyOutcome {
+    /// Self-improvement is disabled or `auto` is off — nothing ran.
+    Skipped { reason: String },
+    /// SkillOpt ran and staged a Pending proposal. Operator must accept to adopt.
+    Staged {
+        proposal_id: String,
+        summary: String,
+    },
+    /// SkillOpt ran but produced no usable improvement (non-zero exit, empty
+    /// stdout, or content identical to the current skill file).
+    NoImprovement,
+    /// The engine invocation or staging step failed.
+    Error { reason: String },
+}
+
+/// Nightly SkillOpt pipeline with an injectable engine closure (IMPR-03).
+///
+/// The `run_engine_fn` closure receives `(persona, timeout)` and returns the same
+/// type as `run_skillopt_capped` — production callers pass `run_skillopt_capped`
+/// directly; tests inject a stub without spawning Python.
+///
+/// Pipeline:
+/// 1. Load `SelfImproveConfig::effective(autonomy)` — skip if `!enabled || !auto`.
+/// 2. Call `run_engine_fn(persona, SKILLOPT_TIMEOUT)`.
+/// 3. Non-zero exit or empty stdout → `NoImprovement`.
+/// 4. Parse stdout via `parse_proposal_output`.
+/// 5. Content identical to the current skill file → `NoImprovement`.
+/// 6. Stage via `stage_proposal` — always `Pending`; NEVER auto-accepted.
+/// 7. Append an `ImproveRecord` (accepted = false — staged only, not yet
+///    operator-adopted).
+///
+/// HARD GATE: no auto-accept at any autonomy level. `auto: true` only runs
+/// the engine and stages; the operator must explicitly
+/// `neoth self-improve accept <id>`.
+pub fn run_nightly_with_engine<F>(
+    home: &Path,
+    persona: &str,
+    skill_path: &str,
+    autonomy: crate::permissions::AutonomyLevel,
+    run_engine_fn: F,
+) -> NightlyOutcome
+where
+    F: FnOnce(&str, std::time::Duration) -> anyhow::Result<std::process::Output>,
+{
+    let cfg = SelfImproveConfig::load(home).effective(autonomy);
+    if !cfg.enabled {
+        return NightlyOutcome::Skipped {
+            reason: "self-improve is disabled (enabled: false in self_improve.yaml)".to_string(),
+        };
+    }
+    if !cfg.auto {
+        return NightlyOutcome::Skipped {
+            reason: "auto is off — operator-triggered only \
+                     (set auto: true to enable nightly runs)"
+                .to_string(),
+        };
+    }
+
+    let output = match run_engine_fn(persona, SKILLOPT_TIMEOUT) {
+        Ok(o) => o,
+        Err(e) => {
+            return NightlyOutcome::Error {
+                reason: format!("SkillOpt engine failed to run: {e}"),
+            };
+        }
+    };
+
+    // Non-zero exit means the engine concluded there is nothing worth proposing.
+    if !output.status.success() {
+        return NightlyOutcome::NoImprovement;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if stdout.trim().is_empty() {
+        return NightlyOutcome::NoImprovement;
+    }
+
+    let (content, quality, spec) = parse_proposal_output(&stdout);
+
+    // No improvement when the proposed content is byte-identical to the current
+    // file (handles the case where SkillOpt ran but concluded no edit was needed).
+    let before = std::fs::read_to_string(skill_path).unwrap_or_default();
+    if content.trim() == before.trim() {
+        return NightlyOutcome::NoImprovement;
+    }
+
+    let now_secs = crate::time::now_unix_ns() / 1_000_000_000;
+    let summary_text = if !quality.heldout_eval_summary.is_empty() {
+        quality.heldout_eval_summary.clone()
+    } else {
+        format!("SkillOpt nightly improvement for `{persona}`")
+    };
+
+    // Snapshot quality fields before they are moved into the Proposal struct.
+    let score_before = quality.score_before;
+    let score_after = quality.score_after;
+
+    let proposal = Proposal {
+        id: format!("p{now_secs}"),
+        skill: persona.to_string(),
+        skill_path: skill_path.to_string(),
+        before,
+        after: content,
+        summary: summary_text.clone(),
+        status: ProposalStatus::Pending,
+        at_unix: now_secs as i64,
+        backup: None,
+        score_before,
+        score_after,
+        heldout_eval_summary: quality.heldout_eval_summary,
+        why_this_improves: quality.why_this_improves,
+        risk_notes: quality.risk_notes,
+        spec,
+    };
+
+    let staged_id = match stage_proposal(home, proposal) {
+        Ok(id) => id,
+        Err(e) => {
+            return NightlyOutcome::Error {
+                reason: format!("stage_proposal failed: {e}"),
+            };
+        }
+    };
+
+    // Record in the ledger — accepted: false (staged, not yet operator-adopted).
+    let _ = append_record(
+        home,
+        ImproveRecord {
+            skill: persona.to_string(),
+            accepted: false,
+            score_before,
+            score_after,
+            summary: summary_text.clone(),
+            at_unix: now_secs as i64,
+        },
+    );
+
+    NightlyOutcome::Staged {
+        proposal_id: staged_id,
+        summary: summary_text,
+    }
+}
+
+/// Nightly self-improvement entry point — the dreaming-tick production caller
+/// (IMPR-03). Runs SkillOpt via `run_skillopt_capped` and stages any improvement
+/// as a Pending proposal. The operator must `neoth self-improve accept <id>` to
+/// adopt it. See `run_nightly_with_engine` for the full pipeline description.
+pub fn run_nightly(
+    home: &Path,
+    persona: &str,
+    skill_path: &str,
+    autonomy: crate::permissions::AutonomyLevel,
+) -> NightlyOutcome {
+    run_nightly_with_engine(home, persona, skill_path, autonomy, run_skillopt_capped)
+}
+
 // ── IMPR-03: Execute variant — verification-gated proposal execution scaffold ─
 //
 // Runs a staged proposal through a verification + advisor-review loop. The
@@ -2327,5 +2493,277 @@ mod tests {
 
         let _ = std::fs::remove_file(proposals_path(&tmp));
         let _ = std::fs::remove_file(&skill);
+    }
+
+    // ── IMPR-03 (nightly path) tests ─────────────────────────────────────────
+
+    /// Build a successful `std::process::Output` with the given stdout bytes —
+    /// used to stub the SkillOpt engine in nightly-path tests without spawning
+    /// Python. Uses a trivial no-op shell to obtain a real exit-0 `ExitStatus`
+    /// in a cross-platform way.
+    fn stub_success_output(stdout: &[u8]) -> std::process::Output {
+        let status = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+            .args(if cfg!(windows) {
+                vec!["/C", "exit 0"]
+            } else {
+                vec!["-c", "true"]
+            })
+            .status()
+            .expect("no-op exit-0 command for stub");
+        std::process::Output {
+            status,
+            stdout: stdout.to_vec(),
+            stderr: vec![],
+        }
+    }
+
+    /// Nightly skipped when config is default-off (enabled=false, auto=false).
+    #[test]
+    fn run_nightly_skipped_when_disabled_by_default() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_nightly_disabled_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(SelfImproveConfig::path(&tmp));
+
+        let outcome = run_nightly_with_engine(
+            &tmp,
+            "test_persona",
+            "/nonexistent/skill.md",
+            crate::permissions::AutonomyLevel::Standard,
+            |_p, _t| panic!("engine must not be called when disabled"),
+        );
+        assert!(
+            matches!(outcome, NightlyOutcome::Skipped { .. }),
+            "expected Skipped when disabled by default, got {outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Nightly skipped when enabled=true but auto=false.
+    #[test]
+    fn run_nightly_skipped_when_auto_off() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_nightly_autooff_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        SelfImproveConfig {
+            enabled: true,
+            auto: false,
+            asked: true,
+            allow_shell_verify: false,
+        }
+        .save(&tmp)
+        .unwrap();
+
+        let outcome = run_nightly_with_engine(
+            &tmp,
+            "test_persona",
+            "/nonexistent/skill.md",
+            crate::permissions::AutonomyLevel::Standard,
+            |_p, _t| panic!("engine must not be called when auto=false"),
+        );
+        assert!(
+            matches!(outcome, NightlyOutcome::Skipped { .. }),
+            "expected Skipped when auto=false, got {outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Engine returns non-zero exit → NoImprovement (engine found nothing to
+    /// propose — its documented convention for a "no change" run).
+    #[test]
+    fn run_nightly_no_improvement_on_engine_nonzero_exit() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_nightly_nzexit_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        SelfImproveConfig {
+            enabled: true,
+            auto: true,
+            asked: true,
+            allow_shell_verify: false,
+        }
+        .save(&tmp)
+        .unwrap();
+
+        let outcome = run_nightly_with_engine(
+            &tmp,
+            "test_persona",
+            "/nonexistent/skill.md",
+            crate::permissions::AutonomyLevel::Standard,
+            |_p, _t| {
+                let status = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+                    .args(if cfg!(windows) {
+                        vec!["/C", "exit 1"]
+                    } else {
+                        vec!["-c", "false"]
+                    })
+                    .status()
+                    .expect("exit-1 command for stub");
+                Ok(std::process::Output {
+                    status,
+                    stdout: vec![],
+                    stderr: vec![],
+                })
+            },
+        );
+        assert!(
+            matches!(outcome, NightlyOutcome::NoImprovement),
+            "expected NoImprovement on non-zero engine exit, got {outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Engine returns content identical to the current file → NoImprovement.
+    #[test]
+    fn run_nightly_no_improvement_when_content_identical() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_nightly_noimpr_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        SelfImproveConfig {
+            enabled: true,
+            auto: true,
+            asked: true,
+            allow_shell_verify: false,
+        }
+        .save(&tmp)
+        .unwrap();
+
+        let skill = tmp.join("skill_noimpr.md");
+        let body = "## skill body — already optimal";
+        std::fs::write(&skill, body).unwrap();
+
+        let outcome = run_nightly_with_engine(
+            &tmp,
+            "test_persona",
+            &skill.display().to_string(),
+            crate::permissions::AutonomyLevel::Standard,
+            |_p, _t| Ok(stub_success_output(body.as_bytes())),
+        );
+        assert!(
+            matches!(outcome, NightlyOutcome::NoImprovement),
+            "expected NoImprovement when proposed == before, got {outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Happy path: engine returns new content → Staged + ledger entry; live
+    /// skill file untouched (proposal is Pending, operator must accept).
+    #[test]
+    fn run_nightly_stages_proposal_and_appends_ledger() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_nightly_staged_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let _ = std::fs::remove_file(ledger_path(&tmp));
+        SelfImproveConfig {
+            enabled: true,
+            auto: true,
+            asked: true,
+            allow_shell_verify: false,
+        }
+        .save(&tmp)
+        .unwrap();
+
+        let skill = tmp.join("skill_staged_nightly.md");
+        std::fs::write(&skill, "## before").unwrap();
+
+        let new_content = "## after — improved by SkillOpt";
+        let outcome = run_nightly_with_engine(
+            &tmp,
+            "test_persona",
+            &skill.display().to_string(),
+            crate::permissions::AutonomyLevel::Standard,
+            |_p, _t| Ok(stub_success_output(new_content.as_bytes())),
+        );
+
+        let proposal_id = match &outcome {
+            NightlyOutcome::Staged { proposal_id, .. } => proposal_id.clone(),
+            other => panic!("expected Staged, got {other:?}"),
+        };
+
+        // Proposal stored as Pending with the engine's proposed content.
+        let proposals = load_proposals(&tmp);
+        let p = proposals
+            .iter()
+            .find(|p| p.id == proposal_id)
+            .expect("staged proposal must exist in the proposals store");
+        assert_eq!(p.status, ProposalStatus::Pending, "proposal must stay Pending");
+        assert_eq!(p.after, new_content, "after content must match engine output");
+        assert_eq!(p.skill, "test_persona");
+
+        // Live skill file MUST be untouched — staging never writes production files.
+        assert_eq!(
+            std::fs::read_to_string(&skill).unwrap(),
+            "## before",
+            "live skill file must not be modified by the nightly stage"
+        );
+
+        // Ledger entry appended with accepted=false (staged, not operator-adopted).
+        let last = last_record(&tmp).expect("ledger entry must exist after nightly stage");
+        assert_eq!(last.skill, "test_persona");
+        assert!(!last.accepted, "staged-only ledger entry must have accepted=false");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Structured JSON engine output → quality fields extracted into the proposal.
+    #[test]
+    fn run_nightly_extracts_quality_from_structured_json_output() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_nightly_quality_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        SelfImproveConfig {
+            enabled: true,
+            auto: true,
+            asked: true,
+            allow_shell_verify: false,
+        }
+        .save(&tmp)
+        .unwrap();
+
+        let skill = tmp.join("skill_nightly_quality.md");
+        std::fs::write(&skill, "## before").unwrap();
+
+        // Escaped (not raw) string: the markdown value "## after" contains `"##`
+        // which would prematurely terminate an r#"…"# / r##"…"## raw literal.
+        let json_output = "{\"skill\":\"## after\",\"score_before\":0.3,\"score_after\":0.8,\"heldout_eval_summary\":\"improved by 50%\",\"why_this_improves\":\"tighter reasoning\",\"risk_notes\":\"none observed\"}";
+
+        let outcome = run_nightly_with_engine(
+            &tmp,
+            "test_persona",
+            &skill.display().to_string(),
+            crate::permissions::AutonomyLevel::Standard,
+            |_p, _t| Ok(stub_success_output(json_output.as_bytes())),
+        );
+
+        let proposal_id = match &outcome {
+            NightlyOutcome::Staged { proposal_id, .. } => proposal_id.clone(),
+            other => panic!("expected Staged, got {other:?}"),
+        };
+
+        let proposals = load_proposals(&tmp);
+        let p = proposals.iter().find(|p| p.id == proposal_id).unwrap();
+        assert!((p.score_before - 0.3).abs() < 1e-9, "score_before mismatch");
+        assert!((p.score_after - 0.8).abs() < 1e-9, "score_after mismatch");
+        assert_eq!(p.heldout_eval_summary, "improved by 50%");
+        assert_eq!(p.why_this_improves, "tighter reasoning");
+        assert_eq!(p.after, "## after");
+        // Ledger summary comes from heldout_eval_summary (non-empty).
+        let last = last_record(&tmp).expect("ledger entry");
+        assert_eq!(last.summary, "improved by 50%");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -194,6 +194,140 @@ async fn emit_channel_privilege_blocked_writes_0x3c_frame() {
     );
 }
 
+// ── NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01: cron_spec_fingerprint unit tests ──
+//
+// These tests are pure (no I/O, no async) because `cron_spec_fingerprint` is
+// a deterministic function over FreedomConfig values. They verify the three
+// correctness invariants:
+//   1. Stability: same config → same fingerprint (no false positives on no-op reloads).
+//   2. Sensitivity: a relevant field change → different fingerprint (no false negatives).
+//   3. Isolation: a field irrelevant to a key does NOT shift its fingerprint.
+
+#[test]
+fn cron_fingerprint_is_deterministic() {
+    let cfg = crate::config::FreedomConfig::default();
+    assert_eq!(
+        cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::BgMonitor, &cfg),
+        cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::BgMonitor, &cfg),
+        "fingerprint must be stable for identical configs",
+    );
+}
+
+#[test]
+fn cron_fingerprint_detects_interval_change() {
+    let mut cfg = crate::config::FreedomConfig::default();
+    cfg.bg_monitor.interval_secs = 60;
+    let before = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::BgMonitor, &cfg);
+    cfg.bg_monitor.interval_secs = 300;
+    let after = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::BgMonitor, &cfg);
+    assert_ne!(
+        before, after,
+        "changing interval_secs must shift the BgMonitor fingerprint",
+    );
+}
+
+#[test]
+fn cron_fingerprint_ignores_unrelated_fields() {
+    let mut cfg = crate::config::FreedomConfig::default();
+    cfg.bg_monitor.interval_secs = 60;
+    let before = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::BgMonitor, &cfg);
+    // Changing a field relevant only to ObsidianSync must NOT affect BgMonitor.
+    cfg.obsidian_vault = Some("~/vault".to_string());
+    let after = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::BgMonitor, &cfg);
+    assert_eq!(
+        before, after,
+        "obsidian_vault change must NOT shift BgMonitor fingerprint",
+    );
+}
+
+#[test]
+fn cron_fingerprint_obsidian_sync_detects_vault_change() {
+    let mut cfg = crate::config::FreedomConfig::default();
+    cfg.obsidian_vault = Some("~/vault1".to_string());
+    let before = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::ObsidianSync, &cfg);
+    cfg.obsidian_vault = Some("~/vault2".to_string());
+    let after = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::ObsidianSync, &cfg);
+    assert_ne!(
+        before, after,
+        "vault path change must shift ObsidianSync fingerprint",
+    );
+}
+
+#[test]
+fn cron_fingerprint_obsidian_sync_ignores_bg_monitor_field() {
+    let mut cfg = crate::config::FreedomConfig::default();
+    cfg.obsidian_vault = Some("~/vault".to_string());
+    let before = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::ObsidianSync, &cfg);
+    cfg.bg_monitor.interval_secs = 999;
+    let after = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::ObsidianSync, &cfg);
+    assert_eq!(
+        before, after,
+        "bg_monitor change must NOT shift ObsidianSync fingerprint",
+    );
+}
+
+#[test]
+fn cron_fingerprint_self_map_detects_source_dir_change() {
+    let mut cfg = crate::config::FreedomConfig::default();
+    cfg.self_map_source_dir = Some("/src/v1".to_string());
+    let before = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::SelfMap, &cfg);
+    cfg.self_map_source_dir = Some("/src/v2".to_string());
+    let after = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::SelfMap, &cfg);
+    assert_ne!(
+        before, after,
+        "source_dir change must shift SelfMap fingerprint",
+    );
+}
+
+#[test]
+fn cron_fingerprint_self_map_detects_interval_change() {
+    let mut cfg = crate::config::FreedomConfig::default();
+    cfg.self_map_interval_secs = Some(3600);
+    let before = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::SelfMap, &cfg);
+    cfg.self_map_interval_secs = Some(7200);
+    let after = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::SelfMap, &cfg);
+    assert_ne!(
+        before, after,
+        "interval_secs change must shift SelfMap fingerprint",
+    );
+}
+
+#[test]
+fn cron_fingerprint_obsidian_vault_reader_detects_enabled_toggle() {
+    let mut cfg = crate::config::FreedomConfig::default();
+    cfg.obsidian_vault = Some("~/v".to_string());
+    cfg.obsidian_vault_reader_enabled = false;
+    let before = cron_spec_fingerprint(
+        crate::cli::serve_tasks::CronKey::ObsidianVaultReader,
+        &cfg,
+    );
+    cfg.obsidian_vault_reader_enabled = true;
+    let after = cron_spec_fingerprint(
+        crate::cli::serve_tasks::CronKey::ObsidianVaultReader,
+        &cfg,
+    );
+    assert_ne!(
+        before, after,
+        "reader_enabled toggle must shift ObsidianVaultReader fingerprint",
+    );
+}
+
+// ── NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01: credential load tests ──
+
+#[test]
+fn credentials_startup_load_fallback_is_explicit_not_silent() {
+    // Verify that `Credentials::load_or_default` on a missing file returns
+    // Ok(default) — confirming the startup warn path only fires on real errors,
+    // not on a fresh install that has no credentials.yaml yet.
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("does_not_exist.yaml");
+    let result = crate::config::credentials::Credentials::load_or_default(&missing);
+    assert!(
+        result.is_ok(),
+        "missing credentials.yaml must return Ok(default), not Err",
+    );
+}
+
 #[tokio::test]
 async fn emit_required_audit_survives_append_failure_without_aborting() {
     // GOLD-COR-04 / A-11: when a security audit frame CANNOT be written

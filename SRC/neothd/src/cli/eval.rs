@@ -42,7 +42,9 @@ pub struct EvalCase {
     /// Shell command to run; passes if exit code is 0.
     #[serde(default)]
     pub verify_command: Option<String>,
-    /// Expected maximum allowed steps (informational; not enforced in headless).
+    /// Maximum allowed steps for this case.  When the suite step budget
+    /// (`EvalArgs::max_steps`) is exhausted, the case is not executed and
+    /// receives a bounded [`CaseOutcome::Error`] verdict.
     #[serde(default)]
     pub max_steps: Option<u32>,
 }
@@ -181,7 +183,7 @@ fn evaluate_case(case: &EvalCase) -> (CaseOutcome, Option<String>) {
 
     // 2. Shell-command verifier.
     if let Some(ref cmd) = case.verify_command {
-        match run_verify_command(cmd) {
+        match run_verify_command(cmd, VERIFY_COMMAND_TIMEOUT) {
             Ok(true) => return (CaseOutcome::Pass, None),
             Ok(false) => {
                 return (
@@ -202,21 +204,61 @@ fn evaluate_case(case: &EvalCase) -> (CaseOutcome, Option<String>) {
     (CaseOutcome::Pass, None)
 }
 
+/// Default wall-clock budget for every `verify_command` execution.
+/// A child that does not exit within this window is killed.
+const VERIFY_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Execute a shell command and return `Ok(true)` iff exit code is 0.
-fn run_verify_command(cmd: &str) -> Result<bool> {
-    #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("cmd")
-        .args(["/C", cmd])
-        .status()
+///
+/// Spawns the child with piped stdout/stderr; two background threads drain
+/// both pipes to prevent pipe-buffer deadlock when the child emits a large
+/// amount of output before it exits.  The main thread polls `try_wait` until
+/// the child exits or `timeout` elapses.  On timeout the child is killed,
+/// reaped, and an error is returned — the drain threads detach and finish
+/// on their own once the OS closes the pipes.
+fn run_verify_command(cmd: &str, timeout: std::time::Duration) -> Result<bool> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+        .args(if cfg!(windows) { vec!["/C", cmd] } else { vec!["-c", cmd] })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .with_context(|| format!("spawn verify_command: {cmd}"))?;
 
-    #[cfg(not(target_os = "windows"))]
-    let status = std::process::Command::new("sh")
-        .args(["-c", cmd])
-        .status()
-        .with_context(|| format!("spawn verify_command: {cmd}"))?;
+    // Drain stdout/stderr in background threads to avoid pipe-buffer deadlock.
+    // We do not need the output — only the exit code — so the handles are
+    // intentionally detached (not joined).  They finish once the pipes close.
+    let mut out_pipe = child.stdout.take().expect("stdout piped");
+    let mut err_pipe = child.stderr.take().expect("stderr piped");
+    std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out_pipe.read_to_end(&mut b);
+    });
+    std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err_pipe.read_to_end(&mut b);
+    });
 
-    Ok(status.success())
+    // Poll until the child exits or the wall-clock deadline is reached.
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait(); // reap to avoid a zombie process
+            anyhow::bail!(
+                "verify_command timed out after {timeout:?} and was killed: {cmd}"
+            );
+        }
+        match child
+            .try_wait()
+            .with_context(|| format!("poll verify_command: {cmd}"))?
+        {
+            Some(status) => return Ok(status.success()),
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
 }
 
 fn truncate(s: &str, max: usize) -> &str {
@@ -228,14 +270,37 @@ fn truncate(s: &str, max: usize) -> &str {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Run every case in `cases` and return an [`EvalReport`].
-pub fn run_suite(suite_path: &str, cases: &[EvalCase]) -> EvalReport {
+///
+/// `max_steps` is a HARD cap on the total steps the suite may consume.  In
+/// headless mode each case costs exactly one step.  Once `max_steps` steps
+/// are consumed, every remaining case is **not executed** and receives a
+/// [`CaseOutcome::Error`] verdict with a "max_steps cap reached" reason.
+/// Pass [`u32::MAX`] to allow all cases to run without limit.
+pub fn run_suite(suite_path: &str, cases: &[EvalCase], max_steps: u32) -> EvalReport {
     let suite_start = Instant::now();
     // GOLD-ARCH-07 — canonical time helper (overflow-safe), not raw duration_since.
     let timestamp_unix = crate::time::now_unix_secs();
 
     let mut results = Vec::with_capacity(cases.len());
+    let mut steps_used: u32 = 0;
     for case in cases {
-        results.push(run_case(case));
+        // Hard-cap enforcement — stop + bounded verdict, not log+continue.
+        if steps_used >= max_steps {
+            results.push(CaseResult {
+                id: case.id.clone(),
+                description: case.description.clone(),
+                outcome: CaseOutcome::Error,
+                failure_reason: Some(format!(
+                    "not executed: max_steps cap ({max_steps}) reached"
+                )),
+                elapsed_secs: 0.0,
+                steps: 0,
+            });
+            continue;
+        }
+        let r = run_case(case);
+        steps_used = steps_used.saturating_add(r.steps);
+        results.push(r);
     }
 
     let passed = results.iter().filter(|r| r.outcome == CaseOutcome::Pass).count();
@@ -262,7 +327,8 @@ pub fn run_suite(suite_path: &str, cases: &[EvalCase]) -> EvalReport {
 pub struct EvalArgs {
     /// Path to the JSON suite file (array of EvalCase).
     pub suite: PathBuf,
-    /// Maximum steps per case (informational; enforced by live runner only).
+    /// Hard cap on the total evaluation steps (cases) the suite may run.
+    /// Cases beyond this limit are not executed and receive an Error verdict.
     #[arg(long, default_value = "25")]
     pub max_steps: u32,
     /// Provider preset to use for live runs (future; no-op in headless mode).
@@ -289,7 +355,7 @@ pub async fn run_eval_cmd(args: EvalArgs) -> Result<()> {
     }
 
     let suite_label = suite_path.to_string_lossy().to_string();
-    let report = run_suite(&suite_label, &cases);
+    let report = run_suite(&suite_label, &cases, args.max_steps);
 
     // ── JSON-only mode ─────────────────────────────────────────────────────
     if args.json {
@@ -443,7 +509,7 @@ mod tests {
             tc("s-02", "answer does NOT", "missing"),
             tc_no_verifier("s-03"),
         ];
-        let report = run_suite("test.json", &cases);
+        let report = run_suite("test.json", &cases, u32::MAX);
         assert_eq!(report.total, 3);
         assert_eq!(report.passed, 2); // s-01 + s-03
         assert_eq!(report.failed, 1); // s-02
@@ -457,7 +523,7 @@ mod tests {
             tc("a-01", "yes the word is here", "here"),
             tc_no_verifier("a-02"),
         ];
-        let report = run_suite("all_pass.json", &cases);
+        let report = run_suite("all_pass.json", &cases, u32::MAX);
         assert_eq!(report.passed, 2);
         assert!(report.all_passed());
     }
@@ -467,7 +533,7 @@ mod tests {
     #[test]
     fn report_json_round_trips() {
         let cases = vec![tc("r-01", "contains needle", "needle")];
-        let report = run_suite("rt.json", &cases);
+        let report = run_suite("rt.json", &cases, u32::MAX);
         let json = serde_json::to_string(&report).unwrap();
         let back: EvalReport = serde_json::from_str(&json).unwrap();
         assert_eq!(back.total, 1);
@@ -481,7 +547,7 @@ mod tests {
             tc("m-01", "answer with expected", "expected"),
             tc("m-02", "answer without", "missing"),
         ];
-        let report = run_suite("md.json", &cases);
+        let report = run_suite("md.json", &cases, u32::MAX);
         let md = report.to_markdown();
         assert!(md.contains("NEOTH Eval Report"));
         assert!(md.contains("Pass"));
@@ -494,9 +560,66 @@ mod tests {
     #[test]
     fn markdown_all_pass_shows_overall_pass() {
         let cases = vec![tc("p-01", "has needle", "needle")];
-        let report = run_suite("pass.json", &cases);
+        let report = run_suite("pass.json", &cases, u32::MAX);
         let md = report.to_markdown();
         assert!(md.contains("Overall: PASS"));
+    }
+
+    // ── Hardening: timeout + max_steps hard cap ───────────────────────────
+
+    /// NEOTH-AUDIT-EVAL-RUNNER-HARDENING-01 (a) — a verify_command that runs
+    /// longer than the supplied timeout must be killed and return an Err.
+    #[test]
+    fn verify_command_timeout_kills_long_child() {
+        // A command that blocks for ~30 s — well beyond the 1-second test
+        // timeout.  On Windows `ping -n 30 127.0.0.1 > nul` gives ~29 s of
+        // wait; on Unix `sleep 30` does the same.
+        #[cfg(windows)]
+        let long_cmd = "ping -n 30 127.0.0.1 > nul";
+        #[cfg(not(windows))]
+        let long_cmd = "sleep 30";
+
+        let short = std::time::Duration::from_secs(1);
+        let result = run_verify_command(long_cmd, short);
+        assert!(result.is_err(), "expected Err on timeout, got Ok");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("timed out"),
+            "error must mention 'timed out', got: {msg}"
+        );
+    }
+
+    /// NEOTH-AUDIT-EVAL-RUNNER-HARDENING-01 (b) — max_steps is a HARD cap:
+    /// once the step budget is exhausted, remaining cases are not executed and
+    /// receive Error verdicts, not a silent continue.
+    #[test]
+    fn max_steps_hard_cap_stops_suite() {
+        let cases = vec![
+            tc("cap-01", "answer has needle", "needle"),
+            tc("cap-02", "answer has needle", "needle"),
+            tc("cap-03", "answer has needle", "needle"),
+        ];
+        // max_steps=2 → cap-01 and cap-02 run (2 steps consumed);
+        // cap-03 must be bounded, not executed.
+        let report = run_suite("cap.json", &cases, 2);
+        assert_eq!(report.total, 3, "all cases appear in report");
+        assert_eq!(report.passed, 2, "cap-01 and cap-02 pass");
+        assert_eq!(report.errored, 1, "cap-03 is a bounded error");
+        assert_eq!(report.failed, 0);
+
+        let bounded = &report.cases[2];
+        assert_eq!(bounded.id, "cap-03");
+        assert_eq!(bounded.outcome, CaseOutcome::Error);
+        assert_eq!(bounded.steps, 0, "bounded case consumed no steps");
+        let reason = bounded.failure_reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("max_steps"),
+            "failure_reason must mention max_steps, got: {reason}"
+        );
+        assert!(
+            reason.contains("2"),
+            "failure_reason must include the cap value, got: {reason}"
+        );
     }
 
     // ── Fixture: 2-case suite JSON → report pass:1 total:2 ───────────────
@@ -520,7 +643,7 @@ mod tests {
             }
         ]"#;
         let cases: Vec<EvalCase> = serde_json::from_str(json).unwrap();
-        let report = run_suite("fixture.json", &cases);
+        let report = run_suite("fixture.json", &cases, u32::MAX);
         assert_eq!(report.total, 2);
         assert_eq!(report.passed, 1, "fix-01 should pass");
         assert_eq!(report.failed, 1, "fix-02 should fail (Madrid missing)");

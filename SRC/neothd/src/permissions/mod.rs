@@ -288,6 +288,25 @@ pub enum Action {
         /// unified-diff prefixes). Non-empty; the gate validates this.
         target_paths: Vec<String>,
     },
+    /// NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01 — the config-driven
+    /// `spawn_obsidian_preload` path writes files into the operator's Obsidian
+    /// vault and updates the SQLite views DB. The vault is an operator-configured,
+    /// explicit opt-in target (`freedom.yaml::obsidian`), so the policy mirrors
+    /// [`Action::WriteNeothHome`]: Strict confirms (no TTY in daemon → fail-closed),
+    /// Standard/Elevated/Full allow.
+    ///
+    /// | Level    | Decision                                                      |
+    /// |----------|---------------------------------------------------------------|
+    /// | Strict   | Confirm — daemon has no TTY → fail-closed                     |
+    /// | Standard | Allow — vault is an operator-chosen write target              |
+    /// | Elevated | Allow                                                         |
+    /// | Full     | Allow                                                         |
+    ///
+    /// Leasable under [`lease::LeaseScope::WriteNeothHome`] — the operator
+    /// can pre-authorise preload writes via the same coarse scope that covers
+    /// `~/.neoth/` writes (the vault is another explicit operator-delegated
+    /// write target).
+    ObsidianPreloadWrite,
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -423,7 +442,9 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         // An OS file read is a read capability — the operator can delegate it
         // to a subject (plugin / peer) under the Read lease scope.
         Action::OsFileRead { .. } => Some(LeaseScope::Read),
-        Action::WriteNeothHome => Some(LeaseScope::WriteNeothHome),
+        Action::WriteNeothHome | Action::ObsidianPreloadWrite => {
+            Some(LeaseScope::WriteNeothHome)
+        }
         Action::ChannelSend => Some(LeaseScope::ChannelSend),
         Action::McpToolInvocation { server_id, tool } => {
             // Qualified `server_id:tool` id — matches the CLI grant form
@@ -558,6 +579,14 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: self-source edit of {} path(s) denied — requires Elevated or Full autonomy",
             target_paths.len()
         )),
+        // NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01: mirrors WriteNeothHome — vault
+        // is an explicit operator-configured target, but Strict always confirms.
+        // Daemon has no TTY → confirm = fail-closed (preload is skipped).
+        Action::ObsidianPreloadWrite => Decision::Confirm(
+            "strict: Obsidian vault preload write requires confirm \
+             (daemon has no TTY at Strict — fail-closed)"
+                .into(),
+        ),
     }
 }
 
@@ -659,6 +688,9 @@ fn evaluate_standard(action: &Action) -> Decision {
             "standard: self-source edit of {} path(s) denied — requires Elevated or Full autonomy",
             target_paths.len()
         )),
+        // NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01: mirrors WriteNeothHome —
+        // the vault is an operator-configured explicit write target; Standard allows.
+        Action::ObsidianPreloadWrite => Decision::Allow,
     }
 }
 
@@ -763,6 +795,9 @@ fn evaluate_elevated(action: &Action) -> Decision {
              this modifies NEOTH's own source code (requires explicit operator ack)",
             target_paths.len()
         )),
+        // NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01: mirrors WriteNeothHome —
+        // the vault is an operator-configured explicit write target; Elevated allows.
+        Action::ObsidianPreloadWrite => Decision::Allow,
     }
 }
 
@@ -863,7 +898,10 @@ fn evaluate_full(action: &Action) -> Decision {
         | Action::OsAppLaunch { .. }
         | Action::ClusterTaskAccept
         | Action::ProactiveChannelSend { .. }
-        | Action::ExternalTaskWrite { .. } => Decision::Allow,
+        | Action::ExternalTaskWrite { .. }
+        // NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01: mirrors WriteNeothHome —
+        // vault is an operator-configured write target; Full allows.
+        | Action::ObsidianPreloadWrite => Decision::Allow,
         // JV-MODE-04 — self-skill toggle: at Full the permissions gate alone
         // signals Allow; the CALLER (`cli::self_activate::run_self_activate`)
         // is responsible for checking `sovereign_active()` and the
@@ -1791,6 +1829,43 @@ mod tests {
             lease_scope_for(&a),
             None,
             "SelfCronRegister must never be pre-authorised by a lease"
+        );
+    }
+
+    // ── NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01 ObsidianPreloadWrite ────────────
+
+    #[test]
+    fn obsidian_preload_write_autonomy_ladder() {
+        // Mirrors WriteNeothHome: Strict=Confirm (fail-closed in daemon),
+        // Standard/Elevated/Full=Allow.
+        assert!(
+            matches!(
+                evaluate(&Action::ObsidianPreloadWrite, AutonomyLevel::Strict),
+                Decision::Confirm(_)
+            ),
+            "Strict must Confirm (daemon has no TTY → fail-closed)"
+        );
+        assert!(
+            evaluate(&Action::ObsidianPreloadWrite, AutonomyLevel::Standard).is_allow(),
+            "Standard must Allow (vault is an operator-chosen write target)"
+        );
+        assert!(
+            evaluate(&Action::ObsidianPreloadWrite, AutonomyLevel::Elevated).is_allow(),
+            "Elevated must Allow"
+        );
+        assert!(
+            evaluate(&Action::ObsidianPreloadWrite, AutonomyLevel::Full).is_allow(),
+            "Full must Allow"
+        );
+    }
+
+    #[test]
+    fn obsidian_preload_write_is_lease_coverable_under_write_neoth_home() {
+        use lease::LeaseScope;
+        assert_eq!(
+            lease_scope_for(&Action::ObsidianPreloadWrite),
+            Some(LeaseScope::WriteNeothHome),
+            "ObsidianPreloadWrite must be coverable by the WriteNeothHome lease scope"
         );
     }
 }
