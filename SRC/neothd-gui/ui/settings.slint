@@ -480,6 +480,8 @@ export component SettingsView inherits Rectangle {
     in property <float> hw-vram-fraction: 0.0;
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
+    // GUI-HARDWARE-RESOURCES-01 — runtime load readout, e.g. "CPU 23% · GPU 41% · 62°C · 118W".
+    in property <string> hw-load-readout: "";
     // GOLD-PROG-05 — cluster peer topology rows (Cluster tab), from
     // `neoth cluster topology --output json`.
     in property <[ClusterPeerRow]> cluster-peers: [];
@@ -2722,6 +2724,14 @@ export component SettingsView inherits Rectangle {
                             segments: 12;
                             fraction: root.hw-vram-fraction;
                             fill: Theme.accent-green;
+                        }
+                        // GUI-HARDWARE-RESOURCES-01 — compact load readout (CPU/GPU/temp/power).
+                        if root.hw-load-readout != "": Text {
+                            text: "load: " + root.hw-load-readout;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                            wrap: word-wrap;
                         }
                         if root.hw-cpu != "": Text {
                             text: "disk: " + root.hw-disk;

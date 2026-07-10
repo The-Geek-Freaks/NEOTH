@@ -347,11 +347,46 @@ pub struct HardwareSnapshot {
     pub vram_fraction: f32,
     pub disk: String,
     pub models: Vec<TrustRow>,
+    // ── GUI-HARDWARE-RESOURCES-01 — runtime load metrics ─────────────────
+    /// CPU aggregate utilization %. `None` when absent from JSON (CPU-only
+    /// host, old firmware, or sysinfo failure).
+    pub cpu_load_pct: Option<f64>,
+    /// GPU compute utilization %. `None` when `nvidia-smi` is absent/failed.
+    pub gpu_util_pct: Option<f64>,
+    /// GPU core temperature in °C. `None` when `nvidia-smi` is absent/failed.
+    pub gpu_temp_c: Option<f64>,
+    /// GPU power draw in W. `None` when `nvidia-smi` is absent/failed.
+    pub gpu_power_w: Option<f64>,
+    /// Pre-formatted one-line load readout consumed by the Slint label, e.g.
+    /// `"CPU 23% · GPU 41% · 62°C · 118W"`. Empty when all four are `None`.
+    pub load_readout: String,
 }
 
 /// Bytes → whole GiB (rounded) as a display string.
 fn gib(bytes: u64) -> u64 {
     bytes / (1024 * 1024 * 1024)
+}
+
+// Type alias to avoid tuple-soup signatures in build_load_readout.
+type LoadMetric = Option<f64>;
+
+/// Build the compact one-line load readout for the hardware panel, e.g.
+/// `"CPU 23% · GPU 41% · 62°C · 118W"`. Absent values render as `"—"`.
+/// Returns an empty string when all four metrics are `None`.
+fn build_load_readout(
+    cpu: LoadMetric,
+    gpu_util: LoadMetric,
+    temp: LoadMetric,
+    power: LoadMetric,
+) -> String {
+    if cpu.is_none() && gpu_util.is_none() && temp.is_none() && power.is_none() {
+        return String::new();
+    }
+    let fmt_cpu = cpu.map_or_else(|| "—".to_string(), |v| format!("{:.0}%", v));
+    let fmt_gpu = gpu_util.map_or_else(|| "—".to_string(), |v| format!("{:.0}%", v));
+    let fmt_temp = temp.map_or_else(|| "—".to_string(), |v| format!("{:.0}°C", v));
+    let fmt_power = power.map_or_else(|| "—".to_string(), |v| format!("{:.0}W", v));
+    format!("CPU {fmt_cpu} · GPU {fmt_gpu} · {fmt_temp} · {fmt_power}")
 }
 
 /// PURE + robust: garbage/empty → default (panel shows a "no daemon" state).
@@ -434,6 +469,15 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
         })
         .collect();
 
+    // GUI-HARDWARE-RESOURCES-01 — runtime load metrics. All are optional;
+    // absent fields (old JSON, CPU-only host) silently produce `None`.
+    let f = |p: &str| v.pointer(p).and_then(|x| x.as_f64());
+    let cpu_load_pct = f("/cpu_load_pct");
+    let gpu_util_pct = f("/gpu_load/util_pct");
+    let gpu_temp_c   = f("/gpu_load/temp_c");
+    let gpu_power_w  = f("/gpu_load/power_w");
+    let load_readout = build_load_readout(cpu_load_pct, gpu_util_pct, gpu_temp_c, gpu_power_w);
+
     HardwareSnapshot {
         cpu,
         memory,
@@ -442,6 +486,11 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
         vram_fraction,
         disk,
         models,
+        cpu_load_pct,
+        gpu_util_pct,
+        gpu_temp_c,
+        gpu_power_w,
+        load_readout,
     }
 }
 
@@ -3011,6 +3060,63 @@ mod tests {
         // Defensive clamp: a stray used>total stays ≤ 1.0 (bar never overruns).
         let over = parse_hardware(r#"{"vram":{"used_mib":99999,"total_mib":1000}}"#);
         assert_eq!(over.vram_fraction, 1.0);
+    }
+
+    // ── GUI-HARDWARE-RESOURCES-01: load metrics + backward compat ─────────
+
+    #[test]
+    fn parse_hardware_backward_compat_no_load_fields() {
+        // Old JSON without cpu_load_pct / gpu_load must parse cleanly with
+        // all new fields as None and load_readout empty.
+        let json = r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#;
+        let h = parse_hardware(json);
+        assert_eq!(h.cpu_load_pct, None);
+        assert_eq!(h.gpu_util_pct, None);
+        assert_eq!(h.gpu_temp_c,   None);
+        assert_eq!(h.gpu_power_w,  None);
+        assert_eq!(h.load_readout, "");
+    }
+
+    #[test]
+    fn parse_hardware_load_fields_when_present() {
+        let json = r#"{
+            "cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1},
+            "cpu_load_pct": 23.4,
+            "gpu_load": {"util_pct": 41, "temp_c": 62, "power_w": 118}
+        }"#;
+        let h = parse_hardware(json);
+        assert!((h.cpu_load_pct.unwrap() - 23.4).abs() < 1e-6);
+        assert_eq!(h.gpu_util_pct, Some(41.0));
+        assert_eq!(h.gpu_temp_c,   Some(62.0));
+        assert_eq!(h.gpu_power_w,  Some(118.0));
+        assert_eq!(h.load_readout, "CPU 23% · GPU 41% · 62°C · 118W");
+    }
+
+    #[test]
+    fn parse_hardware_cpu_only_no_gpu_fields() {
+        // CPU present, no gpu_load node → GPU slots render "—".
+        let json = r#"{"cpu_load_pct": 5.0}"#;
+        let h = parse_hardware(json);
+        assert_eq!(h.cpu_load_pct, Some(5.0));
+        assert_eq!(h.gpu_util_pct, None);
+        assert_eq!(h.load_readout, "CPU 5% · GPU — · — · —");
+    }
+
+    #[test]
+    fn build_load_readout_all_none_is_empty() {
+        assert_eq!(build_load_readout(None, None, None, None), "");
+    }
+
+    #[test]
+    fn build_load_readout_full_values() {
+        let r = build_load_readout(Some(23.0), Some(41.0), Some(62.0), Some(118.0));
+        assert_eq!(r, "CPU 23% · GPU 41% · 62°C · 118W");
+    }
+
+    #[test]
+    fn build_load_readout_partial_gpu_absent() {
+        let r = build_load_readout(Some(10.0), None, None, None);
+        assert_eq!(r, "CPU 10% · GPU — · — · —");
     }
 
     // ── SL-02 cluster topology parser ─────────────────────────────────────

@@ -785,6 +785,8 @@ export component MainWindow inherits Window {
     in property <float> hw-vram-fraction: 0.0;
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
+    // GUI-HARDWARE-RESOURCES-01 — runtime load readout, forwarded to SettingsView.
+    in property <string> hw-load-readout: "";
     // GOLD-PROG-05 — cluster peer topology, forwarded to SettingsView.
     in property <[ClusterPeerRow]> cluster-peers: [];
     // KF-08 — Council budget meter (Config tab), forwarded to SettingsView.
@@ -2165,6 +2167,7 @@ export component MainWindow inherits Window {
             hw-vram-fraction: root.hw-vram-fraction;
             hw-disk: root.hw-disk;
             hw-models: root.hw-models;
+            hw-load-readout: root.hw-load-readout;
             cluster-peers: root.cluster-peers;
             council-cap: root.council-cap;
             council-daily-usd: root.council-daily-usd;
@@ -2427,6 +2430,7 @@ export component MainWindow inherits Window {
                     vram-fraction: root.hw-vram-fraction;
                     disk: root.hw-disk;
                     models-count: root.hw-models.length;
+                    load-readout: root.hw-load-readout;
                 }
                 // Net-new mockup tab — Doctor (`neoth doctor`, wired).
                 if root.nav-active == "doctor": DoctorView {

@@ -41,6 +41,8 @@ export component ResourcesView inherits Rectangle {
     in property <float> vram-fraction;
     in property <string> disk;
     in property <int> models-count: 0;
+    // GUI-HARDWARE-RESOURCES-01 — runtime load readout, e.g. "CPU 23% · GPU 41% · 62°C · 118W".
+    in property <string> load-readout;
 
     background: Theme.bg-base;
     VerticalLayout {
@@ -78,6 +80,9 @@ export component ResourcesView inherits Rectangle {
             }
         }
 
+        // GUI-HARDWARE-RESOURCES-01 — compact load readout (CPU % · GPU % · temp · power).
+        // Absent when all four metrics are None (CPU-only host / first probe not yet complete).
+        if root.load-readout != "": StatRow { label: "LOAD"; value: root.load-readout; }
         StatRow { label: "DISK"; value: root.disk; }
         StatRow { label: "LOCAL MODELS"; value: root.models-count > 0 ? "\{root.models-count} installed" : "none"; }
     }

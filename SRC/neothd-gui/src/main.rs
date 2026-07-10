@@ -6378,6 +6378,8 @@ fn apply_hardware(window: &MainWindow, snap: panel_logic::HardwareSnapshot) {
     window.set_hw_vram_fraction(snap.vram_fraction);
     window.set_hw_disk(snap.disk.into());
     window.set_hw_models(ModelRc::new(VecModel::from(models)));
+    // GUI-HARDWARE-RESOURCES-01 — runtime load readout (CPU/GPU/temp/power).
+    window.set_hw_load_readout(snap.load_readout.into());
 }
 
 /// SL-02 — fetch the cluster peer topology via `neoth cluster topology --output

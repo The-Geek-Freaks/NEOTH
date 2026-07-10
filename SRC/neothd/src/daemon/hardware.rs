@@ -45,6 +45,27 @@ pub struct HardwareReport {
     /// probe) — this is the moment-in-time utilisation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vram: Option<crate::daemon::resource_watch::VramReading>,
+    /// GUI-HARDWARE-RESOURCES-01 — CPU aggregate utilization % (two-refresh
+    /// sysinfo delta; ~200 ms added to probe latency). `None` on failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_load_pct: Option<f32>,
+    /// GUI-HARDWARE-RESOURCES-01 — GPU runtime metrics (utilization %,
+    /// temperature °C, power draw W) from one `nvidia-smi` call. `None` on a
+    /// CPU-only host or when `nvidia-smi` is not on PATH.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_load: Option<GpuLoadReading>,
+}
+
+/// Best-effort GPU runtime metrics (first GPU only) from `nvidia-smi`.
+/// `None` on a CPU-only host, non-NVIDIA GPU, or when `nvidia-smi` is absent.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct GpuLoadReading {
+    /// Compute utilization percentage (0–100).
+    pub util_pct: u8,
+    /// Core temperature in degrees Celsius.
+    pub temp_c: u8,
+    /// Power draw in whole Watts.
+    pub power_w: u32,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -147,6 +168,10 @@ pub fn probe(neoth_home: &Path) -> HardwareReport {
     // SL-03 — best-effort LIVE VRAM read (nvidia-smi/rocm-smi). None on a
     // CPU-only host or when no GPU tool is on PATH; never fails the probe.
     let vram = crate::daemon::resource_watch::read_gpu_vram();
+    // GUI-HARDWARE-RESOURCES-01 — CPU load adds ~200 ms (two-refresh delta).
+    // GPU load is one short nvidia-smi subprocess. Both are best-effort.
+    let cpu_load_pct = probe_cpu_load();
+    let gpu_load = probe_gpu_load();
     HardwareReport {
         cpu,
         memory,
@@ -157,6 +182,8 @@ pub fn probe(neoth_home: &Path) -> HardwareReport {
         recommended_qwen_repo,
         estimated_full_cache_gib,
         vram,
+        cpu_load_pct,
+        gpu_load,
     }
 }
 
@@ -298,6 +325,57 @@ fn disk_prefix_normalize(s: &str) -> String {
 #[cfg(not(windows))]
 fn disk_prefix_normalize(s: &str) -> String {
     s.to_string()
+}
+
+/// CPU aggregate utilization over a ~200 ms sampling window (two sysinfo
+/// refreshes required for a valid delta). `None` when the probe fails.
+fn probe_cpu_load() -> Option<f32> {
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_cpu_usage();
+    // The delta between two refreshes gives the actual utilization %;
+    // a single refresh always returns 0 on the first call.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    sys.refresh_cpu_usage();
+    let pct = sys.global_cpu_usage();
+    if pct.is_nan() {
+        None
+    } else {
+        Some(pct)
+    }
+}
+
+/// GPU runtime metrics from one `nvidia-smi` call. `None` on any failure
+/// (binary absent, non-zero exit, non-NVIDIA host, parse miss). Never panics.
+fn probe_gpu_load() -> Option<GpuLoadReading> {
+    let out = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=utilization.gpu,temperature.gpu,power.draw",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_nvidia_smi_load(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Parse one CSV line from
+/// `nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,power.draw
+/// --format=csv,noheader,nounits`, e.g. `"41, 62, 118.45"`.
+/// `None` on a malformed / empty / single-field line.
+pub(crate) fn parse_nvidia_smi_load(text: &str) -> Option<GpuLoadReading> {
+    let line = text.lines().next()?.trim();
+    let mut parts = line.split(',').map(str::trim);
+    let util_pct = parts.next()?.parse::<f64>().ok()?.round() as u8;
+    let temp_c = parts.next()?.parse::<f64>().ok()?.round() as u8;
+    let power_w = parts.next()?.parse::<f64>().ok()?.round() as u32;
+    Some(GpuLoadReading {
+        util_pct,
+        temp_c,
+        power_w,
+    })
 }
 
 /// Pick a default Qwen variant. Rules:
@@ -567,5 +645,43 @@ mod tests {
         assert!(s.contains("Binaries:"));
         assert!(s.contains("Cached models:"));
         assert!(s.contains("Recommended Qwen:"));
+    }
+
+    // ── GUI-HARDWARE-RESOURCES-01: parse_nvidia_smi_load ─────────────────
+
+    #[test]
+    fn parse_nvidia_smi_load_valid_line() {
+        // Typical output: "41, 62, 118.45"
+        let r = parse_nvidia_smi_load("41, 62, 118.45").unwrap();
+        assert_eq!(r.util_pct, 41);
+        assert_eq!(r.temp_c, 62);
+        assert_eq!(r.power_w, 118);
+    }
+
+    #[test]
+    fn parse_nvidia_smi_load_rounds_power() {
+        // 118.55 → 119 W (round, not truncate).
+        let r = parse_nvidia_smi_load("10, 55, 118.55").unwrap();
+        assert_eq!(r.power_w, 119);
+    }
+
+    #[test]
+    fn parse_nvidia_smi_load_first_line_wins() {
+        // When output has multiple lines (multi-GPU), only the first is used.
+        let r = parse_nvidia_smi_load("30, 70, 200.0\n80, 90, 300.0").unwrap();
+        assert_eq!(r.util_pct, 30);
+    }
+
+    #[test]
+    fn parse_nvidia_smi_load_returns_none_on_garbage() {
+        assert!(parse_nvidia_smi_load("").is_none());
+        assert!(parse_nvidia_smi_load("N/A, N/A, N/A").is_none());
+        assert!(parse_nvidia_smi_load("only-one-field").is_none());
+    }
+
+    #[test]
+    fn parse_nvidia_smi_load_returns_none_on_missing_third_field() {
+        // Two fields — power_w is missing.
+        assert!(parse_nvidia_smi_load("41, 62").is_none());
     }
 }
