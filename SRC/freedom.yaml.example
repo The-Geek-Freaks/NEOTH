@@ -9,6 +9,13 @@
 # NEVER paste them into this file. Both files round-trip through serde
 # automatically.
 #
+# OS keychain (optional, default: file): set secrets_backend below to
+# `keychain` to store secrets in the Windows Credential Manager / macOS
+# Keychain / Linux Secret Service instead of credentials.yaml.
+# Run `neoth credential migrate --to keychain` first to populate the store.
+# Revert with `neoth credential migrate --to file`.
+# secrets_backend: keychain   # default: file
+#
 # File permissions: 0600 on unix, ACL-restricted to the current user on
 # Windows. `neoth init` sets these correctly; if you create the file by
 # hand on unix run `chmod 600 ~/.neoth/freedom.yaml`.

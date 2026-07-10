@@ -21,6 +21,7 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::credentials::{Credentials, default_path};
+use crate::config::keychain;
 
 #[derive(Args, Debug, Clone)]
 pub struct CredentialArgs {
@@ -57,6 +58,26 @@ pub enum CredentialAction {
         /// (catches generic/opaque secrets). Trades precision for recall.
         #[arg(long)]
         entropy: bool,
+    },
+    /// Migrate secrets between storage backends.
+    ///
+    /// `--to keychain` reads `~/.neoth/credentials.yaml`, writes every
+    /// `SecretString` field into the OS credential store (Windows Credential
+    /// Manager; macOS/Linux in follow-on commits), blanks those fields in the
+    /// YAML, and updates `secrets_backend: keychain` in `freedom.yaml`.
+    ///
+    /// `--to file` reverses the migration: fetches secrets from the OS store,
+    /// writes them back to `credentials.yaml`, deletes them from the store,
+    /// and sets `secrets_backend: file` in `freedom.yaml`.
+    ///
+    /// Use `--dry-run` to preview what WOULD move without writing anything.
+    Migrate {
+        /// Target backend: `keychain` or `file`.
+        #[arg(long)]
+        to: String,
+        /// Report what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -126,6 +147,7 @@ pub fn run_credential(args: CredentialArgs, output: OutputFormat) -> Result<()> 
         CredentialAction::List => run_list(output),
         CredentialAction::Import { file, dry_run } => run_import(&file, dry_run, output),
         CredentialAction::Scan { path, entropy } => run_scan(&path, entropy, output),
+        CredentialAction::Migrate { to, dry_run } => run_migrate(&to, dry_run, output),
     }
 }
 
@@ -343,6 +365,203 @@ fn run_import(file: &Path, dry_run: bool, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// Move secrets between `credentials.yaml` and the OS keychain.
+///
+/// `to` must be `"keychain"` or `"file"`. On success, `credentials.yaml` and
+/// `freedom.yaml` are rewritten (unless `dry_run`). Prints a per-key summary.
+fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
+    let direction = match to {
+        "keychain" => keychain::MigrationDirection::ToKeychain,
+        "file" => keychain::MigrationDirection::ToFile,
+        other => anyhow::bail!(
+            "unknown migration target \"{other}\" — expected \"keychain\" or \"file\""
+        ),
+    };
+
+    let cred_path = default_path();
+    let creds = Credentials::load_or_default(&cred_path)
+        .context("load credentials.yaml")?;
+
+    let store = keychain::open_store()
+        .context("open OS credential store — is the `keychain` feature compiled in?")?;
+
+    let (updated_creds, report) = match direction {
+        keychain::MigrationDirection::ToKeychain => {
+            keychain::migrate_to_keychain(&creds, store.as_ref(), dry_run)
+                .context("migrate secrets to keychain")?
+        }
+        keychain::MigrationDirection::ToFile => {
+            keychain::migrate_to_file(&creds, store.as_ref(), dry_run)
+                .context("migrate secrets to file")?
+        }
+    };
+
+    // Print report FIRST so the operator sees failures before the bail.
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "dry_run": report.dry_run,
+                    "direction": to,
+                    "moved": report.moved,
+                    "skipped": report.skipped,
+                    "failed": report.failed
+                        .iter()
+                        .map(|(k, e)| serde_json::json!({"key": k, "error": e}))
+                        .collect::<Vec<_>>(),
+                    "is_clean": report.is_clean(),
+                })
+            );
+        }
+        OutputFormat::Table => {
+            let verb = if dry_run { "Would move" } else { "Moved" };
+            let backend_label = match direction {
+                keychain::MigrationDirection::ToKeychain => store.backend_name(),
+                keychain::MigrationDirection::ToFile => "credentials.yaml",
+            };
+            println!("{verb} {} secret(s) → {}:", report.moved.len(), backend_label);
+            for k in &report.moved {
+                println!("  + {k}");
+            }
+            if !report.skipped.is_empty() {
+                println!("Skipped (not set): {}", report.skipped.join(", "));
+            }
+            if !report.failed.is_empty() {
+                println!("FAILED:");
+                for (k, e) in &report.failed {
+                    println!("  ✗ {k}: {e}");
+                }
+            }
+            if dry_run {
+                println!("(dry-run — nothing written)");
+            } else if !report.is_clean() {
+                println!("(nothing written — fix the failures above and retry)");
+            } else if !report.moved.is_empty() {
+                println!(
+                    "credentials.yaml and freedom.yaml updated. \
+                     secrets_backend is now \"{to}\"."
+                );
+            }
+        }
+    }
+
+    // Bail before any disk write if there were failures.
+    // This keeps the error message truthful: "nothing written".
+    if !report.is_clean() {
+        anyhow::bail!(
+            "{} migration failure(s) — nothing written; fix the failures above and retry",
+            report.failed.len()
+        );
+    }
+
+    // Persist updated credentials.yaml and freedom.yaml only when clean.
+    if !dry_run && !report.moved.is_empty() {
+        updated_creds
+            .write(&cred_path)
+            .with_context(|| format!("write updated credentials to {}", cred_path.display()))?;
+
+        // Update secrets_backend in freedom.yaml — atomic write via temp+rename
+        // so a crash mid-write cannot leave a half-written config file.
+        let freedom_path = crate::config::FreedomConfig::default_path();
+        if freedom_path.exists() {
+            let body = std::fs::read_to_string(&freedom_path)
+                .context("read freedom.yaml for backend update")?;
+            let new_backend = match direction {
+                keychain::MigrationDirection::ToKeychain => "keychain",
+                keychain::MigrationDirection::ToFile => "file",
+            };
+            let updated = update_or_append_secrets_backend(&body, new_backend);
+            atomic_write_str(&freedom_path, &updated)
+                .context("write updated freedom.yaml")?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Write `content` to `path` atomically via a temp file in the same directory.
+///
+/// Creates a sibling temp file, writes the full content, then renames it over
+/// the destination. On Windows, `fs::rename` over the same filesystem is
+/// atomic at the OS level. A mid-write crash can only leave the temp file
+/// behind (not a half-written `path`).
+fn atomic_write_str(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
+    let parent = path.parent().unwrap_or(std::path::Path::new("."));
+    let file_stem = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let tmp = parent.join(format!(".~{}.{}.tmp", file_stem, std::process::id()));
+    std::fs::write(&tmp, content.as_bytes())
+        .with_context(|| format!("write temp file {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+/// Replace or append `secrets_backend: <value>` in a freedom.yaml body.
+///
+/// Rules:
+/// - Only the **first** matching line is replaced (a live key plus a commented
+///   example line must not produce a duplicate key after the edit).
+/// - A commented-out `# secrets_backend: …` line counts as a match and is
+///   uncommented in place, so the example file comment becomes the live value.
+/// - The file's original line-ending style (LF or CRLF) is preserved.
+/// - Operates on raw byte positions to avoid split-and-rejoin artefacts.
+fn update_or_append_secrets_backend(body: &str, value: &str) -> String {
+    let needle = "secrets_backend:";
+    let new_line = format!("secrets_backend: {value}");
+    // Detect CRLF vs LF once so we can preserve the file's style when appending.
+    let line_end = if body.contains("\r\n") { "\r\n" } else { "\n" };
+
+    let mut replaced = false;
+    let mut out = String::with_capacity(body.len() + new_line.len() + 4);
+    let mut pos = 0;
+    let bytes = body.as_bytes();
+
+    while pos < bytes.len() {
+        // Find the end of the current line (inclusive of its \n, if any).
+        let eol_pos = bytes[pos..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| pos + p + 1)   // include the \n
+            .unwrap_or(bytes.len()); // no trailing newline on last line
+
+        let raw_line = &body[pos..eol_pos];
+        // Strip trailing \r\n / \n for matching (but write raw_line verbatim
+        // unless we're replacing this line).
+        let bare = raw_line.trim_end_matches('\n').trim_end_matches('\r');
+        let canonical = bare.trim_start_matches('#').trim();
+
+        if !replaced && canonical.starts_with(needle) {
+            // Write the replacement value with the same line ending as the
+            // original line so CRLF files stay CRLF.
+            out.push_str(&new_line);
+            if raw_line.ends_with("\r\n") {
+                out.push_str("\r\n");
+            } else if raw_line.ends_with('\n') {
+                out.push('\n');
+            }
+            replaced = true;
+        } else {
+            out.push_str(raw_line);
+        }
+        pos = eol_pos;
+    }
+
+    if !replaced {
+        // Append: ensure the file ends with a newline before our new line.
+        if !out.ends_with('\n') {
+            out.push_str(line_end);
+        }
+        out.push_str(&new_line);
+        out.push_str(line_end);
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +637,87 @@ mod tests {
             overwritten,
             vec!["provider_key"],
             "provider_key already set"
+        );
+    }
+
+    #[test]
+    fn update_or_append_secrets_backend_replaces_existing_live_line() {
+        let body = "operator_id: alex\nsecrets_backend: file\nlanguage_primary: de\n";
+        let out = update_or_append_secrets_backend(body, "keychain");
+        assert!(out.contains("secrets_backend: keychain"));
+        assert!(!out.contains("secrets_backend: file"));
+        // Other lines untouched.
+        assert!(out.contains("operator_id: alex"));
+    }
+
+    #[test]
+    fn update_or_append_secrets_backend_uncomments_commented_line() {
+        let body = "operator_id: alex\n# secrets_backend: keychain   # default: file\n";
+        let out = update_or_append_secrets_backend(body, "keychain");
+        assert!(out.contains("secrets_backend: keychain"));
+    }
+
+    #[test]
+    fn update_or_append_secrets_backend_appends_when_absent() {
+        let body = "operator_id: alex\n";
+        let out = update_or_append_secrets_backend(body, "keychain");
+        assert!(out.ends_with("secrets_backend: keychain\n"));
+        assert!(out.contains("operator_id: alex"));
+    }
+
+    #[test]
+    fn update_or_append_secrets_backend_replaces_only_first_match() {
+        // If both a live line and a commented example line are present, only
+        // the first (live) line must be replaced — the commented one is left
+        // as-is so there are no duplicate live keys in the file.
+        let body = "secrets_backend: file\n# secrets_backend: keychain   # example\n";
+        let out = update_or_append_secrets_backend(body, "keychain");
+        // First line replaced.
+        let mut lines = out.lines();
+        assert_eq!(lines.next(), Some("secrets_backend: keychain"));
+        // Second line (comment) left untouched.
+        assert_eq!(
+            lines.next(),
+            Some("# secrets_backend: keychain   # example")
+        );
+        // No duplicate live key.
+        let live_count = out
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#') && l.contains("secrets_backend:"))
+            .count();
+        assert_eq!(live_count, 1, "must have exactly one live secrets_backend key");
+    }
+
+    #[test]
+    fn update_or_append_secrets_backend_preserves_crlf_line_endings() {
+        let body = "operator_id: alex\r\nsecrets_backend: file\r\nlanguage_primary: de\r\n";
+        let out = update_or_append_secrets_backend(body, "keychain");
+        // Result must contain CRLF, not bare LF after the replaced line.
+        assert!(
+            out.contains("secrets_backend: keychain\r\n"),
+            "replaced line must keep CRLF ending"
+        );
+        // Other lines must also be CRLF.
+        assert!(out.contains("operator_id: alex\r\n"));
+        // No stray bare LF as the only terminator (all \n preceded by \r).
+        for (i, b) in out.as_bytes().iter().enumerate() {
+            if *b == b'\n' {
+                assert_eq!(
+                    out.as_bytes().get(i.wrapping_sub(1)).copied(),
+                    Some(b'\r'),
+                    "bare LF at byte {i} in CRLF file"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn update_or_append_secrets_backend_appends_preserves_crlf() {
+        let body = "operator_id: alex\r\n";
+        let out = update_or_append_secrets_backend(body, "keychain");
+        assert!(
+            out.ends_with("secrets_backend: keychain\r\n"),
+            "appended line must use CRLF style"
         );
     }
 

@@ -25,21 +25,22 @@ pub mod wal;
 //   - YAML parses with serde_yaml. Unknown fields are tolerated for forward
 //     compat (operator may have written extras NEOTH does not yet consume).
 //
-// ## Secrets-on-disk model (be honest about it)
+// ## Secrets-on-disk model (D003-KEYCHAIN-01)
 //
-// `freedom.yaml` DOES contain credentials in plaintext: `provider_key`
-// (LLM API key) and `telegram_token`. These are `SecretString` typed —
-// which means:
-//   - **In RAM:** mlock'd against swap (Linux), zeroize on drop.
-//   - **On disk:** plain text inside the YAML. NEOTH relies on OS-level
-//     file permission (mode 0600 / Windows DACL grant:r owner) for at-rest
-//     protection. There is no NEOTH-side encryption of `freedom.yaml`.
+// Secrets live in `~/.neoth/credentials.yaml` (split from freedom.yaml in
+// the Codex audit pass). `SecretString` values are mlock'd in RAM and
+// zeroize'd on drop; the YAML file is mode 0600 / Windows DACL-restricted.
 //
-// Operators who need at-rest crypto should use FDE (BitLocker / LUKS / FileVault).
-// A future Phase 33+ pass moves the secret fields into a separate
-// `~/.neoth/credentials.yaml` for clearer audit + optional OS-keyring
-// integration. The split is non-breaking — the wizard already writes a
-// single file; the split just adds a second one alongside.
+// **OS keychain backend (opt-in):** set `secrets_backend: keychain` in
+// freedom.yaml (or run `neoth credential migrate --to keychain`) to move
+// `SecretString` fields into the OS credential store (Windows Credential
+// Manager; macOS Keychain / Linux Secret Service in follow-on commits).
+// The YAML values then act as an emergency fallback — a non-null YAML
+// value always wins over the keychain entry so operators can recover
+// without the OS store.
+//
+// Operators who need at-rest crypto should also enable FDE (BitLocker /
+// LUKS / FileVault) — the keychain does not replace full-disk encryption.
 //
 // The boot-time `cli/serve.rs` permission check warns if the file is
 // readable by anyone other than the operator.
@@ -50,6 +51,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 pub mod credentials;
+// D003-KEYCHAIN-01 — OS keychain backend, migration helpers, SecretStore trait.
+pub mod keychain;
 // GOLD-ADAPT-DOC-01 (2026-06-23) — Python pip-gate helpers (ppt_master → python-pptx).
 pub mod installer;
 pub mod preset_builtins;
@@ -122,8 +125,34 @@ pub enum PersonaMode {
     LoyalBuddy,
 }
 
+/// D003-KEYCHAIN-01 — controls where `SecretString` fields are loaded from at
+/// daemon startup.
+///
+/// | Value      | Behaviour                                                    |
+/// |------------|--------------------------------------------------------------|
+/// | `file`     | (default) load secrets exclusively from `credentials.yaml`. |
+/// | `keychain` | supplement YAML with OS credential store; YAML value wins.  |
+///
+/// Switch at runtime: set `secrets_backend: keychain` in freedom.yaml (or
+/// run `neoth credential migrate --to keychain` to auto-populate the store
+/// and blank the YAML values). Revert with `--to file`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SecretsBackend {
+    /// Secrets come exclusively from `credentials.yaml` (default).
+    #[default]
+    File,
+    /// Secrets come from the OS credential store, with `credentials.yaml`
+    /// values as an emergency override (YAML wins over keychain if non-null).
+    Keychain,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FreedomConfig {
+    /// D003-KEYCHAIN-01 — secrets backend selection. Default `file`;
+    /// set to `keychain` after running `neoth credential migrate --to keychain`.
+    #[serde(default)]
+    pub secrets_backend: SecretsBackend,
     #[serde(default)]
     pub operator_id: Option<String>,
     #[serde(default)]
@@ -1211,8 +1240,34 @@ impl FreedomConfig {
         };
         #[cfg(unix)]
         warn_if_world_readable(&cred_path);
-        let creds = credentials::Credentials::load_or_default(&cred_path)
+        let mut creds = credentials::Credentials::load_or_default(&cred_path)
             .with_context(|| format!("load credentials at {}", cred_path.display()))?;
+
+        // D003-KEYCHAIN-01 — supplement YAML secrets with OS keychain when
+        // the operator has opted in. YAML values (already populated above) take
+        // precedence over keychain entries — `supplement_from_store` only fills
+        // fields that are still `None`. On any keychain error we log at `warn!`
+        // and fall through to the YAML-only path (graceful degradation).
+        #[cfg(feature = "keychain")]
+        if config.secrets_backend == SecretsBackend::Keychain {
+            match keychain::open_store() {
+                Ok(store) => {
+                    if let Err(e) = keychain::supplement_from_store(&mut creds, store.as_ref()) {
+                        tracing::warn!(
+                            err = %e,
+                            "OS keychain unavailable; falling back to credentials.yaml secrets"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        err = %e,
+                        "could not open OS keychain; falling back to credentials.yaml secrets"
+                    );
+                }
+            }
+        }
+
         if let Some(k) = creds.provider_key {
             config.provider_key = Some(k);
         }
