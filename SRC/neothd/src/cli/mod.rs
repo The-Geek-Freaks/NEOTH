@@ -151,6 +151,9 @@ pub mod security;
 pub mod self_activate;
 pub mod self_dev;
 pub mod self_dev_outbox;
+/// GOLD-FEAT-05 — `neoth self-edit --diff <file> [--dry-run]`.
+/// Five-layer fail-closed gate stack for self-source edits.
+pub mod self_edit;
 pub mod self_improve;
 pub mod serve;
 pub mod serve_pipeline;
@@ -409,6 +412,12 @@ pub enum Commands {
     /// See `cli/self_activate.rs` module doc for the full gate chain.
     #[command(name = "self-activate")]
     SelfActivate(self_activate::SelfActivateArgs),
+    /// GOLD-FEAT-05 — propose a source-code edit against NEOTH's own source
+    /// tree. Five-layer fail-closed gate stack: kill-switch, allowlist,
+    /// permission (Elevated/Full only), worktree isolation, green-test.
+    /// Requires `freedom.yaml::coding.self_edit.enabled = true`.
+    #[command(name = "self-edit")]
+    SelfEdit(self_edit::SelfEditArgs),
     /// Export NEOTH's knowledge as an Open Knowledge Format (OKF) bundle —
     /// interconnected Obsidian-native markdown concept docs.
     Okf(okf::OkfArgs),
@@ -1323,6 +1332,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::SelfActivate(args) => {
             self_activate::run_self_activate(args, global_output)?;
+        }
+        Commands::SelfEdit(args) => {
+            self_edit::run_self_edit(args, global_output).await?;
         }
         Commands::Okf(args) => {
             okf::run_okf(args, global_output)?;

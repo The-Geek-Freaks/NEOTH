@@ -1801,6 +1801,13 @@ Copy a curated Markdown/YAML vault template into Obsidian and optionally ingest 
 - `--ingest` — Also ingest manifest-approved Markdown notes into `idx_groundtruth`
 - `--state <FILE>` — Override the preload hash-state JSON path (mostly for tests)
 
+### `neoth obsidian promote`
+
+Promote a row from `idx_restricted` to `idx_groundtruth`
+
+- `<ID>` — Row id in `idx_restricted` to promote
+- `--dry-run` — Describe what would happen without writing anything
+
 ### `neoth obsidian status`
 
 Report the Obsidian integration config from `freedom.yaml`. Pure read, no side effects. Shows whether a vault is configured and the key automation settings (auto-sync, wiki-rebuild, vault-reader)
@@ -2713,6 +2720,14 @@ List every pending proposal. `--min-confidence` filters by the engine's confiden
 ### `neoth self-dev scan`
 
 One-shot self-development scan: runs a collector tick then the HERMES-06 GAP-B capability evolver pass, and prints the `CollectorReport` + `EvolverReport`. Bridging command until HERMES-01 cron scheduling ships. WAL frames are emitted via a temporary segment that is cleaned up on exit
+
+## `neoth self-edit`
+
+GOLD-FEAT-05 — propose a source-code edit against NEOTH's own source tree. Five-layer fail-closed gate stack: kill-switch, allowlist, permission (Elevated/Full only), worktree isolation, green-test. Requires `freedom.yaml::coding.self_edit.enabled = true`
+
+- `--diff <FILE>` — Path to the unified-diff (`.patch`) file to evaluate and apply
+- `--dry-run` — Evaluate all five gates but do NOT apply the diff to the live tree
+- `--yes` — Acknowledge the self-edit before applying. REQUIRED at Elevated/Full autonomy — the permission gate (Layer 3) refuses a self-source edit without this explicit ack (policy: never auto-apply, even at Full). Not needed for `--dry-run`, which never applies to the live tree
 
 ## `neoth self-improve`
 

@@ -42,6 +42,14 @@
 
 pub mod analyze;
 pub mod brainstorm;
+/// GOLD-FEAT-05 — self-source-edit engine: source root detection, unified-diff
+/// parsing (path extraction, SHA-256 hash, line counter).
+/// Consumed by `self_source_gate` and the `neoth self-edit` CLI.
+pub mod self_source;
+/// GOLD-FEAT-05 — five-layer fail-closed gate stack for self-source edits.
+/// Fail-closed: any gate failure refuses the request without touching the live
+/// source tree. WAL audit via `EXTENDED/SelfEditProposed` + `SelfEditApplied`.
+pub mod self_source_gate;
 /// QU-05 (Session 28) — `cargo check --message-format=json` diagnostic
 /// parser for the validate→fix→escalate loop. Pure-fn half: parse the
 /// captured JSON stream into structured diagnostics + format them for

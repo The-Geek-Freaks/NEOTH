@@ -318,6 +318,11 @@ pub struct CodingConfig {
     /// operator sovereignty. Kill-switch for cost-sensitive setups.
     #[serde(default = "default_coding_gate")]
     pub plan_review: bool,
+    /// GOLD-FEAT-05 — five-layer fail-closed gate stack for self-source edits.
+    /// Default: kill-switch `enabled = false` (all requests refused until the
+    /// operator explicitly opts in via `freedom.yaml::coding.self_edit.enabled`).
+    #[serde(default)]
+    pub self_edit: SelfEditConfig,
 }
 
 fn default_test_timeout_secs() -> u64 {
@@ -328,6 +333,14 @@ fn default_coding_gate() -> bool {
     true
 }
 
+fn default_self_edit_max_lines() -> usize {
+    200
+}
+
+fn default_self_edit_require_green() -> bool {
+    true
+}
+
 impl Default for CodingConfig {
     fn default() -> Self {
         Self {
@@ -335,6 +348,60 @@ impl Default for CodingConfig {
             test_timeout_secs: default_test_timeout_secs(),
             brainstorm_gate: default_coding_gate(),
             plan_review: default_coding_gate(),
+            self_edit: SelfEditConfig::default(),
+        }
+    }
+}
+
+/// GOLD-FEAT-05 — self-source-edit safety configuration.
+///
+/// Lives at `freedom.yaml::coding.self_edit`.
+///
+/// **Default: all requests refused** (`enabled = false`). The operator must
+/// set `enabled: true` AND populate `allowed_modules` to permit any edit.
+///
+/// Gate stack summary (all five must pass in order):
+/// 1. `enabled` kill-switch (Layer 1).
+/// 2. `allowed_modules` allowlist + hard-deny paths (Layer 2).
+/// 3. Autonomy permission gate — `Action::SelfSourceEdit` (Layer 3).
+/// 4. Worktree isolation — apply in a temp `git worktree` (Layer 4).
+/// 5. Green-test gate — `cargo check` must pass in the worktree (Layer 5).
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SelfEditConfig {
+    /// Layer-1 kill-switch. **Default `false`** — refuses ALL self-edit
+    /// requests until the operator explicitly opts in.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Positive allowlist of path prefixes (relative to source root) that a
+    /// diff MAY touch. An empty list means DENY-ALL (the default).
+    ///
+    /// Recommended minimal setting: `["src/cli", "src/coding"]`.
+    #[serde(default)]
+    pub allowed_modules: Vec<String>,
+    /// Source-root override. `None` = auto-detect from binary path (walk up to
+    /// the workspace `Cargo.toml`).
+    #[serde(default)]
+    pub source_root: Option<std::path::PathBuf>,
+    /// Hard cap on total changed lines (additions `+` + removals `-` in the
+    /// diff, excluding header lines). Enforced by Layer 2. Default 200.
+    #[serde(default = "default_self_edit_max_lines")]
+    pub max_lines_changed: usize,
+    /// Require the isolated worktree `cargo check` to pass before applying to
+    /// the live tree. Default `true`. Setting `false` skips Layer 5 —
+    /// **development/test use only**.
+    #[serde(default = "default_self_edit_require_green")]
+    pub require_green_tests: bool,
+}
+
+impl Default for SelfEditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            allowed_modules: Vec::new(),
+            source_root: None,
+            max_lines_changed: default_self_edit_max_lines(),
+            require_green_tests: default_self_edit_require_green(),
         }
     }
 }

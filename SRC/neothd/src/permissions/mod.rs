@@ -263,6 +263,31 @@ pub enum Action {
         /// The `id` field of the job being registered.
         job_id: String,
     },
+    /// GOLD-FEAT-05 — propose a source-code edit against NEOTH's OWN source
+    /// tree via `neoth self-edit --diff <file>`.
+    ///
+    /// Highest blast-radius source-mutation action: a compromised diff applied
+    /// to the live tree is unrestricted modification of the running daemon's
+    /// own code. Gate table:
+    ///
+    /// | Level    | Decision                                                      |
+    /// |----------|---------------------------------------------------------------|
+    /// | Strict   | Deny — source edits never permitted below Elevated            |
+    /// | Standard | Deny                                                          |
+    /// | Elevated | Confirm — operator must ack each self-edit                    |
+    /// | Full     | Confirm — NEVER auto-Allow (mirrors SelfBinaryReplace policy) |
+    ///
+    /// **Never leasable** — no lease may pre-authorise a self-source edit;
+    /// each call must pass the per-call autonomy gate.
+    ///
+    /// The five-layer gate stack in `coding::self_source_gate` runs BEFORE
+    /// this action reaches `evaluate`; this action represents the autonomy
+    /// (Layer 3) decision only. Layers 1, 2, 4, 5 are enforced by the gate.
+    SelfSourceEdit {
+        /// Paths the diff touches (relative to source root, stripped of `a/`/`b/`
+        /// unified-diff prefixes). Non-empty; the gate validates this.
+        target_paths: Vec<String>,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -441,7 +466,11 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         // scripts may pre-authorise a skill or cron toggle; every self-toggle
         // must pass through the per-call operator gate.
         | Action::SelfSkillToggle { .. }
-        | Action::SelfCronRegister { .. } => None,
+        | Action::SelfCronRegister { .. }
+        // GOLD-FEAT-05: never leasable — each self-source edit must pass the
+        // per-call autonomy gate. No lease may pre-authorise editing NEOTH's
+        // own source code (blast-radius equivalent to SelfBinaryReplace).
+        | Action::SelfSourceEdit { .. } => None,
     }
 }
 
@@ -522,6 +551,12 @@ fn evaluate_strict(action: &Action) -> Decision {
         )),
         Action::SelfCronRegister { job_id } => Decision::Deny(format!(
             "strict: self-register cron '{job_id}' denied — self-activation requires Elevated+"
+        )),
+        // GOLD-FEAT-05: strict is the floor — source edits denied outright.
+        // Editing NEOTH's own code requires at minimum Elevated.
+        Action::SelfSourceEdit { target_paths } => Decision::Deny(format!(
+            "strict: self-source edit of {} path(s) denied — requires Elevated or Full autonomy",
+            target_paths.len()
         )),
     }
 }
@@ -618,6 +653,12 @@ fn evaluate_standard(action: &Action) -> Decision {
         Action::SelfCronRegister { job_id } => Decision::Deny(format!(
             "standard: self-register cron '{job_id}' denied — self-activation requires Elevated+"
         )),
+        // GOLD-FEAT-05: Standard denied — same floor as Strict for self-source
+        // edits. Modifying NEOTH's own source requires Elevated+.
+        Action::SelfSourceEdit { target_paths } => Decision::Deny(format!(
+            "standard: self-source edit of {} path(s) denied — requires Elevated or Full autonomy",
+            target_paths.len()
+        )),
     }
 }
 
@@ -713,6 +754,14 @@ fn evaluate_elevated(action: &Action) -> Decision {
         Action::SelfCronRegister { job_id } => Decision::Confirm(format!(
             "elevated: self-register cron '{job_id}' requires confirm — \
              cron registration always requires explicit confirm"
+        )),
+        // GOLD-FEAT-05: Elevated → Confirm. The operator must ack each
+        // self-source edit individually; no auto-allow path at Elevated.
+        // This mirrors SelfBinaryReplace: high blast radius → always confirm.
+        Action::SelfSourceEdit { target_paths } => Decision::Confirm(format!(
+            "elevated: self-source edit of {} path(s) requires confirm — \
+             this modifies NEOTH's own source code (requires explicit operator ack)",
+            target_paths.len()
         )),
     }
 }
@@ -835,6 +884,17 @@ fn evaluate_full(action: &Action) -> Decision {
         Action::SelfCronRegister { job_id } => Decision::Confirm(format!(
             "full: self-register cron '{job_id}' requires confirm — \
              cron registration is never auto-allowed (use --confirm-cron)"
+        )),
+        // GOLD-FEAT-05: NEVER auto-Allow even at Full. Mirrors SelfBinaryReplace
+        // — a compromised diff applied to the live source tree is unrestricted
+        // source-level RCE. The operator confirms each self-edit explicitly;
+        // no amount of autonomy level removes this gate (per the spec: "gate
+        // results in Confirm at Elevated and Full; NEVER Allow at any level").
+        Action::SelfSourceEdit { target_paths } => Decision::Confirm(format!(
+            "full: self-source edit of {} path(s) requires confirm — \
+             modifies NEOTH's own source code; never auto-allowed at any level \
+             (same policy as SelfBinaryReplace)",
+            target_paths.len()
         )),
     }
 }
