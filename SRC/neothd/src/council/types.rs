@@ -352,6 +352,7 @@ impl CouncilDebate {
         }
         best.map(|(r, _)| r)
     }
+
 }
 
 /// Helper for converting a `Duration` to milliseconds without losing

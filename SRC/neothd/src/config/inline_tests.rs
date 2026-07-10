@@ -1003,3 +1003,56 @@ mod tests {
         assert_eq!(re, parsed);
     }
 }
+
+#[cfg(test)]
+mod council_weighting_tests {
+    use super::super::*;
+    use crate::config::inference::CouncilConfig;
+
+    /// CW-01 / 26c3c903 bug-class pin: absent `council:` yaml block,
+    /// empty block, and `CouncilConfig::default()` must yield identical
+    /// locality field values.
+    #[test]
+    fn council_locality_serde_default_matches_rust_default() {
+        let rust_default = CouncilConfig::default();
+
+        let absent: FreedomConfig =
+            serde_yaml::from_str("operator_id: a\n").expect("parse absent council");
+        let empty_block: FreedomConfig =
+            serde_yaml::from_str("operator_id: a\ncouncil: {}\n")
+                .expect("parse empty council block");
+        let explicit: FreedomConfig = serde_yaml::from_str(
+            "operator_id: a\ncouncil:\n  locality_tie_break: true\n  locality_tie_epsilon: 0.05\n  local_score_bonus: 0.0\n",
+        )
+        .expect("parse explicit locality defaults");
+
+        for (label, cfg) in [
+            ("absent", &absent.council),
+            ("empty_block", &empty_block.council),
+            ("explicit", &explicit.council),
+        ] {
+            assert_eq!(
+                cfg.locality_tie_break, rust_default.locality_tie_break,
+                "{label}: locality_tie_break mismatch"
+            );
+            assert!(
+                (cfg.locality_tie_epsilon - rust_default.locality_tie_epsilon).abs() < 1e-9,
+                "{label}: locality_tie_epsilon mismatch (got {}, want {})",
+                cfg.locality_tie_epsilon,
+                rust_default.locality_tie_epsilon
+            );
+            assert!(
+                (cfg.local_score_bonus - rust_default.local_score_bonus).abs() < 1e-9,
+                "{label}: local_score_bonus mismatch"
+            );
+        }
+
+        // pin the concrete default values so regressions are obvious
+        assert!(rust_default.locality_tie_break, "tie_break must default true");
+        assert!(
+            (rust_default.locality_tie_epsilon - 0.05).abs() < 1e-9,
+            "epsilon must default to 0.05"
+        );
+        assert_eq!(rust_default.local_score_bonus, 0.0, "bonus must default to 0.0");
+    }
+}

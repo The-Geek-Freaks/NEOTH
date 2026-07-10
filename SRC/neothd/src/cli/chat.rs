@@ -5827,6 +5827,7 @@ pub(crate) fn select_winner_role_agnostic(
     mode: crate::config::inference::SelectionMode,
     routing_weights: Option<&crate::memory::routing_weights::RoutingWeights>,
     topic_hash: u64,
+    council_cfg: Option<&crate::config::inference::CouncilConfig>,
 ) -> Option<RoleAgnosticWinner> {
     use crate::config::inference::SelectionMode;
     if matches!(mode, SelectionMode::LegacyMajority) {
@@ -5865,6 +5866,18 @@ pub(crate) fn select_winner_role_agnostic(
             (r.role, composite)
         })
         .collect();
+
+    // COUNCIL-WEIGHTING-01 — locality priors (local bonus + tie-break nudge)
+    // applied to the composite scores BEFORE any selection path reads them,
+    // so winner choice and surfaced score stay consistent.
+    let mut scores = scores;
+    if let Some(cfg) = council_cfg {
+        crate::council::quality_score::apply_locality_weights(
+            &mut scores,
+            &outcome.responses,
+            cfg,
+        );
+    }
 
     // ConsensusOrBest: prefer the Verdict's winning_text when
     // present + the corresponding hemisphere is identifiable. When
@@ -6307,6 +6320,7 @@ pub(crate) async fn dispatch_council_with_recovery(
         config.council.selection_mode,
         Some(&rw_read),
         prompt_hash_outer,
+        Some(&config.council),
     );
     // GOLD-ADAPT-LOWKEY-07 — transparent-core: surface the council's Layer-B
     // (verdict, dissent, per-hemisphere provider/score/latency/refusal, what
@@ -8435,7 +8449,7 @@ mod tests {
                 "claude says",
             )],
         );
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::LegacyMajority, None, 0);
+        let winner = select_winner_role_agnostic(&outcome, SelectionMode::LegacyMajority, None, 0, None);
         assert!(winner.is_none());
     }
 
@@ -8451,7 +8465,7 @@ mod tests {
                 mk_resp_picksel(HemisphereRole::Right, "claude_cli", "claude text"),
             ],
         );
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0)
+        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None)
             .expect("BestAlways picks a winner");
         assert_eq!(winner.role, HemisphereRole::Right);
         assert_eq!(winner.provider, "claude_cli");
@@ -8467,7 +8481,7 @@ mod tests {
                 mk_resp_picksel(HemisphereRole::Right, "local_qwen", "qwen text"),
             ],
         );
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0)
+        let winner = select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0, None)
             .expect("ConsensusOrBest picks a winner");
         // winning_text = "claude text" → matches the claude_cli response.
         assert_eq!(winner.text, "claude text");
@@ -8556,7 +8570,7 @@ mod tests {
             mk_resp_picksel(HemisphereRole::Left, "local_qwen", "qwen says A"),
             mk_resp_picksel(HemisphereRole::Right, "claude_cli", "claude says B"),
         ]);
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0)
+        let winner = select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0, None)
             .expect("falls back to best_response");
         // winning_text is None on Split → falls back to best_response,
         // which picks the higher-tier claude_cli.
@@ -8572,7 +8586,7 @@ mod tests {
             "claude_cli",
             "thoughtful answer with structure\n```rust\nfn x() {}\n```\n- list",
         )]);
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0)
+        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None)
             .expect("BestAlways winner");
         // claude_cli tier 1.0 + non-zero dynamic + 0.5 memory + 0 diversity
         // total ≥ 0.40 (tier component alone) + memory component
@@ -8597,7 +8611,7 @@ mod tests {
             refusal: None,
         };
         let outcome = mk_outcome_split(vec![errored]);
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0);
+        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None);
         assert!(winner.is_none(), "no usable responses → fall through");
     }
 

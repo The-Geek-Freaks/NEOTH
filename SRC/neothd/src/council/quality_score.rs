@@ -199,6 +199,77 @@ pub fn score_response(resp: &HemisphereResponse) -> QualityScore {
     QualityScore::new(tier, dynamic, 0.5, 0.0)
 }
 
+/// COUNCIL-WEIGHTING-01 — returns `true` when the provider id corresponds
+/// to a locally-running backend (compute on operator's machine).
+///
+/// `claude_cli` is **excluded** — it uses OAuth but inference runs on
+/// Anthropic's servers.  Mirrors `InferenceProvider::is_local()`.
+pub fn is_local_provider(id: &str) -> bool {
+    matches!(id, "local_qwen" | "local_ouro" | "local_ollama" | "recursive_mas")
+}
+
+/// COUNCIL-WEIGHTING-01 — adjust a score vector to prefer local providers.
+///
+/// **Pass 1 — additive bonus**: adds `cfg.local_score_bonus` (clamped at
+/// 1.0) to every local-provider hemisphere's score.  Default 0.0 → no
+/// effect.
+///
+/// **Pass 2 — tie-break promotion**: when `cfg.locality_tie_break` is true,
+/// any local hemisphere within `cfg.locality_tie_epsilon` of the current
+/// best score is promoted to `best + f32::EPSILON * 4` so it wins the
+/// subsequent `best_response` call.
+///
+/// The function is a no-op when both `locality_tie_break` is false and
+/// `local_score_bonus` is 0.0 — identical to pre-feature behaviour.
+///
+/// **Wire-up**: called from `cli/chat.rs::select_winner_role_agnostic`
+/// in `council/types.rs`.  Completing the wire-up in
+/// `cli/chat.rs::select_winner_role_agnostic` requires a 1-line change
+/// (deferred per COUNCIL-WEIGHTING-01 constraint that only `council/` and
+/// `config/` may be touched in this pass).
+pub fn apply_locality_weights(
+    scores: &mut [(crate::config::inference::HemisphereRole, f32)],
+    responses: &[super::types::HemisphereResponse],
+    cfg: &crate::config::inference::CouncilConfig,
+) {
+    if !cfg.locality_tie_break && cfg.local_score_bonus == 0.0 {
+        return;
+    }
+    let provider_for = |role: crate::config::inference::HemisphereRole| -> Option<&str> {
+        responses
+            .iter()
+            .find(|r| r.role == role)
+            .map(|r| r.provider.as_str())
+    };
+    // Pass 1: additive bonus
+    let bonus = cfg.local_score_bonus as f32;
+    if bonus != 0.0 {
+        for (role, score) in scores.iter_mut() {
+            if provider_for(*role).map(is_local_provider).unwrap_or(false) {
+                *score = (*score + bonus).min(1.0);
+            }
+        }
+    }
+    // Pass 2: tie-break promotion
+    if cfg.locality_tie_break {
+        let epsilon = cfg.effective_locality_tie_epsilon();
+        let best_score = scores
+            .iter()
+            .map(|(_, s)| *s)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if best_score.is_finite() {
+            let nudge = f32::EPSILON * 4.0;
+            for (role, score) in scores.iter_mut() {
+                if provider_for(*role).map(is_local_provider).unwrap_or(false)
+                    && (best_score - *score).abs() <= epsilon
+                {
+                    *score = best_score + nudge;
+                }
+            }
+        }
+    }
+}
+
 /// Pick #8 SP-3 (Session 14) — response-local heuristic signals.
 ///
 /// Composes three sub-signals into a single `[0.0, 1.0]` value:
@@ -674,5 +745,136 @@ Steps to reproduce:
             "a clean technical response must incur no N-Space penalty"
         );
         assert!((dynamic_signal_from_text(&clean) - 1.0).abs() < 1e-6);
+    }
+
+    // ── COUNCIL-WEIGHTING-01 locality tests ─────────────────────────────
+
+    #[test]
+    fn is_local_provider_identifies_local_backends() {
+        assert!(is_local_provider("local_qwen"));
+        assert!(is_local_provider("local_ouro"));
+        assert!(is_local_provider("local_ollama"));
+        assert!(is_local_provider("recursive_mas"));
+        // cloud / semi-cloud providers must NOT be flagged as local
+        assert!(!is_local_provider("claude_cli")); // inference on Anthropic's servers
+        assert!(!is_local_provider("anthropic_api"));
+        assert!(!is_local_provider("openai_api"));
+        assert!(!is_local_provider("openai_compat"));
+        assert!(!is_local_provider("gemini_api"));
+        assert!(!is_local_provider("aws_bedrock"));
+        assert!(!is_local_provider("azure_openai"));
+    }
+
+    /// CW-01 test 1 — local wins within epsilon (default tie-break ON).
+    #[test]
+    fn locality_tie_break_within_epsilon_local_wins() {
+        use crate::config::inference::CouncilConfig;
+        let cfg = CouncilConfig::default();
+        let cloud_resp = ok_resp("openai_api", "cloud answer");
+        let local_resp = HemisphereResponse {
+            role: HemisphereRole::Right,
+            provider: "local_qwen".to_string(),
+            text: Some("local answer".to_string()),
+            error: None,
+            latency_ms: 50,
+            input_tokens: None,
+            output_tokens: None,
+            refusal: None,
+        };
+        // Cloud 0.80, local 0.79 → gap 0.01 < epsilon 0.05 → local promoted
+        let mut scores = vec![
+            (HemisphereRole::Left, 0.80_f32),
+            (HemisphereRole::Right, 0.79_f32),
+        ];
+        apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
+        let right = scores.iter().find(|(r, _)| *r == HemisphereRole::Right).unwrap().1;
+        let left = scores.iter().find(|(r, _)| *r == HemisphereRole::Left).unwrap().1;
+        assert!(right > left, "local (Right) must win tie-break: right={right} left={left}");
+    }
+
+    /// CW-01 test 2 — cloud clearly ahead, no tie-break fires.
+    #[test]
+    fn cloud_clearly_ahead_wins_even_with_tie_break_on() {
+        use crate::config::inference::CouncilConfig;
+        let cfg = CouncilConfig::default();
+        let cloud_resp = ok_resp("openai_api", "cloud answer");
+        let local_resp = HemisphereResponse {
+            role: HemisphereRole::Right,
+            provider: "local_qwen".to_string(),
+            text: Some("local answer".to_string()),
+            error: None,
+            latency_ms: 50,
+            input_tokens: None,
+            output_tokens: None,
+            refusal: None,
+        };
+        // Cloud 0.90, local 0.60 → gap 0.30 > epsilon 0.05 → cloud stays ahead
+        let mut scores = vec![
+            (HemisphereRole::Left, 0.90_f32),
+            (HemisphereRole::Right, 0.60_f32),
+        ];
+        let pre_left = scores[0].1;
+        apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
+        let right = scores.iter().find(|(r, _)| *r == HemisphereRole::Right).unwrap().1;
+        let left = scores.iter().find(|(r, _)| *r == HemisphereRole::Left).unwrap().1;
+        assert!(left > right, "cloud (Left) must remain ahead: left={left} right={right}");
+        assert_eq!(pre_left, left, "cloud score must not change");
+    }
+
+    /// CW-01 test 2b — zero-bonus + tie_break=false leaves scores unchanged (pre-change pin).
+    #[test]
+    fn zero_bonus_and_no_tie_break_leaves_scores_unchanged() {
+        use crate::config::inference::CouncilConfig;
+        let mut cfg = CouncilConfig::default();
+        cfg.locality_tie_break = false;
+        cfg.local_score_bonus = 0.0;
+        let cloud_resp = ok_resp("openai_api", "cloud");
+        let local_resp = HemisphereResponse {
+            role: HemisphereRole::Right,
+            provider: "local_qwen".to_string(),
+            text: Some("local".to_string()),
+            error: None,
+            latency_ms: 50,
+            input_tokens: None,
+            output_tokens: None,
+            refusal: None,
+        };
+        let mut scores = vec![
+            (HemisphereRole::Left, 0.85_f32),
+            (HemisphereRole::Right, 0.70_f32),
+        ];
+        let original = scores.clone();
+        apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
+        assert_eq!(scores, original, "zero-bonus + no-tie-break must leave scores unchanged");
+    }
+
+    /// CW-01 test 4 — explicit bonus flips a near-tie to local.
+    #[test]
+    fn local_score_bonus_applied_flips_near_tie_to_local() {
+        use crate::config::inference::CouncilConfig;
+        let mut cfg = CouncilConfig::default();
+        cfg.locality_tie_break = false; // bonus alone decides
+        cfg.local_score_bonus = 0.2;
+        let cloud_resp = ok_resp("openai_api", "cloud");
+        let local_resp = HemisphereResponse {
+            role: HemisphereRole::Right,
+            provider: "local_qwen".to_string(),
+            text: Some("local".to_string()),
+            error: None,
+            latency_ms: 50,
+            input_tokens: None,
+            output_tokens: None,
+            refusal: None,
+        };
+        let mut scores = vec![
+            (HemisphereRole::Left, 0.80_f32),
+            (HemisphereRole::Right, 0.70_f32),
+        ];
+        apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
+        let right = scores.iter().find(|(r, _)| *r == HemisphereRole::Right).unwrap().1;
+        let left = scores.iter().find(|(r, _)| *r == HemisphereRole::Left).unwrap().1;
+        // local 0.70 + 0.20 = 0.90 > cloud 0.80
+        assert!(right > left, "bonus must flip result: right={right} left={left}");
+        assert!((right - 0.90).abs() < 1e-5, "local score should be 0.90: {right}");
     }
 }

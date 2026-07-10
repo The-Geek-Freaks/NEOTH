@@ -218,6 +218,27 @@ impl InferenceProvider {
             InferenceProvider::RecursiveMas => ProviderKind::RecursiveMas,
         }
     }
+
+    /// Returns `true` for providers whose compute runs entirely on the
+    /// operator's machine — data never leaves the local process.
+    ///
+    /// Used by COUNCIL-WEIGHTING-01 (locality weighting in `cli/chat.rs::select_winner_role_agnostic`)
+    /// to classify hemispheres without hardcoding provider-name lists inside
+    /// scoring logic. Mirrors the string-based `council::quality_score::is_local_provider`.
+    ///
+    /// `ClaudeCli` is explicitly **excluded**: the `claude` CLI uses local
+    /// OAuth but inference runs on Anthropic's servers (data leaves the
+    /// local process). `RecursiveMas` is included as a VRAM-gated local
+    /// sidecar with no external inference calls.
+    pub fn is_local(self) -> bool {
+        matches!(
+            self,
+            InferenceProvider::LocalQwen
+                | InferenceProvider::LocalOuro
+                | InferenceProvider::LocalOllama
+                | InferenceProvider::RecursiveMas
+        )
+    }
 }
 
 /// One hemisphere's provider binding. Reuses the existing single-provider
@@ -630,6 +651,17 @@ fn default_groundtruth_injection() -> bool {
     true
 }
 
+/// COUNCIL-WEIGHTING-01 — locality tie-break is ON by default so local
+/// providers win effective ties without requiring explicit operator config.
+fn default_locality_tie_break() -> bool {
+    true
+}
+
+/// COUNCIL-WEIGHTING-01 — default tie window: 5 % of the [0,1] score scale.
+fn default_locality_tie_epsilon() -> f64 {
+    0.05
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CouncilConfig {
     /// Winner-selection strategy. See [`SelectionMode`].
@@ -810,6 +842,39 @@ pub struct CouncilConfig {
     /// and post-response check). Features-default-on rule: `true`.
     #[serde(default = "default_groundtruth_injection")]
     pub groundtruth_injection: bool,
+
+    /// COUNCIL-WEIGHTING-01 — local-first tie-break.
+    ///
+    /// When `true` (default), a local-provider hemisphere whose composite
+    /// score is within `locality_tie_epsilon` of the current best score is
+    /// promoted to win the debate.  Prevents cloud models from winning
+    /// purely by "tier gravity" when response quality is equivalent.
+    ///
+    /// Applied via locality weighting in `cli/chat.rs::select_winner_role_agnostic`
+    /// (council/types.rs).  Set `false` to fall back to raw score order.
+    #[serde(default = "default_locality_tie_break")]
+    pub locality_tie_break: bool,
+
+    /// COUNCIL-WEIGHTING-01 — epsilon window for the locality tie-break.
+    ///
+    /// Two scores within this distance count as a tie for the local-first
+    /// promotion.  Default `0.05` (5 % of the [0,1] composite scale).
+    /// Raise to widen the promotion window; lower to tighten.
+    #[serde(default = "default_locality_tie_epsilon")]
+    pub locality_tie_epsilon: f64,
+
+    /// COUNCIL-WEIGHTING-01 — explicit additive prior for local providers.
+    ///
+    /// Added to the composite score of every local-provider hemisphere
+    /// **before** the tie-break is evaluated.  Default `0.0` — **no
+    /// behaviour change beyond the tie-break itself**.  Operators who
+    /// always want local to win can raise this (e.g. `0.2` gives local
+    /// providers a 20-point head-start on the [0,1] composite scale).
+    ///
+    /// Applied by `council::quality_score::apply_locality_weights`.
+    /// The raw `QualityScore` stored in WAL frames is never mutated.
+    #[serde(default)]
+    pub local_score_bonus: f64,
 }
 
 /// SPEC-03b operator override surface for the council smart-trigger gates.
@@ -952,6 +1017,11 @@ impl CouncilConfig {
     pub fn effective_max_recursion_depth(&self) -> u8 {
         self.max_recursion_depth
             .unwrap_or(DEFAULT_MAX_RECURSION_DEPTH)
+    }
+
+    /// COUNCIL-WEIGHTING-01 — epsilon cast to f32 for score comparison.
+    pub fn effective_locality_tie_epsilon(&self) -> f32 {
+        self.locality_tie_epsilon as f32
     }
 }
 
