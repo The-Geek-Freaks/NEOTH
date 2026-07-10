@@ -598,6 +598,13 @@ fn main() -> Result<()> {
             let asx = read_nested_i64_in_freedom(fp, "obsidian_auto_sync_secs", 0);
             window.set_obs_auto_sync_secs_edit(asx as i32);
             window.set_obs_reader_enabled_edit(read_nested_bool_in_freedom(fp, "obsidian_vault_reader_enabled", false));
+            // GUI-DES-SETTINGS-PRELOAD-01 — preload config fields
+            window.set_obs_preload_template_dir_edit(
+                read_nested_str_in_freedom(fp, "obsidian_preload_template_dir", "").into());
+            window.set_obs_preload_subdir_edit(
+                read_nested_str_in_freedom(fp, "obsidian_preload_subdir", "").into());
+            window.set_obs_knowledge_preload_dirs_edit(
+                read_nested_seq_in_freedom(fp, "knowledge_preload_dirs").join("\n").into());
         }
 
         window.set_status_line(
@@ -4706,6 +4713,102 @@ fn main() -> Result<()> {
                 }).ok();
             });
         });
+
+        // GUI-DES-SETTINGS-PRELOAD-01 — obsidian_preload_template_dir coalescing writer.
+        // Empty string → Null (key cleared); non-empty → string value.
+        let tx_preload_tmpl = make_coalescing_writer(
+            neoth_dir.join("freedom.yaml"),
+            neoth_dir.join(".reload-requested"),
+            "obsidian_preload_template_dir", "Preload template dir",
+            window.as_weak(), None);
+        window.on_obs_preload_template_dir_changed(move |raw: slint::SharedString| {
+            let s = raw.to_string();
+            let v = if s.trim().is_empty() {
+                serde_yaml::Value::Null
+            } else {
+                serde_yaml::Value::from(s.as_str())
+            };
+            tx_preload_tmpl.send(v).ok();
+        });
+
+        // Browse… for preload template dir — same rfd pattern as on_obs_browse_clicked.
+        let nd_ptd = neoth_dir.clone();
+        let weak_ptd = window.as_weak();
+        window.on_obs_browse_preload_template_dir_clicked(move || {
+            let w2 = weak_ptd.clone();
+            let nd2 = nd_ptd.clone();
+            std::thread::spawn(move || {
+                let picked = rfd::FileDialog::new()
+                    .set_title("Select preload template directory (e.g. L6_Vault_Template)")
+                    .pick_folder();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(p) = picked {
+                        if let Some(w) = w2.upgrade() {
+                            let s: slint::SharedString =
+                                p.to_string_lossy().to_string().into();
+                            w.set_obs_preload_template_dir_edit(s);
+                        }
+                        let fp = nd2.join("freedom.yaml");
+                        let rd = nd2.join(".reload-requested");
+                        let path_str = p.to_string_lossy().to_string();
+                        let result = set_nested_in_freedom(
+                                &fp, "obsidian_preload_template_dir",
+                                serde_yaml::Value::from(path_str.as_str()))
+                            .and_then(|_| std::fs::write(&rd, b"reload\n")
+                                .map_err(|e| anyhow::anyhow!(e)));
+                        match result {
+                            Ok(_) => push_toast(
+                                &w2, "success", "Preload template dir",
+                                "set — daemon reloading"),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&w2, "warn", "Preload template dir write failed", &msg);
+                            }
+                        }
+                    }
+                }).ok();
+            });
+        });
+
+        // obsidian_preload_subdir coalescing writer.
+        let tx_preload_sub = make_coalescing_writer(
+            neoth_dir.join("freedom.yaml"),
+            neoth_dir.join(".reload-requested"),
+            "obsidian_preload_subdir", "Preload subdir",
+            window.as_weak(), None);
+        window.on_obs_preload_subdir_changed(move |raw: slint::SharedString| {
+            let s = raw.to_string();
+            let v = if s.trim().is_empty() {
+                serde_yaml::Value::Null
+            } else {
+                serde_yaml::Value::from(s.as_str())
+            };
+            tx_preload_sub.send(v).ok();
+        });
+
+        // knowledge_preload_dirs coalescing writer.
+        // TextEdit text has one path per line; split, drop blank lines, write YAML sequence.
+        // Empty result → Null (key cleared from config).
+        let tx_kp_dirs = make_coalescing_writer(
+            neoth_dir.join("freedom.yaml"),
+            neoth_dir.join(".reload-requested"),
+            "knowledge_preload_dirs", "Knowledge preload dirs",
+            window.as_weak(), None);
+        window.on_obs_knowledge_preload_dirs_changed(move |raw: slint::SharedString| {
+            let text = raw.to_string();
+            let paths: Vec<serde_yaml::Value> = text
+                .lines()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(serde_yaml::Value::from)
+                .collect();
+            let v = if paths.is_empty() {
+                serde_yaml::Value::Null
+            } else {
+                serde_yaml::Value::Sequence(paths)
+            };
+            tx_kp_dirs.send(v).ok();
+        });
     }
 
     // Pick #32 — Settings panel "Re-run wizard". Reset the wizard
@@ -5595,10 +5698,10 @@ fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> 
 
 /// DES-09 helper — read a nested string from freedom.yaml.
 /// Returns `default` on missing file / key / malformed YAML.
-fn read_nested_str_in_freedom<'a>(
+fn read_nested_str_in_freedom(
     path: &Path,
     dotted_key: &str,
-    default: &'a str,
+    default: &str,
 ) -> String {
     let Ok(body) = std::fs::read_to_string(path) else {
         return default.to_string();
@@ -5673,6 +5776,106 @@ fn format_cap_f64(v: f64) -> String {
         format!("{}", v as i64)
     } else {
         format!("{v}")
+    }
+}
+
+/// GUI-DES-SETTINGS-PRELOAD-01 — read a top-level YAML sequence as Vec<String>.
+///
+/// Only top-level keys are supported (no dotted paths) because
+/// `knowledge_preload_dirs` is a bare list at the root of freedom.yaml.
+/// Returns an empty vec on missing file / missing key / non-sequence / malformed YAML.
+fn read_nested_seq_in_freedom(path: &Path, key: &str) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return Vec::new();
+    };
+    let serde_yaml::Value::Mapping(map) = root else {
+        return Vec::new();
+    };
+    map.get(serde_yaml::Value::from(key))
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// GUI-DES-SETTINGS-PRELOAD-01 — unit tests for preload helpers.
+#[cfg(test)]
+mod preload01_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_yaml(dir: &TempDir, content: &str) -> std::path::PathBuf {
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn seq_reads_list_as_vec() {
+        let dir = TempDir::new().unwrap();
+        let path = write_yaml(
+            &dir,
+            "knowledge_preload_dirs:\n  - /home/user/docs\n  - /var/data/kb\n",
+        );
+        let got = read_nested_seq_in_freedom(&path, "knowledge_preload_dirs");
+        assert_eq!(got, vec!["/home/user/docs", "/var/data/kb"]);
+    }
+
+    #[test]
+    fn seq_returns_empty_for_missing_key() {
+        let dir = TempDir::new().unwrap();
+        let path = write_yaml(&dir, "other_key: value\n");
+        let got = read_nested_seq_in_freedom(&path, "knowledge_preload_dirs");
+        assert!(got.is_empty(), "expected empty vec, got {got:?}");
+    }
+
+    #[test]
+    fn seq_returns_empty_for_missing_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("does_not_exist.yaml");
+        let got = read_nested_seq_in_freedom(&path, "knowledge_preload_dirs");
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn seq_join_roundtrip() {
+        // Write a seq to yaml, read it back, join with "\n" — matches newline-sep UI text.
+        let dir = TempDir::new().unwrap();
+        let path = write_yaml(&dir, "knowledge_preload_dirs:\n  - /alpha\n  - /beta\n");
+        let got = read_nested_seq_in_freedom(&path, "knowledge_preload_dirs");
+        assert_eq!(got.join("\n"), "/alpha\n/beta");
+    }
+
+    #[test]
+    fn newline_list_to_seq_round_trips() {
+        // Simulates on_obs_knowledge_preload_dirs_changed: multiline editor → Vec<String>.
+        let raw = "/home/user/docs\n/var/data/kb\n\n  ";
+        let paths: Vec<String> = raw
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        assert_eq!(paths, vec!["/home/user/docs", "/var/data/kb"]);
+    }
+
+    #[test]
+    fn newline_list_empty_gives_empty_vec() {
+        let raw = "\n  \n\t\n";
+        let paths: Vec<String> = raw
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        assert!(paths.is_empty());
     }
 }
 

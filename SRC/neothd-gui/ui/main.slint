@@ -499,6 +499,14 @@ export component MainWindow inherits Window {
     callback obs-auto-sync-secs-str-changed(string);
     callback obs-reader-enabled-changed(bool);
     callback obs-browse-clicked();
+    // GUI-DES-SETTINGS-PRELOAD-01 — preload config props + callbacks
+    in-out property <string> obs-preload-template-dir-edit: "";
+    in-out property <string> obs-preload-subdir-edit: "";
+    in-out property <string> obs-knowledge-preload-dirs-edit: "";
+    callback obs-preload-template-dir-changed(string);
+    callback obs-browse-preload-template-dir-clicked();
+    callback obs-preload-subdir-changed(string);
+    callback obs-knowledge-preload-dirs-changed(string);
     // DES-09 Welle A/B/C — settings editor props + callbacks (forwarded to SettingsView)
     in-out property <string> cfg-council-daily-usd: "";
     in-out property <string> cfg-council-max-calls: "";
@@ -2569,6 +2577,14 @@ export component MainWindow inherits Window {
                     obs-auto-sync-secs-str-changed(v) => { root.obs-auto-sync-secs-str-changed(v); }
                     obs-reader-enabled-changed(v) => { root.obs-reader-enabled-changed(v); }
                     obs-browse-clicked => { root.obs-browse-clicked(); }
+                    // GUI-DES-SETTINGS-PRELOAD-01 write-back
+                    obs-preload-template-dir-edit <=> root.obs-preload-template-dir-edit;
+                    obs-preload-subdir-edit <=> root.obs-preload-subdir-edit;
+                    obs-knowledge-preload-dirs-edit <=> root.obs-knowledge-preload-dirs-edit;
+                    obs-preload-template-dir-changed(v) => { root.obs-preload-template-dir-changed(v); }
+                    obs-browse-preload-template-dir-clicked => { root.obs-browse-preload-template-dir-clicked(); }
+                    obs-preload-subdir-changed(v) => { root.obs-preload-subdir-changed(v); }
+                    obs-knowledge-preload-dirs-changed(v) => { root.obs-knowledge-preload-dirs-changed(v); }
                 }
 
                 // Wave 4b — Dreaming / Memory & Self-Awareness.

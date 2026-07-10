@@ -17,7 +17,7 @@
 
 import { Theme } from "theme.slint";
 import { Card, Led, EntranceFade, NeothButton, NeothLineEdit, NeothCheckBox, Kicker, InfoRow, RefreshFooter } from "components.slint";
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, TextEdit } from "std-widgets.slint";
 
 // ── Public component ──────────────────────────────────────────────────────────
 
@@ -50,6 +50,10 @@ export component ObsidianView inherits Rectangle {
     in-out property <string> obs-subdir-edit: "";
     in-out property <int>    obs-auto-sync-secs-edit: 0;
     in-out property <bool>   obs-reader-enabled-edit: false;
+    // GUI-DES-SETTINGS-PRELOAD-01 — preload config fields
+    in-out property <string> obs-preload-template-dir-edit: "";
+    in-out property <string> obs-preload-subdir-edit: "";
+    in-out property <string> obs-knowledge-preload-dirs-edit: "";  // newline-joined Vec<String>
 
     // ── Callbacks fired to Rust ─────────────────────────────────────────────
 
@@ -70,6 +74,11 @@ export component ObsidianView inherits Rectangle {
     callback obs-auto-sync-secs-str-changed(string);  // Rust parses to i64; ignores non-numeric
     callback obs-reader-enabled-changed(bool);
     callback obs-browse-clicked();   // rfd folder picker → fires obs-vault-path-changed
+    // GUI-DES-SETTINGS-PRELOAD-01 — preload field callbacks
+    callback obs-preload-template-dir-changed(string);
+    callback obs-browse-preload-template-dir-clicked();  // rfd folder picker → sets obs-preload-template-dir-edit
+    callback obs-preload-subdir-changed(string);
+    callback obs-knowledge-preload-dirs-changed(string);  // Rust splits on \n → Vec<String>
 
     // ── Layout ────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -444,6 +453,84 @@ export component ObsidianView inherits Rectangle {
                                 toggled(v) => {
                                     root.obs-reader-enabled-edit = v;
                                     root.obs-reader-enabled-changed(v);
+                                }
+                            }
+
+                            // GUI-DES-SETTINGS-PRELOAD-01 — preload template dir row
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "PRELOAD TMPL";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    letter-spacing: Theme.letter-spacing-wide;
+                                    vertical-alignment: center;
+                                    width: 110px;
+                                }
+                                NeothLineEdit {
+                                    placeholder-text: "/path/to/L6_Vault_Template";
+                                    text: root.obs-preload-template-dir-edit;
+                                    horizontal-stretch: 1;
+                                    edited(t) => {
+                                        root.obs-preload-template-dir-edit = t;
+                                        root.obs-preload-template-dir-changed(t);
+                                    }
+                                }
+                                NeothButton {
+                                    label: "Browse…";
+                                    primary: false;
+                                    size: "sm";
+                                    clicked => { root.obs-browse-preload-template-dir-clicked(); }
+                                }
+                            }
+
+                            // preload subdir row
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "PRELOAD SUBDIR";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    letter-spacing: Theme.letter-spacing-wide;
+                                    vertical-alignment: center;
+                                    width: 110px;
+                                }
+                                NeothLineEdit {
+                                    placeholder-text: "NEOTH-Preload";
+                                    text: root.obs-preload-subdir-edit;
+                                    horizontal-stretch: 1;
+                                    edited(t) => {
+                                        root.obs-preload-subdir-edit = t;
+                                        root.obs-preload-subdir-changed(t);
+                                    }
+                                }
+                            }
+
+                            // knowledge preload dirs row (one path per line)
+                            // Used by 'neoth obsidian preload' and by serve auto-preload
+                            // when configured (L6-PRELOAD-AUTORUN-01).
+                            VerticalLayout {
+                                spacing: 4px;
+                                alignment: start;
+                                Text {
+                                    text: "KNOWLEDGE PRELOAD DIRS — one path per line. Used by 'neoth obsidian preload' and by serve auto-preload when configured (L6-PRELOAD-AUTORUN-01).";
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    wrap: word-wrap;
+                                }
+                                TextEdit {
+                                    text: root.obs-knowledge-preload-dirs-edit;
+                                    height: 72px;
+                                    horizontal-stretch: 1;
+                                    edited(t) => {
+                                        root.obs-knowledge-preload-dirs-edit = t;
+                                        root.obs-knowledge-preload-dirs-changed(t);
+                                    }
                                 }
                             }
                         }
