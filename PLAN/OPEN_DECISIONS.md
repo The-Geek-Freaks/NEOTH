@@ -150,7 +150,13 @@ even 'defer indefinitely' counts") closed by the Status table.
 
 ## D-009 WAL opcode space exhaustion — u8 extension track
 
-**Status:** OPEN (filed 2026-07-10, DES-13-AUTO-RESTORE-01 implementation)
+**Status:** PARTIALLY RESOLVED (filed 2026-07-10, DES-13-AUTO-RESTORE-01 implementation).
+**Update same day:** commit `92a28300` shipped `EVENT_TYPE_EXTENDED` — a
+variant of Option A (escape hatch: one u8 opcode fans out to sub-typed
+payloads), already consumed by FEAT-05/06. New event families should use the
+EXTENDED path; the restore audit stays off-WAL (`restore-audit.jsonl`) by
+design — simpler, and audit records carry free-form JSON that never needed a
+WAL band. Option B (u16 WAL v2) remains the clean v1.1 target.
 
 **Context:** The WAL opcode space is a `u8` (0x00–0xFF = 256 slots). As of
 `SRC/neothd/src/wal/events.rs`, all 256 values are assigned or reserved.
