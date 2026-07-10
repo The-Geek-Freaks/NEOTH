@@ -349,6 +349,130 @@ pub(crate) fn spawn_obsidian_wiki_rebuild(
     ))
 }
 
+/// L6-PRELOAD-AUTORUN-01 — one-shot Obsidian vault preload at serve startup.
+///
+/// Spawns a single background task that calls
+/// [`crate::cli::obsidian::preload_template`] for the primary
+/// `obsidian_preload_template_dir` and for each entry in
+/// `knowledge_preload_dirs`.  Each root gets its own state file (keyed by path
+/// hash via [`crate::cli::obsidian::preload_state_path_for`]) so an
+/// unchanged-restart run writes zero chunks.
+///
+/// Gates:
+///   - `obsidian_preload_template_dir` must be `Some`; if unset, returns `None`
+///     with a debug log (most installs hit this branch — no noise).
+///   - `obsidian_vault` must also be set; missing vault emits a `warn!` and
+///     returns `None`.
+///   - Each `knowledge_preload_dirs` entry without a `preload_manifest.yaml` is
+///     skipped with a `warn!` per entry; remaining entries still run.
+///
+/// WAL-free (writes to views.db and vault files, not the WAL).
+/// Returns `None` when preload is not configured.
+pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandle<()>> {
+    use crate::cli::obsidian::{
+        knowledge_root_has_manifest, preload_autorun_decision, preload_state_path_for,
+        PreloadDecision,
+    };
+
+    let (vault, template_dir, subdir) = match preload_autorun_decision(config) {
+        PreloadDecision::Skip => {
+            tracing::debug!(
+                "obsidian_preload_template_dir not set — preload autorun disabled"
+            );
+            return None;
+        }
+        PreloadDecision::WarnNoVault => {
+            warn!(
+                "obsidian_preload_template_dir is set but obsidian_vault is not \
+                 configured — preload autorun skipped"
+            );
+            return None;
+        }
+        PreloadDecision::Run {
+            vault,
+            template_dir,
+            subdir,
+        } => (vault, template_dir, subdir),
+    };
+
+    let knowledge_dirs: Vec<std::path::PathBuf> = config
+        .knowledge_preload_dirs
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+
+    info!(
+        template = %template_dir.display(),
+        vault = %vault.display(),
+        knowledge_roots = knowledge_dirs.len(),
+        "obsidian preload-autorun task spawned (one-shot)"
+    );
+
+    let handle = tokio::spawn(async move {
+        // ── Primary template ─────────────────────────────────────────────
+        let state = preload_state_path_for(&template_dir);
+        match crate::cli::obsidian::preload_template(
+            &template_dir,
+            &vault,
+            &subdir,
+            false, // dry_run
+            true,  // ingest
+            Some(&state),
+            None,
+        )
+        .await
+        {
+            Ok(stats) => info!(
+                files_copied = stats.files_copied,
+                ingested_chunks = stats.ingested_chunks,
+                template = %template_dir.display(),
+                "obsidian preload-autorun: primary template complete"
+            ),
+            Err(e) => warn!(
+                error = %e,
+                template = %template_dir.display(),
+                "obsidian preload-autorun: primary template failed"
+            ),
+        }
+
+        // ── knowledge_preload_dirs ────────────────────────────────────────
+        for root in &knowledge_dirs {
+            if !knowledge_root_has_manifest(root) {
+                warn!(
+                    dir = %root.display(),
+                    "knowledge_preload_dirs entry has no preload_manifest.yaml — skipped"
+                );
+                continue;
+            }
+            let state = preload_state_path_for(root);
+            // Empty subdir → preload_template uses the manifest's default_vault_subdir.
+            match crate::cli::obsidian::preload_template(
+                root,
+                &vault,
+                &std::path::PathBuf::new(),
+                false,
+                true,
+                Some(&state),
+                None,
+            )
+            .await
+            {
+                Ok(stats) => info!(
+                    dir = %root.display(),
+                    files_copied = stats.files_copied,
+                    "obsidian preload-autorun: knowledge root complete"
+                ),
+                Err(e) => warn!(
+                    error = %e,
+                    dir = %root.display(),
+                    "obsidian preload-autorun: knowledge root failed — continuing"
+                ),
+            }
+        }
+    });
+    Some(handle)
+}
+
 /// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron. Spawned only when both
 /// `freedom.yaml::obsidian_vault` AND a source dir are configured (either
 /// `freedom.yaml::self_map_source_dir` or env `NEOTH_SRC_DIR`).
@@ -4400,6 +4524,10 @@ pub(crate) struct BackgroundHandles {
     /// feature not compiled in.
     pub companion_p2p_task: Option<JoinHandle<()>>,
     pub cloud_task: Option<JoinHandle<anyhow::Result<()>>>,
+    /// L6-PRELOAD-AUTORUN-01 — one-shot vault-preload task. `None` when
+    /// `obsidian_preload_template_dir` is unset (most installs).
+    /// WAL-free; abort order relative to `drop(writer)` is irrelevant.
+    pub obsidian_preload_task: Option<JoinHandle<()>>,
     pub hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor>,
     /// TERMIX-01 — running SSH local-forward tunnels. Shut down (task
     /// abort) after Hysteria; inert background tasks, no WAL interaction.
@@ -4486,6 +4614,7 @@ pub(crate) async fn shutdown_background_tasks(
         companion_p2p_shutdown,
         companion_p2p_task,
         cloud_task,
+        obsidian_preload_task,
         hysteria_supervisor,
         #[cfg(feature = "ssh-tunnel")]
         ssh_tunnel_handles,
@@ -4780,6 +4909,11 @@ pub(crate) async fn shutdown_background_tasks(
     // upstream gets the final delta on its own schedule once the
     // file lands on disk.
     crate::cli::serve_tasks::abort_optional(cloud_task).await;
+
+    // L6-PRELOAD-AUTORUN-01: abort the one-shot preload task. WAL-free;
+    // mid-pass abort at worst leaves vault files partially updated — the next
+    // daemon start re-runs and the hash state skips already-copied files.
+    crate::cli::serve_tasks::abort_optional(obsidian_preload_task).await;
 
     // Tear down the Hysteria subprocess. `Drop` does the cleanup; the
     // explicit drop here just makes the order obvious in shutdown logs.

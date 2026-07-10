@@ -856,6 +856,78 @@ fn default_preload_state_path() -> PathBuf {
     crate::config::FreedomConfig::default_neoth_home().join("obsidian_preload_state.json")
 }
 
+/// L6-PRELOAD-AUTORUN-01 — distinct state path per template root.
+///
+/// Each `knowledge_preload_dirs` entry and the primary
+/// `obsidian_preload_template_dir` uses a separate state file keyed by a
+/// 64-bit hash of the template path.  Prevents cross-root hash collisions
+/// when two roots share a file with the same relative name.
+///
+/// Pure function — no env reads, no I/O.  Stable across restarts for the
+/// same path; different paths always produce different names.
+pub(crate) fn preload_state_path_for(template: &Path) -> PathBuf {
+    use std::hash::Hash;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    template.hash(&mut h);
+    let key = std::hash::Hasher::finish(&h);
+    crate::config::FreedomConfig::default_neoth_home()
+        .join(format!("obsidian_preload_state_{key:016x}.json"))
+}
+
+/// Gate result returned by [`preload_autorun_decision`].
+///
+/// The enum keeps side effects (warn log) out of the decision function so
+/// the function stays pure and tests can match on the variant without any
+/// tracing subscriber being present.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PreloadDecision {
+    /// `obsidian_preload_template_dir` is unset — no-op, no log.
+    Skip,
+    /// Template dir is set but `obsidian_vault` is not — caller should warn.
+    WarnNoVault,
+    /// Both are set; caller should spawn the one-shot preload task.
+    Run {
+        vault: PathBuf,
+        template_dir: PathBuf,
+        /// Empty `PathBuf` means the manifest's `default_vault_subdir` is used.
+        subdir: PathBuf,
+    },
+}
+
+/// Pure gate: derive from config whether the preload autorun should fire.
+///
+/// No side effects (no logging, no I/O).  Callers handle the warn case.
+/// `Skip` is the common case for installs that have not configured preload.
+pub(crate) fn preload_autorun_decision(cfg: &crate::config::FreedomConfig) -> PreloadDecision {
+    let template_str = match cfg.obsidian_preload_template_dir.as_deref() {
+        Some(s) => s,
+        None => return PreloadDecision::Skip,
+    };
+    let vault = match cfg.obsidian_vault.as_deref() {
+        Some(v) => PathBuf::from(v),
+        None => return PreloadDecision::WarnNoVault,
+    };
+    let subdir = cfg
+        .obsidian_preload_subdir
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_default(); // empty → manifest's default_vault_subdir
+    PreloadDecision::Run {
+        vault,
+        template_dir: PathBuf::from(template_str),
+        subdir,
+    }
+}
+
+/// Returns `true` when `root` contains a `preload_manifest.yaml` file.
+///
+/// Used by `spawn_obsidian_preload` to gate each `knowledge_preload_dirs`
+/// entry.  Extracted as a named function so tests can assert the skip logic
+/// independently of the async spawn path.
+pub(crate) fn knowledge_root_has_manifest(root: &Path) -> bool {
+    root.join("preload_manifest.yaml").exists()
+}
+
 fn load_preload_manifest(template: &Path) -> Result<PreloadManifest> {
     let path = template.join("preload_manifest.yaml");
     let body = std::fs::read_to_string(&path)
@@ -2070,5 +2142,102 @@ sections:
         });
         assert_eq!(v["configured"], false);
         assert!(v["obsidian_vault"].is_null());
+    }
+
+    // ── L6-PRELOAD-AUTORUN-01: gate + state-path helpers ─────────────────
+
+    #[test]
+    fn preload_decision_skip_when_no_template_dir() {
+        let cfg = crate::config::FreedomConfig::default();
+        assert_eq!(preload_autorun_decision(&cfg), PreloadDecision::Skip);
+    }
+
+    #[test]
+    fn preload_decision_warn_when_template_set_but_no_vault() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.obsidian_preload_template_dir = Some("/tmp/template".to_string());
+        assert_eq!(
+            preload_autorun_decision(&cfg),
+            PreloadDecision::WarnNoVault,
+        );
+    }
+
+    #[test]
+    fn preload_decision_run_when_both_set() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.obsidian_preload_template_dir = Some("/tmp/template".to_string());
+        cfg.obsidian_vault = Some("/tmp/vault".to_string());
+        match preload_autorun_decision(&cfg) {
+            PreloadDecision::Run {
+                vault,
+                template_dir,
+                subdir,
+            } => {
+                assert_eq!(vault, PathBuf::from("/tmp/vault"));
+                assert_eq!(template_dir, PathBuf::from("/tmp/template"));
+                assert_eq!(subdir, PathBuf::new(), "unset subdir must be empty (manifest default)");
+            }
+            other => panic!("expected PreloadDecision::Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preload_decision_run_uses_configured_subdir() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.obsidian_preload_template_dir = Some("/tmp/template".to_string());
+        cfg.obsidian_vault = Some("/tmp/vault".to_string());
+        cfg.obsidian_preload_subdir = Some("MyPreload".to_string());
+        match preload_autorun_decision(&cfg) {
+            PreloadDecision::Run { subdir, .. } => {
+                assert_eq!(subdir, PathBuf::from("MyPreload"));
+            }
+            other => panic!("expected PreloadDecision::Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preload_state_path_for_distinct_for_different_roots() {
+        let p1 = preload_state_path_for(Path::new("/tmp/root_a"));
+        let p2 = preload_state_path_for(Path::new("/tmp/root_b"));
+        assert_ne!(p1, p2, "distinct roots must map to distinct state paths");
+    }
+
+    #[test]
+    fn preload_state_path_for_stable_for_same_root() {
+        let path = Path::new("/tmp/template");
+        assert_eq!(
+            preload_state_path_for(path),
+            preload_state_path_for(path),
+            "same root must always produce the same state path",
+        );
+    }
+
+    #[test]
+    fn preload_state_path_for_has_json_extension() {
+        let p = preload_state_path_for(Path::new("/some/path"));
+        assert_eq!(
+            p.extension().and_then(|s| s.to_str()),
+            Some("json"),
+            "state path must end with .json",
+        );
+    }
+
+    #[test]
+    fn knowledge_root_has_manifest_true_when_present() {
+        let dir = tempdir().unwrap();
+        write_preload_manifest(dir.path());
+        assert!(
+            knowledge_root_has_manifest(dir.path()),
+            "must return true when preload_manifest.yaml exists",
+        );
+    }
+
+    #[test]
+    fn knowledge_root_has_manifest_false_when_missing() {
+        let dir = tempdir().unwrap();
+        assert!(
+            !knowledge_root_has_manifest(dir.path()),
+            "must return false when preload_manifest.yaml is absent",
+        );
     }
 }

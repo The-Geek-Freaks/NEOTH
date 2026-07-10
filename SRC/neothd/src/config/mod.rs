@@ -312,8 +312,8 @@ pub struct FreedomConfig {
     /// copied by `neoth obsidian preload --template`. The importer reads the
     /// template's `preload_manifest.yaml` and keeps raw/restricted corpora out
     /// of normal recall unless explicitly promoted there.
-    /// NOTE: consumed by the CLI command only — the daemon does not auto-run
-    /// preload from this field until L6-PRELOAD-AUTORUN-01 ships.
+    /// NOTE: L6-PRELOAD-AUTORUN-01 shipped — also consumed at serve startup by
+    /// `serve_tasks::spawn_obsidian_preload` (one-shot, idempotent via hash state).
     #[serde(default)]
     pub obsidian_preload_template_dir: Option<String>,
     /// Vault subdirectory for copied preload notes. `None` = the manifest
@@ -322,7 +322,8 @@ pub struct FreedomConfig {
     pub obsidian_preload_subdir: Option<String>,
     /// Additional curated knowledge roots NEOTH can preload/index. Each root
     /// should carry its own manifest or be explicitly operator-reviewed.
-    /// NOTE: declared for L6-PRELOAD-AUTORUN-01; no runtime consumer yet.
+    /// NOTE: L6-PRELOAD-AUTORUN-01 shipped — consumed at serve startup by
+    /// `serve_tasks::spawn_obsidian_preload`; roots without a manifest are skipped.
     #[serde(default)]
     pub knowledge_preload_dirs: Vec<String>,
     /// GOLD-ADAPT-GRAPH-05 — source directory for the self-map cron.

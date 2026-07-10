@@ -806,6 +806,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let cloud_task = crate::cli::serve_tasks::spawn_cloud_archive(&config);
 
+    // ── L6-PRELOAD-AUTORUN-01 — one-shot Obsidian vault preload ────────────
+    //
+    // Fires once at serve startup when `obsidian_preload_template_dir` AND
+    // `obsidian_vault` are both set in freedom.yaml.  Idempotent: unchanged
+    // files are skipped via hash state kept in ~/.neoth/obsidian_preload_state_*.json.
+    // Errors are logged (warn) but never crash the daemon.  WAL-free.
+    // GOLD-ARCH-01: body in serve_tasks (same handle pattern as cloud_task).
+    let obsidian_preload_task = crate::cli::serve_tasks::spawn_obsidian_preload(&config);
+
     // ── 5b-pent. R-02 Phase 4c — dreaming nightly task ─────────────────────
     //
     // Off by default. When freedom.yaml::dreaming.enabled = true,
@@ -2028,6 +2037,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         companion_p2p_shutdown,
         companion_p2p_task,
         cloud_task,
+        obsidian_preload_task,
         hysteria_supervisor,
         #[cfg(feature = "ssh-tunnel")]
         ssh_tunnel_handles,

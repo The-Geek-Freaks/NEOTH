@@ -198,9 +198,9 @@ review_gate_enabled: false
 # obsidian_vault: /home/user/vaults/main
 # obsidian_subdir: NEOTH       # default: "NEOTH"
 # obsidian_auto_sync_secs: 3600 # default: 1 hour
-# obsidian_preload_template_dir: /home/user/agenter/L6_Vault_Template
+# obsidian_preload_template_dir: /home/user/agenter/L6_Vault_Template  # auto-runs once at serve startup when set
 # obsidian_preload_subdir: NEOTH-Preload
-# knowledge_preload_dirs:
+# knowledge_preload_dirs:   # each entry auto-runs once at serve startup; skipped if preload_manifest.yaml is absent
 #   - /home/user/agenter/L6_Vault_Template
 
 
@@ -320,3 +320,31 @@ claude_cli:
 profile:
   learn_enabled: false
   timeout_secs: 15
+
+# ── 14. Council local-first weighting (COUNCIL-WEIGHTING-01) ────────────────
+#
+# Prevents cloud models from winning a council debate purely by TIER_TABLE
+# score when actual response quality is equivalent to a local provider.
+#
+# locality_tie_break (default: true) — when the highest-scoring cloud
+#   candidate is within `locality_tie_epsilon` of a local candidate, the
+#   local provider wins.  Set `false` to fall back to raw score ordering.
+#
+# locality_tie_epsilon (default: 0.05) — tie window on the [0,1] composite
+#   scale.  Raise to widen the promotion window; lower to tighten it.
+#
+# local_score_bonus (default: 0.0) — explicit additive prior for local
+#   providers, applied before the tie-break.  Default 0.0 = no extra boost.
+#   Set e.g. 0.2 to give local providers a 20-point head-start.
+#
+# "Local" providers: local_qwen, local_ouro, local_ollama, recursive_mas.
+# cloud_cli is NOT local (inference runs on Anthropic's servers).
+#
+# Applied via CouncilDebate::best_response_with_locality (council/types.rs).
+# Wire-up: cli/chat.rs::select_winner_role_agnostic needs a 1-line update
+# to call best_response_with_locality instead of best_response.
+#
+#council:
+#  locality_tie_break: true
+#  locality_tie_epsilon: 0.05
+#  local_score_bonus: 0.0
