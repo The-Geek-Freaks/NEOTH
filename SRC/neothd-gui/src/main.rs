@@ -6246,7 +6246,7 @@ mod des09_tests {
     #[test]
     fn format_cap_preserves_fractional() {
         assert_eq!(format_cap_f64(10.5), "10.5");
-        assert_eq!(format_cap_f64(3.14), "3.14");
+        assert_eq!(format_cap_f64(3.75), "3.75");
     }
 
     // ── FIX 2 / FIX 3 tests — Null write deserialized as YAML null ─────────
@@ -6262,7 +6262,7 @@ mod des09_tests {
         // serde_yaml::Value::Null means Option<T> deserializes as None.
         let node = root.get("persona_mode");
         // Either the key is absent or its value is Null — both are valid representations.
-        let is_null_or_absent = node.map_or(true, |v| v.is_null());
+        let is_null_or_absent = node.is_none_or(|v| v.is_null());
         assert!(is_null_or_absent, "expected null or absent, got {:?}", node);
     }
 
@@ -6274,7 +6274,7 @@ mod des09_tests {
         let body = std::fs::read_to_string(&path).unwrap();
         let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
         let node = root.get("obsidian_auto_sync_secs");
-        let is_null_or_absent = node.map_or(true, |v| v.is_null());
+        let is_null_or_absent = node.is_none_or(|v| v.is_null());
         assert!(is_null_or_absent, "expected null or absent, got {:?}", node);
     }
 }

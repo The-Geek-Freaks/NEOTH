@@ -291,7 +291,7 @@ async fn research_round(
 
                 // ODY-18: fence every web content block before it enters a prompt
                 let fenced = untrusted_wrap::wrap_untrusted(
-                    &format!("deep_research_web:{}", &hit.url),
+                    &format!("deep_research_web:{}", hit.url),
                     &truncated,
                 );
 

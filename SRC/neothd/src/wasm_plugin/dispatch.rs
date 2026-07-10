@@ -1031,6 +1031,7 @@ mod tests {
             fuel_budget_override: None,
             memory_limit_bytes: None,
             source: None,
+            ui_surface: None,
         }
     }
 
