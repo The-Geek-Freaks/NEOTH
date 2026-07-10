@@ -125,8 +125,12 @@ const PATTERNS_HEDGING: &[&str] = &[
     "it might be",
     "it may be",
     "it could be",
+    "perhaps",
+    "possibly",
     "i'm not sure but",
+    "i'm not certain",
     "i'm not entirely sure",
+    "i believe, but",
     "generally speaking",
     "in most cases",
     "it's worth noting that",
@@ -135,6 +139,9 @@ const PATTERNS_HEDGING: &[&str] = &[
     "it's important to keep in mind",
     "please note that",
     "please be aware",
+    "es könnte sein",
+    "vielleicht",
+    "möglicherweise",
 ];
 
 const PATTERNS_TONE_POLICING: &[&str] = &[
@@ -144,6 +151,7 @@ const PATTERNS_TONE_POLICING: &[&str] = &[
     "i'd gently suggest",
     "i'd like to remind you",
     "please be mindful",
+    "that said, it's important",
     "i understand your frustration, but",
     "bitte bleib höflich",
     "bleib respektvoll",
@@ -157,6 +165,7 @@ const PATTERNS_FAKE_EMPATHY: &[&str] = &[
     "i can imagine how",
     "that must be frustrating",
     "i hear you",
+    "i feel for you",
     "ich verstehe deine frustration",
     "das muss schwierig sein",
 ];
@@ -167,6 +176,7 @@ const PATTERNS_ASSISTANT_THEATER: &[&str] = &[
     "as a language model",
     "i'm just an ai",
     "i am just an ai",
+    "i'm an ai",
     "as your assistant",
     "my purpose is to",
     "i'm designed to",
@@ -177,6 +187,9 @@ const PATTERNS_ASSISTANT_THEATER: &[&str] = &[
 ];
 
 const PATTERNS_SAFETY_MORALIZING: &[&str] = &[
+    "it's important to consider",
+    "it's important to note",
+    "it is important to",
     "i must note that",
     "i should mention that",
     "i want to make sure you're aware",
@@ -189,6 +202,158 @@ const PATTERNS_SAFETY_MORALIZING: &[&str] = &[
     "proceed with caution",
     "please be careful",
 ];
+
+// ── IMBA omission scan (GOLD-ADAPT-LOWKEY-03) ──────────────────────────────
+//
+// IMBA (Integrity Maintaining & Broadening Auditor) — LOWKEY-8 §4,§5.
+// Detects four signal-loss patterns in a response that indicates the model
+// trimmed, softened, or evaded the answer rather than delivering full
+// information density.  This is a heuristic pre-filter that fires
+// *independently* of the N-Space penalty — it contributes a boolean flag to
+// the council WAL record; the orchestrator decides whether to re-route or
+// demote the response.
+//
+// Per design doc §2.3: placed in nspace.rs (tracker note: "N-Space anti-
+// pattern scoring penalty + IMBA omission scan -> council/nspace.rs") rather
+// than factual_check.rs so that this file is the single cluster boundary.
+// The orchestrator wires imba_omission_scan at the call-site listed in
+// gate_notes.
+
+/// The four IMBA signal-loss categories (LOWKEY-8 §5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImbaCategory {
+    /// Response describes a process but skips mechanistic steps — no
+    /// "because", "therefore", "leads to", "causes", "results in" present
+    /// when the prompt asked "how" or "why".
+    MissingMechanism,
+    /// Tone-drift: ≥3 softener hits ("possibly", "might", "could be") in a
+    /// response shorter than 400 chars — short hedging-dense answers.
+    ToneDrift,
+    /// False-assumption hedge: response limits itself based on presumed user
+    /// intent never stated in the prompt.
+    FalseAssumptionHedge,
+    /// Information void: response is < 80 chars when the prompt is > 30 chars
+    /// (substantive question answered with a deflection).
+    InformationVoid,
+}
+
+/// Aggregate IMBA scan result for one response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImbaOmissionResult {
+    /// One or more IMBA signal-loss categories detected.
+    pub categories: Vec<ImbaCategory>,
+    /// True iff any category was detected (convenience flag).
+    pub has_omission: bool,
+}
+
+impl ImbaOmissionResult {
+    fn new(categories: Vec<ImbaCategory>) -> Self {
+        let has_omission = !categories.is_empty();
+        Self { categories, has_omission }
+    }
+}
+
+/// Mechanism markers: their PRESENCE is healthy. Their ABSENCE when a causal
+/// topic is present is the IMBA `MissingMechanism` signal (LOWKEY-8 §4).
+/// Bilingual per operator profile.
+const MECHANISM_MARKERS: &[&str] = &[
+    "because",
+    "therefore",
+    "thus",
+    "hence",
+    "leads to",
+    "causes",
+    "results in",
+    "due to",
+    "as a result",
+    "consequently",
+    "weil",
+    "dadurch",
+    "deshalb",
+    "führt zu",
+    "verursacht",
+];
+
+/// Tone-drift softeners: excessive density of these without explicit epistemic
+/// qualification flags drift. Checked against the FULL response text.
+const TONE_DRIFT_SOFTENERS: &[&str] = &[
+    "possibly",
+    "might",
+    "could be",
+    "perhaps",
+    "maybe",
+    "seems like",
+    "appears to",
+    "vielleicht",
+    "möglicherweise",
+    "könnte",
+];
+
+/// False-assumption hedge markers: response limits scope based on unstated
+/// user intent (LOWKEY-8 §5 "premature practicality framing").
+const FALSE_ASSUMPTION_HEDGES: &[&str] = &[
+    "depending on your use case",
+    "if that's what you mean",
+    "assuming you're asking about",
+    "if you're looking for",
+    "you might want to consider",
+    "in your situation",
+    "je nach anwendungsfall",
+    "wenn ich richtig verstehe",
+];
+
+/// Run the IMBA omission scan.
+///
+/// `response` — the model output to evaluate.
+/// `prompt`   — the original user prompt (needed for causal-intent detection).
+///
+/// Pure function; no I/O; no allocation beyond the return value.
+pub fn imba_omission_scan(response: &str, prompt: &str) -> ImbaOmissionResult {
+    let r_lower = response.to_ascii_lowercase();
+    let p_lower = prompt.to_ascii_lowercase();
+    let mut categories = Vec::new();
+
+    // (1) Missing mechanism: prompt asks "why"/"how" but response contains
+    // no mechanism markers.  Conservative interpretation: only flag when the
+    // prompt explicitly contains a causal-intent keyword AND the response
+    // contains NONE of the mechanism markers.
+    let prompt_causal = p_lower.contains("why")
+        || p_lower.contains("how")
+        || p_lower.contains("warum")
+        || p_lower.contains("wie");
+    if prompt_causal && !MECHANISM_MARKERS.iter().any(|&m| r_lower.contains(m)) {
+        categories.push(ImbaCategory::MissingMechanism);
+    }
+
+    // (2) Tone drift: ≥3 softener hits AND response < 400 chars.
+    // The length gate prevents flagging long nuanced answers that cite genuine
+    // uncertainty with supporting evidence (design doc §5 Risk 3).
+    let softener_count = TONE_DRIFT_SOFTENERS
+        .iter()
+        .filter(|&&s| r_lower.contains(s))
+        .count();
+    if softener_count >= 3 && response.len() < 400 {
+        categories.push(ImbaCategory::ToneDrift);
+    }
+
+    // (3) False assumption hedge: any match.
+    if FALSE_ASSUMPTION_HEDGES
+        .iter()
+        .any(|&h| r_lower.contains(h))
+    {
+        categories.push(ImbaCategory::FalseAssumptionHedge);
+    }
+
+    // (4) Information void: response ≤ 80 chars, prompt > 30 chars.
+    // Conservative: we count trimmed bytes (not chars) — safe for ASCII;
+    // multi-byte UTF-8 responses are even longer so the threshold only
+    // fires on genuinely empty deflections.
+    if response.trim().len() < 80 && prompt.trim().len() > 30 {
+        categories.push(ImbaCategory::InformationVoid);
+    }
+
+    ImbaOmissionResult::new(categories)
+}
 
 #[cfg(test)]
 mod tests {
@@ -261,5 +426,119 @@ mod tests {
         let r = scan_nspace("The answer is 42. X causes Y via Z.", &[]);
         assert_eq!(r.total_penalty, 0.0);
         assert!(r.groups_hit().is_empty());
+    }
+
+    // ── IMBA omission scan tests ──────────────────────────────────────────
+
+    #[test]
+    fn imba_clean_causal_response_no_omission() {
+        // Direct answer with mechanism markers — no flag expected.
+        let result = imba_omission_scan(
+            "TCP is reliable because it uses acknowledgment packets, \
+             therefore delivery is guaranteed. UDP lacks this, which \
+             results in faster but unreliable transmission.",
+            "How does TCP differ from UDP?",
+        );
+        assert!(!result.has_omission, "clean causal response must not flag");
+    }
+
+    #[test]
+    fn imba_detects_missing_mechanism_on_causal_prompt() {
+        // "How does X work?" + response with no mechanism markers → flag.
+        let result = imba_omission_scan(
+            "It works fine in most situations.",
+            "How does the caching mechanism work?",
+        );
+        assert!(
+            result.categories.contains(&ImbaCategory::MissingMechanism),
+            "must detect missing mechanism: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn imba_no_flag_on_non_causal_prompt() {
+        // Prompt has no "how"/"why" → MissingMechanism must NOT fire
+        // even if the response has no mechanism markers.
+        let result = imba_omission_scan(
+            "The capital is Berlin.",
+            "What is the capital of Germany?",
+        );
+        assert!(
+            !result.categories.contains(&ImbaCategory::MissingMechanism),
+            "non-causal prompt must not trigger MissingMechanism"
+        );
+    }
+
+    #[test]
+    fn imba_detects_tone_drift_short_hedging_response() {
+        // ≥3 softeners AND < 400 chars → ToneDrift.
+        let result = imba_omission_scan(
+            "Possibly it might work. Could be correct, perhaps.",
+            "What is the result?",
+        );
+        assert!(
+            result.categories.contains(&ImbaCategory::ToneDrift),
+            "short hedging-dense response must flag ToneDrift: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn imba_no_tone_drift_on_long_nuanced_response() {
+        // ≥3 DISTINCT softeners present (possibly, perhaps, might, could be)
+        // but the response is ≥ 400 chars → ToneDrift must NOT fire.
+        // This specifically tests the length-gate safety valve: short responses
+        // with ≥3 softeners DO flag; long nuanced ones don't.
+        let body = "The evidence is mixed; it possibly points to A or B. \
+                    Perhaps the answer might be C in some edge cases. \
+                    It could be that further research is needed. \
+                    Multiple interpretations are valid; more context is below. ";
+        // body is ~200 chars; repeat × 3 = ~600 chars, well over 400.
+        let padded = body.repeat(3);
+        assert!(padded.len() >= 400, "sanity: padded must be long enough");
+        let result = imba_omission_scan(&padded, "What does the research show?");
+        assert!(
+            !result.categories.contains(&ImbaCategory::ToneDrift),
+            "long response must NOT flag ToneDrift even with ≥3 softeners"
+        );
+    }
+
+    #[test]
+    fn imba_detects_false_assumption_hedge() {
+        let result = imba_omission_scan(
+            "Depending on your use case, the answer varies.",
+            "What is the best sorting algorithm?",
+        );
+        assert!(
+            result.categories.contains(&ImbaCategory::FalseAssumptionHedge),
+            "false-assumption hedge must be detected: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn imba_detects_information_void() {
+        // Very short response to a substantive question.
+        let result = imba_omission_scan(
+            "It depends.",
+            "What is the difference between TCP and UDP?",
+        );
+        assert!(
+            result.categories.contains(&ImbaCategory::InformationVoid),
+            "deflection answer must flag InformationVoid: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn imba_no_void_on_short_prompt() {
+        // Short prompt with short response → InformationVoid must NOT fire
+        // (prompt ≤ 30 chars gate).
+        let result = imba_omission_scan("Yes.", "Time?");
+        assert!(
+            !result.categories.contains(&ImbaCategory::InformationVoid),
+            "short prompt must not trigger InformationVoid"
+        );
     }
 }

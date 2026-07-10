@@ -276,6 +276,23 @@ pub async fn run_debate_with_depth_budget(
 
     let mut responses: Vec<HemisphereResponse> = Vec::with_capacity(3);
     while let Some(resp) = tasks.next().await {
+        // IMBA omission scan (LOWKEY-8 §4/§5): flag structural omissions
+        // (missing mechanism on a why/how prompt, tone-drift, hedged false
+        // assumption, information void) per hemisphere. Hot lane → tracing
+        // audit, not WAL; ranking impact is handled by the N-Space penalty
+        // inside `quality_score::score_response`.
+        if let Some(text) = resp.outcome().text() {
+            let imba = super::nspace::imba_omission_scan(text, effective_prompt);
+            if imba.has_omission {
+                tracing::info!(
+                    target: "neoth::council::imba",
+                    provider = %resp.provider,
+                    role = ?resp.role,
+                    categories = ?imba.categories,
+                    "IMBA omission scan flagged hemisphere response"
+                );
+            }
+        }
         responses.push(resp);
         // Early-exit check: quorum reached + present responses agree.
         // Audit 2026-05-19 Type #13 Phase 2: route both `is_present` and

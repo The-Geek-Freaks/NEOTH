@@ -193,7 +193,12 @@ pub fn score_response(resp: &HemisphereResponse) -> QualityScore {
         HemisphereOutcome::Errored { .. } => return QualityScore::errored(),
     };
     let tier = provider_tier(&resp.provider);
-    let dynamic = dynamic_signal_from_text(text);
+    // N-Space anti-pattern penalty (LOWKEY-8): hedging/tone-policing/theater
+    // responses lose scoring weight so `best_response` never prefers slop.
+    // Built-in pattern tables only — operator extra_patterns need a config
+    // surface here before they can flow in.
+    let nspace = super::nspace::scan_nspace(text, &[]);
+    let dynamic = (dynamic_signal_from_text(text) - nspace.total_penalty).max(0.0);
     // Memory weight stays at neutral 0.5 until SP-4 wires the
     // `memory::routing_weights` lookup.
     QualityScore::new(tier, dynamic, 0.5, 0.0)
@@ -393,6 +398,27 @@ mod tests {
             output_tokens: None,
             refusal: None,
         }
+    }
+
+    #[test]
+    fn nspace_slop_scores_below_clean_response_same_provider() {
+        // N-Space wiring guard: a hedging/tone-policing response must lose
+        // to a direct answer of comparable shape from the same provider.
+        let clean = ok_resp(
+            "anthropic_api",
+            "The auth middleware rejects expired tokens because the expiry \
+             check uses `<` instead of `<=`. Fix the comparison in token.rs.",
+        );
+        let slop = ok_resp(
+            "anthropic_api",
+            "I'd be happy to help! It's important to note that perhaps the \
+             issue might possibly be related to tokens. That said, it's \
+             important to consider many factors. I hope this helps!",
+        );
+        assert!(
+            score_response(&slop).total() < score_response(&clean).total(),
+            "N-Space penalty must push slop below a clean direct answer"
+        );
     }
 
     #[test]
