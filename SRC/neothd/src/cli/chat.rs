@@ -6085,10 +6085,8 @@ async fn emit_council_transcripts(
             continue;
         }
         let stored = if text.len() > MAX_TRANSCRIPT_BYTES {
-            let mut t = text[..MAX_TRANSCRIPT_BYTES].to_string();
-            while !t.is_char_boundary(t.len()) {
-                t.pop();
-            }
+            let safe = crate::util::byte_floor(text, MAX_TRANSCRIPT_BYTES);
+            let mut t = text[..safe].to_string();
             t.push_str("\n[NEOTH] …transcript truncated…");
             t
         } else {

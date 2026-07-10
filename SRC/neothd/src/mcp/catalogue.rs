@@ -41,6 +41,25 @@ use crate::mcp::config::McpServers;
 use crate::mcp::gate::{SanitizedTool, list_tools_sanitized};
 use crate::mcp::smart_loader::{LoadPlan, ServerProfile, plan_loader, render_deferred_hint};
 
+/// Maximum tools a single server may contribute to the catalogue.
+/// Bounds a hostile server from flooding the system prompt with thousands of
+/// tool schemas that consume the entire context window.
+pub const MAX_TOOLS_PER_SERVER: usize = 128;
+
+/// Returns `true` when `name` should appear in the catalogue, mirroring the
+/// gate's Layer-1 allow/trust semantics exactly (gate.rs :249-283):
+///
+/// - `allow_tools = Some(list)` → tool must appear in the list.
+/// - `allow_tools = None, trust_all = true`  → visible.
+/// - `allow_tools = None, trust_all = false` → **not visible**
+///   (matches `GateError::MissingAllowlistSecureDefault`).
+fn tool_in_catalogue(name: &str, trust_all: bool, allow: Option<&Vec<String>>) -> bool {
+    trust_all
+        || allow
+            .map(|list| list.iter().any(|n| n == name))
+            .unwrap_or(false)
+}
+
 /// Per-server spawn timeout. Chat hot-path can't afford to block 30s
 /// waiting for a misconfigured server — 5s is generous for a healthy
 /// MCP server's handshake while still keeping the prompt-build phase
@@ -216,15 +235,21 @@ async fn fetch_server_tools(
         return Ok(None);
     }
 
-    let allow = cfg.allow_tools.as_ref();
-    let filtered: Vec<SanitizedTool> = tools
+    // Mirror gate Layer-1: tool_in_catalogue matches the exact allow/trust
+    // condition from gate.rs :249-283 so prompt-visibility == execution-trust.
+    let mut filtered: Vec<SanitizedTool> = tools
         .into_iter()
-        .filter(|t| {
-            allow
-                .map(|list| list.iter().any(|name| name == &t.tool.name))
-                .unwrap_or(true)
-        })
+        .filter(|t| tool_in_catalogue(&t.tool.name, cfg.trust_all_tools, cfg.allow_tools.as_ref()))
         .collect();
+    if filtered.len() > MAX_TOOLS_PER_SERVER {
+        warn!(
+            server = %cfg.id,
+            count = filtered.len(),
+            limit = MAX_TOOLS_PER_SERVER,
+            "MCP server exceeded tool limit; truncating catalogue"
+        );
+        filtered.truncate(MAX_TOOLS_PER_SERVER);
+    }
 
     if filtered.is_empty() {
         Ok(None)
@@ -284,13 +309,26 @@ fn join_blocks(blocks: &[String]) -> String {
 
 /// Render the full markdown block for one server's tool list.
 fn render_full_server_block(id: &str, description: Option<&str>, tools: &[SanitizedTool]) -> String {
+    // Safety cap: a hostile server returning a huge tool list must not be able
+    // to flood the system prompt regardless of which call path reaches this fn.
+    let visible = if tools.len() > MAX_TOOLS_PER_SERVER {
+        warn!(
+            server = %id,
+            count = tools.len(),
+            limit = MAX_TOOLS_PER_SERVER,
+            "MCP server exceeded tool limit; truncating catalogue render"
+        );
+        &tools[..MAX_TOOLS_PER_SERVER]
+    } else {
+        tools
+    };
     let mut block =
-        String::with_capacity(64 + tools.iter().map(|t| t.tool.name.len() + 80).sum::<usize>());
+        String::with_capacity(64 + visible.iter().map(|t| t.tool.name.len() + 80).sum::<usize>());
     block.push_str(&format!("## Server `{id}`\n"));
     if let Some(desc) = description {
         block.push_str(&format!("{desc}\n\n"));
     }
-    for t in tools {
+    for t in visible {
         block.push_str(&render_tool_entry(t));
     }
     block
@@ -335,18 +373,28 @@ async fn build_server_block(cfg: &crate::mcp::config::McpServerConfig) -> Result
         return Ok(None);
     }
 
-    // Honour the per-server allowlist: only surface tools the operator
-    // pinned. Mirrors the gate's runtime enforcement so the LLM doesn't
-    // get tempted by tools it can't actually call.
+    // Honour the per-server allowlist and trust setting: only surface tools
+    // the gate would allow. Mirrors Layer-1 semantics from gate.rs :249-283
+    // so the LLM never sees tools it cannot actually invoke.
     let allow = cfg.allow_tools.as_ref();
-    let mut entries = Vec::with_capacity(tools.len());
+    let mut entries = Vec::with_capacity(tools.len().min(MAX_TOOLS_PER_SERVER));
+    let mut truncated = false;
     for t in &tools {
-        if let Some(list) = allow {
-            if !list.iter().any(|name| name == &t.tool.name) {
-                continue;
-            }
+        if !tool_in_catalogue(&t.tool.name, cfg.trust_all_tools, allow) {
+            continue;
+        }
+        if entries.len() >= MAX_TOOLS_PER_SERVER {
+            truncated = true;
+            break;
         }
         entries.push(render_tool_entry(t));
+    }
+    if truncated {
+        warn!(
+            server = %cfg.id,
+            limit = MAX_TOOLS_PER_SERVER,
+            "MCP server exceeded tool limit; truncating catalogue"
+        );
     }
     if entries.is_empty() {
         return Ok(None);
@@ -363,12 +411,24 @@ async fn build_server_block(cfg: &crate::mcp::config::McpServerConfig) -> Result
 }
 
 fn render_tool_entry(t: &SanitizedTool) -> String {
+    const MAX_DESC_BYTES: usize = 512;
     let name = &t.tool.name;
-    let desc = t
+    let desc_raw = t
         .tool
         .description
         .as_deref()
         .unwrap_or("(no description provided)");
+    // Bound description length so a hostile server cannot flood the prompt.
+    // Truncate at the last UTF-8 char boundary at or before MAX_DESC_BYTES.
+    let desc = if desc_raw.len() > MAX_DESC_BYTES {
+        let mut end = MAX_DESC_BYTES;
+        while !desc_raw.is_char_boundary(end) {
+            end -= 1;
+        }
+        &desc_raw[..end]
+    } else {
+        desc_raw
+    };
     let schema = render_input_schema(&t.tool.input_schema);
     let flagged = if t.verdict.flagged {
         format!(" [FLAGGED: {}]", t.verdict.matched_patterns.join(", "))
@@ -651,5 +711,76 @@ mod tests {
         assert!(CATALOGUE_HEADER.contains("\"server\""));
         assert!(CATALOGUE_HEADER.contains("\"tool\""));
         assert!(CATALOGUE_HEADER.contains("\"arguments\""));
+    }
+
+    // ── NEOTH-AUDIT-MCP-TRUST-METADATA-01 parity tests ───────────────────────
+
+    #[test]
+    fn gate_parity_no_trust_no_allow_yields_nothing() {
+        // trust_all=false, allow=None → zero visible tools.
+        // Matches gate.rs MissingAllowlistSecureDefault deny path (:267-283).
+        assert!(
+            !tool_in_catalogue("any_tool", false, None),
+            "untrusted server with no allow list must expose NO tools to the catalogue"
+        );
+    }
+
+    #[test]
+    fn gate_parity_trust_all_yields_any_tool() {
+        // trust_all=true → every tool visible regardless of allow list.
+        assert!(tool_in_catalogue("read_file", true, None));
+        assert!(tool_in_catalogue("dangerous_tool", true, None));
+        // trust_all overrides a present allow list too.
+        let allow = vec!["read_file".to_string()];
+        assert!(tool_in_catalogue("write_file", true, Some(&allow)));
+    }
+
+    #[test]
+    fn gate_parity_allow_list_restricts_to_listed_only() {
+        let allow = vec!["read_file".to_string(), "list_dir".to_string()];
+        // Listed tool → visible.
+        assert!(tool_in_catalogue("read_file", false, Some(&allow)));
+        assert!(tool_in_catalogue("list_dir", false, Some(&allow)));
+        // Non-listed tool → not visible (matches gate NotInAllowlist path).
+        assert!(!tool_in_catalogue("write_file", false, Some(&allow)));
+        assert!(!tool_in_catalogue("delete_file", false, Some(&allow)));
+    }
+
+    #[test]
+    fn max_tools_per_server_is_enforced_in_render() {
+        // 130 tools fed to render_full_server_block must produce at most
+        // MAX_TOOLS_PER_SERVER (128) rendered entries.
+        let tools: Vec<SanitizedTool> = (0..130)
+            .map(|i| make_tool(&format!("tool_{i:03}")))
+            .collect();
+        let block = render_full_server_block("big-server", None, &tools);
+        // Each rendered tool starts with "- **tool_"; count occurrences.
+        let count = block.matches("**tool_").count();
+        assert_eq!(
+            count, MAX_TOOLS_PER_SERVER,
+            "expected truncation at {MAX_TOOLS_PER_SERVER}, got {count}"
+        );
+    }
+
+    #[test]
+    fn render_tool_entry_truncates_long_description() {
+        // A description longer than 512 bytes must be capped.
+        let long_desc = "x".repeat(600);
+        let t = SanitizedTool {
+            tool: McpTool {
+                name: "flood".into(),
+                description: Some(long_desc),
+                input_schema: serde_json::json!({}),
+                annotations: None,
+            },
+            verdict: clean_verdict(),
+        };
+        let s = render_tool_entry(&t);
+        // Count 'x' characters in the rendered entry — must not exceed cap.
+        let x_count = s.chars().filter(|&c| c == 'x').count();
+        assert!(
+            x_count <= 512,
+            "description not capped: {x_count} 'x' chars in rendered entry"
+        );
     }
 }

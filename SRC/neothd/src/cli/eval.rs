@@ -220,11 +220,7 @@ fn run_verify_command(cmd: &str) -> Result<bool> {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+    &s[..crate::util::byte_floor(s, max)]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

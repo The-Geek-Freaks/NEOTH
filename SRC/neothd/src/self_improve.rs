@@ -309,7 +309,11 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
     let path = Path::new(&p.skill_path);
     // Back up the exact content we're about to replace (may differ from `before`
     // if the file changed since staging) so rollback is precise.
-    let current = std::fs::read_to_string(path).unwrap_or_default();
+    // SAFETY-FIX NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01(b): propagate read failure
+    // instead of silently replacing with an empty string — a missing or
+    // unreadable skill file must never be treated as approved-with-empty-evidence.
+    let current = std::fs::read_to_string(path)
+        .with_context(|| format!("backup read failed for `{}`", path.display()))?;
     p.backup = Some(current);
     crate::util::atomic_write::atomic_write(path, p.after.as_bytes())
         .with_context(|| format!("write skill {}", path.display()))?;
@@ -745,23 +749,23 @@ pub enum ExecutionVerdict {
 /// `BLOCK` (case-insensitive). Everything after the token on that line becomes
 /// the `reason`. Plain-text or structured — whichever the advisor emits.
 pub fn review_execution_result(report: &str) -> ExecutionVerdict {
+    // Strip a leading separator (`:`, `-`, `—`) + surrounding whitespace after
+    // the matched token so "BLOCK: unsafe" yields the reason "unsafe", not
+    // ": unsafe".
+    let clean_reason = |s: &str| -> String {
+        s.trim()
+            .trim_start_matches(|c: char| c == ':' || c == '-' || c == '—')
+            .trim()
+            .to_string()
+    };
     for line in report.lines() {
         let upper = line.to_ascii_uppercase();
-        if upper.contains("APPROVE") {
-            return ExecutionVerdict::Approved;
-        }
-        if let Some(pos) = upper.find("REVISE") {
-            let reason = line[pos + "REVISE".len()..].trim().to_string();
-            return ExecutionVerdict::Revise {
-                reason: if reason.is_empty() {
-                    "advisor requested changes".to_string()
-                } else {
-                    reason
-                },
-            };
-        }
+
+        // SAFETY-FIX NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01(a): BLOCK / REJECT must
+        // be checked BEFORE APPROVE so that "BLOCK, do not approve" or any other
+        // phrasing that contains both tokens never falls through to Approved.
         if let Some(pos) = upper.find("BLOCK") {
-            let reason = line[pos + "BLOCK".len()..].trim().to_string();
+            let reason = clean_reason(&line[pos + "BLOCK".len()..]);
             return ExecutionVerdict::Blocked {
                 reason: if reason.is_empty() {
                     "advisor blocked execution".to_string()
@@ -770,7 +774,44 @@ pub fn review_execution_result(report: &str) -> ExecutionVerdict {
                 },
             };
         }
+        if let Some(pos) = upper.find("REJECT") {
+            let reason = clean_reason(&line[pos + "REJECT".len()..]);
+            return ExecutionVerdict::Blocked {
+                reason: if reason.is_empty() {
+                    "advisor rejected execution".to_string()
+                } else {
+                    reason
+                },
+            };
+        }
+
+        // REVISE before APPROVE — "REVISE the plan" must not be confused with
+        // approval even when the word "approve" appears nowhere else on the line.
+        if let Some(pos) = upper.find("REVISE") {
+            let reason = clean_reason(&line[pos + "REVISE".len()..]);
+            return ExecutionVerdict::Revise {
+                reason: if reason.is_empty() {
+                    "advisor requested changes".to_string()
+                } else {
+                    reason
+                },
+            };
+        }
+
+        // APPROVE only when no negation modifier is present on the same line.
+        // "DO NOT APPROVE", "NOT APPROVE", "do not approve this", etc. must NOT
+        // parse as Approved — they continue scanning and ultimately fall through
+        // to the safe-default Blocked below.
+        if upper.contains("APPROVE") {
+            let negated = upper.contains("NOT APPROVE") || upper.contains("DO NOT");
+            if !negated {
+                return ExecutionVerdict::Approved;
+            }
+            // Negated APPROVE — keep scanning remaining lines; the safe-default
+            // fires if no affirmative token is found on any subsequent line.
+        }
     }
+    // No unambiguous affirmative verdict found — fail safe, never default-approve.
     ExecutionVerdict::Blocked {
         reason: "advisor report contained no APPROVE/REVISE/BLOCK token".to_string(),
     }
@@ -1404,6 +1445,114 @@ mod tests {
         assert!(d.contains("+ B"));
         assert!(!d.contains("(no line changes)"));
         assert!(line_diff("same", "same").contains("(no line changes)"));
+    }
+
+    // ── NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 regression tests ──────────────────
+
+    /// (a) Negated APPROVE phrases must never parse as Approved.
+    #[test]
+    fn review_execution_result_negated_approve_is_not_approved() {
+        // "DO NOT APPROVE" — classic bypass attempt
+        assert_eq!(
+            review_execution_result("DO NOT APPROVE this change"),
+            ExecutionVerdict::Blocked {
+                reason: "advisor report contained no APPROVE/REVISE/BLOCK token".to_string()
+            },
+            "DO NOT APPROVE must not parse as Approved"
+        );
+        // "NOT APPROVE" variant
+        assert_eq!(
+            review_execution_result("I would NOT APPROVE this."),
+            ExecutionVerdict::Blocked {
+                reason: "advisor report contained no APPROVE/REVISE/BLOCK token".to_string()
+            },
+            "NOT APPROVE must not parse as Approved"
+        );
+        // "BLOCK, do not approve" — contains both BLOCK and APPROVE; BLOCK wins
+        assert!(matches!(
+            review_execution_result("BLOCK, do not approve this diff"),
+            ExecutionVerdict::Blocked { .. }
+        ));
+    }
+
+    /// (a) Unambiguous BLOCK → Blocked; REVISE → Revise; plain APPROVE → Approved.
+    #[test]
+    fn review_execution_result_unambiguous_tokens() {
+        // BLOCK: unsafe
+        assert!(matches!(
+            review_execution_result("BLOCK: unsafe operation detected"),
+            ExecutionVerdict::Blocked { reason } if reason == "unsafe operation detected"
+        ));
+        // REVISE the plan
+        assert!(matches!(
+            review_execution_result("REVISE the plan before proceeding"),
+            ExecutionVerdict::Revise { reason } if reason == "the plan before proceeding"
+        ));
+        // Plain APPROVE alone
+        assert_eq!(
+            review_execution_result("APPROVE"),
+            ExecutionVerdict::Approved
+        );
+        // Affirmative with preamble, no negation
+        assert_eq!(
+            review_execution_result("looks good, APPROVE"),
+            ExecutionVerdict::Approved
+        );
+        // REJECT is treated as Blocked
+        assert!(matches!(
+            review_execution_result("REJECT: changes are unsafe"),
+            ExecutionVerdict::Blocked { reason } if reason == "changes are unsafe"
+        ));
+    }
+
+    /// (a) Ambiguous / empty report → safe non-approve (Blocked).
+    #[test]
+    fn review_execution_result_ambiguous_falls_to_blocked() {
+        assert!(matches!(
+            review_execution_result(""),
+            ExecutionVerdict::Blocked { .. }
+        ));
+        assert!(matches!(
+            review_execution_result("The analysis is complete."),
+            ExecutionVerdict::Blocked { .. }
+        ));
+    }
+
+    /// (b) accept_proposal errors when the skill file cannot be read for backup —
+    /// a missing file must not silently produce an empty-string backup and proceed.
+    #[test]
+    fn accept_proposal_fails_when_skill_file_missing() {
+        let tmp = std::env::temp_dir().join("neoth_si_safety01b_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+
+        // Skill path that does NOT exist.
+        let nonexistent = tmp.join("ghost_skill.md");
+        let _ = std::fs::remove_file(&nonexistent);
+
+        stage_proposal(
+            &tmp,
+            Proposal {
+                id: "p_ghost".into(),
+                skill: "ghost".into(),
+                skill_path: nonexistent.display().to_string(),
+                before: "x".into(),
+                after: "y".into(),
+                summary: "test".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 1,
+                backup: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let err = accept_proposal(&tmp, "p_ghost");
+        assert!(
+            err.is_err(),
+            "accept must fail when the skill file is unreadable — got Ok"
+        );
+        let _ = std::fs::remove_file(proposals_path(&tmp));
     }
 
     #[test]

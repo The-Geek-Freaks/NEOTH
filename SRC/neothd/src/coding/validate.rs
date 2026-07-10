@@ -136,7 +136,8 @@ impl PatchValidation {
             out.push_str("- ");
             out.push_str(r);
             if out.len() >= HINT_DIAGNOSTIC_CAP {
-                out.truncate(HINT_DIAGNOSTIC_CAP);
+                let safe = crate::util::byte_floor(&out, HINT_DIAGNOSTIC_CAP);
+                out.truncate(safe);
                 out.push_str("\n...(truncated)");
                 break;
             }

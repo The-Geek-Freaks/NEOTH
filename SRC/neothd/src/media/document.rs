@@ -143,11 +143,8 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     };
     let truncated = text.len() > MAX_TOTAL_TEXT;
     if truncated {
-        text.truncate(MAX_TOTAL_TEXT);
-        // Avoid slicing through a UTF-8 boundary mid-codepoint.
-        while !text.is_char_boundary(text.len()) {
-            text.pop();
-        }
+        let safe = crate::util::byte_floor(&text, MAX_TOTAL_TEXT);
+        text.truncate(safe);
         text.push_str("\n[NEOTH] …document truncated at extraction cap…");
     }
 

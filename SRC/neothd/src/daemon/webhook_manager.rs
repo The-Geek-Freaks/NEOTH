@@ -85,6 +85,15 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
             false
         }
         IpAddr::V6(v6) => {
+            // IPv4-mapped: ::ffff:0:0/96 — reuse the V4 guard so that e.g.
+            // ::ffff:10.0.0.1 correctly hits the RFC-1918 block.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_blocked_ip(IpAddr::V4(v4));
+            }
+            // unspecified ::
+            if v6.is_unspecified() {
+                return true;
+            }
             // loopback ::1
             if v6.is_loopback() {
                 return true;
@@ -426,7 +435,7 @@ async fn deliver_to_endpoint(
     let body_bytes = match serde_json::to_vec(&body_value) {
         Ok(b) => b,
         Err(e) => {
-            error!(url = %endpoint.url, error = %e, "webhook: failed to serialize payload");
+            error!(url_hash = %endpoint_url_hash(&endpoint.url), error = %e, "webhook: failed to serialize payload");
             emit_failed(writer, &endpoint.url, &format!("serialize: {e}")).await;
             return;
         }
@@ -437,7 +446,7 @@ async fn deliver_to_endpoint(
     let signature = if !secret.is_empty() {
         format!("hmac-sha256={}", hmac_sha256_hex(secret, &body_bytes))
     } else {
-        warn!(url = %endpoint.url, "webhook: no signing secret configured — signature header omitted");
+        warn!(url_hash = %endpoint_url_hash(&endpoint.url), "webhook: no signing secret configured — signature header omitted");
         String::new()
     };
 
@@ -468,7 +477,7 @@ async fn deliver_to_endpoint(
                     Ok(c) => c,
                     Err(e) => {
                         error!(
-                            url = %endpoint.url,
+                            url_hash = %endpoint_url_hash(&endpoint.url),
                             error = %e,
                             "webhook: pinned-client build failed — failing closed (no unpinned fallback)"
                         );
@@ -479,7 +488,7 @@ async fn deliver_to_endpoint(
             }
             Err(e) => {
                 error!(
-                    url = %endpoint.url,
+                    url_hash = %endpoint_url_hash(&endpoint.url),
                     error = %e,
                     "webhook: host parse failed at pin stage — failing closed"
                 );
@@ -490,7 +499,7 @@ async fn deliver_to_endpoint(
         // Unreachable after the SSRF gate, but fail closed defensively rather than
         // ever sending over an unpinned client.
         _ => {
-            error!(url = %endpoint.url, "webhook: no pinned IPs at delivery stage — failing closed");
+            error!(url_hash = %endpoint_url_hash(&endpoint.url), "webhook: no pinned IPs at delivery stage — failing closed");
             emit_failed(writer, &endpoint.url, "no pinned IPs (ssrf cache miss)").await;
             return;
         }
@@ -511,17 +520,17 @@ async fn deliver_to_endpoint(
             let status = resp.status().as_u16();
             let latency_ms = t0.elapsed().as_millis() as u64;
             if resp.status().is_success() {
-                info!(url = %endpoint.url, status, latency_ms, event = event_name, "webhook delivered");
+                info!(url_hash = %endpoint_url_hash(&endpoint.url), status, latency_ms, event = event_name, "webhook delivered");
                 emit_delivered(writer, &endpoint.url, status, latency_ms).await;
             } else {
                 let msg = format!("HTTP {status}");
-                warn!(url = %endpoint.url, status, latency_ms, event = event_name, "webhook non-2xx response");
+                warn!(url_hash = %endpoint_url_hash(&endpoint.url), status, latency_ms, event = event_name, "webhook non-2xx response");
                 emit_failed(writer, &endpoint.url, &msg).await;
             }
         }
         Err(e) => {
             let msg = format!("http send: {e}");
-            error!(url = %endpoint.url, error = %msg, "webhook delivery failed");
+            error!(url_hash = %endpoint_url_hash(&endpoint.url), error = %msg, "webhook delivery failed");
             emit_failed(writer, &endpoint.url, &msg).await;
         }
     }
@@ -734,6 +743,54 @@ mod tests {
     fn ssrf_ip_blocks_ipv6_loopback() {
         use std::net::{IpAddr, Ipv6Addr};
         assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    /// NEOTH-AUDIT-WEBHOOK-SSRF-PRIVACY-01 (a) — IPv4-mapped IPv6 bypass fix.
+    /// ::ffff:10.0.0.1 must be blocked via the V4 RFC-1918 path.
+    #[test]
+    fn ssrf_ip_blocks_ipv4_mapped_private() {
+        use std::net::IpAddr;
+        // ::ffff:10.0.0.1
+        assert!(is_blocked_ip("::ffff:10.0.0.1".parse::<IpAddr>().unwrap()));
+        // ::ffff:192.168.1.1
+        assert!(is_blocked_ip("::ffff:192.168.1.1".parse::<IpAddr>().unwrap()));
+        // ::ffff:127.0.0.1 (loopback via V4 path)
+        assert!(is_blocked_ip("::ffff:127.0.0.1".parse::<IpAddr>().unwrap()));
+    }
+
+    /// NEOTH-AUDIT-WEBHOOK-SSRF-PRIVACY-01 (a) — unspecified address :: must be blocked.
+    #[test]
+    fn ssrf_ip_blocks_ipv6_unspecified() {
+        use std::net::{IpAddr, Ipv6Addr};
+        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
+    }
+
+    /// ULA fc00::/7 must be blocked (fc00::1, fd00::1, etc.)
+    #[test]
+    fn ssrf_ip_blocks_ipv6_ula() {
+        use std::net::IpAddr;
+        assert!(is_blocked_ip("fc00::1".parse::<IpAddr>().unwrap()));
+        assert!(is_blocked_ip("fd00::1".parse::<IpAddr>().unwrap()));
+    }
+
+    /// Public IPv6 address must NOT be blocked.
+    #[test]
+    fn ssrf_ip_allows_public_ipv6() {
+        use std::net::IpAddr;
+        // 2606:4700:4700::1111 — Cloudflare public DNS
+        assert!(!is_blocked_ip("2606:4700:4700::1111".parse::<IpAddr>().unwrap()));
+    }
+
+    /// Privacy: endpoint_url_hash must NOT equal the raw URL.
+    /// Operator logs use the hash, never the raw URL which may embed tokens.
+    #[test]
+    fn tracing_uses_hash_not_raw_url() {
+        let url_with_token = "https://hooks.example.com/notify?token=supersecret";
+        let h = endpoint_url_hash(url_with_token);
+        assert_ne!(h, url_with_token, "hash must differ from raw URL");
+        assert_eq!(h.len(), 16, "xxh3-64 → 16 hex chars");
+        // Deterministic across calls (same input → same hash, always)
+        assert_eq!(h, endpoint_url_hash(url_with_token));
     }
 
     // ── extract_host_port ────────────────────────────────────────────────────

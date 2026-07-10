@@ -19,7 +19,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::time::Instant;
 
 use crate::mcp::config::McpServerConfig;
-use crate::mcp::transport::{JsonRpcRequest, JsonRpcResponse, frame, parse_frame};
+use crate::mcp::transport::{JsonRpcRequest, JsonRpcResponse, frame, parse_frame, MAX_MCP_FRAME_BYTES};
 
 /// Default timeout for any single MCP request. 30s is generous for
 /// `tools/list` (which servers cache) but tight enough to surface
@@ -103,6 +103,8 @@ pub enum McpError {
     },
     #[error("MCP server `{0}`: stdin/stdout I/O error: {1}")]
     Io(String, String),
+    #[error("MCP server `{0}`: incoming frame exceeds size limit")]
+    FrameTooBig(String),
 }
 
 /// One live connection to an MCP server.
@@ -279,6 +281,9 @@ impl McpClient {
                 Err(_) => return Err(McpError::Timeout(self.server_id.clone(), timeout)),
             };
             buf.extend_from_slice(&chunk[..n]);
+            if buf.len() > MAX_MCP_FRAME_BYTES {
+                return Err(McpError::FrameTooBig(self.server_id.clone()));
+            }
         }
     }
 
@@ -417,6 +422,17 @@ mod tests {
         let body = r#"{"content":[{"type":"text","text":"failed"}],"isError":true}"#;
         let r: ToolCallResult = serde_json::from_str(body).unwrap();
         assert!(r.is_error);
+    }
+
+    #[test]
+    fn frame_too_big_error_variant_is_constructible() {
+        // Smoke test: FrameTooBig is constructible and formats correctly.
+        // The read-loop cap enforcement is exercised in request(); this test
+        // verifies the error variant and its Display output are correctly wired.
+        let e = McpError::FrameTooBig("my-server".into());
+        let msg = format!("{e}");
+        assert!(msg.contains("my-server"), "server id missing: {msg}");
+        assert!(msg.contains("size limit"), "limit text missing: {msg}");
     }
 
     #[test]

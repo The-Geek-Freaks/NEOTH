@@ -51,6 +51,11 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
+/// Maximum allowed MCP frame body in bytes (16 MiB). Frames larger than this
+/// are rejected before any allocation is attempted, preventing OOM from a
+/// malicious or misbehaving child MCP process.
+pub const MAX_MCP_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
 /// Frame a JSON body with the `Content-Length` header per LSP/MCP spec.
 pub fn frame(body: &[u8]) -> Vec<u8> {
     let header = format!("Content-Length: {}\r\n\r\n", body.len());
@@ -93,7 +98,12 @@ pub fn parse_frame(buf: &[u8]) -> Result<Option<(Vec<u8>, usize)>, FrameError> {
     let content_length = content_length
         .ok_or_else(|| FrameError::HeaderMalformed("missing Content-Length".into()))?;
     let body_start = header_end + 4;
-    let body_end = body_start + content_length;
+    let body_end = body_start
+        .checked_add(content_length)
+        .ok_or(FrameError::Overflow)?;
+    if content_length > MAX_MCP_FRAME_BYTES {
+        return Err(FrameError::FrameTooLarge(content_length));
+    }
     if buf.len() < body_end {
         return Ok(None); // body not yet complete
     }
@@ -108,6 +118,10 @@ pub enum FrameError {
     HeaderNotUtf8,
     #[error("malformed header: {0}")]
     HeaderMalformed(String),
+    #[error("frame too large: claimed Content-Length {0} exceeds limit")]
+    FrameTooLarge(usize),
+    #[error("frame header overflow: body_start + content_length overflows usize")]
+    Overflow,
 }
 
 /// Find the index of the `\r\n\r\n` sequence that terminates the
@@ -163,6 +177,34 @@ mod tests {
         framed = b"Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}".to_vec();
         let (body2, _) = parse_frame(&framed).unwrap().unwrap();
         assert_eq!(body2, b"{}");
+    }
+
+    #[test]
+    fn parse_frame_rejects_oversized_content_length() {
+        // 999_999_999 bytes (~954 MiB) is rejected as FrameTooLarge without
+        // allocating a body buffer.
+        let header = b"Content-Length: 999999999\r\n\r\n";
+        let r = parse_frame(header);
+        assert!(matches!(r, Err(FrameError::FrameTooLarge(999_999_999))));
+    }
+
+    #[test]
+    fn parse_frame_rejects_overflow_content_length() {
+        // content_length = usize::MAX causes body_start.checked_add() to overflow
+        // before the size check fires, returning Overflow.
+        let header = format!("Content-Length: {}\r\n\r\n", usize::MAX);
+        let r = parse_frame(header.as_bytes());
+        assert!(matches!(r, Err(FrameError::Overflow)));
+    }
+
+    #[test]
+    fn parse_frame_accepts_exactly_at_limit() {
+        // content_length == MAX_MCP_FRAME_BYTES passes the size guard.
+        // Body is absent so parse_frame returns Ok(None) — no body allocation.
+        let header = format!("Content-Length: {}\r\n\r\n", MAX_MCP_FRAME_BYTES);
+        let r = parse_frame(header.as_bytes());
+        assert!(r.is_ok());
+        assert!(r.unwrap().is_none());
     }
 
     #[test]
