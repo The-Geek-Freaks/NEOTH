@@ -1323,7 +1323,7 @@ fn run_verification_in_sandbox(
                 // Using an extern "C" declaration avoids a hard dep on the `libc`
                 // crate while still calling the well-known POSIX `kill(2)` symbol.
                 unsafe {
-                    extern "C" {
+                    unsafe extern "C" {
                         fn kill(pid: i32, sig: i32) -> i32;
                     }
                     let _ = kill(-(pgid as i32), 9); // 9 = SIGKILL
