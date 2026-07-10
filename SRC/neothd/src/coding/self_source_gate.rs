@@ -30,7 +30,8 @@
 //! ```text
 //! src/wal/
 //! src/crypto
-//! src/config/credentials
+//! src/config/          (credentials AND the FreedomConfig / autonomy loader)
+//! src/permissions/     (the permission evaluator — no self-weakening the gate)
 //! src/coding/self_source_gate.rs   (this file — gates may not self-modify)
 //! src/coding/self_source.rs        (companion engine)
 //! ```
@@ -108,12 +109,6 @@ pub enum LayerOutcome {
     Pass,
     Fail(String),
     Skipped,
-}
-
-impl LayerOutcome {
-    fn is_pass(&self) -> bool {
-        matches!(self, LayerOutcome::Pass)
-    }
 }
 
 /// Audit record emitted for every self-edit request (proposed + optionally
