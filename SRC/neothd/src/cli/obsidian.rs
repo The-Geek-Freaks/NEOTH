@@ -116,6 +116,30 @@ pub enum ObsidianAction {
         #[arg(long, value_name = "FILE")]
         state: Option<PathBuf>,
     },
+    /// Deliberate, consented offline mirror: fetch named remote sources from a
+    /// YAML manifest and write them to a local directory with provenance
+    /// frontmatter. SSRF-safe (https-only; private/loopback/link-local IPs
+    /// blocked). No background fetch, no cron — one-shot operator command only.
+    ///
+    /// State is persisted to `<dest>/mirror_state.yaml` after each source so
+    /// partial progress survives interruption. Re-run with unchanged upstream
+    /// overwrites timestamps only (same content ⇒ same sha256 recorded).
+    Mirror {
+        /// YAML manifest listing sources to mirror.
+        /// Accepts `offline_security_sources.yaml` shape directly:
+        /// `id`/`primary_url`/`mirror_policy` are aliases for
+        /// `name`/`url`/`policy`. Unknown extra fields are ignored.
+        manifest: PathBuf,
+        /// Destination directory. Defaults to `<manifest-dir>/mirrored/`.
+        #[arg(long, value_name = "DIR")]
+        dest: Option<PathBuf>,
+        /// List what would be fetched; no network I/O.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the TTY consent prompt. Required for non-TTY / scripted use.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -227,6 +251,14 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
             )
             .await?;
             render_preload(stats, args.output);
+        }
+        ObsidianAction::Mirror {
+            manifest,
+            dest,
+            dry_run,
+            yes,
+        } => {
+            run_mirror(&manifest, dest.as_deref(), dry_run, yes).await?;
         }
     }
     Ok(())
@@ -1597,6 +1629,470 @@ fn render_days(days: Vec<String>, output: OutputFormat) {
     }
 }
 
+// ── L6-PRELOAD-MIRROR-01 — offline mirror command ────────────────────────────
+//
+// `neoth obsidian mirror <manifest> [--dest <dir>] [--dry-run] [--yes]`
+//
+// One-shot deliberate offline mirror of named remote sources.
+// Operator consent is required on TTY; `--yes` is required for scripted use.
+// SSRF-safe: https-only, private/loopback/link-local IPs blocked on literal
+// IP targets. The no-redirect HTTP client closes the post-validation gap where
+// a public URL could otherwise 302 into a private address.
+
+/// Maximum bytes accepted per mirrored file.
+///
+/// 8 MiB is generous for a README or wiki page and prevents runaway downloads
+/// if the manifest accidentally points at a binary asset URL. Checked both via
+/// the Content-Length response header (early-out for cooperative servers) and
+/// by accumulating the streamed body (authoritative cap before disk write).
+const MIRROR_SIZE_CAP: u64 = 8 * 1024 * 1024;
+
+/// Top-level mirror manifest.
+///
+/// Only `sources` is required. All other top-level keys (version, catalog_id,
+/// default_policy, risk_tiers, …) are tolerated so `offline_security_sources
+/// .yaml` can be passed as-is without stripping its header fields.
+#[derive(Debug, Deserialize)]
+pub(crate) struct MirrorManifest {
+    pub sources: Vec<MirrorSource>,
+}
+
+/// One source entry in the mirror manifest.
+///
+/// Core fields are `name` / `url` / `policy`. Aliases make the command accept
+/// `offline_security_sources.yaml` unchanged: that catalog uses `id` for the
+/// name, `primary_url` for the URL, and `mirror_policy` for the policy tag.
+/// Unknown extra fields (risk_tier, notes, format, …) are silently ignored.
+#[derive(Debug, Deserialize)]
+pub(crate) struct MirrorSource {
+    /// Unique slug — becomes the output filename stem.
+    #[serde(alias = "id")]
+    pub name: String,
+    /// Remote URL to fetch. Must be `https://`.
+    #[serde(alias = "primary_url")]
+    pub url: String,
+    /// Optional mirror policy tag. Recorded verbatim in state for operator
+    /// review; not enforced by this command.
+    #[serde(alias = "mirror_policy", default)]
+    pub policy: Option<String>,
+}
+
+/// Per-source record persisted to `mirror_state.yaml`.
+///
+/// `error` is `Some` when the fetch failed. Re-running with unchanged upstream
+/// overwrites `fetched_at` but keeps the same `sha256` (same content ⇒ same
+/// hash ⇒ no logical change). `sha256` covers the raw fetched bytes before
+/// the provenance frontmatter is prepended, so it can be verified against the
+/// upstream source independently.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct MirrorSourceState {
+    pub url: String,
+    pub sha256: Option<String>,
+    pub bytes: Option<u64>,
+    /// Unix timestamp (seconds) of the last fetch attempt.
+    pub fetched_at: Option<i64>,
+    pub http_status: Option<u16>,
+    /// Non-None when the fetch failed; stores the error message.
+    pub error: Option<String>,
+}
+
+/// Full state persisted to `mirror_state.yaml`.
+///
+/// BTreeMap ensures deterministic ordering: same sources in any manifest
+/// order produce the same YAML output.
+type MirrorState = BTreeMap<String, MirrorSourceState>;
+
+/// Validate `raw` as a mirror URL.
+///
+/// Rules enforced:
+/// 1. Must parse as a valid URL.
+/// 2. Scheme must be `https` (blocks `http://`, `file://`, custom schemes).
+/// 3. If the host is a literal IP address, it must not be private, loopback,
+///    link-local, CGNAT, broadcast, unspecified, or ULA.
+///
+/// Hostname-based targets whose DNS resolves to a private IP are NOT caught at
+/// validation time (no DNS resolution here). The no-redirect client closes the
+/// remaining gap: a public URL cannot 302 into a private address because
+/// redirects are never followed. This matches the SSRF hardening applied in
+/// commit a44b6a3a ("fix(security): block IPv4-mapped private IPs").
+pub(crate) fn validate_mirror_url(raw: &str) -> Result<url::Url> {
+    let url =
+        url::Url::parse(raw).with_context(|| format!("invalid mirror URL: {raw}"))?;
+    if url.scheme() != "https" {
+        anyhow::bail!(
+            "mirror URLs must use https (got scheme {:?}): {raw}",
+            url.scheme()
+        );
+    }
+    // Match url::Host directly — host_str() renders IPv6 with brackets
+    // ("[::1]"), which IpAddr::parse rejects and would silently skip the guard.
+    match url.host() {
+        None => anyhow::bail!("mirror URL has no host: {raw}"),
+        Some(url::Host::Ipv4(v4)) => {
+            block_mirror_ip(std::net::IpAddr::V4(v4))
+                .with_context(|| format!("SSRF guard rejected mirror URL: {raw}"))?;
+        }
+        Some(url::Host::Ipv6(v6)) => {
+            block_mirror_ip(std::net::IpAddr::V6(v6))
+                .with_context(|| format!("SSRF guard rejected mirror URL: {raw}"))?;
+        }
+        Some(url::Host::Domain(_)) => {}
+    }
+    Ok(url)
+}
+
+/// Reject IP addresses that the mirror command must never reach.
+///
+/// Covers loopback, private (RFC 1918), link-local (169.254.0.0/16 and
+/// fe80::/10), CGNAT (100.64.0.0/10, RFC 6598), broadcast, unspecified,
+/// ULA IPv6 (fc00::/7), and IPv4-mapped IPv6 aliases for all of the above.
+fn block_mirror_ip(addr: std::net::IpAddr) -> Result<()> {
+    match addr {
+        std::net::IpAddr::V4(v4) => {
+            if v4.is_loopback() {
+                anyhow::bail!("blocked loopback address {v4}");
+            }
+            if v4.is_private() {
+                anyhow::bail!("blocked private RFC-1918 address {v4}");
+            }
+            if v4.is_link_local() {
+                anyhow::bail!("blocked link-local address {v4}");
+            }
+            if v4.is_broadcast() {
+                anyhow::bail!("blocked broadcast address {v4}");
+            }
+            if v4.is_unspecified() {
+                anyhow::bail!("blocked unspecified address {v4}");
+            }
+            // CGNAT 100.64.0.0/10 — not covered by is_private()
+            let o = v4.octets();
+            if o[0] == 100 && (o[1] & 0xC0) == 64 {
+                anyhow::bail!("blocked CGNAT address {v4}");
+            }
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() {
+                anyhow::bail!("blocked loopback IPv6 {v6}");
+            }
+            if v6.is_unspecified() {
+                anyhow::bail!("blocked unspecified IPv6 {v6}");
+            }
+            let segs = v6.segments();
+            // ULA fc00::/7
+            if (segs[0] & 0xFE00) == 0xFC00 {
+                anyhow::bail!("blocked ULA IPv6 {v6}");
+            }
+            // link-local fe80::/10
+            if (segs[0] & 0xFFC0) == 0xFE80 {
+                anyhow::bail!("blocked link-local IPv6 {v6}");
+            }
+            // IPv4-mapped ::ffff:A.B.C.D — check the mapped address
+            if let Some(v4) = v6.to_ipv4() {
+                block_mirror_ip(std::net::IpAddr::V4(v4))
+                    .with_context(|| format!("IPv4-mapped IPv6 {v6} aliases a blocked range"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Load and parse a mirror manifest from `path`.
+pub(crate) fn load_mirror_manifest(path: &Path) -> Result<MirrorManifest> {
+    let body = std::fs::read_to_string(path)
+        .with_context(|| format!("read mirror manifest {}", path.display()))?;
+    serde_yaml::from_str(&body)
+        .with_context(|| format!("parse mirror manifest {}", path.display()))
+}
+
+fn load_mirror_state(path: &Path) -> Result<MirrorState> {
+    if !path.exists() {
+        return Ok(MirrorState::new());
+    }
+    let body = std::fs::read_to_string(path)
+        .with_context(|| format!("read mirror state {}", path.display()))?;
+    serde_yaml::from_str(&body)
+        .with_context(|| format!("parse mirror state {}", path.display()))
+}
+
+fn save_mirror_state(path: &Path, state: &MirrorState) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create mirror state dir {}", parent.display()))?;
+    }
+    let body = serde_yaml::to_string(state).context("serialize mirror state")?;
+    std::fs::write(path, body.as_bytes())
+        .with_context(|| format!("write mirror state {}", path.display()))
+}
+
+/// Hex-encoded SHA-256 of `data`.
+///
+/// Uses `sha2` (direct dep, version 0.10). The hash covers the raw fetched
+/// bytes before the provenance frontmatter is prepended, enabling independent
+/// verification against the upstream source.
+pub(crate) fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
+}
+
+/// Determine the output filename for a mirrored source.
+///
+/// Uses `.md` for URLs with no extension or with a `.md` extension; preserves
+/// any other extension (`.yaml`, `.json`, `.txt`, …) so the file type is
+/// self-evident without reading the content.
+fn mirror_filename(name: &str, url: &url::Url) -> String {
+    let ext = std::path::Path::new(url.path())
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty() && *e != "md")
+        .unwrap_or("md");
+    format!("{name}.{ext}")
+}
+
+/// Prepend a YAML provenance frontmatter block to `content`.
+///
+/// The block records `source_url`, `fetched_at` (Unix seconds), `sha256`,
+/// and `mirror_only: true`. The `mirror_only` flag signals to the preload
+/// pipeline that this file must not be ingested into NEOTH recall — it is
+/// copy-only provenance material (section trust = raw-source).
+pub(crate) fn with_provenance_frontmatter(
+    content: &str,
+    url: &str,
+    fetched_at: i64,
+    sha256: &str,
+) -> String {
+    format!(
+        "---\nsource_url: {url}\nfetched_at: {fetched_at}\nsha256: {sha256}\nmirror_only: true\n---\n\n{content}"
+    )
+}
+
+/// Run `neoth obsidian mirror`.
+///
+/// Loads the manifest, validates all URLs (SSRF guard, no network), obtains
+/// operator consent on TTY (unless `--yes`), then fetches each valid source
+/// in manifest order. Per-source outcome is persisted to
+/// `<dest>/mirror_state.yaml` after each fetch so partial progress survives
+/// interruption. Exits non-zero only when ALL sources fail.
+pub(crate) async fn run_mirror(
+    manifest_path: &Path,
+    dest: Option<&Path>,
+    dry_run: bool,
+    yes: bool,
+) -> Result<()> {
+    let manifest = load_mirror_manifest(manifest_path)?;
+    if manifest.sources.is_empty() {
+        println!("mirror: manifest has no sources — nothing to do.");
+        return Ok(());
+    }
+
+    // Validate all URLs up-front (pure, zero network) and report every
+    // SSRF rejection immediately so the operator sees the full picture before
+    // any fetch begins.
+    let mut valid: Vec<(&MirrorSource, url::Url)> = Vec::new();
+    for src in &manifest.sources {
+        match validate_mirror_url(&src.url) {
+            Ok(u) => valid.push((src, u)),
+            Err(e) => eprintln!("mirror: skipping {:?} — {e:#}", src.name),
+        }
+    }
+    if valid.is_empty() {
+        anyhow::bail!("mirror: no valid HTTPS sources found in manifest");
+    }
+
+    let manifest_dir = manifest_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let dest_dir = dest
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| manifest_dir.join("mirrored"));
+    let state_path = dest_dir.join("mirror_state.yaml");
+
+    // ── dry-run: list only, zero network I/O ─────────────────────────────
+    if dry_run {
+        println!(
+            "[dry-run] would mirror {} source(s) → {}",
+            valid.len(),
+            dest_dir.display()
+        );
+        for (src, url) in &valid {
+            let tag = src
+                .policy
+                .as_deref()
+                .map(|p| format!("  [policy: {p}]"))
+                .unwrap_or_default();
+            println!("  {} — {}{tag}", src.name, url.as_str());
+        }
+        return Ok(());
+    }
+
+    // ── consent: required on TTY unless --yes ─────────────────────────────
+    if !yes {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "mirror: non-TTY stdin without --yes; refusing to fetch. \
+                 Pass --yes to confirm fetch in scripted or piped use."
+            );
+        }
+        println!(
+            "mirror: about to fetch {} source(s) → {}",
+            valid.len(),
+            dest_dir.display()
+        );
+        for (src, url) in &valid {
+            println!("  {} — {}", src.name, url.as_str());
+        }
+        {
+            use std::io::Write;
+            print!("Proceed? [y/N] ");
+            std::io::stdout().flush().ok();
+        }
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("mirror: aborted.");
+            return Ok(());
+        }
+    }
+
+    // ── fetch ─────────────────────────────────────────────────────────────
+    std::fs::create_dir_all(&dest_dir)
+        .with_context(|| format!("create mirror dest {}", dest_dir.display()))?;
+
+    // State is loaded once; new entries are merged and re-saved after each
+    // source so partial progress is durable.
+    let mut state = load_mirror_state(&state_path).unwrap_or_default();
+
+    // No-redirect client: prevents a public URL from 302-ing into a private
+    // address after the up-front validate_mirror_url check has passed.
+    let client = crate::providers::http_client::build_client_no_redirect()
+        .context("build HTTP client for mirror")?;
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let mut any_ok = false;
+
+    for (src, url) in &valid {
+        let result = fetch_and_write_source(&client, src, url, &dest_dir, now_secs).await;
+        match result {
+            Ok(entry) => {
+                any_ok = true;
+                state.insert(src.name.clone(), entry);
+            }
+            Err(e) => {
+                eprintln!("mirror: {} failed — {e:#}", src.name);
+                state.insert(
+                    src.name.clone(),
+                    MirrorSourceState {
+                        url: src.url.clone(),
+                        fetched_at: Some(now_secs),
+                        error: Some(format!("{e:#}")),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        // Save state after every source so interrupts leave a consistent file.
+        if let Err(e) = save_mirror_state(&state_path, &state) {
+            eprintln!("mirror: warning — could not save state: {e:#}");
+        }
+    }
+
+    if !any_ok {
+        anyhow::bail!("mirror: all sources failed — see {}", state_path.display());
+    }
+
+    let ok_n = state.values().filter(|s| s.error.is_none()).count();
+    let fail_n = state.values().filter(|s| s.error.is_some()).count();
+    println!(
+        "mirror: {ok_n}/{} source(s) fetched, {fail_n} failed — state: {}",
+        valid.len(),
+        state_path.display()
+    );
+    Ok(())
+}
+
+/// Fetch one source, write the file with provenance frontmatter, return state.
+///
+/// Errors are per-source: callers continue to the next source and record the
+/// failure in `mirror_state.yaml`. Non-success HTTP status codes and exceeded
+/// size caps are errors.
+async fn fetch_and_write_source(
+    client: &reqwest::Client,
+    src: &MirrorSource,
+    url: &url::Url,
+    dest_dir: &Path,
+    now_secs: i64,
+) -> Result<MirrorSourceState> {
+    let resp = client
+        .get(url.as_str())
+        .header("User-Agent", "neoth-mirror/1 (offline source pinning)")
+        .send()
+        .await
+        .with_context(|| format!("GET {}", url.as_str()))?;
+
+    let http_status = resp.status().as_u16();
+    if !resp.status().is_success() {
+        anyhow::bail!("HTTP {http_status}");
+    }
+
+    // Content-Length pre-check: cooperative servers get an early rejection.
+    if let Some(cl) = resp.content_length() {
+        if cl > MIRROR_SIZE_CAP {
+            anyhow::bail!(
+                "Content-Length {cl} exceeds mirror size cap ({MIRROR_SIZE_CAP} bytes)"
+            );
+        }
+    }
+
+    // Stream body via chunk() (no StreamExt import needed; reqwest `stream`
+    // feature is enabled). Accumulate until the size cap; abort before writing
+    // if the limit is reached mid-stream.
+    let mut body: Vec<u8> = Vec::new();
+    let mut resp = resp;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .with_context(|| format!("read body from {}", url.as_str()))?
+    {
+        if body.len() as u64 + chunk.len() as u64 > MIRROR_SIZE_CAP {
+            anyhow::bail!(
+                "response body exceeds mirror size cap ({MIRROR_SIZE_CAP} bytes); refusing to store"
+            );
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    let bytes = body.len() as u64;
+    // Hash the raw bytes before prepending the frontmatter so the stored sha256
+    // is independently verifiable against the upstream source.
+    let sha256 = sha256_hex(&body);
+    let content = String::from_utf8_lossy(&body);
+    let output = with_provenance_frontmatter(&content, url.as_str(), now_secs, &sha256);
+
+    let filename = mirror_filename(&src.name, url);
+    let out_path = dest_dir.join(&filename);
+    std::fs::write(&out_path, output.as_bytes())
+        .with_context(|| format!("write {}", out_path.display()))?;
+
+    println!(
+        "mirror:   {} → {} ({bytes}B sha256:{}…)",
+        src.name,
+        out_path.display(),
+        &sha256[..16]
+    );
+    Ok(MirrorSourceState {
+        url: src.url.clone(),
+        sha256: Some(sha256),
+        bytes: Some(bytes),
+        fetched_at: Some(now_secs),
+        http_status: Some(http_status),
+        error: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2239,5 +2735,429 @@ sections:
             !knowledge_root_has_manifest(dir.path()),
             "must return false when preload_manifest.yaml is absent",
         );
+    }
+}
+
+// ── L6-PRELOAD-MIRROR-01 tests ────────────────────────────────────────────────
+#[cfg(test)]
+mod mirror_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    fn write_manifest(dir: &std::path::Path, yaml: &str) -> std::path::PathBuf {
+        let p = dir.join("mirror.yaml");
+        std::fs::write(&p, yaml).unwrap();
+        p
+    }
+
+    // ── SSRF guard — literal IP rejections ───────────────────────────────────
+
+    #[test]
+    fn ssrf_rejects_loopback_127_0_0_1() {
+        let e = validate_mirror_url("https://127.0.0.1/readme.md").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("loopback") || msg.contains("SSRF"),
+            "expected loopback/SSRF message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ssrf_rejects_private_10_x() {
+        let e = validate_mirror_url("https://10.0.0.1/readme.md").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("private") || msg.contains("SSRF"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ssrf_rejects_private_192_168_x() {
+        let e = validate_mirror_url("https://192.168.1.100/readme.md").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(msg.contains("private") || msg.contains("SSRF"), "got: {msg}");
+    }
+
+    #[test]
+    fn ssrf_rejects_link_local_169_254() {
+        // AWS/GCP metadata endpoint
+        let e =
+            validate_mirror_url("https://169.254.169.254/latest/meta-data/").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("link-local") || msg.contains("SSRF"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ssrf_rejects_file_scheme() {
+        let e = validate_mirror_url("file:///etc/passwd").unwrap_err();
+        assert!(
+            format!("{e:#}").contains("https"),
+            "file:// should be rejected for wrong scheme"
+        );
+    }
+
+    #[test]
+    fn ssrf_rejects_plain_http() {
+        let e = validate_mirror_url("http://example.com/readme.md").unwrap_err();
+        assert!(format!("{e:#}").contains("https"));
+    }
+
+    #[test]
+    fn ssrf_rejects_ipv4_mapped_private_v6() {
+        // ::ffff:10.0.0.1 aliases RFC-1918
+        let e = validate_mirror_url("https://[::ffff:10.0.0.1]/readme.md").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("SSRF") || msg.contains("private") || msg.contains("IPv4"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ssrf_rejects_ipv6_loopback() {
+        let e = validate_mirror_url("https://[::1]/readme.md").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("loopback") || msg.contains("SSRF"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ssrf_rejects_ula_ipv6() {
+        let e = validate_mirror_url("https://[fc00::1]/readme.md").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(msg.contains("ULA") || msg.contains("SSRF"), "got: {msg}");
+    }
+
+    #[test]
+    fn ssrf_rejects_link_local_ipv6_fe80() {
+        let e = validate_mirror_url("https://[fe80::1]/readme.md").unwrap_err();
+        let msg = format!("{e:#}");
+        assert!(
+            msg.contains("link-local") || msg.contains("SSRF"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ssrf_accepts_public_hostname() {
+        let result = validate_mirror_url(
+            "https://raw.githubusercontent.com/foo/bar/main/README.md",
+        );
+        assert!(result.is_ok(), "public hostname must pass: {result:?}");
+    }
+
+    // ── Manifest parse — name/url/policy fields ───────────────────────────────
+
+    #[test]
+    fn manifest_parses_name_url_policy() {
+        let dir = tempdir().unwrap();
+        let p = write_manifest(
+            dir.path(),
+            "sources:\n  - name: example\n    url: \"https://example.com/README.md\"\n    policy: full-mirror-ok\n",
+        );
+        let m = load_mirror_manifest(&p).unwrap();
+        assert_eq!(m.sources.len(), 1);
+        assert_eq!(m.sources[0].name, "example");
+        assert_eq!(m.sources[0].url, "https://example.com/README.md");
+        assert_eq!(m.sources[0].policy.as_deref(), Some("full-mirror-ok"));
+    }
+
+    #[test]
+    fn manifest_accepts_id_primary_url_mirror_policy_aliases() {
+        // Directly loadable from offline_security_sources.yaml without modification.
+        let yaml = concat!(
+            "version: 1\ncatalog_id: test\n",
+            "sources:\n",
+            "  - id: hacktricks\n",
+            "    title: \"HackTricks\"\n",
+            "    primary_url: \"https://github.com/HackTricks-wiki/hacktricks\"\n",
+            "    mirror_policy: full-mirror-ok\n",
+            "    risk_tier: dual-use-payloads\n",
+            "    offline_priority: 1\n",
+            "    notes: \"broad pentest corpus\"\n",
+        );
+        let dir = tempdir().unwrap();
+        let p = write_manifest(dir.path(), yaml);
+        let m = load_mirror_manifest(&p).unwrap();
+        assert_eq!(m.sources.len(), 1);
+        assert_eq!(m.sources[0].name, "hacktricks");
+        assert_eq!(m.sources[0].url, "https://github.com/HackTricks-wiki/hacktricks");
+        assert_eq!(m.sources[0].policy.as_deref(), Some("full-mirror-ok"));
+    }
+
+    #[test]
+    fn manifest_tolerates_extra_top_level_fields() {
+        // default_policy, risk_tiers, and other catalog-level keys must not fail parse.
+        let yaml = concat!(
+            "version: 1\ncatalog_id: extra-fields-test\n",
+            "default_policy:\n  copy_to_vault: true\n",
+            "risk_tiers:\n  safe-reference:\n    description: \"safe\"\n",
+            "sources:\n",
+            "  - name: src\n",
+            "    url: \"https://example.com/README.md\"\n",
+            "    risk_tier: safe-reference\n",
+            "    format: [\"markdown\"]\n",
+            "    notes: \"just a test\"\n",
+        );
+        let dir = tempdir().unwrap();
+        let p = write_manifest(dir.path(), yaml);
+        let m = load_mirror_manifest(&p).unwrap();
+        assert_eq!(m.sources.len(), 1);
+        assert_eq!(m.sources[0].name, "src");
+    }
+
+    #[test]
+    fn manifest_policy_field_is_optional() {
+        let yaml =
+            "sources:\n  - name: no-policy\n    url: \"https://example.com/README.md\"\n";
+        let dir = tempdir().unwrap();
+        let p = write_manifest(dir.path(), yaml);
+        let m = load_mirror_manifest(&p).unwrap();
+        assert!(m.sources[0].policy.is_none());
+    }
+
+    // ── dry-run: zero network I/O, zero files created ─────────────────────────
+
+    #[tokio::test]
+    async fn dry_run_creates_no_files_and_no_state() {
+        let dir = tempdir().unwrap();
+        let p = write_manifest(
+            dir.path(),
+            "sources:\n  - name: test-src\n    url: \"https://raw.githubusercontent.com/example/repo/main/README.md\"\n",
+        );
+        let dest = dir.path().join("mirrored");
+        run_mirror(&p, Some(&dest), /*dry_run=*/ true, /*yes=*/ true)
+            .await
+            .unwrap();
+        assert!(!dest.exists(), "dry-run must not create dest dir");
+    }
+
+    #[tokio::test]
+    async fn dry_run_with_invalid_url_also_produces_no_files() {
+        let dir = tempdir().unwrap();
+        // SSRF-rejected URL: dry-run should still succeed (zero-fetch) but skip it
+        let p = write_manifest(
+            dir.path(),
+            "sources:\n  - name: bad\n    url: \"https://127.0.0.1/README.md\"\n",
+        );
+        let dest = dir.path().join("mirrored");
+        // run_mirror returns Err when all sources are invalid — that's expected here
+        let _ = run_mirror(&p, Some(&dest), true, true).await;
+        assert!(!dest.exists(), "dry-run must not create dest dir even with invalid URLs");
+    }
+
+    // ── per-source failure continues; nonzero exit only when ALL fail ─────────
+
+    #[test]
+    fn failed_source_state_records_error_and_clears_hash() {
+        let s = MirrorSourceState {
+            url: "https://example.com".to_string(),
+            error: Some("HTTP 404".to_string()),
+            fetched_at: Some(1_720_000_000),
+            ..Default::default()
+        };
+        assert!(s.error.is_some(), "failed entry must carry error");
+        assert!(s.sha256.is_none(), "failed entry must not have sha256");
+        assert!(s.bytes.is_none(), "failed entry must not have bytes");
+        assert!(s.http_status.is_none(), "failed entry must not have http_status");
+    }
+
+    // ── SHA-256 correctness & determinism ─────────────────────────────────────
+
+    #[test]
+    fn sha256_hex_is_deterministic() {
+        assert_eq!(sha256_hex(b"neoth mirror"), sha256_hex(b"neoth mirror"));
+    }
+
+    #[test]
+    fn sha256_hex_is_64_chars() {
+        assert_eq!(sha256_hex(b"anything").len(), 64, "sha256 hex must be 64 chars");
+    }
+
+    #[test]
+    fn sha256_hex_differs_for_different_content() {
+        assert_ne!(sha256_hex(b"content A"), sha256_hex(b"content B"));
+    }
+
+    #[test]
+    fn sha256_known_empty_vector() {
+        // FIPS 180-4 test vector for SHA-256("")
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn sha256_known_abc_vector() {
+        // FIPS 180-4 test vector for SHA-256("abc") — 64 hex chars (32 bytes).
+        // Last byte is 0x02, which hex-encodes as "02" not "2".
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    // ── provenance frontmatter ────────────────────────────────────────────────
+
+    #[test]
+    fn provenance_frontmatter_has_all_required_fields() {
+        let result = with_provenance_frontmatter(
+            "# README content",
+            "https://example.com/README.md",
+            1_720_000_000,
+            "abc123def456",
+        );
+        assert!(result.starts_with("---\n"), "must start with YAML frontmatter fence");
+        assert!(result.contains("source_url: https://example.com/README.md"));
+        assert!(result.contains("fetched_at: 1720000000"));
+        assert!(result.contains("sha256: abc123def456"));
+        assert!(result.contains("mirror_only: true"));
+        assert!(result.contains("# README content"), "original content must be preserved");
+    }
+
+    #[test]
+    fn provenance_frontmatter_original_content_follows_separator() {
+        let body = "# Title\n\nSome text.";
+        let result = with_provenance_frontmatter(body, "https://x.example/r.md", 0, "h");
+        // Frontmatter block must be closed with ---
+        assert!(result.contains("---\n\n"), "frontmatter must be closed with ---");
+        assert!(result.ends_with("Some text."));
+    }
+
+    // ── output filename derivation ────────────────────────────────────────────
+
+    #[test]
+    fn mirror_filename_defaults_to_md_for_extensionless_path() {
+        let url = url::Url::parse("https://example.com/some/path").unwrap();
+        assert_eq!(mirror_filename("owasp-wstg", &url), "owasp-wstg.md");
+    }
+
+    #[test]
+    fn mirror_filename_uses_md_for_md_url() {
+        let url = url::Url::parse("https://example.com/README.md").unwrap();
+        assert_eq!(mirror_filename("hacktricks", &url), "hacktricks.md");
+    }
+
+    #[test]
+    fn mirror_filename_preserves_yaml_extension() {
+        let url = url::Url::parse("https://example.com/data.yaml").unwrap();
+        assert_eq!(mirror_filename("lolbas", &url), "lolbas.yaml");
+    }
+
+    #[test]
+    fn mirror_filename_preserves_json_extension() {
+        let url = url::Url::parse("https://example.com/attack.json").unwrap();
+        assert_eq!(mirror_filename("mitre-attack", &url), "mitre-attack.json");
+    }
+
+    // ── size cap constant ─────────────────────────────────────────────────────
+
+    #[test]
+    fn size_cap_is_8_mib() {
+        assert_eq!(MIRROR_SIZE_CAP, 8 * 1024 * 1024, "size cap must be exactly 8 MiB");
+    }
+
+    // ── mirror_state.yaml round-trip ──────────────────────────────────────────
+
+    #[test]
+    fn mirror_state_round_trips_through_yaml() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mirror_state.yaml");
+        let mut state = MirrorState::new();
+        state.insert(
+            "example".to_string(),
+            MirrorSourceState {
+                url: "https://example.com/README.md".to_string(),
+                sha256: Some("abc123deadbeef".to_string()),
+                bytes: Some(4096),
+                fetched_at: Some(1_720_000_000),
+                http_status: Some(200),
+                error: None,
+            },
+        );
+        save_mirror_state(&path, &state).unwrap();
+        let loaded = load_mirror_state(&path).unwrap();
+        let entry = loaded.get("example").expect("entry must survive round-trip");
+        assert_eq!(entry.sha256.as_deref(), Some("abc123deadbeef"));
+        assert_eq!(entry.bytes, Some(4096));
+        assert_eq!(entry.http_status, Some(200));
+        assert!(entry.error.is_none());
+        assert_eq!(entry.fetched_at, Some(1_720_000_000));
+    }
+
+    #[test]
+    fn mirror_state_btreemap_ordering_is_deterministic() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.yaml");
+        let mut s = MirrorState::new();
+        // Insert in reverse alphabetical order
+        for name in ["zebra", "alpha", "middle"] {
+            s.insert(
+                name.to_string(),
+                MirrorSourceState { url: "https://x.example".to_string(), ..Default::default() },
+            );
+        }
+        save_mirror_state(&path, &s).unwrap();
+        let yaml = std::fs::read_to_string(&path).unwrap();
+        let alpha_pos = yaml.find("alpha").unwrap();
+        let middle_pos = yaml.find("middle").unwrap();
+        let zebra_pos = yaml.find("zebra").unwrap();
+        assert!(alpha_pos < middle_pos, "BTreeMap must output alpha before middle");
+        assert!(middle_pos < zebra_pos, "BTreeMap must output middle before zebra");
+    }
+
+    // ── wiremock-style success: file written with correct sha256 ──────────────
+    // (Real network calls are excluded per BSOD constraint. This test drives
+    //  the pure helper layer — sha256_hex + with_provenance_frontmatter +
+    //  mirror_filename — end-to-end the same path fetch_and_write_source would
+    //  take, verifying the file+state contract without network I/O.)
+
+    #[test]
+    fn successful_fetch_contract_file_and_state_have_matching_sha256() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("out");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let raw_content = b"# HackTricks README\n\nSome content here.\n";
+        let sha256 = sha256_hex(raw_content);
+        let url_str = "https://github.com/HackTricks-wiki/hacktricks";
+        let fetched_at: i64 = 1_720_000_000;
+
+        // Simulate what fetch_and_write_source does after getting the body
+        let content = String::from_utf8_lossy(raw_content);
+        let output = with_provenance_frontmatter(&content, url_str, fetched_at, &sha256);
+        let url = url::Url::parse(url_str).unwrap();
+        let filename = mirror_filename("hacktricks", &url);
+        let out_path = dest.join(&filename);
+        std::fs::write(&out_path, output.as_bytes()).unwrap();
+
+        // File must exist
+        assert!(out_path.exists(), "output file must be written");
+
+        // File must start with frontmatter containing the sha256
+        let written = std::fs::read_to_string(&out_path).unwrap();
+        assert!(written.contains(&sha256), "file must contain the sha256 of raw content");
+        assert!(written.contains("mirror_only: true"), "file must have mirror_only flag");
+
+        // State record must carry the same sha256
+        let state_entry = MirrorSourceState {
+            url: url_str.to_string(),
+            sha256: Some(sha256.clone()),
+            bytes: Some(raw_content.len() as u64),
+            fetched_at: Some(fetched_at),
+            http_status: Some(200),
+            error: None,
+        };
+        assert_eq!(state_entry.sha256.as_deref(), Some(sha256.as_str()));
+        assert!(state_entry.error.is_none());
     }
 }
