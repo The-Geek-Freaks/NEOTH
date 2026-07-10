@@ -207,19 +207,20 @@ fn semantic_split(prompt: &str, keep_recent_chars: usize) -> usize {
         return 0;
     }
 
-    // Search window: ±25% of keep_recent_chars around raw_split. `window` is a
-    // raw byte count, so the window bounds must be snapped back to char
-    // boundaries before slicing — otherwise a multibyte codepoint (emoji, CJK)
-    // straddling a bound panics at `&prompt[search_lo..search_hi]`.
+    // Search window: up to 25% of keep_recent_chars BACKWARD from raw_split.
+    // The upper bound is raw_split itself, never past it: a boundary chosen in
+    // the live zone (> raw_split) would grow the stable prefix into content that
+    // changes every turn, breaking the byte-identical-prefix cache guarantee AND
+    // shrinking the live zone below keep_recent_chars. `search_lo` is a raw byte
+    // count so it must be snapped back to a char boundary before slicing (emoji
+    // / CJK straddling the bound would otherwise panic). `raw_split` is already
+    // a char boundary from the adjustment above.
     let window = keep_recent_chars / 4;
     let mut search_lo = raw_split.saturating_sub(window);
     while search_lo > 0 && !prompt.is_char_boundary(search_lo) {
         search_lo -= 1;
     }
-    let mut search_hi = (raw_split + window).min(prompt.len());
-    while search_hi < prompt.len() && !prompt.is_char_boundary(search_hi) {
-        search_hi += 1;
-    }
+    let search_hi = raw_split;
 
     // Find the last turn-boundary marker whose *end* falls within [search_lo, search_hi].
     let mut best: Option<usize> = None;
@@ -1053,6 +1054,27 @@ mod tests {
         let prompt = "assistant preamble\n\nHuman: hi there, this is the whole thing";
         assert_eq!(semantic_split(prompt, prompt.len()), 0);
         assert_eq!(semantic_split(prompt, prompt.len() + 1000), 0);
+    }
+
+    /// Wave-18: the split must NEVER exceed the raw keep_recent boundary — a
+    /// turn marker sitting in the live zone must not pull the split forward
+    /// (that would shrink the live zone below keep_recent_chars and make the
+    /// "stable" prefix change every fire, defeating the prompt cache).
+    #[test]
+    fn pxp02_semantic_split_never_exceeds_keep_recent_boundary() {
+        // 200-char stable prefix, then a marker right at the boundary, then the
+        // live tail. keep_recent_chars=100 → raw_split≈len-100 sits before the
+        // second marker, which must NOT be chosen.
+        let stable = "x".repeat(200);
+        let prompt = format!("{stable}\n\nHuman: recent turn content here padded out");
+        let keep = 40;
+        let raw_boundary = prompt.len() - keep.min(prompt.len());
+        let at = semantic_split(&prompt, keep);
+        assert!(
+            at <= raw_boundary,
+            "split {at} exceeded keep_recent boundary {raw_boundary}"
+        );
+        assert!(prompt.is_char_boundary(at));
     }
 
     /// Two consecutive fires over the same stable prefix must produce identical
