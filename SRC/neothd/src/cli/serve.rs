@@ -25,6 +25,30 @@ use crate::wal::EventFlags;
 use crate::wal::events::{EVENT_TYPE_BOOT, EVENT_TYPE_ONBOARDING_COMPLETE_CONFIRMED};
 use crate::wal::writer::WalWriterHandle;
 
+// ── ZF-07 Boot-Stagger constants ──────────────────────────────────────────────
+//
+// At daemon boot the full cron fleet (≤ 28 tasks) whose schedules are
+// already-due fire their first tick simultaneously — thundering herd on
+// CPU, IO, and the provider API rate-limit.  A shared `Semaphore` with
+// `START_STAGGER_PERMITS` permits bounds cold-start concurrency: each cron
+// seed acquires one permit before spawning; the permit is released after
+// `CRON_FIRST_TICK_WINDOW`, letting the next batch start.  Steady-state
+// ticks (all subsequent interval firings) run completely unthrottled.
+
+/// Maximum concurrent cron cold-starts during daemon boot (ZF-07 ceiling).
+///
+/// With 28 fleet crons at 4 permits the burst is ≤ 4-wide; the full fleet
+/// seeds in ≈ 28/4 × 500 ms ≈ 3.5 s instead of an instantaneous spike.
+const START_STAGGER_PERMITS: usize = 4;
+
+/// How long a boot-stagger permit is held after a cron is spawned.
+///
+/// Conservative upper bound on a typical first-tick wall-time including any
+/// cold-path provider latency.  Releasing too early would let a slow first
+/// tick overlap with the next batch; releasing too late would delay seeding
+/// unnecessarily.  500 ms covers the common cases without notable boot delay.
+const CRON_FIRST_TICK_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
+
 // GOLD-ARCH-01: the channel-side inbound pipeline now lives in `serve_pipeline`.
 
 #[derive(Args, Debug, Clone)]
@@ -1144,12 +1168,29 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 u64,
             > = std::collections::HashMap::new();
 
+            // ZF-07 Boot-Stagger: create the first-tick semaphore once for the
+            // boot seed phase.  Each cron acquires one permit before spawning;
+            // the permit is released after CRON_FIRST_TICK_WINDOW via a tiny
+            // detached timer task.  The semaphore is not used after seeding —
+            // steady-state hot-reload restarts bypass it entirely.
+            let boot_stagger_sem = std::sync::Arc::new(
+                tokio::sync::Semaphore::new(START_STAGGER_PERMITS),
+            );
+
             // Seed: spawn all desired crons for the boot config.
             {
                 let boot_cfg = ctrl.latest();
                 let desired = desired_cron_keys(&boot_cfg);
                 let mut seeded = 0usize;
                 for key in &desired {
+                    // ZF-07: acquire before spawn — at most START_STAGGER_PERMITS
+                    // crons execute their first tick concurrently.  Blocks until a
+                    // slot opens; runtime continues scheduling other tasks meanwhile.
+                    let stagger_permit = boot_stagger_sem
+                        .clone()
+                        .acquire_owned()
+                        .await
+                        .expect("boot_stagger_sem closed");
                     if let Some(handle) = spawn_cron_for_key(*key, &boot_cfg, &deps) {
                         fleet
                             .lock()
@@ -1157,7 +1198,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             .insert(*key, handle);
                         fp_map.insert(*key, cron_spec_fingerprint(*key, &boot_cfg));
                         seeded += 1;
+                        // Hold the permit for CRON_FIRST_TICK_WINDOW so the cron's
+                        // first tick finishes before the next batch is released.
+                        // Detached: daemon-lifetime task; no handle needed.
+                        tokio::spawn(async move {
+                            tokio::time::sleep(CRON_FIRST_TICK_WINDOW).await;
+                            drop(stagger_permit); // explicit: release the slot
+                        });
                     }
+                    // None branch: stagger_permit drops here, releasing immediately.
                 }
                 // Count tasks actually spawned, not the desired-set size: a
                 // desired key whose spawn_* returns None (e.g. a vault is set but
@@ -2390,6 +2439,80 @@ pub(crate) async fn handle_reload_sentinel(
             error = %e,
             path = %sentinel_path.display(),
             "reload sentinel delete failed; next poll tick may double-fire"
+        );
+    }
+}
+
+// ── ZF-07 boot-stagger unit tests ─────────────────────────────────────────────
+#[cfg(test)]
+mod boot_stagger_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use super::{CRON_FIRST_TICK_WINDOW, START_STAGGER_PERMITS};
+
+    /// Proves that the boot-stagger semaphore bounds concurrent cron cold-starts
+    /// to at most `START_STAGGER_PERMITS` (ZF-07 correctness).
+    ///
+    /// Spawns `START_STAGGER_PERMITS * 3` tasks (three full batches).  Each task
+    /// mirrors the seed-loop pattern: acquire an owned permit, record peak
+    /// concurrency, do brief "first-tick" work, then release.  The observed peak
+    /// must never exceed the ceiling.
+    #[tokio::test]
+    async fn boot_stagger_bounds_concurrent_first_ticks() {
+        let sem = Arc::new(tokio::sync::Semaphore::new(START_STAGGER_PERMITS));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let n_tasks = START_STAGGER_PERMITS * 3;
+        let mut handles = Vec::with_capacity(n_tasks);
+        for _ in 0..n_tasks {
+            let sem = Arc::clone(&sem);
+            let active = Arc::clone(&active);
+            let peak = Arc::clone(&peak);
+            handles.push(tokio::spawn(async move {
+                // Mirror the seed loop: acquire one permit before "first tick".
+                let _permit = sem.acquire_owned().await.expect("semaphore closed");
+                let cur = active.fetch_add(1, Ordering::AcqRel) + 1;
+                // Track peak via CAS loop (avoids a separate mutex).
+                let mut p = peak.load(Ordering::Acquire);
+                while p < cur {
+                    match peak.compare_exchange_weak(
+                        p,
+                        cur,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break,
+                        Err(actual) => p = actual,
+                    }
+                }
+                // Simulate first-tick work (much shorter than CRON_FIRST_TICK_WINDOW
+                // so the test finishes quickly while still proving concurrency).
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                active.fetch_sub(1, Ordering::AcqRel);
+                // _permit drops here — releases the semaphore slot.
+            }));
+        }
+        for h in handles {
+            h.await.expect("task panicked");
+        }
+        let observed = peak.load(Ordering::Acquire);
+        // The semaphore ceiling must hold.
+        assert!(
+            observed <= START_STAGGER_PERMITS,
+            "peak concurrent first-ticks {observed} must not exceed \
+             START_STAGGER_PERMITS={START_STAGGER_PERMITS}",
+        );
+    }
+
+    /// Sanity: CRON_FIRST_TICK_WINDOW is non-zero (a zero window would release
+    /// the permit immediately, making the stagger a no-op).
+    #[test]
+    fn cron_first_tick_window_is_positive() {
+        assert!(
+            !CRON_FIRST_TICK_WINDOW.is_zero(),
+            "CRON_FIRST_TICK_WINDOW must be > 0 or the stagger is a no-op",
         );
     }
 }
