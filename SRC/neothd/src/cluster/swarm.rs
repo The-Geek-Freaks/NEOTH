@@ -476,4 +476,80 @@ mod tests {
         assert_eq!(table.len(), 1, "stale entry must be pruned");
         assert_eq!(table.rows()[0].node_id, "peer-aabbccdd");
     }
+
+    // ── Wire-compat: GOLD-FEAT-06 real-value upgrade ──────────────────────
+    //
+    // After the GOLD-FEAT-06 upgrade, gossip payloads carry REAL CPU/RAM/VRAM
+    // values instead of placeholder zeros. These tests verify that:
+    //   (a) real values round-trip correctly through encode/decode;
+    //   (b) the old "zeros + Noise-PK hostname" format is still parseable —
+    //       nodes running the old firmware must not crash when they encounter
+    //       upgraded payloads, and upgraded nodes must handle any old frames
+    //       still present in WAL replays (serde_json ignores unknown fields by
+    //       default and accepts any valid JSON for known fields).
+
+    /// Real CPU/RAM/VRAM values round-trip through the gossip wire codec.
+    #[test]
+    fn wire_compat_real_values_roundtrip() {
+        let real = NodeResourceSnapshot::new(
+            "shadow-pc".to_string(),
+            "shadow-pc".to_string(),
+            45.3,        // real CPU% (not a placeholder 0.0)
+            8_192_u64,   // 8 GiB used
+            32_768_u64,  // 32 GiB total
+            Some(6_144), // 6 GiB VRAM used (e.g. RTX 3080)
+            Some(10_240),// 10 GiB VRAM total
+            1_700_000_000,
+        );
+        let encoded = encode_snapshot_gossip_payload(&real).unwrap();
+        let decoded = decode_snapshot_gossip_payload(&encoded).unwrap();
+        assert_eq!(decoded, real, "real-values snapshot must survive wire roundtrip");
+        assert!((decoded.cpu_pct - 45.3).abs() < 0.001, "cpu_pct must be preserved");
+        assert_eq!(decoded.ram_used_mb, 8_192);
+        assert_eq!(decoded.ram_total_mb, 32_768);
+        assert_eq!(decoded.vram_used_mb, Some(6_144));
+        assert_eq!(decoded.vram_total_mb, Some(10_240));
+    }
+
+    /// Placeholder-zero payloads (old firmware style) are still decodable —
+    /// wire backward compatibility: upgraded receivers tolerate old senders.
+    #[test]
+    fn wire_compat_old_zeros_still_parse() {
+        let old_style = NodeResourceSnapshot::new(
+            "a1b2c3d4e5f6".to_string(), // Noise-PK hex placeholder
+            "a1b2c3d4e5f6".to_string(),
+            0.0,
+            0,
+            0,
+            None,
+            None,
+            1_700_000_000,
+        );
+        let encoded = encode_snapshot_gossip_payload(&old_style).unwrap();
+        let decoded = decode_snapshot_gossip_payload(&encoded).unwrap();
+        assert_eq!(decoded.cpu_pct, 0.0);
+        assert_eq!(decoded.ram_total_mb, 0);
+        assert_eq!(decoded.vram_used_mb, None);
+        assert_eq!(decoded.node_id, "a1b2c3d4e5f6");
+    }
+
+    /// CPU-only host (no VRAM): None fields round-trip correctly.
+    #[test]
+    fn wire_compat_cpu_only_host_no_vram() {
+        let cpu_only = NodeResourceSnapshot::new(
+            "headless-node".to_string(),
+            "headless-node".to_string(),
+            12.5,
+            4_096,
+            16_384,
+            None,
+            None,
+            1_700_000_000,
+        );
+        let encoded = encode_snapshot_gossip_payload(&cpu_only).unwrap();
+        let decoded = decode_snapshot_gossip_payload(&encoded).unwrap();
+        assert_eq!(decoded.vram_used_mb, None, "CPU-only: vram_used_mb must stay None");
+        assert_eq!(decoded.vram_total_mb, None, "CPU-only: vram_total_mb must stay None");
+        assert_eq!(decoded.ram_total_mb, 16_384);
+    }
 }

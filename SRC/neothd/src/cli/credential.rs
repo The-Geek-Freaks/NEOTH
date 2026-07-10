@@ -455,88 +455,138 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
         );
     }
 
-    // Persist only when clean. `--to file` is strictly two-phase: the keychain
-    // is NOT touched until credentials.yaml is written AND verified to hold
-    // every migrated secret (migrate_to_file no longer deletes). This closes the
-    // data-loss window where a secret was deleted from the keychain before the
-    // file existed. `--to keychain` already set the keychain in phase 1 (with
-    // rollback on failure), so here it only persists the blanked file + backend.
+    // Persist only when clean. Each direction is ordered so a crash at ANY step
+    // leaves the secret reachable through the backend `freedom.yaml` currently
+    // points at — never in a place the live read path won't consult.
+    //
+    // `--to file`:    write+verify file → switch backend → purge keychain.
+    // `--to keychain`: verify keychain → switch backend → THEN blank file.
+    //
+    // The orderings are mirror images because the backend pointer must only be
+    // flipped once the *new* source of truth is durable, and the *old* source is
+    // only cleared once the pointer no longer references it.
     if !dry_run && !report.moved.is_empty() {
-        // Persist the credentials.yaml (atomic inside `.write`).
-        updated_creds
-            .write(&cred_path)
-            .with_context(|| format!("write updated credentials to {}", cred_path.display()))?;
+        match direction {
+            keychain::MigrationDirection::ToFile => {
+                // Phase 1: write the populated file (atomic inside `.write`).
+                updated_creds
+                    .write(&cred_path)
+                    .with_context(|| format!("write updated credentials to {}", cred_path.display()))?;
 
-        // For --to file, VERIFY the file holds every migrated secret before we
-        // switch the backend or delete anything from the keychain. If a secret
-        // is missing, the keychain is still intact — no data lost, just retry.
-        if matches!(direction, keychain::MigrationDirection::ToFile) {
-            let reloaded = Credentials::load_or_default(&cred_path)
-                .context("re-load credentials.yaml to verify the migration before purging keychain")?;
-            let reloaded_yaml = serde_yaml::to_value(&reloaded)
-                .context("serialize reloaded credentials for verification")?;
-            let map = reloaded_yaml
-                .as_mapping()
-                .context("reloaded credentials serialised to a non-mapping")?;
-            let missing: Vec<&String> = report
-                .moved
-                .iter()
-                .filter(|key| {
-                    let k = serde_yaml::Value::String((*key).clone());
-                    map.get(&k).and_then(|v| v.as_str()).is_none_or(|s| s.is_empty())
-                })
-                .collect();
-            if !missing.is_empty() {
-                anyhow::bail!(
-                    "credentials.yaml was written but verification found {} secret(s) missing \
-                     ({}); the keychain is left INTACT — no data lost. Re-run `neoth credential \
-                     migrate --to file`.",
-                    missing.len(),
-                    missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
-                );
-            }
-        }
-
-        // Switch secrets_backend in freedom.yaml — atomic write via temp+rename
-        // so a crash mid-write cannot leave a half-written config file.
-        let freedom_path = crate::config::FreedomConfig::default_path();
-        if freedom_path.exists() {
-            let body = std::fs::read_to_string(&freedom_path)
-                .context("read freedom.yaml for backend update")?;
-            let new_backend = match direction {
-                keychain::MigrationDirection::ToKeychain => "keychain",
-                keychain::MigrationDirection::ToFile => "file",
-            };
-            let updated = update_or_append_secrets_backend(&body, new_backend);
-            atomic_write_str(&freedom_path, &updated).context("write updated freedom.yaml")?;
-        }
-
-        // Phase 3 (--to file only): now that the secrets are durably in the file
-        // AND freedom.yaml points at `file`, purge them from the keychain. A
-        // delete failure here is a CLEANUP problem (the secret is safe in the
-        // file, merely duplicated in the keychain) — never data loss.
-        if matches!(direction, keychain::MigrationDirection::ToFile) {
-            let cleanup_failed = keychain::purge_from_keychain(store.as_ref(), &report.moved);
-            if !cleanup_failed.is_empty() {
-                eprintln!(
-                    "WARNING: {} secret(s) are now in credentials.yaml but could NOT be removed \
-                     from the OS keychain — they exist in BOTH places (no data was lost). \
-                     Remove these keychain entries manually or re-run the migration:",
-                    cleanup_failed.len()
-                );
-                for (k, e) in &cleanup_failed {
-                    eprintln!("  ✗ {k}: {e}");
+                // Phase 2: VERIFY the file holds every migrated secret before we
+                // switch the backend or delete anything from the keychain. If a
+                // secret is missing, the keychain is still intact — no data lost.
+                let reloaded = Credentials::load_or_default(&cred_path)
+                    .context("re-load credentials.yaml to verify the migration before purging keychain")?;
+                let reloaded_yaml = serde_yaml::to_value(&reloaded)
+                    .context("serialize reloaded credentials for verification")?;
+                let map = reloaded_yaml
+                    .as_mapping()
+                    .context("reloaded credentials serialised to a non-mapping")?;
+                let missing: Vec<&String> = report
+                    .moved
+                    .iter()
+                    .filter(|key| {
+                        let k = serde_yaml::Value::String((*key).clone());
+                        map.get(&k).and_then(|v| v.as_str()).is_none_or(|s| s.is_empty())
+                    })
+                    .collect();
+                if !missing.is_empty() {
+                    anyhow::bail!(
+                        "credentials.yaml was written but verification found {} secret(s) missing \
+                         ({}); the keychain is left INTACT — no data lost. Re-run `neoth credential \
+                         migrate --to file`.",
+                        missing.len(),
+                        missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    );
                 }
-                anyhow::bail!(
-                    "keychain cleanup incomplete after a successful file migration — {} \
-                     entr(y/ies) remain in the keychain (see warnings above)",
-                    cleanup_failed.len()
-                );
+
+                // Phase 3: file is durable → point the backend at it.
+                switch_secrets_backend(direction)?;
+
+                // Phase 4: freedom.yaml now reads from the file, so purge the
+                // keychain. A delete failure here is a CLEANUP problem (the
+                // secret is safe in the file, merely duplicated) — never loss.
+                let cleanup_failed = keychain::purge_from_keychain(store.as_ref(), &report.moved);
+                if !cleanup_failed.is_empty() {
+                    eprintln!(
+                        "WARNING: {} secret(s) are now in credentials.yaml but could NOT be removed \
+                         from the OS keychain — they exist in BOTH places (no data was lost). \
+                         Remove these keychain entries manually or re-run the migration:",
+                        cleanup_failed.len()
+                    );
+                    for (k, e) in &cleanup_failed {
+                        eprintln!("  ✗ {k}: {e}");
+                    }
+                    anyhow::bail!(
+                        "keychain cleanup incomplete after a successful file migration — {} \
+                         entr(y/ies) remain in the keychain (see warnings above)",
+                        cleanup_failed.len()
+                    );
+                }
+            }
+            keychain::MigrationDirection::ToKeychain => {
+                // Phase 1 (migrate_to_keychain) already SET every secret in the
+                // store, with rollback on partial failure. VERIFY each is now
+                // readable back before we touch the file or the backend pointer.
+                // A verify failure means the file still holds the plaintext and
+                // freedom.yaml still says `file` — no data lost; roll back and
+                // retry.
+                let mut missing = Vec::new();
+                for key in &report.moved {
+                    match store.get(key) {
+                        Ok(Some(_)) => {}
+                        Ok(None) => missing.push(key.clone()),
+                        Err(e) => missing.push(format!("{key} ({e})")),
+                    }
+                }
+                if !missing.is_empty() {
+                    let _ = keychain::purge_from_keychain(store.as_ref(), &report.moved);
+                    anyhow::bail!(
+                        "keychain verification failed for {} secret(s) ({}); the keychain sets were \
+                         rolled back and credentials.yaml is UNTOUCHED — no data lost. Re-run \
+                         `neoth credential migrate --to keychain`.",
+                        missing.len(),
+                        missing.join(", ")
+                    );
+                }
+
+                // Phase 2: secrets durable in the keychain → point the backend at
+                // it FIRST. From here reads come from the keychain (the file's
+                // plaintext, if a crash prevents the blanking below, is only an
+                // emergency override that resolves to the same value).
+                switch_secrets_backend(direction)?;
+
+                // Phase 3: backend now reads the keychain → safe to blank the
+                // file. A crash before this leaves plaintext in the file, still
+                // reachable and correct; the next run re-blanks it.
+                updated_creds
+                    .write(&cred_path)
+                    .with_context(|| format!("write updated credentials to {}", cred_path.display()))?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Atomically point `freedom.yaml`'s `secrets_backend` at the migration target.
+///
+/// Writes via temp+rename so a crash mid-write cannot leave a half-written
+/// config file. A missing `freedom.yaml` is a no-op (nothing to repoint).
+fn switch_secrets_backend(direction: keychain::MigrationDirection) -> anyhow::Result<()> {
+    let freedom_path = crate::config::FreedomConfig::default_path();
+    if !freedom_path.exists() {
+        return Ok(());
+    }
+    let body = std::fs::read_to_string(&freedom_path)
+        .context("read freedom.yaml for backend update")?;
+    let new_backend = match direction {
+        keychain::MigrationDirection::ToKeychain => "keychain",
+        keychain::MigrationDirection::ToFile => "file",
+    };
+    let updated = update_or_append_secrets_backend(&body, new_backend);
+    atomic_write_str(&freedom_path, &updated).context("write updated freedom.yaml")
 }
 
 /// Write `content` to `path` atomically via a temp file in the same directory.

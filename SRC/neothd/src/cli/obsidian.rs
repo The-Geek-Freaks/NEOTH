@@ -1484,6 +1484,51 @@ fn open_promotion_audit_log(path: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 
+/// Drain all un-drained rows from `idx_promotion_outbox` to the JSONL audit
+/// file, marking each row done only after a successful fsync.
+///
+/// Calling this at both the start and end of every `promote_cmd` invocation
+/// covers two cases:
+///   - **Normal path**: the just-inserted outbox row is written to JSONL.
+///   - **Crash-recovery path**: rows left pending by a prior process death are
+///     replayed before any new work begins.
+///
+/// If the table does not yet exist it is created (idempotent).  Empty outbox
+/// is a no-op.
+fn drain_promotion_outbox(conn: &rusqlite::Connection, audit_path: &Path) -> Result<()> {
+    crate::memory::groundtruth::ensure_promotion_outbox(conn)?;
+    let pending = crate::memory::groundtruth::pending_promotions(conn)?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    use std::io::Write;
+    let mut f = open_promotion_audit_log(audit_path)?;
+    let now_ns = crate::time::now_unix_ns_i64();
+    for row in &pending {
+        let record = serde_json::json!({
+            "event": "restricted_promoted",
+            "restricted_id": row.restricted_id,
+            "groundtruth_id": row.groundtruth_id,
+            "promoted_by": row.promoted_by,
+            "promoted_at_ns": row.promoted_at_ns,
+        });
+        writeln!(f, "{record}").with_context(|| {
+            format!("write promotion audit record (outbox_id={})", row.outbox_id)
+        })?;
+        f.flush().with_context(|| {
+            format!("flush audit log (outbox_id={})", row.outbox_id)
+        })?;
+        // fsync before marking done — the audit line must be on disk before
+        // we lose the evidence of what to retry on next startup.
+        f.sync_data().with_context(|| {
+            format!("fsync audit log (outbox_id={})", row.outbox_id)
+        })?;
+        crate::memory::groundtruth::mark_outbox_drained(conn, row.outbox_id, now_ns)
+            .with_context(|| format!("mark outbox row {} drained", row.outbox_id))?;
+    }
+    Ok(())
+}
+
 /// Core of `neoth obsidian promote <id> [--dry-run]`.
 ///
 /// Separated from `run_obsidian` so tests can inject the DB and audit paths
@@ -1495,23 +1540,17 @@ fn promote_cmd(
     audit_path: &Path,
     promoted_by: &str,
 ) -> Result<()> {
-    use std::io::Write;
     let conn = crate::memory::store::open(db_path)
         .with_context(|| format!("open views.db for restricted promote ({})", db_path.display()))?;
+    // Replay any outbox rows left pending by a prior crash before doing new work.
+    drain_promotion_outbox(&conn, audit_path)?;
     let now_ns = crate::time::now_unix_ns_i64();
     let outcome =
         crate::memory::groundtruth::promote_restricted(&conn, id, promoted_by, now_ns, dry_run)?;
     match &outcome {
         crate::memory::groundtruth::PromoteOutcome::Promoted { groundtruth_id } => {
-            let record = serde_json::json!({
-                "event": "restricted_promoted",
-                "restricted_id": id,
-                "groundtruth_id": groundtruth_id,
-                "promoted_by": promoted_by,
-                "promoted_at_ns": now_ns,
-            });
-            let mut f = open_promotion_audit_log(audit_path)?;
-            writeln!(f, "{record}")?;
+            // Drain the just-inserted outbox row to JSONL.
+            drain_promotion_outbox(&conn, audit_path)?;
             println!("promoted: restricted row {id} → groundtruth row {groundtruth_id}");
         }
         crate::memory::groundtruth::PromoteOutcome::AlreadyPromoted { groundtruth_id_hint } => {

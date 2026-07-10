@@ -86,9 +86,10 @@ use super::heartbeat::{
 use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
-use super::swarm::{encode_snapshot_gossip_payload, NodeResourceSnapshot};
+use super::swarm::encode_snapshot_gossip_payload;
 use super::wal_sync::{GossipState, SWARM_SNAPSHOT_SUBTYPE};
 use super::{PeerLoad, PeerLoadRegistry, PeerPubkey, PeerSessionId};
+use crate::daemon::resource_snapshot_cron::{new_system, resolve_node_id, sample_snapshot};
 use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
 
@@ -584,6 +585,11 @@ async fn handle_peeroxide_connection(
     // 30d budget); a `freedom.yaml::cluster.gossip` override is a follow-on.
     let mut gossip_state = GossipState::new();
     let gossip_policy = GossipPolicy::default();
+    // GOLD-FEAT-06: keep a sysinfo::System alive for the per-connection gossip
+    // piggyback so CPU% is a differential (accurate from tick 2+; RAM/VRAM/
+    // hostname are correct from tick 1). One System per peer connection is
+    // acceptable for a typical cluster size of 2-10 nodes.
+    let mut gossip_sys = new_system();
 
     // SL-00(1c): register this peer's outbound channel; the Drop guard removes
     // it on EVERY exit path (clean disconnect, error, supersede).
@@ -648,23 +654,13 @@ async fn handle_peeroxide_connection(
                             emit_heartbeat_sent_wal(wal_writer.as_deref(), &peer_id, body);
                         }
                     }
-                    // GOLD-FEAT-06 gossip-piggyback (a): send a minimal
-                    // SwarmResourceSnapshot alongside the heartbeat so peers can
-                    // populate their local SwarmTable. Resource fields (CPU/RAM/VRAM)
-                    // are zeros here — the resource_snapshot_cron writes accurate
-                    // LocalSnapshot (0x04) frames to the LOCAL WAL; this piggyback
-                    // only establishes peer presence so `neoth cluster swarm` shows
-                    // rows. The node_id is the Noise static pubkey hex (stable per node).
-                    let snap = NodeResourceSnapshot::new(
-                        hex_encode(&own_noise_pk),
-                        hex_encode(&own_noise_pk),
-                        0.0,
-                        0,
-                        0,
-                        None,
-                        None,
-                        crate::time::now_unix_i64(),
-                    );
+                    // GOLD-FEAT-06 gossip-piggyback (a): send REAL resource values
+                    // (CPU/RAM/VRAM/hostname) alongside the heartbeat so remote peers
+                    // see accurate data in their `neoth cluster swarm` view.
+                    // `gossip_sys` is kept alive across heartbeats: CPU% is a sysinfo
+                    // differential reading (accurate from tick 2+; ~0% on first tick);
+                    // RAM/VRAM/hostname are correct from the very first tick.
+                    let snap = sample_snapshot(&resolve_node_id(), &mut gossip_sys);
                     if let Some(gossip_payload) = encode_snapshot_gossip_payload(&snap) {
                         let self_pk = PeerPubkey::new(own_peer_id.clone());
                         if let Some(gframe) = gossip_state.build_outbound(

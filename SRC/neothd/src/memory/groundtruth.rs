@@ -650,6 +650,78 @@ pub enum PromoteOutcome {
     DryRun { chunk: RestrictedChunk },
 }
 
+// ---------------------------------------------------------------------------
+// Restricted-promotion outbox (ChatGPT-R3 finding #2)
+// ---------------------------------------------------------------------------
+//
+// Problem: the DB promotion committed first, JSONL audit written second.  A
+// crash between the two leaves an unauditable promotion.
+//
+// Fix: the outbox row is inserted in THE SAME atomic SAVEPOINT as the
+// groundtruth insert and the idx_restricted stamp.  A separate drain step
+// (cli/obsidian.rs::drain_promotion_outbox) writes the JSONL and marks the
+// outbox row done only after an fsync'd success.  Pending rows survive
+// restart and are replayed by the next drain call.
+
+/// A row from `idx_promotion_outbox` that has not yet been drained to JSONL.
+#[derive(Debug, Clone)]
+pub struct PendingPromotion {
+    pub outbox_id: i64,
+    pub restricted_id: i64,
+    pub groundtruth_id: i64,
+    pub promoted_by: String,
+    pub promoted_at_ns: i64,
+}
+
+/// Ensure `idx_promotion_outbox` exists.
+///
+/// Uses `CREATE TABLE IF NOT EXISTS` — idempotent on every DB version without
+/// touching `meta.schema_version`. Call this from any code path that reads or
+/// writes the outbox table.
+pub fn ensure_promotion_outbox(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS idx_promotion_outbox (\
+            id              INTEGER PRIMARY KEY AUTOINCREMENT, \
+            restricted_id   INTEGER NOT NULL, \
+            groundtruth_id  INTEGER NOT NULL, \
+            promoted_by     TEXT    NOT NULL, \
+            promoted_at_ns  INTEGER NOT NULL, \
+            drained_at_ns   INTEGER \
+        );",
+    )
+    .context("ensure idx_promotion_outbox")
+}
+
+/// Return all un-drained outbox rows in insertion order.
+pub fn pending_promotions(conn: &Connection) -> Result<Vec<PendingPromotion>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, restricted_id, groundtruth_id, promoted_by, promoted_at_ns \
+         FROM idx_promotion_outbox WHERE drained_at_ns IS NULL ORDER BY id ASC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(PendingPromotion {
+            outbox_id: r.get(0)?,
+            restricted_id: r.get(1)?,
+            groundtruth_id: r.get(2)?,
+            promoted_by: r.get(3)?,
+            promoted_at_ns: r.get(4)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<_>>()
+        .context("pending_promotions: collect")
+}
+
+/// Mark an outbox row as drained — called after the JSONL audit entry is
+/// written and fsync'd.  Only marks done; never rolls back the promotion.
+pub fn mark_outbox_drained(conn: &Connection, outbox_id: i64, drained_at_ns: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE idx_promotion_outbox SET drained_at_ns = ?1 WHERE id = ?2",
+        params![drained_at_ns, outbox_id],
+    )
+    .context("mark_outbox_drained")?;
+    Ok(())
+}
+
 /// Promote a restricted chunk into `idx_groundtruth` with operator attestation.
 ///
 /// - Stamps `promoted_at` / `promoted_by` on the `idx_restricted` row.
@@ -658,6 +730,15 @@ pub enum PromoteOutcome {
 ///   `Source::OperatorRuntime` is operator-attested).
 /// - Idempotent: a second call on the same `id` returns `AlreadyPromoted`.
 /// - `dry_run = true` returns `DryRun` without touching either table.
+///
+/// ## Crash safety (outbox)
+///
+/// All three DB writes — groundtruth insert, `idx_restricted` stamp, and the
+/// `idx_promotion_outbox` row — are wrapped in a single SQLite SAVEPOINT so
+/// they land atomically.  The JSONL audit file is written by the caller's
+/// `drain_promotion_outbox` step, which marks the outbox row done only after
+/// a successful fsync.  Pending outbox rows survive process death and are
+/// replayed on the next drain call.
 pub fn promote_restricted(
     conn: &Connection,
     restricted_id: i64,
@@ -689,26 +770,51 @@ pub fn promote_restricted(
         return Ok(PromoteOutcome::DryRun { chunk });
     }
 
-    // Insert into idx_groundtruth via the standard insert path.
-    let gt_id = insert(
-        conn,
-        &chunk.statement,
-        &Source::OperatorRuntime,
-        &chunk.scope,
-        now_ns,
-    )
-    .context("promote_restricted: groundtruth insert")?;
+    // Ensure the outbox table exists before we write to it.  Idempotent.
+    ensure_promotion_outbox(conn).context("promote_restricted: ensure outbox")?;
 
-    // Stamp promoted_at / promoted_by on the restricted row.
-    conn.execute(
-        "UPDATE idx_restricted SET promoted_at = ?1, promoted_by = ?2 WHERE id = ?3",
-        params![now_ns, promoted_by, restricted_id],
-    )
-    .context("promote_restricted: stamp promoted_at")?;
+    // All three writes must land atomically.  We use a raw SQLite SAVEPOINT so
+    // the caller does not need to hold an open transaction and the public API
+    // signature stays `&Connection` (no `&mut` required).
+    conn.execute_batch("SAVEPOINT promote_atomic")
+        .context("promote_restricted: begin savepoint")?;
 
-    Ok(PromoteOutcome::Promoted {
-        groundtruth_id: gt_id,
-    })
+    let result: Result<i64> = (|| {
+        let gt_id =
+            insert(conn, &chunk.statement, &Source::OperatorRuntime, &chunk.scope, now_ns)
+                .context("promote_restricted: groundtruth insert")?;
+
+        conn.execute(
+            "UPDATE idx_restricted SET promoted_at = ?1, promoted_by = ?2 WHERE id = ?3",
+            params![now_ns, promoted_by, restricted_id],
+        )
+        .context("promote_restricted: stamp promoted_at")?;
+
+        conn.execute(
+            "INSERT INTO idx_promotion_outbox \
+             (restricted_id, groundtruth_id, promoted_by, promoted_at_ns) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![restricted_id, gt_id, promoted_by, now_ns],
+        )
+        .context("promote_restricted: insert outbox row")?;
+
+        Ok(gt_id)
+    })();
+
+    match result {
+        Ok(gt_id) => {
+            conn.execute_batch("RELEASE SAVEPOINT promote_atomic")
+                .context("promote_restricted: commit savepoint")?;
+            Ok(PromoteOutcome::Promoted {
+                groundtruth_id: gt_id,
+            })
+        }
+        Err(e) => {
+            // Best-effort rollback — reverts all three writes atomically.
+            let _ = conn.execute_batch("ROLLBACK TO SAVEPOINT promote_atomic");
+            Err(e)
+        }
+    }
 }
 
 fn row_to_gt(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroundTruth> {
@@ -1643,5 +1749,107 @@ mod tests {
         // The restricted row must remain un-stamped.
         let r = get_restricted(&conn, rid).unwrap().unwrap();
         assert!(r.promoted_at.is_none(), "dry-run must not stamp promoted_at");
+    }
+
+    // ------------------------------------------------------------------
+    // Outbox tests — ChatGPT-R3 finding #2
+    // ------------------------------------------------------------------
+
+    /// (a) All three DB writes are atomic: groundtruth row is durable and the
+    /// outbox row stays pending when the caller never drains (simulates a
+    /// crash before the JSONL audit write).
+    #[test]
+    fn promote_restricted_outbox_row_atomic_promotion_durable_on_jsonl_skip() {
+        let (_dir, conn) = open();
+        let rid = insert_restricted(
+            &conn,
+            "sensitive-payload-alpha",
+            "src",
+            "scope-outbox",
+            "dual-use",
+            1_000,
+        )
+        .unwrap();
+
+        let outcome = promote_restricted(&conn, rid, "op-test", 2_000, false).unwrap();
+        let gt_id = match outcome {
+            PromoteOutcome::Promoted { groundtruth_id } => groundtruth_id,
+            other => panic!("expected Promoted, got {other:?}"),
+        };
+
+        // Groundtruth row is durable — promotion survived.
+        let gt_rows = list_for_scope(&conn, "scope-outbox").unwrap();
+        assert_eq!(gt_rows.len(), 1, "groundtruth row must be present");
+        assert_eq!(gt_rows[0].id, gt_id);
+
+        // Outbox row is pending (drained_at_ns IS NULL) — simulating that the
+        // process crashed before the JSONL write; the row stays for replay.
+        let pending = pending_promotions(&conn).unwrap();
+        assert_eq!(pending.len(), 1, "outbox row must be pending");
+        assert_eq!(pending[0].restricted_id, rid);
+        assert_eq!(pending[0].groundtruth_id, gt_id);
+        assert_eq!(pending[0].promoted_by, "op-test");
+        assert_eq!(pending[0].promoted_at_ns, 2_000);
+    }
+
+    /// (b) mark_outbox_drained stamps drained_at_ns; pending_promotions
+    /// returns empty afterwards.
+    #[test]
+    fn drain_marks_outbox_row_done() {
+        let (_dir, conn) = open();
+        let rid = insert_restricted(
+            &conn,
+            "sensitive-payload-beta",
+            "src",
+            "scope-drain",
+            "dual-use",
+            1_000,
+        )
+        .unwrap();
+        let outcome = promote_restricted(&conn, rid, "op-drain", 2_000, false).unwrap();
+        assert!(matches!(outcome, PromoteOutcome::Promoted { .. }));
+
+        let pending_before = pending_promotions(&conn).unwrap();
+        assert_eq!(pending_before.len(), 1, "one pending row before drain");
+
+        mark_outbox_drained(&conn, pending_before[0].outbox_id, 3_000).unwrap();
+
+        let pending_after = pending_promotions(&conn).unwrap();
+        assert!(pending_after.is_empty(), "no pending rows after drain marks done");
+
+        // The row must be stamped, not deleted.
+        let drained_at: Option<i64> = conn
+            .query_row(
+                "SELECT drained_at_ns FROM idx_promotion_outbox WHERE id = ?1",
+                params![pending_before[0].outbox_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(drained_at, Some(3_000), "drained_at_ns must be set to drain timestamp");
+    }
+
+    /// (c) A row left pending by a prior crash surfaces in pending_promotions
+    /// on the next startup / drain call (crash-recovery replay).
+    #[test]
+    fn replay_on_restart_returns_pending_outbox_rows() {
+        let (_dir, conn) = open();
+        ensure_promotion_outbox(&conn).unwrap();
+
+        // Directly insert a survivor row: promotion happened, process died
+        // before JSONL write, drained_at_ns is NULL.
+        conn.execute(
+            "INSERT INTO idx_promotion_outbox \
+             (restricted_id, groundtruth_id, promoted_by, promoted_at_ns) \
+             VALUES (42, 99, 'op-crash', 5000)",
+            [],
+        )
+        .unwrap();
+
+        let pending = pending_promotions(&conn).unwrap();
+        assert_eq!(pending.len(), 1, "crash-survivor row must surface on replay");
+        assert_eq!(pending[0].restricted_id, 42);
+        assert_eq!(pending[0].groundtruth_id, 99);
+        assert_eq!(pending[0].promoted_by, "op-crash");
+        assert_eq!(pending[0].promoted_at_ns, 5_000);
     }
 }

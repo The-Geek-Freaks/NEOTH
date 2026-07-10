@@ -855,7 +855,7 @@ mod tests {
     // ── migrate_to_file ───────────────────────────────────────────────────
 
     #[test]
-    fn migrate_to_file_restores_values_and_deletes_from_store() {
+    fn migrate_to_file_restores_values_then_purge_empties_store() {
         let store = InMemorySecretStore::default();
         store
             .set("provider_key", &SecretString::from("sk-restored".to_string()))
@@ -881,7 +881,14 @@ mod tests {
             "bot-restored"
         );
 
-        // Store must now be empty for those keys.
+        // Phase 1 (migrate_to_file) is a pure read — it must NOT delete, so the
+        // secret survives a crash before credentials.yaml is durably written.
+        assert!(store.get("provider_key").unwrap().is_some());
+        assert!(store.get("telegram_token").unwrap().is_some());
+
+        // Phase 3: only after the file lands does the caller purge the keychain.
+        let purge_failures = purge_from_keychain(&store, &report.moved);
+        assert!(purge_failures.is_empty());
         assert!(store.get("provider_key").unwrap().is_none());
         assert!(store.get("telegram_token").unwrap().is_none());
     }
@@ -1007,7 +1014,7 @@ mod tests {
         assert!(r1.is_clean());
         assert!(blanked.provider_key.is_none());
 
-        // keychain → file
+        // keychain → file (phase 1: pure read, no delete)
         let (restored, r2) = migrate_to_file(&blanked, &store, false).unwrap();
         assert!(r2.is_clean());
         assert_eq!(restored.provider_key.as_ref().unwrap().expose(), "sk-roundtrip");
@@ -1016,7 +1023,8 @@ mod tests {
             "bot-roundtrip"
         );
 
-        // Store is now empty.
+        // Phase 3: caller purges the keychain only after the file is durable.
+        assert!(purge_from_keychain(&store, &r2.moved).is_empty());
         assert!(store.get("provider_key").unwrap().is_none());
     }
 }

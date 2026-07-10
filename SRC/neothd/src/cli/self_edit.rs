@@ -236,6 +236,9 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
         Err(GateError::GreenTest(reason)) => {
             anyhow::bail!("REFUSED (layer 5 green-test): {reason}")
         }
+        Err(GateError::StateDrift(reason)) => {
+            anyhow::bail!("REFUSED (base-SHA drift): {reason}")
+        }
         Err(GateError::AuditFailedAfterApply(reason)) => {
             // The live tree WAS mutated but the required audit frame failed — an
             // inconsistent state. Surface it loudly; never report clean success.

@@ -101,10 +101,14 @@ pub fn spawn_resource_snapshot_cron(
     }))
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// ── Internal helpers (pub(crate) so cluster/hyperswarm can call them for the
+// ── gossip-piggyback without a separate sysinfo sampling path) ───────────────
 
 /// Create a `sysinfo::System` pre-configured for CPU + memory polling.
-fn new_system() -> sysinfo::System {
+///
+/// Callers keep the returned value alive across ticks so that
+/// [`sample_snapshot`] can compute a differential CPU reading.
+pub(crate) fn new_system() -> sysinfo::System {
     use sysinfo::System;
     System::new()
 }
@@ -114,7 +118,7 @@ fn new_system() -> sysinfo::System {
 /// `sys` is kept alive by the caller across ticks to give accurate CPU
 /// differential readings (first tick reads ~0% — subsequent ticks give the
 /// correct average over the interval).
-fn sample_snapshot(node_id: &str, sys: &mut sysinfo::System) -> NodeResourceSnapshot {
+pub(crate) fn sample_snapshot(node_id: &str, sys: &mut sysinfo::System) -> NodeResourceSnapshot {
     sys.refresh_cpu_all();
     sys.refresh_memory();
 
@@ -191,8 +195,72 @@ fn probe_vram() -> Option<crate::daemon::resource_watch::VramReading> {
 ///
 /// Checked in order: `HOSTNAME` env var, `COMPUTERNAME` env var (Windows),
 /// then the literal string `"unknown"`.
-fn resolve_node_id() -> String {
+pub(crate) fn resolve_node_id() -> String {
     std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| "unknown".to_string())
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `sample_snapshot` must return non-zero RAM on any real machine.
+    /// CPU% may be ~0 on the first call (differential not yet primed), but
+    /// total RAM is always present and must exceed zero.
+    #[test]
+    fn sample_snapshot_returns_real_ram() {
+        let mut sys = new_system();
+        let snap = sample_snapshot("test-node", &mut sys);
+        assert!(
+            snap.ram_total_mb > 0,
+            "ram_total_mb must be >0 on a physical host (got {})",
+            snap.ram_total_mb
+        );
+        // used ≤ total invariant enforced by NodeResourceSnapshot::new.
+        assert!(
+            snap.ram_used_mb <= snap.ram_total_mb,
+            "ram_used_mb ({}) must not exceed ram_total_mb ({})",
+            snap.ram_used_mb,
+            snap.ram_total_mb,
+        );
+    }
+
+    /// Second tick of sample_snapshot gives a positive CPU% on a busy host.
+    /// We warm the sysinfo differential and do a second refresh — on any active
+    /// machine the aggregate CPU should be ≥ 0.0 (strictly: we just assert it is
+    /// a valid finite f32 in [0, 100]).
+    #[test]
+    fn sample_snapshot_cpu_pct_valid_range() {
+        let mut sys = new_system();
+        let _warm = sample_snapshot("warm", &mut sys); // prime differential
+        let snap = sample_snapshot("test-node", &mut sys);
+        assert!(
+            snap.cpu_pct >= 0.0 && snap.cpu_pct <= 100.0,
+            "cpu_pct must be in [0, 100], got {}",
+            snap.cpu_pct
+        );
+        assert!(snap.cpu_pct.is_finite(), "cpu_pct must be finite");
+    }
+
+    /// `resolve_node_id` returns a non-empty string on any real host.
+    #[test]
+    fn resolve_node_id_returns_nonempty() {
+        let id = resolve_node_id();
+        assert!(
+            !id.is_empty(),
+            "resolve_node_id must return a non-empty string"
+        );
+    }
+
+    /// `new_system` must return a usable sysinfo::System (no panic).
+    #[test]
+    fn new_system_does_not_panic() {
+        let mut sys = new_system();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+        // If we get here without panicking, the system initialised correctly.
+    }
 }

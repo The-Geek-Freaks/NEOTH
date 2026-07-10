@@ -304,6 +304,20 @@ impl QuotaGuard {
         // disk before admitting any bytes.
         self.reserved.store(self.remeasure_threshold, Ordering::Release);
     }
+
+    /// Release a previously admitted reservation.  Called when `try_admit`
+    /// succeeded but the subsequent channel send failed (WriterClosed or
+    /// WriterBackpressured), so the frame was never queued and the bytes must
+    /// not permanently inflate `reserved`.
+    ///
+    /// Uses saturating arithmetic: a bug-induced underflow clamps to 0 rather
+    /// than wrapping to near-`u64::MAX`, which would permanently seal the guard.
+    pub(crate) fn release_reserved(&self, bytes: u64) {
+        use std::sync::atomic::Ordering;
+        let _ = self.reserved.fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+            Some(cur.saturating_sub(bytes))
+        });
+    }
 }
 
 impl WalWriterHandle {
@@ -334,18 +348,28 @@ impl WalWriterHandle {
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
+        let admitted = payload.len() as u64;
         if let Some(guard) = self.quota.as_ref() {
-            guard.try_admit(payload.len() as u64)?;
+            guard.try_admit(admitted)?;
         }
         let (ack_tx, ack_rx) = oneshot::channel();
-        self.tx
+        if self
+            .tx
             .send(WriteRequest {
                 header,
                 payload,
                 ack: ack_tx,
             })
             .await
-            .map_err(|_| WalError::WriterClosed)?;
+            .is_err()
+        {
+            // Frame never reached the writer task — release the reservation so
+            // phantom bytes don't permanently tighten the projected-sum check.
+            if let Some(guard) = self.quota.as_ref() {
+                guard.release_reserved(admitted);
+            }
+            return Err(WalError::WriterClosed);
+        }
         ack_rx.await.map_err(|_| WalError::WriterClosed)?
     }
 
@@ -411,22 +435,31 @@ impl WalWriterHandle {
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
+        let admitted = payload.len() as u64;
         if let Some(guard) = self.quota.as_ref() {
-            guard.try_admit(payload.len() as u64)?;
+            guard.try_admit(admitted)?;
         }
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
-        self.tx
-            .try_send(WriteRequest {
-                header,
-                payload,
-                ack: ack_tx,
-            })
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => WalError::WriterBackpressured {
-                    capacity: DEFAULT_CHANNEL_CAPACITY,
-                },
-                mpsc::error::TrySendError::Closed(_) => WalError::WriterClosed,
-            })
+        match self.tx.try_send(WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+        }) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Frame never queued — release the reservation so
+                // phantom bytes don't permanently tighten the projected-sum check.
+                if let Some(guard) = self.quota.as_ref() {
+                    guard.release_reserved(admitted);
+                }
+                Err(match e {
+                    mpsc::error::TrySendError::Full(_) => WalError::WriterBackpressured {
+                        capacity: DEFAULT_CHANNEL_CAPACITY,
+                    },
+                    mpsc::error::TrySendError::Closed(_) => WalError::WriterClosed,
+                })
+            }
+        }
     }
 
     pub async fn append_no_ack(
@@ -437,22 +470,32 @@ impl WalWriterHandle {
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
+        let admitted = payload.len() as u64;
         if let Some(guard) = self.quota.as_ref() {
-            guard.try_admit(payload.len() as u64)?;
+            guard.try_admit(admitted)?;
         }
         // Construct the oneshot but immediately drop the receiver.
         // The writer task tries to send through it after fsync, sees
         // the receiver dropped, and logs at debug — same path as a
         // caller that times out. No new writer-task code needed.
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
-        self.tx
+        if self
+            .tx
             .send(WriteRequest {
                 header,
                 payload,
                 ack: ack_tx,
             })
             .await
-            .map_err(|_| WalError::WriterClosed)?;
+            .is_err()
+        {
+            // Frame never reached the writer task — release the reservation so
+            // phantom bytes don't permanently tighten the projected-sum check.
+            if let Some(guard) = self.quota.as_ref() {
+                guard.release_reserved(admitted);
+            }
+            return Err(WalError::WriterClosed);
+        }
         Ok(())
     }
 }
@@ -2550,6 +2593,59 @@ mod tests {
             "D008 sync_data p99 {:.1}ms > 2000ms ceiling — storage anomaly; \
              check SMART/NVMe health logs",
             p99 as f64 / 1_000_000.0
+        );
+    }
+
+    /// WAL-QUOTA-FAILCLOSED-01 residual gap: reservations must be released
+    /// when the channel send that follows a successful `try_admit` fails.
+    ///
+    /// Without the fix, every WriterClosed/WriterBackpressured failure permanently
+    /// inflates `reserved`, eventually making the projected-sum check reject all
+    /// further writes — silencing the audit log while disk usage is well under
+    /// the ceiling (fail-open on forensics).
+    ///
+    /// Interleaving that triggers the bug (old code, ceiling = 1 MiB):
+    ///   T1: try_admit(600 KiB) → reserved = 600 KiB          [CAS succeeds]
+    ///   T1: tx.send()         → WriterClosed (channel dead)   [frame NOT queued]
+    ///   T1: reserved stays at 600 KiB                         [LEAK — no release]
+    ///   T2: try_admit(600 KiB) → projected = 0 + 600K + 600K = 1.2 MiB > 1 MiB
+    ///                          → QuotaExceeded                [false rejection]
+    #[tokio::test]
+    async fn quota_reservation_released_on_writer_closed_send_failure() {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx); // force WriterClosed on every send
+
+        let payload_bytes: usize = 600 * 1024;
+        let ceiling: u64 = 1024 * 1024;
+        let dir = tempdir().unwrap();
+        let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), ceiling));
+        // Bypass the initial-measure pre-arm so state is precisely known.
+        guard.reserved.store(0, Ordering::Release);
+        guard.last_measured.store(0, Ordering::Release);
+
+        let handle = WalWriterHandle {
+            tx,
+            quota: Some(Arc::clone(&guard)),
+        };
+
+        // try_admit succeeds (0 + 0 + 600 KiB ≤ 1 MiB ceiling), then
+        // channel send fails → reservation must be released.
+        let h1 = header_for(payload_bytes as u32, 1);
+        let err = handle
+            .append(h1, vec![0u8; payload_bytes])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, WalError::WriterClosed));
+
+        // With the fix:    reserved = 0  → projected = 600 KiB ≤ ceiling → Ok
+        // Without the fix: reserved = 600 KiB → projected = 1.2 MiB > ceiling → Err
+        assert!(
+            guard.try_admit(payload_bytes as u64).is_ok(),
+            "reservation leaked into `reserved` on WriterClosed send failure — \
+             second try_admit incorrectly rejected (disk is empty, ceiling = 1 MiB)"
         );
     }
 }

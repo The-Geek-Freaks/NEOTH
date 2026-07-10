@@ -1427,7 +1427,7 @@ fn assign_child_to_job(child: &std::process::Child) -> bool {
     // SAFETY: CreateJobObjectW with null attrs + null name is always valid;
     // it creates an anonymous job object owned by this process.
     let job: HANDLE = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-    if job == 0 {
+    if job.is_null() {
         return false;
     }
 
@@ -1456,7 +1456,8 @@ fn assign_child_to_job(child: &std::process::Child) -> bool {
         return false;
     }
 
-    // `as_raw_handle()` returns RawHandle = *mut c_void; cast to HANDLE = isize.
+    // `as_raw_handle()` returns RawHandle = *mut c_void; HANDLE is the same
+    // raw-pointer type in windows-sys 0.59, so this is a pointer→pointer cast.
     let process_handle = child.as_raw_handle() as HANDLE;
     // SAFETY: `job` and `process_handle` are valid handles we own.
     let assigned = unsafe { AssignProcessToJobObject(job, process_handle) };

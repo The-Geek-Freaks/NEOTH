@@ -145,6 +145,27 @@ pub enum LayerOutcome {
     Skipped,
 }
 
+impl Default for LayerOutcome {
+    fn default() -> Self {
+        Self::Skipped
+    }
+}
+
+/// HEAD commit SHA and index tree SHA captured immediately after the
+/// reentrancy lock is acquired and before the worktree is created.
+///
+/// Re-verified right before the live apply: if HEAD has moved (another commit
+/// landed) or the index tree has changed (files were staged) between snapshot
+/// and apply, the edit is refused — the gates evaluated a state that no longer
+/// matches what `git apply --index` would land on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaseShaSnapshot {
+    /// Output of `git rev-parse HEAD` at capture time.
+    pub head_sha: String,
+    /// Output of `git write-tree` (current index tree) at capture time.
+    pub index_tree: String,
+}
+
 /// Audit record emitted for every self-edit request (proposed + optionally
 /// applied). Stored as JSON in the WAL payload — NEVER contains secrets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +179,16 @@ pub struct SelfEditAudit {
     pub layer5_green_test: LayerOutcome,
     pub ts_unix: i64,
     pub dry_run: bool,
+    /// Snapshot captured after lock acquisition; `None` when capture failed
+    /// (gate refuses before worktree creation). Present in every WAL record
+    /// written after the base-SHA drift fix was introduced.
+    #[serde(default)]
+    pub base_snapshot: Option<BaseShaSnapshot>,
+    /// Outcome of the pre-apply state-drift check (HEAD + index tree
+    /// unchanged since snapshot). `Skipped` for dry-runs and for WAL records
+    /// written before this field existed (backward-compatible default).
+    #[serde(default)]
+    pub layer_state_drift: LayerOutcome,
 }
 
 /// Error returned when any gate refuses the edit.
@@ -173,6 +204,10 @@ pub enum GateError {
     Worktree(String),
     #[error("Layer 5 (green-test): {0}")]
     GreenTest(String),
+    /// HEAD or staged index moved between worktree-test and live-apply.
+    /// The diff was NOT applied. The operator must re-submit against HEAD.
+    #[error("state drift (pre-apply): {0}")]
+    StateDrift(String),
     /// The live tree WAS mutated but the REQUIRED `SelfEditApplied` audit frame
     /// could not be written — an inconsistent state the operator must reconcile.
     /// Never reported as clean success.
@@ -233,6 +268,8 @@ pub async fn run_gate_stack(
         layer5_green_test: LayerOutcome::Skipped,
         ts_unix: ts,
         dry_run,
+        base_snapshot: None,
+        layer_state_drift: LayerOutcome::Skipped,
     };
 
     // Emit PROPOSED frame BEFORE any gate runs (audit trail of all attempts).
@@ -309,6 +346,28 @@ pub async fn run_gate_stack(
             refuse!(audit, GateError::Worktree(reason));
         }
     };
+
+    // ── Base-SHA snapshot (M1 drift guard) ───────────────────────────────────
+    // Capture HEAD + index tree right after the reentrancy lock so we have a
+    // reference point for the state the gates are about to test. Re-verified
+    // immediately before the live apply (see below). Runs in spawn_blocking
+    // because it shells out to git.
+    let base_snapshot = {
+        let r = roots.clone();
+        match tokio::task::spawn_blocking(move || capture_base_snapshot(&r.git_root)).await {
+            Ok(Ok(snap)) => snap,
+            Ok(Err(reason)) => {
+                audit.layer_state_drift = LayerOutcome::Fail(reason.clone());
+                refuse!(audit, GateError::StateDrift(reason));
+            }
+            Err(e) => {
+                let reason = format!("base snapshot task panicked: {e}");
+                audit.layer_state_drift = LayerOutcome::Fail(reason.clone());
+                refuse!(audit, GateError::StateDrift(reason));
+            }
+        }
+    };
+    audit.base_snapshot = Some(base_snapshot.clone());
 
     // Use a pseudo-task-id derived from the diff hash (low bits) to get a
     // unique worktree path without requiring a real kanban task.
@@ -407,6 +466,37 @@ pub async fn run_gate_stack(
                  source tree without an audit trail (use dry_run to preview)"
             )));
         }
+        // ── M1 drift check: verify HEAD + index unchanged since snapshot ────
+        // Between worktree-creation and this point another process could have
+        // committed (HEAD moves) or staged files (index tree changes). Neither
+        // makes `git apply --index` error on non-conflicting diffs, so without
+        // this check the patch would silently land on a different overall state
+        // than the one the 5 gates evaluated. Any drift → refuse, emit
+        // SelfEditRefused via the existing 0x05 opcode (no new WAL opcode).
+        {
+            let r = roots.clone();
+            let snap = base_snapshot.clone();
+            match tokio::task::spawn_blocking(move || verify_base_snapshot(&r.git_root, &snap))
+                .await
+            {
+                Ok(Ok(())) => {
+                    audit.layer_state_drift = LayerOutcome::Pass;
+                }
+                Ok(Err(reason)) => {
+                    audit.layer_state_drift = LayerOutcome::Fail(reason.clone());
+                    warn!(reason, "self_edit: state drift detected before live apply — refusing");
+                    let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+                    return Err(GateError::StateDrift(reason));
+                }
+                Err(e) => {
+                    let reason = format!("drift check task panicked: {e}");
+                    audit.layer_state_drift = LayerOutcome::Fail(reason.clone());
+                    let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+                    return Err(GateError::StateDrift(reason));
+                }
+            }
+        }
+
         // Apply the SAME in-memory bytes the gates validated (piped via stdin),
         // NOT a re-read of the on-disk file — closes the TOCTOU where the diff
         // file could be swapped between validation and the live apply. Runs in
@@ -934,6 +1024,91 @@ fn verify_git_truth(
     Ok(real_paths)
 }
 
+// ── Base-SHA snapshot helpers ─────────────────────────────────────────────────
+
+/// Capture the current HEAD commit SHA and index tree SHA from `git_root`.
+///
+/// Both values are used by [`verify_base_snapshot`] right before the live
+/// apply to detect any concurrent mutation of the repo state.
+fn capture_base_snapshot(git_root: &Path) -> Result<BaseShaSnapshot, String> {
+    let run_git = |args: &[&str]| -> Result<String, String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(git_root)
+            .args(args)
+            .output()
+            .map_err(|e| format!("git {args:?} failed to launch: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+
+    let head_sha = run_git(&["rev-parse", "HEAD"])?;
+    // `git write-tree` serialises the current index as a tree object and
+    // prints its SHA. Idempotent and side-effect-free (the tree object may
+    // already exist; GC reclaims unreferenced objects later). Captures staged
+    // changes that have not yet been committed.
+    let index_tree = run_git(&["write-tree"])?;
+    Ok(BaseShaSnapshot { head_sha, index_tree })
+}
+
+/// Re-check that `git_root`'s HEAD and index tree match the captured snapshot.
+///
+/// Returns `Err` with a human-readable message if either has changed, so the
+/// caller can emit `SelfEditRefused` and return `GateError::StateDrift` before
+/// the live apply runs. The error message names the old/new values (first 12
+/// chars) so the operator understands what happened without needing to grep
+/// the WAL.
+fn verify_base_snapshot(git_root: &Path, base: &BaseShaSnapshot) -> Result<(), String> {
+    let run_git = |args: &[&str]| -> Result<String, String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(git_root)
+            .args(args)
+            .output()
+            .map_err(|e| format!("git {args:?} failed to launch: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+
+    fn abbrev(sha: &str) -> &str {
+        &sha[..12.min(sha.len())]
+    }
+
+    let current_head = run_git(&["rev-parse", "HEAD"])?;
+    if current_head != base.head_sha {
+        return Err(format!(
+            "HEAD moved between worktree test and live apply \
+             (was {}, now {}) — another commit landed while the gates ran; \
+             re-submit the diff against the current HEAD",
+            abbrev(&base.head_sha),
+            abbrev(&current_head),
+        ));
+    }
+
+    let current_tree = run_git(&["write-tree"])?;
+    if current_tree != base.index_tree {
+        return Err(format!(
+            "staged index changed between worktree test and live apply \
+             (tree was {}, now {}) — the index was modified concurrently; \
+             re-submit to avoid applying to a different state than what was tested",
+            abbrev(&base.index_tree),
+            abbrev(&current_tree),
+        ));
+    }
+
+    Ok(())
+}
+
 // ── WAL emit helper ───────────────────────────────────────────────────────────
 
 /// Emit a `EXTENDED/<subtype>` WAL frame. Returns `Err` on a genuine write
@@ -1433,6 +1608,112 @@ mod tests {
         assert!(
             !tmp.path().join("src/wal/evil.rs").exists(),
             "the rename must have been refused before touching the live tree"
+        );
+    }
+
+    // ── Base-SHA snapshot / M1 drift guard ──────────────────────────────────
+
+    #[test]
+    fn capture_base_snapshot_returns_valid_shas() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping base-snapshot capture test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        let snap = capture_base_snapshot(tmp.path()).expect("capture must succeed");
+        // SHA-1 OIDs are 40 hex chars; SHA-256 repos produce 64. Either is fine.
+        assert!(snap.head_sha.len() >= 40, "head_sha too short: {:?}", snap.head_sha);
+        assert!(snap.index_tree.len() >= 40, "index_tree too short: {:?}", snap.index_tree);
+        assert!(
+            snap.head_sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "head_sha contains non-hex chars: {:?}",
+            snap.head_sha
+        );
+        assert!(
+            snap.index_tree.chars().all(|c| c.is_ascii_hexdigit()),
+            "index_tree contains non-hex chars: {:?}",
+            snap.index_tree
+        );
+    }
+
+    #[test]
+    fn drift_check_passes_when_repo_unchanged() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping drift no-change test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        let snap = capture_base_snapshot(tmp.path()).expect("capture");
+        verify_base_snapshot(tmp.path(), &snap)
+            .expect("unchanged repo must pass drift check");
+    }
+
+    #[test]
+    fn drift_check_refused_when_head_moves() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping head-drift test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        let snap = capture_base_snapshot(tmp.path()).expect("capture");
+
+        // Advance HEAD with a new commit while the "gates are running".
+        let new_file = tmp.path().join("src/cli/added.rs");
+        std::fs::write(&new_file, "fn added() {}\n").unwrap();
+        let git = |args: &[&str]| -> bool {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(tmp.path())
+                .args(args)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+        assert!(git(&["add", "src/cli/added.rs"]), "git add failed");
+        assert!(git(&["commit", "-q", "-m", "concurrent commit"]), "commit failed");
+
+        let err = verify_base_snapshot(tmp.path(), &snap)
+            .expect_err("HEAD drift must be detected and refused");
+        assert!(
+            err.contains("HEAD moved"),
+            "expected 'HEAD moved' in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn drift_check_refused_when_index_changes() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping index-drift test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        let snap = capture_base_snapshot(tmp.path()).expect("capture");
+
+        // Stage a file (no commit) — index tree diverges from HEAD tree.
+        let staged = tmp.path().join("src/cli/staged.rs");
+        std::fs::write(&staged, "fn staged() {}\n").unwrap();
+        let git_ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["add", "src/cli/staged.rs"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(git_ok, "git add for index-drift setup failed");
+
+        let err = verify_base_snapshot(tmp.path(), &snap)
+            .expect_err("index drift must be detected and refused");
+        assert!(
+            err.contains("staged index changed"),
+            "expected 'staged index changed' in error, got: {err}"
         );
     }
 

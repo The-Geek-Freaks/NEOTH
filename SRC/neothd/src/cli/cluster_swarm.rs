@@ -140,17 +140,19 @@ fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result
                 );
                 return Ok(());
             }
+            let now = crate::time::now_unix_i64();
             println!(
-                "{:<22}  {:<22}  {:>6}  {:>12}  {:>12}  {:>12}  {:>12}",
+                "{:<22}  {:<22}  {:>6}  {:>14}  {:>14}  {:>14}  {:>14}  {:>7}",
                 "node_id",
                 "hostname",
                 "cpu%",
-                "ram_used_mb",
-                "ram_total_mb",
-                "vram_used_mb",
-                "vram_total_mb",
+                "ram_used(MiB)",
+                "ram_total(MiB)",
+                "vram_used(MiB)",
+                "vram_total(MiB)",
+                "age_s",
             );
-            println!("{}", "-".repeat(100));
+            println!("{}", "-".repeat(115));
             for r in &rows {
                 let vram_u = r
                     .vram_used_mb
@@ -160,8 +162,9 @@ fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result
                     .vram_total_mb
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "-".to_string());
+                let age_s = (now - r.ts_unix).max(0);
                 println!(
-                    "{:<22}  {:<22}  {:>5.1}  {:>12}  {:>12}  {:>12}  {:>12}",
+                    "{:<22}  {:<22}  {:>5.1}  {:>14}  {:>14}  {:>14}  {:>14}  {:>7}",
                     trunc(&r.node_id, 22),
                     trunc(&r.hostname, 22),
                     r.cpu_pct,
@@ -169,9 +172,10 @@ fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result
                     r.ram_total_mb,
                     vram_u,
                     vram_t,
+                    age_s,
                 );
             }
-            println!("{}", "-".repeat(100));
+            println!("{}", "-".repeat(115));
             println!("# {} node(s), stale_secs={}", rows.len(), stale_secs);
         }
     }
@@ -179,7 +183,12 @@ fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result
 }
 
 /// Serialize a snapshot to a JSON value with all required fields.
+///
+/// `age_s` is a convenience field: `now_unix_i64() - ts_unix`, clamped ≥ 0.
+/// It lets consumers display "how stale is this reading?" without computing
+/// the current wall-clock time themselves.
 pub fn snapshot_to_json(r: &NodeResourceSnapshot) -> serde_json::Value {
+    let age_s = (crate::time::now_unix_i64() - r.ts_unix).max(0);
     serde_json::json!({
         "node_id":      r.node_id,
         "hostname":     r.hostname,
@@ -189,6 +198,7 @@ pub fn snapshot_to_json(r: &NodeResourceSnapshot) -> serde_json::Value {
         "vram_used_mb": r.vram_used_mb,
         "vram_total_mb":r.vram_total_mb,
         "ts_unix":      r.ts_unix,
+        "age_s":        age_s,
     })
 }
 
