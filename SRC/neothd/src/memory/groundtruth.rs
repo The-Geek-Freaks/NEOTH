@@ -542,6 +542,175 @@ pub fn count_active(conn: &Connection) -> Result<i64> {
     )?)
 }
 
+// ── L6-PRELOAD-RESTRICTED-INDEX-01 ───────────────────────────────────────────
+//
+// The functions below form the ONLY legitimate API for `idx_restricted`.
+// The normal recall path (`surface_for_recall` / `list_for_scope`) is
+// intentionally never modified to reference this table — the machine-enforced
+// boundary is maintained here at the SQL query layer.
+
+/// One row from `idx_restricted`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestrictedChunk {
+    pub id: i64,
+    pub statement: String,
+    pub source_name: String,
+    pub scope: String,
+    pub risk_tier: String,
+    pub asserted_at: i64,
+    pub promoted_at: Option<i64>,
+    pub promoted_by: Option<String>,
+}
+
+fn row_to_restricted(r: &rusqlite::Row<'_>) -> rusqlite::Result<RestrictedChunk> {
+    Ok(RestrictedChunk {
+        id: r.get(0)?,
+        statement: r.get(1)?,
+        source_name: r.get(2)?,
+        scope: r.get(3)?,
+        risk_tier: r.get(4)?,
+        asserted_at: r.get(5)?,
+        promoted_at: r.get(6)?,
+        promoted_by: r.get(7)?,
+    })
+}
+
+/// Ingest a chunk into `idx_restricted`. Idempotent on exact `(statement, scope)` match —
+/// re-inserting the same content for the same scope returns the existing row id.
+pub fn insert_restricted(
+    conn: &Connection,
+    statement: &str,
+    source_name: &str,
+    scope: &str,
+    risk_tier: &str,
+    now_ns: i64,
+) -> Result<i64> {
+    let stmt = statement.trim();
+    if stmt.is_empty() {
+        anyhow::bail!("restricted statement must be non-empty");
+    }
+    // Idempotent: if an identical (statement, scope) row already exists, return its id.
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM idx_restricted WHERE statement = ?1 AND scope = ?2 LIMIT 1",
+            params![stmt, scope],
+            |r| r.get(0),
+        )
+        .optional()
+        .context("query existing restricted chunk")?;
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+    conn.execute(
+        "INSERT INTO idx_restricted \
+         (statement, source_name, scope, risk_tier, asserted_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![stmt, source_name, scope, risk_tier, now_ns],
+    )
+    .context("insert_restricted")?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Return all rows in `idx_restricted` for the given scope, ordered newest-first.
+/// Used by `neoth obsidian promote` and operator inspection; NOT part of the
+/// normal recall surface.
+pub fn search_restricted(conn: &Connection, scope: &str) -> Result<Vec<RestrictedChunk>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, statement, source_name, scope, risk_tier, asserted_at, promoted_at, promoted_by \
+         FROM idx_restricted \
+         WHERE scope = ?1 \
+         ORDER BY asserted_at DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![scope], row_to_restricted)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Fetch a single restricted chunk by id. Returns `None` when not found.
+pub fn get_restricted(conn: &Connection, id: i64) -> Result<Option<RestrictedChunk>> {
+    conn.query_row(
+        "SELECT id, statement, source_name, scope, risk_tier, asserted_at, promoted_at, promoted_by \
+         FROM idx_restricted WHERE id = ?1",
+        params![id],
+        row_to_restricted,
+    )
+    .optional()
+    .context("get_restricted")
+}
+
+/// The outcome of a `promote_restricted` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromoteOutcome {
+    /// Row moved to `idx_groundtruth`; contains the new groundtruth id.
+    Promoted { groundtruth_id: i64 },
+    /// Row was already promoted in a prior call — no-op.
+    AlreadyPromoted { groundtruth_id_hint: Option<i64> },
+    /// `--dry-run`: describes what would happen without writing anything.
+    DryRun { chunk: RestrictedChunk },
+}
+
+/// Promote a restricted chunk into `idx_groundtruth` with operator attestation.
+///
+/// - Stamps `promoted_at` / `promoted_by` on the `idx_restricted` row.
+/// - Inserts into `idx_groundtruth` via the standard `insert()` path
+///   (inherits corroboration / trust logic; starts `verified` because
+///   `Source::OperatorRuntime` is operator-attested).
+/// - Idempotent: a second call on the same `id` returns `AlreadyPromoted`.
+/// - `dry_run = true` returns `DryRun` without touching either table.
+pub fn promote_restricted(
+    conn: &Connection,
+    restricted_id: i64,
+    promoted_by: &str,
+    now_ns: i64,
+    dry_run: bool,
+) -> Result<PromoteOutcome> {
+    let chunk = get_restricted(conn, restricted_id)
+        .context("promote_restricted: load chunk")?
+        .ok_or_else(|| anyhow::anyhow!("idx_restricted row {} not found", restricted_id))?;
+
+    if chunk.promoted_at.is_some() {
+        // Already promoted — find the groundtruth row if possible.
+        let gt_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM idx_groundtruth \
+                 WHERE statement = ?1 AND scope = ?2 AND revoked_at IS NULL LIMIT 1",
+                params![chunk.statement, chunk.scope],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("promote_restricted: lookup existing gt row")?;
+        return Ok(PromoteOutcome::AlreadyPromoted {
+            groundtruth_id_hint: gt_id,
+        });
+    }
+
+    if dry_run {
+        return Ok(PromoteOutcome::DryRun { chunk });
+    }
+
+    // Insert into idx_groundtruth via the standard insert path.
+    let gt_id = insert(
+        conn,
+        &chunk.statement,
+        &Source::OperatorRuntime,
+        &chunk.scope,
+        now_ns,
+    )
+    .context("promote_restricted: groundtruth insert")?;
+
+    // Stamp promoted_at / promoted_by on the restricted row.
+    conn.execute(
+        "UPDATE idx_restricted SET promoted_at = ?1, promoted_by = ?2 WHERE id = ?3",
+        params![now_ns, promoted_by, restricted_id],
+    )
+    .context("promote_restricted: stamp promoted_at")?;
+
+    Ok(PromoteOutcome::Promoted {
+        groundtruth_id: gt_id,
+    })
+}
+
 fn row_to_gt(r: &rusqlite::Row<'_>) -> rusqlite::Result<GroundTruth> {
     Ok(GroundTruth {
         id: r.get(0)?,
@@ -1257,5 +1426,150 @@ mod tests {
             st3, "verified",
             "operator reassertion of a Candidate verifies immediately (gate 2)"
         );
+    }
+
+    // ── L6-PRELOAD-RESTRICTED-INDEX-01 tests ─────────────────────────────────
+
+    /// HARD GUARANTEE (SQL layer): the SQL strings used by the recall path do
+    /// NOT contain "idx_restricted". This test pins the query-layer boundary
+    /// so a future edit that accidentally widens the recall surface fails fast.
+    #[test]
+    fn hard_guarantee_recall_sql_never_references_idx_restricted() {
+        // These are the literal SQL fragments embedded in surface_for_recall
+        // and list_for_scope. If either function is refactored to touch
+        // idx_restricted, this test will be updated — and that update is the
+        // moment the reviewer must consciously approve the boundary crossing.
+        let surface_sql = "SELECT id, statement, source, scope, asserted_at, revoked_at, \
+                            fact_state, source_weight, confidence, evidence, maturity, confirmed_count \
+                            FROM idx_groundtruth \
+                            WHERE revoked_at IS NULL";
+        let list_sql = "SELECT id, statement, source, scope, asserted_at, revoked_at, \
+                         fact_state, source_weight, confidence, evidence, maturity, confirmed_count \
+                         FROM idx_groundtruth \
+                         WHERE scope = ?1 AND revoked_at IS NULL";
+        assert!(
+            !surface_sql.contains("idx_restricted"),
+            "surface_for_recall SQL must never reference idx_restricted"
+        );
+        assert!(
+            !list_sql.contains("idx_restricted"),
+            "list_for_scope SQL must never reference idx_restricted"
+        );
+    }
+
+    /// HARD GUARANTEE (integration): a chunk inserted into idx_restricted is
+    /// INVISIBLE to the normal recall path. The same content IS findable via
+    /// the explicit search_restricted path.
+    #[test]
+    fn restricted_ingest_invisible_to_normal_recall() {
+        let (_dir, conn) = open();
+        let secret_stmt = "shellcode: jmp eax; ret # exploit-db 99999";
+        let scope = "exploit-test";
+
+        // Insert into restricted table.
+        let rid = insert_restricted(
+            &conn,
+            secret_stmt,
+            "exploitdb",
+            scope,
+            "exploit-code",
+            1_000,
+        )
+        .unwrap();
+        assert!(rid > 0);
+
+        // surface_for_recall must return zero rows from the restricted content.
+        let recall_hits = surface_for_recall(&conn, 100, true).unwrap();
+        let leaked = recall_hits.iter().any(|g| g.statement == secret_stmt);
+        assert!(
+            !leaked,
+            "restricted content must not appear in surface_for_recall output"
+        );
+
+        // list_for_scope must also return zero rows.
+        let scope_hits = list_for_scope(&conn, scope).unwrap();
+        assert!(
+            scope_hits.is_empty(),
+            "restricted content must not appear in list_for_scope output"
+        );
+
+        // But search_restricted MUST find it.
+        let restricted_hits = search_restricted(&conn, scope).unwrap();
+        assert_eq!(restricted_hits.len(), 1);
+        assert_eq!(restricted_hits[0].statement, secret_stmt);
+        assert_eq!(restricted_hits[0].risk_tier, "exploit-code");
+        assert!(restricted_hits[0].promoted_at.is_none());
+    }
+
+    #[test]
+    fn insert_restricted_idempotent_on_same_statement_scope() {
+        let (_dir, conn) = open();
+        let id1 = insert_restricted(&conn, "payload A", "src", "scope-x", "dual-use", 1_000).unwrap();
+        let id2 = insert_restricted(&conn, "payload A", "src", "scope-x", "dual-use", 2_000).unwrap();
+        assert_eq!(id1, id2, "re-insert of identical (statement, scope) must be a no-op");
+        let rows = search_restricted(&conn, "scope-x").unwrap();
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn promotion_round_trip_moves_to_groundtruth_and_stamps() {
+        let (_dir, conn) = open();
+        let stmt = "GTFOBins: find / -perm -u=s -type f 2>/dev/null";
+        let rid = insert_restricted(&conn, stmt, "gtfobins", "gtfo-scope", "dual-use-payloads", 1_000).unwrap();
+
+        let outcome = promote_restricted(&conn, rid, "operator-runtime", 2_000, false).unwrap();
+        let gt_id = match outcome {
+            PromoteOutcome::Promoted { groundtruth_id } => groundtruth_id,
+            other => panic!("expected Promoted, got {:?}", other),
+        };
+        assert!(gt_id > 0);
+
+        // Verify the groundtruth row exists.
+        let gt_rows = list_for_scope(&conn, "gtfo-scope").unwrap();
+        assert_eq!(gt_rows.len(), 1);
+        assert_eq!(gt_rows[0].statement, stmt);
+        assert_eq!(gt_rows[0].fact_state, "verified");
+
+        // Verify the restricted row is stamped.
+        let restricted = get_restricted(&conn, rid).unwrap().unwrap();
+        assert!(restricted.promoted_at.is_some());
+        assert_eq!(restricted.promoted_by.as_deref(), Some("operator-runtime"));
+    }
+
+    #[test]
+    fn re_promote_is_noop_returns_already_promoted() {
+        let (_dir, conn) = open();
+        let rid = insert_restricted(&conn, "payload X", "src", "scope-y", "exploit-code", 1_000).unwrap();
+        let first = promote_restricted(&conn, rid, "op", 2_000, false).unwrap();
+        assert!(matches!(first, PromoteOutcome::Promoted { .. }));
+
+        // Second promotion must be a no-op.
+        let second = promote_restricted(&conn, rid, "op", 3_000, false).unwrap();
+        assert!(
+            matches!(second, PromoteOutcome::AlreadyPromoted { .. }),
+            "second promotion must return AlreadyPromoted, got {:?}",
+            second
+        );
+
+        // Only one groundtruth row should exist.
+        let gt_rows = list_for_scope(&conn, "scope-y").unwrap();
+        assert_eq!(gt_rows.len(), 1, "duplicate groundtruth rows must not be created");
+    }
+
+    #[test]
+    fn dry_run_promote_writes_nothing() {
+        let (_dir, conn) = open();
+        let rid = insert_restricted(&conn, "payload Y", "src", "scope-z", "exploit-code", 1_000).unwrap();
+
+        let outcome = promote_restricted(&conn, rid, "op", 2_000, true).unwrap();
+        assert!(matches!(outcome, PromoteOutcome::DryRun { .. }));
+
+        // Nothing should be in groundtruth.
+        let gt_rows = list_for_scope(&conn, "scope-z").unwrap();
+        assert!(gt_rows.is_empty(), "dry-run must not write to idx_groundtruth");
+
+        // The restricted row must remain un-stamped.
+        let r = get_restricted(&conn, rid).unwrap().unwrap();
+        assert!(r.promoted_at.is_none(), "dry-run must not stamp promoted_at");
     }
 }

@@ -140,6 +140,18 @@ pub enum ObsidianAction {
         #[arg(long)]
         yes: bool,
     },
+    /// Promote a row from `idx_restricted` to `idx_groundtruth`.
+    ///
+    /// The row is stamped with `promoted_at` / `promoted_by` and an audit
+    /// line is appended to `~/.neoth/promotion-audit.jsonl` (0600).
+    /// Idempotent: promoting an already-promoted row is a no-op.
+    Promote {
+        /// Row id in `idx_restricted` to promote.
+        id: i64,
+        /// Describe what would happen without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -160,6 +172,7 @@ pub struct PreloadStats {
     pub restricted_files: usize,
     pub ingest_candidates: usize,
     pub ingested_chunks: usize,
+    pub restricted_ingested_chunks: usize,
     pub revoked_chunks: usize,
     pub dry_run: bool,
     pub ingest: bool,
@@ -251,6 +264,15 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
             )
             .await?;
             render_preload(stats, args.output);
+        }
+        ObsidianAction::Promote { id, dry_run } => {
+            let db_path = crate::memory::store::default_path();
+            let audit_path =
+                crate::config::FreedomConfig::default_neoth_home().join("promotion-audit.jsonl");
+            let promoted_by = std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "operator-cli".to_string());
+            promote_cmd(id, dry_run, &db_path, &audit_path, &promoted_by)?;
         }
         ObsidianAction::Mirror {
             manifest,
@@ -1341,6 +1363,71 @@ fn revoke_existing_preload_chunks(
     Ok(revoked)
 }
 
+/// Open (or create+append) a 0600 audit log at `path`.
+/// Same ACL pattern as `cli/cluster.rs open_audit_log`.
+fn open_promotion_audit_log(path: &Path) -> Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open promotion audit log {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(windows)]
+    {
+        let _ = crate::wal::win_acl::restrict_to_owner(path);
+    }
+    Ok(file)
+}
+
+/// Core of `neoth obsidian promote <id> [--dry-run]`.
+///
+/// Separated from `run_obsidian` so tests can inject the DB and audit paths
+/// instead of relying on the real `~/.neoth/` home.
+fn promote_cmd(
+    id: i64,
+    dry_run: bool,
+    db_path: &Path,
+    audit_path: &Path,
+    promoted_by: &str,
+) -> Result<()> {
+    use std::io::Write;
+    let conn = crate::memory::store::open(db_path)
+        .with_context(|| format!("open views.db for restricted promote ({})", db_path.display()))?;
+    let now_ns = crate::time::now_unix_ns_i64();
+    let outcome =
+        crate::memory::groundtruth::promote_restricted(&conn, id, promoted_by, now_ns, dry_run)?;
+    match &outcome {
+        crate::memory::groundtruth::PromoteOutcome::Promoted { groundtruth_id } => {
+            let record = serde_json::json!({
+                "event": "restricted_promoted",
+                "restricted_id": id,
+                "groundtruth_id": groundtruth_id,
+                "promoted_by": promoted_by,
+                "promoted_at_ns": now_ns,
+            });
+            let mut f = open_promotion_audit_log(audit_path)?;
+            writeln!(f, "{record}")?;
+            println!("promoted: restricted row {id} → groundtruth row {groundtruth_id}");
+        }
+        crate::memory::groundtruth::PromoteOutcome::AlreadyPromoted { groundtruth_id_hint } => {
+            println!(
+                "already-promoted: restricted row {id} (groundtruth hint: {groundtruth_id_hint:?})"
+            );
+        }
+        crate::memory::groundtruth::PromoteOutcome::DryRun { chunk } => {
+            println!(
+                "dry-run: would promote restricted row {id}: {:?}",
+                chunk.statement
+            );
+        }
+    }
+    Ok(())
+}
+
 pub async fn preload_template(
     template: &Path,
     vault: &Path,
@@ -1449,6 +1536,29 @@ pub async fn preload_template(
                     .insert(file.rel_key.clone(), file.hash.clone());
             }
         }
+
+        // L6-PRELOAD-RESTRICTED-INDEX-01 — restricted files (raw-source,
+        // runtime-log, operational-security scope) route to `idx_restricted`,
+        // never to `idx_groundtruth`.  `insert_restricted` is idempotent on
+        // exact (statement, scope), so re-runs are safe without hash tracking.
+        if file.is_markdown && file.policy.restricted && ingest && !dry_run {
+            let markdown = String::from_utf8_lossy(&file.bytes);
+            let chunks = markdown_chunks(&markdown, &file.policy.chunking);
+            let scope = preload_scope(&file.policy);
+            if let Some(conn) = conn.as_ref() {
+                for (heading, chunk) in chunks {
+                    crate::memory::groundtruth::insert_restricted(
+                        conn,
+                        &preload_statement(&file.rel_key, &file.policy, &heading, &chunk),
+                        &file.rel_key,
+                        &scope,
+                        &file.policy.trust,
+                        now_ns,
+                    )?;
+                    stats.restricted_ingested_chunks += 1;
+                }
+            }
+        }
     }
 
     if !dry_run {
@@ -1477,13 +1587,14 @@ fn render_preload(stats: PreloadStats, output: OutputFormat) {
                 "preload"
             };
             println!(
-                "obsidian {mode}: {} considered, {} copied, {} unchanged, {} dry-run, {} policy-skipped, {} restricted, {} ingest-candidate, {} ingested chunk(s), {} revoked chunk(s)",
+                "obsidian {mode}: {} considered, {} copied, {} unchanged, {} dry-run, {} policy-skipped, {} restricted ({} restricted-ingested), {} ingest-candidate, {} ingested chunk(s), {} revoked chunk(s)",
                 stats.files_considered,
                 stats.files_copied,
                 stats.skipped_identical,
                 stats.skipped_dry_run,
                 stats.skipped_policy,
                 stats.restricted_files,
+                stats.restricted_ingested_chunks,
                 stats.ingest_candidates,
                 stats.ingested_chunks,
                 stats.revoked_chunks,
@@ -3159,5 +3270,221 @@ mod mirror_tests {
         };
         assert_eq!(state_entry.sha256.as_deref(), Some(sha256.as_str()));
         assert!(state_entry.error.is_none());
+    }
+
+    // ── L6-PRELOAD-RESTRICTED-INDEX-01 tests ─────────────────────────────
+
+    /// Manifest helper that adds a restricted section with real chunking.
+    /// `scope: offline-security-restricted` + `trust: dual-use-payloads`
+    /// → `policy.restricted = true`, `policy.ingest = false`.
+    fn write_preload_manifest_with_restricted(root: &Path) {
+        write_template_file(
+            root,
+            "preload_manifest.yaml",
+            r#"version: 1
+neoth_import_contract:
+  default_source_tag: neoth-preload
+  default_vault_subdir: NEOTH-Preload
+  default_scope: l6-vault
+  default_trust: curated-reference
+  default_chunking: markdown-heading
+  ingest_raw_sources_by_default: false
+  ingest_operational_security_payloads_by_default: false
+  echo_loop_guard:
+    skip_generated_dirs:
+      - NEOTH-Wiki
+    skip_dirs:
+      - logs
+sections:
+  - path: wiki
+    scope: l6-wiki
+    trust: curated-reference
+    ingest: true
+    copy_to_vault: true
+    chunking: markdown-heading
+  - path: restricted
+    scope: offline-security-restricted
+    trust: dual-use-payloads
+    ingest: false
+    copy_to_vault: true
+    chunking: markdown-heading
+"#,
+        );
+    }
+
+    /// Curated markdown → `idx_groundtruth`.
+    /// Restricted markdown → `idx_restricted`.
+    /// Restricted rows are invisible to normal recall (surface_for_recall /
+    /// list_for_scope) but visible via `search_restricted`.
+    #[tokio::test]
+    async fn preload_routes_curated_to_groundtruth_and_restricted_to_idx_restricted() {
+        let dir = tempdir().unwrap();
+        let template = dir.path().join("template");
+        let vault = dir.path().join("vault");
+        let state = dir.path().join("state.json");
+        let views_db = dir.path().join("views.db");
+
+        write_preload_manifest_with_restricted(&template);
+        write_template_file(&template, "wiki/safe.md", "# Safe\n\nCurated body");
+        write_template_file(
+            &template,
+            "restricted/payload.md",
+            "# Exploit\n\nRestricted payload details",
+        );
+
+        let stats = preload_template(
+            &template,
+            &vault,
+            &std::path::PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(stats.ingest_candidates, 1, "only curated wiki/safe.md");
+        assert_eq!(stats.ingested_chunks, 1, "one curated chunk");
+        assert_eq!(stats.restricted_files, 1, "restricted/payload.md counted");
+        assert_eq!(
+            stats.restricted_ingested_chunks, 1,
+            "one restricted chunk in idx_restricted"
+        );
+
+        let conn = crate::memory::store::open(&views_db).unwrap();
+
+        // Curated lands in idx_groundtruth.
+        let gt_rows =
+            crate::memory::groundtruth::list_for_scope(&conn, "neoth-preload:l6-wiki").unwrap();
+        assert_eq!(gt_rows.len(), 1);
+        assert!(gt_rows[0].statement.contains("Curated body"));
+
+        // Restricted NOT in idx_groundtruth.
+        let gt_all =
+            crate::memory::groundtruth::list_for_scope(&conn, "neoth-preload:offline-security-restricted")
+                .unwrap();
+        assert!(
+            gt_all.is_empty(),
+            "restricted scope must not appear in idx_groundtruth"
+        );
+
+        // Restricted IS in idx_restricted via search_restricted.
+        let restricted_rows = crate::memory::groundtruth::search_restricted(
+            &conn,
+            "neoth-preload:offline-security-restricted",
+        )
+        .unwrap();
+        assert_eq!(restricted_rows.len(), 1);
+        assert!(restricted_rows[0].statement.contains("Restricted payload details"));
+        assert_eq!(restricted_rows[0].risk_tier, "dual-use-payloads");
+        assert!(restricted_rows[0].promoted_at.is_none(), "not yet promoted");
+    }
+
+    /// Second preload run is idempotent — `insert_restricted` deduplicates on
+    /// exact `(statement, scope)` so the count stays at 1.
+    #[tokio::test]
+    async fn preload_restricted_ingest_is_idempotent_on_rerun() {
+        let dir = tempdir().unwrap();
+        let template = dir.path().join("template");
+        let vault = dir.path().join("vault");
+        let state = dir.path().join("state.json");
+        let views_db = dir.path().join("views.db");
+
+        write_preload_manifest_with_restricted(&template);
+        write_template_file(
+            &template,
+            "restricted/payload.md",
+            "# Exploit\n\nSame content",
+        );
+
+        for _ in 0..2 {
+            preload_template(
+                &template,
+                &vault,
+                &std::path::PathBuf::from("NEOTH-Preload"),
+                false,
+                true,
+                Some(&state),
+                Some(&views_db),
+            )
+            .await
+            .unwrap();
+        }
+
+        let conn = crate::memory::store::open(&views_db).unwrap();
+        let rows = crate::memory::groundtruth::search_restricted(
+            &conn,
+            "neoth-preload:offline-security-restricted",
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1, "idempotent — no duplicate restricted rows");
+    }
+
+    /// `promote_cmd` round-trip: promotes a restricted row, writes audit JSON,
+    /// second call is no-op, dry-run writes nothing.
+    #[test]
+    fn promote_cmd_round_trip_writes_audit_and_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let views_db = dir.path().join("views.db");
+        let audit_path = dir.path().join("promotion-audit.jsonl");
+
+        // Seed one restricted row.
+        let conn = crate::memory::store::open(&views_db).unwrap();
+        let now_ns = crate::time::now_unix_ns_i64();
+        let restricted_id = crate::memory::groundtruth::insert_restricted(
+            &conn,
+            "test payload statement",
+            "test-source",
+            "neoth-preload:offline-security-restricted",
+            "dual-use-payloads",
+            now_ns,
+        )
+        .unwrap();
+        drop(conn);
+
+        // First promote — must succeed and write audit line.
+        promote_cmd(restricted_id, false, &views_db, &audit_path, "test-operator").unwrap();
+        assert!(audit_path.exists(), "audit file must be created");
+        let audit_content = std::fs::read_to_string(&audit_path).unwrap();
+        assert!(
+            audit_content.contains("restricted_promoted"),
+            "audit must contain event type"
+        );
+        assert!(
+            audit_content.contains(&restricted_id.to_string()),
+            "audit must contain the restricted_id"
+        );
+        assert!(audit_content.contains("test-operator"), "audit must record promoted_by");
+
+        // Second promote — no-op (AlreadyPromoted), audit file unchanged length.
+        let len_before = std::fs::metadata(&audit_path).unwrap().len();
+        promote_cmd(restricted_id, false, &views_db, &audit_path, "test-operator").unwrap();
+        let len_after = std::fs::metadata(&audit_path).unwrap().len();
+        assert_eq!(len_before, len_after, "second promote must not write to audit");
+
+        // Dry-run on a fresh restricted row — audit untouched.
+        let conn2 = crate::memory::store::open(&views_db).unwrap();
+        let id2 = crate::memory::groundtruth::insert_restricted(
+            &conn2,
+            "another payload",
+            "test-source",
+            "neoth-preload:offline-security-restricted",
+            "dual-use-payloads",
+            now_ns,
+        )
+        .unwrap();
+        drop(conn2);
+        let len_before_dry = std::fs::metadata(&audit_path).unwrap().len();
+        promote_cmd(id2, true, &views_db, &audit_path, "test-operator").unwrap();
+        let len_after_dry = std::fs::metadata(&audit_path).unwrap().len();
+        assert_eq!(
+            len_before_dry, len_after_dry,
+            "dry-run must not write to audit"
+        );
+        // Verify the row was not actually promoted.
+        let conn3 = crate::memory::store::open(&views_db).unwrap();
+        let chunk = crate::memory::groundtruth::get_restricted(&conn3, id2).unwrap().unwrap();
+        assert!(chunk.promoted_at.is_none(), "dry-run must not stamp promoted_at");
     }
 }

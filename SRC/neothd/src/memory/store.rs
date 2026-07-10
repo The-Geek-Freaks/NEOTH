@@ -49,7 +49,14 @@ use rusqlite::Connection;
 ///      to recall. The contradiction detector calls `invalidate_relation`
 ///      best-effort whenever a negation-contradiction or temporal-supersede
 ///      auto-resolution closes a ground-truth fact.
-pub const SCHEMA_VERSION: i64 = 24;
+/// v25: L6-PRELOAD-RESTRICTED-INDEX-01 — add `idx_restricted`, a physically
+///      separate table for exploit/payload corpora that must NEVER be read by
+///      the normal recall path. Columns mirror `idx_groundtruth`'s chunk shape
+///      plus `risk_tier`, `source_name`, `promoted_at`, `promoted_by`.
+///      Operator-attested promotion to idx_groundtruth is the only bridge
+///      (written by `neoth obsidian promote`, audited in
+///      `~/.neoth/promotion-audit.jsonl`).
+pub const SCHEMA_VERSION: i64 = 25;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -1018,6 +1025,37 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("create idx_foreign_events")?;
+
+    // L6-PRELOAD-RESTRICTED-INDEX-01 — physically separate restricted index.
+    //
+    // Exploit/payload corpora land here after `neoth obsidian preload --ingest`
+    // when the manifest section has a restricted `risk_tier`. This table is
+    // NEVER read by the normal recall path (`groundtruth::surface_for_recall` /
+    // `groundtruth::list_for_scope` only query `idx_groundtruth`). Content
+    // becomes available to recall ONLY via explicit operator promotion
+    // (`neoth obsidian promote <id>`), which moves the row into `idx_groundtruth`
+    // and writes an audit entry to `~/.neoth/promotion-audit.jsonl`.
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_restricted (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            statement    TEXT    NOT NULL,
+            source_name  TEXT    NOT NULL,
+            scope        TEXT    NOT NULL,
+            risk_tier    TEXT    NOT NULL,
+            asserted_at  INTEGER NOT NULL,
+            promoted_at  INTEGER,          -- NULL until operator promotes
+            promoted_by  TEXT              -- NULL until operator promotes
+        );
+        CREATE INDEX IF NOT EXISTS idx_restricted_scope
+            ON idx_restricted (scope);
+        CREATE INDEX IF NOT EXISTS idx_restricted_risk_tier
+            ON idx_restricted (risk_tier);
+        CREATE INDEX IF NOT EXISTS idx_restricted_promoted
+            ON idx_restricted (promoted_at);
+        "#,
+    )
+    .context("create idx_restricted")?;
 
     // Stamp schema version (idempotent).
     conn.execute(

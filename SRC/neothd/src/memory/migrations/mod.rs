@@ -198,7 +198,53 @@ pub const MIGRATIONS: &[Migration] = &[
                       idempotent. Separate from idx_episode: foreign ≠ operator truth.",
         run: migration_v23_to_v24,
     },
+    Migration {
+        from: 24,
+        to: 25,
+        description: "L6-PRELOAD-RESTRICTED-INDEX-01: add idx_restricted — physically \
+                      separate table for exploit/payload corpora. Never read by the normal \
+                      recall path; operator-attested promotion to idx_groundtruth is the \
+                      only bridge (audited in ~/.neoth/promotion-audit.jsonl).",
+        run: migration_v24_to_v25,
+    },
 ];
+
+/// v24 → v25: L6-PRELOAD-RESTRICTED-INDEX-01 — create `idx_restricted`.
+///
+/// Physically separate table for exploit/payload corpora ingested by
+/// `neoth obsidian preload --ingest` when the manifest section carries a
+/// restricted `risk_tier` (e.g. `dual-use-payloads`, `exploit-code`).
+///
+/// The normal recall path (`groundtruth::surface_for_recall` /
+/// `groundtruth::list_for_scope`) NEVER references this table. Content
+/// enters `idx_groundtruth` ONLY via explicit operator promotion
+/// (`neoth obsidian promote <id>`) which stamps `promoted_at`/`promoted_by`
+/// and appends an audit record to `~/.neoth/promotion-audit.jsonl`.
+///
+/// `CREATE TABLE IF NOT EXISTS` keeps the migration idempotent.
+fn migration_v24_to_v25(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_restricted (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            statement    TEXT    NOT NULL,
+            source_name  TEXT    NOT NULL,
+            scope        TEXT    NOT NULL,
+            risk_tier    TEXT    NOT NULL,
+            asserted_at  INTEGER NOT NULL,
+            promoted_at  INTEGER,
+            promoted_by  TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_restricted_scope
+            ON idx_restricted (scope);
+        CREATE INDEX IF NOT EXISTS idx_restricted_risk_tier
+            ON idx_restricted (risk_tier);
+        CREATE INDEX IF NOT EXISTS idx_restricted_promoted
+            ON idx_restricted (promoted_at);
+        "#,
+    )
+    .context("migration_v24_to_v25: create idx_restricted")
+}
 
 /// v23 → v24: G-02 CLUSTER-01 — create `idx_foreign_events`.
 ///
