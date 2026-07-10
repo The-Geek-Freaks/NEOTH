@@ -2031,7 +2031,7 @@ pub fn parse_calendar_next(json: &str, n: usize) -> (bool, Vec<(String, String)>
     let parsed: Vec<(String, String)> = events
         .iter()
         .take(n)
-        .filter_map(|ev| {
+        .map(|ev| {
             let summary = ev
                 .get("summary")
                 .or_else(|| ev.get("title"))
@@ -2052,7 +2052,7 @@ pub fn parse_calendar_next(json: &str, n: usize) -> (bool, Vec<(String, String)>
                     }
                 })
                 .unwrap_or_else(|| "—".to_string());
-            Some((time, summary))
+            (time, summary)
         })
         .collect();
 
@@ -2161,9 +2161,12 @@ pub fn parse_n8n_workflows(json: &str) -> Vec<(String, String)> {
 /// Returns `(enabled, threshold, epsilon, federate, total_windows,
 ///           collapse_flagged, gran_rows)` where `gran_rows` is
 /// `Vec<(window_secs_i32, count_i32, last_ts_end)>`.
-pub fn parse_babel_status(
-    json: &str,
-) -> (bool, String, String, bool, i32, i32, Vec<(i32, i32, String)>) {
+/// Row shape for the babel granularity table: `(window_secs, count, last_ts_end)`.
+pub type BabelGranRow = (i32, i32, String);
+/// Full `parse_babel_status` result — see the doc comment above for field order.
+pub type BabelStatus = (bool, String, String, bool, i32, i32, Vec<BabelGranRow>);
+
+pub fn parse_babel_status(json: &str) -> BabelStatus {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
     let enabled   = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
     let threshold = v.get("threshold").map(|x| x.to_string()).unwrap_or_default();
@@ -2176,7 +2179,7 @@ pub fn parse_babel_status(
     let total     = v.get("total_windows").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
     let collapse  = v.get("collapse_flagged").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
 
-    let gran_rows: Vec<(i32, i32, String)> = v
+    let gran_rows: Vec<BabelGranRow> = v
         .get("windows_by_granularity")
         .and_then(|x| x.as_array())
         .cloned()
@@ -2201,9 +2204,11 @@ pub fn parse_babel_status(
 ///
 /// Returns `Vec<(id, window_secs, ts_start, ts_end, b_log, b_mult,
 ///               b_bottleneck, collapse_kind)>`.
-pub fn parse_babel_windows(
-    json: &str,
-) -> Vec<(String, i32, String, String, f32, f32, f32, String)> {
+/// Row shape for the babel windows table:
+/// `(id, window_secs, ts_start, ts_end, b_log, b_mult, b_bottleneck, collapse_kind)`.
+pub type BabelWindowRow = (String, i32, String, String, f32, f32, f32, String);
+
+pub fn parse_babel_windows(json: &str) -> Vec<BabelWindowRow> {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
     let arr = v
         .get("windows")
@@ -2212,7 +2217,7 @@ pub fn parse_babel_windows(
         .or_else(|| v.as_array().cloned())
         .unwrap_or_default();
     arr.iter()
-        .filter_map(|item| {
+        .map(|item| {
             let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let ws = item.get("window_secs").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
             let ts_start = item.get("ts_start").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -2229,7 +2234,7 @@ pub fn parse_babel_windows(
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            Some((id, ws, ts_start, ts_end, b_log, b_mult, b_bottleneck, collapse_kind))
+            (id, ws, ts_start, ts_end, b_log, b_mult, b_bottleneck, collapse_kind)
         })
         .collect()
 }
@@ -2331,7 +2336,7 @@ pub fn parse_selfimprove_log(json: &str) -> Vec<(String, String, String, String)
         .unwrap_or_default();
     arr.iter()
         .take(10)
-        .filter_map(|item| {
+        .map(|item| {
             let id     = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let title  = item.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let status = item.get("status").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -2340,7 +2345,7 @@ pub fn parse_selfimprove_log(json: &str) -> Vec<(String, String, String, String)
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            Some((id, title, status, ts))
+            (id, title, status, ts)
         })
         .collect()
 }
@@ -2774,9 +2779,11 @@ pub fn parse_chat_consent_grants(json: &str) -> Vec<(String, bool)> {
 //
 // Return tuple per row: (id, name, enabled, cron, tz, role, timeout, channel, recipient)
 // where `timeout` is `timeout_seconds` as a display string (empty if 0/absent).
-pub fn parse_cron_jobs(
-    json: &str,
-) -> Vec<(String, String, bool, String, String, String, String, String, String)> {
+/// Row shape for the cron jobs table:
+/// `(id, name, enabled, cron, tz, role, timeout, channel, recipient)`.
+pub type CronJobRow = (String, String, bool, String, String, String, String, String, String);
+
+pub fn parse_cron_jobs(json: &str) -> Vec<CronJobRow> {
     let arr = match serde_json::from_str::<serde_json::Value>(json) {
         Ok(v) => v.as_array().cloned().unwrap_or_default(),
         Err(_) => return vec![],
