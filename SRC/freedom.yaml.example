@@ -198,6 +198,10 @@ review_gate_enabled: false
 # obsidian_vault: /home/user/vaults/main
 # obsidian_subdir: NEOTH       # default: "NEOTH"
 # obsidian_auto_sync_secs: 3600 # default: 1 hour
+# obsidian_preload_template_dir: /home/user/agenter/L6_Vault_Template
+# obsidian_preload_subdir: NEOTH-Preload
+# knowledge_preload_dirs:
+#   - /home/user/agenter/L6_Vault_Template
 
 
 # ── 9. Hysteria transport (optional, R-3) ────────────────────────────────────

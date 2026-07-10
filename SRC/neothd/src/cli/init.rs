@@ -1063,6 +1063,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_config_maps_bootstrapped_vault_to_runtime_obsidian_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let vault = dir.path().join("NEOTH-Vault");
+        let mut state = fixture_state();
+        state.bootstrap_vault = true;
+        state.vault_path = Some(vault.clone());
+
+        write_config(&neoth_dir, &state)
+            .await
+            .expect("write_config");
+
+        let cfg = crate::config::FreedomConfig::load_from_path(&neoth_dir.join("freedom.yaml"))
+            .expect("load freedom.yaml");
+        let vault_s = vault.to_string_lossy().to_string();
+        assert_eq!(cfg.obsidian_vault.as_deref(), Some(vault_s.as_str()));
+        assert_eq!(cfg.obsidian_subdir.as_deref(), Some("NEOTH-sessions"));
+    }
+
+    #[tokio::test]
     async fn step7b_non_interactive_leaves_default_auto_update() {
         // The step writes the default AutoUpdateConfig when
         // interactive == false. Pin the contract so a future
@@ -2308,7 +2328,9 @@ mod tests {
         let neoth_dir = dir.path().join(".neoth");
         // fixture_state() has telegram_token set → onboarding_complete = true.
         let state = fixture_state();
-        write_config(&neoth_dir, &state).await.expect("write_config");
+        write_config(&neoth_dir, &state)
+            .await
+            .expect("write_config");
         let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         assert!(
             body.contains("onboarding_complete: true"),
@@ -2327,7 +2349,9 @@ mod tests {
         state.telegram_token = None;
         state.keet_seed_phrase = None;
         // write_config recomputes the flag from configured_channels(state).
-        write_config(&neoth_dir, &state).await.expect("write_config");
+        write_config(&neoth_dir, &state)
+            .await
+            .expect("write_config");
         let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         assert!(
             body.contains("onboarding_complete: false"),

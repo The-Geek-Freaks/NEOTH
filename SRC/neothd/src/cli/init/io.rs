@@ -426,8 +426,28 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     // This correctly re-arms the hint on `neoth init --force` runs too.
     public_state.chat_onboarding_completed = false;
 
+    let mut public_value =
+        serde_yaml::to_value(&public_state).context("serialize WizardState as YAML value")?;
+    if public_state.bootstrap_vault {
+        if let Some(vault_path) = public_state.vault_path.as_ref() {
+            if let serde_yaml::Value::Mapping(map) = &mut public_value {
+                map.insert(
+                    serde_yaml::Value::String("obsidian_vault".to_string()),
+                    serde_yaml::Value::String(vault_path.display().to_string()),
+                );
+                let subdir_key = serde_yaml::Value::String("obsidian_subdir".to_string());
+                if !map.contains_key(&subdir_key) {
+                    map.insert(
+                        subdir_key,
+                        serde_yaml::Value::String("NEOTH-sessions".to_string()),
+                    );
+                }
+            }
+        }
+    }
+
     let freedom_yaml = neoth_dir.join("freedom.yaml");
-    let serialized = serde_yaml::to_string(&public_state)
+    let serialized = serde_yaml::to_string(&public_value)
         .context("serialize WizardState as YAML for freedom.yaml")?;
 
     // A3-tail mutation-site wiring: when freedom.yaml ALREADY exists

@@ -58,6 +58,7 @@ pub mod presets;
 use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
+pub use crate::analytics::babel::BabelConfig;
 pub use automation::{
     AutoSkillExtractConfig, BgMonitorConfig, CheckinCronConfig, CompanionConfig,
     ConsolidationSweepConfig, DEFAULT_CHECKIN_CRON_INTERVAL_SECS,
@@ -68,21 +69,20 @@ pub use automation::{
     DEFAULT_REGRESSION_INTERVAL_SECS, DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
     DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_SKILL_CURATOR_INTERVAL_SECS,
     DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
-    DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, GuidanceCronConfig, KanbanSseConfig,
-    MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig, ProactiveConfig,
-    ProfileAdaptConfig, RecallLatencyConfig, RecursiveMasConfig, RegressionAnchorConfig,
-    ResourceWatchConfig, SelfWikiConfig,
+    DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, EmailIngestCronConfig, GuidanceCronConfig,
+    KanbanSseConfig, MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig,
+    ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RecursiveMasConfig,
+    RegressionAnchorConfig, ResourceWatchConfig, SelfActivationConfig, SelfWikiConfig,
     SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
-    SelfActivationConfig, WatchdogConfig, EmailIngestCronConfig,
+    WatchdogConfig,
 };
 pub use features::{
-    ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope, ChannelWeightsConfig,
-    DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS, DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS,
-    DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE, DreamingConfig, EcologyConfig, EmailConfig, FallbackConfig,
-    GoalConfig, HintsConfig, HookChainConfig, LiveDeliveryConfig, LoopConfig, MediaConfig,
-    OmiConfig, TransferConfig,
+    ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope,
+    ChannelWeightsConfig, DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS,
+    DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS, DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE, DreamingConfig,
+    EcologyConfig, EmailConfig, FallbackConfig, GoalConfig, HintsConfig, HookChainConfig,
+    LiveDeliveryConfig, LoopConfig, MediaConfig, OmiConfig, TransferConfig,
 };
-pub use crate::analytics::babel::BabelConfig;
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
     AutoUpdateConfig, CodeMapConfig, CodingConfig, DoctorConfig, PluginsConfig, ProfileConfig,
@@ -91,7 +91,7 @@ pub use ops::{
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
-    FeedsConfig, SecurityPolicy, SkillsConfig, SkillVisibility, TokensConfig,
+    FeedsConfig, SecurityPolicy, SkillVisibility, SkillsConfig, TokensConfig,
 };
 pub use provider::{ClaudeCliBackendCfg, ClaudeCliConfig, ClaudeCliTmuxConfig, TmuxSessionScope};
 pub use rollback::RollbackConfig;
@@ -308,6 +308,23 @@ pub struct FreedomConfig {
     /// Field unused when `obsidian_vault_reader_enabled = false`.
     #[serde(default)]
     pub obsidian_vault_reader_secs: Option<u64>,
+    /// GOLD-ADAPT-VAULT-PRELOAD-01 — optional curated vault-template directory
+    /// copied by `neoth obsidian preload --template`. The importer reads the
+    /// template's `preload_manifest.yaml` and keeps raw/restricted corpora out
+    /// of normal recall unless explicitly promoted there.
+    /// NOTE: consumed by the CLI command only — the daemon does not auto-run
+    /// preload from this field until L6-PRELOAD-AUTORUN-01 ships.
+    #[serde(default)]
+    pub obsidian_preload_template_dir: Option<String>,
+    /// Vault subdirectory for copied preload notes. `None` = the manifest
+    /// default, normally `"NEOTH-Preload"`.
+    #[serde(default)]
+    pub obsidian_preload_subdir: Option<String>,
+    /// Additional curated knowledge roots NEOTH can preload/index. Each root
+    /// should carry its own manifest or be explicitly operator-reviewed.
+    /// NOTE: declared for L6-PRELOAD-AUTORUN-01; no runtime consumer yet.
+    #[serde(default)]
+    pub knowledge_preload_dirs: Vec<String>,
     /// GOLD-ADAPT-GRAPH-05 — source directory for the self-map cron.
     /// `graphify update` is run against this directory to produce the
     /// structural graph of the daemon source tree.
@@ -1067,7 +1084,10 @@ impl FreedomConfig {
     /// Unknown keys pass through unchanged (provider surfaces the error).
     #[inline]
     pub fn resolve_model_alias<'a>(&'a self, id: &'a str) -> &'a str {
-        self.models_aliases.get(id).map(String::as_str).unwrap_or(id)
+        self.models_aliases
+            .get(id)
+            .map(String::as_str)
+            .unwrap_or(id)
     }
 
     pub fn sovereign_active(&self) -> bool {

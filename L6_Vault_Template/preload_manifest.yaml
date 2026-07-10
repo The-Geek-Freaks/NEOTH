@@ -1,0 +1,120 @@
+version: 1
+corpus_id: l6-vault-template
+display_name: "L6 Vault Template"
+created: "2026-07-06"
+owner: "operator"
+purpose: "Seed NEOTH and the operator Obsidian vault with curated local-first wiki knowledge."
+
+obsidian_contract:
+  data_model: "Markdown notes with YAML properties at file top."
+  bases_ready: true
+  recommended_properties:
+    - tags
+    - aliases
+    - source
+    - status
+    - neoth_preload
+    - neoth_scope
+    - neoth_trust
+    - neoth_chunking
+    - neoth_safety_tier
+    - neoth_offline_priority
+
+neoth_import_contract:
+  copy_to_vault: true
+  default_vault_subdir: "NEOTH-Preload"
+  default_source_tag: "neoth-preload"
+  default_scope: "l6-vault"
+  default_state: "candidate"
+  default_chunking: "markdown-heading"
+  ingest_raw_sources_by_default: false
+  ingest_operational_security_payloads_by_default: false
+  offline_source_catalog: "sources/offline_security_sources.yaml"
+  echo_loop_guard:
+    skip_generated_dirs:
+      - "NEOTH-Facts"
+      - "NEOTH-Synthesis"
+      - "NEOTH-Self"
+      - "NEOTH-Wiki"
+    skip_dirs:
+      - ".obsidian"
+      - ".git"
+      - "logs"
+
+sections:
+  - path: "00_System_Core"
+    scope: "neoth-core"
+    trust: "operator-attested"
+    ingest: true
+    copy_to_vault: true
+    chunking: "markdown-heading"
+  - path: "01_Operator_Profile"
+    scope: "operator-profile"
+    trust: "operator-attested"
+    ingest: true
+    copy_to_vault: true
+    chunking: "whole-note"
+    requires_operator_review: true
+  - path: "10_Local_AI_and_SelfHosting"
+    scope: "local-ai"
+    trust: "curated-reference"
+    ingest: true
+    copy_to_vault: true
+    chunking: "markdown-heading"
+  - path: "11_Cybersecurity_and_SecOps"
+    scope: "security-ops"
+    trust: "curated-reference"
+    ingest: true
+    copy_to_vault: true
+    chunking: "markdown-heading"
+  - path: "12_Software_Engineering_and_Rust"
+    scope: "software-engineering"
+    trust: "curated-reference"
+    ingest: true
+    copy_to_vault: true
+    chunking: "markdown-heading"
+  - path: "13_Offline_Security_Preparedness"
+    scope: "offline-security-prep"
+    trust: "curated-reference"
+    ingest: true
+    copy_to_vault: true
+    chunking: "markdown-heading"
+    note: "Defensive offline-prep summaries and source-selection policy. Do not treat raw exploit/payload mirrors as normal recall."
+  - path: "wiki"
+    scope: "l6-wiki"
+    trust: "curated-reference"
+    ingest: true
+    copy_to_vault: true
+    chunking: "markdown-heading"
+  - path: "sources"
+    scope: "l6-sources"
+    trust: "raw-source"
+    ingest: false
+    copy_to_vault: true
+    chunking: "none"
+    note: "Keep raw upstream READMEs available in Obsidian, but do not inject them into NEOTH recall until summarized."
+  - path: "logs"
+    scope: "l6-logs"
+    trust: "runtime-log"
+    ingest: false
+    copy_to_vault: false
+    chunking: "none"
+
+minimum_neoth_wiring:
+  - "neoth init should offer this template as an Obsidian/wiki preload source."
+  - "neoth serve should optionally run an idempotent preload sync from this directory into obsidian_vault/default_vault_subdir."
+  - "The importer should read this manifest, normalize frontmatter in copied files, and insert body chunks into memory with scope/trust metadata."
+  - "Raw sources should stay reachable but should not pollute recall unless explicitly promoted."
+  - "Offline security corpora should default to summaries, metadata, and defensive checklists; raw payload/exploit mirrors require an explicit restricted-index policy."
+  - "The preload state should be hash-based so re-runs update changed notes without duplicating facts."
+
+research_basis:
+  - title: "Obsidian Properties"
+    url: "https://obsidian.md/help/properties"
+    note: "Properties are YAML at the top of Markdown notes; default keys include tags, aliases, and cssclasses."
+  - title: "Obsidian Import"
+    url: "https://obsidian.md/help/import"
+    note: "Obsidian uses local plain text Markdown files and supports import from Markdown and other formats."
+  - title: "Obsidian Bases"
+    url: "https://obsidian.md/help/bases"
+    note: "Bases build database-like views from local Markdown files and their properties."

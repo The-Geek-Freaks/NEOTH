@@ -15,13 +15,15 @@
 //!   - Obsidian wikilink resolution (e.g. `[[2026-05-14]]`)
 //!   - Dataview-compatible metadata enrichment
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use serde::{Deserialize, Serialize};
 
-use crate::cli::obsidian_sync_util::{detect_sync_conflicts, DirMtimeCache, WriteCoalescer};
 use crate::cli::OutputFormat;
+use crate::cli::obsidian_sync_util::{DirMtimeCache, WriteCoalescer, detect_sync_conflicts};
 use crate::memory::archive;
 
 #[derive(Args, Debug, Clone)]
@@ -92,6 +94,28 @@ pub enum ObsidianAction {
         #[arg(long)]
         ingest: bool,
     },
+    /// Copy a curated Markdown/YAML vault template into Obsidian and optionally
+    /// ingest reviewed Markdown notes into NEOTH memory. Raw/restricted source
+    /// folders stay copy-only unless the manifest explicitly marks them safe.
+    Preload {
+        /// Obsidian vault root to copy the preload into.
+        vault: PathBuf,
+        /// Curated vault-template directory. Must contain `preload_manifest.yaml`.
+        #[arg(long, value_name = "DIR")]
+        template: PathBuf,
+        /// Subdirectory inside the vault for copied preload files.
+        #[arg(long, default_value = "NEOTH-Preload")]
+        subdir: PathBuf,
+        /// Print the plan without writing vault files, state, or memory rows.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also ingest manifest-approved Markdown notes into `idx_groundtruth`.
+        #[arg(long)]
+        ingest: bool,
+        /// Override the preload hash-state JSON path (mostly for tests).
+        #[arg(long, value_name = "FILE")]
+        state: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -100,6 +124,23 @@ pub struct SyncStats {
     pub copied: usize,
     pub skipped_identical: usize,
     pub skipped_dry_run: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PreloadStats {
+    pub files_considered: usize,
+    pub files_copied: usize,
+    pub skipped_identical: usize,
+    pub skipped_dry_run: usize,
+    pub skipped_policy: usize,
+    pub restricted_files: usize,
+    pub ingest_candidates: usize,
+    pub ingested_chunks: usize,
+    pub revoked_chunks: usize,
+    pub dry_run: bool,
+    pub ingest: bool,
+    pub vault_subdir: String,
+    pub state_path: String,
 }
 
 pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
@@ -160,6 +201,32 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
                     crate::wiki::WIKI_SCOPE
                 );
             }
+        }
+        ObsidianAction::Preload {
+            vault,
+            template,
+            subdir,
+            dry_run,
+            ingest,
+            state,
+        } => {
+            validate_subdir(&subdir).with_context(|| {
+                format!(
+                    "invalid preload subdir {}: must be a simple name, not a traversal path",
+                    subdir.display()
+                )
+            })?;
+            let stats = preload_template(
+                &template,
+                &vault,
+                &subdir,
+                dry_run,
+                ingest,
+                state.as_deref(),
+                None,
+            )
+            .await?;
+            render_preload(stats, args.output);
         }
     }
     Ok(())
@@ -558,11 +625,7 @@ pub async fn sync_archive(
     {
         let conflict_report = detect_sync_conflicts(vault);
         if let Some(msg) = conflict_report.describe() {
-            tracing::warn!(
-                conflict_count = conflict_report.conflicts.len(),
-                "{}",
-                msg
-            );
+            tracing::warn!(conflict_count = conflict_report.conflicts.len(), "{}", msg);
         }
     }
 
@@ -650,14 +713,681 @@ pub async fn sync_archive(
     // IGNIS-01: flush all queued writes in one pass. Skipped-identical
     // entries come back so we can update stats accurately.
     if !dry_run {
-        let (written, skipped_identical) = coalescer
-            .flush()
-            .context("WriteCoalescer flush")?;
+        let (written, skipped_identical) = coalescer.flush().context("WriteCoalescer flush")?;
         stats.copied = written;
         stats.skipped_identical = skipped_identical;
     }
 
     Ok(stats)
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct PreloadManifest {
+    #[serde(default)]
+    neoth_import_contract: PreloadImportContract,
+    #[serde(default)]
+    sections: Vec<PreloadSection>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct PreloadImportContract {
+    #[serde(default = "default_vault_preload_subdir")]
+    default_vault_subdir: String,
+    #[serde(default = "default_source_tag")]
+    default_source_tag: String,
+    #[serde(default = "default_preload_scope")]
+    default_scope: String,
+    #[serde(default = "default_preload_trust")]
+    default_trust: String,
+    #[serde(default = "default_preload_chunking")]
+    default_chunking: String,
+    #[serde(default)]
+    ingest_raw_sources_by_default: bool,
+    #[serde(default)]
+    ingest_operational_security_payloads_by_default: bool,
+    #[serde(default)]
+    echo_loop_guard: EchoLoopGuard,
+}
+
+impl Default for PreloadImportContract {
+    fn default() -> Self {
+        Self {
+            default_vault_subdir: default_vault_preload_subdir(),
+            default_source_tag: default_source_tag(),
+            default_scope: default_preload_scope(),
+            default_trust: default_preload_trust(),
+            default_chunking: default_preload_chunking(),
+            ingest_raw_sources_by_default: false,
+            ingest_operational_security_payloads_by_default: false,
+            echo_loop_guard: EchoLoopGuard::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct EchoLoopGuard {
+    #[serde(default)]
+    skip_generated_dirs: Vec<String>,
+    #[serde(default)]
+    skip_dirs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct PreloadSection {
+    path: String,
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
+    trust: String,
+    #[serde(default = "default_true")]
+    ingest: bool,
+    #[serde(default = "default_true")]
+    copy_to_vault: bool,
+    #[serde(default)]
+    chunking: String,
+}
+
+impl Default for PreloadSection {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            scope: default_preload_scope(),
+            trust: default_preload_trust(),
+            ingest: true,
+            copy_to_vault: true,
+            chunking: default_preload_chunking(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EffectivePreloadPolicy {
+    scope: String,
+    trust: String,
+    chunking: String,
+    ingest: bool,
+    copy_to_vault: bool,
+    restricted: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PreloadFile {
+    rel: PathBuf,
+    rel_key: String,
+    bytes: Vec<u8>,
+    hash: String,
+    is_markdown: bool,
+    policy: EffectivePreloadPolicy,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct PreloadState {
+    #[serde(default)]
+    copied_hashes: BTreeMap<String, String>,
+    #[serde(default)]
+    ingested_hashes: BTreeMap<String, String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_vault_preload_subdir() -> String {
+    "NEOTH-Preload".to_string()
+}
+
+fn default_source_tag() -> String {
+    "neoth-preload".to_string()
+}
+
+fn default_preload_scope() -> String {
+    "l6-vault".to_string()
+}
+
+fn default_preload_trust() -> String {
+    "curated-reference".to_string()
+}
+
+fn default_preload_chunking() -> String {
+    "markdown-heading".to_string()
+}
+
+fn default_preload_state_path() -> PathBuf {
+    crate::config::FreedomConfig::default_neoth_home().join("obsidian_preload_state.json")
+}
+
+fn load_preload_manifest(template: &Path) -> Result<PreloadManifest> {
+    let path = template.join("preload_manifest.yaml");
+    let body = std::fs::read_to_string(&path)
+        .with_context(|| format!("read preload manifest {}", path.display()))?;
+    serde_yaml::from_str(&body)
+        .with_context(|| format!("parse preload manifest {}", path.display()))
+}
+
+fn load_preload_state(path: &Path) -> Result<PreloadState> {
+    if !path.exists() {
+        return Ok(PreloadState::default());
+    }
+    let body = std::fs::read_to_string(path)
+        .with_context(|| format!("read preload state {}", path.display()))?;
+    serde_json::from_str(&body).with_context(|| format!("parse preload state {}", path.display()))
+}
+
+fn save_preload_state(path: &Path, state: &PreloadState) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create preload state dir {}", parent.display()))?;
+    }
+    let body = serde_json::to_vec_pretty(state).context("serialize preload state")?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))
+}
+
+fn normalize_rel(path: &Path) -> String {
+    path.components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn section_matches(rel_key: &str, section_path: &str) -> bool {
+    let p = section_path.trim_matches('/').replace('\\', "/");
+    if p.is_empty() {
+        return true;
+    }
+    rel_key == p
+        || rel_key
+            .strip_prefix(&p)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn effective_policy(manifest: &PreloadManifest, rel_key: &str) -> EffectivePreloadPolicy {
+    let mut best: Option<&PreloadSection> = None;
+    for section in &manifest.sections {
+        if section_matches(rel_key, &section.path) {
+            match best {
+                Some(prev) if prev.path.len() >= section.path.len() => {}
+                _ => best = Some(section),
+            }
+        }
+    }
+    let contract = &manifest.neoth_import_contract;
+    let (scope, trust, chunking, ingest, copy_to_vault, section_path) = match best {
+        Some(section) => (
+            if section.scope.is_empty() {
+                contract.default_scope.clone()
+            } else {
+                section.scope.clone()
+            },
+            if section.trust.is_empty() {
+                contract.default_trust.clone()
+            } else {
+                section.trust.clone()
+            },
+            if section.chunking.is_empty() {
+                contract.default_chunking.clone()
+            } else {
+                section.chunking.clone()
+            },
+            section.ingest,
+            section.copy_to_vault,
+            section.path.as_str(),
+        ),
+        None => (
+            contract.default_scope.clone(),
+            contract.default_trust.clone(),
+            contract.default_chunking.clone(),
+            true,
+            true,
+            "",
+        ),
+    };
+
+    let raw_or_restricted = section_path.eq_ignore_ascii_case("sources")
+        || trust.eq_ignore_ascii_case("raw-source")
+        || trust.eq_ignore_ascii_case("runtime-log");
+    let operational_security = scope.eq_ignore_ascii_case("l6-sources")
+        || scope.eq_ignore_ascii_case("offline-security-restricted")
+        || rel_key.contains("Restricted-Exploit-Code");
+    let ingest_allowed = ingest
+        && (!raw_or_restricted || contract.ingest_raw_sources_by_default)
+        && (!operational_security || contract.ingest_operational_security_payloads_by_default);
+
+    EffectivePreloadPolicy {
+        scope,
+        trust,
+        chunking,
+        ingest: ingest_allowed,
+        copy_to_vault,
+        restricted: raw_or_restricted || operational_security,
+    }
+}
+
+fn skip_dir_name(manifest: &PreloadManifest, name: &str) -> bool {
+    if name.starts_with('.') {
+        return true;
+    }
+    let guard = &manifest.neoth_import_contract.echo_loop_guard;
+    guard.skip_dirs.iter().any(|d| d == name) || guard.skip_generated_dirs.iter().any(|d| d == name)
+}
+
+fn allowed_preload_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase()),
+        Some(ext)
+            if matches!(
+                ext.as_str(),
+                "md" | "markdown" | "txt" | "yaml" | "yml" | "json"
+            )
+    )
+}
+
+fn collect_preload_files(
+    template: &Path,
+    manifest: &PreloadManifest,
+) -> Result<(Vec<PreloadFile>, usize)> {
+    fn walk(
+        root: &Path,
+        dir: &Path,
+        manifest: &PreloadManifest,
+        out: &mut Vec<PreloadFile>,
+        skipped_policy: &mut usize,
+    ) -> Result<()> {
+        let mut entries = std::fs::read_dir(dir)
+            .with_context(|| format!("read preload dir {}", dir.display()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .with_context(|| format!("read entries in {}", dir.display()))?;
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let meta = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("stat preload path {}", path.display()))?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                if skip_dir_name(manifest, &name) {
+                    continue;
+                }
+                walk(root, &path, manifest, out, skipped_policy)?;
+                continue;
+            }
+            if !meta.is_file() || name.starts_with('.') || !allowed_preload_extension(&path) {
+                continue;
+            }
+
+            let rel = path
+                .strip_prefix(root)
+                .with_context(|| format!("strip preload root from {}", path.display()))?
+                .to_path_buf();
+            let rel_key = normalize_rel(&rel);
+            if rel_key.eq_ignore_ascii_case("preload_manifest.yaml")
+                || rel_key.eq_ignore_ascii_case("preload_manifest.yml")
+            {
+                continue;
+            }
+            let policy = effective_policy(manifest, &rel_key);
+            if !policy.copy_to_vault {
+                *skipped_policy += 1;
+                continue;
+            }
+            let is_markdown = path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+                s.eq_ignore_ascii_case("md") || s.eq_ignore_ascii_case("markdown")
+            });
+            let raw = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+            let bytes = if is_markdown {
+                let text = String::from_utf8_lossy(&raw);
+                normalize_markdown_frontmatter(&text, manifest, &policy).into_bytes()
+            } else {
+                raw
+            };
+            let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
+            out.push(PreloadFile {
+                rel,
+                rel_key,
+                bytes,
+                hash,
+                is_markdown,
+                policy,
+            });
+        }
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    let mut skipped_policy = 0usize;
+    walk(
+        template,
+        template,
+        manifest,
+        &mut files,
+        &mut skipped_policy,
+    )?;
+    files.sort_by(|a, b| a.rel_key.cmp(&b.rel_key));
+    Ok((files, skipped_policy))
+}
+
+fn frontmatter_has_key(frontmatter: &str, key: &str) -> bool {
+    frontmatter
+        .lines()
+        .any(|line| line.trim_start().starts_with(&format!("{key}:")))
+}
+
+fn frontmatter_fields(
+    manifest: &PreloadManifest,
+    policy: &EffectivePreloadPolicy,
+) -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "source",
+            manifest.neoth_import_contract.default_source_tag.clone(),
+        ),
+        ("neoth_preload", "true".to_string()),
+        ("neoth_scope", policy.scope.clone()),
+        ("neoth_trust", policy.trust.clone()),
+        ("neoth_chunking", policy.chunking.clone()),
+    ]
+}
+
+fn normalize_markdown_frontmatter(
+    text: &str,
+    manifest: &PreloadManifest,
+    policy: &EffectivePreloadPolicy,
+) -> String {
+    let text = text.replace("\r\n", "\n");
+    let fields = frontmatter_fields(manifest, policy);
+    if let Some(rest) = text.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---\n") {
+            let (frontmatter, body_with_delim) = rest.split_at(end);
+            let body = &body_with_delim["\n---\n".len()..];
+            let mut out = String::from("---\n");
+            out.push_str(frontmatter);
+            if !frontmatter.ends_with('\n') && !frontmatter.is_empty() {
+                out.push('\n');
+            }
+            for (key, value) in fields {
+                if !frontmatter_has_key(frontmatter, key) {
+                    out.push_str(key);
+                    out.push_str(": ");
+                    out.push_str(&value);
+                    out.push('\n');
+                }
+            }
+            out.push_str("---\n");
+            out.push_str(body);
+            return out;
+        }
+    }
+
+    let mut out = String::from("---\n");
+    for (key, value) in fields {
+        out.push_str(key);
+        out.push_str(": ");
+        out.push_str(&value);
+        out.push('\n');
+    }
+    out.push_str("---\n\n");
+    out.push_str(&text);
+    out
+}
+
+fn strip_frontmatter(text: &str) -> &str {
+    if let Some(rest) = text.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---\n") {
+            return &rest[end + "\n---\n".len()..];
+        }
+    }
+    text
+}
+
+fn clean_statement_text(text: &str) -> String {
+    let mut out = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    const MAX_CHARS: usize = 1800;
+    if out.chars().count() > MAX_CHARS {
+        out = out.chars().take(MAX_CHARS).collect::<String>();
+        out.push_str("...");
+    }
+    out
+}
+
+fn markdown_chunks(markdown: &str, chunking: &str) -> Vec<(String, String)> {
+    let body = strip_frontmatter(markdown).trim();
+    if body.is_empty() || chunking.eq_ignore_ascii_case("none") {
+        return Vec::new();
+    }
+    if chunking.eq_ignore_ascii_case("whole-note") {
+        return vec![("whole-note".to_string(), clean_statement_text(body))];
+    }
+
+    let mut chunks = Vec::new();
+    let mut heading = "preamble".to_string();
+    let mut buf = String::new();
+    let flush = |chunks: &mut Vec<(String, String)>, heading: &str, buf: &mut String| {
+        let clean = clean_statement_text(buf);
+        if !clean.is_empty() {
+            chunks.push((heading.to_string(), clean));
+        }
+        buf.clear();
+    };
+
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            flush(&mut chunks, &heading, &mut buf);
+            heading = trimmed.trim_start_matches('#').trim().to_string();
+            if heading.is_empty() {
+                heading = "heading".to_string();
+            }
+        } else {
+            buf.push_str(line);
+            buf.push('\n');
+        }
+    }
+    flush(&mut chunks, &heading, &mut buf);
+    if chunks.is_empty() {
+        chunks.push(("whole-note".to_string(), clean_statement_text(body)));
+    }
+    chunks
+}
+
+fn preload_scope(policy: &EffectivePreloadPolicy) -> String {
+    format!("neoth-preload:{}", policy.scope)
+}
+
+fn preload_statement(
+    rel_key: &str,
+    policy: &EffectivePreloadPolicy,
+    heading: &str,
+    chunk: &str,
+) -> String {
+    format!(
+        "NEOTH preload chunk source_path={} scope={} trust={} heading=\"{}\": {}",
+        rel_key, policy.scope, policy.trust, heading, chunk
+    )
+}
+
+fn revoke_existing_preload_chunks(
+    conn: &rusqlite::Connection,
+    scope: &str,
+    rel_key: &str,
+    now_ns: i64,
+) -> Result<usize> {
+    let marker = format!("source_path={rel_key} ");
+    let mut revoked = 0usize;
+    for row in crate::memory::groundtruth::list_for_scope(conn, scope)? {
+        if row.revoked_at.is_none() && row.statement.contains(&marker) {
+            crate::memory::groundtruth::revoke(conn, row.id, now_ns)?;
+            revoked += 1;
+        }
+    }
+    Ok(revoked)
+}
+
+pub async fn preload_template(
+    template: &Path,
+    vault: &Path,
+    subdir: &Path,
+    dry_run: bool,
+    ingest: bool,
+    state_override: Option<&Path>,
+    views_db_override: Option<&Path>,
+) -> Result<PreloadStats> {
+    validate_subdir(subdir).with_context(|| {
+        format!(
+            "invalid preload subdir {}: must be a simple name, not a traversal path",
+            subdir.display()
+        )
+    })?;
+    if !template.is_dir() {
+        anyhow::bail!(
+            "preload template is not a directory: {}",
+            template.display()
+        );
+    }
+
+    let manifest = load_preload_manifest(template)?;
+    let effective_subdir = if subdir.as_os_str().is_empty() {
+        PathBuf::from(&manifest.neoth_import_contract.default_vault_subdir)
+    } else {
+        subdir.to_path_buf()
+    };
+    validate_subdir(&effective_subdir)?;
+
+    let state_path = state_override
+        .map(Path::to_path_buf)
+        .unwrap_or_else(default_preload_state_path);
+    let mut state = load_preload_state(&state_path)?;
+    let (files, skipped_policy) = collect_preload_files(template, &manifest)?;
+
+    let mut stats = PreloadStats {
+        files_considered: files.len(),
+        skipped_policy,
+        dry_run,
+        ingest,
+        vault_subdir: effective_subdir.display().to_string(),
+        state_path: state_path.display().to_string(),
+        ..PreloadStats::default()
+    };
+
+    let mut coalescer = WriteCoalescer::new();
+    let conn = if ingest && !dry_run {
+        let db_path = views_db_override
+            .map(Path::to_path_buf)
+            .unwrap_or_else(crate::memory::store::default_path);
+        Some(crate::memory::store::open(&db_path).with_context(|| {
+            format!("open views.db for preload ingest at {}", db_path.display())
+        })?)
+    } else {
+        None
+    };
+    let now_ns = crate::time::now_unix_ns_i64();
+
+    for file in &files {
+        if file.policy.restricted {
+            stats.restricted_files += 1;
+        }
+        let dst = vault.join(&effective_subdir).join(&file.rel);
+        if dry_run {
+            stats.skipped_dry_run += 1;
+        } else {
+            coalescer.push(dst, file.bytes.clone());
+            state
+                .copied_hashes
+                .insert(file.rel_key.clone(), file.hash.clone());
+        }
+
+        if file.is_markdown && file.policy.ingest {
+            stats.ingest_candidates += 1;
+            if ingest && !dry_run {
+                let old_hash = state.ingested_hashes.get(&file.rel_key);
+                if old_hash == Some(&file.hash) {
+                    continue;
+                }
+                let markdown = String::from_utf8_lossy(&file.bytes);
+                let chunks = markdown_chunks(&markdown, &file.policy.chunking);
+                if chunks.is_empty() {
+                    state
+                        .ingested_hashes
+                        .insert(file.rel_key.clone(), file.hash.clone());
+                    continue;
+                }
+                let scope = preload_scope(&file.policy);
+                if let Some(conn) = conn.as_ref() {
+                    stats.revoked_chunks +=
+                        revoke_existing_preload_chunks(conn, &scope, &file.rel_key, now_ns)?;
+                    for (heading, chunk) in chunks {
+                        crate::memory::groundtruth::insert(
+                            conn,
+                            &preload_statement(&file.rel_key, &file.policy, &heading, &chunk),
+                            &crate::memory::groundtruth::Source::ImportObsidian,
+                            &scope,
+                            now_ns,
+                        )?;
+                        stats.ingested_chunks += 1;
+                    }
+                }
+                state
+                    .ingested_hashes
+                    .insert(file.rel_key.clone(), file.hash.clone());
+            }
+        }
+    }
+
+    if !dry_run {
+        let (written, skipped_identical) =
+            coalescer.flush().context("preload WriteCoalescer flush")?;
+        stats.files_copied = written;
+        stats.skipped_identical = skipped_identical;
+        save_preload_state(&state_path, &state)?;
+    }
+
+    Ok(stats)
+}
+
+fn render_preload(stats: PreloadStats, output: OutputFormat) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&stats).unwrap_or_default()
+            );
+        }
+        OutputFormat::Table => {
+            let mode = if stats.dry_run {
+                "preload dry-run"
+            } else {
+                "preload"
+            };
+            println!(
+                "obsidian {mode}: {} considered, {} copied, {} unchanged, {} dry-run, {} policy-skipped, {} restricted, {} ingest-candidate, {} ingested chunk(s), {} revoked chunk(s)",
+                stats.files_considered,
+                stats.files_copied,
+                stats.skipped_identical,
+                stats.skipped_dry_run,
+                stats.skipped_policy,
+                stats.restricted_files,
+                stats.ingest_candidates,
+                stats.ingested_chunks,
+                stats.revoked_chunks,
+            );
+            println!("vault subdir: {}", stats.vault_subdir);
+            println!("state: {}", stats.state_path);
+        }
+    }
 }
 
 // IGNIS-01: identity check now handled inside WriteCoalescer::flush; kept
@@ -711,6 +1441,9 @@ fn render_status(cfg: &crate::config::FreedomConfig, output: OutputFormat) {
                     "obsidian_auto_sync_secs": auto_sync_secs,
                     "obsidian_wiki_rebuild_secs": wiki_rebuild_secs,
                     "obsidian_vault_reader_enabled": vault_reader_enabled,
+                    "obsidian_preload_template_dir": cfg.obsidian_preload_template_dir,
+                    "obsidian_preload_subdir": cfg.obsidian_preload_subdir,
+                    "knowledge_preload_dirs": cfg.knowledge_preload_dirs,
                 })
             );
         }
@@ -735,8 +1468,21 @@ fn render_status(cfg: &crate::config::FreedomConfig, output: OutputFormat) {
             );
             println!(
                 "vault reader:            {}",
-                if vault_reader_enabled { "enabled" } else { "disabled" }
+                if vault_reader_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
             );
+            if let Some(template) = cfg.obsidian_preload_template_dir.as_deref() {
+                println!("preload template:        {template}");
+            }
+            if !cfg.knowledge_preload_dirs.is_empty() {
+                println!(
+                    "knowledge preload dirs:  {}",
+                    cfg.knowledge_preload_dirs.join(", ")
+                );
+            }
         }
     }
 }
@@ -983,6 +1729,204 @@ mod tests {
         );
     }
 
+    fn write_template_file(root: &Path, rel: &str, body: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    fn write_preload_manifest(root: &Path) {
+        write_template_file(
+            root,
+            "preload_manifest.yaml",
+            r#"version: 1
+neoth_import_contract:
+  default_source_tag: neoth-preload
+  default_vault_subdir: NEOTH-Preload
+  default_scope: l6-vault
+  default_trust: curated-reference
+  default_chunking: markdown-heading
+  ingest_raw_sources_by_default: false
+  ingest_operational_security_payloads_by_default: false
+  echo_loop_guard:
+    skip_generated_dirs:
+      - NEOTH-Wiki
+    skip_dirs:
+      - logs
+sections:
+  - path: wiki
+    scope: l6-wiki
+    trust: curated-reference
+    ingest: true
+    copy_to_vault: true
+    chunking: markdown-heading
+  - path: sources
+    scope: l6-sources
+    trust: raw-source
+    ingest: false
+    copy_to_vault: true
+    chunking: none
+  - path: logs
+    scope: l6-logs
+    trust: runtime-log
+    ingest: false
+    copy_to_vault: false
+    chunking: none
+"#,
+        );
+    }
+
+    #[tokio::test]
+    async fn preload_dry_run_excludes_logs_and_restricted_sources_from_ingest() {
+        let dir = tempdir().unwrap();
+        let template = dir.path().join("template");
+        write_preload_manifest(&template);
+        write_template_file(&template, "wiki/a.md", "# A\n\nSafe summary");
+        write_template_file(&template, "sources/payloads.md", "# Raw\n\npayload list");
+        write_template_file(&template, "logs/runtime.md", "# Log\n\nignore");
+        write_template_file(
+            &template,
+            "NEOTH-Wiki/generated.md",
+            "# Generated\n\nignore",
+        );
+        let state = dir.path().join("state.json");
+        let views_db = dir.path().join("views.db");
+
+        let stats = preload_template(
+            &template,
+            &dir.path().join("vault"),
+            &PathBuf::from("NEOTH-Preload"),
+            true,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(stats.files_considered, 2, "wiki + sources");
+        assert_eq!(stats.skipped_dry_run, 2);
+        assert_eq!(stats.ingest_candidates, 1, "only wiki/a.md is ingestable");
+        assert_eq!(
+            stats.restricted_files, 1,
+            "sources/ is restricted copy-only"
+        );
+        assert!(!dir.path().join("vault/NEOTH-Preload").exists());
+    }
+
+    #[tokio::test]
+    async fn preload_copies_relative_paths_and_normalizes_frontmatter() {
+        let dir = tempdir().unwrap();
+        let template = dir.path().join("template");
+        let vault = dir.path().join("vault");
+        let state = dir.path().join("state.json");
+        let views_db = dir.path().join("views.db");
+        write_preload_manifest(&template);
+        write_template_file(&template, "wiki/a.md", "# A\n\nSafe summary");
+        write_template_file(&template, "sources/raw.md", "# Raw\n\ncopy only");
+
+        let stats = preload_template(
+            &template,
+            &vault,
+            &PathBuf::from("NEOTH-Preload"),
+            false,
+            false,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+        assert_eq!(stats.files_copied, 2, "wiki + sources");
+
+        let copied = std::fs::read_to_string(vault.join("NEOTH-Preload/wiki/a.md")).unwrap();
+        assert!(copied.starts_with("---\n"));
+        assert!(copied.contains("source: neoth-preload"));
+        assert!(copied.contains("neoth_preload: true"));
+        assert!(copied.contains("neoth_scope: l6-wiki"));
+
+        let second = preload_template(
+            &template,
+            &vault,
+            &PathBuf::from("NEOTH-Preload"),
+            false,
+            false,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.files_copied, 0);
+        assert_eq!(second.skipped_identical, 2);
+    }
+
+    #[tokio::test]
+    async fn preload_ingest_is_hash_idempotent_and_revokes_changed_file_chunks() {
+        let dir = tempdir().unwrap();
+        let template = dir.path().join("template");
+        let vault = dir.path().join("vault");
+        let state = dir.path().join("state.json");
+        let views_db = dir.path().join("views.db");
+        write_preload_manifest(&template);
+        write_template_file(&template, "wiki/a.md", "# Alpha\n\nBody one");
+
+        let first = preload_template(
+            &template,
+            &vault,
+            &PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.ingest_candidates, 1);
+        assert_eq!(first.ingested_chunks, 1);
+        assert_eq!(first.revoked_chunks, 0);
+
+        let second = preload_template(
+            &template,
+            &vault,
+            &PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.ingested_chunks, 0, "unchanged hash skips ingest");
+        assert_eq!(second.revoked_chunks, 0);
+
+        write_template_file(&template, "wiki/a.md", "# Alpha\n\nBody two");
+        let third = preload_template(
+            &template,
+            &vault,
+            &PathBuf::from("NEOTH-Preload"),
+            false,
+            true,
+            Some(&state),
+            Some(&views_db),
+        )
+        .await
+        .unwrap();
+        assert_eq!(third.ingested_chunks, 1);
+        assert_eq!(
+            third.revoked_chunks, 1,
+            "old chunk for same source_path revoked"
+        );
+
+        let conn = crate::memory::store::open(&views_db).unwrap();
+        let rows =
+            crate::memory::groundtruth::list_for_scope(&conn, "neoth-preload:l6-wiki").unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "only the latest changed note chunk is active"
+        );
+        assert!(rows[0].statement.contains("Body two"));
+    }
+
     // ── O-2 vault scaffold tests ──────────────────────────────────────────
 
     #[test]
@@ -1115,7 +2059,11 @@ mod tests {
     #[test]
     fn status_json_shape_unconfigured() {
         let cfg = crate::config::FreedomConfig::default();
-        let configured = cfg.obsidian_vault.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+        let configured = cfg
+            .obsidian_vault
+            .as_deref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
         let v = serde_json::json!({
             "configured": configured,
             "obsidian_vault": cfg.obsidian_vault,

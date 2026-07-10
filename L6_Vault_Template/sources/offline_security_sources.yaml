@@ -1,0 +1,188 @@
+version: 1
+catalog_id: offline-security-prep-sources
+created: "2026-07-06"
+owner: "operator"
+purpose: "Offline source registry for NEOTH/Obsidian security preparedness."
+
+default_policy:
+  copy_to_vault: true
+  mirror_root: "NEOTH-Preload/Offline-Security"
+  neoth_recall_default: "summary-only"
+  ingest_raw_payloads_by_default: false
+  ingest_exploit_code_by_default: false
+  require_operator_review_for_restricted_index: true
+  require_license_review_before_bulk_copy: true
+
+risk_tiers:
+  safe-reference:
+    description: "Defensive reference material, checklists, schemas, standards, or taxonomies."
+    default_ingest_policy: "curated-full-or-summary"
+  defensive-test-guide:
+    description: "Authorized testing methodology with strong defensive framing."
+    default_ingest_policy: "curated-methodology"
+  dual-use-payloads:
+    description: "Payloads, bypasses, living-off-the-land techniques, or broad pentest notes."
+    default_ingest_policy: "metadata-and-reviewed-summaries"
+  exploit-code:
+    description: "Exploit modules, PoCs, shellcode, or directly weaponizable code."
+    default_ingest_policy: "mirror-only-or-restricted-index"
+  historical-archive:
+    description: "Historical hacker culture, BBS, zine, or magazine archives."
+    default_ingest_policy: "index-and-curated-summaries"
+
+sources:
+  - id: hacktricks
+    title: "HackTricks"
+    category: "hacker-handbook"
+    primary_url: "https://github.com/HackTricks-wiki/hacktricks"
+    website: "https://book.hacktricks.xyz/"
+    format: ["git", "markdown", "mdbook"]
+    risk_tier: "dual-use-payloads"
+    offline_priority: 1
+    mirror_policy: "full-mirror-ok"
+    neoth_ingest_policy: "metadata-and-reviewed-summaries"
+    local_subdir: "Dual-Use-Mirror/hacktricks"
+    notes: "Broad pentest, CTF, cloud, AD, web, Linux, Windows, and research corpus. Useful offline, but too broad and operational for unfiltered recall."
+
+  - id: payloads-all-the-things
+    title: "PayloadsAllTheThings"
+    category: "payload-catalog"
+    primary_url: "https://github.com/swisskyrepo/PayloadsAllTheThings"
+    website: "https://swisskyrepo.github.io/PayloadsAllTheThings/"
+    format: ["git", "markdown"]
+    risk_tier: "dual-use-payloads"
+    offline_priority: 1
+    mirror_policy: "restricted-mirror"
+    neoth_ingest_policy: "restricted-index"
+    local_subdir: "Dual-Use-Mirror/payloads-all-the-things"
+    notes: "Useful for authorized labs and test validation. Keep raw payload/bypass strings out of normal recall."
+
+  - id: owasp-wstg
+    title: "OWASP Web Security Testing Guide"
+    category: "web-security-testing"
+    primary_url: "https://github.com/OWASP/wstg"
+    website: "https://owasp.org/www-project-web-security-testing-guide/"
+    format: ["git", "markdown", "checklists"]
+    risk_tier: "defensive-test-guide"
+    offline_priority: 1
+    mirror_policy: "full-mirror-ok"
+    neoth_ingest_policy: "curated-methodology"
+    local_subdir: "Reference/owasp-wstg"
+    notes: "Best first source for structured web-app and web-service testing methodology."
+
+  - id: owasp-cheat-sheet-series
+    title: "OWASP Cheat Sheet Series"
+    category: "defensive-appsec"
+    primary_url: "https://github.com/OWASP/CheatSheetSeries"
+    website: "https://cheatsheetseries.owasp.org/"
+    format: ["git", "markdown", "site"]
+    risk_tier: "safe-reference"
+    offline_priority: 1
+    mirror_policy: "full-mirror-ok"
+    neoth_ingest_policy: "curated-full-or-summary"
+    local_subdir: "Reference/owasp-cheat-sheet-series"
+    notes: "High-value defensive RAG corpus for app security design and review."
+
+  - id: gtfobins
+    title: "GTFOBins"
+    category: "unix-living-off-the-land"
+    primary_url: "https://github.com/GTFOBins/GTFOBins.github.io"
+    website: "https://gtfobins.github.io/"
+    format: ["git", "yaml", "markdown", "json"]
+    risk_tier: "dual-use-payloads"
+    offline_priority: 1
+    mirror_policy: "metadata-mirror"
+    neoth_ingest_policy: "defensive-summaries-and-detection-metadata"
+    local_subdir: "Dual-Use-Mirror/gtfobins"
+    notes: "Use for Unix hardening, misconfiguration triage, detection, and local incident response."
+
+  - id: lolbas
+    title: "LOLBAS"
+    category: "windows-living-off-the-land"
+    primary_url: "https://github.com/LOLBAS-Project/LOLBAS"
+    website: "https://lolbas-project.github.io/"
+    format: ["git", "yaml", "site", "api"]
+    risk_tier: "dual-use-payloads"
+    offline_priority: 1
+    mirror_policy: "metadata-mirror"
+    neoth_ingest_policy: "defensive-summaries-and-attack-mapping"
+    local_subdir: "Dual-Use-Mirror/lolbas"
+    notes: "Use for Windows LOLBin awareness, ATT&CK mapping, detections, and hardening."
+
+  - id: mitre-attack-stix
+    title: "MITRE ATT&CK STIX Data"
+    category: "adversary-taxonomy"
+    primary_url: "https://github.com/mitre-attack/attack-stix-data"
+    website: "https://attack.mitre.org/"
+    format: ["git", "json", "stix"]
+    risk_tier: "safe-reference"
+    offline_priority: 1
+    mirror_policy: "full-mirror-ok"
+    neoth_ingest_policy: "graph-taxonomy"
+    local_subdir: "Reference/mitre-attack-stix"
+    notes: "Import as structured tactics, techniques, mitigations, detections, groups, software, and relationships."
+
+  - id: exploit-db-searchsploit
+    title: "Exploit-DB / SearchSploit"
+    category: "exploit-database"
+    primary_url: "https://gitlab.com/exploit-database/exploitdb"
+    website: "https://www.exploit-db.com/searchsploit"
+    format: ["git", "database", "local-package"]
+    risk_tier: "exploit-code"
+    offline_priority: 2
+    mirror_policy: "restricted-mirror"
+    neoth_ingest_policy: "metadata-only-or-restricted-index"
+    local_subdir: "Restricted-Exploit-Code/exploitdb"
+    notes: "Useful for offline vulnerability research and historical PoC lookup. Keep raw exploit code outside normal recall."
+
+  - id: metasploit-framework
+    title: "Metasploit Framework"
+    category: "exploit-framework"
+    primary_url: "https://github.com/rapid7/metasploit-framework"
+    website: "https://docs.rapid7.com/metasploit/msf-overview/"
+    format: ["git", "ruby", "modules", "docs"]
+    risk_tier: "exploit-code"
+    offline_priority: 2
+    mirror_policy: "restricted-mirror"
+    neoth_ingest_policy: "module-metadata-only"
+    local_subdir: "Restricted-Exploit-Code/metasploit-framework"
+    notes: "Index module names, platforms, references, CVEs, targets, and descriptions. Do not ingest runnable modules as normal memory."
+
+  - id: phrack
+    title: "Phrack"
+    category: "hacker-history"
+    primary_url: "https://phrack.org/"
+    website: "https://archives.phrack.org/"
+    format: ["html", "txt", "pdf", "tgz"]
+    risk_tier: "historical-archive"
+    offline_priority: 3
+    mirror_policy: "archive-index-first"
+    neoth_ingest_policy: "index-and-curated-summaries"
+    local_subdir: "Historical-Archive/phrack"
+    notes: "Strong culture and historical technical context. Mark old technical claims as historical unless reviewed."
+
+  - id: 2600
+    title: "2600: The Hacker Quarterly"
+    category: "hacker-culture-magazine"
+    primary_url: "https://www.2600.com/Magazine/digital-back-issues"
+    website: "https://www.2600.com/"
+    format: ["magazine", "index", "pdf"]
+    risk_tier: "historical-archive"
+    offline_priority: 4
+    mirror_policy: "license-review-required"
+    neoth_ingest_policy: "index-only-unless-rights-cleared"
+    local_subdir: "Historical-Archive/2600"
+    notes: "Copyright-sensitive. Store index, purchase/download metadata, and local rights state before bulk import."
+
+  - id: textfiles-com
+    title: "textfiles.com"
+    category: "bbs-underground-archive"
+    primary_url: "http://textfiles.com/"
+    website: "http://textfiles.com/"
+    format: ["txt", "archive"]
+    risk_tier: "historical-archive"
+    offline_priority: 4
+    mirror_policy: "curated-subset"
+    neoth_ingest_policy: "index-and-curated-summaries"
+    local_subdir: "Historical-Archive/textfiles-com"
+    notes: "Large, mixed-quality historical archive. Curate subsets and mark as historical/cultural context, not current truth."
