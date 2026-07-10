@@ -1707,7 +1707,7 @@ Recommended waves:
 
 ### B07 — CHANNEL-CREDENTIAL-ATOMICITY (P1)
 
-- [ ] **NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01** Validate credentials before startup degradation or reload teardown.
+- [x] **NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01** Validate credentials before startup degradation or reload teardown. — ✅ **DONE (2026-07-10, `ad347e11`, Fable-5 wave-a):** `serve.rs` startup cred load no longer silent-`unwrap_or_default` (explicit match + warn); reload LOADS+VALIDATES creds BEFORE the fleet abort — on load error the supervisor keeps the OLD fleet running instead of tearing it down then respawning credentialless.
 - **Evidence:** `serve.rs` uses `Credentials::load_or_default(...).unwrap_or_default()` at startup. On reload it aborts the running channel fleet before loading credentials, then also defaults parse/I/O failure to empty, contradicting `bad_yaml_returns_error_not_silent_default` in `config/credentials.rs`.
 - **Required implementation:** missing file remains the loader's legitimate empty case; parse/I/O/permission errors propagate at startup. On reload, fully load and validate fresh config+credentials before touching handles. A bad reload records warning/audit and leaves the old fleet intact. For valid rotation, construct/probe where possible, then perform the minimal abort→bind swap exactly once.
 - **Tests:** bad YAML startup errors; unreadable file errors; missing file allowed; bad reload preserves fake running adapters/task count; valid token rotation replaces once; failed new bind leaves a truthful degraded status and no duplicate workers.
@@ -1715,7 +1715,7 @@ Recommended waves:
 
 ### B08 — CRON-FLEET-LIFECYCLE (P1)
 
-- [ ] **NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01** Supervise completed handles and reload changed cron specs, not only enable/disable keys.
+- [x] **NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01** Supervise completed handles and reload changed cron specs, not only enable/disable keys. — ✅ **DONE (2026-07-10, `ad347e11`, Fable-5 wave-a):** `serve.rs` — `cron_spec_fingerprint` (per-key config hash) + `fp_map` so a changed interval/path triggers abort+respawn on reload (not just key presence); an `is_finished()` sweep before each diff reaps completed/panicked handles + queues them for respawn. 9 unit tests.
 - **Evidence:** `serve.rs` stores handles by `CronKey` and derives running state from map keys without `JoinHandle::is_finished`; wrapped Err/Panic handles remain registered forever. `desired_cron_keys/diff_cron_fleet` compares only a `HashSet<CronKey>`, so interval/path/model/config changes do not restart snapshot-based tasks such as Babel, BG monitor, self-improvement collector, and several Obsidian/SelfMap tasks.
 - **Required implementation:** choose one model. Preferred: `CronSpec { key, config_fingerprint }` plus supervisor state/outcome/backoff. Before every diff, remove+join finished handles; desired transient failures restart with bounded backoff, terminal config failures remain visible without a tight loop. A changed fingerprint performs orderly restart from the new config; unchanged self-reloading tasks survive. Shutdown disables respawn before abort/join.
 - **Tests:** finished success/Err/Panic cleanup and bounded respawn; no respawn when undesired; terminal error no loop; interval/path/model fingerprint changes restart once; unchanged fingerprint does not; disable→enable once; shutdown race cannot resurrect.
@@ -1756,7 +1756,7 @@ Recommended waves:
 
 ### B13 — PRELOAD-AUTORUN-AUDIT (P1, depends B04+B05)
 
-- [ ] **NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01** Close ADR-008/009 for the config-driven serve path.
+- [x] **NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01** Close ADR-008/009 for the config-driven serve path. — ✅ **DONE (2026-07-10, `ad347e11`, Fable-5 wave-a):** new `Action::ObsidianPreloadWrite` (Strict=Confirm, Standard/Elevated/Full=Allow; `LeaseScope::WriteNeothHome`) gates `spawn_obsidian_preload`; new `ExtendedSubtype::ObsidianPreloadIntent=0x06`/`ObsidianPreloadResult=0x07` (EXTENDED escape — top-level byte space exhausted) emit intent-before-first-write + result-after-writes (best-effort). 3 tests (Action policy + subtype round-trip).
 - **Evidence:** `serve.rs`/`serve_tasks.rs::spawn_obsidian_preload` labels the autorun WAL-free, yet it writes vault files and authoritative DB rows. It has a safe `None` default and decision tests, but no typed permission action, pre-effect audit, result audit, or durable doctor/status outcome.
 - **Required implementation:** add `Action::ObsidianPreloadWrite` with explicit autonomy ladder. Emit EXTENDED intent before the first file/DB effect and result on success/failure/recovery. Status/doctor reports last time, root hash (not sensitive path if policy says so), copied/ingested/revoked/retired counts, pending recovery, and failure. Manual CLI is explicit operator intent but still needs outcome audit.
 - **Tests:** full permission ladder; denied means zero file/DB effects; intent sequence precedes first effect; every intent receives result or recoverable pending state; doctor unconfigured pass, failed/incomplete warn, successful pass; status redaction.
@@ -1764,7 +1764,7 @@ Recommended waves:
 
 ### B14 — CONFIG-WIRING-TRUTH (P2, after B08)
 
-- [ ] **NEOTH-AUDIT-CONFIG-WIRING-TRUTH-01** Wire two small configuration surfaces that currently report or run false defaults.
+- [x] **NEOTH-AUDIT-CONFIG-WIRING-TRUTH-01** Wire two small configuration surfaces that currently report or run false defaults. — ✅ **DONE (2026-07-10, `ad347e11`, Fable-5 wave-a):** (a) Buddy MCP status now reads live `cfg.security.smart_approve` instead of hardcoded `false`; (b) `SwarmConfig.stale_after_secs` is now actually applied (`resolve_stale_secs` with CLI override) instead of a duplicated hardcoded 300. 3 tests. Follow-on: when `config/mod.rs` unfreezes + `FreedomConfig.swarm` lands, `resolve_stale_secs` reads the loaded value (single site).
 - **Buddy:** `cli/buddy.rs::run_status` hardcodes `smart_approve_any=false` although the field lives per server in `mcp_servers.yaml`. Load the canonical MCP config and compute any-enabled; on parse/read error report `unknown/error`, never a false negative. Tests: none/some/malformed/missing.
 - **Swarm:** `serve.rs` starts `resource_snapshot_cron` with `SwarmConfig::default()` and carries `TODO(FEAT-06)` instead of reading live config. Add/consume `freedom.yaml::swarm`, include its fingerprint in B08 reload, and make default behavior explicit. Tests: disabled no spawn, interval applies, reload restarts once, status matches.
 - **Done:** operator-visible status derives from the same loader/runtime config as the effectful consumer.
@@ -1779,7 +1779,7 @@ Recommended waves:
 
 ### B16 — EVAL-RUNNER-HARDENING (P2, non-security)
 
-- [ ] **NEOTH-AUDIT-EVAL-RUNNER-HARDENING-01** Bound and test the intentionally local shell verifier without misclassifying it as command injection.
+- [x] **NEOTH-AUDIT-EVAL-RUNNER-HARDENING-01** Bound and test the intentionally local shell verifier without misclassifying it as command injection. — ✅ **DONE (2026-07-10, `ad347e11`, Fable-5 wave-a):** `eval.rs` — per-verify-command 30s wall-clock timeout with child-kill (piped stdio + drain threads, no pipe-buffer deadlock); `max_steps` is now a HARD cap (remaining cases → `Error "max_steps cap reached"`, not log+continue). The `util::byte_floor` unicode guard is preserved (not misclassified as injection — the verifier is an authorized local shell tool, bounded not blocked). 2 tests.
 - **Verdict:** `neoth eval` deliberately accepts a local suite's `verify_command` and invokes the host shell; there is no request/network/model construction path, so this is not a confirmed injection bug and the shell feature remains adopted.
 - **Required implementation:** add per-command timeout/child-tree termination, explicit trusted-suite warning (optionally `--allow-commands` defense in depth), and platform tests for exit 0/non-zero/spawn/timeout. Either enforce or remove/rename the currently informational `max_steps`; label `preset` as future/no-op in machine output. B11 fixes the Unicode truncation panic in this file.
 - **Done:** a trusted local command cannot hang the suite indefinitely, and CLI help/reporting does not imply unenforced limits.
