@@ -366,6 +366,52 @@ pub(crate) fn spawn_obsidian_wiki_rebuild(
 ///   - Each `knowledge_preload_dirs` entry without a `preload_manifest.yaml` is
 ///     skipped with a `warn!` per entry; remaining entries still run.
 ///
+/// NEOTH-AUDIT-PRELOAD-FS-BOUNDARY-01: canonical-containment guard for vault writes.
+///
+/// Creates `target_dir` if it does not yet exist, then canonicalizes both the
+/// vault root and `target_dir`.  Returns `true` iff the resolved path is a
+/// descendant of (or equal to) the vault root.  Fail-closed: returns `false`
+/// and emits a `warn!` on any I/O error or detected escape so the caller can
+/// skip the write entirely.
+///
+/// Windows note: `std::fs::canonicalize` returns a `\\?\`-verbatim path on
+/// Windows; both sides are canonicalized with the same call so
+/// `Path::starts_with` operates on consistent representations regardless of
+/// whether the raw strings carry a verbatim prefix.
+fn vault_subdir_is_contained(
+    canonical_vault: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> bool {
+    if let Err(e) = std::fs::create_dir_all(target_dir) {
+        warn!(
+            error  = %e,
+            target = %target_dir.display(),
+            "obsidian preload: cannot create target dir; refusing write (fail-closed)"
+        );
+        return false;
+    }
+    match std::fs::canonicalize(target_dir) {
+        Ok(real) if real.starts_with(canonical_vault) => true,
+        Ok(real) => {
+            warn!(
+                target = %target_dir.display(),
+                real   = %real.display(),
+                "obsidian preload: write target resolves outside vault \
+                 (symlink/junction escape); refusing write"
+            );
+            false
+        }
+        Err(e) => {
+            warn!(
+                error  = %e,
+                target = %target_dir.display(),
+                "obsidian preload: canonicalize failed; refusing write (fail-closed)"
+            );
+            false
+        }
+    }
+}
+
 /// WAL-free (writes to views.db and vault files, not the WAL).
 /// Returns `None` when preload is not configured.
 pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandle<()>> {
@@ -409,33 +455,68 @@ pub(crate) fn spawn_obsidian_preload(config: &FreedomConfig) -> Option<JoinHandl
     );
 
     let handle = tokio::spawn(async move {
+        // NEOTH-AUDIT-PRELOAD-FS-BOUNDARY-01: canonicalize the vault root once.
+        // Per-call containment checks compare resolved paths against this root.
+        // Falls back to the raw path when the vault does not yet exist so the
+        // per-target create_dir_all + canonicalize check still catches escapes
+        // once the directory is materialised.
+        let canonical_vault =
+            std::fs::canonicalize(&vault).unwrap_or_else(|_| vault.clone());
+
         // ── Primary template ─────────────────────────────────────────────
         let state = preload_state_path_for(&template_dir);
-        match crate::cli::obsidian::preload_template(
-            &template_dir,
-            &vault,
-            &subdir,
-            false, // dry_run
-            true,  // ingest
-            Some(&state),
-            None,
-        )
-        .await
-        {
-            Ok(stats) => info!(
-                files_copied = stats.files_copied,
-                ingested_chunks = stats.ingested_chunks,
-                template = %template_dir.display(),
-                "obsidian preload-autorun: primary template complete"
-            ),
-            Err(e) => warn!(
-                error = %e,
-                template = %template_dir.display(),
-                "obsidian preload-autorun: primary template failed"
-            ),
+        // Containment guard: when subdir is non-empty (the common case), verify
+        // that vault/subdir resolves INSIDE the vault before delegating writes
+        // to preload_template.  A symlink or Windows junction at vault/subdir
+        // that points outside the vault would otherwise let preload_template
+        // write outside the vault undetected.
+        // When subdir is empty, preload_template derives effective_subdir from
+        // the template manifest; we cannot determine it here without re-loading
+        // the manifest.  validate_subdir inside preload_template still rejects
+        // traversal components for the manifest-derived value (defence-in-depth
+        // for the empty-subdir path).
+        let primary_allowed = subdir.as_os_str().is_empty()
+            || vault_subdir_is_contained(&canonical_vault, &vault.join(&subdir));
+        if !primary_allowed {
+            warn!(
+                vault  = %vault.display(),
+                subdir = %subdir.display(),
+                "obsidian preload: primary template skipped — \
+                 vault/subdir escapes vault root (symlink/junction guard)"
+            );
+        } else {
+            match crate::cli::obsidian::preload_template(
+                &template_dir,
+                &vault,
+                &subdir,
+                false, // dry_run
+                true,  // ingest
+                Some(&state),
+                None,
+            )
+            .await
+            {
+                Ok(stats) => info!(
+                    files_copied = stats.files_copied,
+                    ingested_chunks = stats.ingested_chunks,
+                    template = %template_dir.display(),
+                    "obsidian preload-autorun: primary template complete"
+                ),
+                Err(e) => warn!(
+                    error = %e,
+                    template = %template_dir.display(),
+                    "obsidian preload-autorun: primary template failed"
+                ),
+            }
         }
 
         // ── knowledge_preload_dirs ────────────────────────────────────────
+        // NOTE: effective_subdir for each knowledge root is read from the
+        // root's preload_manifest.yaml by preload_template (obsidian.rs); we
+        // cannot perform the per-subdir containment check here without
+        // re-loading the manifest.  validate_subdir inside preload_template
+        // rejects traversal components; a junction/symlink-at-subdir guard for
+        // this code path requires a fix in preload_template (obsidian.rs).
         for root in &knowledge_dirs {
             if !knowledge_root_has_manifest(root) {
                 warn!(
@@ -5826,6 +5907,82 @@ mod zf06_fleet_tests {
         assert!(
             !desired_cron_keys(&off).contains(&CronKey::WebhookManager),
             "disabled webhook_manager must be GONE from the desired set (reload must stop it)"
+        );
+    }
+}
+
+// ── NEOTH-AUDIT-PRELOAD-FS-BOUNDARY-01 — containment helper tests ─────────────
+#[cfg(test)]
+mod vault_containment_tests {
+    use super::vault_subdir_is_contained;
+
+    /// A normal subdir immediately inside the vault must pass.
+    #[test]
+    fn allows_in_vault_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let canonical_vault = std::fs::canonicalize(&vault).unwrap();
+
+        let target = vault.join("NEOTH");
+        assert!(
+            vault_subdir_is_contained(&canonical_vault, &target),
+            "an in-vault subdir must be allowed"
+        );
+    }
+
+    /// Passing vault itself (empty-subdir case) must pass — the vault is
+    /// trivially contained within itself.
+    #[test]
+    fn allows_vault_root_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let canonical_vault = std::fs::canonicalize(&vault).unwrap();
+
+        assert!(
+            vault_subdir_is_contained(&canonical_vault, &vault),
+            "vault root itself must pass containment"
+        );
+    }
+
+    /// A path that escapes the vault via `..` must be refused.
+    /// `vault.join("..").join("outside")` resolves to a sibling of the vault
+    /// directory — outside by construction.
+    #[test]
+    fn rejects_parent_traversal_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let canonical_vault = std::fs::canonicalize(&vault).unwrap();
+
+        // Construct a path that canonicalises to tmp/outside — NOT under vault.
+        let escape = vault.join("..").join("outside");
+        assert!(
+            !vault_subdir_is_contained(&canonical_vault, &escape),
+            "a path escaping the vault via `..` must be refused"
+        );
+    }
+
+    /// Canonical root is a strict prefix: a sibling directory whose name
+    /// starts with the same bytes as the vault name must NOT match.
+    /// e.g. canonical_vault = /tmp/vault  and  target = /tmp/vault_evil
+    /// must not pass starts_with("/tmp/vault").
+    #[test]
+    fn rejects_sibling_with_prefix_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let canonical_vault = std::fs::canonicalize(&vault).unwrap();
+
+        // target is a sibling: tmp/vault_evil — shares the "vault" prefix in
+        // the raw string, but Path::starts_with is component-aware so it must
+        // still be refused.
+        let sibling = tmp.path().join("vault_evil");
+        std::fs::create_dir_all(&sibling).unwrap();
+        assert!(
+            !vault_subdir_is_contained(&canonical_vault, &sibling),
+            "a sibling directory sharing a raw name prefix must be refused"
         );
     }
 }

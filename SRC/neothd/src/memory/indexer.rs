@@ -23,6 +23,7 @@ use rusqlite::{Connection, params};
 use tokio::fs;
 use tracing::{debug, warn};
 
+use crate::wal::error::HeaderParseError;
 use crate::wal::events::{
     EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_INDEXER_TAMPER_SUSPECT,
     EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
@@ -104,9 +105,28 @@ pub async fn replay_once_audited(
         let dec = match decode_frame(&logical[offset..]) {
             Ok(d) => d,
             Err(e) => {
-                // Partial frame at the tail (writer mid-append) — stop and
-                // resume on next pass. Any other error is a corruption signal.
-                debug!(error = %e, offset, "stop indexing at partial/invalid frame");
+                if matches!(e, HeaderParseError::BufferTooShort { .. }) {
+                    // Benign partial tail: writer mid-append, not enough bytes
+                    // yet. Stop and resume on the next pass. Cursor stays at
+                    // `offset` — correct, retry when more bytes arrive.
+                    debug!(error = %e, offset, "stop indexing at partial frame tail (benign)");
+                } else {
+                    // Real corruption (CrcMismatch, InvalidMagic, etc.).
+                    // Saving the same `offset` and breaking would re-read the
+                    // same bad frame on every subsequent pass — a permanent
+                    // stall (NEOTH-AUDIT-WAL-FAIL-CLOSED-01b). Advance by 1
+                    // byte to guarantee forward progress and attempt resync on
+                    // the next indexer pass. Log at error level — this is loud,
+                    // not a silent swallow.
+                    tracing::error!(
+                        error = %e,
+                        offset,
+                        segment = %segment_key,
+                        "indexer: corrupt WAL frame detected; advancing cursor by 1 byte to resync \
+                         (NEOTH-AUDIT-WAL-FAIL-CLOSED-01b)"
+                    );
+                    offset += 1;
+                }
                 break;
             }
         };
@@ -712,6 +732,100 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_episode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    /// NEOTH-AUDIT-WAL-FAIL-CLOSED-01b: a CrcMismatch frame must NOT cause the
+    /// indexer to permanently stall at the same offset. Without the fix, the
+    /// indexer hits the bad frame, breaks, saves the SAME offset, then on the
+    /// next pass re-reads the same bad frame forever. With the fix, the cursor
+    /// advances by at least 1 byte so subsequent passes make forward progress.
+    #[tokio::test]
+    async fn replay_crc_mismatch_advances_cursor_not_stalled() {
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let db = dir.path().join("views.db");
+
+        // Build: SegmentHeader + a valid frame whose last CRC byte is flipped.
+        let mut bytes = Vec::new();
+        let sh = SegmentHeader::new(0, 1, 0, 1_700_000_000_000_000_000, [0u8; 16]);
+        bytes.extend_from_slice(&sh.to_le_bytes());
+        let p = b"intact".to_vec();
+        let h = header_for(
+            EVENT_TYPE_RAW_TEXT,
+            p.len() as u32,
+            1,
+            1_700_000_000_000_000_001,
+        );
+        let mut frame_bytes = encode_frame(&h, &p);
+        // Flip the last CRC byte → decode_frame returns CrcMismatch, not BufferTooShort.
+        let last = frame_bytes.len() - 1;
+        frame_bytes[last] ^= 0xFF;
+        bytes.extend_from_slice(&frame_bytes);
+        write(&seg, &bytes).await.unwrap();
+
+        let mut conn = crate::memory::store::open(&db).unwrap();
+
+        // First replay: hits CrcMismatch. No rows indexed.
+        let n = replay_once(&mut conn, &seg).await.unwrap();
+        assert_eq!(n, 0, "corrupt frame yields no indexed rows");
+
+        // Cursor must have advanced PAST header_len so the next pass does not
+        // re-read the same bad frame (no stall).
+        // Before fix: cursor = SEGMENT_HEADER_LEN (stall). After fix: > it.
+        let cursor_after_first: i64 = conn
+            .query_row(
+                "SELECT next_offset FROM wal_cursor WHERE segment_path = ?1",
+                [seg.to_string_lossy().as_ref()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            cursor_after_first > SEGMENT_HEADER_LEN as i64,
+            "cursor must advance past the corrupt frame start to break the infinite stall; \
+             got cursor={cursor_after_first}, header_len={}",
+            SEGMENT_HEADER_LEN
+        );
+    }
+
+    /// BufferTooShort is a benign partial tail (writer mid-append). The indexer
+    /// must keep the cursor at the current offset so the next pass retries
+    /// when more bytes arrive from the writer — NOT advance and lose the retry.
+    #[tokio::test]
+    async fn replay_buffer_too_short_keeps_cursor_for_retry() {
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let db = dir.path().join("views.db");
+
+        // SegmentHeader + 3 partial bytes (minimum frame needs 104 bytes) →
+        // decode_frame returns BufferTooShort.
+        let mut bytes = Vec::new();
+        let sh = SegmentHeader::new(0, 1, 0, 1_700_000_000_000_000_000, [0u8; 16]);
+        bytes.extend_from_slice(&sh.to_le_bytes());
+        bytes.extend_from_slice(b"NEO"); // looks like partial magic, too short
+        write(&seg, &bytes).await.unwrap();
+
+        let mut conn = crate::memory::store::open(&db).unwrap();
+        let n = replay_once(&mut conn, &seg).await.unwrap();
+        assert_eq!(n, 0, "partial tail yields no indexed rows");
+
+        // Cursor must stay at SEGMENT_HEADER_LEN — benign tail, retry next pass.
+        let cursor: i64 = conn
+            .query_row(
+                "SELECT next_offset FROM wal_cursor WHERE segment_path = ?1",
+                [seg.to_string_lossy().as_ref()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            cursor,
+            SEGMENT_HEADER_LEN as i64,
+            "benign BufferTooShort must keep cursor at frame start for retry; \
+             cursor advanced to {cursor}"
+        );
     }
 
     #[tokio::test]

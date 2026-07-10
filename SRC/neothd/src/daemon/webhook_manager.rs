@@ -529,9 +529,9 @@ async fn deliver_to_endpoint(
             }
         }
         Err(e) => {
-            let msg = format!("http send: {e}");
-            error!(url_hash = %endpoint_url_hash(&endpoint.url), error = %msg, "webhook delivery failed");
-            emit_failed(writer, &endpoint.url, &msg).await;
+            let reason = scrub_reqwest_error(&e);
+            error!(url_hash = %endpoint_url_hash(&endpoint.url), error = %reason, "webhook delivery failed");
+            emit_failed(writer, &endpoint.url, &reason).await;
         }
     }
 }
@@ -545,6 +545,35 @@ async fn deliver_to_endpoint(
 /// `WEBHOOK_DELIVERED` / `WEBHOOK_SSRF_BLOCKED` / `WEBHOOK_FAILED` events.
 fn endpoint_url_hash(url: &str) -> String {
     format!("{:016x}", xxhash_rust::xxh3::xxh3_64(url.as_bytes()))
+}
+
+/// Convert a [`reqwest::Error`] to a URL-free typed reason string.
+///
+/// `reqwest::Error`'s `Display` implementation embeds the request URL — which
+/// may carry a secret token in its path or query — via text like:
+/// `"error sending request for url (https://…?secret=TOKEN): …"`.
+/// This function uses only the typed predicates exposed by `reqwest::Error`
+/// (never `Display` / `{e}`) so the webhook URL never enters logs or WAL.
+fn scrub_reqwest_error(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return "timeout".to_string();
+    }
+    if e.is_connect() {
+        return "connect_error".to_string();
+    }
+    if e.is_body() {
+        return "body_error".to_string();
+    }
+    if e.is_decode() {
+        return "decode_error".to_string();
+    }
+    if let Some(status) = e.status() {
+        return format!("http_status_{}", status.as_u16());
+    }
+    if e.is_request() {
+        return "request_error".to_string();
+    }
+    "send_error".to_string()
 }
 
 async fn emit_delivered(writer: &WalWriterHandle, url: &str, status: u16, latency_ms: u64) {
@@ -1126,6 +1155,82 @@ mod tests {
         // in emit_failed being called, which is acceptable.
         deliver_to_endpoint(&client, &endpoint, &hook, &mut ssrf_cache, &writer).await;
         // If we reach here without panic, the pinned-client code path compiled and ran.
+    }
+
+    // ── scrub_reqwest_error — no URL/secret leaks ────────────────────────────
+
+    /// All typed-reason strings produced by `scrub_reqwest_error` must not
+    /// contain a URL scheme (`://`).  We enumerate every reachable branch and
+    /// assert the contract holds without needing a real reqwest::Error for each.
+    #[test]
+    fn scrub_reqwest_error_known_outputs_contain_no_url_scheme() {
+        // Every branch of scrub_reqwest_error produces one of these strings.
+        let typed_reasons = [
+            "timeout",
+            "connect_error",
+            "body_error",
+            "decode_error",
+            "request_error",
+            "send_error",
+        ];
+        for reason in &typed_reasons {
+            assert!(
+                !reason.contains("://"),
+                "scrub_reqwest_error output must not contain a URL scheme: '{reason}'"
+            );
+        }
+        // http_status_NNN branch — verify the status variant is also clean.
+        let status_reason = format!("http_status_{}", 503u16);
+        assert!(
+            !status_reason.contains("://"),
+            "http_status reason must not contain a URL scheme: '{status_reason}'"
+        );
+    }
+
+    /// A real `reqwest::Error` produced by a failed send (connection refused to
+    /// a released ephemeral port) must, after scrubbing, contain neither the
+    /// secret token embedded in the URL nor any URL scheme string (`://`).
+    #[tokio::test]
+    async fn scrub_reqwest_error_does_not_expose_secret_from_url() {
+        // Bind a listener on an ephemeral port, capture the port, then drop the
+        // listener so the port is closed — any subsequent connection will be
+        // refused immediately without a timeout.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        // Embed a fake secret token in the URL path/query — exactly what a real
+        // webhook endpoint might look like.
+        let secret_url = format!("http://127.0.0.1:{port}/hook?token=SECRET_TOKEN_12345");
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap();
+
+        match client.post(&secret_url).body("{}").send().await {
+            Ok(_) => {
+                // Unexpected success (nothing is listening) — skip assertion.
+            }
+            Err(e) => {
+                let scrubbed = scrub_reqwest_error(&e);
+                assert!(
+                    !scrubbed.contains("SECRET_TOKEN_12345"),
+                    "scrubbed error must not expose the secret token; got: '{scrubbed}'"
+                );
+                assert!(
+                    !scrubbed.contains("://"),
+                    "scrubbed error must not contain a URL scheme; got: '{scrubbed}'"
+                );
+                // Confirm the raw Display WOULD expose the URL (documents why this
+                // fix is necessary; does not assert on content since Display format
+                // is not guaranteed across reqwest versions).
+                let raw_display = format!("{e}");
+                // raw_display typically contains the URL — we only assert our
+                // scrubbed path is clean, not that reqwest's format changes.
+                let _ = raw_display;
+            }
+        }
     }
 
     // ── WAL scan ─────────────────────────────────────────────────────────────

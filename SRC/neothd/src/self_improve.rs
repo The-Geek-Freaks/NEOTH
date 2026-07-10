@@ -31,6 +31,14 @@ pub struct SelfImproveConfig {
     /// prompts a single time, per the "ask before using" requirement).
     #[serde(default)]
     pub asked: bool,
+    /// SELF-IMPROVE-SAFETY-01 — opt-in gate for the shell verifier path.
+    /// Defaults to `false` (deny). When false, any `verification_command`
+    /// present in a proposal is NEVER spawned; `execute_proposal_with_verification`
+    /// returns `Blocked` immediately, keeping the proposal in `Pending` state.
+    /// Set to `true` in `self_improve.yaml` only after the operator explicitly
+    /// acknowledges that a child process may execute inside the sandbox.
+    #[serde(default)]
+    pub allow_shell_verify: bool,
 }
 
 impl SelfImproveConfig {
@@ -64,6 +72,9 @@ impl SelfImproveConfig {
                 enabled: true,
                 auto: true,
                 asked: self.asked,
+                // SELF-IMPROVE-SAFETY-01: full-auto stages proposals but must NEVER
+                // auto-enable the shell verifier — carry the stored opt-in through.
+                allow_shell_verify: self.allow_shell_verify,
             }
         } else {
             self
@@ -856,6 +867,29 @@ where
 
     let diff = crate::self_improve::line_diff(&p.before, &p.after);
 
+    // SELF-IMPROVE-SAFETY-01 — default-deny gate for the shell verifier path.
+    // The shell spawn is OPT-IN: operators must set `allow_shell_verify: true`
+    // in self_improve.yaml. When the gate is off and a verification_command is
+    // present, we return Blocked immediately — the proposal stays Pending and
+    // is NEVER auto-accepted without explicit operator action.
+    let si_cfg = SelfImproveConfig::load(home);
+    if !si_cfg.allow_shell_verify
+        && p.spec
+            .as_ref()
+            .and_then(|s| s.verification_command.as_deref())
+            .is_some()
+    {
+        return Ok((
+            ExecutionVerdict::Blocked {
+                reason: "shell verifier is disabled (allow_shell_verify = false in \
+                         self_improve.yaml); set allow_shell_verify: true to opt in \
+                         before verification commands are spawned"
+                    .to_string(),
+            },
+            0,
+        ));
+    }
+
     // Step 2: run the verification command INSIDE AN ISOLATED SANDBOX
     // (IMPR-SANDBOX-00). The proposal's `after` content is written into a
     // throwaway temp dir and the command runs THERE (cwd = sandbox, environment
@@ -869,7 +903,12 @@ where
         .as_ref()
         .and_then(|s| s.verification_command.as_deref())
     {
-        match run_verification_in_sandbox(std::path::Path::new(&p.skill_path), &p.after, cmd) {
+        match run_verification_in_sandbox(
+            std::path::Path::new(&p.skill_path),
+            &p.after,
+            cmd,
+            SKILLOPT_TIMEOUT,
+        ) {
             Ok(stdout) => stdout,
             Err(e) => {
                 return Ok((
@@ -987,6 +1026,7 @@ fn run_verification_in_sandbox(
     skill_path: &std::path::Path,
     after_content: &str,
     cmd: &str,
+    timeout: std::time::Duration,
 ) -> std::result::Result<String, SandboxVerificationError> {
     // IMPR-SANDBOX-01 — static denylist guard BEFORE any sandbox/spawn work.
     validate_verification_command(cmd)?;
@@ -1001,7 +1041,11 @@ fn run_verification_in_sandbox(
     std::fs::write(sandbox.join(basename), after_content.as_bytes())
         .map_err(|e| SandboxVerificationError::Setup(e.to_string()))?;
 
-    let out = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+    // Spawn with piped stdio — background threads drain stdout/stderr to
+    // prevent pipe-buffer deadlock; the main thread polls try_wait and kills
+    // the child tree if the wall-clock deadline is reached.
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
         .args(if cfg!(windows) {
             vec!["/C", cmd]
         } else {
@@ -1016,15 +1060,58 @@ fn run_verification_in_sandbox(
         .env("USERPROFILE", std::env::var("USERPROFILE").unwrap_or_default())
         .env("SystemRoot", std::env::var("SystemRoot").unwrap_or_default())
         .env("ComSpec", std::env::var("ComSpec").unwrap_or_default())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| SandboxVerificationError::SpawnFailed(e.to_string()))?;
 
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    // Drain stdout/stderr in background threads to avoid pipe-buffer deadlock
+    // when the child writes a lot before exiting.
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let (tx_out, rx_out) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (tx_err, rx_err) = std::sync::mpsc::channel::<Vec<u8>>();
+    if let Some(mut pipe) = stdout_pipe {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            let _ = tx_out.send(buf);
+        });
+    }
+    if let Some(mut pipe) = stderr_pipe {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            let _ = tx_err.send(buf);
+        });
+    }
+
+    // Poll until the child exits or the wall-clock deadline passes.
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait(); // reap to avoid a zombie process
+            return Err(SandboxVerificationError::Timeout);
+        }
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => return Err(SandboxVerificationError::SpawnFailed(e.to_string())),
+        }
+    };
+
+    let stdout_bytes = rx_out.recv().unwrap_or_default();
+    let stderr_bytes = rx_err.recv().unwrap_or_default();
+
+    if status.success() {
+        Ok(String::from_utf8_lossy(&stdout_bytes).into_owned())
     } else {
         Err(SandboxVerificationError::CommandFailed {
-            exit: out.status.code(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            exit: status.code(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
         })
     }
 }
@@ -1051,6 +1138,8 @@ enum SandboxVerificationError {
     Setup(String),
     SpawnFailed(String),
     CommandFailed { exit: Option<i32>, stderr: String },
+    /// The child process did not exit within the wall-clock timeout and was killed.
+    Timeout,
 }
 impl std::fmt::Display for SandboxVerificationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1063,6 +1152,10 @@ impl std::fmt::Display for SandboxVerificationError {
             Self::CommandFailed { exit, stderr } => {
                 write!(f, "verification_command failed in sandbox (exit {exit:?}): {stderr}")
             }
+            Self::Timeout => write!(
+                f,
+                "verification_command exceeded the wall-clock time limit and was killed"
+            ),
         }
     }
 }
@@ -1132,6 +1225,13 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
 
+        // Opt the sandbox into shell verification so the isolation proof can run.
+        std::fs::write(
+            SelfImproveConfig::path(&tmp),
+            "allow_shell_verify: true\n",
+        )
+        .unwrap();
+
         // A live skill file with a sentinel the test asserts stays intact.
         let live_skill = tmp.join("sentinel_skill.md");
         let sentinel = "SENTINEL_CONTENT_MUST_NOT_CHANGE";
@@ -1189,6 +1289,144 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// SELF-IMPROVE-SAFETY-01 (a) — with the default config (no self_improve.yaml,
+    /// allow_shell_verify = false) any proposal that carries a verification_command
+    /// must be Blocked immediately; the advisor fn is never reached.
+    #[test]
+    fn shell_verify_gate_blocks_when_disabled_by_default() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_gate_default_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        // Explicitly remove any leftover config so the default (false) applies.
+        let _ = std::fs::remove_file(SelfImproveConfig::path(&tmp));
+
+        let live_skill = tmp.join("gate_skill.md");
+        std::fs::write(&live_skill, "## before").unwrap();
+
+        #[cfg(windows)]
+        let vcmd = "echo gate_test_ok";
+        #[cfg(not(windows))]
+        let vcmd = "echo gate_test_ok";
+
+        let prop = Proposal {
+            id: "pgate".into(),
+            skill: "gate_skill".into(),
+            skill_path: live_skill.display().to_string(),
+            before: "## before".into(),
+            after: "## after".into(),
+            summary: "gate default-deny test".into(),
+            status: ProposalStatus::Pending,
+            spec: Some(ProposalSpec {
+                verification_command: Some(vcmd.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        save_proposals(&tmp, &[prop]).unwrap();
+
+        // Advisor unconditionally approves — if the gate fails open, we'd get
+        // Approved; a Blocked result proves the gate fired before the advisor.
+        let (verdict, revises) = execute_proposal_with_verification(
+            &tmp,
+            "pgate",
+            2,
+            crate::permissions::AutonomyLevel::Elevated,
+            |_, _| "APPROVE — should never be reached".to_string(),
+        )
+        .unwrap();
+
+        assert!(
+            matches!(verdict, ExecutionVerdict::Blocked { .. }),
+            "expected Blocked when allow_shell_verify=false (default), got {verdict:?}"
+        );
+        assert_eq!(revises, 0, "no advisor rounds should run when the gate blocks");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// SELF-IMPROVE-SAFETY-01 (b) — env_clear is applied: the child process
+    /// must not inherit env vars from the parent that are not on the allowlist.
+    /// During `cargo test`, CARGO and CARGO_MANIFEST_DIR are always set by the
+    /// test harness. Neither is in the sandbox allowlist, so the child must not
+    /// see them.
+    #[test]
+    fn shell_verify_env_scrubbed_parent_vars_absent_in_child() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_env_scrub_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let skill = tmp.join("env_scrub_skill.md");
+        std::fs::write(&skill, "content").unwrap();
+
+        // On Windows `cmd /C echo %VAR%` prints the literal `%VAR%` (not expanded)
+        // when the variable is absent, and the real path when it IS inherited.
+        // On Unix the default expansion `${VAR:-__ABSENT__}` prints `__ABSENT__`.
+        #[cfg(windows)]
+        let cmd = "echo %CARGO%";
+        #[cfg(not(windows))]
+        let cmd = "echo ${CARGO:-__CARGO_ABSENT__}";
+
+        // Use a 10-second timeout — the echo command exits immediately.
+        let result = super::run_verification_in_sandbox(
+            &skill,
+            "content",
+            cmd,
+            std::time::Duration::from_secs(10),
+        );
+        let out = result.unwrap_or_default();
+
+        // On Windows: if CARGO were inherited, output would contain a filesystem
+        // path (e.g. C:\...\cargo.exe). Without inheritance it echoes "%CARGO%".
+        // On Unix: output is "__CARGO_ABSENT__", not the real cargo binary path.
+        #[cfg(windows)]
+        assert!(
+            !out.contains(":\\") && !out.contains(":/"),
+            "CARGO must not be inherited by the sandboxed child (got: {out:?})"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            out.trim() == "__CARGO_ABSENT__",
+            "CARGO must not be inherited by the sandboxed child (got: {out:?})"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// SELF-IMPROVE-SAFETY-01 (c) — wall-clock timeout: a child process that
+    /// runs longer than the supplied timeout must be killed and return `Timeout`.
+    #[test]
+    fn shell_verify_timeout_kills_long_running_child() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth_si_timeout_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let skill = tmp.join("timeout_skill.md");
+        std::fs::write(&skill, "content").unwrap();
+
+        // A command that blocks for ~30 s — much longer than our 1-second test
+        // timeout. `ping -n 30 127.0.0.1` on Windows gives ≈29 s of wait.
+        #[cfg(windows)]
+        let sleep_cmd = "ping -n 30 127.0.0.1 > nul";
+        #[cfg(not(windows))]
+        let sleep_cmd = "sleep 30";
+
+        let short_timeout = std::time::Duration::from_secs(1);
+        let result =
+            super::run_verification_in_sandbox(&skill, "content", sleep_cmd, short_timeout);
+
+        assert!(
+            matches!(result, Err(super::SandboxVerificationError::Timeout)),
+            "expected Timeout after 1 s, got: {result:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     /// IMPR-SANDBOX-01 — the static guard rejects network-egress / remote-exec
     /// verification commands, and lets normal test/lint commands through
     /// (including the `--nocapture` boundary case that must NOT match `nc`).
@@ -1234,6 +1472,7 @@ mod tests {
             enabled: true,
             auto: true,
             asked: true,
+            allow_shell_verify: false,
         };
         cfg.save(&tmp).unwrap();
         assert_eq!(SelfImproveConfig::load(&tmp), cfg);
@@ -1260,6 +1499,7 @@ mod tests {
             enabled: false,
             auto: false,
             asked: true,
+            allow_shell_verify: false,
         };
         let e = opted_off.effective(A::Full);
         assert!(
@@ -1968,6 +2208,9 @@ mod tests {
         let tmp = std::env::temp_dir().join("neoth_si_kb02_premature");
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
+        // SELF-IMPROVE-SAFETY-01: this test exercises the shell-verifier stop-gate,
+        // so opt into the (default-deny) shell path.
+        std::fs::write(SelfImproveConfig::path(&tmp), "allow_shell_verify: true\n").unwrap();
         let skill = tmp.join("skill_kb02_premature.md");
         std::fs::write(&skill, "ORIGINAL").unwrap();
 
@@ -2031,6 +2274,9 @@ mod tests {
         let tmp = std::env::temp_dir().join("neoth_si_kb02_genuine");
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
+        // SELF-IMPROVE-SAFETY-01: this test exercises the shell-verifier stop-gate,
+        // so opt into the (default-deny) shell path.
+        std::fs::write(SelfImproveConfig::path(&tmp), "allow_shell_verify: true\n").unwrap();
         let skill = tmp.join("skill_kb02_genuine.md");
         std::fs::write(&skill, "ORIGINAL").unwrap();
 

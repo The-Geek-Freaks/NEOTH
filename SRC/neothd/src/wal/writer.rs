@@ -171,27 +171,46 @@ impl QuotaGuard {
         // later caller) observe at the top of this fn. This keeps the disk walk
         // single-flighted and the counter reset un-torn, so the ceiling holds
         // under concurrent writers.
-        if crossed
-            && self
+        if crossed {
+            if self
                 .in_remeasure
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
-        {
-            let used = crate::daemon::quota::measure_dir(&self.home);
-            self.last_measured.store(used, Ordering::Release);
-            self.bytes_since_measure.store(0, Ordering::Release);
-            let over = used >= self.ceiling;
-            if over {
-                self.breached.store(true, Ordering::Release);
-            }
-            // Release the gate BEFORE any early return — returning while it is
-            // still held would latch it forever and stop all future measures.
-            self.in_remeasure.store(false, Ordering::Release);
-            if over {
-                return Err(WalError::QuotaExceeded {
-                    used,
-                    ceiling: self.ceiling,
-                });
+            {
+                let used = crate::daemon::quota::measure_dir(&self.home);
+                self.last_measured.store(used, Ordering::Release);
+                self.bytes_since_measure.store(0, Ordering::Release);
+                let over = used >= self.ceiling;
+                if over {
+                    self.breached.store(true, Ordering::Release);
+                }
+                // Release the gate BEFORE any early return — returning while it is
+                // still held would latch it forever and stop all future measures.
+                self.in_remeasure.store(false, Ordering::Release);
+                if over {
+                    return Err(WalError::QuotaExceeded {
+                        used,
+                        ceiling: self.ceiling,
+                    });
+                }
+            } else {
+                // COR-23b: losers of the in_remeasure CAS must NOT silently
+                // return Ok(()) — that lets them race past the winner's breach
+                // verdict and admit writes against a disk that is already full.
+                // Spin until the winner releases in_remeasure (its Release store
+                // synchronises-with this Acquire load), then re-read breached.
+                // The spin is bounded by the winner's measure_dir wall-time,
+                // which is the same blocking cost the winner already pays on
+                // this same calling thread — no worse in the worst case.
+                while self.in_remeasure.load(Ordering::Acquire) {
+                    std::hint::spin_loop();
+                }
+                if self.breached.load(Ordering::Acquire) {
+                    return Err(WalError::QuotaExceeded {
+                        used: self.last_measured.load(Ordering::Acquire),
+                        ceiling: self.ceiling,
+                    });
+                }
             }
         }
         Ok(())
@@ -1829,6 +1848,57 @@ mod tests {
             assert_eq!(f.header.event_type, EVENT_TYPE_PROVIDER_STREAM_CHUNK);
             cursor += f.header.total_len as usize;
         }
+    }
+
+    /// COR-23b: threads that LOSE the in_remeasure CAS must fail-closed when
+    /// the disk is over quota — not silently return Ok(). Without the fix,
+    /// losers race past the winner's breach verdict and are erroneously
+    /// admitted. This test pre-positions bytes_since_measure exactly at the
+    /// threshold so ALL 16 concurrent threads see `crossed=true` and compete
+    /// for the CAS: 1 wins (measures → sets breached), 15 lose. With the fix
+    /// the 15 losers spin-wait for the verdict and return Err. None admitted.
+    #[test]
+    fn concurrent_losers_fail_closed_when_quota_breached() {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        // Seed home dir well over the 1 KiB ceiling so measure_dir triggers breach.
+        std::fs::write(dir.path().join("seed.bin"), vec![0u8; 4096]).unwrap();
+        let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), 1024));
+
+        // Position bytes_since_measure exactly AT remeasure_threshold so every
+        // fetch_add(64) returns a value >= threshold → all threads crossed=true
+        // and all compete for the in_remeasure CAS simultaneously.
+        let threshold = guard.remeasure_threshold;
+        guard.bytes_since_measure.store(threshold, Ordering::Release);
+
+        let admitted = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let g = Arc::clone(&guard);
+            let a = Arc::clone(&admitted);
+            handles.push(std::thread::spawn(move || {
+                if g.try_admit(64).is_ok() {
+                    a.fetch_add(1, Ordering::Relaxed);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let n = admitted.load(Ordering::Relaxed);
+        assert_eq!(
+            n, 0,
+            "all concurrent writers (winner + losers) must be rejected fail-closed \
+             when disk is over quota; {n} slipped through"
+        );
+        // Breach must remain sticky after the storm.
+        assert!(
+            matches!(guard.try_admit(1), Err(WalError::QuotaExceeded { .. })),
+            "breach must be sticky after concurrent storm"
+        );
     }
 
     #[test]
