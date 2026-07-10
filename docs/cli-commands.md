@@ -400,7 +400,7 @@ Print the active policy + known peer state
 GOLD-FEAT-06 — exo-style swarm dashboard: per-node CPU/RAM/VRAM read from the `EXTENDED/LocalSnapshot` + `EXTENDED/SwarmResourceSnapshot` WAL frames the resource-snapshot cron emits. `--watch` refreshes live
 
 - `-w, --watch` — Continuously refresh the dashboard every 5 s. Exit with Ctrl-C
-- `--stale-secs <STALE_SECS>` — Drop nodes whose last snapshot is older than this many seconds
+- `--stale-secs <STALE_SECS>` — Drop nodes whose last snapshot is older than this many seconds. Defaults to `SwarmConfig::stale_after_secs` (300) when not supplied. Once `freedom.yaml` gains a `swarm` section (TODO FEAT-06), the default will be read from config; explicit `--stale-secs` always overrides it
 
 ### `neoth cluster topology`
 
@@ -865,7 +865,7 @@ Remove a domain from the trusted-sender allowlist
 GOLD-ADAPT-HARNESS-05 — JSON EvalCase suite runner
 
 - `<SUITE>` — Path to the JSON suite file (array of EvalCase)
-- `--max-steps <MAX_STEPS>` — Maximum steps per case (informational; enforced by live runner only)
+- `--max-steps <MAX_STEPS>` — Hard cap on the total evaluation steps (cases) the suite may run. Cases beyond this limit are not executed and receive an Error verdict
 - `--preset <PRESET>` — Provider preset to use for live runs (future; no-op in headless mode)
 - `--json` — Emit only the JSON report to stdout; suppress the summary table + Markdown
 - `--out-dir <OUT_DIR>` — Write report files to this directory instead of the default eval-runs/<ts>/
@@ -2728,6 +2728,7 @@ GOLD-FEAT-05 — propose a source-code edit against NEOTH's own source tree. Fiv
 - `--diff <FILE>` — Path to the unified-diff (`.patch`) file to evaluate and apply
 - `--dry-run` — Evaluate all five gates but do NOT apply the diff to the live tree
 - `--yes` — Acknowledge the self-edit before applying. REQUIRED at Elevated/Full autonomy — the permission gate (Layer 3) refuses a self-source edit without this explicit ack (policy: never auto-apply, even at Full). Not needed for `--dry-run`, which never applies to the live tree
+- `--expect-hash <SHA256>` — Expected SHA-256 hex digest of the diff file (TOCTOU guard)
 
 ## `neoth self-improve`
 

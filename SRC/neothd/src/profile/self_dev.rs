@@ -24,7 +24,7 @@ use super::presets::{PresetData, ProfilePreset};
 /// Kind of adjustment a proposal recommends. Pinned exhaustively —
 /// adding a kind needs a `propose_*` function + operator-facing
 /// description in `as_str`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalKind {
     /// Switch to a different profile preset (e.g. Lowkey → Formal
@@ -37,15 +37,27 @@ pub enum ProposalKind {
     /// Surface that operator's usage spans a new topic area NEOTH
     /// could learn an extension for.
     LearnExtension,
+    /// GUI-DES-SELFDEV-APPLY-01 — propose a concrete source-code diff that
+    /// the operator may gate-apply via `neoth self-edit`.  Carries the path
+    /// to the unified-diff file, its sha256 (TOCTOU guard passed as
+    /// `--expect-hash` to the CLI), and the list of source paths the patch
+    /// touches.  Serialised as an externally-tagged object so old JSON files
+    /// with unit-variant kinds remain backward-compatible.
+    SourceEdit {
+        patch_path: std::path::PathBuf,
+        diff_sha256: String,
+        target_paths: Vec<String>,
+    },
 }
 
 impl ProposalKind {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::SwitchPreset => "switch_preset",
             Self::AdjustVerbosity => "adjust_verbosity",
             Self::AdjustBriefingSchedule => "adjust_briefing_schedule",
             Self::LearnExtension => "learn_extension",
+            Self::SourceEdit { .. } => "source_edit",
         }
     }
 }
@@ -557,5 +569,58 @@ mod tests {
     fn verbosity_default_for_lowkey_is_terse() {
         let lk = apply_preset(ProfilePreset::Lowkey);
         assert_eq!(lk.verbosity, Verbosity::Terse);
+    }
+
+    // ── GUI-DES-SELFDEV-APPLY-01 — SourceEdit variant ──────────────────
+
+    #[test]
+    fn source_edit_kind_as_str() {
+        let kind = ProposalKind::SourceEdit {
+            patch_path: std::path::PathBuf::from("src/cli/foo.patch"),
+            diff_sha256: "abc123".into(),
+            target_paths: vec!["src/cli/foo.rs".into()],
+        };
+        assert_eq!(kind.as_str(), "source_edit");
+    }
+
+    #[test]
+    fn source_edit_serde_round_trip() {
+        let kind = ProposalKind::SourceEdit {
+            patch_path: std::path::PathBuf::from("src/cli/foo.patch"),
+            diff_sha256: "deadbeef".into(),
+            target_paths: vec!["src/cli/foo.rs".into(), "src/cli/bar.rs".into()],
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        let back: ProposalKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, kind);
+    }
+
+    #[test]
+    fn unit_variant_backward_compat_deserialize() {
+        // Old-format plain-string unit variants must still deserialize even
+        // when SourceEdit is present in the enum.
+        let cases = [
+            (r#""switch_preset""#, ProposalKind::SwitchPreset),
+            (r#""adjust_verbosity""#, ProposalKind::AdjustVerbosity),
+            (r#""learn_extension""#, ProposalKind::LearnExtension),
+        ];
+        for (json, expected) in cases {
+            let got: ProposalKind = serde_json::from_str(json).unwrap();
+            assert_eq!(got, expected, "failed for json: {json}");
+        }
+    }
+
+    #[test]
+    fn source_edit_kind_not_affected_by_as_str_call() {
+        // as_str now takes &self, so the value is still usable afterwards.
+        let kind = ProposalKind::SourceEdit {
+            patch_path: std::path::PathBuf::from("p.patch"),
+            diff_sha256: "ff".into(),
+            target_paths: vec![],
+        };
+        let s = kind.as_str();   // borrows, does NOT move
+        assert_eq!(s, "source_edit");
+        // kind still accessible:
+        assert!(matches!(kind, ProposalKind::SourceEdit { .. }));
     }
 }

@@ -2402,6 +2402,10 @@ pub fn parse_selfimprove_log(json: &str) -> Vec<(String, String, String, String)
 // ── FEAT-05 — Self-Dev Proposal Review parse ─────────────────────────────────
 
 /// One decoded proposal from `neoth self-dev review --output json`.
+///
+/// `patch_path`, `diff_sha256`, and `target_paths` are only populated for
+/// `kind == "source_edit"` proposals (GUI-DES-SELFDEV-APPLY-01). They are
+/// empty/default for all other proposal kinds.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SelfDevProposalData {
     pub id: String,
@@ -2409,15 +2413,25 @@ pub struct SelfDevProposalData {
     pub confidence: f64,
     pub target: String,
     pub reason: String,
-    /// Raw status string from the daemon: "pending" | "accepted" | …
+    /// Raw status string from the daemon: "pending" | "accepted" | "declined".
     pub status: String,
+    /// Absolute path to the `.patch` file — only set for `kind == "source_edit"`.
+    pub patch_path: String,
+    /// SHA-256 hex digest of the patch file — TOCTOU guard for the apply subprocess.
+    pub diff_sha256: String,
+    /// Files the patch touches — display hint for the confirm dialog.
+    pub target_paths: Vec<String>,
 }
 
 /// Parse `neoth self-dev review --output json` → `Vec<SelfDevProposalData>`.
 ///
-/// Accepts a top-level JSON array `[{id, kind, confidence, target, reason, status}]`
+/// Accepts a top-level JSON array `[{id, kind, confidence, target, reason, status, ...}]`
 /// or an object with a `"proposals"` key.  Pure + tolerant: missing / malformed
 /// input yields an empty vec; unknown extra fields are ignored.
+///
+/// For `kind == "source_edit"` entries the additional fields `patch_path`,
+/// `diff_sha256`, and `target_paths` are extracted; all other kinds leave them
+/// as default (empty string / empty vec).
 pub fn parse_selfdev_proposals(json: &str) -> Vec<SelfDevProposalData> {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
     let arr = v
@@ -2453,7 +2467,37 @@ pub fn parse_selfdev_proposals(json: &str) -> Vec<SelfDevProposalData> {
                 .and_then(|x| x.as_str())
                 .unwrap_or("pending")
                 .to_string();
-            Some(SelfDevProposalData { id, kind, confidence, target, reason, status })
+            // SourceEdit-specific fields (null / absent for other kinds).
+            let patch_path = item
+                .get("patch_path")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let diff_sha256 = item
+                .get("diff_sha256")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let target_paths = item
+                .get("target_paths")
+                .and_then(|x| x.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(SelfDevProposalData {
+                id,
+                kind,
+                confidence,
+                target,
+                reason,
+                status,
+                patch_path,
+                diff_sha256,
+                target_paths,
+            })
         })
         .collect()
 }
@@ -2490,6 +2534,51 @@ mod selfdev_tests {
         // Entry missing required `id` field → skipped, not fatal.
         let json = r#"[{"kind":"lint","confidence":0.5}]"#;
         assert!(parse_selfdev_proposals(json).is_empty());
+    }
+
+    #[test]
+    fn parse_selfdev_proposals_source_edit_populates_extra_fields() {
+        let json = r#"[{
+            "id": "source_edit-deadbeef",
+            "kind": "source_edit",
+            "confidence": 0.95,
+            "target": "src/cli/mod.rs",
+            "reason": "performance",
+            "status": "accepted",
+            "patch_path": "/tmp/edit.patch",
+            "diff_sha256": "abc123def456",
+            "target_paths": ["src/cli/mod.rs", "src/cli/obsidian.rs"]
+        }]"#;
+        let rows = parse_selfdev_proposals(json);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.kind, "source_edit");
+        assert_eq!(r.status, "accepted");
+        assert_eq!(r.patch_path, "/tmp/edit.patch");
+        assert_eq!(r.diff_sha256, "abc123def456");
+        assert_eq!(r.target_paths, vec!["src/cli/mod.rs", "src/cli/obsidian.rs"]);
+    }
+
+    #[test]
+    fn parse_selfdev_proposals_unit_variant_has_empty_source_edit_fields() {
+        let json = r#"[{
+            "id": "switch_preset-aabbccdd",
+            "kind": "switch_preset",
+            "confidence": 0.8,
+            "target": "formal",
+            "reason": "drift",
+            "status": "pending",
+            "patch_path": null,
+            "diff_sha256": null,
+            "target_paths": null
+        }]"#;
+        let rows = parse_selfdev_proposals(json);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.kind, "switch_preset");
+        assert!(r.patch_path.is_empty());
+        assert!(r.diff_sha256.is_empty());
+        assert!(r.target_paths.is_empty());
     }
 }
 

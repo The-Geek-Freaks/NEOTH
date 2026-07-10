@@ -341,6 +341,10 @@ fn default_self_edit_require_green() -> bool {
     true
 }
 
+fn default_self_edit_apply_cooldown() -> u64 {
+    300
+}
+
 impl Default for CodingConfig {
     fn default() -> Self {
         Self {
@@ -353,12 +357,14 @@ impl Default for CodingConfig {
     }
 }
 
-/// GOLD-FEAT-05 — self-source-edit safety configuration.
+/// GOLD-FEAT-05 / GUI-DES-SELFDEV-APPLY-01 — self-source-edit safety config.
 ///
 /// Lives at `freedom.yaml::coding.self_edit`.
 ///
-/// **Default: all requests refused** (`enabled = false`). The operator must
-/// set `enabled: true` AND populate `allowed_modules` to permit any edit.
+/// **Default: enabled = true** with minimal module allowlist (src/cli +
+/// src/coding). Real gating is the full five-layer stack + Elevated/Full
+/// autonomy requirement + explicit `--yes` ack + WAL write.  The kill-switch
+/// (`enabled: false`) fully stops all self-edits regardless of other settings.
 ///
 /// Gate stack summary (all five must pass in order):
 /// 1. `enabled` kill-switch (Layer 1).
@@ -369,15 +375,17 @@ impl Default for CodingConfig {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct SelfEditConfig {
-    /// Layer-1 kill-switch. **Default `false`** — refuses ALL self-edit
-    /// requests until the operator explicitly opts in.
-    #[serde(default)]
+    /// Layer-1 kill-switch.  **Default `true`** — real safety comes from the
+    /// five-layer gate + autonomy requirement + WAL audit.  Set `false` to
+    /// refuse ALL self-edit requests regardless of other settings.
+    #[serde(default = "default_self_edit_enabled")]
     pub enabled: bool,
     /// Positive allowlist of path prefixes (relative to source root) that a
-    /// diff MAY touch. An empty list means DENY-ALL (the default).
+    /// diff MAY touch. An empty list means DENY-ALL.
     ///
-    /// Recommended minimal setting: `["src/cli", "src/coding"]`.
-    #[serde(default)]
+    /// Default: `["src/cli", "src/coding"]` — the primary self-improvement
+    /// surface as ratified by the architecture panel.
+    #[serde(default = "default_self_edit_allowed_modules")]
     pub allowed_modules: Vec<String>,
     /// Source-root override. `None` = auto-detect from binary path (walk up to
     /// the workspace `Cargo.toml`).
@@ -392,16 +400,30 @@ pub struct SelfEditConfig {
     /// **development/test use only**.
     #[serde(default = "default_self_edit_require_green")]
     pub require_green_tests: bool,
+    /// Minimum seconds between two successive live applies (anti-loop guard).
+    /// The daemon CLI is the single enforcement point; the GUI cannot bypass.
+    /// Default 300 (5 minutes).
+    #[serde(default = "default_self_edit_apply_cooldown")]
+    pub apply_cooldown_secs: u64,
+}
+
+fn default_self_edit_enabled() -> bool {
+    true
+}
+
+fn default_self_edit_allowed_modules() -> Vec<String> {
+    vec!["src/cli".into(), "src/coding".into()]
 }
 
 impl Default for SelfEditConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            allowed_modules: Vec::new(),
+            enabled: default_self_edit_enabled(),
+            allowed_modules: default_self_edit_allowed_modules(),
             source_root: None,
             max_lines_changed: default_self_edit_max_lines(),
             require_green_tests: default_self_edit_require_green(),
+            apply_cooldown_secs: default_self_edit_apply_cooldown(),
         }
     }
 }

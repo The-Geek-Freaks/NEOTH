@@ -2295,6 +2295,51 @@ fn main() -> Result<()> {
             });
         });
 
+        // GUI-DES-SELFDEV-APPLY-01 — Apply accepted SourceEdit proposal via gate.
+        let weak_sd_apply = window.as_weak();
+        window.on_sd_apply_source_clicked(move |id, patch_path, diff_sha256| {
+            let id = id.to_string();
+            let patch_path = patch_path.to_string();
+            let diff_sha256 = diff_sha256.to_string();
+            let weak = weak_sd_apply.clone();
+            std::thread::spawn(move || {
+                // RED LINE: validate all three args before subprocess invocation.
+                if !sd_id_valid(id.trim()) {
+                    push_toast(&weak, "warn", "Self-Dev Apply", "invalid proposal id");
+                    return;
+                }
+                if patch_path.trim().is_empty() {
+                    push_toast(&weak, "warn", "Self-Dev Apply", "missing patch path");
+                    return;
+                }
+                // diff_sha256: 64-char lowercase hex (SHA-256).
+                let sha = diff_sha256.trim();
+                if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+                    push_toast(
+                        &weak, "warn", "Self-Dev Apply",
+                        "invalid diff hash — expected 64-char hex SHA-256",
+                    );
+                    return;
+                }
+                let out = run_neothd_probe(&[
+                    "self-edit",
+                    "--diff",         patch_path.trim(),
+                    "--yes",
+                    "--expect-hash",  sha,
+                ]);
+                let ok = out.contains("applied") || out.contains("passed");
+                let (level, title) = if ok {
+                    ("consent", "Source Edit Applied")
+                } else {
+                    ("warn", "Source Edit Refused")
+                };
+                push_toast(&weak, level, title, out.trim());
+                // Refresh so any status change is reflected.
+                let weak2 = weak.clone();
+                std::thread::spawn(move || refresh_selfdev(weak2));
+            });
+        });
+
         // Fire once at startup + the nav-switch case below handles on-demand refresh.
         let weak_sd_init = window.as_weak();
         std::thread::spawn(move || {
@@ -8995,22 +9040,30 @@ fn refresh_selfdev(weak: slint::Weak<MainWindow>) {
             .into_iter()
             .map(|p| {
                 // RED LINE: status_badge never says "Applied" or
-                // "Self-Reprogramming applied". Accepted proposals show
-                // "Accepted (pending apply)" — no source file has been
-                // modified. All other statuses show "Pending".
-                let badge = if p.status == "accepted" {
-                    "Accepted (pending apply)"
-                } else {
-                    "Pending"
+                // "Self-Reprogramming applied". Badge is the raw status string
+                // ("pending" | "accepted" | "declined") so the Slint Apply button
+                // condition `row-status-badge == "accepted"` resolves correctly.
+                // SourceEdit accepted proposals show the Apply button as enabled;
+                // the operator must click through a confirm dialog before any
+                // gate subprocess fires.
+                let badge = match p.status.as_str() {
+                    "accepted" => "accepted",
+                    "declined" => "declined",
+                    _          => "pending",
                 };
                 let conf = format!("{:.2}", p.confidence);
+                let is_source_edit = p.kind == "source_edit";
                 SelfReprogProposalRow {
-                    id: p.id.as_str().into(),
-                    kind: p.kind.as_str().into(),
-                    confidence: conf.as_str().into(),
-                    target: p.target.as_str().into(),
-                    reason: p.reason.as_str().into(),
-                    status_badge: badge.into(),
+                    id:             p.id.as_str().into(),
+                    kind:           p.kind.as_str().into(),
+                    confidence:     conf.as_str().into(),
+                    target:         p.target.as_str().into(),
+                    reason:         p.reason.as_str().into(),
+                    status_badge:   badge.into(),
+                    // GUI-DES-SELFDEV-APPLY-01 — SourceEdit fields:
+                    is_source_edit,
+                    patch_path:     p.patch_path.as_str().into(),
+                    diff_sha256:    p.diff_sha256.as_str().into(),
                 }
             })
             .collect();

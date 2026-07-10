@@ -397,6 +397,16 @@ pub async fn run_gate_stack(
 
     // ── All gates passed — apply to live tree (unless --dry-run) ─────────────
     if !dry_run {
+        // A live apply REQUIRES a WAL writer — enforced HERE, inside the gate,
+        // so no caller (CLI, daemon, GUI, future IPC) can mutate the source
+        // tree without a forensic record. Dry-runs stay WAL-optional; refusal
+        // paths above stay testable with `wal: None`.
+        if wal.is_none() {
+            return Err(GateError::Audit(anyhow::anyhow!(
+                "live apply requires a WAL writer — refusing to mutate the \
+                 source tree without an audit trail (use dry_run to preview)"
+            )));
+        }
         // Apply the SAME in-memory bytes the gates validated (piped via stdin),
         // NOT a re-read of the on-disk file — closes the TOCTOU where the diff
         // file could be swapped between validation and the live apply. Runs in
@@ -411,19 +421,14 @@ pub async fn run_gate_stack(
         }
 
         // Update audit timestamp to reflect the actual apply moment. The
-        // SelfEditApplied frame is a REQUIRED audit WHEN a writer is present:
-        // propagate a write failure as AuditFailedAfterApply so the CLI never
-        // reports clean success on a live mutation with no forensic record. A
-        // `None` writer is the caller's explicit opt-out (the CLI gates WAL
-        // presence for real applies separately at `cli/self_edit.rs`); it is
-        // not an inconsistent-state error, so only a real write failure with a
-        // PRESENT writer is fatal here.
+        // SelfEditApplied frame is a REQUIRED audit: the entry guard above
+        // guarantees a writer is present for every live apply, so any write
+        // failure here is an inconsistent state (tree mutated, no forensic
+        // record) and must surface as AuditFailedAfterApply — never as clean
+        // success.
         audit.ts_unix = crate::time::now_unix_i64();
-        let audit_result = emit_wal(wal, ExtendedSubtype::SelfEditApplied, &audit).await;
-        if wal.is_some() {
-            if let Err(e) = audit_result {
-                return Err(GateError::AuditFailedAfterApply(e));
-            }
+        if let Err(e) = emit_wal(wal, ExtendedSubtype::SelfEditApplied, &audit).await {
+            return Err(GateError::AuditFailedAfterApply(e));
         }
         info!(
             paths = ?real_paths,
@@ -1312,9 +1317,18 @@ mod tests {
         cfg.coding.self_edit.require_green_tests = false;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
-        let outcome = run_gate_stack(diff, &cfg, false, true, None)
+        // Live applies require a WAL writer (gate-enforced) — spawn one into
+        // the fixture tempdir so the applied-frame audit has somewhere to go.
+        let wal_seg = tmp.path().join("wal").join("self_edit_audit.wal");
+        std::fs::create_dir_all(wal_seg.parent().unwrap()).unwrap();
+        let (wal_handle, wal_join) =
+            crate::wal::writer::spawn(wal_seg).expect("fixture WAL writer");
+
+        let outcome = run_gate_stack(diff, &cfg, false, true, Some(&wal_handle))
             .await
             .expect("dummy.rs comment addition must pass all gates");
+        drop(wal_handle);
+        let _ = wal_join.await;
         assert_eq!(outcome.target_paths, vec!["src/cli/dummy.rs".to_string()]);
         assert!(!outcome.dry_run);
 
@@ -1337,6 +1351,46 @@ mod tests {
             listing.matches("worktree ").count(),
             1,
             "gate worktree leaked: {listing}"
+        );
+    }
+
+    /// Pins the gate-internal WAL invariant: a live apply with `wal: None`
+    /// must be REFUSED before the tree is touched, no matter how careful the
+    /// caller is elsewhere. Guards against any future GUI/IPC/daemon caller
+    /// (or refactor) re-opening the unaudited-apply path.
+    #[tokio::test]
+    async fn live_apply_without_wal_writer_is_refused_before_mutation() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping WAL-required gate test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        let diff = "--- a/src/cli/dummy.rs\n\
+                    +++ b/src/cli/dummy.rs\n\
+                    @@ -1 +1,2 @@\n \
+                    fn dummy() {}\n\
+                    +// unaudited apply attempt\n";
+
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        cfg.coding.self_edit.enabled = true;
+        cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
+        cfg.coding.self_edit.require_green_tests = false;
+        cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+
+        let err = run_gate_stack(diff, &cfg, false, true, None)
+            .await
+            .expect_err("live apply without a WAL writer must be refused");
+        assert!(
+            matches!(err, GateError::Audit(_)),
+            "expected Audit refusal, got: {err:?}"
+        );
+        let body = std::fs::read_to_string(tmp.path().join("src/cli/dummy.rs")).unwrap();
+        assert!(
+            !body.contains("unaudited apply attempt"),
+            "live tree must NOT be mutated on a WAL-less apply, got: {body}"
         );
     }
 

@@ -19,6 +19,8 @@ import { ScrollView } from "std-widgets.slint";
 
 /// One row from `neoth self-dev review --output json`.
 /// confidence is pre-formatted ("0.83").  status-badge is display-only.
+/// patch-path, diff-sha256, is-source-edit — GUI-DES-SELFDEV-APPLY-01:
+/// only populated for kind == "source_edit" proposals.
 export struct SelfReprogProposalRow {
     id: string,
     kind: string,
@@ -26,12 +28,16 @@ export struct SelfReprogProposalRow {
     target: string,
     reason: string,
     status-badge: string,
+    // SourceEdit-specific (empty for all other kinds):
+    patch-path: string,
+    diff-sha256: string,
+    is-source-edit: bool,
 }
 
 // ── Per-row component ─────────────────────────────────────────────────────────
 
 // One proposal row: id chip · kind chip · confidence · target · reason (wrapped)
-// · Accept (consent) · Decline (ghost).
+// · Accept (consent) · Decline (ghost) · Apply to Source (SourceEdit only).
 // target and reason are DISPLAY-ONLY — never forwarded to shell args.
 component SelfReprogRow inherits Rectangle {
     in property <string> row-id;
@@ -40,13 +46,89 @@ component SelfReprogRow inherits Rectangle {
     in property <string> row-target;
     in property <string> row-reason;
     in property <string> row-status-badge;
+    // GUI-DES-SELFDEV-APPLY-01 — SourceEdit fields:
+    in property <bool>   row-is-source-edit: false;
+    in property <string> row-patch-path: "";
+    in property <string> row-diff-sha256: "";
     callback accept-clicked();
     callback decline-clicked();
+    /// Fired when operator confirms "Apply to Source" for a SourceEdit proposal.
+    /// args: (id, patch_path, diff_sha256) — validated + escaped in Rust before
+    /// being forwarded to `run_neothd_probe(["self-edit", "--diff", ..., "--expect-hash", ...])`.
+    callback apply-source-clicked(string, string, string);
 
     border-radius: Theme.radius-md;
     background: Theme.surface-1;
     border-width: 1px;
     border-color: Theme.border-subtle;
+
+    // ── Confirm-apply popup ───────────────────────────────────────────────────
+    // Shown when the operator clicks "Apply to Source".  Requires a second
+    // explicit confirmation click before the gate subprocess fires.
+    apply-confirm := PopupWindow {
+        x: 0px; y: 0px;
+        width: root.width;
+        height: 152px;
+
+        Rectangle {
+            background: Theme.surface-1;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.accent;
+            width: root.width;
+            height: 152px;
+
+            VerticalLayout {
+                padding: 14px; spacing: 10px;
+
+                Text {
+                    text: "Apply diff to live source tree?";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-size-sm;
+                    font-weight: Theme.weight-semibold;
+                }
+                Text {
+                    text: root.row-target;
+                    color: Theme.text-secondary;
+                    font-size: 10px;
+                    overflow: elide;
+                }
+
+                HorizontalLayout {
+                    alignment: end; spacing: 8px;
+
+                    NeothButton {
+                        label: "Cancel"; size: "sm"; primary: false;
+                        clicked => { apply-confirm.close(); }
+                    }
+
+                    Rectangle {
+                        width: 100px; height: 26px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.consent;
+                        TouchArea {
+                            clicked => {
+                                apply-confirm.close();
+                                root.apply-source-clicked(
+                                    root.row-id,
+                                    root.row-patch-path,
+                                    root.row-diff-sha256,
+                                );
+                            }
+                        }
+                        Text {
+                            text: "Confirm Apply";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-size-sm;
+                            font-weight: Theme.weight-semibold;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     VerticalLayout {
         padding: 12px; spacing: 6px;
@@ -150,6 +232,29 @@ component SelfReprogRow inherits Rectangle {
                 width: 72px; height: 26px;
                 clicked => { root.decline-clicked(); }
             }
+
+            // Apply to Source — only for accepted SourceEdit proposals.
+            // Disabled (greyed) when status != "accepted".
+            if root.row-is-source-edit: Rectangle {
+                width: 100px; height: 26px;
+                border-radius: Theme.radius-md;
+                background: root.row-status-badge == "accepted" ? Theme.consent : Theme.surface-2;
+                opacity: root.row-status-badge == "accepted" ? 1.0 : 0.38;
+                border-width: 1px;
+                border-color: root.row-status-badge == "accepted" ? Theme.accent : Theme.border-subtle;
+                TouchArea {
+                    enabled: root.row-status-badge == "accepted";
+                    clicked => { apply-confirm.show(); }
+                }
+                Text {
+                    text: "Apply to Source";
+                    color: root.row-status-badge == "accepted" ? Theme.text-primary : Theme.text-disabled;
+                    font-size: 9px;
+                    font-weight: Theme.weight-semibold;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
         }
     }
 }
@@ -167,6 +272,11 @@ export component SelfReprogramView inherits Rectangle {
     callback decline-clicked(string);  // proposal id — reason is hard-coded "declined" in Rust
     callback scan-clicked();
     callback refresh-clicked();
+    /// GUI-DES-SELFDEV-APPLY-01 — fires after operator confirms the apply dialog.
+    /// args: (id, patch_path, diff_sha256) forwarded to the Rust handler which
+    /// invokes run_neothd_probe(["self-edit", "--diff", patch_path, "--yes",
+    ///   "--expect-hash", diff_sha256]).
+    callback sd-apply-source-clicked(string, string, string);
 
     background: transparent;
 
@@ -258,8 +368,13 @@ export component SelfReprogramView inherits Rectangle {
                             row-target: p.target;
                             row-reason: p.reason;
                             row-status-badge: p.status-badge;
-                            accept-clicked  => { root.accept-clicked(p.id); }
-                            decline-clicked => { root.decline-clicked(p.id); }
+                            // GUI-DES-SELFDEV-APPLY-01 — SourceEdit fields:
+                            row-is-source-edit: p.is-source-edit;
+                            row-patch-path: p.patch-path;
+                            row-diff-sha256: p.diff-sha256;
+                            accept-clicked       => { root.accept-clicked(p.id); }
+                            decline-clicked      => { root.decline-clicked(p.id); }
+                            apply-source-clicked => { root.sd-apply-source-clicked(p.id, p.patch-path, p.diff-sha256); }
                         }
                     }
                 }

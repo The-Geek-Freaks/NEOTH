@@ -65,6 +65,15 @@ pub struct SelfEditArgs {
     /// Not needed for `--dry-run`, which never applies to the live tree.
     #[arg(long, default_value = "false")]
     pub yes: bool,
+
+    /// Expected SHA-256 hex digest of the diff file (TOCTOU guard).
+    ///
+    /// When provided, the diff bytes are hashed immediately after reading and
+    /// compared to this value. Any mismatch causes a hard refusal BEFORE any
+    /// gate runs, ensuring the file was not swapped between proposal-acceptance
+    /// and apply. The GUI always passes this; CLI callers may omit it.
+    #[arg(long, value_name = "SHA256")]
+    pub expect_hash: Option<String>,
 }
 
 /// Entry point for `neoth self-edit`.
@@ -80,6 +89,11 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
 
     if diff_text.trim().is_empty() {
         anyhow::bail!("diff file is empty: {}", diff_path.display());
+    }
+
+    // 1b. TOCTOU guard — verify hash before any gate runs.
+    if let Some(ref expected) = args.expect_hash {
+        check_expect_hash(diff_text.as_bytes(), expected)?;
     }
 
     // 2. Load FreedomConfig.
@@ -104,6 +118,11 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
              max_lines_changed cap of {max} \
              (set freedom.yaml::coding.self_edit.max_lines_changed to raise this limit)"
         );
+    }
+
+    // 3c. Apply-cooldown guard (real apply only — dry-run is always allowed).
+    if !args.dry_run {
+        check_apply_cooldown(cfg.coding.self_edit.apply_cooldown_secs)?;
     }
 
     match output {
@@ -167,6 +186,10 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
 
     match result {
         Ok(outcome) => {
+            // Write cooldown sentinel after a successful real apply.
+            if !outcome.dry_run {
+                write_apply_cooldown();
+            }
             match output {
                 OutputFormat::Table => {
                     if outcome.dry_run {
@@ -256,6 +279,85 @@ fn open_audit_wal(wal_dir: &std::path::Path) -> Option<AuditWal> {
     }
 }
 
+// ── Expect-hash guard ────────────────────────────────────────────────────────
+
+/// Verify that `diff_bytes` SHA-256 matches `expected_hex`.
+///
+/// Called immediately after reading the diff file so any TOCTOU swap between
+/// proposal-acceptance and the apply invocation is caught before gates run.
+fn check_expect_hash(diff_bytes: &[u8], expected_hex: &str) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let actual = hex::encode(Sha256::digest(diff_bytes));
+    if actual != expected_hex {
+        anyhow::bail!(
+            "diff hash mismatch — TOCTOU guard: expected {expected_hex}, got {actual}. \
+             The diff file may have been modified after the proposal was accepted."
+        );
+    }
+    Ok(())
+}
+
+// ── Apply-cooldown guard ──────────────────────────────────────────────────────
+
+/// Path to the cooldown sentinel file (`~/.neoth/self_edit/last_apply`).
+fn self_edit_cooldown_path() -> std::path::PathBuf {
+    FreedomConfig::default_path()
+        .parent()
+        .map(|p| p.join("self_edit").join("last_apply"))
+        .unwrap_or_else(|| std::path::PathBuf::from(".neoth/self_edit/last_apply"))
+}
+
+/// Refuse if a successful apply was recorded within `cooldown_secs` seconds.
+///
+/// Delegates to `check_apply_cooldown_at` with the canonical sentinel path.
+/// Zero cooldown disables the guard entirely.
+fn check_apply_cooldown(cooldown_secs: u64) -> Result<()> {
+    check_apply_cooldown_at(&self_edit_cooldown_path(), cooldown_secs)
+}
+
+/// Inner implementation — separated so tests can supply an arbitrary path.
+fn check_apply_cooldown_at(path: &std::path::Path, cooldown_secs: u64) -> Result<()> {
+    if cooldown_secs == 0 {
+        return Ok(());
+    }
+    if !path.exists() {
+        return Ok(()); // no prior apply recorded
+    }
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("read cooldown sentinel {}", path.display()))?;
+    let last: i64 = content.trim().parse().unwrap_or(0);
+    let now = crate::time::now_unix_i64();
+    let elapsed = now.saturating_sub(last).max(0) as u64;
+    if elapsed < cooldown_secs {
+        let remaining = cooldown_secs - elapsed;
+        anyhow::bail!(
+            "self-edit apply on cooldown — {remaining}s remaining \
+             (cooldown: {cooldown_secs}s). \
+             Adjust freedom.yaml::coding.self_edit.apply_cooldown_secs to change this limit."
+        );
+    }
+    Ok(())
+}
+
+/// Write the current timestamp to the cooldown sentinel after a successful apply.
+///
+/// Failures are logged as warnings only — a missing sentinel means the next
+/// apply will proceed without the cooldown delay (acceptable; not a security
+/// property, just an anti-loop rate limit).
+fn write_apply_cooldown() {
+    let path = self_edit_cooldown_path();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            warn!(error = %e, dir = %parent.display(), "self_edit: cannot create cooldown dir");
+            return;
+        }
+    }
+    let ts = crate::time::now_unix_i64().to_string();
+    if let Err(e) = std::fs::write(&path, &ts) {
+        warn!(error = %e, path = %path.display(), "self_edit: cannot write cooldown sentinel");
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -266,7 +368,10 @@ mod tests {
     // This module tests the pre-validation guards that run BEFORE the gate
     // stack (so they don't require a real cargo workspace).
 
+    use super::*;
     use crate::coding::self_source::{diff_line_count, diff_paths};
+
+    // ── diff pre-validation ──────────────────────────────────────────────────
 
     #[test]
     fn rejects_empty_diff() {
@@ -285,5 +390,85 @@ mod tests {
         );
         let count = diff_line_count(diff);
         assert!(count <= 200, "expected count ≤ 200, got {count}");
+    }
+
+    // ── expect-hash guard ────────────────────────────────────────────────────
+
+    #[test]
+    fn expect_hash_accepts_correct_hash() {
+        use sha2::{Digest, Sha256};
+        let data = b"--- a/src/cli/foo.rs\n+++ b/src/cli/foo.rs\n@@ -1 +1 @@\n-old\n+new\n";
+        let expected = hex::encode(Sha256::digest(data));
+        assert!(check_expect_hash(data, &expected).is_ok());
+    }
+
+    #[test]
+    fn expect_hash_rejects_wrong_hash() {
+        let data = b"--- a/src/cli/foo.rs\n+++ b/src/cli/foo.rs\n@@ -1 +1 @@\n-old\n+new\n";
+        let err = check_expect_hash(data, "deadbeefdeadbeef").unwrap_err();
+        assert!(
+            err.to_string().contains("TOCTOU"),
+            "expected TOCTOU in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn expect_hash_rejects_empty_expected() {
+        let data = b"some diff bytes";
+        let err = check_expect_hash(data, "").unwrap_err();
+        assert!(err.to_string().contains("mismatch"), "got: {err}");
+    }
+
+    // ── apply-cooldown guard ─────────────────────────────────────────────────
+
+    #[test]
+    fn cooldown_zero_always_allows() {
+        // Zero = disabled; no file needed, no side effects.
+        let dir = std::env::temp_dir().join("neoth_selfed_test_zero");
+        let path = dir.join("last_apply");
+        assert!(check_apply_cooldown_at(&path, 0).is_ok());
+    }
+
+    #[test]
+    fn cooldown_no_sentinel_allows() {
+        // Missing sentinel = no prior apply = allow.
+        let dir = std::env::temp_dir().join("neoth_selfed_test_nosent");
+        let path = dir.join("nonexistent_last_apply");
+        // Ensure it truly doesn't exist.
+        let _ = std::fs::remove_file(&path);
+        assert!(check_apply_cooldown_at(&path, 300).is_ok());
+    }
+
+    #[test]
+    fn cooldown_expired_sentinel_allows() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("neoth_selfed_test_expired");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("last_apply");
+        // Timestamp 1 (epoch+1s) is always expired.
+        let mut f = std::fs::File::create(&path).unwrap();
+        write!(f, "1").unwrap();
+        drop(f);
+        assert!(check_apply_cooldown_at(&path, 300).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cooldown_fresh_sentinel_refuses() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("neoth_selfed_test_fresh");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("last_apply");
+        // Write current timestamp — definitely within any positive cooldown.
+        let now = crate::time::now_unix_i64();
+        let mut f = std::fs::File::create(&path).unwrap();
+        write!(f, "{now}").unwrap();
+        drop(f);
+        let err = check_apply_cooldown_at(&path, 300).unwrap_err();
+        assert!(
+            err.to_string().contains("cooldown"),
+            "expected 'cooldown' in error, got: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

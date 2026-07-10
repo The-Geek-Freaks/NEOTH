@@ -525,6 +525,9 @@ export component MainWindow inherits Window {
     callback sd-decline-clicked(string);
     callback sd-scan-clicked();
     callback sd-refresh-clicked();
+    /// GUI-DES-SELFDEV-APPLY-01 — fire gate subprocess for accepted SourceEdit.
+    /// args: (id, patch_path, diff_sha256)
+    callback sd-apply-source-clicked(string, string, string);
 
     // ── Wave 4b — Obsidian panel ──────────────────────────────────────────────
     in property <bool>   obs-configured: false;
@@ -3125,10 +3128,12 @@ export component MainWindow inherits Window {
                     sd-proposals: root.sd-proposals;
                     sd-refreshed-at: root.sd-refreshed-at;
                     sd-scan-running: root.sd-scan-running;
-                    accept-clicked(id)  => { root.sd-accept-clicked(id); }
-                    decline-clicked(id) => { root.sd-decline-clicked(id); }
-                    scan-clicked        => { root.sd-scan-clicked(); }
-                    refresh-clicked     => { root.sd-refresh-clicked(); }
+                    accept-clicked(id)                     => { root.sd-accept-clicked(id); }
+                    decline-clicked(id)                    => { root.sd-decline-clicked(id); }
+                    scan-clicked                           => { root.sd-scan-clicked(); }
+                    refresh-clicked                        => { root.sd-refresh-clicked(); }
+                    // GUI-DES-SELFDEV-APPLY-01:
+                    sd-apply-source-clicked(id, pp, sha)  => { root.sd-apply-source-clicked(id, pp, sha); }
                 }
 
                 // Wave 4b — Obsidian Vault.
