@@ -195,10 +195,19 @@ static LEDGER_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// propagate (never silently ignore). Mirrors `ProactiveQueue::modify` pattern.
 pub fn append_ledger_locked(home: &Path, rec: ImproveRecord) -> Result<()> {
     let _guard = LEDGER_WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let p = ledger_path(home);
+    // B19 cross-process tier: the daemon nightly path and the `neoth self-improve`
+    // CLI append from separate processes — the process mutex above only serialises
+    // threads. Hold the OS lock across the whole load→push→write so a concurrent
+    // process cannot lose an appended record (mirrors credentials/mcp/council).
+    let _oslock = crate::util::locked_file::lock_file_blocking(
+        &p.with_extension("json.lock"),
+        "self-improve ledger",
+    )?;
     let mut log = load_ledger_strict(home)?;
     log.push(rec);
     let json = serde_json::to_string_pretty(&log)?;
-    crate::util::atomic_write::atomic_write(&ledger_path(home), json.as_bytes())?;
+    crate::util::atomic_write::atomic_write(&p, json.as_bytes())?;
     Ok(())
 }
 
@@ -334,6 +343,14 @@ pub fn update_proposals<T>(
     f: impl FnOnce(&mut Vec<Proposal>) -> Result<T>,
 ) -> Result<T> {
     let _guard = PROPOSALS_WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // B19 cross-process tier: the daemon nightly path and the `neoth self-improve`
+    // CLI mutate proposals.json from separate processes — the process mutex above
+    // only serialises threads. Hold the OS lock across the whole reload→mutate→write
+    // cycle so a concurrent process cannot commit a lost update.
+    let _oslock = crate::util::locked_file::lock_file_blocking(
+        &proposals_path(home).with_extension("json.lock"),
+        "self-improve proposals",
+    )?;
     let mut all = load_proposals_strict(home)?;
     let result = f(&mut all)?;
     save_proposals(home, &all)?;
@@ -398,8 +415,18 @@ pub fn recover_pending_journal(home: &Path) -> Result<()> {
         "accept journal is corrupt — delete self_improve_journal.json manually"
     })?;
 
-    // Determine whether the skill write landed.
-    let current_bytes = std::fs::read_to_string(&journal.skill_path).unwrap_or_default();
+    // Determine whether the skill write landed. A failed read (missing or
+    // unreadable skill) is an UNKNOWN state, not "empty" — defaulting to an
+    // empty string would make `current_hash != base_hash` and wrongly conclude
+    // "the write landed", possibly committing a transition that never applied.
+    // Abort instead so the journal is preserved for retry / operator inspection.
+    let current_bytes = std::fs::read_to_string(&journal.skill_path).with_context(|| {
+        format!(
+            "recover: cannot read skill {} to determine if the write landed — \
+             resolve manually (journal preserved)",
+            journal.skill_path
+        )
+    })?;
     let current_hash = fnv1a_hash(&current_bytes);
 
     if current_hash == journal.base_hash {
@@ -1118,7 +1145,19 @@ where
 
     // No improvement when the proposed content is byte-identical to the current
     // file (handles the case where SkillOpt ran but concluded no edit was needed).
-    let before = std::fs::read_to_string(skill_path).unwrap_or_default();
+    // A genuinely missing skill (NotFound) has no baseline → empty is correct; any
+    // OTHER read error must NOT default to empty — that would stage a proposal with
+    // a corrupt empty `before` baseline (and a wrong crash-recovery hash). Fail the
+    // nightly run instead (B19 fail-closed).
+    let before = match std::fs::read_to_string(skill_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return NightlyOutcome::Error {
+                reason: format!("cannot read baseline skill {skill_path}: {e}"),
+            };
+        }
+    };
     if content.trim() == before.trim() {
         return NightlyOutcome::NoImprovement;
     }
@@ -3761,6 +3800,73 @@ mod tests {
             skill_content,
             "skill file must be unchanged"
         );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_recover_pending_journal_errors_and_preserves_when_skill_unreadable() {
+        // B19 fail-closed: a journal exists but the skill file is missing/unreadable
+        // → the write-landed state is UNKNOWN. Recovery must NOT default the read to
+        // empty and guess a transition; it must error and leave the journal on disk.
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_rec_unreadable_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let skill_path = tmp.join("gone.md"); // deliberately never created
+        let journal = AcceptJournal {
+            proposal_id: "p1".to_string(),
+            skill_path: skill_path.display().to_string(),
+            original_bytes: "original".to_string(),
+            intended_status: ProposalStatus::Accepted,
+            base_hash: fnv1a_hash("original"),
+        };
+        std::fs::write(journal_path(&tmp), serde_json::to_string_pretty(&journal).unwrap())
+            .unwrap();
+
+        let r = recover_pending_journal(&tmp);
+        assert!(r.is_err(), "unreadable skill must fail recovery, not guess");
+        assert!(
+            journal_path(&tmp).exists(),
+            "journal must be preserved for retry / operator inspection"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_update_proposals_creates_oslock_sibling() {
+        // B19 cross-process tier: update_proposals must acquire the OS lock on the
+        // `.json.lock` sibling and still round-trip the mutation.
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_oslock_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        update_proposals(&tmp, |all| {
+            all.push(Proposal {
+                id: "p1".to_string(),
+                skill: "s".to_string(),
+                skill_path: "x".to_string(),
+                before: String::new(),
+                after: String::new(),
+                summary: String::new(),
+                status: ProposalStatus::Pending,
+                at_unix: 0,
+                backup: None,
+                score_before: 0.0,
+                score_after: 0.0,
+                heldout_eval_summary: String::new(),
+                why_this_improves: String::new(),
+                risk_notes: String::new(),
+                spec: None,
+            });
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(
+            proposals_path(&tmp).with_extension("json.lock").exists(),
+            "OS lock sibling must be created"
+        );
+        assert_eq!(load_proposals_strict(&tmp).unwrap().len(), 1, "mutation must persist");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
