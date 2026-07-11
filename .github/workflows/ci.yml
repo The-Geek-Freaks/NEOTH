@@ -168,11 +168,21 @@ jobs:
         working-directory: SRC
         run: cargo build --workspace --release
 
+      # Tests run in DEBUG, not --release.  The release *test* binary (all
+      # ~10k unit tests + integration tests + the harness) OOM-killed the
+      # 16 GB GitHub runners while LINKING with the committed lto/cu=1
+      # profile — the root cause of the CI matrix being red since 2026-07-02
+      # (every leg died during the silent link phase before any test ran).
+      # Debug test binaries link cheaply (no LTO, opt-level 0, cu=256) and
+      # the tests are logic tests that pass identically in debug (verified
+      # locally: `cargo test -p neothd --lib` = 10344/0).  Release *compile*
+      # coverage is retained by the `cargo build --workspace --release` step
+      # above; release.yml still ships the fully-optimized binary.
       # Unix runners: parallel test execution (default).
-      - name: cargo test --workspace --release (unix)
+      - name: cargo test --workspace (unix)
         if: runner.os != 'Windows'
         working-directory: SRC
-        run: cargo test --workspace --release
+        run: cargo test --workspace
 
       # Windows runner: serialise tests with --test-threads=1.
       # Rationale: webhook_listener port-binding tests race on the
@@ -180,10 +190,10 @@ jobs:
       # Windows. The race is harmless in production (the daemon binds
       # one port total) but trips CI. Documented as a known flake in
       # HANDOFF_2026-05-18 §8.
-      - name: cargo test --workspace --release (windows, single-threaded)
+      - name: cargo test --workspace (windows, single-threaded)
         if: runner.os == 'Windows'
         working-directory: SRC
-        run: cargo test --workspace --release -- --test-threads=1
+        run: cargo test --workspace -- --test-threads=1
 
       # cargo-audit runs only on Linux to save 2-3 minutes per CI cycle
       # — the advisory database is OS-independent so one run covers the
