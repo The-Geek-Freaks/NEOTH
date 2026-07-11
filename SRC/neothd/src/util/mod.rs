@@ -6,6 +6,7 @@
 //! (architecture debt) to kill copy-pasted variants.
 
 pub mod atomic_write;
+pub mod locked_file;
 pub mod url_encode;
 
 /// Returns the largest byte index ≤ `cap` that is a valid UTF-8 char boundary.
