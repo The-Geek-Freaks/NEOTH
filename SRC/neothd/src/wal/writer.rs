@@ -262,8 +262,21 @@ impl QuotaGuard {
                 // Bytes admitted during the walk are not yet captured in `used`;
                 // retain them so they count against the ceiling next time.
                 let during_walk = post_walk.saturating_sub(pre_walk_reserved);
+                // Bytes reserved BEFORE the walk that the walk did NOT observe on
+                // disk (admitted but not yet fsynced — the caller writes after
+                // try_admit returns).  If we dropped these, `last_measured +
+                // reserved` would fall below the true committed+pending total and
+                // a concurrent near-ceiling admission could slip past the
+                // projected-sum check — fail-OPEN.  Keep them in `reserved` until
+                // a later walk sees them land in `used`.  Converges to zero once
+                // the bytes are on disk (used >= old_measured + pre_walk_reserved).
+                let old_measured = self.last_measured.load(Ordering::SeqCst);
+                let unflushed_pre_walk = old_measured
+                    .saturating_add(pre_walk_reserved)
+                    .saturating_sub(used);
+                let new_reserved = during_walk.saturating_add(unflushed_pre_walk);
                 self.last_measured.store(used, Ordering::SeqCst);
-                let over = used.saturating_add(during_walk) > self.ceiling;
+                let over = used.saturating_add(new_reserved) > self.ceiling;
                 // Set breach BEFORE resetting reserved: any thread that sees the
                 // post-reset (small) value of `reserved` via a concurrent CAS
                 // will observe breached=true on its subsequent SeqCst load,
@@ -271,7 +284,7 @@ impl QuotaGuard {
                 if over {
                     self.breached.store(true, Ordering::SeqCst);
                 }
-                self.reserved.store(during_walk, Ordering::SeqCst);
+                self.reserved.store(new_reserved, Ordering::SeqCst);
                 *is_measuring = false;
                 drop(is_measuring);
                 self.measure_done.notify_all();
