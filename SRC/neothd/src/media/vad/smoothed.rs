@@ -85,6 +85,9 @@ pub enum VadDecision {
 /// ```rust
 /// use neothd::media::vad::{SmoothedVad, VadDecision};
 ///
+/// // One second of 16 kHz mono PCM (silence here; real audio in practice).
+/// let samples_16k_mono_f32 = vec![0.0f32; 16_000];
+///
 /// let mut vad = SmoothedVad::default();
 /// let decision = vad.process(&samples_16k_mono_f32, 16_000);
 /// if decision == VadDecision::Speaking {
