@@ -33,11 +33,13 @@ pub struct BabelConfig {
     /// `0.01 x median((D/A) x (H/V))` over the first 10% of windows).
     /// `None` = not yet calibrated.
     pub epsilon_calibrated: Option<f64>,
-    /// Feed memory-subsystem signals (contradiction ledger, recall misses)
-    /// into feature extraction.
+    /// Reserved: no runtime effect in v1.0; wired only after pre-hoc
+    /// feature/collapse mapping is complete (post-GOLD). Kept for
+    /// forward-compat deserialization of existing freedom.yaml files.
     pub memory_signals: bool,
-    /// Feed skill-router signals (routing misses, low-weight dispatches)
-    /// into feature extraction.
+    /// Reserved: no runtime effect in v1.0; wired only after pre-hoc
+    /// feature/collapse mapping is complete (post-GOLD). Kept for
+    /// forward-compat deserialization of existing freedom.yaml files.
     pub skill_signals: bool,
     /// Federation opt-in. Default FALSE — sharing anonymized window records
     /// with other NEOTH instances only happens when the operator explicitly
@@ -71,8 +73,8 @@ impl Default for BabelConfig {
             threshold: 0.8,
             v_max_default: 150.0,
             epsilon_calibrated: None,
-            memory_signals: true,
-            skill_signals: true,
+            memory_signals: false,
+            skill_signals: false,
             federate: false,
             federation_endpoint: None,
             federation_aggregator_pubkey: None,
@@ -117,5 +119,29 @@ mod tests {
         let y = serde_yaml::to_string(&c).expect("serializes");
         let back: BabelConfig = serde_yaml::from_str(&y).expect("parses back");
         assert_eq!(c, back);
+    }
+
+    /// Reserved signal flags must default to false in v1.0 (no-op, post-GOLD).
+    #[test]
+    fn signal_flags_default_false() {
+        let c = BabelConfig::default();
+        assert!(!c.memory_signals, "memory_signals must default to false (reserved/no-op in v1.0)");
+        assert!(!c.skill_signals, "skill_signals must default to false (reserved/no-op in v1.0)");
+    }
+
+    /// Fields stay in the struct for forward-compat: existing freedom.yaml
+    /// files with `memory_signals: true` must parse cleanly and round-trip
+    /// without loss even though the default changed to false.
+    #[test]
+    fn signal_flags_parse_and_roundtrip_when_set_true() {
+        let c: BabelConfig =
+            serde_yaml::from_str("memory_signals: true\nskill_signals: true\n")
+                .expect("parses with signals set true");
+        assert!(c.memory_signals, "parses memory_signals: true");
+        assert!(c.skill_signals, "parses skill_signals: true");
+        let yaml = serde_yaml::to_string(&c).expect("serializes");
+        let back: BabelConfig = serde_yaml::from_str(&yaml).expect("parses back");
+        assert!(back.memory_signals, "roundtrip preserves memory_signals = true");
+        assert!(back.skill_signals, "roundtrip preserves skill_signals = true");
     }
 }

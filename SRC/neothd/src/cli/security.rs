@@ -517,17 +517,66 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
     // than text. Engaged (off) = the media NEVER leaves the device for a cloud
     // provider; relaxed (on) = the operator accepted that it does. Each says so
     // plainly so "this media leaves your device" is never hidden.
+    // B20 — 5-state rail reflecting actual provider + flag combination.
     rails.push(Rail {
         name: "cloud_stt_enabled",
-        engaged: !cfg.media.cloud_stt_enabled,
-        detail: if cfg.media.cloud_stt_enabled {
-            "ON — your AUDIO leaves the device to a cloud STT provider \
-             (OpenAI Whisper / Azure Speech). Transcripts are not WAL-stored; \
-             the cloud call itself is audited 0xCC STT_TRANSCRIBED (metadata only)."
-                .to_string()
-        } else {
-            "off — speech-to-text stays on-device (local candle Whisper); no audio leaves"
-                .to_string()
+        // engaged=true (safe) only when cloud_stt_enabled=false OR (primary is local
+        // AND no cloud fallback exists).  A local primary with a cloud fallback and
+        // cloud_stt_enabled=true can still egress on retryable failure → not safe.
+        engaged: !cfg.media.cloud_stt_enabled
+            || (cfg.media.stt.primary.is_local()
+                && !cfg.media.stt.fallback.map(|f| !f.is_local()).unwrap_or(false)),
+        detail: {
+            let primary = cfg.media.stt.primary;
+            let cloud_on = cfg.media.cloud_stt_enabled;
+            let has_fallback_cloud = cfg
+                .media
+                .stt
+                .fallback
+                .map(|f| !f.is_local())
+                .unwrap_or(false);
+            if primary == crate::media::stt_dispatch::SttProvider::Vosk {
+                // (5) unsupported / Vosk deferred
+                "unsupported — Vosk is deferred (C-FFI, cmake+C++ build risk); \
+                 audio stays on-device via candle Whisper default"
+                    .to_string()
+            } else if primary.is_local() && !cloud_on && !has_fallback_cloud {
+                // (1) off — local primary, no cloud anywhere
+                format!(
+                    "off — STT stays on-device ({} / faster-whisper); no audio leaves",
+                    primary.as_str()
+                )
+            } else if !primary.is_local() && !cloud_on {
+                // (2) configured-but-blocked
+                format!(
+                    "CONFIGURED-but-BLOCKED — cloud STT provider '{}' selected in \
+                     media.stt but cloud_stt_enabled=false; audio will NOT be sent \
+                     until you flip the flag",
+                    primary.as_str()
+                )
+            } else if !primary.is_local() && cloud_on {
+                // (3) cloud active as primary
+                format!(
+                    "ON — your AUDIO leaves the device to {}; \
+                     audited 0xCC STT_TRANSCRIBED (metadata only)",
+                    primary.as_str()
+                )
+            } else if primary.is_local() && cloud_on && has_fallback_cloud {
+                // (4) local primary + cloud fallback consented
+                format!(
+                    "fallback-active — primary is local ({}), cloud fallback '{}' \
+                     enabled; audio sent to cloud ONLY on retryable primary failure; \
+                     audited 0xCC STT_TRANSCRIBED (metadata only)",
+                    primary.as_str(),
+                    cfg.media
+                        .stt
+                        .fallback
+                        .map(|f| f.as_str())
+                        .unwrap_or("none")
+                )
+            } else {
+                "off — speech-to-text stays on-device; no audio leaves".to_string()
+            }
         },
     });
     rails.push(Rail {

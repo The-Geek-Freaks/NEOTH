@@ -74,6 +74,11 @@ pub enum BabelAction {
         /// Only windows with ts_end >= this unix timestamp (default: all).
         #[arg(long, default_value = "0")]
         since: i64,
+        /// Export format override. Precedence: --format > babel.export_format
+        /// in freedom.yaml > default ("jsonl"). Only "jsonl" is currently
+        /// implemented; any other value is a loud error before any file write.
+        #[arg(long)]
+        format: Option<String>,
     },
 }
 
@@ -153,6 +158,8 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                             "total_windows": total,
                             "collapse_flagged": collapses,
                             "windows_by_granularity": windows_by_granularity,
+                            "memory_signals_reserved": true,
+                            "skill_signals_reserved": true,
                         })
                     );
                 }
@@ -167,6 +174,8 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                         "federation: {}",
                         if cfg.federate { "ENABLED (consent-gated at runtime)" } else { "disabled" }
                     );
+                    println!("memory_signals: reserved/no effect (post-GOLD)");
+                    println!("skill_signals: reserved/no effect (post-GOLD)");
                     if total == 0 {
                         println!("no windows recorded yet");
                         return Ok(());
@@ -317,10 +326,19 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 );
             }
         }
-        BabelAction::Export { out, since } => {
+        BabelAction::Export { out, since, format } => {
+            // Load config fail-loud: a silent fallback to "jsonl" would hide
+            // a misconfigured export_format (e.g. "csv") that the operator
+            // set expecting a loud error. Precedence: --format > config > default.
+            let cfg = crate::config::FreedomConfig::load_from_path(
+                &crate::config::FreedomConfig::default_path(),
+            )
+            .context("load freedom.yaml for babel export")?
+            .babel;
+            let effective_format = format.unwrap_or(cfg.export_format);
             let conn = open_views()?;
             let stamped = post_hoc_label_pass(&conn, 1800, crate::time::now_unix_i64())?;
-            let stats = export_batch(&conn, &out, "jsonl", since)?;
+            let stats = export_batch(&conn, &out, &effective_format, since)?;
             println!(
                 "exported {} windows ({} labels, {} horizons stamped) -> {}",
                 stats.windows,
@@ -335,6 +353,28 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::analytics::babel::export::export_batch;
+    use crate::analytics::babel::store::ensure_schema;
+
+    /// Minimal seeded in-memory connection with one window row for export tests.
+    fn seeded_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("mem db");
+        ensure_schema(&conn).expect("schema");
+        let vars = serde_json::json!({
+            "C": 0.5, "K": 0.4, "M": 0.3, "A": 0.5, "V": 0.2, "D": 1.0, "H": 1.0,
+            "algo": {"c": "C_d_v0", "k": "K_d_v0", "m": "M_d_v0", "a": "A_d_v0",
+                      "v": "V_d_v0", "d": "D_d_v0", "h": "H_d_v0"},
+            "schema": "neoth-babel-window/0.2.0",
+        });
+        conn.execute(
+            "INSERT INTO idx_babel_windows
+             (id, session_id, window_secs, ts_start, ts_end, b_log, b_bottleneck, variables)
+             VALUES (?1, 'a1b2c3d4e5f60718', 900, 0, 900, -1.5, 0.2, ?2)",
+            rusqlite::params!["w0", vars.to_string()],
+        )
+        .expect("seed");
+        conn
+    }
 
     /// JSON shape for `status` must contain the expected top-level keys.
     #[test]
@@ -356,6 +396,26 @@ mod tests {
         assert_eq!(v["windows_by_granularity"][0]["count"], 42);
     }
 
+    /// Status JSON must include reserved signal annotation keys (B24).
+    #[test]
+    fn status_json_shape_includes_reserved_signal_keys() {
+        let v = serde_json::json!({
+            "enabled": true,
+            "threshold": 1.5_f64,
+            "epsilon_calibrated": null,
+            "federate": false,
+            "total_windows": 42_i64,
+            "collapse_flagged": 3_i64,
+            "windows_by_granularity": [
+                {"window_secs": 900_i64, "count": 42_i64, "last_ts_end": 1_700_000_000_i64}
+            ],
+            "memory_signals_reserved": true,
+            "skill_signals_reserved": true,
+        });
+        assert_eq!(v["memory_signals_reserved"], true, "memory_signals_reserved key present and true");
+        assert_eq!(v["skill_signals_reserved"], true, "skill_signals_reserved key present and true");
+    }
+
     /// JSON shape for `windows` must wrap rows under a `windows` array.
     #[test]
     fn windows_json_shape() {
@@ -375,5 +435,64 @@ mod tests {
         assert!(envelope["windows"].is_array());
         assert_eq!(envelope["windows"][0]["id"], "abc-123");
         assert_eq!(envelope["windows"][0]["collapse_kind"], "agent_loop");
+    }
+
+    /// A configured export_format of "csv" must produce a loud error before
+    /// any file is written at the target path (B24 truth-slice).
+    #[test]
+    fn export_arm_errors_on_configured_csv_before_write() {
+        let conn = seeded_conn();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("babel.jsonl");
+        // Simulate: config has export_format = "csv", no CLI --format flag →
+        // config value is the effective format (precedence: CLI > config > default).
+        let effective = "csv".to_string();
+        let result = export_batch(&conn, &out, &effective, 0);
+        assert!(result.is_err(), "csv format must produce an error");
+        let msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            msg.contains("unsupported babel export format"),
+            "error must name the unsupported format; got: {msg}"
+        );
+        assert!(!out.exists(), "target file must not exist after a format error");
+    }
+
+    /// export_format = "jsonl" from config (no CLI flag) must succeed and write
+    /// the output file with at least one window (B24 truth-slice).
+    #[test]
+    fn export_arm_passes_format_from_config() {
+        let conn = seeded_conn();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("babel.jsonl");
+        // Simulate: config has export_format = "jsonl", no CLI --format flag →
+        // config value is the effective format.
+        let effective = "jsonl".to_string();
+        let stats = export_batch(&conn, &out, &effective, 0)
+            .expect("jsonl export via config format must succeed");
+        assert!(stats.windows > 0, "at least one window must be exported");
+        assert!(out.exists(), "output file must exist after a successful export");
+    }
+
+    /// CLI --format flag wins over babel.export_format in config (B24 truth-slice).
+    /// Case A: --format jsonl + config csv → success.
+    /// Case B: --format csv + config jsonl → error (CLI override is enforced).
+    #[test]
+    fn export_cli_format_flag_overrides_config() {
+        let conn = seeded_conn();
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Case A: CLI jsonl beats config csv → export must succeed.
+        let out_ok = dir.path().join("ok.jsonl");
+        let effective_a = "jsonl".to_string(); // CLI --format jsonl overrides config csv
+        let result_a = export_batch(&conn, &out_ok, &effective_a, 0);
+        assert!(result_a.is_ok(), "CLI --format jsonl must beat config csv and succeed");
+        assert!(out_ok.exists(), "output file must exist on success");
+
+        // Case B: CLI csv beats config jsonl → export must error.
+        let out_bad = dir.path().join("bad.jsonl");
+        let effective_b = "csv".to_string(); // CLI --format csv overrides config jsonl
+        let result_b = export_batch(&conn, &out_bad, &effective_b, 0);
+        assert!(result_b.is_err(), "CLI --format csv must beat config jsonl and error");
+        assert!(!out_bad.exists(), "no file written when CLI format is unsupported");
     }
 }

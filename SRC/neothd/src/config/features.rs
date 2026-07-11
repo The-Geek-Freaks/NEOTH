@@ -361,7 +361,10 @@ impl Default for OmiConfig {
 /// MM-01b/02b/03b — cloud media opt-ins. ALL default OFF (`false`). Each flag,
 /// when `true`, means the operator has accepted that THIS media type leaves the
 /// device for a cloud provider. Audio/image/video are more sensitive than text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+// `Copy` dropped in B20: MediaConfig now embeds `stt: MediaSttConfig` which owns
+// String fields (provider model/language/region), so the struct can no longer be
+// bit-copied. It is passed by reference or `.clone()`d everywhere already.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct MediaConfig {
     /// Cloud speech-to-text (OpenAI Whisper / Azure Speech). On = your AUDIO
@@ -451,6 +454,14 @@ pub struct MediaConfig {
     /// Configure in `freedom.yaml` under `media.dictation_enabled`.
     #[serde(default)]
     pub dictation_enabled: bool,
+
+    /// B20 STT-DISPATCHER-HOTPATH — per-call STT configuration.
+    ///
+    /// Defaults to local candle Whisper; no cloud unless explicitly configured.
+    /// Missing `media.stt` key in `freedom.yaml` deserializes cleanly to the
+    /// local-candle default (no cloud, no egress).
+    #[serde(default)]
+    pub stt: crate::media::stt_dispatch::MediaSttConfig,
 }
 
 fn default_whisper_idle_unload_secs() -> Option<u64> {
@@ -473,6 +484,8 @@ impl Default for MediaConfig {
             vad_enabled: false,
             // GOLD-ADOPT-25 — dictation: off by default; mic capture is opt-in.
             dictation_enabled: false,
+            // B20 — default to local candle Whisper; no cloud egress.
+            stt: crate::media::stt_dispatch::MediaSttConfig::default(),
         }
     }
 }

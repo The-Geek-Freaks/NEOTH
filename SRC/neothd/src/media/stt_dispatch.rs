@@ -23,8 +23,10 @@ pub enum SttProvider {
     // Note: explicit `rename` per variant — serde's
     // `rename_all="snake_case"` splits at case boundaries which
     // would write `open_ai_whisper_api` and `whisper_rs_local`
-    // (acceptable but ugly). Pinning each wire form keeps the
-    // audit log aligned with `as_str()`.
+    // (acceptable but ugly). Pinning each wire form provides a
+    // stable serde contract independent of as_str() display values.
+    // NB: WhisperRsLocal serde wire = "whisper_rs_local" (kept for
+    //     backward compat); as_str() = "candle_whisper_local" (honest).
     #[serde(rename = "whisper_rs_local")]
     WhisperRsLocal,
     #[serde(rename = "openai_whisper_api")]
@@ -45,7 +47,11 @@ pub enum SttProvider {
 impl SttProvider {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::WhisperRsLocal => "whisper_rs_local",
+            // Display "candle_whisper_local" — the actual backend is candle
+            // (safetensors), not whisper-rs (GGML).  The serde wire value is
+            // pinned to "whisper_rs_local" via #[serde(rename)] for backward
+            // compat; as_str() is the operator-facing display only.
+            Self::WhisperRsLocal => "candle_whisper_local",
             Self::OpenAiWhisperApi => "openai_whisper_api",
             Self::AzureSpeech => "azure_speech",
             Self::Vosk => "vosk",
@@ -67,7 +73,7 @@ impl SttProvider {
     pub fn description(self) -> &'static str {
         match self {
             Self::WhisperRsLocal => {
-                "Local whisper.cpp via Rust binding — CPU, no network (recommended)"
+                "Local candle Whisper (safetensors, CPU/GPU, no cloud, no network for inference)"
             }
             Self::OpenAiWhisperApi => "OpenAI Whisper API — best quality, paid + cloud",
             Self::AzureSpeech => "Azure Speech — cloud, regional endpoints, paid",
@@ -400,7 +406,43 @@ pub fn resolve_language(requested: Option<&str>, supported: &[&str]) -> Resolved
     }
 }
 
+/// Canonical per-call STT config embedded under `media.stt` in `MediaConfig`.
+///
+/// This is the B20-introduced config struct that replaces the scattered use of
+/// `SttDispatcherConfig`. Wire it via `MediaConfig::stt`; the outer
+/// `MediaConfig::cloud_stt_enabled` flag and audit sink still gate cloud calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MediaSttConfig {
+    pub primary: SttProvider,
+    #[serde(default)]
+    pub fallback: Option<SttProvider>,
+    pub model_size: WhisperModelSize,
+    pub language: String,
+    /// Required for `AzureSpeech` provider; empty = Azure provider cannot be used.
+    #[serde(default)]
+    pub azure_region: String,
+}
+
+impl Default for MediaSttConfig {
+    fn default() -> Self {
+        Self {
+            primary: SttProvider::WhisperRsLocal,
+            fallback: None,
+            model_size: WhisperModelSize::Base,
+            language: String::new(),
+            azure_region: String::new(),
+        }
+    }
+}
+
 /// Dispatcher config.
+///
+/// # Deprecated
+///
+/// Use [`MediaSttConfig`] instead. `MediaSttConfig` is the canonical B20
+/// per-call config embedded at `media.stt` in `freedom.yaml`. This struct
+/// remains for one release for backward-compat and will be removed in v1.1.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SttDispatcherConfig {
     pub primary: SttProvider,
@@ -429,7 +471,7 @@ mod tests {
 
     #[test]
     fn provider_as_str_pinned() {
-        assert_eq!(SttProvider::WhisperRsLocal.as_str(), "whisper_rs_local");
+        assert_eq!(SttProvider::WhisperRsLocal.as_str(), "candle_whisper_local");
         assert_eq!(SttProvider::OpenAiWhisperApi.as_str(), "openai_whisper_api");
         assert_eq!(SttProvider::AzureSpeech.as_str(), "azure_speech");
         assert_eq!(SttProvider::Vosk.as_str(), "vosk");

@@ -74,12 +74,53 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     };
     let duration_secs = samples.len() as f64 / TARGET_SAMPLE_RATE as f64;
 
-    // Phase 2b + GOLD-ADAPT-HANDY-04: real whisper transcription.
-    // If the model is not yet cached AND allow_huggingface_downloads is true
-    // (the default), `transcribe_if_cached` triggers an auto-download on first
-    // use before returning the transcript. When downloads are disabled the
-    // function returns an empty text with status "model download blocked".
-    let (text, status) = transcribe_if_cached(&samples);
+    // Fix FAIL-3: local-only path uses sync transcribe_if_cached seam directly —
+    // avoids WhisperLocalProvider::new() → init_global_engine_sync nested-runtime
+    // panic when extract_blocking is called from spawn_blocking inside a tokio test.
+    // Cloud dispatch fires only when a cloud provider is wired AND
+    // cloud_stt_enabled=true. Cloud-audit refusals are now warned (CAVEAT fix).
+    let (text, status) = {
+        let cfg = crate::config::FreedomConfig::load_from_default_path()
+            .unwrap_or_default();
+        let needs_cloud = !cfg.media.stt.primary.is_local()
+            || cfg.media.stt.fallback.map(|f| !f.is_local()).unwrap_or(false);
+        if needs_cloud && cfg.media.cloud_stt_enabled {
+            let wav = crate::media::stt_provider::pcm_bytes_to_wav(
+                &samples
+                    .iter()
+                    .flat_map(|s: &f32| s.to_le_bytes())
+                    .collect::<Vec<u8>>(),
+            );
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => match handle.block_on(
+                    crate::media::stt_provider::dispatch_transcription(
+                        &cfg.media.stt,
+                        &cfg.media,
+                        &wav,
+                        None,
+                    ),
+                ) {
+                    Ok(r) if !r.text.is_empty() => (r.text, "transcribed"),
+                    Ok(_) => (String::new(), "empty transcript"),
+                    Err(e) => {
+                        // Caveat fix: log cloud-audit refusals instead of silently
+                        // degrading to local — audit hardline must be observable.
+                        tracing::warn!(
+                            error = %e,
+                            "audio: STT cloud dispatch failed (audit refused or transient) \
+                             — falling back to local"
+                        );
+                        transcribe_if_cached(&samples)
+                    }
+                },
+                // No runtime → local sync fallback.
+                Err(_) => transcribe_if_cached(&samples),
+            }
+        } else {
+            // Local-only or cloud disabled: sync path, no nested-runtime risk.
+            transcribe_if_cached(&samples)
+        }
+    };
     Ok(Extraction {
         text,
         metadata: serde_json::json!({
@@ -116,6 +157,11 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
 /// avoid nested-runtime panic.
 /// `pub(crate)` so `media::dictation` can reuse the same STT path without
 /// duplicating the faster-whisper → candle priority logic.
+// B20: the direct callers now go through `dispatch_transcription`; this thin
+// wrapper is retained one release as the no-runtime fallback seam (used by
+// `extract_blocking` when `Handle::try_current()` is None). Allow dead_code so
+// `-D warnings` doesn't trip while the migration settles.
+#[allow(dead_code)]
 pub(crate) fn transcribe_pcm_samples(samples: &[f32]) -> (String, &'static str) {
     transcribe_if_cached(samples)
 }

@@ -106,6 +106,7 @@ Export windows + labels as JSONL for the theorem-test tooling. Runs the post-hoc
 
 - `--out <OUT>` — Output file path
 - `--since <SINCE>` — Only windows with ts_end >= this unix timestamp (default: all)
+- `--format <FORMAT>` — Export format override. Precedence: --format > babel.export_format in freedom.yaml > default ("jsonl"). Only "jsonl" is currently implemented; any other value is a loud error before any file write
 
 ### `neoth babel federate`
 

@@ -141,6 +141,77 @@ impl Tweaks {
     }
 }
 
+/// Which layer in the model-selection priority chain resolved the effective model.
+///
+/// Walk order (highest → lowest priority):
+/// `Dispatch` → `Skill` → `Cli` → `Tweaks` → `Freedom` → `ProviderDefault`.
+/// Recorded in WAL frames so operators can audit what drove each model decision.
+/// Never contains secrets (model identifiers are configuration, not credentials).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelSource {
+    /// A Dispatch agent or council decision selected the model.
+    Dispatch,
+    /// A skill manifest declared a `model:` field.
+    Skill,
+    /// Operator passed `--model` on the CLI.
+    Cli,
+    /// `model_default` in `tweaks.toml` wins.
+    Tweaks,
+    /// `provider_model` in `freedom.yaml` wins.
+    Freedom,
+    /// No override; the provider selects the model itself.
+    ProviderDefault,
+}
+
+impl ModelSource {
+    /// Static label used in WAL payloads and diagnostics. No allocation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelSource::Dispatch => "dispatch",
+            ModelSource::Skill => "skill",
+            ModelSource::Cli => "cli",
+            ModelSource::Tweaks => "tweaks",
+            ModelSource::Freedom => "freedom",
+            ModelSource::ProviderDefault => "provider_default",
+        }
+    }
+}
+
+/// Resolve the effective model from the priority chain.
+///
+/// Pure — no I/O, no side effects, trivially unit-testable. Walk the chain
+/// in priority order and return the first `Some` value together with its
+/// [`ModelSource`] tag, or `(None, ModelSource::ProviderDefault)` when all
+/// inputs are `None`.
+///
+/// Priority: `dispatch` > `skill` > `cli` > `tweaks_default` > `freedom`
+/// > provider default.
+pub fn resolve_effective_model<'a>(
+    dispatch: Option<&'a str>,
+    skill: Option<&'a str>,
+    cli: Option<&'a str>,
+    tweaks_default: Option<&'a str>,
+    freedom: Option<&'a str>,
+) -> (Option<&'a str>, ModelSource) {
+    if let Some(m) = dispatch {
+        return (Some(m), ModelSource::Dispatch);
+    }
+    if let Some(m) = skill {
+        return (Some(m), ModelSource::Skill);
+    }
+    if let Some(m) = cli {
+        return (Some(m), ModelSource::Cli);
+    }
+    if let Some(m) = tweaks_default {
+        return (Some(m), ModelSource::Tweaks);
+    }
+    if let Some(m) = freedom {
+        return (Some(m), ModelSource::Freedom);
+    }
+    (None, ModelSource::ProviderDefault)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +339,132 @@ animation_speed = "reduced"
         std::fs::write(&path, "statusline = \"x\"").unwrap();
         let t = Tweaks::load_or_default(&path).unwrap();
         assert!(t.prompts.is_empty());
+    }
+
+    // ── B22 — resolve_effective_model precedence table ────────────────────
+
+    #[test]
+    fn resolve_model_full_precedence_table() {
+        // dispatch wins over everything
+        let (m, src) =
+            resolve_effective_model(Some("d"), Some("s"), Some("c"), Some("t"), Some("f"));
+        assert_eq!(m, Some("d"));
+        assert_eq!(src, ModelSource::Dispatch);
+
+        // skill wins when no dispatch
+        let (m, src) =
+            resolve_effective_model(None, Some("s"), Some("c"), Some("t"), Some("f"));
+        assert_eq!(m, Some("s"));
+        assert_eq!(src, ModelSource::Skill);
+
+        // cli wins over tweaks and freedom
+        let (m, src) = resolve_effective_model(None, None, Some("c"), Some("t"), Some("f"));
+        assert_eq!(m, Some("c"));
+        assert_eq!(src, ModelSource::Cli);
+
+        // tweaks wins over freedom
+        let (m, src) = resolve_effective_model(None, None, None, Some("t"), Some("f"));
+        assert_eq!(m, Some("t"));
+        assert_eq!(src, ModelSource::Tweaks);
+
+        // freedom wins when only freedom present
+        let (m, src) = resolve_effective_model(None, None, None, None, Some("f"));
+        assert_eq!(m, Some("f"));
+        assert_eq!(src, ModelSource::Freedom);
+
+        // all None → ProviderDefault
+        let (m, src) = resolve_effective_model(None, None, None, None, None);
+        assert_eq!(m, None);
+        assert_eq!(src, ModelSource::ProviderDefault);
+    }
+
+    #[test]
+    fn resolve_model_no_override_is_provider_default() {
+        let (m, src) = resolve_effective_model(None, None, None, None, None);
+        assert!(m.is_none());
+        assert_eq!(src, ModelSource::ProviderDefault);
+    }
+
+    #[test]
+    fn resolve_model_tweaks_alone_beats_freedom() {
+        let (m, src) =
+            resolve_effective_model(None, None, None, Some("claude-opus-4-7"), Some("sonnet"));
+        assert_eq!(m, Some("claude-opus-4-7"));
+        assert_eq!(src, ModelSource::Tweaks);
+    }
+
+    #[test]
+    fn model_source_as_str_roundtrips() {
+        assert_eq!(ModelSource::Dispatch.as_str(), "dispatch");
+        assert_eq!(ModelSource::Skill.as_str(), "skill");
+        assert_eq!(ModelSource::Cli.as_str(), "cli");
+        assert_eq!(ModelSource::Tweaks.as_str(), "tweaks");
+        assert_eq!(ModelSource::Freedom.as_str(), "freedom");
+        assert_eq!(ModelSource::ProviderDefault.as_str(), "provider_default");
+    }
+
+    // ── B22 production-wiring invariants ─────────────────────────────────────
+    // These tests verify the scenarios that the bug-fixes in cli/chat.rs depend
+    // on: when dispatch_provider calls resolve_effective_model with a pre-folded
+    // override_model (dispatch+skill winner) as the `dispatch` param, the result
+    // must match what the 6-tier chain would have produced inline.
+
+    #[test]
+    fn resolve_model_prefold_dispatch_skill_beats_all_lower_tiers() {
+        // In dispatch_provider, override_model carries the pre-folded dispatch+skill
+        // winner and is passed as the `dispatch` parameter.  It must win over cli,
+        // tweaks, and freedom so PROVIDER_REQUEST WAL, model_used, and error
+        // usage_log all record the correct model when a skill/dispatch override won.
+        let (m, src) = resolve_effective_model(
+            Some("skill-or-dispatch-model"),
+            None, // already folded into dispatch param by the caller
+            Some("cli-model"),
+            Some("tweaks-model"),
+            Some("freedom-model"),
+        );
+        assert_eq!(m, Some("skill-or-dispatch-model"));
+        assert_eq!(src, ModelSource::Dispatch);
+    }
+
+    #[test]
+    fn resolve_model_no_override_falls_through_to_cli() {
+        // When neither dispatch nor skill resolved a model (override_model = None),
+        // the cli flag must win — matching the behaviour of the old inline chain.
+        let (m, src) = resolve_effective_model(None, None, Some("my-cli"), None, None);
+        assert_eq!(m, Some("my-cli"));
+        assert_eq!(src, ModelSource::Cli);
+    }
+
+    #[test]
+    fn resolve_model_tweaks_beats_freedom_when_no_higher_tier() {
+        // Confirms the tweaks tier wins over freedom when cli/dispatch/skill are absent
+        // (regression guard for the token-cap + error-log sites that use effective_model).
+        let (m, src) = resolve_effective_model(None, None, None, Some("tweaks-opus"), Some("freedom-sonnet"));
+        assert_eq!(m, Some("tweaks-opus"));
+        assert_eq!(src, ModelSource::Tweaks);
+    }
+
+    #[test]
+    fn resolve_model_all_none_gives_unknown_sentinel() {
+        // When ALL tiers are absent the resolved model is None — callers unwrap to
+        // "unknown".  Verifies that the streaming model_used fallback path matches.
+        let (m, src) = resolve_effective_model(None, None, None, None, None);
+        assert!(m.is_none(), "should be None when all tiers absent");
+        assert_eq!(src, ModelSource::ProviderDefault);
+    }
+
+    #[test]
+    fn invalid_toml_error_includes_path_context() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "model_default = [broken").unwrap();
+        let err = Tweaks::load_or_default(&path).unwrap_err();
+        let msg = format!("{err:#}");
+        // load_or_default adds "parse TOML at <path>" context — operator must
+        // be able to find the offending file from the error message.
+        assert!(
+            msg.contains("parse TOML") || msg.contains("bad.toml"),
+            "expected path context in error, got: {msg}"
+        );
     }
 }

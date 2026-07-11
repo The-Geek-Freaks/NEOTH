@@ -276,6 +276,10 @@ async fn build_prompt_bundle(
     // every normal (non-slash) turn. Used by the visibility pre-filter
     // to decide whether `NameOnly` / `UserInvocableOnly` skills are eligible.
     slash_skill_name: Option<String>,
+    // B22-TWEAKS-MODEL-01 — persona_override pre-loaded fail-loud at the chat
+    // boundary (run_chat_with). Passed here so this function performs no Tweaks
+    // I/O of its own; replaces the silent `.ok()` load that was here before.
+    persona_override_from_tweaks: Option<String>,
 ) -> (PromptBundle, FreedomConfig, String, std::path::PathBuf) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
     // GOLD-CCPARITY-SUBDIR-MD-01 — resolve extra_dirs from config; relative
@@ -773,10 +777,9 @@ async fn build_prompt_bundle(
     };
 
     // ── C-7 persona layer (tweaks.toml::persona_override) ─────────────────
-    let tweaks_path = crate::tweaks::Tweaks::default_path();
-    let persona_override = crate::tweaks::Tweaks::load_or_default(&tweaks_path)
-        .ok()
-        .and_then(|t| t.persona_override.clone());
+    // B22 — pre-loaded fail-loud at the chat boundary (run_chat_with);
+    // no Tweaks I/O here. The silent `.ok()` suppression is removed.
+    let persona_override = persona_override_from_tweaks;
 
     // ── GOLD-ADAPT-LOWKEY-08 — MDS dynamic tone modifier ─────────────────
     // Augments the static tweaks.toml persona_override with a per-turn
@@ -1004,6 +1007,11 @@ async fn enforce_preflight(
     plan_attest_hash: Option<String>,
     // GOLD-ADAPT-OH-13: raw enrichment layers for selective agent rebuild.
     agent_raw_layers: AgentRawLayers,
+    // B22-TWEAKS-MODEL-01 — tweaks.model_default propagated from the chat
+    // boundary (already loaded fail-loud there). Feeds model_for_estimate so
+    // the cost predictor and COST_ESTIMATE_SHOWN WAL frame reflect the tweaks
+    // tier rather than silently falling back to the freedom.yaml default.
+    tweaks_model_for_cost: Option<String>,
     // GOLD-CCPARITY-ONCE: session-scoped set of once=true hook names that have
     // already fired. Passed by &mut ref so PrePipeline + PreProviderCall share
     // the same set — a once=true hook fired at PrePipeline is suppressed at
@@ -1017,6 +1025,16 @@ async fn enforce_preflight(
     // WAL frame so operators can audit what was projected vs what
     // actually billed (PROVIDER_RESPONSE event reports actual usage
     // post-call).
+    // B22: known limitation — the cost gate below estimates on the 3-tier model
+    // (cli > tweaks > freedom).  Dispatch and skill model resolution happens INSIDE
+    // enforce_preflight, after this gate runs, so the dispatch/skill model cannot be
+    // known here without resolving the dispatch decision first (which requires the
+    // full agent + skill pipeline that runs later in this function).  A full fix
+    // would require resolving the dispatch decision before cost estimation, which is
+    // a larger refactor.  The practical risk: if a skill/dispatch selects a model
+    // with a significantly higher per-token price the gate may approve on a lower
+    // estimate.  Operators who care about tight cost gates should set
+    // `freedom.yaml::tokens.max_per_request` conservatively.
     let predicted_cost = {
         let meter = crate::providers::meter::Meter::with_default_window();
         // Assemble the same string the provider sees: system prefix
@@ -1026,14 +1044,14 @@ async fn enforce_preflight(
         let assembled = format!("{}\n\n{}", combined_system.as_deref().unwrap_or(""), prompt);
         crate::providers::cost::predict(
             provider.name(),
-            &model_for_estimate(args, config),
+            &model_for_estimate(args, config, tweaks_model_for_cost.as_deref()),
             &assembled,
             &meter,
         )
     };
     let est_payload = serde_json::to_vec(&serde_json::json!({
         "provider": provider.name(),
-        "model": model_for_estimate(args, config),
+        "model": model_for_estimate(args, config, tweaks_model_for_cost.as_deref()),
         "input_tokens": predicted_cost.input_tokens,
         "output_tokens_est": predicted_cost.output_tokens_est,
         "total_eur": predicted_cost.total_eur,
@@ -1582,6 +1600,13 @@ async fn dispatch_provider(
     // GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget. `None` = provider
     // default. Mapped to `req.thinking_budget` before provider spawn.
     override_effort: Option<crate::providers::effort_override::EffortBudget>,
+    // B22-TWEAKS-MODEL-01 — tweaks.model_default for the full effective_model
+    // chain: dispatch/skill (override_model) > cli (args.model) > tweaks >
+    // freedom (config.provider_model) > provider default.
+    tweaks_model_default: Option<String>,
+    // B22-TWEAKS-MODEL-01 — which priority layer resolved the model for this
+    // turn. Embedded in WAL diagnostics; never contains secrets.
+    model_source: &'static str,
     // GOLD-CCPARITY-SA-DENY-01 — sub-agent allow-list and denylist. Both
     // propagated from enforce_preflight via PreflightOutcome::Continue.
     // `agent_allowed_tools`: when non-empty, overrides skill_tool_allowlist
@@ -1626,11 +1651,22 @@ async fn dispatch_provider(
     let merged_system = Some(crate::cli::clarify_chat::augment_system(
         crate::providers::context_guards::apply_code_discipline_preamble(final_system.as_deref()),
     ));
-    // GOLD-CCPARITY-MODEL-02: apply the priority chain —
-    // Dispatch.model > skill.manifest.model > args.model.
-    // `override_model` already holds the winner of the first two tiers
-    // (merged at the call site in run_chat_with).
-    let effective_model = override_model.or_else(|| args.model.clone());
+    // B22 — full priority chain routed through the single tested source of truth.
+    // `override_model` carries the pre-folded dispatch+skill winner passed in from
+    // run_chat_with (both tiers are collapsed by the caller); there is no separate
+    // skill slot at this level.  Passing it as the `dispatch` param to
+    // resolve_effective_model preserves the correct priority (wins over cli/tweaks/
+    // freedom).  The returned ModelSource is discarded here — `model_source` (the
+    // &'static str computed in run_chat_with) is already threaded in as a param and
+    // is the authoritative audit label; we only need the resolved model string.
+    let (resolved_em, _) = crate::tweaks::resolve_effective_model(
+        override_model.as_deref(),
+        None, // dispatch + skill are pre-folded into override_model by the caller
+        args.model.as_deref(),
+        tweaks_model_default.as_deref(),
+        config.provider_model.as_deref(),
+    );
+    let effective_model = resolved_em.map(str::to_string);
     // GOLD-CCPARITY-EFFORT-03: map the per-skill effort variant to a
     // concrete token count and store it on the Request so the provider
     // (claude_cli) can inject MAX_THINKING_TOKENS before spawning.
@@ -1719,6 +1755,9 @@ async fn dispatch_provider(
             "request_id": id,
             "prompt_hash": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
             "model": req.model.clone(),
+            // B22-TWEAKS-MODEL-01: which precedence layer chose this model
+            // (dispatch|skill|cli|tweaks|freedom|provider_default) — audit only.
+            "model_source": model_source,
             "stream": args.stream,
             "ts_unix": now_unix(),
         }))
@@ -1806,13 +1845,14 @@ async fn dispatch_provider(
         let mut output_tokens: Option<u32> = None;
         let mut cache_creation_tokens: Option<u32> = None;
         let mut cache_read_tokens: Option<u32> = None;
-        let mut model_used = args.model.clone().unwrap_or_default();
-        if model_used.is_empty() {
-            model_used = config
-                .provider_model
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-        }
+        // B22: seed model_used from the 6-tier effective_model (dispatch > skill > cli >
+        // tweaks > freedom > provider_default) so the streaming PROVIDER_RESPONSE WAL
+        // frame, usage_log, sentinel_cap, and DispatchOutput.model_used all record the
+        // model that was actually requested — not the stale 2-tier (cli → freedom)
+        // fallback that dropped dispatch and skill overrides.
+        let model_used = effective_model
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
 
         use futures_util::stream::StreamExt;
         use std::io::Write as _;
@@ -2144,7 +2184,7 @@ async fn dispatch_provider(
                 }
             };
             println!("{response_text}");
-            (response_text, None, None, model_for_estimate(args, config))
+            (response_text, None, None, model_for_estimate(args, config, tweaks_model_default.as_deref()))
         } else if use_loop {
             info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
             // SC-11 — scope the MCP gate to the matched skill's
@@ -2392,7 +2432,7 @@ async fn dispatch_provider(
                 outcome.final_text,
                 None,
                 None,
-                model_for_estimate(args, config),
+                model_for_estimate(args, config, tweaks_model_default.as_deref()),
             )
         } else {
             // QM-10 Phase 2: consult the circuit breaker for this
@@ -2476,7 +2516,11 @@ async fn dispatch_provider(
                     }
                     // Record the failure too so the rollup distinguishes
                     // ok-vs-err for the same provider (GR-15 helper).
-                    let model = model_for_estimate(args, config);
+                    // B22: use effective_model (6-tier chain resolved above) so the
+                    // failure analytics record the model that was actually attempted —
+                    // not the 3-tier (cli > tweaks > freedom) fallback that dropped
+                    // any dispatch/skill override.
+                    let model = effective_model.as_deref().unwrap_or("unknown").to_string();
                     crate::daemon::usage_log::record_provider_call_best_effort(
                         provider_name,
                         &model,
@@ -2617,6 +2661,9 @@ async fn run_post_reply_pipelines(
     // Empty on non-MCP turns; the distiller falls back to the blind response
     // prefix when this slice is empty (backward compat with unit-test paths).
     mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord>,
+    // B22-TWEAKS-MODEL-01 — tweaks.model_default propagated from run_chat_with
+    // for model_for_estimate calls in token-cap and usage-log accounting.
+    tweaks_model: Option<String>,
     // GOLD-ADAPT-SKILL-09 — FilteredBlocks from BlockFilter hooks at
     // PreProviderCall. Restored into response_text after the PostProviderCall
     // hook stage so WAL/recall never see placeholder text.
@@ -2626,8 +2673,16 @@ async fn run_post_reply_pipelines(
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
     // Used by the turn-end context bar further below.
+    // B22: use model_used (seeded from the 6-tier effective_model in
+    // dispatch_provider) so the context-window cap reflects the model that was
+    // actually called.  Fall back to model_for_estimate only when model_used is
+    // empty — a guard against future regressions; normal paths always set it.
     let resolved_cap: u32 = {
-        let model_name_for_cap = model_for_estimate(&args, &config);
+        let model_name_for_cap = if model_used.is_empty() {
+            model_for_estimate(&args, &config, tweaks_model.as_deref())
+        } else {
+            model_used.clone()
+        };
         crate::tokens::budget::effective_cap(
             provider.name(),
             &model_name_for_cap,
@@ -3823,11 +3878,23 @@ pub async fn run_chat_with(
     });
     let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
 
+    // B22-TWEAKS-MODEL-01 — fail-loud Tweaks load at the chat-turn boundary.
+    // Bad `tweaks.toml` surfaces here with path context rather than being
+    // silently swallowed inside build_prompt_bundle via `.ok()`.
+    // Loaded once per turn; threaded into build_prompt_bundle, enforce_preflight,
+    // dispatch_provider, and run_post_reply_pipelines so every consumer reads
+    // the same value.
+    let tweaks = {
+        let p = crate::tweaks::Tweaks::default_path();
+        crate::tweaks::Tweaks::load_or_default(&p)
+            .with_context(|| format!("tweaks.toml invalid: {}", p.display()))?
+    };
+
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
     // Declared here so enforce_budget below uses it.
     let resolved_cap: u32 = {
-        let model_name_for_cap = model_for_estimate(&args, &config);
+        let model_name_for_cap = model_for_estimate(&args, &config, tweaks.model_default.as_deref());
         crate::tokens::budget::effective_cap(
             provider.name(),
             &model_name_for_cap,
@@ -3911,17 +3978,26 @@ pub async fn run_chat_with(
         estimate
     };
 
+    // B22 — known limitation: PROVIDER_REQUEST WAL records the pre-dispatch model tier
+    // (cli > tweaks > freedom > provider_default). The dispatch/skill model resolution
+    // (agent_model from enforce_preflight, skill_model from build_prompt_bundle) happens
+    // AFTER this emission point and cannot be known here without restructuring the
+    // enforce_preflight cost-gate flow. The corrected model is recorded downstream in
+    // the PROVIDER_RESPONSE WAL (via DispatchOutput.model_used) and in usage_log.
     // ODY-09: incognito turns skip PROVIDER_REQUEST — no prompt hash/metadata in WAL.
     if !args.incognito {
         let req_payload = serde_json::to_vec(&serde_json::json!({
             "operator_id": config.operator_id,
             "provider": provider.name(),
-            // SPEC-04: on/off-device classification of THIS request's
-            // provider ("local" | "cloud") — the durable per-turn audit
-            // anchor for the privacy posture, alongside the extraction-path
-            // 0x2E PROFILE_EXTRACT_TARGET frame.
             "target": crate::profile::runner::extract_target_label(provider.name()),
-            "model": args.model.clone().or_else(|| config.provider_model.clone()),
+            "model": args.model.as_deref()
+                .or(tweaks.model_default.as_deref())
+                .or(config.provider_model.as_deref())
+                .map(str::to_string),
+            "model_source": if args.model.is_some() { "cli" }
+                else if tweaks.model_default.is_some() { "tweaks" }
+                else if config.provider_model.is_some() { "freedom" }
+                else { "provider_default" },
             "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
             "prompt_bytes": prompt.len(),
             "prompt_bundle_hash": prompt_bundle_hash,
@@ -3978,6 +4054,8 @@ pub async fn run_chat_with(
         home,
         &writer,
         slash_skill_name,
+        // B22-TWEAKS-MODEL-01 — persona_override pre-loaded fail-loud at the chat boundary.
+        tweaks.persona_override.clone(),
     )
     .await;
 
@@ -4015,6 +4093,8 @@ pub async fn run_chat_with(
         &home,
         plan_attest_hash,
         agent_raw_layers,
+        // B22-TWEAKS-MODEL-01 — tweaks loaded fail-loud above; propagate here.
+        tweaks.model_default.clone(),
         &mut session_fired_once,
     )
     .await?
@@ -4050,13 +4130,20 @@ pub async fn run_chat_with(
             pending_block_restorations,
         ),
     };
-    // GOLD-CCPARITY-MODEL-02 — merge the model priority chain:
-    //   agent override (from Dispatch.model) > skill override (from
-    //   skill.manifest.model) > operator default (args.model).
-    // `agent_model` and `skill_model` are both Option<String>; the first
-    // Some wins. `dispatch_provider` receives the pre-resolved winner and
-    // applies it to the Request — args.model is never mutated.
+    // GOLD-CCPARITY-MODEL-02 / B22-TWEAKS-MODEL-01 — full priority chain:
+    //   dispatch > skill > CLI (args.model) > tweaks.model_default > freedom.yaml > provider default.
+    // model_source drives the WAL + retry/fallback diagnostics in dispatch_provider.
+    let agent_won = agent_model.is_some();
+    let skill_won = !agent_won && skill_model.is_some();
+    let tweaks_model_default = tweaks.model_default.clone();
+    let model_source: &'static str = if agent_won { "dispatch" }
+        else if skill_won { "skill" }
+        else if args.model.is_some() { "cli" }
+        else if tweaks_model_default.is_some() { "tweaks" }
+        else if config.provider_model.is_some() { "freedom" }
+        else { "provider_default" };
     let effective_model = agent_model.or(skill_model);
+
     let DispatchOutput {
         response_text,
         final_input_tokens,
@@ -4087,6 +4174,9 @@ pub async fn run_chat_with(
         effective_model,
         // GOLD-CCPARITY-EFFORT-03: per-skill reasoning-budget (None = provider default).
         skill_effort,
+        // B22-TWEAKS-MODEL-01: tweaks.model_default + resolved source for cost/WAL.
+        tweaks_model_default,
+        model_source,
         // GOLD-CCPARITY-SA-DENY-01: agent tool lists from enforce_preflight.
         agent_allowed_tools,
         agent_disallowed_tools,
@@ -4121,6 +4211,8 @@ pub async fn run_chat_with(
         mcp_tool_calls,
         // REVFIX-EXCERPTS-01 — structured call records for digest-based extraction.
         mcp_tool_records,
+        // B22-TWEAKS-MODEL-01 — thread tweaks model for ODY-16 token cap inside pipelines.
+        tweaks.model_default.clone(),
         // GOLD-ADAPT-SKILL-09 — blocks redacted at PreProviderCall by BlockFilter
         // hooks; restored inside run_post_reply_pipelines after PostProviderCall
         // hook stage so WAL/recall never see placeholders.
@@ -4456,15 +4548,24 @@ async fn record_quota_exceeded(
     );
 }
 
-/// Resolve the model string the cost predictor should price against
-/// — prefers `--model` CLI flag, then `freedom.yaml::provider_model`,
-/// falls back to "unknown" so the lookup table returns None and the
-/// estimate defaults to zero (operator gets a free-tier preview
-/// rather than a panic).
-fn model_for_estimate(args: &ChatArgs, config: &crate::config::FreedomConfig) -> String {
+/// Resolve the model string the cost predictor and diagnostics should use.
+///
+/// Priority: CLI `--model` > `tweaks.model_default` > `freedom.yaml::provider_model`
+/// > "unknown" (so the lookup table returns None and the estimate defaults to
+/// zero rather than panicking on a missing entry).
+///
+/// B22: `tweaks_model` is the `Tweaks.model_default` from the chat boundary load;
+/// pass `None` at any call site where tweaks are not in scope yet.
+fn model_for_estimate(
+    args: &ChatArgs,
+    config: &crate::config::FreedomConfig,
+    tweaks_model: Option<&str>,
+) -> String {
     args.model
-        .clone()
-        .or_else(|| config.provider_model.clone())
+        .as_deref()
+        .or(tweaks_model)
+        .or(config.provider_model.as_deref())
+        .map(str::to_string)
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -9629,6 +9730,10 @@ mod tests {
             override_model,
             // GOLD-CCPARITY-EFFORT-03: no effort override in model-capture tests.
             None,
+            // B22-TWEAKS-MODEL-01: no tweaks default; source is the dispatch
+            // override_model layer these capture tests exercise.
+            None,
+            "dispatch",
             // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
             vec![],
             vec![],
@@ -9794,6 +9899,9 @@ mod tests {
             "0000000000000002",
             None, // override_model
             override_effort,
+            // B22-TWEAKS-MODEL-01: no tweaks default; provider-default source.
+            None,
+            "provider_default",
             // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
             vec![],
             vec![],

@@ -1,9 +1,9 @@
 //! GOLD-ADOPT-25 — Dictation input mode.
 //!
 //! Captures microphone audio, gates it through `SmoothedVad` (when
-//! `media.vad_enabled` is true), and routes completed utterances to the
-//! active local STT pipeline (candle `WhisperEngine` → `transcribe_if_cached`
-//! path or `faster-whisper` subprocess).
+//! `media.vad_enabled` is true), and routes completed utterances through
+//! `dispatch_transcription` — the B20 unified STT entry point that enforces
+//! provider selection, cloud gating, audit, and fallback in one place.
 //!
 //! # Scope verdict (GOLD-ADOPT-25)
 //!
@@ -161,8 +161,9 @@ pub fn transcribe_utterance(
              ║  NEOTH DICTATION — MICROPHONE NOTICE                        ║\n\
              ║                                                              ║\n\
              ║  Dictation mode captures audio from your microphone and      ║\n\
-             ║  transcribes it locally using the Whisper model. Audio is    ║\n\
-             ║  NEVER sent to a cloud service by this path.                 ║\n\
+             ║  transcribes it using the configured STT provider            ║\n\
+             ║  (local candle Whisper by default; cloud only if explicitly  ║\n\
+             ║  enabled in freedom.yaml media.stt).                         ║\n\
              ║                                                              ║\n\
              ║  To disable dictation at any time:                           ║\n\
              ║    neoth config set media.dictation_enabled false            ║\n\
@@ -195,7 +196,56 @@ pub fn transcribe_utterance(
         std::borrow::Cow::Owned(resampled)
     };
 
-    let (text, status) = crate::media::audio::transcribe_pcm_samples(&samples);
+    // Fix FAIL-1/2: local-only path is fully sync — no async runtime, no
+    // WhisperLocalProvider::new(), no Handle::current() panic in plain #[test]s.
+    // Cloud dispatch only fires when a cloud provider is wired AND
+    // cloud_stt_enabled=true; even then a missing tokio runtime falls back to
+    // local with a warning (no panic).
+    let needs_cloud = !config.stt.primary.is_local()
+        || config.stt.fallback.map(|f| !f.is_local()).unwrap_or(false);
+
+    let (text, status) = if needs_cloud && config.cloud_stt_enabled {
+        let wav_bytes = crate::media::stt_provider::pcm_bytes_to_wav(
+            &samples
+                .iter()
+                .flat_map(|s| s.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        );
+        let stt_result = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.block_on(
+                crate::media::stt_provider::dispatch_transcription(
+                    &config.stt,
+                    config,
+                    &wav_bytes,
+                    None, // no WAL writer for dictation
+                ),
+            ),
+            Err(_) => {
+                // No tokio runtime (e.g. plain #[test]) and cloud was requested —
+                // warn and fall back to local so the process does not panic.
+                tracing::warn!(
+                    "dictation: cloud STT configured but no tokio runtime — \
+                     falling back to local transcription"
+                );
+                let (t, s) = crate::media::audio::transcribe_pcm_samples(&samples);
+                return if t.is_empty() {
+                    Err(DictationError::Transcription(s.to_string()))
+                } else {
+                    info!(status = s, chars = t.len(), "dictation: transcribed");
+                    Ok(t)
+                };
+            }
+        };
+        match stt_result {
+            Ok(r) if !r.text.is_empty() => (r.text, "transcribed"),
+            Ok(_) => (String::new(), "empty transcript"),
+            Err(e) => return Err(DictationError::Transcription(e)),
+        }
+    } else {
+        // Local-only (default): use the sync transcribe_if_cached seam.
+        // No async, no real engine construction, no Handle::current() required.
+        crate::media::audio::transcribe_pcm_samples(&samples)
+    };
     if text.is_empty() {
         Err(DictationError::Transcription(status.to_string()))
     } else {

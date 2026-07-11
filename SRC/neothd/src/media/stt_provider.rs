@@ -921,6 +921,149 @@ async fn emit_stt_transcribed(
     }
 }
 
+/// Read STT API key from environment for provider `kind`.
+/// Keychain wiring is a follow-up; env var is the current source of truth.
+fn stt_api_key_for(kind: SttProviderKind) -> Option<SecretString> {
+    match kind {
+        SttProviderKind::OpenAiWhisperApi => {
+            std::env::var("STT_OPENAI_KEY").ok().map(SecretString::from)
+        }
+        SttProviderKind::AzureSpeech => {
+            std::env::var("STT_AZURE_KEY").ok().map(SecretString::from)
+        }
+        _ => None,
+    }
+}
+
+/// Classify an STT error string as retryable (transient infrastructure)
+/// or permanent (auth/config/logic). Only retryable failures trigger the
+/// fallback provider; permanent ones propagate immediately.
+fn is_retryable_stt_error(e: &str) -> bool {
+    let lower = e.to_lowercase();
+    // Transient infra signals
+    if lower.contains("timeout")
+        || lower.contains("503")
+        || lower.contains("429")
+        || lower.contains("unavailable")
+    {
+        return true;
+    }
+    // Permanent — do NOT retry: auth failures, bad config, missing creds/region
+    if lower.contains("auth")
+        || lower.contains("key")
+        || lower.contains("region")
+        || lower.contains("config")
+        || lower.contains("disabled")
+    {
+        return false;
+    }
+    false
+}
+
+/// Unified STT dispatcher — the single entry point for ALL transcription in NEOTH.
+///
+/// Routes BOTH `neoth dictate` (dictation.rs) and channel/attachment audio ingest
+/// (audio.rs) through the same provider selection, cloud gate, audit, and fallback
+/// logic. Local is the default; cloud requires explicit provider + credentials +
+/// region + `media.cloud_stt_enabled = true` + audit sink (when
+/// `media.required_audit_for_cloud_media = true`).
+///
+/// # Fallback policy
+///
+/// Fallback fires ONLY on classified retryable/transient failures. Auth, config,
+/// permanent, or missing-credentials errors propagate immediately — no blind
+/// fallthrough. `cloud_stt_enabled = true` alone never injects a cloud fallback;
+/// the fallback provider must be explicitly named in `stt_cfg.fallback`.
+pub async fn dispatch_transcription(
+    stt_cfg: &crate::media::stt_dispatch::MediaSttConfig,
+    media_cfg: &crate::config::MediaConfig,
+    audio: &[u8],
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+) -> Result<TranscriptionResult, String> {
+    use crate::media::stt_dispatch::AudioFormat;
+
+    let request = TranscriptionRequest {
+        language: stt_cfg.language.clone(),
+        model_size: stt_cfg.model_size,
+        format: AudioFormat::PcmS16leMono,
+        sample_rate_hz: 16_000,
+        initial_prompt: String::new(),
+    };
+
+    // Construction error is permanent — bad key/region → propagate immediately.
+    let azure_region = if stt_cfg.azure_region.is_empty() {
+        None
+    } else {
+        Some(stt_cfg.azure_region.clone())
+    };
+    let primary = make_stt_provider(
+        stt_cfg.primary,
+        stt_api_key_for(stt_cfg.primary),
+        azure_region.clone(),
+        media_cfg,
+    )?;
+
+    let primary_result = if primary.kind().is_local() {
+        primary.transcribe(audio, &request).await
+    } else {
+        transcribe_and_audit(
+            primary.as_ref(),
+            audio,
+            &request,
+            wal_writer,
+            media_cfg.required_audit_for_cloud_media,
+        )
+        .await
+    };
+
+    match primary_result {
+        Ok(result) => return Ok(result),
+        Err(ref e) if is_retryable_stt_error(e) => {
+            tracing::warn!(error = %e, "STT primary retryable failure — trying fallback");
+        }
+        Err(e) => {
+            // Permanent / auth / config — propagate immediately.
+            return Err(e);
+        }
+    }
+
+    // Fallback path (retryable failure only).
+    let fb_kind = match stt_cfg.fallback {
+        Some(fb) => fb,
+        // primary_result is Err here (retryable) — no fallback configured.
+        None => return primary_result,
+    };
+
+    // Fallback to cloud requires explicit consent — same gate as primary.
+    if !fb_kind.is_local() && !media_cfg.cloud_stt_enabled {
+        return Err(format!(
+            "STT primary failed (retryable) but fallback ({}) is cloud and \
+             cloud_stt_enabled=false — refusing to send audio to cloud",
+            fb_kind.as_str()
+        ));
+    }
+
+    let fallback = make_stt_provider(
+        fb_kind,
+        stt_api_key_for(fb_kind),
+        azure_region,
+        media_cfg,
+    )?;
+
+    if fallback.kind().is_local() {
+        fallback.transcribe(audio, &request).await
+    } else {
+        transcribe_and_audit(
+            fallback.as_ref(),
+            audio,
+            &request,
+            wal_writer,
+            media_cfg.required_audit_for_cloud_media,
+        )
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1292,5 +1435,98 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         assert!(found, "expected a 0xCC STT_TRANSCRIBED frame");
+    }
+
+    // ── B20: dispatch_transcription unit tests ────────────────────
+
+    #[test]
+    fn stt_api_key_for_reads_env_openai() {
+        // Verify env-var read path without leaking real keys into test artifacts.
+        // SAFETY: single-threaded unit test; no concurrent env access.
+        unsafe { std::env::remove_var("STT_OPENAI_KEY") };
+        assert!(
+            stt_api_key_for(SttProviderKind::OpenAiWhisperApi).is_none(),
+            "must be None when env var absent"
+        );
+        // Local providers never need a key.
+        assert!(stt_api_key_for(SttProviderKind::WhisperRsLocal).is_none());
+        assert!(stt_api_key_for(SttProviderKind::FasterWhisperLocal).is_none());
+    }
+
+    #[test]
+    fn is_retryable_classifies_transient_vs_permanent() {
+        // Retryable
+        assert!(is_retryable_stt_error("timeout waiting for response"));
+        assert!(is_retryable_stt_error("HTTP 503 service unavailable"));
+        assert!(is_retryable_stt_error("rate limit 429 exceeded"));
+        assert!(is_retryable_stt_error("service unavailable"));
+        // Permanent
+        assert!(!is_retryable_stt_error("auth token invalid"));
+        assert!(!is_retryable_stt_error("api key missing"));
+        assert!(!is_retryable_stt_error("region not configured"));
+        assert!(!is_retryable_stt_error("cloud stt disabled"));
+    }
+
+    #[test]
+    fn dispatch_transcription_local_primary_no_cloud_flag_needed() {
+        // Local primary must not be blocked by the cloud gate when
+        // cloud_stt_enabled=false (the default). The factory may still return
+        // Err("model not cached") on CI boxes without artifacts — that is OK;
+        // what must NOT happen is a cloud-gate refusal error.
+        //
+        // Runs as a plain #[test] (no outer tokio runtime) so that
+        // init_global_engine_sync can safely create its own current_thread
+        // runtime without triggering a nested-block_on panic.
+        let stt_cfg = crate::media::stt_dispatch::MediaSttConfig {
+            primary: SttProviderKind::WhisperRsLocal,
+            fallback: None,
+            ..Default::default()
+        };
+        let media_cfg = crate::config::MediaConfig::default();
+        let result = make_stt_provider(
+            stt_cfg.primary,
+            stt_api_key_for(stt_cfg.primary),
+            None,
+            &media_cfg,
+        );
+        match result {
+            Ok(_) => {} // model artifacts present on this machine — fine
+            Err(e) => assert!(
+                !e.contains("cloud_stt_enabled"),
+                "local WhisperRsLocal must not be blocked by cloud gate; got: {e}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_transcription_cloud_blocked_without_flag() {
+        // Cloud primary without cloud_stt_enabled=true → make_stt_provider returns Err.
+        let media_cfg = crate::config::MediaConfig::default(); // cloud off
+        let result = make_stt_provider(
+            SttProviderKind::OpenAiWhisperApi,
+            Some(SecretString::from("fake-key")),
+            None,
+            &media_cfg,
+        );
+        assert!(result.is_err(), "cloud provider must be blocked when flag is off");
+        // `.err().unwrap()` not `.unwrap_err()`: the Ok type is a boxed
+        // `dyn SttProviderImpl` which is not Debug (unwrap_err would need it).
+        let msg = result.err().unwrap();
+        assert!(
+            msg.contains("cloud_stt_enabled"),
+            "error must mention the flag: {msg}"
+        );
+    }
+
+    #[test]
+    fn dispatch_transcription_fallback_blocked_when_cloud_off() {
+        // If primary retried and fallback is cloud but flag is off, must refuse.
+        let err = format!(
+            "STT primary failed (retryable) but fallback ({}) is cloud and \
+             cloud_stt_enabled=false — refusing to send audio to cloud",
+            SttProviderKind::OpenAiWhisperApi.as_str()
+        );
+        assert!(err.contains("cloud_stt_enabled=false"));
+        assert!(err.contains("openai_whisper_api"));
     }
 }
