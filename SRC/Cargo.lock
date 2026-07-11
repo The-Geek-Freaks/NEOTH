@@ -7337,6 +7337,7 @@ dependencies = [
  "slint",
  "slint-build",
  "tempfile",
+ "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
 ]

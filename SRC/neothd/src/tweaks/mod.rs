@@ -212,6 +212,293 @@ pub fn resolve_effective_model<'a>(
     (None, ModelSource::ProviderDefault)
 }
 
+// ── B23 — THEME-TWEAKS-RUNTIME ───────────────────────────────────────────────
+
+/// Which layer in the theme-precedence chain provided the effective value.
+///
+/// Walk order (highest → lowest priority):
+/// `Dotfile` (persisted `.gui-theme`/`.gui-density`) → `Tweaks` (`[theme]` block)
+/// → `BuiltIn` (hard-coded NEOTH defaults).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeSource {
+    /// Value came from a persisted dotfile (`.gui-theme` / `.gui-density`).
+    Dotfile,
+    /// Value came from the `[theme]` block in `tweaks.toml`.
+    Tweaks,
+    /// Value is the NEOTH built-in default (no operator override).
+    BuiltIn,
+}
+
+impl ThemeSource {
+    /// Static label used in diagnostics and the `tweaks show` renderer.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ThemeSource::Dotfile => "dotfile",
+            ThemeSource::Tweaks => "tweaks",
+            ThemeSource::BuiltIn => "built_in",
+        }
+    }
+}
+
+impl Default for ThemeSource {
+    fn default() -> Self {
+        ThemeSource::BuiltIn
+    }
+}
+
+/// Support matrix: each field name paired with its status string.
+///
+/// Status strings:
+/// - `"active/<sink-name>"` — wired to a named Slint property or TUI surface.
+/// - `"reserved/<reason>"` — parsed but no sink implemented yet; a visible
+///   diagnostic is emitted when the field is set by the operator.
+///
+/// Every field that appears in `ThemeConfig` PLUS `color_theme` and `statusline`
+/// (top-level `Tweaks` fields that belong to the theme surface) is listed here.
+/// Silent parse-and-ignore is forbidden: any field that is set but not `active`
+/// must appear in `EffectiveGuiTheme::unsupported_keys`.
+pub const THEME_SUPPORT_MATRIX: &[(&str, &str)] = &[
+    // ── top-level Tweaks fields that touch the theme surface ───────────────
+    ("color_theme",        "active/Theme.dark"),
+    ("statusline",         "reserved/no-tui-sink"),
+    // ── [theme] block — 5 actively wired fields ────────────────────────────
+    ("compact_mode",       "active/Theme.density-mode"),
+    ("font_family",        "active/Theme.font-sans-override"),
+    ("font_size_pt",       "active/Theme.font-size-pt-override"),
+    ("sidebar_width_px",   "active/Theme.sidebar-w-override"),
+    ("input_height_lines", "active/Theme.input-height-lines-override"),
+    // ── [theme] block — validated, no Slint sink yet ───────────────────────
+    ("panel_opacity",      "reserved/validated-no-sink"),
+    // ── [theme] block — 11 reserved, no sink ──────────────────────────────
+    ("accent_color",       "reserved/no-sink"),
+    ("background_color",   "reserved/no-sink"),
+    ("foreground_color",   "reserved/no-sink"),
+    ("border_radius_px",   "reserved/no-sink"),
+    ("show_token_count",   "reserved/no-sink"),
+    ("show_model_badge",   "reserved/no-sink"),
+    ("chat_bubble_style",  "reserved/no-sink"),
+    ("icon_set",           "reserved/no-sink"),
+    ("animation_speed",    "reserved/no-sink"),
+    ("scrollbar_style",    "reserved/no-sink"),
+    ("header_hidden",      "reserved/no-sink"),
+    ("sidebar_collapsed",  "reserved/no-sink"),
+];
+
+/// Resolved effective GUI theme values with per-field source attribution.
+///
+/// Computed once before first paint (pure, no I/O). Consumed by the Slint GUI
+/// bootstrap in `neothd-gui` and by `neoth tweaks show`.
+#[derive(Clone, Debug, Serialize)]
+pub struct EffectiveGuiTheme {
+    /// `true` = dark mode (NEOTH default).
+    pub dark: bool,
+    /// Which precedence layer resolved `dark`.
+    pub dark_source: ThemeSource,
+    /// Density mode: 0=compact  1=normal  2=spacious.
+    pub density_mode: i32,
+    /// Which precedence layer resolved `density_mode`.
+    pub density_source: ThemeSource,
+    /// Font family override — maps to `Theme.font-sans-override`.
+    pub font_family: Option<String>,
+    /// Font size in points — maps to `Theme.font-size-pt-override`.
+    pub font_size_pt: Option<u8>,
+    /// Sidebar width in pixels — maps to `Theme.sidebar-w-override`.
+    pub sidebar_width_px: Option<u32>,
+    /// Input-area height in lines — maps to `Theme.input-height-lines-override`.
+    pub input_height_lines: Option<u8>,
+    /// Panel opacity (0.0–1.0), validated; no Slint sink yet.
+    pub panel_opacity: Option<f32>,
+    /// Field names that are set in `tweaks.toml` but have no active sink.
+    pub unsupported_keys: Vec<String>,
+    /// Human-readable diagnostics: invalid values, dotfile fall-through, etc.
+    pub diagnostics: Vec<String>,
+}
+
+impl Default for EffectiveGuiTheme {
+    fn default() -> Self {
+        Self {
+            dark: true,
+            dark_source: ThemeSource::BuiltIn,
+            density_mode: 1,
+            density_source: ThemeSource::BuiltIn,
+            font_family: None,
+            font_size_pt: None,
+            sidebar_width_px: None,
+            input_height_lines: None,
+            panel_opacity: None,
+            unsupported_keys: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
+/// Resolve the effective GUI theme from the precedence chain.
+///
+/// Pure — no I/O, no side effects, trivially unit-testable.
+///
+/// **Precedence:** valid dotfile > tweaks baseline > built-in default.
+/// Invalid dotfile values fall through WITH a diagnostic instead of
+/// silently to `dark`/`normal`.
+///
+/// # Parameters
+/// - `tweaks` — parsed `tweaks.toml`, or `Tweaks::default()` when missing.
+/// - `dotfile_theme` — trimmed content of `~/.neoth/.gui-theme`, or `None`.
+/// - `dotfile_density` — parsed density (0/1/2) from `~/.neoth/.gui-density`,
+///   or `None` when the file is absent/unparseable.
+pub fn resolve_effective_gui_theme(
+    tweaks: &Tweaks,
+    dotfile_theme: Option<&str>,
+    dotfile_density: Option<i32>,
+) -> EffectiveGuiTheme {
+    let mut e = EffectiveGuiTheme::default();
+
+    // ── color_theme / dark ────────────────────────────────────────────────
+    match dotfile_theme {
+        Some("dark") => {
+            e.dark = true;
+            e.dark_source = ThemeSource::Dotfile;
+        }
+        Some("light") => {
+            e.dark = false;
+            e.dark_source = ThemeSource::Dotfile;
+        }
+        Some(s) => {
+            // Non-empty but unrecognised → fall through with diagnostic.
+            e.diagnostics.push(format!(
+                "invalid dotfile theme '{}'; falling through to tweaks color_theme",
+                s
+            ));
+            resolve_dark_from_tweaks(tweaks, &mut e);
+        }
+        None => {
+            resolve_dark_from_tweaks(tweaks, &mut e);
+        }
+    }
+
+    // ── density_mode / compact_mode ───────────────────────────────────────
+    match dotfile_density {
+        Some(v) if (0..=2).contains(&v) => {
+            e.density_mode = v;
+            e.density_source = ThemeSource::Dotfile;
+        }
+        Some(v) => {
+            e.diagnostics.push(format!(
+                "invalid dotfile density {}; falling through to tweaks compact_mode",
+                v
+            ));
+            resolve_density_from_tweaks(tweaks, &mut e);
+        }
+        None => {
+            resolve_density_from_tweaks(tweaks, &mut e);
+        }
+    }
+
+    // ── font_family ───────────────────────────────────────────────────────
+    e.font_family = tweaks.theme.font_family.clone();
+
+    // ── font_size_pt ──────────────────────────────────────────────────────
+    e.font_size_pt = tweaks.theme.font_size_pt;
+
+    // ── sidebar_width_px ──────────────────────────────────────────────────
+    e.sidebar_width_px = tweaks.theme.sidebar_width_px;
+
+    // ── input_height_lines ────────────────────────────────────────────────
+    e.input_height_lines = tweaks.theme.input_height_lines;
+
+    // ── panel_opacity (validated; no Slint sink yet) ──────────────────────
+    if let Some(v) = tweaks.theme.panel_opacity {
+        if v.is_finite() && (0.0..=1.0).contains(&v) {
+            e.panel_opacity = Some(v);
+        } else {
+            e.diagnostics.push(format!(
+                "panel_opacity {} is not finite or out of range 0.0..=1.0; ignoring",
+                v
+            ));
+            e.unsupported_keys.push("panel_opacity".to_string());
+        }
+    }
+
+    // ── reserved fields — emit diagnostic when set ────────────────────────
+    macro_rules! reserved_opt {
+        ($field:expr, $key:literal) => {
+            if $field.is_some() {
+                e.unsupported_keys.push($key.to_string());
+                e.diagnostics.push(format!(
+                    "'{}' is set but has no active sink (reserved/no-sink)",
+                    $key
+                ));
+            }
+        };
+    }
+    reserved_opt!(tweaks.theme.accent_color,     "accent_color");
+    reserved_opt!(tweaks.theme.background_color,  "background_color");
+    reserved_opt!(tweaks.theme.foreground_color,  "foreground_color");
+    reserved_opt!(tweaks.theme.border_radius_px,  "border_radius_px");
+    reserved_opt!(tweaks.theme.show_token_count,  "show_token_count");
+    reserved_opt!(tweaks.theme.show_model_badge,  "show_model_badge");
+    reserved_opt!(tweaks.theme.chat_bubble_style, "chat_bubble_style");
+    reserved_opt!(tweaks.theme.icon_set,          "icon_set");
+    reserved_opt!(tweaks.theme.animation_speed,   "animation_speed");
+    reserved_opt!(tweaks.theme.scrollbar_style,   "scrollbar_style");
+    reserved_opt!(tweaks.theme.header_hidden,     "header_hidden");
+    reserved_opt!(tweaks.theme.sidebar_collapsed, "sidebar_collapsed");
+
+    // ── statusline (top-level) ────────────────────────────────────────────
+    if tweaks.statusline.is_some() {
+        e.unsupported_keys.push("statusline".to_string());
+        e.diagnostics.push(
+            "'statusline' is set but has no TUI sink yet (reserved/no-tui-sink)".to_string(),
+        );
+    }
+
+    e
+}
+
+/// Resolve `dark` from `tweaks.color_theme`, falling back to built-in dark.
+fn resolve_dark_from_tweaks(tweaks: &Tweaks, e: &mut EffectiveGuiTheme) {
+    match tweaks.color_theme.as_deref() {
+        Some("light") => {
+            e.dark = false;
+            e.dark_source = ThemeSource::Tweaks;
+        }
+        Some("dark") | Some("auto") => {
+            e.dark = true;
+            e.dark_source = ThemeSource::Tweaks;
+        }
+        Some(other) => {
+            e.diagnostics.push(format!(
+                "color_theme '{}' is not a valid value (light|dark|auto); using built-in dark",
+                other
+            ));
+            e.dark = true;
+            e.dark_source = ThemeSource::BuiltIn;
+        }
+        None => {
+            e.dark = true;
+            e.dark_source = ThemeSource::BuiltIn;
+        }
+    }
+}
+
+/// Resolve `density_mode` from `tweaks.theme.compact_mode`, falling back to 1 (normal).
+fn resolve_density_from_tweaks(tweaks: &Tweaks, e: &mut EffectiveGuiTheme) {
+    match tweaks.theme.compact_mode {
+        Some(true) => {
+            e.density_mode = 0;
+            e.density_source = ThemeSource::Tweaks;
+        }
+        Some(false) => {
+            e.density_mode = 1;
+            e.density_source = ThemeSource::Tweaks;
+        }
+        None => {
+            e.density_mode = 1;
+            e.density_source = ThemeSource::BuiltIn;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +753,295 @@ animation_speed = "reduced"
             msg.contains("parse TOML") || msg.contains("bad.toml"),
             "expected path context in error, got: {msg}"
         );
+    }
+
+    // ── B23 — resolve_effective_gui_theme ─────────────────────────────────
+
+    #[test]
+    fn b23_dotfile_dark_beats_tweaks_light() {
+        let t = Tweaks { color_theme: Some("light".into()), ..Default::default() };
+        let e = resolve_effective_gui_theme(&t, Some("dark"), None);
+        assert!(e.dark, "dotfile dark must win over tweaks light");
+        assert_eq!(e.dark_source, ThemeSource::Dotfile);
+    }
+
+    #[test]
+    fn b23_dotfile_light_beats_tweaks_dark() {
+        let t = Tweaks { color_theme: Some("dark".into()), ..Default::default() };
+        let e = resolve_effective_gui_theme(&t, Some("light"), None);
+        assert!(!e.dark, "dotfile light must win over tweaks dark");
+        assert_eq!(e.dark_source, ThemeSource::Dotfile);
+    }
+
+    #[test]
+    fn b23_invalid_dotfile_theme_falls_through_with_diagnostic() {
+        let t = Tweaks { color_theme: Some("dark".into()), ..Default::default() };
+        let e = resolve_effective_gui_theme(&t, Some("solarized"), None);
+        assert!(e.dark, "should fall through to tweaks dark");
+        assert_eq!(e.dark_source, ThemeSource::Tweaks);
+        assert!(
+            e.diagnostics.iter().any(|d| d.contains("solarized")),
+            "diagnostic must name the invalid value"
+        );
+    }
+
+    #[test]
+    fn b23_tweaks_light_beats_builtin_dark() {
+        let t = Tweaks { color_theme: Some("light".into()), ..Default::default() };
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert!(!e.dark);
+        assert_eq!(e.dark_source, ThemeSource::Tweaks);
+    }
+
+    #[test]
+    fn b23_auto_color_theme_resolves_to_dark() {
+        let t = Tweaks { color_theme: Some("auto".into()), ..Default::default() };
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert!(e.dark, "auto must resolve to dark");
+        assert_eq!(e.dark_source, ThemeSource::Tweaks);
+    }
+
+    #[test]
+    fn b23_invalid_tweaks_color_theme_falls_to_builtin_dark_with_diagnostic() {
+        let t = Tweaks { color_theme: Some("matrix".into()), ..Default::default() };
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert!(e.dark);
+        assert_eq!(e.dark_source, ThemeSource::BuiltIn);
+        assert!(e.diagnostics.iter().any(|d| d.contains("matrix")));
+    }
+
+    #[test]
+    fn b23_builtin_defaults_to_dark_normal_when_all_absent() {
+        let t = Tweaks::default();
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert!(e.dark);
+        assert_eq!(e.dark_source, ThemeSource::BuiltIn);
+        assert_eq!(e.density_mode, 1);
+        assert_eq!(e.density_source, ThemeSource::BuiltIn);
+        assert!(e.unsupported_keys.is_empty());
+        assert!(e.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn b23_dotfile_density_beats_compact_mode_tweaks() {
+        let mut t = Tweaks::default();
+        t.theme.compact_mode = Some(true); // would give density=0
+        let e = resolve_effective_gui_theme(&t, None, Some(2)); // dotfile=spacious
+        assert_eq!(e.density_mode, 2);
+        assert_eq!(e.density_source, ThemeSource::Dotfile);
+    }
+
+    #[test]
+    fn b23_compact_mode_true_gives_density_0() {
+        let mut t = Tweaks::default();
+        t.theme.compact_mode = Some(true);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.density_mode, 0);
+        assert_eq!(e.density_source, ThemeSource::Tweaks);
+    }
+
+    #[test]
+    fn b23_compact_mode_false_gives_density_1() {
+        let mut t = Tweaks::default();
+        t.theme.compact_mode = Some(false);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.density_mode, 1);
+        assert_eq!(e.density_source, ThemeSource::Tweaks);
+    }
+
+    #[test]
+    fn b23_invalid_dotfile_density_falls_through_with_diagnostic() {
+        let t = Tweaks::default();
+        let e = resolve_effective_gui_theme(&t, None, Some(99));
+        assert_eq!(e.density_mode, 1, "should fall to built-in normal");
+        assert!(e.diagnostics.iter().any(|d| d.contains("density") && d.contains("99")));
+    }
+
+    #[test]
+    fn b23_font_family_passthrough() {
+        let mut t = Tweaks::default();
+        t.theme.font_family = Some("JetBrains Mono".into());
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.font_family.as_deref(), Some("JetBrains Mono"));
+    }
+
+    #[test]
+    fn b23_font_size_pt_passthrough() {
+        let mut t = Tweaks::default();
+        t.theme.font_size_pt = Some(16);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.font_size_pt, Some(16));
+    }
+
+    #[test]
+    fn b23_sidebar_width_px_passthrough() {
+        let mut t = Tweaks::default();
+        t.theme.sidebar_width_px = Some(320);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.sidebar_width_px, Some(320));
+    }
+
+    #[test]
+    fn b23_input_height_lines_passthrough() {
+        let mut t = Tweaks::default();
+        t.theme.input_height_lines = Some(5);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.input_height_lines, Some(5));
+    }
+
+    #[test]
+    fn b23_panel_opacity_valid_passthrough() {
+        let mut t = Tweaks::default();
+        t.theme.panel_opacity = Some(0.8);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.panel_opacity, Some(0.8));
+        assert!(!e.unsupported_keys.contains(&"panel_opacity".to_string()));
+    }
+
+    #[test]
+    fn b23_panel_opacity_nonfinite_rejected_with_diagnostic() {
+        let mut t = Tweaks::default();
+        t.theme.panel_opacity = Some(f32::INFINITY);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert!(e.panel_opacity.is_none());
+        assert!(e.unsupported_keys.contains(&"panel_opacity".to_string()));
+        assert!(e.diagnostics.iter().any(|d| d.contains("panel_opacity")));
+    }
+
+    #[test]
+    fn b23_panel_opacity_out_of_range_rejected() {
+        let mut t = Tweaks::default();
+        t.theme.panel_opacity = Some(1.5);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert!(e.panel_opacity.is_none());
+        assert!(e.unsupported_keys.contains(&"panel_opacity".to_string()));
+        assert!(e.diagnostics.iter().any(|d| d.contains("panel_opacity") && d.contains("1.5")));
+    }
+
+    #[test]
+    fn b23_panel_opacity_zero_and_one_are_valid_boundaries() {
+        let mut t = Tweaks::default();
+        t.theme.panel_opacity = Some(0.0);
+        assert_eq!(resolve_effective_gui_theme(&t, None, None).panel_opacity, Some(0.0));
+        t.theme.panel_opacity = Some(1.0);
+        assert_eq!(resolve_effective_gui_theme(&t, None, None).panel_opacity, Some(1.0));
+    }
+
+    #[test]
+    fn b23_reserved_keys_produce_unsupported_and_diagnostics() {
+        let mut t = Tweaks::default();
+        t.theme.accent_color = Some("#ff0000".into());
+        t.theme.icon_set = Some("feather".into());
+        t.theme.animation_speed = Some("none".into());
+        let e = resolve_effective_gui_theme(&t, None, None);
+        for key in &["accent_color", "icon_set", "animation_speed"] {
+            assert!(
+                e.unsupported_keys.contains(&(*key).to_string()),
+                "missing from unsupported_keys: {}",
+                key
+            );
+            assert!(
+                e.diagnostics.iter().any(|d| d.contains(key)),
+                "no diagnostic for: {}",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn b23_all_reserved_theme_fields_produce_diagnostics() {
+        let mut t = Tweaks::default();
+        t.theme.accent_color     = Some("x".into());
+        t.theme.background_color = Some("x".into());
+        t.theme.foreground_color = Some("x".into());
+        t.theme.border_radius_px = Some(4);
+        t.theme.show_token_count = Some(true);
+        t.theme.show_model_badge = Some(false);
+        t.theme.chat_bubble_style = Some("rounded".into());
+        t.theme.icon_set         = Some("feather".into());
+        t.theme.animation_speed  = Some("none".into());
+        t.theme.scrollbar_style  = Some("thin".into());
+        t.theme.header_hidden    = Some(true);
+        t.theme.sidebar_collapsed = Some(false);
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert_eq!(e.unsupported_keys.len(), 12, "all 12 reserved fields must appear");
+    }
+
+    #[test]
+    fn b23_statusline_set_produces_reserved_diagnostic() {
+        let t = Tweaks {
+            statusline: Some("neoth • {operator}".into()),
+            ..Default::default()
+        };
+        let e = resolve_effective_gui_theme(&t, None, None);
+        assert!(e.unsupported_keys.contains(&"statusline".to_string()));
+        assert!(e.diagnostics.iter().any(|d| d.contains("statusline")));
+    }
+
+    #[test]
+    fn b23_complete_non_default_fixture_changes_all_supported_fields() {
+        let mut t = Tweaks {
+            color_theme: Some("light".into()),
+            statusline: Some("s".into()),
+            ..Default::default()
+        };
+        t.theme.compact_mode      = Some(true);
+        t.theme.font_family       = Some("Inter".into());
+        t.theme.font_size_pt      = Some(14);
+        t.theme.sidebar_width_px  = Some(300);
+        t.theme.input_height_lines = Some(4);
+        // Dotfile wins for color and density
+        let e = resolve_effective_gui_theme(&t, Some("dark"), Some(1));
+        assert!(e.dark);
+        assert_eq!(e.dark_source, ThemeSource::Dotfile);
+        assert_eq!(e.density_mode, 1);
+        assert_eq!(e.density_source, ThemeSource::Dotfile);
+        assert_eq!(e.font_family.as_deref(), Some("Inter"));
+        assert_eq!(e.font_size_pt, Some(14));
+        assert_eq!(e.sidebar_width_px, Some(300));
+        assert_eq!(e.input_height_lines, Some(4));
+    }
+
+    #[test]
+    fn b23_support_matrix_covers_all_18_theme_fields_plus_color_and_statusline() {
+        let keys: Vec<&str> = THEME_SUPPORT_MATRIX.iter().map(|(k, _)| *k).collect();
+        // All 18 ThemeConfig fields
+        for field in &[
+            "accent_color", "background_color", "foreground_color", "font_family",
+            "font_size_pt", "sidebar_width_px", "border_radius_px", "compact_mode",
+            "show_token_count", "show_model_badge", "chat_bubble_style", "icon_set",
+            "animation_speed", "scrollbar_style", "input_height_lines", "panel_opacity",
+            "header_hidden", "sidebar_collapsed",
+        ] {
+            assert!(keys.contains(field), "support matrix missing ThemeConfig field: {}", field);
+        }
+        // Top-level theme-surface fields
+        assert!(keys.contains(&"color_theme"), "support matrix missing top-level: color_theme");
+        assert!(keys.contains(&"statusline"),  "support matrix missing top-level: statusline");
+    }
+
+    #[test]
+    fn b23_support_matrix_active_fields_named_correctly() {
+        let active: Vec<&str> = THEME_SUPPORT_MATRIX
+            .iter()
+            .filter(|(_, s)| s.starts_with("active/"))
+            .map(|(k, _)| *k)
+            .collect();
+        // Exactly the 5 wired fields + color_theme
+        for key in &["color_theme", "compact_mode", "font_family", "font_size_pt",
+                     "sidebar_width_px", "input_height_lines"] {
+            assert!(active.contains(key), "expected '{}' to be active in support matrix", key);
+        }
+        assert_eq!(active.len(), 6, "exactly 6 active entries (color_theme + 5 theme fields)");
+    }
+
+    #[test]
+    fn b23_missing_dotfile_theme_with_no_tweaks_gives_builtin_dark() {
+        let e = resolve_effective_gui_theme(&Tweaks::default(), None, None);
+        assert!(e.dark);
+        assert_eq!(e.dark_source, ThemeSource::BuiltIn);
+        assert_eq!(e.density_mode, 1);
+        assert!(e.unsupported_keys.is_empty());
+        assert!(e.diagnostics.is_empty());
     }
 }

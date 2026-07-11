@@ -34,6 +34,7 @@ rfd = "0.15"
 
 # Shared deps from the workspace.
 anyhow = "1"
+toml = "0.8"
 serde.workspace      = true
 serde_json.workspace = true
 serde_yaml = "0.9"

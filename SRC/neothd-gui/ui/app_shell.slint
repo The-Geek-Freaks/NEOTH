@@ -138,7 +138,7 @@ export component Sidebar inherits Rectangle {
     callback set-complexity(int);
     callback toggle-theme();
 
-    width: 248px;
+    width: Theme.sidebar-w;   // B23: driven by tweaks.toml sidebar_width_px or 248px built-in
     background: Theme.bg-sunken;
     // right hairline
     Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border-subtle; }

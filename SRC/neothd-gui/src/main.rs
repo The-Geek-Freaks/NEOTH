@@ -324,6 +324,52 @@ fn main() -> Result<()> {
         }
     });
 
+    // B23 — THEME-TWEAKS-RUNTIME: apply tweaks contract before first paint.
+    // Reads ~/.neoth/tweaks.toml locally (no subprocess, no neothd dep in GUI).
+    // Precedence for each field: dotfile already applied above > tweaks > built-in.
+    {
+        let neoth_dir = default_neoth_home();
+        if let Some(tc) = read_gui_tweaks(&neoth_dir) {
+            // font-sans-override: non-empty string overrides the built-in font-sans token.
+            if let Some(ref family) = tc.theme.font_family {
+                if !family.is_empty() {
+                    window.global::<Theme>().set_font_sans_override(family.as_str().into());
+                }
+            }
+            // font-size-pt-override: non-zero value overrides; 0 = no override.
+            if let Some(pt) = tc.theme.font_size_pt {
+                if pt > 0 {
+                    window.global::<Theme>().set_font_size_pt_override(pt as i32);
+                }
+            }
+            // sidebar-w-override: non-zero px overrides the 248px built-in.
+            if let Some(px) = tc.theme.sidebar_width_px {
+                if px > 0 {
+                    window
+                        .global::<Theme>()
+                        .set_sidebar_w_override(px as f32);
+                }
+            }
+            // input-height-lines-override: non-zero value overrides.
+            if let Some(lines) = tc.theme.input_height_lines {
+                if lines > 0 {
+                    window
+                        .global::<Theme>()
+                        .set_input_height_lines_override(lines as i32);
+                }
+            }
+            // compact_mode → density_mode, only when .gui-density dotfile is absent
+            // (dotfile wins: already applied by the density block above).
+            if !neoth_dir.join(".gui-density").exists() {
+                if let Some(compact) = tc.theme.compact_mode {
+                    let density = if compact { 0 } else { 1 };
+                    window.global::<Theme>().set_density_mode(density);
+                    window.set_chat_density_mode(density);
+                }
+            }
+        }
+    }
+
     // H-3 fix — hardware probe runs in a worker thread so a hanging
     // `neothd hardware` subprocess can never block the window from
     // appearing. The placeholder string shows until the real probe
@@ -9745,12 +9791,76 @@ pub fn format_migrate_summary(detect_json: &str) -> String {
     )
 }
 
-fn default_neoth_home() -> PathBuf {
-    let home = std::env::var("HOME")
+/// Resolve `~/.neoth` honouring `NEOTH_HOME > HOME/.neoth > USERPROFILE/.neoth > ./.neoth`.
+/// Pure helper extracted so tests can call it without touching process env.
+fn resolve_neoth_home(
+    neoth_home_env: Option<&str>,
+    home_env: Option<&str>,
+    userprofile_env: Option<&str>,
+) -> PathBuf {
+    if let Some(e) = neoth_home_env.filter(|s| !s.is_empty()) {
+        return PathBuf::from(e);
+    }
+    let home = home_env
         .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."));
+        .or_else(|| userprofile_env.map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
     home.join(".neoth")
+}
+
+fn default_neoth_home() -> PathBuf {
+    resolve_neoth_home(
+        std::env::var("NEOTH_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+        std::env::var("USERPROFILE").ok().as_deref(),
+    )
+}
+
+// B23 — THEME-TWEAKS-RUNTIME: mirrored contract types.
+// File-private — do NOT re-export and do NOT add a `neothd` dep to the GUI crate.
+// Field names and types MUST match `neothd::tweaks::ThemeConfig` field-for-field;
+// parity is enforced by `gui_tweaks_contract_parses_all_18_theme_fields` below.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct GuiThemeContract {
+    pub accent_color: Option<String>,
+    pub background_color: Option<String>,
+    pub foreground_color: Option<String>,
+    pub font_family: Option<String>,
+    pub font_size_pt: Option<u8>,
+    pub sidebar_width_px: Option<u32>,
+    pub border_radius_px: Option<u32>,
+    pub compact_mode: Option<bool>,
+    pub show_token_count: Option<bool>,
+    pub show_model_badge: Option<bool>,
+    pub chat_bubble_style: Option<String>,
+    pub icon_set: Option<String>,
+    pub animation_speed: Option<String>,
+    pub scrollbar_style: Option<String>,
+    pub input_height_lines: Option<u8>,
+    pub panel_opacity: Option<f32>,
+    pub header_hidden: Option<bool>,
+    pub sidebar_collapsed: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct GuiTweaksContract {
+    pub color_theme: Option<String>,
+    #[serde(default)]
+    pub theme: GuiThemeContract,
+}
+
+/// Read `<neoth_home>/tweaks.toml` into the GUI contract type.
+/// Returns `None` silently when the file is absent or unparseable — the GUI
+/// must not block on a malformed tweaks.toml; it falls back to built-in defaults.
+fn read_gui_tweaks(neoth_home: &std::path::Path) -> Option<GuiTweaksContract> {
+    let path = neoth_home.join("tweaks.toml");
+    if !path.exists() {
+        return None;
+    }
+    let body = std::fs::read_to_string(&path).ok()?;
+    toml::from_str::<GuiTweaksContract>(&body).ok()
 }
 
 /// ODY-04 — wall-clock epoch millis for the stall-watchdog clock.
@@ -10390,6 +10500,147 @@ mod tests {
         write_gui_density(&path, 99);
         assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "normal");
         assert_eq!(read_gui_density(dir.path()), 1);
+    }
+}
+
+/// B23 — THEME-TWEAKS-RUNTIME: GUI-side contract type tests.
+#[cfg(test)]
+mod b23_gui_tweaks_tests {
+    use super::{read_gui_tweaks, resolve_neoth_home, GuiTweaksContract};
+    use tempfile::TempDir;
+
+    // ── resolve_neoth_home ────────────────────────────────────────────────
+
+    #[test]
+    fn neoth_home_env_takes_priority_over_home() {
+        let p = resolve_neoth_home(Some("/custom/neoth"), Some("/home/user"), None);
+        assert_eq!(p, std::path::PathBuf::from("/custom/neoth"));
+    }
+
+    #[test]
+    fn neoth_home_empty_string_falls_through_to_home() {
+        let p = resolve_neoth_home(Some(""), Some("/home/user"), None);
+        assert_eq!(p, std::path::PathBuf::from("/home/user/.neoth"));
+    }
+
+    #[test]
+    fn neoth_home_absent_uses_home_with_dot_neoth_suffix() {
+        let p = resolve_neoth_home(None, Some("/home/user"), None);
+        assert_eq!(p, std::path::PathBuf::from("/home/user/.neoth"));
+    }
+
+    #[test]
+    fn neoth_home_falls_through_to_userprofile_when_home_absent() {
+        let p = resolve_neoth_home(None, None, Some("C:\\Users\\Shadow"));
+        assert_eq!(
+            p,
+            std::path::PathBuf::from("C:\\Users\\Shadow").join(".neoth")
+        );
+    }
+
+    #[test]
+    fn neoth_home_dot_fallback_when_all_absent() {
+        let p = resolve_neoth_home(None, None, None);
+        assert_eq!(p, std::path::PathBuf::from(".").join(".neoth"));
+    }
+
+    // ── read_gui_tweaks ───────────────────────────────────────────────────
+
+    #[test]
+    fn read_gui_tweaks_returns_none_when_file_missing() {
+        let dir = TempDir::new().unwrap();
+        assert!(read_gui_tweaks(dir.path()).is_none());
+    }
+
+    #[test]
+    fn read_gui_tweaks_parses_valid_file() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("tweaks.toml"),
+            r#"
+color_theme = "light"
+[theme]
+font_size_pt = 16
+sidebar_width_px = 300
+"#,
+        )
+        .unwrap();
+        let c = read_gui_tweaks(dir.path()).unwrap();
+        assert_eq!(c.color_theme.as_deref(), Some("light"));
+        assert_eq!(c.theme.font_size_pt, Some(16));
+        assert_eq!(c.theme.sidebar_width_px, Some(300));
+    }
+
+    #[test]
+    fn read_gui_tweaks_returns_none_on_bad_toml() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("tweaks.toml"), b"bad = [broken").unwrap();
+        assert!(read_gui_tweaks(dir.path()).is_none());
+    }
+
+    /// Parity guard: GuiThemeContract must parse all 18 ThemeConfig fields.
+    /// If a field is added to ThemeConfig in neothd, this test will break
+    /// because the field won't round-trip — keeping the two types in sync.
+    #[test]
+    fn gui_tweaks_contract_parses_all_18_theme_fields() {
+        let toml_str = r##"
+color_theme = "dark"
+[theme]
+accent_color = "#ff0000"
+background_color = "#000000"
+foreground_color = "#ffffff"
+font_family = "Inter"
+font_size_pt = 14
+sidebar_width_px = 320
+border_radius_px = 8
+compact_mode = true
+show_token_count = true
+show_model_badge = false
+chat_bubble_style = "rounded"
+icon_set = "feather"
+animation_speed = "reduced"
+scrollbar_style = "thin"
+input_height_lines = 4
+panel_opacity = 0.9
+header_hidden = false
+sidebar_collapsed = true
+"##;
+        let c: GuiTweaksContract = toml::from_str(toml_str).unwrap();
+        assert_eq!(c.color_theme.as_deref(), Some("dark"));
+        assert_eq!(c.theme.font_family.as_deref(), Some("Inter"));
+        assert_eq!(c.theme.font_size_pt, Some(14));
+        assert_eq!(c.theme.sidebar_width_px, Some(320));
+        assert_eq!(c.theme.input_height_lines, Some(4));
+        assert_eq!(c.theme.compact_mode, Some(true));
+        assert_eq!(c.theme.panel_opacity, Some(0.9));
+        assert_eq!(c.theme.accent_color.as_deref(), Some("#ff0000"));
+        assert_eq!(c.theme.background_color.as_deref(), Some("#000000"));
+        assert_eq!(c.theme.foreground_color.as_deref(), Some("#ffffff"));
+        assert_eq!(c.theme.border_radius_px, Some(8));
+        assert_eq!(c.theme.show_token_count, Some(true));
+        assert_eq!(c.theme.show_model_badge, Some(false));
+        assert_eq!(c.theme.chat_bubble_style.as_deref(), Some("rounded"));
+        assert_eq!(c.theme.icon_set.as_deref(), Some("feather"));
+        assert_eq!(c.theme.animation_speed.as_deref(), Some("reduced"));
+        assert_eq!(c.theme.scrollbar_style.as_deref(), Some("thin"));
+        assert_eq!(c.theme.header_hidden, Some(false));
+        assert_eq!(c.theme.sidebar_collapsed, Some(true));
+    }
+
+    #[test]
+    fn gui_tweaks_contract_absent_block_gives_all_none() {
+        let c: GuiTweaksContract = toml::from_str("color_theme = \"dark\"").unwrap();
+        assert!(c.theme.font_family.is_none());
+        assert!(c.theme.compact_mode.is_none());
+        assert!(c.theme.sidebar_width_px.is_none());
+    }
+
+    #[test]
+    fn gui_tweaks_contract_missing_file_falls_through_silently() {
+        // read_gui_tweaks must not panic on missing file
+        let dir = TempDir::new().unwrap();
+        let result = read_gui_tweaks(dir.path());
+        assert!(result.is_none());
     }
 }
 

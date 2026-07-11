@@ -42,6 +42,18 @@ export global Theme {
     // on the on_density_changed callback. Default=1 (normal).
     in-out property <int> density-mode: 1;
 
+    // B23 — THEME-TWEAKS-RUNTIME: override properties set from tweaks.toml
+    // at startup via read_gui_tweaks(). Default sentinel = "no override".
+    //   font-sans-override: ""   → no override, built-in font-sans token wins.
+    //   font-size-pt-override: 0 → no override, consumers keep their px token.
+    //   sidebar-w-override: 0px  → no override, sidebar-w resolves to 248px.
+    //   input-height-lines-override: 0 → no override, consumers use their default.
+    // Rust must set these before window.run() so the first paint is correct.
+    in-out property <string> font-sans-override: "";
+    in-out property <int>    font-size-pt-override: 0;
+    in-out property <length> sidebar-w-override: 0px;
+    in-out property <int>    input-height-lines-override: 0;
+
     // ══ INK SCALE — near-black canvas the brand lives on ════════════════
     out property <color> ink-1000: #050505;
     out property <color> ink-950:  #0a0a0a;
@@ -175,7 +187,8 @@ export global Theme {
     out property <length> composer-padding: root.density-mode == 0 ? 6px  : (root.density-mode == 2 ? 16px : 8px);
 
     // Layout.
-    out property <length> sidebar-w:    248px;
+    // sidebar-w: use override from tweaks.toml when > 0px, else 248px built-in.
+    out property <length> sidebar-w: root.sidebar-w-override > 0px ? root.sidebar-w-override : 248px;
     out property <length> container-max: 1200px;
 
     // ══ TYPOGRAPHY ═════════════════════════════════════════════════════
