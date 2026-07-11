@@ -573,20 +573,50 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
 /// Atomically point `freedom.yaml`'s `secrets_backend` at the migration target.
 ///
 /// Writes via temp+rename so a crash mid-write cannot leave a half-written
-/// config file. A missing `freedom.yaml` is a no-op (nothing to repoint).
+/// config file.
+///
+/// Missing `freedom.yaml` is direction-specific: `--to file` is a genuine no-op
+/// (the runtime default backend is already `File`, so the missing file already
+/// points at the right place), but `--to keychain` MUST create the file. Without
+/// it, `neothd` defaults to `SecretsBackend::File` and reads the now-blanked
+/// `credentials.yaml`, silently losing access to the secrets that `migrate` just
+/// moved into the OS keychain — a fail-open the success message would hide.
 fn switch_secrets_backend(direction: keychain::MigrationDirection) -> anyhow::Result<()> {
     let freedom_path = crate::config::FreedomConfig::default_path();
-    if !freedom_path.exists() {
-        return Ok(());
-    }
-    let body = std::fs::read_to_string(&freedom_path)
-        .context("read freedom.yaml for backend update")?;
     let new_backend = match direction {
         keychain::MigrationDirection::ToKeychain => "keychain",
         keychain::MigrationDirection::ToFile => "file",
     };
+    if !freedom_path.exists() {
+        if let Some(content) = missing_freedom_backend_content(direction) {
+            if let Some(parent) = freedom_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("create config dir {}", parent.display()))?;
+            }
+            atomic_write_str(&freedom_path, &content)
+                .context("create freedom.yaml pointing at keychain backend")?;
+        }
+        return Ok(());
+    }
+    let body = std::fs::read_to_string(&freedom_path)
+        .context("read freedom.yaml for backend update")?;
     let updated = update_or_append_secrets_backend(&body, new_backend);
     atomic_write_str(&freedom_path, &updated).context("write updated freedom.yaml")
+}
+
+/// Content to CREATE for an absent `freedom.yaml`, or `None` when a missing file
+/// needs no write for this direction. Pure so the fail-open fix is unit-testable
+/// without writing to the real (hardcoded) config path.
+///
+/// `--to keychain` returns a minimal file — every `FreedomConfig` field is
+/// `#[serde(default)]`, so only the backend pointer must be set. `--to file`
+/// returns `None`: the runtime default is already `File`, so a missing file
+/// already points at the right backend.
+fn missing_freedom_backend_content(direction: keychain::MigrationDirection) -> Option<String> {
+    match direction {
+        keychain::MigrationDirection::ToKeychain => Some("secrets_backend: keychain\n".to_string()),
+        keychain::MigrationDirection::ToFile => None,
+    }
 }
 
 /// Write `content` to `path` atomically via a temp file in the same directory.
@@ -746,6 +776,26 @@ mod tests {
             overwritten,
             vec!["provider_key"],
             "provider_key already set"
+        );
+    }
+
+    #[test]
+    fn missing_freedom_to_keychain_creates_pointer_file() {
+        // Fail-open fix: `migrate --to keychain` with no freedom.yaml must create
+        // one pointing at the keychain backend, else neothd defaults to File and
+        // reads the now-blanked credentials.yaml (silent secret loss).
+        let c = missing_freedom_backend_content(keychain::MigrationDirection::ToKeychain)
+            .expect("ToKeychain must create a pointer file");
+        assert_eq!(c, "secrets_backend: keychain\n");
+    }
+
+    #[test]
+    fn missing_freedom_to_file_is_noop() {
+        // `--to file`: runtime default is already File, so a missing file already
+        // points at the right backend — no write needed.
+        assert!(
+            missing_freedom_backend_content(keychain::MigrationDirection::ToFile).is_none(),
+            "ToFile with missing freedom.yaml must stay a no-op"
         );
     }
 
