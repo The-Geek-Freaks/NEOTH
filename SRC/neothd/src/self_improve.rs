@@ -1340,6 +1340,26 @@ fn run_verification_in_sandbox(
         }
     };
 
+    // Child exited before the deadline (normal-exit path).  Any grandchildren
+    // that a backgrounded command (`cmd &`) spawned inside the sandbox are
+    // still alive and hold inherited pipe write-ends, which makes
+    // rx_out/rx_err.recv() block until those grandchildren exit on their own.
+    // Kill the whole process group now to close those write-ends before we
+    // block on recv.  The timeout path already does this kill + returns early,
+    // so the kill here only covers the success path — it never weakens the
+    // production timeout-kill behaviour.
+    #[cfg(unix)]
+    {
+        let pgid = child.id(); // pgid == child pid; process_group(0) was set at spawn
+        // SAFETY: same invariants as the timeout-path kill above.
+        unsafe {
+            unsafe extern "C" {
+                fn kill(pid: i32, sig: i32) -> i32;
+            }
+            let _ = kill(-(pgid as i32), 9); // SIGKILL orphaned grandchildren
+        }
+    }
+
     let stdout_bytes = rx_out.recv().unwrap_or_default();
     let stderr_bytes = rx_err.recv().unwrap_or_default();
 
@@ -2946,9 +2966,12 @@ mod tests {
 
         // Spawn a long-lived grandchild in the background, then immediately
         // exit the top-level shell (so the top-level child exits fast but the
-        // grandchild is still in the process group). The whole group must be
-        // killed on timeout.
-        let cmd = "sleep 60 &";
+        // grandchild is still in the process group). The production fix (group
+        // kill on the normal-exit path) ensures the grandchild is reaped before
+        // rx_out.recv() blocks, so the test completes in <1 s regardless.
+        // Sleep duration is kept short (3 s) so a hypothetical regression is
+        // visible (test takes 3 s instead of <1 s) without burning 60 s of CI.
+        let cmd = "sleep 3 &";
         let short = std::time::Duration::from_secs(1);
         let result = super::run_verification_in_sandbox(&skill, "content", cmd, short);
 
