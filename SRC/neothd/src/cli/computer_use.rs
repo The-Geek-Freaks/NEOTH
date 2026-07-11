@@ -56,7 +56,27 @@ pub async fn run_computer_use(args: ComputerUseArgs, output: OutputFormat) -> Re
 
 fn status(output: OutputFormat) -> Result<()> {
     let installed = cu::is_installed();
-    let servers = McpServers::load().unwrap_or_default();
+    // B18: strict load — invalid YAML is a distinct failure mode from "not
+    // registered" and must not be silently swallowed as an empty config.
+    let servers = match McpServers::load_from(&McpServers::default_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "installed": installed,
+                        "load_error": e.to_string(),
+                        "server_id": cu::CUA_DRIVER_SERVER_ID,
+                    })
+                );
+            } else {
+                eprintln!("error: failed to load mcp_servers.yaml: {e}");
+            }
+            return Err(e);
+        }
+    };
+
     let entry = servers
         .servers
         .iter()
@@ -75,6 +95,7 @@ fn status(output: OutputFormat) -> Result<()> {
                 "enabled": enabled,
                 "allowlisted_tools": tool_count,
                 "server_id": cu::CUA_DRIVER_SERVER_ID,
+                "load_error": serde_json::Value::Null,
             })
         );
         return Ok(());
@@ -83,11 +104,7 @@ fn status(output: OutputFormat) -> Result<()> {
     println!("NEOTH computer-use (cua-driver)");
     println!(
         "  driver installed : {}",
-        if installed {
-            "yes"
-        } else {
-            "NO — run `neoth computer-use install`"
-        }
+        if installed { "yes" } else { "NO — run `neoth computer-use install`" }
     );
     println!(
         "  MCP server       : {}",
@@ -106,29 +123,24 @@ fn status(output: OutputFormat) -> Result<()> {
 }
 
 fn set_enabled(on: bool, output: OutputFormat) -> Result<()> {
-    let mut servers = McpServers::load().unwrap_or_default();
-    let action = if let Some(s) = servers
-        .servers
-        .iter_mut()
-        .find(|s| s.id == cu::CUA_DRIVER_SERVER_ID)
-    {
-        s.enabled = on;
-        if on {
-            "re-enabled existing entry"
-        } else {
-            "disabled"
-        }
-    } else if on {
-        servers.servers.push(cu::cua_driver_server());
-        "registered + enabled"
-    } else {
-        // disabling a non-existent entry — nothing to do
-        "not registered (nothing to disable)"
-    };
-
     let path = McpServers::default_path();
-    let yaml = serde_yaml::to_string(&servers)?;
-    crate::util::atomic_write::atomic_write(&path, yaml.as_bytes())?;
+    // B18: route all writes through update_at (locked + validated + atomic).
+    // Ok(false) from the closure → no write (disable of non-existent is a no-op).
+    let mut action = "not registered (nothing to disable)";
+    McpServers::update_at(&path, |servers| {
+        if let Some(s) = servers.servers.iter_mut().find(|s| s.id == cu::CUA_DRIVER_SERVER_ID) {
+            s.enabled = on;
+            action = if on { "re-enabled existing entry" } else { "disabled" };
+            Ok(true)
+        } else if on {
+            servers.servers.push(cu::cua_driver_server());
+            action = "registered + enabled";
+            Ok(true)
+        } else {
+            // Disabling a non-existent entry — no write needed.
+            Ok(false)
+        }
+    })?;
 
     let installed = cu::is_installed();
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {

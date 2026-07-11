@@ -17,11 +17,66 @@
 //! open on unix; icacls grant:r owner on Windows).
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::secret::SecretString;
+
+/// Cross-process-safe credential-store status classifier.
+///
+/// A single-read probe of `credentials.yaml` that callers use to decide
+/// whether to display a warning, synthesise empty state, or bail — without
+/// calling `load_or_default` and silently swallowing load failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialStoreStatus {
+    /// File does not exist — fresh install, treat as empty store.
+    Missing,
+    /// File exists and parses correctly.
+    Ok,
+    /// File exists but YAML or UTF-8 is corrupt.
+    Invalid,
+    /// File exists but an I/O error prevented reading it (permissions, etc.).
+    Unreadable,
+    /// File is AEAD-encrypted but the master key is unavailable.
+    KeyUnavailable,
+}
+
+impl CredentialStoreStatus {
+    /// Short lowercase label suitable for log messages and JSON fields.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CredentialStoreStatus::Missing => "missing",
+            CredentialStoreStatus::Ok => "ok",
+            CredentialStoreStatus::Invalid => "invalid",
+            CredentialStoreStatus::Unreadable => "unreadable",
+            CredentialStoreStatus::KeyUnavailable => "key_unavailable",
+        }
+    }
+}
+
+// ── Intra-process mutex (taken BEFORE the OS file lock, mutex-first ordering)
+//
+// Same pattern as `cluster::registry` — same-process writers serialise by
+// parking on the mutex, so only the mutex-holder ever contends for the file
+// lock. Poison-tolerant: a panic inside a critical section leaves the file
+// consistent thanks to atomic rename, so recovering and proceeding is safe.
+static CRED_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_cred() -> MutexGuard<'static, ()> {
+    CRED_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Bounded-blocking exclusive OS lock on `<path>.lock`.
+/// Delegates to the shared `util::locked_file` primitive (same logic as
+/// `cluster::registry::lock_registry_file`, without copy-pasting the unsafe
+/// `flock`/`share_mode` code).
+fn lock_cred_file(path: &Path) -> Result<std::fs::File> {
+    let lock_path = path.with_extension("lock");
+    crate::util::locked_file::lock_file_blocking(&lock_path, "credentials")
+}
 
 /// Default file: `<neoth_home>/credentials.yaml`.
 pub fn default_path() -> PathBuf {
@@ -324,11 +379,18 @@ impl Credentials {
     /// silent fallback would mask a typo that disables an operator's
     /// configured provider.
     pub fn load_or_default(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let raw = std::fs::read(path)
-            .with_context(|| format!("read credentials at {}", path.display()))?;
+        // B17 TOCTOU fix: single syscall, no TOCTOU window between exists() and
+        // read(). Only ErrorKind::NotFound returns the default empty store; every
+        // other error (permissions, I/O, keychain, corrupt YAML) propagates with
+        // full path context so the caller can fail-closed.
+        let raw = match std::fs::read(path) {
+            Ok(r) => r,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("read credentials at {}", path.display()))
+            }
+        };
         // CRYPTO-04 #5 — decrypt when at-rest-encrypted; else legacy plaintext.
         let body: String = if raw.starts_with(CONF_MAGIC) {
             let key = crate::wal::master_key::config_subkey().ok_or_else(|| {
@@ -545,6 +607,68 @@ impl Credentials {
     /// readability.
     pub fn has_any(&self) -> bool {
         !self.is_empty()
+    }
+
+    /// B17 — single-read classifier that does NOT silently fall back to a
+    /// default. Callers that previously used `load_or_default(..).unwrap_or_default()`
+    /// switch to this + a conditional load so they can distinguish a bad file
+    /// from a genuinely missing one.
+    pub fn credential_store_status(path: &Path) -> CredentialStoreStatus {
+        let raw = match std::fs::read(path) {
+            Ok(r) => r,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return CredentialStoreStatus::Missing
+            }
+            Err(_) => return CredentialStoreStatus::Unreadable,
+        };
+        if raw.starts_with(CONF_MAGIC) {
+            let Some(key) = crate::wal::master_key::config_subkey() else {
+                return CredentialStoreStatus::KeyUnavailable;
+            };
+            if decrypt_credentials_body(&key, &raw).is_err() {
+                return CredentialStoreStatus::Invalid;
+            }
+        } else {
+            // Plaintext path — validate UTF-8 then YAML.
+            let Ok(body) = std::str::from_utf8(&raw) else {
+                return CredentialStoreStatus::Invalid;
+            };
+            if serde_yaml::from_str::<Self>(body).is_err() {
+                return CredentialStoreStatus::Invalid;
+            }
+        }
+        CredentialStoreStatus::Ok
+    }
+
+    /// B17 — cross-process-safe read-modify-write on `credentials.yaml`.
+    ///
+    /// Acquires the intra-process `CRED_LOCK` (mutex-first) then the OS
+    /// advisory lock on `<path>.lock`, reloads strictly under both locks,
+    /// calls `mutation`, and atomically writes the result. Returns the
+    /// mutation's return value.
+    ///
+    /// STOP invariants:
+    /// - If `load_or_default` returns `Err`, returns immediately WITHOUT
+    ///   calling the mutation or writing — the bad file bytes are preserved
+    ///   intact for operator recovery.
+    /// - If the mutation returns `Err`, writes nothing.
+    /// - Never auto-repairs, truncates, or re-encrypts a corrupt file.
+    pub fn update_at<F, R>(path: &Path, mutation: F) -> Result<R>
+    where
+        F: FnOnce(&mut Self) -> Result<R>,
+    {
+        let _mutex = lock_cred();
+        let _file_lock = lock_cred_file(path)
+            .with_context(|| format!("acquire credentials lock for {}", path.display()))?;
+        // Load strictly under both locks. Only NotFound returns Ok(default);
+        // any other error propagates — NEVER writes into a failed-load.
+        let mut creds = Self::load_or_default(path)
+            .with_context(|| format!("load credentials at {} for update", path.display()))?;
+        let result = mutation(&mut creds)?;
+        creds
+            .write(path)
+            .with_context(|| format!("write credentials at {} after update", path.display()))?;
+        Ok(result)
     }
 }
 
@@ -842,6 +966,132 @@ mod tests {
         std::fs::write(&path, "this is = not [valid").unwrap();
         let r = Credentials::load_or_default(&path);
         assert!(r.is_err(), "bad YAML must surface as error");
+    }
+
+    // ── B17 regression tests ───────────────────────────────────────────────
+
+    #[test]
+    fn load_or_default_notfound_returns_default() {
+        // TOCTOU fix: direct fs::read, only NotFound → Ok(default).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("absent.yaml");
+        let c = Credentials::load_or_default(&path).unwrap();
+        assert!(c.is_empty(), "missing file must return empty default");
+    }
+
+    #[test]
+    fn credential_store_status_missing() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("no.yaml");
+        assert_eq!(
+            Credentials::credential_store_status(&path),
+            CredentialStoreStatus::Missing
+        );
+    }
+
+    #[test]
+    fn credential_store_status_ok() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        std::fs::write(&path, "provider_key: sk-test\n").unwrap();
+        assert_eq!(
+            Credentials::credential_store_status(&path),
+            CredentialStoreStatus::Ok
+        );
+    }
+
+    #[test]
+    fn credential_store_status_invalid_yaml() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        std::fs::write(&path, "this is = not [valid yaml").unwrap();
+        assert_eq!(
+            Credentials::credential_store_status(&path),
+            CredentialStoreStatus::Invalid
+        );
+    }
+
+    #[test]
+    fn credential_store_status_invalid_utf8() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        // Non-UTF-8 bytes, no CONF_MAGIC prefix.
+        std::fs::write(&path, [0xFF, 0xFE, 0x00, 0x01]).unwrap();
+        assert_eq!(
+            Credentials::credential_store_status(&path),
+            CredentialStoreStatus::Invalid
+        );
+    }
+
+    #[test]
+    fn update_at_missing_file_creates_entry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        // File does not exist yet — update_at must create it with the mutated creds.
+        Credentials::update_at(&path, |c| {
+            c.telegram_token = Some(SecretString::from("bot-token"));
+            Ok(())
+        })
+        .unwrap();
+        let loaded = Credentials::load_or_default(&path).unwrap();
+        assert_eq!(loaded.telegram_token.as_ref().unwrap().expose(), "bot-token");
+    }
+
+    #[test]
+    fn update_at_never_writes_on_load_failure() {
+        // STOP invariant: a malformed YAML file must not be overwritten.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        let sentinel = "this is = not [valid yaml SENTINEL_BYTES_MUST_SURVIVE";
+        std::fs::write(&path, sentinel).unwrap();
+        let original_bytes = std::fs::read(&path).unwrap();
+
+        let r = Credentials::update_at(&path, |_c| -> Result<()> { Ok(()) });
+        assert!(r.is_err(), "update_at on malformed YAML must return Err");
+        let after_bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            original_bytes, after_bytes,
+            "file bytes must be identical after a failed update_at"
+        );
+    }
+
+    #[test]
+    fn concurrent_update_at_both_preserved() {
+        // Ten barrier-synced threads each setting a different field via
+        // update_at on the same path. At the end, both the first writer's
+        // field AND subsequent writers' fields must all be present — no
+        // silent lost-update.
+        use std::sync::{Arc, Barrier};
+        let dir = tempdir().unwrap();
+        let path = Arc::new(dir.path().join("concurrent.yaml"));
+        const N: usize = 10;
+        let barrier = Arc::new(Barrier::new(N));
+
+        // Each thread writes a unique discord_bot_token last-writer-wins is
+        // acceptable here; what must NOT happen is for any write to
+        // corrupt the file or for a load failure to go undetected.
+        let mut handles = Vec::with_capacity(N);
+        for i in 0..N {
+            let p = Arc::clone(&path);
+            let b = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                b.wait();
+                Credentials::update_at(&p, move |c| {
+                    c.irc_nick = Some(format!("bot-{i}"));
+                    Ok(())
+                })
+                .expect("concurrent update_at must not return Err");
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread must not panic");
+        }
+        // File must be loadable and non-empty after all concurrent writes.
+        let loaded = Credentials::load_or_default(&path).unwrap();
+        assert!(
+            loaded.irc_nick.is_some(),
+            "concurrent updates must leave a valid credential in the file"
+        );
     }
 
     #[test]

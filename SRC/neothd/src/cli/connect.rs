@@ -218,7 +218,25 @@ pub fn channel_details(name: &str) -> Option<&'static str> {
 /// `neoth connect` entry point. Read-only.
 pub fn run_connect(args: ConnectArgs) -> Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let creds = Credentials::load_or_default(&home.join("credentials.yaml")).unwrap_or_default();
+    let cred_path = home.join("credentials.yaml");
+    // B17: classify the credential store before loading so we can expose the
+    // status to the operator instead of silently defaulting to empty creds.
+    let mut cred_status = Credentials::credential_store_status(&cred_path);
+    let creds = match cred_status {
+        crate::config::credentials::CredentialStoreStatus::Ok
+        | crate::config::credentials::CredentialStoreStatus::Missing => {
+            // B17: downgrade to Invalid on a mid-command corruption race rather
+            // than silently returning default creds under a healthy `Ok`.
+            match Credentials::load_or_default(&cred_path) {
+                Ok(c) => c,
+                Err(_) => {
+                    cred_status = crate::config::credentials::CredentialStoreStatus::Invalid;
+                    Credentials::default()
+                }
+            }
+        }
+        _ => Credentials::default(),
+    };
     let rows = connect_rows(&creds);
 
     // Single-channel detail view.
@@ -232,9 +250,20 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
         };
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
-                println!("{}", row_json(row));
+                println!("{}", row_json_with_cred_status(row, cred_status.as_str()));
             }
             OutputFormat::Table => {
+                if !matches!(
+                    cred_status,
+                    crate::config::credentials::CredentialStoreStatus::Ok
+                        | crate::config::credentials::CredentialStoreStatus::Missing
+                ) {
+                    println!(
+                        "credential store: {} — {}",
+                        cred_path.display(),
+                        cred_status.as_str()
+                    );
+                }
                 println!("{} — {}", row.name, row.status.label());
                 println!("  {}", row.note);
                 if let Some(detail) = channel_details(&name) {
@@ -249,10 +278,39 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
     // Full discovery list.
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let body = rows.iter().map(row_json).collect::<Vec<_>>().join(",\n");
-            println!("[\n{body}\n]");
+            // Wrap rows in an envelope that carries the credential_store_status
+            // so callers can distinguish bad-file from fresh-install.
+            let rows_json: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "channel": r.name,
+                        "status": r.status.label(),
+                        "note": r.note,
+                        "onramp": r.onramp,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "credential_store_status": cred_status.as_str(),
+                    "channels": rows_json,
+                }))?
+            );
         }
         OutputFormat::Table => {
+            if !matches!(
+                cred_status,
+                crate::config::credentials::CredentialStoreStatus::Ok
+                    | crate::config::credentials::CredentialStoreStatus::Missing
+            ) {
+                println!(
+                    "credential store: {} — {}",
+                    cred_path.display(),
+                    cred_status.as_str()
+                );
+            }
             let connected = rows.iter().filter(|r| r.status.is_connected()).count();
             println!("Channels — {connected} of {} connected\n", rows.len());
             for r in &rows {
@@ -264,12 +322,25 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn row_json(r: &ChannelRow) -> String {
     serde_json::json!({
         "channel": r.name,
         "status": r.status.label(),
         "note": r.note,
         "onramp": r.onramp,
+    })
+    .to_string()
+}
+
+/// B17: single-channel JSON with the credential store status included.
+fn row_json_with_cred_status(r: &ChannelRow, cred_status: &str) -> String {
+    serde_json::json!({
+        "channel": r.name,
+        "status": r.status.label(),
+        "note": r.note,
+        "onramp": r.onramp,
+        "credential_store_status": cred_status,
     })
     .to_string()
 }

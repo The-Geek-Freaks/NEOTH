@@ -658,24 +658,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // R4-P1: load credentials once. Used by the Slack/WhatsApp adapters in
     // spawn_channel_adapters below AND by cluster-transport activation later, so
     // it stays in run_serve and is passed by reference (not consumed).
-    // NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01: propagate/log a load failure
-    // instead of silently defaulting. A bad credentials.yaml (parse/IO/keychain
-    // error) at startup is surfaced at warn level so the operator knows the
-    // channels will run credentialless; the daemon still starts (channels that
-    // need the missing cred will fail per-message, not boot-time crash).
-    let creds = match crate::config::credentials::Credentials::load_or_default(
+    // B17 FAIL-CLOSED: a credentials.yaml that exists but cannot be loaded
+    // (corrupt YAML, I/O error, wrong keychain key) is a hard error at startup.
+    // Only NotFound is Ok (fresh install). The daemon must NOT start channel
+    // adapters with fabricated-empty credentials — that silently erases all
+    // channel config from the operator's perspective.
+    let creds = crate::config::credentials::Credentials::load_or_default(
         &crate::config::credentials::default_path(),
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(
-                error = %e,
-                "credentials.yaml load failed at startup — channel adapters will start \
-                 without credentials; check file permissions and the keychain encryption key",
-            );
-            crate::config::credentials::Credentials::default()
-        }
-    };
+    )
+    .with_context(|| {
+        format!(
+            "credentials.yaml at {} exists but cannot be loaded — \
+             repair the file or restore the keychain key before starting the daemon \
+             (run `neoth security restore-master-key` if the file is encrypted)",
+            crate::config::credentials::default_path().display()
+        )
+    })?;
     // GOLD-ADAPT-GOOSE-03: construct the approval bus + drain task BEFORE
     // spawning channel adapters. The drain task reads ConfirmRequests and
     // forwards them as elicitation messages on the operator's primary channel

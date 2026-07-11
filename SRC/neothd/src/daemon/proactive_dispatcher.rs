@@ -658,7 +658,23 @@ pub async fn run_proactive_delivery_tick(
         &home.join(crate::channels::routing::CHANNEL_ROUTING_FILE),
     )
     .unwrap_or_default();
-    let credentials = crate::config::credentials::Credentials::load().unwrap_or_default();
+    // B17: `load()` is fail-closed (only a MISSING file → default; a corrupt or
+    // unreadable one → Err). Don't `.unwrap_or_default()` that away — a bad
+    // credentials.yaml silently routing every channel item to SidecarOnly with
+    // no operator signal is exactly the invisible degradation B17 forbids. On a
+    // real load error we still degrade to defaults for this tick (so the queue
+    // keeps draining to the sidecar), but LOUDLY.
+    let credentials = match crate::config::credentials::Credentials::load() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                error = %format!("{e:#}"),
+                "proactive dispatch: credentials.yaml is unreadable/corrupt — \
+                 routing non-sidecar items to SidecarOnly this tick until it is repaired"
+            );
+            crate::config::credentials::Credentials::default()
+        }
+    };
     let mut records: Vec<(crate::proactive::ProactiveItem, ProactiveStatus)> =
         Vec::with_capacity(drained.len());
     let mut delivered = 0usize;

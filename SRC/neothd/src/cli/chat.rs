@@ -2047,19 +2047,31 @@ async fn dispatch_provider(
         // the local/free path). Operator-forced council bypasses it.
         let council_home = FreedomConfig::default_neoth_home();
         let council_now = crate::council::last_ts::now_unix() as i64;
-        let council_cap_hit = !council_force
-            && trigger_decision.should_convene()
-            && crate::council::day_counter::cap_reached(&council_home, council_now);
-        if council_cap_hit {
-            tracing::warn!(
-                cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
-                "council daily convene cap reached — single-provider for this turn"
-            );
-        }
-        let council_enable = trigger_decision.should_convene() && !council_cap_hit;
-        if council_enable {
-            crate::council::day_counter::record_convene(&council_home, council_now);
-        }
+        // B-25: atomic OS-locked admission — fail-closed on any I/O error.
+        // Operator-forced council (council_force=true) bypasses cap entirely.
+        let (council_enable, council_cap_hit, council_deny_reason) = if council_force {
+            (trigger_decision.should_convene(), false, None::<&'static str>)
+        } else if trigger_decision.should_convene() {
+            use crate::council::day_counter::AdmitResult;
+            match crate::council::day_counter::try_admit_convene(&council_home, council_now) {
+                AdmitResult::Admitted => (true, false, None),
+                AdmitResult::Capped => {
+                    tracing::warn!(
+                        cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                        "council daily convene cap reached — single-provider for this turn"
+                    );
+                    (false, true, None)
+                }
+                AdmitResult::StateInvalid => {
+                    tracing::warn!(
+                        "council day-counter state invalid — fail-closed for this turn"
+                    );
+                    (false, true, Some("council day-counter state invalid — fail-closed"))
+                }
+            }
+        } else {
+            (false, false, None)
+        };
         if !council_force && !council_disable {
             info!(
                 decision = ?trigger_decision,
@@ -2076,7 +2088,9 @@ async fn dispatch_provider(
         // gate over time.
         if !council_enable {
             let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-            let reason = if council_cap_hit {
+            let reason = if let Some(r) = council_deny_reason {
+                r
+            } else if council_cap_hit {
                 "daily convene cap (rolling 24h) reached"
             } else {
                 trigger_decision.reason()

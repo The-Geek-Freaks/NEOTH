@@ -73,42 +73,48 @@ pub fn auto_register(
         return Ok(false);
     }
 
-    // Build the hardened MCP entry with the operator's server.js path baked
-    // into args. The factory sets enabled: false; we flip it to true here
-    // because the wizard obtained explicit operator consent.
-    let mut cfg = crate::mcp::config::tududi_recommended_config(server_js_path);
-    cfg.enabled = true;
-
-    // Upsert into mcp_servers.yaml (idempotent: update existing OR push new).
     let mcp_path = neoth_home.join("mcp_servers.yaml");
-    let mut servers = crate::mcp::config::McpServers::load_from(&mcp_path)
-        .unwrap_or_default();
-    if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
-        existing.enabled = true;
-        // Refresh the server.js path in case the operator moved the file.
-        existing.args = cfg.args.clone();
-        // Always enforce the token sentinel (never a literal value).
-        existing
-            .env
-            .insert("TUDUDI_API_TOKEN".to_string(), "from_env".to_string());
-    } else {
-        servers.servers.push(cfg);
-    }
-    let yaml = serde_yaml::to_string(&servers).context("serialise mcp_servers.yaml")?;
-    crate::util::atomic_write::atomic_write(&mcp_path, yaml.as_bytes())
-        .context("write mcp_servers.yaml")?;
-
-    // Write the token to credentials.yaml (mode 0600). Load-modify-write is
-    // intentional: we must preserve every other field already in the file.
     let cred_path = neoth_home.join("credentials.yaml");
-    let mut creds =
-        crate::config::credentials::Credentials::load_or_default(&cred_path)
-            .unwrap_or_default();
-    creds.tududi_api_token =
-        Some(crate::secret::SecretString::new(api_token.to_string()));
-    creds
-        .write(&cred_path)
-        .context("write tududi_api_token to credentials.yaml")?;
+
+    // Phase 1 — Pre-validate: both target files must load without error.
+    // A corrupted file is an operator error that must surface BEFORE any
+    // write — never silently replaced with a one-entry file.
+    crate::mcp::config::McpServers::load_from(&mcp_path)
+        .with_context(|| format!("pre-validate {}", mcp_path.display()))?;
+    crate::config::credentials::Credentials::load_or_default(&cred_path)
+        .with_context(|| format!("pre-validate {}", cred_path.display()))?;
+
+    // Phase 2 — Commit the secret FIRST (B18 two-phase invariant).
+    // A crash here leaves an unused token in credentials.yaml (harmless —
+    // no enabled MCP server references it yet). The dangerous state to
+    // avoid is the opposite: an enabled server with no token.
+    crate::config::credentials::Credentials::update_at(&cred_path, |creds| {
+        creds.tududi_api_token =
+            Some(crate::secret::SecretString::new(api_token.to_string()));
+        Ok(())
+    })
+    .context("write tududi_api_token to credentials.yaml")?;
+
+    // Phase 3 — Activate the MCP entry SECOND (token is now durable).
+    // A crash here leaves an unused token — retry is idempotent.
+    let server_js_owned = server_js_path.to_string();
+    crate::mcp::config::McpServers::update_at(&mcp_path, |servers| {
+        let mut cfg = crate::mcp::config::tududi_recommended_config(&server_js_owned);
+        cfg.enabled = true;
+        if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
+            existing.enabled = true;
+            // Refresh the server.js path in case the operator moved the file.
+            existing.args = cfg.args.clone();
+            // Always enforce the token sentinel (never a literal value).
+            existing
+                .env
+                .insert("TUDUDI_API_TOKEN".to_string(), "from_env".to_string());
+        } else {
+            servers.servers.push(cfg);
+        }
+        Ok(true)
+    })
+    .context("update mcp_servers.yaml")?;
 
     Ok(true)
 }
@@ -249,6 +255,61 @@ mod tests {
         assert!(
             srv.args.iter().any(|a| a.contains("new_server.js")),
             "args must reflect the updated server.js path"
+        );
+    }
+
+    // ── B18 fault-injection tests ─────────────────────────────────────────
+
+    /// Pre-validate fires before any write: corrupt mcp_servers.yaml → Err,
+    /// credentials.yaml must NOT be created (no partial state).
+    #[test]
+    fn auto_register_prevalidate_rejects_bad_mcp_yaml_before_credential_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let server_js = dir.path().join("server.js");
+        std::fs::write(&server_js, b"// stub").unwrap();
+
+        let mcp_path = dir.path().join("mcp_servers.yaml");
+        let bad_yaml = b": invalid yaml structure\n";
+        std::fs::write(&mcp_path, bad_yaml).unwrap();
+        let bad_bytes = bad_yaml.to_vec();
+
+        let result = auto_register(server_js.to_str().unwrap(), "secret-token", dir.path());
+        assert!(result.is_err(), "must Err on corrupt mcp_servers.yaml");
+
+        // mcp_servers.yaml must be byte-identical — not clobbered.
+        let after_mcp = std::fs::read(&mcp_path).unwrap();
+        assert_eq!(after_mcp, bad_bytes, "mcp_servers.yaml must be unchanged");
+
+        // credentials.yaml must NOT exist: no write occurred before pre-validate error.
+        assert!(
+            !dir.path().join("credentials.yaml").exists(),
+            "credentials.yaml must not be created when pre-validate fails"
+        );
+    }
+
+    /// Corrupt credentials.yaml → Err, neither file mutated.
+    #[test]
+    fn auto_register_prevalidate_rejects_bad_credentials_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let server_js = dir.path().join("server.js");
+        std::fs::write(&server_js, b"// stub").unwrap();
+
+        let cred_path = dir.path().join("credentials.yaml");
+        let bad_yaml = b": invalid yaml structure\n";
+        std::fs::write(&cred_path, bad_yaml).unwrap();
+        let bad_bytes = bad_yaml.to_vec();
+
+        let result = auto_register(server_js.to_str().unwrap(), "secret-token", dir.path());
+        assert!(result.is_err(), "must Err on corrupt credentials.yaml");
+
+        // credentials.yaml must be byte-identical — not clobbered.
+        let after_cred = std::fs::read(&cred_path).unwrap();
+        assert_eq!(after_cred, bad_bytes, "credentials.yaml must be unchanged");
+
+        // mcp_servers.yaml must NOT have been created.
+        assert!(
+            !dir.path().join("mcp_servers.yaml").exists(),
+            "mcp_servers.yaml must not be created when pre-validate fails on credentials.yaml"
         );
     }
 

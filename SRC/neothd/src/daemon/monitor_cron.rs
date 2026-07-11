@@ -684,11 +684,25 @@ pub async fn run_pipeline_scorecard_tick(
 /// and `warn!` any that are actively misconfigured (e.g. one of a required
 /// token pair). Best-effort: a missing config/creds file → no warning. The full
 /// per-channel table lives in `neoth status`.
+///
+/// B17: an existing-but-corrupt credentials.yaml now emits an explicit warn
+/// instead of silently defaulting to empty (which could make every channel
+/// appear unconfigured and suppress the real misconfigured warnings).
 pub(crate) fn warn_misconfigured_channels(home: &Path) {
     let cfg = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok();
-    let creds =
-        crate::config::credentials::Credentials::load_or_default(&home.join("credentials.yaml"))
-            .unwrap_or_default();
+    let creds_path = home.join("credentials.yaml");
+    let creds = match crate::config::credentials::Credentials::load_or_default(&creds_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %creds_path.display(),
+                "credentials.yaml load failed — channel misconfiguration check skipped \
+                 (repair the file or restore the keychain key)"
+            );
+            return;
+        }
+    };
     let view = crate::channels::probe::ChannelCredsView::from_config(cfg.as_ref(), &creds);
     for h in crate::channels::probe::misconfigured(&view) {
         tracing::warn!(

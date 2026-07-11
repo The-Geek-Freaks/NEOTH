@@ -56,9 +56,49 @@ pub struct PrivacyFinding {
 pub async fn run_privacy(args: PrivacyArgs) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
-    let creds = Credentials::load_or_default(&crate::config::credentials::default_path())
-        .unwrap_or_default();
-    let findings = audit_posture(&cfg, &creds);
+    let cred_path = crate::config::credentials::default_path();
+    // B17: classify the credential store. An invalid/unreadable store is a
+    // critical privacy finding — audit_posture must not derive posture from
+    // fabricated-empty creds, and the operator needs to know the file is bad.
+    let mut cred_status = Credentials::credential_store_status(&cred_path);
+    let creds = match cred_status {
+        crate::config::credentials::CredentialStoreStatus::Ok
+        | crate::config::credentials::CredentialStoreStatus::Missing => {
+            // B17: a mid-command corruption race downgrades to Invalid so the
+            // critical privacy finding below still fires (never a healthy view).
+            match Credentials::load_or_default(&cred_path) {
+                Ok(c) => c,
+                Err(_) => {
+                    cred_status = crate::config::credentials::CredentialStoreStatus::Invalid;
+                    Credentials::default()
+                }
+            }
+        }
+        _ => Credentials::default(),
+    };
+    let mut findings = audit_posture(&cfg, &creds);
+    // Inject a critical finding when the credential store is in a bad state.
+    if !matches!(
+        cred_status,
+        crate::config::credentials::CredentialStoreStatus::Ok
+            | crate::config::credentials::CredentialStoreStatus::Missing
+    ) {
+        findings.insert(
+            0,
+            PrivacyFinding {
+                category: "credential-store",
+                severity: "critical",
+                status: cred_status.as_str().to_string(),
+                detail: format!(
+                    "{} exists but cannot be loaded ({}) — channel and provider posture \
+                     below is derived from an empty store and may be inaccurate; \
+                     repair the file or restore the keychain key",
+                    cred_path.display(),
+                    cred_status.as_str()
+                ),
+            },
+        );
+    }
 
     // `--last <window>`: scan the WAL for the sensitive events that
     // actually fired in the window (the static posture above says what

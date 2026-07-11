@@ -2126,25 +2126,43 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // calls without bound.
             let council_home = FreedomConfig::default_neoth_home();
             let council_now = crate::council::last_ts::now_unix() as i64;
-            let council_cap_hit = council_decision.should_convene()
-                && crate::council::day_counter::cap_reached(&council_home, council_now);
-            if council_cap_hit {
-                warn!(
-                    cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
-                    "channel council daily convene cap reached — single-provider for this turn"
-                );
-            }
-            let council_enable = council_decision.should_convene() && !council_cap_hit;
-            if council_enable {
-                crate::council::day_counter::record_convene(&council_home, council_now);
-            }
+            // B-25: atomic OS-locked admission on the channel (autonomous) path.
+            // No council_force on this path — channel path is always autonomous.
+            let (council_enable, council_cap_hit, council_deny_reason) =
+                if council_decision.should_convene() {
+                    use crate::council::day_counter::AdmitResult;
+                    match crate::council::day_counter::try_admit_convene(
+                        &council_home,
+                        council_now,
+                    ) {
+                        AdmitResult::Admitted => (true, false, None::<&'static str>),
+                        AdmitResult::Capped => {
+                            warn!(
+                                cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                                "channel council daily convene cap reached — \
+                                 single-provider for this turn"
+                            );
+                            (false, true, None)
+                        }
+                        AdmitResult::StateInvalid => {
+                            warn!(
+                                "council day-counter state invalid — fail-closed for this turn"
+                            );
+                            (false, true, Some("council day-counter state invalid — fail-closed"))
+                        }
+                    }
+                } else {
+                    (false, false, None)
+                };
             // B-1 (Session 13) — channel-side COUNCIL_SKIP audit. Same
             // contract as the CLI path: every Skip decision lands in
             // the WAL so the operator can reconstruct why a channel
             // message was answered by the single Left hemisphere.
             if !council_enable {
                 let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
-                let reason = if council_cap_hit {
+                let reason = if let Some(r) = council_deny_reason {
+                    r
+                } else if council_cap_hit {
                     "daily convene cap (rolling 24h) reached"
                 } else {
                     council_decision.reason()

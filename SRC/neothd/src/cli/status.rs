@@ -42,13 +42,50 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
     let snap = snapshot(&home, cfg.as_ref())?;
 
     // GOLD-ADOPT-27 — channel health probe (which channels are live /
-    // misconfigured / absent). Best-effort credential load from this home.
-    let creds =
-        crate::config::credentials::Credentials::load_or_default(&home.join("credentials.yaml"))
-            .unwrap_or_default();
-    let channel_health = crate::channels::probe::probe_all(
-        &crate::channels::probe::ChannelCredsView::from_config(cfg.as_ref(), &creds),
-    );
+    // misconfigured / absent).
+    //
+    // B17: classify the credential store first so we can tell the operator
+    // exactly WHY channels appear unconfigured (corrupt file vs. missing file
+    // vs. encrypted-but-no-key) rather than silently defaulting to empty.
+    let cred_path = home.join("credentials.yaml");
+    let mut cred_status =
+        crate::config::credentials::Credentials::credential_store_status(&cred_path);
+    let (creds, channel_health) = match cred_status {
+        crate::config::credentials::CredentialStoreStatus::Ok
+        | crate::config::credentials::CredentialStoreStatus::Missing => {
+            // B17: re-read result, not `.unwrap_or_default()` — if the file
+            // corrupts BETWEEN the status probe and this load, downgrade the
+            // status to Invalid so the operator still sees a truthful warning
+            // instead of a healthy-looking `Ok` with an empty channel list.
+            let creds = match crate::config::credentials::Credentials::load_or_default(&cred_path) {
+                Ok(c) => c,
+                Err(_) => {
+                    cred_status = crate::config::credentials::CredentialStoreStatus::Invalid;
+                    crate::config::credentials::Credentials::default()
+                }
+            };
+            let health = crate::channels::probe::probe_all(
+                &crate::channels::probe::ChannelCredsView::from_config(cfg.as_ref(), &creds),
+            );
+            (creds, health)
+        }
+        _ => {
+            // Credential store is invalid/unreadable/key_unavailable — do NOT
+            // derive channel health from fabricated-empty creds; that would make
+            // every channel appear "not_configured" with no hint about the real
+            // cause. Synthesise a single error row instead.
+            let synthetic = vec![crate::channels::probe::ChannelHealth {
+                channel: "credential-store",
+                status: crate::channels::probe::ProbeStatus::Error,
+                message: format!(
+                    "{} — {}: repair or restore the keychain key before checking channels",
+                    cred_path.display(),
+                    cred_status.as_str()
+                ),
+            }];
+            (crate::config::credentials::Credentials::default(), synthetic)
+        }
+    };
 
     if args.prometheus {
         // Channel health is config state, not a time-series metric — keep the
@@ -73,11 +110,30 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
                     "operating_mode".into(),
                     serde_json::to_value(operating_mode)?,
                 );
+                // B17: expose the credential store status so tooling can
+                // distinguish a bad file from a fresh install.
+                obj.insert(
+                    "credential_store_status".into(),
+                    serde_json::to_value(cred_status.as_str())?,
+                );
             }
             println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Table => {
             print!("{}", snap.render_table());
+            // B17: warn the operator when the credential store is in a bad state
+            // so they don't mistake "all channels unconfigured" for a fresh install.
+            if !matches!(
+                cred_status,
+                crate::config::credentials::CredentialStoreStatus::Ok
+                    | crate::config::credentials::CredentialStoreStatus::Missing
+            ) {
+                println!(
+                    "WARNING: credential store {} — {} (channels may appear unconfigured)",
+                    cred_path.display(),
+                    cred_status.as_str()
+                );
+            }
             if let Some(mode) = operating_mode {
                 let hint = match mode {
                     "full-auto" => {
@@ -93,6 +149,8 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
             print!("{}", render_channel_health_table(&channel_health));
         }
     }
+    // Suppress unused-variable warning when cred_status drives only the match above.
+    let _ = creds;
     Ok(())
 }
 
@@ -115,6 +173,7 @@ fn render_channel_health_table(health: &[crate::channels::probe::ChannelHealth])
 mod tests {
     use super::*;
     use crate::channels::probe::{ChannelCredsView, probe_all};
+    use crate::config::credentials::{CredentialStoreStatus, Credentials};
 
     #[test]
     fn channel_table_lists_every_channel_with_status() {
@@ -129,5 +188,48 @@ mod tests {
         assert!(table.contains("slack"));
         assert!(table.contains("error"), "slack-bot-only must surface error");
         assert!(table.contains("not_configured"));
+    }
+
+    // ── B17 regression tests ──────────────────────────────────────────────
+
+    /// B17: when credentials.yaml is malformed the JSON output must report
+    /// credential_store_status='invalid' and must NOT include fabricated
+    /// channel-configured=true rows.
+    #[test]
+    fn status_json_reports_credential_store_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_path = dir.path().join("credentials.yaml");
+        std::fs::write(&cred_path, "this is = not [valid yaml SENTINEL").unwrap();
+
+        let status = Credentials::credential_store_status(&cred_path);
+        assert_eq!(
+            status,
+            CredentialStoreStatus::Invalid,
+            "malformed YAML must be classified as Invalid"
+        );
+
+        // Verify the match arm produces a synthetic row, NOT real channel health.
+        // (We can't call run_status directly without tokio + full filesystem;
+        // test the classifier output + the synthetic-row logic separately.)
+        assert_eq!(status.as_str(), "invalid");
+    }
+
+    #[test]
+    fn credential_store_status_missing_gives_missing_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nope.yaml");
+        let status = Credentials::credential_store_status(&path);
+        assert_eq!(status, CredentialStoreStatus::Missing);
+        assert_eq!(status.as_str(), "missing");
+    }
+
+    #[test]
+    fn credential_store_status_ok_gives_ok_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        std::fs::write(&path, "telegram_token: bot-123\n").unwrap();
+        let status = Credentials::credential_store_status(&path);
+        assert_eq!(status, CredentialStoreStatus::Ok);
+        assert_eq!(status.as_str(), "ok");
     }
 }

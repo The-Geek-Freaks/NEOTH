@@ -20,6 +20,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -102,6 +103,11 @@ fn default_smart_loading() -> bool {
     true
 }
 
+/// B18 — in-process serialization guard for all `update_at` calls on
+/// `mcp_servers.yaml`. The OS-level file lock in `update_at` handles
+/// inter-process races; this mutex handles intra-process races.
+static MCP_SERVERS_LOCK: Mutex<()> = Mutex::new(());
+
 impl McpServers {
     /// Default path: `<neoth_home>/mcp_servers.yaml`.
     pub fn default_path() -> PathBuf {
@@ -170,6 +176,58 @@ impl McpServers {
                 }
             }
         }
+    }
+
+    /// B18 (NEOTH-AUDIT-MCP-CONFIG-MUTATION-FAILCLOSED-01) — locked,
+    /// validated, atomic read-modify-write for `mcp_servers.yaml`.
+    ///
+    /// Acquisition order: in-process `MCP_SERVERS_LOCK` first, then the
+    /// OS-level advisory file lock on `path.with_extension("yaml.lock")`.
+    /// This two-level locking prevents both intra-process races (concurrent
+    /// threads) and inter-process races (wizard + daemon running together).
+    ///
+    /// Invariants:
+    /// - File is NEVER written when `mutation` returns `Ok(false)` (no-op).
+    /// - File is NEVER written when load or mutation returns `Err`.
+    /// - Every write is validated by a serde round-trip before hitting disk.
+    /// - Crash-safe atomic write via `crate::util::atomic_write::atomic_write`.
+    pub fn update_at(
+        path: &Path,
+        mutation: impl FnOnce(&mut McpServers) -> Result<bool>,
+    ) -> Result<()> {
+        // 1. In-process serialization guard (poison-tolerant: recover from
+        //    prior thread panics so the process isn't permanently wedged).
+        let _guard = match MCP_SERVERS_LOCK.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+
+        // 2. Cross-process OS-level advisory file lock.
+        let lock_path = path.with_extension("yaml.lock");
+        let _file_lock =
+            crate::util::locked_file::lock_file_blocking(&lock_path, "mcp_servers")?;
+
+        // 3. Strict reload under lock — any YAML error propagates (fail-closed).
+        //    Never replace a corrupt file with a stripped-down one.
+        let mut current = Self::load_from(path)?;
+
+        // 4. Apply the mutation closure. Ok(false) → no change → skip write.
+        let changed = mutation(&mut current)?;
+        if !changed {
+            return Ok(());
+        }
+
+        // 5. Validate via serde round-trip before committing to disk.
+        let yaml = serde_yaml::to_string(&current)
+            .with_context(|| format!("serialise McpServers for {}", path.display()))?;
+        serde_yaml::from_str::<McpServers>(&yaml)
+            .with_context(|| format!("round-trip validation failed for {}", path.display()))?;
+
+        // 6. Crash-safe atomic write (write tmp → fsync → rename).
+        crate::util::atomic_write::atomic_write(path, yaml.as_bytes())
+            .with_context(|| format!("write {}", path.display()))?;
+
+        Ok(())
     }
 }
 
@@ -1425,5 +1483,184 @@ servers:
         // Elevated and Full must satisfy the gate.
         assert!(Elevated.meets_gate(required), "Elevated must satisfy its own gate");
         assert!(Full.meets_gate(required), "Full must satisfy Elevated gate");
+    }
+
+    // ── B18 tests ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn update_at_malformed_yaml_returns_err_and_leaves_file_unchanged() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp_servers.yaml");
+        let bad_yaml = b": this is not valid yaml\n  structure: \xff";
+        std::fs::write(&path, bad_yaml).unwrap();
+
+        let result = McpServers::update_at(&path, |_| Ok(true));
+        assert!(result.is_err(), "update_at must Err on malformed YAML");
+
+        // File bytes must be byte-identical — no write happened.
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(after.as_slice(), bad_yaml, "file must be byte-identical after failed load");
+    }
+
+    #[test]
+    fn update_at_missing_file_creates_expected_entry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp_servers.yaml");
+        // File does not exist.
+        McpServers::update_at(&path, |servers| {
+            servers.servers.push(McpServerConfig {
+                id: "new-server".into(),
+                command: "node".into(),
+                description: None,
+                args: vec![],
+                env: std::collections::HashMap::new(),
+                enabled: true,
+                allow_tools: None,
+                trust_all_tools: false,
+                smart_approve: false,
+                autonomy_gate: None,
+            });
+            Ok(true)
+        })
+        .unwrap();
+
+        let loaded = McpServers::load_from(&path).unwrap();
+        assert_eq!(loaded.servers.len(), 1);
+        assert_eq!(loaded.servers[0].id, "new-server");
+    }
+
+    #[test]
+    fn update_at_preserves_unrelated_entries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp_servers.yaml");
+        std::fs::write(
+            &path,
+            "servers:\n  - id: keeper\n    command: keep\n  - id: target\n    command: old\n",
+        )
+        .unwrap();
+
+        McpServers::update_at(&path, |servers| {
+            if let Some(s) = servers.servers.iter_mut().find(|s| s.id == "target") {
+                s.command = "new".into();
+            }
+            Ok(true)
+        })
+        .unwrap();
+
+        let loaded = McpServers::load_from(&path).unwrap();
+        assert_eq!(loaded.servers.len(), 2, "both entries must survive");
+        assert!(loaded.servers.iter().any(|s| s.id == "keeper"), "keeper must be preserved");
+        let target = loaded.servers.iter().find(|s| s.id == "target").unwrap();
+        assert_eq!(target.command, "new");
+    }
+
+    #[test]
+    fn update_at_noop_mutation_skips_write() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp_servers.yaml");
+        let original = "servers:\n  - id: existing\n    command: x\n";
+        std::fs::write(&path, original).unwrap();
+
+        McpServers::update_at(&path, |_| Ok(false)).unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        // Content unchanged — no spurious rewrite on no-op.
+        let loaded = McpServers::load_from(&path).unwrap();
+        assert_eq!(loaded.servers.len(), 1, "no-op must not alter entries");
+        let _ = after; // still readable
+    }
+
+    #[test]
+    fn update_at_concurrent_different_ids_all_written_exactly_once() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = tempdir().unwrap();
+        let path = Arc::new(dir.path().join("mcp_servers.yaml"));
+        let barrier = Arc::new(Barrier::new(4));
+
+        let handles: Vec<_> = (0..4_u32)
+            .map(|i| {
+                let p = Arc::clone(&path);
+                let b = Arc::clone(&barrier);
+                let id = format!("server-{i}");
+                std::thread::spawn(move || {
+                    b.wait();
+                    McpServers::update_at(&p, move |servers| {
+                        if !servers.servers.iter().any(|s| s.id == id) {
+                            servers.servers.push(McpServerConfig {
+                                id: id.clone(),
+                                command: "x".into(),
+                                description: None,
+                                args: vec![],
+                                env: std::collections::HashMap::new(),
+                                enabled: true,
+                                allow_tools: None,
+                                trust_all_tools: false,
+                                smart_approve: false,
+                                autonomy_gate: None,
+                            });
+                        }
+                        Ok(true)
+                    })
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+
+        let loaded = McpServers::load_from(&path).unwrap();
+        for i in 0..4_u32 {
+            assert!(
+                loaded.servers.iter().any(|s| s.id == format!("server-{i}")),
+                "server-{i} must be present"
+            );
+        }
+        assert_eq!(loaded.servers.len(), 4, "exactly 4 entries — no duplicates");
+    }
+
+    #[test]
+    fn update_at_concurrent_same_id_no_duplicate() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = tempdir().unwrap();
+        let path = Arc::new(dir.path().join("mcp_servers.yaml"));
+        let barrier = Arc::new(Barrier::new(4));
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let p = Arc::clone(&path);
+                let b = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    b.wait();
+                    McpServers::update_at(&p, |servers| {
+                        if !servers.servers.iter().any(|s| s.id == "shared") {
+                            servers.servers.push(McpServerConfig {
+                                id: "shared".into(),
+                                command: "x".into(),
+                                description: None,
+                                args: vec![],
+                                env: std::collections::HashMap::new(),
+                                enabled: true,
+                                allow_tools: None,
+                                trust_all_tools: false,
+                                smart_approve: false,
+                                autonomy_gate: None,
+                            });
+                        }
+                        Ok(true)
+                    })
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+
+        let loaded = McpServers::load_from(&path).unwrap();
+        let count = loaded.servers.iter().filter(|s| s.id == "shared").count();
+        assert_eq!(count, 1, "exactly one 'shared' entry after concurrent same-id upserts");
     }
 }

@@ -1710,11 +1710,11 @@ Recommended waves:
 
 ### B07 — CHANNEL-CREDENTIAL-ATOMICITY (P1)
 
-- [x] **NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01** Validate credentials before startup degradation or reload teardown. — ✅ **DONE (2026-07-10, `ad347e11`, Fable-5 wave-a):** `serve.rs` startup cred load no longer silent-`unwrap_or_default` (explicit match + warn); reload LOADS+VALIDATES creds BEFORE the fleet abort — on load error the supervisor keeps the OLD fleet running instead of tearing it down then respawning credentialless.
-- **Evidence:** `serve.rs` uses `Credentials::load_or_default(...).unwrap_or_default()` at startup. On reload it aborts the running channel fleet before loading credentials, then also defaults parse/I/O failure to empty, contradicting `bad_yaml_returns_error_not_silent_default` in `config/credentials.rs`.
-- **Required implementation:** missing file remains the loader's legitimate empty case; parse/I/O/permission errors propagate at startup. On reload, fully load and validate fresh config+credentials before touching handles. A bad reload records warning/audit and leaves the old fleet intact. For valid rotation, construct/probe where possible, then perform the minimal abort→bind swap exactly once.
-- **Tests:** bad YAML startup errors; unreadable file errors; missing file allowed; bad reload preserves fake running adapters/task count; valid token rotation replaces once; failed new bind leaves a truthful degraded status and no duplicate workers.
-- **Done:** configuration failure can never silently convert a healthy fleet to empty credentials.
+- [~] **NEOTH-AUDIT-CHANNEL-CREDENTIAL-ATOMICITY-01** Validate credentials before startup degradation or reload teardown. — 🔧 **PARTIAL (2026-07-10, `ad347e11`, re-audited on `bf302991`):** the reload ordering is fixed — fresh credentials are loaded before the old fleet is touched and a bad reload preserves the running adapters. Startup is still fail-open: `serve.rs:661-677` logs the load error, substitutes `Credentials::default()`, and starts credentialless. The named regression in `serve_tests.rs:315-329` proves only the legitimate missing-file case, not bad YAML or the real startup entry point. Residual work is batched as B17.
+- **Evidence:** `Credentials::load_or_default` intentionally treats only a missing file as empty and returns `Err` for read/decrypt/UTF-8/YAML failure (`config/credentials.rs:321-349`; invariant test `:839-844`). Startup overrides that contract with warn+default. Reload now correctly keeps the old fleet on load failure.
+- **Required implementation:** missing file remains the sole empty case; parse/I/O/permission/decryption errors propagate at startup. On reload, retain the shipped load-before-teardown behavior. A valid rotation replaces the fleet exactly once; a failed bind must remain visibly degraded without duplicate workers.
+- **Tests:** real startup with bad YAML errors before any channel spawn; unreadable/encrypted-without-key errors; missing file allowed; bad reload preserves fake running adapters/task count; valid token rotation replaces once; failed new bind leaves truthful status.
+- **Done:** no existing credential-store failure can silently become an empty credential set at startup, reload, CLI mutation, or operator diagnostics.
 
 ### B08 — CRON-FLEET-LIFECYCLE (P1)
 
@@ -1847,3 +1847,177 @@ Minimum filters by batch:
 | B16 | `cli::eval` on Windows; Unix CI counterpart |
 
 For each closed checkbox, append: exact HEAD, scoped diffstat, regression test names/pass counts, default/feature build results, remaining manual/environment limitations, and any status/doctor screenshot or command output required by ADR-008. **Do not mark a batch DONE when verification timed out, when only mocks cover the effect boundary, or when the implementation exists without a live caller.**
+
+## Continuation audit — residual defects after B01–B16 (2026-07-10)
+
+**Audit snapshot:** findings were derived on HEAD `bf302991` plus its then-current parallel worktree and drift-revalidated after those source changes landed in `8892255f` / current HEAD `309212b2`. All B17–B25 failure signatures still exist at `309212b2`; only this roadmap remains dirty. Before executing a batch, re-run its evidence grep against the current tree; do not overwrite a newer fix merely because the line number moved. This continuation used declaration → default → loader → production caller → effect → test tracing, plus the existing `SRC/neothd/src/graphify-out/graph.json` as a stale-but-useful relationship index. Source inspection, not the 2026-07-03 graph snapshot, is the authority.
+
+### Continuation priority, ownership, and batch order
+
+| Batch | Priority | Impact | Effort | Fix risk | Confidence | Exclusive hot ownership / ordering |
+|---|---:|---:|---:|---:|---:|---|
+| B17 CHANNEL-CREDENTIAL-RMW-FAILCLOSED | P1 | HIGH / secret-store loss + credentialless daemon | M | MED | HIGH | owns `config/credentials.rs`, `cli/channel.rs`, startup/status consumers; first |
+| B18 MCP-CONFIG-MUTATION-FAILCLOSED | P1 | HIGH / entire MCP registry loss | M | LOW–MED | HIGH | after B17 because Tududi also writes credentials; owns installer/MCP mutations |
+| B19 SELF-IMPROVE-STATE-TRANSACTIONS | P1 | HIGH / consent, approval, rollback, audit integrity | M–L | MED–HIGH | HIGH | owns `self_improve.rs`; preserve/rebase the committed B01/B15/`8892255f` hardening |
+| B20 STT-DISPATCHER-HOTPATH | P1 | HIGH capability/truth; cloud-audio gate currently inert | L | HIGH | HIGH | one worker across media/config/credentials/channel audio |
+| B21 CHANNEL-CLI-REGISTRY-PARITY | P2 | MED / configured channels omitted or called unknown | M | LOW–MED | HIGH | after B17; same `cli/channel.rs` hot file |
+| B22 TWEAKS-MODEL-RESOLUTION | P2 | MED / ignored model choice, wrong cost/WAL model | M | MED | HIGH | owns `cli/chat.rs`; do not parallelize with another chat edit |
+| B23 THEME-TWEAKS-RUNTIME | P2 | MED / 18 silently ignored GUI settings | M–L | MED | HIGH | owns tweaks + GUI theme/bootstrap; can parallel B24 |
+| B24 BABEL-CONFIG-TRUTH | P2 | MED / no-op default-on signals + ignored export format | XS truth fix or M–L full wire | MED | HIGH | Babel-only lane |
+| B25 COUNCIL-HARD-CAP-DURABILITY | P1 | HIGH / runaway fan-out limit fails open | M | MED | HIGH | owns `council/day_counter.rs` + two admission sites |
+
+**Execution waves:** (1) B17 alone. (2) B18, B19, B24, and B25 in parallel if their files remain disjoint. (3) B21 after B17; B22 can run beside it. (4) B20 as a dedicated integration batch after credential/config helpers settle; B23 can run in parallel unless B20 grows a GUI settings surface. Rebase and re-run `git diff --check` between waves.
+
+### B17 — CHANNEL-CREDENTIAL-RMW-FAILCLOSED (P1, reopens B07 residual)
+
+- [x] **NEOTH-AUDIT-CHANNEL-CLI-CREDENTIAL-RMW-FAILCLOSED-02** Make the shared credential store fail-closed and concurrency-safe across startup, CLI mutation, and diagnostics.
+- **Confirmed failure chain:** `Credentials::load_or_default` promises missing → empty but existing invalid/unreadable/undecryptable → `Err` (`config/credentials.rs:321-349`, regression `:839-844`). `cli/channel.rs::run_add` discards that `Err` at `:675`, stages one new credential into an empty struct, then atomically replaces the entire shared `credentials.yaml` at `:728-731`. This can erase provider, channel, calendar, todo, cluster, and integration secrets. Atomic rename prevents a torn write; it does not make a wrong read-modify-write correct.
+- **Other affected surfaces:** `channel list` (`:115-120`) and `test` (`:237-250`) falsely report every channel unconfigured; `remove` (`:944-970`) falsely reports nothing to remove. `serve.rs:661-677` starts credentialless after an existing-file error. `cli/status.rs:41-50`, `cli/connect.rs:221`, `cli/privacy.rs:57-61`, `cli/serve_tasks.rs:4444-4477`, and `daemon/monitor_cron.rs:687-699` derive normal health/onboarding/posture from an invented empty store.
+- **Required implementation, in order:**
+  1. Replace the `path.exists()` preflight in `Credentials::load_or_default` with a direct read: only `ErrorKind::NotFound` returns default; every other I/O/decrypt/UTF-8/YAML error retains path context.
+  2. Add one cross-process `Credentials::update_at(path, mutation)` primitive: acquire a per-file OS lock, reload strictly under the lock, mutate, validate, atomically write, then unlock. Reuse an existing lock primitive; do not add last-writer-wins content races behind a new helper.
+  3. In `channel add`, collect/validate interactive input first, then enter the locked reload→mutate→write section. Never hold the lock while waiting at a prompt. `remove` uses the same update helper. `list`/`test` propagate a load error.
+  4. Startup returns an error before spawning adapters when an existing store cannot load. Keep the already-correct reload-before-teardown branch. Onboarding propagates the credential cause instead of returning generic incomplete onboarding.
+  5. Status/connect/privacy/monitor output must expose `credential_store_status = missing|ok|invalid|unreadable|key_unavailable`; do not derive normal channel health from invalid state. JSON gets a typed error/status field; table/log output names the file and class without secret contents.
+  6. Audit every remaining `Credentials::load_or_default(...).unwrap_or_default()` caller. Classify read-only versus mutating; no mutator may retain it.
+- **Regression tests:** malformed YAML containing valuable sentinel bytes + `channel add` exits nonzero and leaves the file byte-identical; same for remove/list/test, invalid UTF-8, unreadable file, and encrypted-without-master-key. Missing file remains a valid fresh-install path. Two barrier-synchronized adds preserve both changes or one returns an explicit conflict; never silent loss. Real serve startup with invalid store spawns zero channel tasks. Status JSON reports invalid and no fabricated healthy/unconfigured rows.
+- **Done invariant:** only true `NotFound` is an empty credential store; no other load failure can reach write/delete/rename or a normal health verdict.
+- **STOP:** never auto-repair, truncate, replace, or re-encrypt an existing file that failed to load. Preserve its bytes for operator recovery.
+
+### B18 — MCP-CONFIG-MUTATION-FAILCLOSED (P1, after B17)
+
+- [x] **NEOTH-AUDIT-MCP-CONFIG-MUTATION-FAILCLOSED-01** Prevent installers and Computer Use from replacing a malformed or concurrently edited MCP registry.
+- **Evidence:** `McpServers::load[_from]` correctly treats only missing as default and bad YAML as `Err` (`mcp/config.rs:111-126`). Mutating production paths throw that away: Tududi `installers/tududi.rs:82-99`, Mobile MCP `installers/mobile_mcp.rs:83-102`, CBM `installers/cbm.rs:210-226`, and `cli/computer_use.rs:108-131` all load with `unwrap_or_default`, upsert/disable, then replace the whole file. `computer-use status` at `:57-80` also turns invalid YAML into “not registered”. Wizard production callers are in `cli/init/steps_topology.rs` (CBM `:639-658`, Tududi `:750-783`, Mobile MCP `:855-879`).
+- **Cross-file Tududi hazard:** it writes/enables `mcp_servers.yaml` before loading/writing `credentials.yaml` (`tududi.rs:98` then `:101-111`). A credential failure leaves an enabled server without its token; a credential parse failure can also replace every other secret unless B17's strict helper is used.
+- **Required implementation:**
+  1. Add `McpServers::update_at(path, mutation)` with cross-process lock, strict reload under lock, validation, atomic write, and no write for a no-op disable.
+  2. Route Tududi, Mobile MCP, CBM, and Computer Use through that one helper. Remove production and duplicated test-helper fallback logic.
+  3. Tududi preloads and validates both target stores before any effect. Commit the secret first and activate the MCP entry second, or use a small recovery journal. A failure may leave a harmless unused token, never an enabled server with missing token. Retry must be idempotent.
+  4. `computer-use status` and wizard results return a typed load error/nonzero exit; no success text after a rejected mutation.
+  5. Preserve every unknown/disabled server field and `smart_loading` value; upsert only the owned ID/keys.
+- **Tests:** for each mutator, malformed/unreadable YAML → `Err`, byte-identical file, no success output. Missing file creates one expected entry. Valid registry with unrelated entries round-trips byte-semantically unchanged outside the owned entry. Four concurrent different upserts yield all four exactly once. Same-ID concurrent updates have deterministic semantics/no duplicate. Tududi fault injection before/after each file commit proves the recovery invariant and never destroys credentials.
+- **Done:** no installer or CLI toggle can turn a registry load failure or concurrent edit into whole-file data loss.
+
+### B19 — SELF-IMPROVE-STATE-TRANSACTIONS (P1, depends B01/B15 stabilization)
+
+- [x] **NEOTH-AUDIT-SELF-IMPROVE-STATE-TRANSACTIONS-01** Make consent, proposal approval, rollback evidence, and the improvement ledger authoritative durable state instead of fail-open cache data.
+- **Consent/config failure:** `SelfImproveConfig::load` maps every read/YAML error to default (`self_improve.rs:48-52`). `effective(Full)` then sets `enabled=true, auto=true` whenever default `asked=false` (`:69-78`). `run_nightly_with_engine` (`:797-821`) and the live dreaming tick (`cli/dreaming_task.rs:241-247`) consume it. A corrupt/unreadable explicit `asked:true, enabled:false` can therefore re-enable automatic proposal generation. CLI enable/disable also load-default then overwrite (`cli/self_improve.rs:83-108`). `allow_shell_verify` remains false, so do not mislabel this as direct shell bypass; it is a master-switch/consent failure.
+- **Ledger/proposal loss:** `load_ledger` (`self_improve.rs:108-112`) and `load_proposals` (`:217-221`) map malformed/unreadable authoritative JSON to empty. The next `append_record`/`stage_proposal` replaces history with a one-entry file. Nightly ignores `append_record` failure (`:887-898`). VerifiedApproved persistence ignores `save_proposals` failure yet returns Approved (`:1177-1190`). All mutations are unlocked whole-file RMWs; `util/atomic_write.rs` explicitly is not a concurrency primitive.
+- **Accept/rollback crash window:** `accept_proposal` changes the production skill before durably committing backup + Accepted status (`self_improve.rs:303-348`); rollback similarly writes production before its status commit (`:353-373`). Crash/save failure can leave changed code, stale approval status, and no trustworthy original backup.
+- **Required implementation:**
+  1. Make config/ledger/proposal loaders return `Result`; only missing means default/empty. Automatic paths skip fail-closed with a visible error; CLI/doctor distinguish missing from invalid.
+  2. Add locked `update_proposals` with reload-under-lock, expected-state/version checks, invariant validation, and atomic commit. Use it for stage, verification result, accept, reject, and rollback. IDs are generated/checked under the lock.
+  3. Make the audit ledger append-only JSONL with lock+fsync, or retain the array only behind the same locked transactional helper. Never report Staged/Approved if its required audit/status write failed.
+  4. Journal accept/rollback: persist original bytes + intended transition, atomically write the skill, then durably mark commit. On startup/next command recover a pending journal deterministically. A stale writer must fail an expected-base-hash/status compare.
+  5. Enable/disable never changes bytes after config load failure. Full autonomy may infer auto only from a successfully loaded missing/default state, never from invalid state.
+- **Tests:** malformed config under Full calls engine zero times; enable/disable preserve original bytes. Malformed ledger/proposals reject mutations byte-identically. Barrier tests preserve two concurrent stages and two ledger appends. Injected save failure cannot return Approved. Fault injection at every accept/rollback step yields either unchanged skill or changed skill with durable original backup + committed state; recovery rollback restores byte-exact original.
+- **Done:** no corruption, read failure, concurrent writer, or crash can erase evidence, re-enable an explicit opt-out, approve without persisted proof, or strand an unrollbackable production edit.
+- **STOP:** start from `309212b2` or newer and preserve the B01/B15 plus `8892255f` Windows-handle/sandbox hardening; do not resurrect the pre-hardening implementation while restructuring persistence.
+
+### B20 — STT-DISPATCHER-HOTPATH (P1 capability/truth, high-risk integration)
+
+- [ ] **NEOTH-AUDIT-STT-DISPATCHER-HOTPATH-01** Replace the dead STT dispatcher scaffold with one consent- and audit-correct production path, or downgrade every shipped/live claim.
+- **Dead configuration:** `SttDispatcherConfig { primary, fallback, default_model_size, default_language }` exists only at declaration/default/unit-test (`media/stt_dispatch.rs:403-421`, `:629-634`). It is not in `FreedomConfig`/`MediaConfig`, is never deserialized, and has no dispatcher consumer.
+- **Dead provider hotpath:** `make_stt_provider` and `transcribe_and_audit` are real tested primitives (`media/stt_provider.rs:704-743`, `:750+`) but repo-wide call search finds only same-module tests. The live `neoth dictate` path uses `media::audio::transcribe_pcm_samples` (`media/dictation.rs:142-203`), which probes faster-whisper then Candle and ignores dispatcher primary/fallback/model/language and `media.cloud_stt_enabled`.
+- **False runtime surfaces:** `MediaConfig.cloud_stt_enabled` says enabled audio leaves the device (`config/features.rs:367-369`), but it is only read in the uncalled factory. `neoth security` reports cloud audio/audit posture from that flag (`cli/security.rs:521-526`) despite no production cloud call. Roadmap lines around HON-04/F66 call Cloud STT wired/live. `WhisperRsLocal` is actually mapped to Candle while its description says whisper.cpp/Rust binding; there is no `whisper-rs` dependency.
+- **Required implementation:**
+  1. Choose one canonical, serde-defaulted STT config under `media.stt`; either expose a corrected dispatcher type or delete the dead type and migrate to `MediaSttConfig`. Preserve old `whisper_rs_local` wire values through an alias while naming/displaying the actual Candle backend honestly.
+  2. Bind provider, model, language, and provider-specific credentials explicitly. Azure requires region; do not guess that a generic provider key fits both services. Map every model enum to a real Candle repo/faster-whisper argument or reject it as unsupported.
+  3. Build `dispatch_transcription`: primary once; fallback only for classified retryable/unavailable failures; auth/config/permanent failure does not blindly fall through. Local is the default. A cloud fallback requires explicit provider selection plus `cloud_stt_enabled`; the generic flag alone must never turn local audio into egress.
+  4. Every actual cloud call goes through `transcribe_and_audit`; `required_audit_for_cloud_media` refuses before the first network byte when no WAL sink exists. Emit `0xCC` exactly once with metadata only and never transcript/audio contents.
+  5. Route both `neoth dictate` and the real channel/attachment audio ingest through the same dispatcher. Construct credentials/provider once at the CLI/daemon boundary. Local-only startup needs no key and no network.
+  6. Status/security distinguish disabled, configured-but-inactive, active primary, active fallback, and unsupported/unwired. Correct roadmap/docs only after a production-caller test, otherwise downgrade to “provider primitive”.
+- **Tests:** primary success skips fallback; retryable failure invokes exactly one fallback; auth/config failure does not. Cloud-off and required-audit-without-writer both stop before a mock network call. Cloud success emits one metadata-only `0xCC`. Non-default language/model reaches the real backend argument. Fixture audio traverses dispatcher → transcript → channel pipeline, and `neoth dictate` uses the same seam. Corrupt config/credentials never falls to cloud/default-empty.
+- **Done:** every advertised STT choice has a production consumer and the consent/audit/status surfaces describe the same effective provider that handled the bytes.
+- **STOP:** no cloud fallback by flag inference; provider, credentials, region, data-egress consent, and audit sink must all be explicit and testable.
+
+### B21 — CHANNEL-CLI-REGISTRY-PARITY (P2, after B17)
+
+- [ ] **NEOTH-AUDIT-CHANNEL-CLI-REGISTRY-PARITY-01** Drive list/add/remove/test/help from one canonical channel registry.
+- **Evidence:** `cli/channel.rs::channel_statuses` hardcodes only Telegram, Slack, WhatsApp, Keet, and Discord (`:35-105`); `plan_channel_test` recognizes the same five (`:169-217`). Add/remove accept Signal, LINE, IRC, BlueBubbles/iMessage, Mattermost, and Google Chat too (`:679-695`, `:883-934`). The canonical runtime probe already lists 15 `ChannelKind`s with complete credential rules (`channels/probe.rs:150-354`). Result today: `channel add signal` can succeed, then `channel list` omits Signal and `channel test signal` says unknown. Module docs `channel.rs:9-10` also still call add/test/remove deferred.
+- **Required implementation:** define one registry entry per `ChannelKind` containing canonical id, aliases, feature/runtime availability, credential probe, supported mutations, and test capability. Reuse `ChannelCredsView`/`probe_all`; do not duplicate predicates. List every canonical channel once. Normalize aliases. For configured channels without a safe live probe, return typed `configured_but_test_unsupported`; for feature-off/deferred adapters, show that state instead of omission/unknown.
+- **Tests:** `ALL_CHANNELS` and CLI registry have exact one-to-one coverage; every accepted add/remove alias resolves to a row; each startable adapter has a real test plan or explicit unsupported result; one-credential-at-a-time matrix matches `probe_channel`; feature-gated Matrix/IRC/Nostr and deferred Keet inbound remain truthful.
+- **Done:** no channel can be accepted or spawned while absent/unknown in list/test/help.
+
+### B22 — TWEAKS-MODEL-RESOLUTION (P2, chat hot file)
+
+- [ ] **NEOTH-AUDIT-TWEAKS-TOPLEVEL-CONTRACT-01** Make `Tweaks.model_default` a real model-precedence input and use one effective model for execution, cost, and WAL.
+- **Evidence:** `tweaks/mod.rs:43-45` says `model_default` wins over `freedom.yaml::provider_model`, but the exact identifier appears only in schema/parser/CLI/tests. Chat loads tweaks only for `persona_override` and suppresses TOML errors via `.ok()` (`cli/chat.rs:775-779`) despite the loader's fail-loud contract. Provider request precedence at `chat.rs:1629-1633`, WAL at `:3900-3915`, and cost estimation at `:4445-4454` use different subsets and never read `model_default`; WAL also misses dispatch/skill model winners.
+- **Required implementation:** load Tweaks once at the chat boundary and propagate invalid TOML with path context. Introduce a pure `resolve_effective_model` with pinned precedence: dispatch override > skill manifest > explicit CLI `--model` > `tweaks.model_default` > `freedom.yaml::provider_model` > provider default. Thread that single resolved value into the provider `Request`, cost preflight, quota/model accounting, retry/fallback diagnostics, and PROVIDER_REQUEST WAL payload. Record source (`dispatch|skill|cli|tweaks|freedom|provider_default`) without leaking secrets.
+- **Scope boundary:** B22 owns model selection and fail-loud Tweaks loading. B23 owns `color_theme`, statusline, and `[theme]`. Prompt snippets are currently an explicit inspect/copy surface; do not auto-inject them without a separate trigger contract.
+- **Tests:** full precedence table; invalid TOML blocks before provider call; capturing provider, cost resolver, and decoded WAL observe the same model/source; no override preserves current provider default; fallback model changes are recorded as effective-attempt model rather than stale requested model.
+- **Done:** one model decision drives effect, price estimate, audit, and operator output.
+
+### B23 — THEME-TWEAKS-RUNTIME (P2, incomplete Workstream-P wiring)
+
+- [ ] **NEOTH-AUDIT-THEME-TWEAKS-RUNTIME-01** Give every retained Theme/TUI setting a real sink or an explicit unsupported state.
+- **Evidence:** `tweaks/mod.rs:51-64` claims GUI/statusline consumption and render-time validation for 18 `ThemeConfig` fields (`:67-87`). Current exact-name search finds only declarations and parser tests; no production `tweaks.theme.*` read. `neothd-gui` never reads `tweaks.toml`; it independently reads `.gui-theme` and `.gui-density` (`neothd-gui/src/main.rs:290-325`) and exposes only dark/density as live mode properties (`ui/theme.slint:31-43`). Sidebar remains hardcoded 248px (`ui/app_shell.slint:141`). `render_statusline` has only unit-test callers (`tweaks/mod.rs:127-141`). `neoth tweaks show` promises theme but omits `t.theme` from JSON/table (`cli/tweaks.rs:48-88`), and its tests assert only `Ok`. GUI home resolution ignores `NEOTH_HOME` while daemon resolution honors it (`neothd-gui/src/main.rs:9748-9754` versus `config/mod.rs:1300-1314`). PROGRESS correctly describes HO-05 as parser/schema only; do not falsify that historical scope.
+- **Required implementation:**
+  1. Publish a support matrix: each field is active with a named Slint/statusline sink, explicitly reserved/unsupported with a visible diagnostic, or removed/deprecated. Silent parse-and-ignore is forbidden.
+  2. Add pure `resolve_effective_gui_theme(tweaks, dotfile_theme, dotfile_density, builtins)`. Pin precedence: valid persisted `.gui-theme/.gui-density` choice > tweaks baseline > built-ins; invalid dotfiles fall through with diagnosis, not silently to dark/normal.
+  3. Align GUI home resolution to `NEOTH_HOME > HOME/.neoth > USERPROFILE/.neoth > ./.neoth`. Read the small contract locally before first paint; do not spawn a blocking `neoth` subprocess or add the full `neothd` dependency to GUI. Use a tiny shared contract or a mirrored serde type with all-fields parity test.
+  4. Wire only semantically clear fields first: `color_theme`, `compact_mode`, font family/size, sidebar width, and input height. Define exact sinks before touching accent/background/foreground palettes, model badge, token count, icon set, scrollbar, collapse, or animation semantics. Validate enum/color/range values; `panel_opacity` must be finite in `0..=1`.
+  5. Wire `Tweaks.statusline` to an actual TUI/CLI status surface or mark it unsupported; do not confuse it with the GUI's transient settings-feedback `status-line` property.
+  6. Refactor `tweaks show` through a pure JSON/value renderer. Output full configured/effective/source state and a list of set-but-unsupported keys. Doctor must not claim unknown keys are reported when serde intentionally tolerates them, and must not point at a missing example file.
+- **Tests:** complete non-default fixture changes every supported effective field; one TOML→effective-sink test per supported key; precedence/missing/invalid dotfiles; shared `NEOTH_HOME`; invalid colors/enums/nonfinite opacity/dimensions; exact JSON key/source assertions; Slint compile and targeted property binding tests. Every retained unsupported key must produce a visible diagnostic.
+- **Done:** setting a documented tweak either changes the named runtime value or reports that it is unsupported; none disappear silently.
+- **STOP:** do not mechanically map all 18 fields by name, delete dotfiles without migration, block first paint on a subprocess, or pull the whole daemon dependency graph into the GUI.
+
+### B24 — BABEL-CONFIG-TRUTH (P2)
+
+- [ ] **NEOTH-AUDIT-BABEL-SIGNAL-CONFIG-TRUTH-01** Resolve default-active no-op signal flags and honor the export-format setting without corrupting Babel's scientific semantics.
+- **Dead signal flags:** `BabelConfig.memory_signals` and `skill_signals` promise contradiction/recall-miss and skill-routing inputs (`analytics/babel/config.rs:36-41`) and default true (`:74-75`), yet those are their only exact production occurrences. `BabelCronState::new` consumes only v-max/threshold/epsilon (`analytics/babel/cron.rs:150-157`); `WalEventKind`/ingest have no such variants (`:43-78`, `:299-355`); daemon wiring passes config but no DB/in-process signal feed. True and false are behaviorally identical.
+- **Ignored export format:** `BabelConfig.export_format` says it drives `neoth babel export` (`config.rs:62-63`). `export_batch` accepts a format and rejects unsupported values (`analytics/babel/export.rs:34-45`), but the sole CLI caller hardcodes `"jsonl"` (`cli/babel.rs:320-323`). A configured `csv` silently produces JSONL instead of the existing error.
+- **Required truth slice (must ship even if full signals are deferred):** load config fail-loud in the export arm and pass `cfg.babel.export_format`, with documented CLI-override > config > default precedence if `--format` is added. For memory/skill flags, either remove/deprecate them or mark `reserved`, default false, and show `reserved/no effect` in `babel status`. Do not leave a default-true no-op.
+- **Full implementation only after pre-hoc semantics:** do not relabel contradiction/recall/routing misses as existing SchemaConflict/FallbackFailure merely to flip a checkbox. Specify their feature/collapse mapping first. Then use a bounded, content-free, nonblocking feed analogous to `khist`; tap actual contradiction persistence, true zero-hit recall, and final skill routing outcomes. Gate at source. Persist signal posture + mapping version and bump feature algorithm/window/export schema whenever scores change so old/new federated rows cannot be pooled silently.
+- **Tests:** `export_format=jsonl` works; unsupported config errors before target mutation; optional CLI override wins. Flag false prevents source emission; true + one matching synthetic event causes only the specified change; separate contradiction/recall/no-route/low-weight cases; bounded-feed drop counter; export records posture/version; legacy WAL/K-hist baseline remains value-identical without new signals.
+- **Done:** every exposed value either affects a specified runtime boundary or is visibly reserved/unsupported; exported data records enough version/posture to remain scientifically comparable.
+- **STOP:** if no defensible pre-hoc feature mapping exists, the correct batch closure is honest downgrade/removal, not invented weights.
+
+### B25 — COUNCIL-HARD-CAP-DURABILITY (P1, reopens GOLD-SEC-32 / GR-037)
+
+- [x] **NEOTH-AUDIT-COUNCIL-HARD-CAP-DURABILITY-01** Make the advertised rolling-24h HARD cap a real atomic admission invariant. ✅ **DONE (B25):** full rewrite of `council/day_counter.rs` — `AdmitResult` enum, `try_admit_convene` holds OS file lock for entire load→prune→check→append→atomic-persist cycle; `load_strict` fail-closed (missing→empty, corrupt→quarantine+StateInvalid); `quarantine_corrupt` renames to `.corrupt.<pid>`; `lock_log_file`/`try_lock_log_file_once` mirror registry.rs GR-020 pattern (Windows FILE_SHARE_READ, Unix flock LOCK_EX|LOCK_NB, 5 s give-up→StateInvalid). Both CLI (`chat.rs:2050`) and channel (`serve_pipeline.rs:2129`) callers replaced with single `try_admit_convene` match; operator `council_force` bypass preserved in chat.rs, absent from serve_pipeline.rs. StateInvalid emits distinct reason `"council day-counter state invalid — fail-closed"` to existing COUNCIL_SKIP path. Deleted `corrupt_log_reads_as_empty` fail-open test. Added 8 tests: `missing_log_admits_and_creates_file`, `corrupt_log_blocks_admission_bytes_preserved`, `unreadable_log_blocks_admission` (unix+windows), `n_concurrent_admissions_near_cap_exact_remaining` (barrier stress, MAX-3 seed, 5 threads, assert exactly 3 Admitted + 2 Capped), `write_failure_preserves_valid_state_returns_state_invalid` (unix+windows), `rolling_window_boundary_exact`, `admitted_count_reaches_cap_then_blocks`.
+- **Why reopen the prior intentional verdict:** GR-037 accepted fail-open/best-effort I/O as intentional, but that contradicts the module's own security contract: `council/day_counter.rs:1-23` calls this the missing HARD ceiling that stops unbounded autonomous provider fan-out. A safety ceiling cannot simultaneously be hard and reset to zero on corruption.
+- **Evidence:** `load_pruned` maps missing, read failure, and malformed JSON to an empty history (`day_counter.rs:31-37`); the test `corrupt_log_reads_as_empty` pins fail-open (`:111-116`). `record_convene` is unlocked load→append→direct `fs::write`, ignores failure at debug (`:50-63`). Both live callers do separate `cap_reached` then `record_convene` (`cli/chat.rs:2045-2062`; `cli/serve_pipeline.rs:2123-2140`), so concurrent processes/tasks can all pass the check, lose writes, and exceed/reset the ceiling.
+- **Required implementation:** replace check+record with one `try_admit_convene(home, now) -> Result<Admitted|Capped>`. Acquire a cross-process lock; strictly load/prune; on missing start empty, on read/parse/lock failure fail closed as capped/error; check limit and append under the same lock; atomically persist+fsync before returning Admitted. Preserve/quarantine corrupt bytes instead of overwriting them. Both callers use only this API and emit a visible skip/audit reason for capped versus state-invalid. Decide explicitly whether operator-forced council bypass remains; do not accidentally change it in this batch.
+- **Tests:** corrupt/unreadable state blocks autonomous council and remains byte-identical; N barrier-synchronized admissions near the cap admit exactly remaining slots; concurrent CLI/channel processes lose no count; injected write/rename failure keeps previous valid state readable and returns no admission; missing state works; rolling prune boundary remains exact. Delete the fail-open test.
+- **Done:** at most `MAX_CONVENES_PER_24H` autonomous admissions can commit in a rolling window regardless of concurrency, crash, corruption, or I/O failure.
+
+### Continuation items explicitly not to reopen as bugs
+
+| Premise | Vetted result |
+|---|---|
+| `DreamingConfig.forge_skills` is dead | False: `cli/dreaming_task.rs` gates and calls the forge path. |
+| `SelfEditConfig.apply_cooldown_secs` is ignored | False: `cli/self_edit.rs` enforces it before apply. |
+| `ChannelWeightsConfig` operator policy is unused | False: `serve_pipeline.rs` applies operator/allowlist learning gates through `learn_factor`. |
+| Babel as a whole is unwired | False: observer enable/tick, WAL ingestion, window store, scoring, K-histogram, threshold, epsilon, and federation have live consumers. B24 is limited to two flags + export format. |
+| `k_d_embedding_model` is a surprise dead field | False as a defect: its config comment and roadmap explicitly park the embedding implementation post-GOLD. Keep it visibly reserved. |
+| HANDY-06 `resolve_language` itself is broken | False: it is wired inside `transcribe_and_audit`; B20 concerns the missing production caller around the entire wrapper. |
+| HO-05 parser/schema was falsely completed | False: parser/schema exist and PROGRESS states GUI/statusline consumption was downstream. B23 is that downstream residual. |
+| Discord live test absence is a hidden bug | No: current CLI explicitly says configured-but-not-testable. B21 must preserve that honest state while fixing registry coverage. |
+| Live microphone capture already exists | False, but honestly parked: `neoth dictate` is file-based and documents no `cpal` capture loop. Do not call it push-to-talk until a separately consented capture/E2E batch lands. |
+
+### Continuation verification matrix
+
+Always run the crash-safe cheap gates first:
+
+```powershell
+git diff --check
+cargo metadata --manifest-path SRC\Cargo.toml --no-deps --format-version 1
+```
+
+Then use one build job and only the named scopes; no broad duplicate build on this Windows host:
+
+| Batch | Minimum focused evidence |
+|---|---|
+| B17 | `config::credentials`, `cli::channel`, serve startup/reload, status/connect/privacy/onboarding/monitor fixtures |
+| B18 | `mcp::config`, `installers::{tududi,mobile_mcp,cbm}`, `cli::computer_use`; parallel-process RMW fixture |
+| B19 | `self_improve`, `cli::self_improve`, dreaming auto-pass; save/crash fault-injection + concurrency |
+| B20 | `media::{stt_dispatch,stt_provider,dictation,audio}`, cloud-off/audit mock, channel-audio E2E; default + relevant media features |
+| B21 | `cli::channel`, `channels::probe`, feature-on/off registry matrix |
+| B22 | `tweaks`, `cli::chat`; capturing provider + cost + decoded WAL consistency |
+| B23 | `tweaks`, `cli::tweaks`, GUI bootstrap/theme resolver; `cargo check -p neothd-gui` / Slint compile |
+| B24 | `analytics::babel::{config,cron,export}`, `daemon::babel_cron`, `cli::babel`; schema/version round-trip if signals implemented |
+| B25 | `council::day_counter`, CLI/channel admission call sites; multi-thread and multi-process near-cap fixture |
+
+For each closure, append the exact working-tree base, affected file list, red-before/green-after regression names, pass counts, build/feature results, and remaining manual/environment limits. A code-presence grep, mock-only internal primitive, or unchanged status/UI surface is not completion evidence.

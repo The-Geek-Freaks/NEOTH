@@ -57,6 +57,22 @@ impl SelfImproveConfig {
         Ok(())
     }
 
+    /// B19: fail-closed config loader.
+    /// - File absent (`NotFound`) → `Ok(None)` (never-configured, first-time).
+    /// - Any other I/O error or YAML parse error → `Err` (corrupt — callers must
+    ///   not fall back to a default that could re-enable a disabled master switch).
+    pub fn load_strict(home: &Path) -> Result<Option<Self>> {
+        let p = Self::path(home);
+        match std::fs::read_to_string(&p) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(anyhow::Error::from(e)
+                .context(format!("could not read {}", p.display()))),
+            Ok(s) => serde_yaml::from_str(&s)
+                .map(Some)
+                .map_err(|e| anyhow::anyhow!("{}: YAML parse error: {e}", p.display())),
+        }
+    }
+
     /// Resolve the effective switch for a given daemon autonomy level.
     /// `Full` autonomy implies self-improvement runs automatically (the nightly
     /// sleep cycle STAGES proposals) — "skillopt improve auto on in full-auto
@@ -79,6 +95,38 @@ impl SelfImproveConfig {
         } else {
             self
         }
+    }
+}
+
+/// B19: resolve effective config from `Option<SelfImproveConfig>`.
+///
+/// - `None` = file absent (never configured).  Under `Full` autonomy this implies
+///   auto-on (same as the `Full && !asked` branch of the legacy `effective()`).
+///   Below `Full`, defaults remain all-off until the operator enables explicitly.
+/// - `Some(cfg)` = stored choice is always returned unchanged at every autonomy
+///   level.  The corruption path never reaches here — callers abort on `Err`
+///   before calling this function.
+///
+/// B15 safety: `allow_shell_verify` is never set to `true` by this function.
+pub fn effective_from_option(
+    opt: Option<SelfImproveConfig>,
+    autonomy: crate::permissions::AutonomyLevel,
+) -> SelfImproveConfig {
+    match opt {
+        None => {
+            if autonomy == crate::permissions::AutonomyLevel::Full {
+                SelfImproveConfig {
+                    enabled: true,
+                    auto: true,
+                    asked: false,
+                    // B15: never auto-enable the shell verifier for absent config.
+                    allow_shell_verify: false,
+                }
+            } else {
+                SelfImproveConfig::default()
+            }
+        }
+        Some(cfg) => cfg, // stored choice always wins — no override
     }
 }
 
@@ -123,6 +171,35 @@ pub fn append_record(home: &Path, rec: ImproveRecord) -> Result<()> {
 /// The most recent improvement attempt, if any.
 pub fn last_record(home: &Path) -> Option<ImproveRecord> {
     load_ledger(home).into_iter().next_back()
+}
+
+// B19: strict ledger loader + locked append ──────────────────────────────────
+
+/// Strict ledger loader: `NotFound` → empty vec; corrupt JSON → `Err`.
+fn load_ledger_strict(home: &Path) -> Result<Vec<ImproveRecord>> {
+    let p = ledger_path(home);
+    match std::fs::read_to_string(&p) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(anyhow::Error::from(e)
+            .context(format!("ledger read: {}", p.display()))),
+        Ok(s) => serde_json::from_str(&s)
+            .map_err(|e| anyhow::anyhow!("{}: JSON parse error: {e}", p.display())),
+    }
+}
+
+static LEDGER_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Append a record to the ledger under the write lock.
+///
+/// Returns `Err` if the ledger is corrupt or the write fails — callers must
+/// propagate (never silently ignore). Mirrors `ProactiveQueue::modify` pattern.
+pub fn append_ledger_locked(home: &Path, rec: ImproveRecord) -> Result<()> {
+    let _guard = LEDGER_WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut log = load_ledger_strict(home)?;
+    log.push(rec);
+    let json = serde_json::to_string_pretty(&log)?;
+    crate::util::atomic_write::atomic_write(&ledger_path(home), json.as_bytes())?;
+    Ok(())
 }
 
 // ── Review-then-adopt: staged proposals ─────────────────────────────────────
@@ -227,6 +304,147 @@ pub fn save_proposals(home: &Path, props: &[Proposal]) -> Result<()> {
     Ok(())
 }
 
+// B19: proposals write lock + strict loader + transactional RMW ──────────────
+
+static PROPOSALS_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Strict proposals loader: `NotFound` → empty vec; corrupt JSON → `Err`.
+fn load_proposals_strict(home: &Path) -> Result<Vec<Proposal>> {
+    let p = proposals_path(home);
+    match std::fs::read_to_string(&p) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(anyhow::Error::from(e)
+            .context(format!("proposals read: {}", p.display()))),
+        Ok(s) => serde_json::from_str(&s)
+            .map_err(|e| anyhow::anyhow!("{}: JSON parse error: {e}", p.display())),
+    }
+}
+
+/// Transactional proposals read-modify-write under `PROPOSALS_WRITE_LOCK`.
+///
+/// 1. Acquires the process-local lock.
+/// 2. Reloads (strict) under the lock so concurrent writers see each other's work.
+/// 3. Calls `f(&mut all)` — may mutate the vec and return any `T`.
+/// 4. On `Ok(t)`: atomically saves the mutated vec, then returns `Ok(t)`.
+/// 5. On `Err` from `f`: proposals file is NOT written; error propagates.
+///
+/// This is the ONLY path allowed to modify the proposals file.
+pub fn update_proposals<T>(
+    home: &Path,
+    f: impl FnOnce(&mut Vec<Proposal>) -> Result<T>,
+) -> Result<T> {
+    let _guard = PROPOSALS_WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut all = load_proposals_strict(home)?;
+    let result = f(&mut all)?;
+    save_proposals(home, &all)?;
+    Ok(result)
+}
+
+// B19: AcceptJournal — crash-recovery for accept/rollback ────────────────────
+
+/// Path to the single-entry crash-recovery journal.
+pub fn journal_path(home: &Path) -> PathBuf {
+    home.join("self_improve_journal.json")
+}
+
+/// FNV-1a 64-bit hash for change-detection (no external crate needed).
+fn fnv1a_hash(s: &str) -> u64 {
+    let mut hash: u64 = 14_695_981_039_346_656_037;
+    for byte in s.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    hash
+}
+
+/// Crash-recovery journal written BEFORE a skill file is overwritten in
+/// `accept_proposal` / `rollback_proposal`. Enables `recover_pending_journal`
+/// to deterministically complete or roll back a partial operation on startup
+/// or before the next CLI command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptJournal {
+    pub proposal_id: String,
+    pub skill_path: String,
+    /// Bytes the skill file held before the operation (used for rollback
+    /// and as the expected base hash for identity checks).
+    pub original_bytes: String,
+    /// The `ProposalStatus` the operation is trying to reach.
+    pub intended_status: ProposalStatus,
+    /// FNV-1a 64-bit hash of `original_bytes` — if the current skill bytes
+    /// hash to this value, the skill write never completed.
+    pub base_hash: u64,
+}
+
+/// Recover from a partial accept or rollback after a crash.
+///
+/// Called by `run_self_improve` before every subcommand dispatch (B19 startup
+/// recovery gate). Logic:
+/// - No journal file → `Ok(())` immediately.
+/// - Journal present and `current_hash == base_hash`: skill write never happened
+///   → delete journal (clean slate).
+/// - Journal present and `current_hash != base_hash` and proposal is still
+///   `VerifiedApproved` (proposals.json was NOT updated): skill was written but
+///   proposals.json save failed → call `update_proposals` to commit the intended
+///   status + backup, then delete journal.
+/// - Any other state (already committed, or unexpected): delete journal.
+pub fn recover_pending_journal(home: &Path) -> Result<()> {
+    let jp = journal_path(home);
+    let js = match std::fs::read_to_string(&jp) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(anyhow::Error::from(e).context("read accept journal")),
+        Ok(s) => s,
+    };
+    let journal: AcceptJournal = serde_json::from_str(&js).with_context(|| {
+        "accept journal is corrupt — delete self_improve_journal.json manually"
+    })?;
+
+    // Determine whether the skill write landed.
+    let current_bytes = std::fs::read_to_string(&journal.skill_path).unwrap_or_default();
+    let current_hash = fnv1a_hash(&current_bytes);
+
+    if current_hash == journal.base_hash {
+        // Skill write never happened — delete journal, no-op recovery.
+        let _ = std::fs::remove_file(&jp);
+        return Ok(());
+    }
+
+    // Skill was rewritten. Check whether proposals.json already reflects the
+    // intended status (both sides committed → just clean up the journal).
+    let already_committed = load_proposals_strict(home)
+        .ok()
+        .and_then(|v| v.into_iter().find(|p| p.id == journal.proposal_id))
+        .map(|p| p.status == journal.intended_status)
+        .unwrap_or(false);
+
+    if already_committed {
+        let _ = std::fs::remove_file(&jp);
+        return Ok(());
+    }
+
+    // Skill was written but proposals.json was not updated.  Complete the
+    // transition so the durable state matches the applied skill change.
+    let pid = journal.proposal_id.clone();
+    let orig = journal.original_bytes.clone();
+    let tgt = journal.intended_status;
+    update_proposals(home, move |all| {
+        if let Some(p) = all.iter_mut().find(|p| p.id == pid) {
+            match tgt {
+                ProposalStatus::Accepted => {
+                    p.backup = Some(orig.clone());
+                    p.status = ProposalStatus::Accepted;
+                }
+                ProposalStatus::RolledBack => {
+                    p.status = ProposalStatus::RolledBack;
+                }
+                _ => {} // unexpected intended status — leave as-is
+            }
+        }
+        Ok(())
+    })?;
+    let _ = std::fs::remove_file(&jp);
+    Ok(())
+}
+
 // ── IMPR-02: git drift-check helpers ─────────────────────────────────────────
 
 /// Capture `git rev-parse --short HEAD` from the cwd. Returns `None` when git
@@ -269,28 +487,29 @@ pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
     if spec.drift_sha.is_none() {
         spec.drift_sha = sha;
     }
-    let mut all = load_proposals(home);
-    // GR-fix: guarantee a unique proposal id. Callers build the id as `p{ts}`;
-    // on a coarse clock (Windows timers are ~15 ms) two proposals staged in the
-    // same tick would otherwise collide, and accept/rollback/pr resolve by
-    // `find(|p| p.id == id)` → always the first match. On collision, suffix
-    // `-2`, `-3`, … until unique so every staged proposal is addressable.
-    if all.iter().any(|e| e.id == p.id) {
-        let base = p.id.clone();
-        let mut n = 2u32;
-        loop {
-            let candidate = format!("{base}-{n}");
-            if !all.iter().any(|e| e.id == candidate) {
-                p.id = candidate;
-                break;
+    // B19: use update_proposals (locked reload-under-lock + atomic save).
+    update_proposals(home, move |all| {
+        // GR-fix: guarantee a unique proposal id. Callers build the id as `p{ts}`;
+        // on a coarse clock (Windows timers are ~15 ms) two proposals staged in the
+        // same tick would otherwise collide, and accept/rollback/pr resolve by
+        // `find(|p| p.id == id)` → always the first match. On collision, suffix
+        // `-2`, `-3`, … until unique so every staged proposal is addressable.
+        if all.iter().any(|e| e.id == p.id) {
+            let base = p.id.clone();
+            let mut n = 2u32;
+            loop {
+                let candidate = format!("{base}-{n}");
+                if !all.iter().any(|e| e.id == candidate) {
+                    p.id = candidate;
+                    break;
+                }
+                n += 1;
             }
-            n += 1;
         }
-    }
-    let id = p.id.clone();
-    all.push(p);
-    save_proposals(home, &all)?;
-    Ok(id)
+        let id = p.id.clone();
+        all.push(p);
+        Ok(id)
+    })
 }
 
 /// Accept a pending proposal: back up the CURRENT skill file content, then write
@@ -300,77 +519,127 @@ pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
 /// IMPR-02: if the proposal carries a `spec.drift_sha`, runs
 /// `git diff --stat <sha>..HEAD -- <skill_path>` and prints a warning when the
 /// target file changed since staging. A git error never aborts the accept.
+///
+/// B19: uses `update_proposals` (locked reload-under-lock + atomic save) and
+/// an `AcceptJournal` written before the skill file is overwritten so that
+/// `recover_pending_journal` can complete a partial accept after a crash.
 pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
-    let mut all = load_proposals(home);
-    let p = all
-        .iter_mut()
-        .find(|p| p.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
-    // NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 (residual 1): non-bypassable approval
-    // evidence. Accepting directly from `Pending` is refused — the proposal
-    // must first pass through `execute_proposal_with_verification` (advisor →
-    // Approved verdict persisted as `VerifiedApproved`). This check survives
-    // a restart because `VerifiedApproved` is stored in the proposals JSON.
-    if p.status != ProposalStatus::VerifiedApproved {
-        anyhow::bail!(
-            "proposal `{id}` is {:?}, not verified_approved — \
-             run `neoth self-improve execute {id}` first to obtain a \
-             persisted advisor-approved verdict before accepting",
-            p.status
-        );
-    }
-    // IMPR-02 + GR-fix: drift check — ABORT (not just warn) if the target skill
-    // file changed since the proposal was staged. The module gate promises "no
-    // skill changes without operator approval"; the approved diff was reviewed
-    // against the staged base, so applying `p.after` over a drifted file would
-    // clobber the out-of-band edits with a stale proposal. Refuse + tell the
-    // operator to re-stage. (git subprocess errors stay non-fatal — see below.)
-    if let Some(sha) = p.spec.as_ref().and_then(|s| s.drift_sha.as_deref()) {
-        if let Some(diff) = git_diff_stat_since(sha, &p.skill_path) {
+    let jp = journal_path(home);
+    let jp_inner = jp.clone();
+    let id_owned = id.to_string();
+    update_proposals(home, move |all| {
+        let p = all
+            .iter_mut()
+            .find(|p| p.id == id_owned)
+            .ok_or_else(|| anyhow::anyhow!("no proposal `{id_owned}`"))?;
+        // NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 (residual 1): non-bypassable approval
+        // evidence. Accepting directly from `Pending` is refused — the proposal
+        // must first pass through `execute_proposal_with_verification` (advisor →
+        // Approved verdict persisted as `VerifiedApproved`). This check survives
+        // a restart because `VerifiedApproved` is stored in the proposals JSON.
+        if p.status != ProposalStatus::VerifiedApproved {
             anyhow::bail!(
-                "drift detected: `{}` changed since the proposal was staged (sha {sha}):\n{diff}\n   The proposal is stale — re-stage it (`neoth self-improve run`) and review the fresh diff before accepting.",
-                p.skill_path
+                "proposal `{id_owned}` is {:?}, not verified_approved — \
+                 run `neoth self-improve execute {id_owned}` first to obtain a \
+                 persisted advisor-approved verdict before accepting",
+                p.status
             );
         }
-    }
-    let path = Path::new(&p.skill_path);
-    // Back up the exact content we're about to replace (may differ from `before`
-    // if the file changed since staging) so rollback is precise.
-    // SAFETY-FIX NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01(b): propagate read failure
-    // instead of silently replacing with an empty string — a missing or
-    // unreadable skill file must never be treated as approved-with-empty-evidence.
-    let current = std::fs::read_to_string(path)
-        .with_context(|| format!("backup read failed for `{}`", path.display()))?;
-    p.backup = Some(current);
-    crate::util::atomic_write::atomic_write(path, p.after.as_bytes())
-        .with_context(|| format!("write skill {}", path.display()))?;
-    p.status = ProposalStatus::Accepted;
-    save_proposals(home, &all)?;
+        // IMPR-02 + GR-fix: drift check — ABORT (not just warn) if the target skill
+        // file changed since the proposal was staged.
+        if let Some(sha) = p.spec.as_ref().and_then(|s| s.drift_sha.as_deref()) {
+            if let Some(diff) = git_diff_stat_since(sha, &p.skill_path) {
+                anyhow::bail!(
+                    "drift detected: `{}` changed since the proposal was staged (sha {sha}):\n{diff}\n   The proposal is stale — re-stage it (`neoth self-improve run`) and review the fresh diff before accepting.",
+                    p.skill_path
+                );
+            }
+        }
+        let path = Path::new(&p.skill_path);
+        // SAFETY-FIX NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01(b): propagate read failure
+        // instead of silently replacing with an empty string.
+        let current = std::fs::read_to_string(path)
+            .with_context(|| format!("backup read failed for `{}`", path.display()))?;
+        // B19: write crash-recovery journal BEFORE writing the skill file.
+        // If we crash between here and the proposals.json save, recover_pending_journal
+        // will complete the status transition on next startup.
+        let journal = AcceptJournal {
+            proposal_id: id_owned.clone(),
+            skill_path: p.skill_path.clone(),
+            original_bytes: current.clone(),
+            intended_status: ProposalStatus::Accepted,
+            base_hash: fnv1a_hash(&current),
+        };
+        let jj = serde_json::to_string_pretty(&journal)?;
+        crate::util::atomic_write::atomic_write(&jp_inner, jj.as_bytes())
+            .context("write accept journal")?;
+        // Write the new skill content.
+        crate::util::atomic_write::atomic_write(path, p.after.as_bytes())
+            .with_context(|| format!("write skill {}", path.display()))?;
+        // Commit the status transition — save_proposals is called by update_proposals
+        // after this closure returns Ok.
+        p.backup = Some(current);
+        p.status = ProposalStatus::Accepted;
+        Ok(())
+    })?;
+    // Both skill + proposals.json committed — journal is now redundant.
+    let _ = std::fs::remove_file(&jp);
     Ok(())
 }
 
 /// Roll back an accepted proposal: restore the backed-up content to the skill.
+///
+/// B19: uses `update_proposals` (locked reload-under-lock + atomic save) and
+/// an `AcceptJournal` for crash-safe recovery.
 pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
-    let mut all = load_proposals(home);
-    let p = all
-        .iter_mut()
-        .find(|p| p.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
-    if p.status != ProposalStatus::Accepted {
-        anyhow::bail!(
-            "proposal `{id}` is {:?}, not accepted — nothing to roll back",
-            p.status
-        );
-    }
-    let backup = p
-        .backup
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("proposal `{id}` has no backup"))?;
-    let path = Path::new(&p.skill_path);
-    crate::util::atomic_write::atomic_write(path, backup.as_bytes())
-        .with_context(|| format!("restore skill {}", path.display()))?;
-    p.status = ProposalStatus::RolledBack;
-    save_proposals(home, &all)?;
+    let jp = journal_path(home);
+    let jp_inner = jp.clone();
+    let id_owned = id.to_string();
+    update_proposals(home, move |all| {
+        let p = all
+            .iter_mut()
+            .find(|p| p.id == id_owned)
+            .ok_or_else(|| anyhow::anyhow!("no proposal `{id_owned}`"))?;
+        if p.status != ProposalStatus::Accepted {
+            anyhow::bail!(
+                "proposal `{id_owned}` is {:?}, not accepted — nothing to roll back",
+                p.status
+            );
+        }
+        let backup = p
+            .backup
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("proposal `{id_owned}` has no backup"))?;
+        let path = Path::new(&p.skill_path);
+        // B19: snapshot current bytes for journal (what we're about to overwrite).
+        // A genuinely-absent skill file (NotFound) snapshots as empty — we are
+        // about to restore the backup over it. But a permission/I/O read error
+        // must NOT silently become "" (that would let crash-recovery mistake a
+        // real write for a no-op); propagate it like accept_proposal does.
+        let current = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                return Err(anyhow::Error::from(e)
+                    .context(format!("read skill {} for rollback journal", path.display())));
+            }
+        };
+        let journal = AcceptJournal {
+            proposal_id: id_owned.clone(),
+            skill_path: p.skill_path.clone(),
+            original_bytes: current.clone(),
+            intended_status: ProposalStatus::RolledBack,
+            base_hash: fnv1a_hash(&current),
+        };
+        let jj = serde_json::to_string_pretty(&journal)?;
+        crate::util::atomic_write::atomic_write(&jp_inner, jj.as_bytes())
+            .context("write rollback journal")?;
+        crate::util::atomic_write::atomic_write(path, backup.as_bytes())
+            .with_context(|| format!("restore skill {}", path.display()))?;
+        p.status = ProposalStatus::RolledBack;
+        Ok(())
+    })?;
+    let _ = std::fs::remove_file(&jp);
     Ok(())
 }
 
@@ -804,7 +1073,15 @@ pub fn run_nightly_with_engine<F>(
 where
     F: FnOnce(&str, std::time::Duration) -> anyhow::Result<std::process::Output>,
 {
-    let cfg = SelfImproveConfig::load(home).effective(autonomy);
+    // B19: fail-closed — corrupt config is an error, not a silent default-on.
+    let cfg = match SelfImproveConfig::load_strict(home) {
+        Ok(opt) => effective_from_option(opt, autonomy),
+        Err(e) => {
+            return NightlyOutcome::Error {
+                reason: format!("self_improve.yaml is corrupt — refusing to proceed: {e}"),
+            };
+        }
+    };
     if !cfg.enabled {
         return NightlyOutcome::Skipped {
             reason: "self-improve is disabled (enabled: false in self_improve.yaml)".to_string(),
@@ -884,8 +1161,13 @@ where
         }
     };
 
-    // Record in the ledger — accepted: false (staged, not yet operator-adopted).
-    let _ = append_record(
+    // B19: Record in the ledger under the write lock — locked append propagates
+    // errors so a corrupt ledger surfaces rather than being silently lost. A
+    // proposal that is staged but NOT recorded is an audit-trail hole (the
+    // operator's `neoth self-improve log` would miss it), so a failed append is
+    // a surfaced Error, not a background warn — spec B19 "Nightly propagates
+    // that error (no silent ignore)".
+    if let Err(e) = append_ledger_locked(
         home,
         ImproveRecord {
             skill: persona.to_string(),
@@ -895,7 +1177,14 @@ where
             summary: summary_text.clone(),
             at_unix: now_secs as i64,
         },
-    );
+    ) {
+        return NightlyOutcome::Error {
+            reason: format!(
+                "proposal {staged_id} was staged but the ledger append failed \
+                 ({e:#}) — the audit trail is incomplete; inspect self_improve_log.json"
+            ),
+        };
+    }
 
     NightlyOutcome::Staged {
         proposal_id: staged_id,
@@ -1176,16 +1465,17 @@ where
                 }
                 // NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 (residual 1): persist the
                 // VerifiedApproved state so accept_proposal can verify the
-                // evidence even after a daemon restart. Fresh load (independent
-                // of the immutable `all`/`p` borrow above) — best-effort: an
-                // I/O failure is logged but does not suppress the verdict; the
-                // operator will see the error and can re-run execute.
+                // evidence even after a daemon restart.
+                // B19: use update_proposals (locked + atomic) so a save failure
+                // returns Err instead of silently producing an unverified Approved.
                 {
-                    let mut proposals_w = load_proposals(home);
-                    if let Some(entry) = proposals_w.iter_mut().find(|x| x.id == id) {
-                        entry.status = ProposalStatus::VerifiedApproved;
-                    }
-                    let _ = save_proposals(home, &proposals_w);
+                    let pid = id.to_string();
+                    update_proposals(home, move |proposals_w| {
+                        if let Some(entry) = proposals_w.iter_mut().find(|x| x.id == pid) {
+                            entry.status = ProposalStatus::VerifiedApproved;
+                        }
+                        Ok(())
+                    })?;
                 }
                 return Ok((ExecutionVerdict::Approved, revises));
             }
@@ -3283,6 +3573,375 @@ mod tests {
         let last = last_record(&tmp).expect("ledger entry");
         assert_eq!(last.summary, "improved by 50%");
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ── B19: state-transaction tests ──────────────────────────────────────────
+
+    #[test]
+    fn b19_fnv1a_hash_differs_on_change() {
+        let h1 = fnv1a_hash("hello");
+        let h2 = fnv1a_hash("hello!");
+        assert_ne!(h1, h2);
+        assert_eq!(fnv1a_hash(""), fnv1a_hash(""));
+        assert_eq!(fnv1a_hash("abc"), fnv1a_hash("abc"));
+    }
+
+    #[test]
+    fn b19_load_proposals_strict_empty_when_missing() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_pstrict_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let result = load_proposals_strict(&tmp);
+        assert!(result.is_ok(), "missing proposals.json must be Ok");
+        assert!(result.unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_load_proposals_strict_errors_on_corrupt_json() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_pcorrupt_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(proposals_path(&tmp), b"not json {{{{").unwrap();
+        let result = load_proposals_strict(&tmp);
+        assert!(result.is_err(), "corrupt JSON must be Err, not silent Ok");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_config_load_strict_none_when_missing() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_cfg_miss_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(SelfImproveConfig::path(&tmp));
+        let result = SelfImproveConfig::load_strict(&tmp);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none(), "missing file must be Ok(None)");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_config_load_strict_errors_on_corrupt_yaml() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_cfg_corr_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(SelfImproveConfig::path(&tmp), b": : : not yaml").unwrap();
+        let result = SelfImproveConfig::load_strict(&tmp);
+        assert!(result.is_err(), "corrupt YAML must be Err, not silent Ok");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_effective_from_option_none_full_enables() {
+        let cfg = effective_from_option(None, crate::permissions::AutonomyLevel::Full);
+        assert!(cfg.enabled, "Full autonomy + no config must enable");
+        assert!(cfg.auto, "Full autonomy + no config must set auto=true");
+        assert!(!cfg.allow_shell_verify, "allow_shell_verify must remain false");
+    }
+
+    #[test]
+    fn b19_effective_from_option_none_standard_default() {
+        let cfg = effective_from_option(None, crate::permissions::AutonomyLevel::Standard);
+        assert!(!cfg.enabled, "Standard autonomy + no config must not enable");
+        assert!(!cfg.allow_shell_verify);
+    }
+
+    #[test]
+    fn b19_effective_from_option_some_preserved() {
+        let stored = SelfImproveConfig {
+            enabled: true,
+            auto: false,
+            asked: true,
+            allow_shell_verify: false,
+        };
+        let cfg =
+            effective_from_option(Some(stored.clone()), crate::permissions::AutonomyLevel::Full);
+        assert_eq!(cfg.enabled, stored.enabled);
+        assert_eq!(cfg.auto, stored.auto);
+        assert_eq!(cfg.asked, stored.asked);
+    }
+
+    #[test]
+    fn b19_update_proposals_closure_err_does_not_write_file() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_txn_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+        let result = update_proposals::<()>(&tmp, |_| anyhow::bail!("intentional failure"));
+        assert!(result.is_err());
+        assert!(
+            !proposals_path(&tmp).exists(),
+            "proposals.json must not be created on closure Err"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_update_proposals_sequential_updates_accumulate() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_seq_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(proposals_path(&tmp));
+
+        let mk = |id: &str| Proposal {
+            id: id.to_string(),
+            skill: "test".to_string(),
+            skill_path: "/tmp/skill.md".to_string(),
+            before: "".to_string(),
+            after: "a".to_string(),
+            summary: "".to_string(),
+            status: ProposalStatus::Pending,
+            at_unix: 0,
+            backup: None,
+            score_before: 0.0,
+            score_after: 0.0,
+            heldout_eval_summary: "".to_string(),
+            why_this_improves: "".to_string(),
+            risk_notes: "".to_string(),
+            spec: None,
+        };
+
+        update_proposals(&tmp, |all| {
+            all.push(mk("a1"));
+            Ok(())
+        })
+        .unwrap();
+        update_proposals(&tmp, |all| {
+            all.push(mk("a2"));
+            Ok(())
+        })
+        .unwrap();
+
+        let all = load_proposals_strict(&tmp).unwrap();
+        assert_eq!(all.len(), 2, "both proposals must persist across sequential updates");
+        assert_eq!(all[0].id, "a1");
+        assert_eq!(all[1].id, "a2");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_recover_pending_journal_noop_when_no_journal() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_rec_noop_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let _ = std::fs::remove_file(journal_path(&tmp));
+        assert!(recover_pending_journal(&tmp).is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_recover_pending_journal_cleans_up_when_skill_unchanged() {
+        // Crash scenario: journal written but skill file write never happened.
+        // base_hash == current_hash → just delete journal.
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_rec_nowrite_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let skill_content = "original content";
+        let skill_path = tmp.join("skill.md");
+        std::fs::write(&skill_path, skill_content).unwrap();
+
+        let journal = AcceptJournal {
+            proposal_id: "p1".to_string(),
+            skill_path: skill_path.display().to_string(),
+            original_bytes: skill_content.to_string(),
+            intended_status: ProposalStatus::Accepted,
+            base_hash: fnv1a_hash(skill_content),
+        };
+        std::fs::write(journal_path(&tmp), serde_json::to_string_pretty(&journal).unwrap())
+            .unwrap();
+
+        recover_pending_journal(&tmp).unwrap();
+
+        assert!(!journal_path(&tmp).exists(), "journal must be removed");
+        assert_eq!(
+            std::fs::read_to_string(&skill_path).unwrap(),
+            skill_content,
+            "skill file must be unchanged"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_recover_pending_journal_commits_when_skill_written_proposals_not_saved() {
+        // Crash scenario: skill written, proposals.json not yet updated.
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_rec_commit_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let original = "old content";
+        let new_content = "new content";
+        let skill_path = tmp.join("skill.md");
+        // Simulate: skill file already has the new content.
+        std::fs::write(&skill_path, new_content).unwrap();
+
+        // proposals.json still shows VerifiedApproved (not Accepted).
+        let prop = Proposal {
+            id: "p1".to_string(),
+            skill: "test".to_string(),
+            skill_path: skill_path.display().to_string(),
+            before: original.to_string(),
+            after: new_content.to_string(),
+            summary: "test".to_string(),
+            status: ProposalStatus::VerifiedApproved,
+            at_unix: 0,
+            backup: None,
+            score_before: 0.0,
+            score_after: 0.0,
+            heldout_eval_summary: "".to_string(),
+            why_this_improves: "".to_string(),
+            risk_notes: "".to_string(),
+            spec: None,
+        };
+        save_proposals(&tmp, &[prop]).unwrap();
+
+        // Journal records base_hash of the OLD content.
+        let journal = AcceptJournal {
+            proposal_id: "p1".to_string(),
+            skill_path: skill_path.display().to_string(),
+            original_bytes: original.to_string(),
+            intended_status: ProposalStatus::Accepted,
+            base_hash: fnv1a_hash(original),
+        };
+        std::fs::write(journal_path(&tmp), serde_json::to_string_pretty(&journal).unwrap())
+            .unwrap();
+
+        // current_hash (new_content) != base_hash (original) → recovery commits.
+        recover_pending_journal(&tmp).unwrap();
+
+        assert!(!journal_path(&tmp).exists(), "journal must be removed after recovery");
+
+        let proposals = load_proposals_strict(&tmp).unwrap();
+        let p = proposals.iter().find(|p| p.id == "p1").unwrap();
+        assert_eq!(
+            p.status,
+            ProposalStatus::Accepted,
+            "recovery must commit Accepted status"
+        );
+        assert_eq!(
+            p.backup.as_deref(),
+            Some(original),
+            "recovery must persist the pre-accept backup"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_injected_save_failure_returns_err() {
+        // Make proposals_path a DIRECTORY so atomic_write to it fails.
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_savefail_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let pp = proposals_path(&tmp);
+        std::fs::create_dir_all(&pp).unwrap(); // proposals.json is now a dir
+        let result = update_proposals::<()>(&tmp, |_| Ok(()));
+        assert!(result.is_err(), "save failure must propagate as Err");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_accept_proposal_journal_deleted_on_success() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_jp_clean_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let skill_path = tmp.join("skill.md");
+        std::fs::write(&skill_path, "before").unwrap();
+
+        let prop = Proposal {
+            id: "jp1".to_string(),
+            skill: "test".to_string(),
+            skill_path: skill_path.display().to_string(),
+            before: "before".to_string(),
+            after: "after".to_string(),
+            summary: "".to_string(),
+            status: ProposalStatus::VerifiedApproved,
+            at_unix: 0,
+            backup: None,
+            score_before: 0.0,
+            score_after: 0.0,
+            heldout_eval_summary: "".to_string(),
+            why_this_improves: "".to_string(),
+            risk_notes: "".to_string(),
+            spec: None,
+        };
+        save_proposals(&tmp, &[prop]).unwrap();
+
+        accept_proposal(&tmp, "jp1").unwrap();
+
+        assert!(
+            !journal_path(&tmp).exists(),
+            "journal must be removed after successful accept"
+        );
+        assert_eq!(std::fs::read_to_string(&skill_path).unwrap(), "after");
+        let all = load_proposals_strict(&tmp).unwrap();
+        let p = all.iter().find(|p| p.id == "jp1").unwrap();
+        assert_eq!(p.status, ProposalStatus::Accepted);
+        assert_eq!(p.backup.as_deref(), Some("before"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_rollback_proposal_journal_deleted_on_success() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_rb_jp_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let skill_path = tmp.join("skill.md");
+        std::fs::write(&skill_path, "after").unwrap();
+
+        let prop = Proposal {
+            id: "rb1".to_string(),
+            skill: "test".to_string(),
+            skill_path: skill_path.display().to_string(),
+            before: "before".to_string(),
+            after: "after".to_string(),
+            summary: "".to_string(),
+            status: ProposalStatus::Accepted,
+            at_unix: 0,
+            backup: Some("before".to_string()),
+            score_before: 0.0,
+            score_after: 0.0,
+            heldout_eval_summary: "".to_string(),
+            why_this_improves: "".to_string(),
+            risk_notes: "".to_string(),
+            spec: None,
+        };
+        save_proposals(&tmp, &[prop]).unwrap();
+
+        rollback_proposal(&tmp, "rb1").unwrap();
+
+        assert!(
+            !journal_path(&tmp).exists(),
+            "journal must be removed after successful rollback"
+        );
+        assert_eq!(std::fs::read_to_string(&skill_path).unwrap(), "before");
+        let all = load_proposals_strict(&tmp).unwrap();
+        let p = all.iter().find(|p| p.id == "rb1").unwrap();
+        assert_eq!(p.status, ProposalStatus::RolledBack);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn b19_nightly_errors_on_corrupt_config() {
+        let tmp = std::env::temp_dir()
+            .join(format!("neoth_b19_cfg_fail_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(SelfImproveConfig::path(&tmp), b": : : not yaml").unwrap();
+
+        let outcome = run_nightly_with_engine(
+            &tmp,
+            "test",
+            "/tmp/skill.md",
+            crate::permissions::AutonomyLevel::Standard,
+            |_, _| panic!("engine must not run when config is corrupt"),
+        );
+        assert!(
+            matches!(outcome, NightlyOutcome::Error { .. }),
+            "corrupt config must yield NightlyOutcome::Error, got {outcome:?}"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

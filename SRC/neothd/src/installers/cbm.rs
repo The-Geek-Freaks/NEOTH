@@ -212,17 +212,17 @@ pub fn auto_register() -> anyhow::Result<bool> {
         return Ok(false);
     }
     use crate::mcp::config::{McpServers, cbm_recommended_config};
-    let mut recommended = cbm_recommended_config();
-    recommended.enabled = true;
-    let mut servers = McpServers::load().unwrap_or_default();
-    if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == recommended.id) {
-        existing.enabled = true;
-    } else {
-        servers.servers.push(recommended);
-    }
     let path = McpServers::default_path();
-    let yaml = serde_yaml::to_string(&servers)?;
-    crate::util::atomic_write::atomic_write(&path, yaml.as_bytes())?;
+    McpServers::update_at(&path, |servers| {
+        let mut recommended = cbm_recommended_config();
+        recommended.enabled = true;
+        if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == recommended.id) {
+            existing.enabled = true;
+        } else {
+            servers.servers.push(recommended);
+        }
+        Ok(true)
+    })?;
     Ok(true)
 }
 

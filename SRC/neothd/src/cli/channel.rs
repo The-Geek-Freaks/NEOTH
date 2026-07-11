@@ -110,12 +110,18 @@ fn configured_count(rows: &[ChannelStatus]) -> usize {
 }
 
 /// `neoth channel list` — load config + credentials, render the inventory.
-/// Missing/unreadable files degrade to defaults (everything UNCONFIGURED), the
-/// honest answer on a fresh install.
+/// A missing credentials file is fine (fresh install). A bad file is an error
+/// — silent fallback would hide operator-visible corruption.
 pub fn run_list(output: &OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
     let creds = Credentials::load_or_default(&crate::config::credentials::default_path())
-        .unwrap_or_default();
+        .with_context(|| {
+            format!(
+                "load credentials at {} — file exists but cannot be read; \
+                 repair or remove it before running `neoth channel list`",
+                crate::config::credentials::default_path().display()
+            )
+        })?;
     let rows = channel_statuses(&cfg, &creds);
     print!("{}", render(&rows, output)?);
     Ok(())
@@ -237,7 +243,13 @@ pub struct ChannelTestResult {
 pub async fn run_test(name: &str, output: &OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
     let creds = Credentials::load_or_default(&crate::config::credentials::default_path())
-        .unwrap_or_default();
+        .with_context(|| {
+            format!(
+                "load credentials at {} — file exists but cannot be read; \
+                 repair or remove it before running `neoth channel test`",
+                crate::config::credentials::default_path().display()
+            )
+        })?;
     let chan = name.trim().to_ascii_lowercase();
 
     let result = match plan_channel_test(&chan, &cfg, &creds) {
@@ -672,10 +684,11 @@ fn required_flags_for(channel: &str) -> &'static str {
 pub async fn run_add(channel: &str, flags: &ChannelAddFlags, output: &OutputFormat) -> Result<()> {
     let chan = channel.trim().to_ascii_lowercase();
     let path = crate::config::credentials::default_path();
-    let base = Credentials::load_or_default(&path).unwrap_or_default();
 
     // Reject unknown channels BEFORE prompting (no point asking for a token we
     // can't store) — let the staging validator produce the precise message.
+    // Uses a throwaway default base because the purpose is purely name validation
+    // (stage_channel_add always bails for unknown names regardless of base).
     if !matches!(
         chan.as_str(),
         "telegram"
@@ -693,10 +706,13 @@ pub async fn run_add(channel: &str, flags: &ChannelAddFlags, output: &OutputForm
             | "gchat"
             | "google_chat"
     ) {
-        stage_channel_add(&chan, &ChannelAddFields::default(), base)?;
+        stage_channel_add(&chan, &ChannelAddFields::default(), Credentials::default())?;
         return Ok(()); // unreachable — the line above always errors for these
     }
 
+    // B17: collect ALL interactive input BEFORE entering the lock.
+    // prompt_channel_fields / flag parsing must complete here; never hold
+    // CRED_LOCK or the OS file lock while waiting at a terminal prompt.
     let fields = if flags.any_set() {
         // Non-interactive: build fields directly from CLI flags.
         flags.clone().into_fields()
@@ -725,10 +741,15 @@ pub async fn run_add(channel: &str, flags: &ChannelAddFlags, output: &OutputForm
         }
     };
 
-    let updated = stage_channel_add(&chan, &fields, base)?;
-    updated
-        .write(&path)
-        .with_context(|| format!("write credentials to {}", path.display()))?;
+    // B17 RMW: acquire cross-process lock, reload under lock, mutate, write atomically.
+    // If credentials.yaml exists but is corrupt the load inside update_at returns Err
+    // and update_at propagates without touching the file (STOP invariant).
+    Credentials::update_at(&path, |c| {
+        let updated = stage_channel_add(&chan, &fields, c.clone())?;
+        *c = updated;
+        Ok(())
+    })
+    .with_context(|| format!("update credentials at {}", path.display()))?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -944,14 +965,17 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
 pub fn run_remove(channel: &str, output: &OutputFormat) -> Result<()> {
     let chan = channel.trim().to_ascii_lowercase();
     let path = crate::config::credentials::default_path();
-    let base = Credentials::load_or_default(&path).unwrap_or_default();
-    let (updated, removed) = stage_channel_remove(&chan, base)?;
-
-    if removed {
-        updated
-            .write(&path)
-            .with_context(|| format!("rewrite credentials at {}", path.display()))?;
-    }
+    // B17 RMW: collect the removal outcome via a captured mutable bool;
+    // the update_at closure holds the lock for the whole load→mutate→write cycle.
+    let mut was_removed = false;
+    Credentials::update_at(&path, |c| {
+        let (updated, removed) = stage_channel_remove(&chan, c.clone())?;
+        *c = updated;
+        was_removed = removed;
+        Ok(())
+    })
+    .with_context(|| format!("update credentials at {}", path.display()))?;
+    let removed = was_removed;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -1705,5 +1729,116 @@ mod tests {
                 "missing hint for channel `{ch}`"
             );
         }
+    }
+
+    // ── B17 regression tests ──────────────────────────────────────────────
+
+    fn write_malformed(path: &std::path::Path) {
+        std::fs::write(path, "this is = not [valid yaml SENTINEL").unwrap();
+    }
+
+    fn write_invalid_utf8(path: &std::path::Path) {
+        std::fs::write(path, [0xFF, 0xFE, 0x00, 0x42]).unwrap();
+    }
+
+    fn malformed_original_bytes(path: &std::path::Path) -> Vec<u8> {
+        std::fs::read(path).unwrap()
+    }
+
+    #[test]
+    fn run_add_malformed_yaml_exits_nonzero_file_byte_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        write_malformed(&path);
+        let original = malformed_original_bytes(&path);
+
+        // Simulate non-interactive flag path so stdin isn't needed.
+        let flags = ChannelAddFlags {
+            token: Some(valid_tg_token()),
+            ..Default::default()
+        };
+        // We can't call run_add without tokio here, so test the underlying
+        // update_at directly (which run_add delegates to).
+        let r = Credentials::update_at(&path, |c| {
+            let updated = stage_channel_add("telegram", &flags.clone().into_fields(), c.clone())?;
+            *c = updated;
+            Ok(())
+        });
+        assert!(r.is_err(), "update_at on malformed YAML must return Err");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            original,
+            "malformed file bytes must be unchanged"
+        );
+    }
+
+    #[test]
+    fn run_remove_malformed_yaml_exits_nonzero_file_byte_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        write_malformed(&path);
+        let original = malformed_original_bytes(&path);
+
+        let mut was_removed = false;
+        let r = Credentials::update_at(&path, |c| {
+            let (updated, removed) = stage_channel_remove("telegram", c.clone())?;
+            *c = updated;
+            was_removed = removed;
+            Ok(())
+        });
+        assert!(r.is_err(), "update_at on malformed YAML must return Err");
+        assert!(!was_removed);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn run_list_malformed_yaml_is_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        write_malformed(&path);
+        // run_list calls load_or_default with ? — test that load fails.
+        let r = Credentials::load_or_default(&path);
+        assert!(r.is_err(), "malformed YAML must propagate as Err");
+    }
+
+    #[test]
+    fn run_test_malformed_yaml_is_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        write_malformed(&path);
+        let r = Credentials::load_or_default(&path);
+        assert!(r.is_err(), "malformed YAML must propagate as Err for run_test path");
+    }
+
+    #[test]
+    fn run_add_invalid_utf8_is_err_and_file_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        write_invalid_utf8(&path);
+        let original = malformed_original_bytes(&path);
+
+        let r = Credentials::update_at(&path, |_c| -> anyhow::Result<()> { Ok(()) });
+        assert!(r.is_err(), "update_at on invalid UTF-8 must return Err");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn run_add_missing_file_succeeds() {
+        // Fresh install: no credentials.yaml → update_at creates it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        assert!(!path.exists());
+        Credentials::update_at(&path, |c| {
+            let fields = ChannelAddFields {
+                token: Some(valid_tg_token()),
+                ..Default::default()
+            };
+            let updated = stage_channel_add("telegram", &fields, c.clone())?;
+            *c = updated;
+            Ok(())
+        })
+        .unwrap();
+        let loaded = Credentials::load_or_default(&path).unwrap();
+        assert!(loaded.telegram_token.is_some());
     }
 }

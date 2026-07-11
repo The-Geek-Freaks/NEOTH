@@ -38,7 +38,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Probe whether `npx` is available on the operator's PATH.
 ///
@@ -75,31 +75,25 @@ pub async fn auto_register(neoth_home: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    // Build the hardened MCP entry. The factory sets enabled: false;
-    // flip it to true here because the wizard obtained explicit operator consent.
-    let mut cfg = crate::mcp::config::mobile_mcp_recommended_config();
-    cfg.enabled = true;
-
-    // Upsert into mcp_servers.yaml (idempotent: update existing OR push new).
     let mcp_path = neoth_home.join("mcp_servers.yaml");
-    let mut servers =
-        crate::mcp::config::McpServers::load_from(&mcp_path).unwrap_or_default();
-    if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
-        // Re-enable + always enforce the telemetry opt-out sentinel.
-        existing.enabled = true;
-        existing
-            .env
-            .insert("MOBILEMCP_DISABLE_TELEMETRY".to_string(), "1".to_string());
-        // Refresh allow_tools and autonomy_gate from the factory in case
-        // the operator is upgrading from an older config.
-        existing.allow_tools = cfg.allow_tools;
-        existing.autonomy_gate = cfg.autonomy_gate;
-    } else {
-        servers.servers.push(cfg);
-    }
-    let yaml = serde_yaml::to_string(&servers).context("serialise mcp_servers.yaml")?;
-    crate::util::atomic_write::atomic_write(&mcp_path, yaml.as_bytes())
-        .context("write mcp_servers.yaml")?;
+    crate::mcp::config::McpServers::update_at(&mcp_path, |servers| {
+        let mut cfg = crate::mcp::config::mobile_mcp_recommended_config();
+        cfg.enabled = true;
+        if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
+            // Re-enable + always enforce the telemetry opt-out sentinel.
+            existing.enabled = true;
+            existing
+                .env
+                .insert("MOBILEMCP_DISABLE_TELEMETRY".to_string(), "1".to_string());
+            // Refresh allow_tools and autonomy_gate from the factory in case
+            // the operator is upgrading from an older config.
+            existing.allow_tools = cfg.allow_tools;
+            existing.autonomy_gate = cfg.autonomy_gate;
+        } else {
+            servers.servers.push(cfg);
+        }
+        Ok(true)
+    })?;
 
     Ok(true)
 }
@@ -239,26 +233,39 @@ mod tests {
 
     /// Inner registration without the async npx probe — used by sync tests.
     fn do_register(neoth_home: &Path) -> Result<bool> {
-        let mut cfg = crate::mcp::config::mobile_mcp_recommended_config();
-        cfg.enabled = true;
-
         let mcp_path = neoth_home.join("mcp_servers.yaml");
-        let mut servers =
-            crate::mcp::config::McpServers::load_from(&mcp_path).unwrap_or_default();
-        if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
-            existing.enabled = true;
-            existing
-                .env
-                .insert("MOBILEMCP_DISABLE_TELEMETRY".to_string(), "1".to_string());
-            existing.allow_tools = cfg.allow_tools;
-            existing.autonomy_gate = cfg.autonomy_gate;
-        } else {
-            servers.servers.push(cfg);
-        }
-        let yaml = serde_yaml::to_string(&servers).context("serialise mcp_servers.yaml")?;
-        crate::util::atomic_write::atomic_write(&mcp_path, yaml.as_bytes())
-            .context("write mcp_servers.yaml")?;
+        crate::mcp::config::McpServers::update_at(&mcp_path, |servers| {
+            let mut cfg = crate::mcp::config::mobile_mcp_recommended_config();
+            cfg.enabled = true;
+            if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
+                existing.enabled = true;
+                existing
+                    .env
+                    .insert("MOBILEMCP_DISABLE_TELEMETRY".to_string(), "1".to_string());
+                existing.allow_tools = cfg.allow_tools;
+                existing.autonomy_gate = cfg.autonomy_gate;
+            } else {
+                servers.servers.push(cfg);
+            }
+            Ok(true)
+        })?;
         Ok(true)
+    }
+
+    // ── B18 tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn do_register_fails_on_corrupt_yaml_and_leaves_file_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp_path = dir.path().join("mcp_servers.yaml");
+        let bad_yaml = b": corrupt yaml\n";
+        std::fs::write(&mcp_path, bad_yaml).unwrap();
+
+        let result = do_register(dir.path());
+        assert!(result.is_err(), "must Err on corrupt mcp_servers.yaml");
+
+        let after = std::fs::read(&mcp_path).unwrap();
+        assert_eq!(after.as_slice(), bad_yaml, "file must be byte-identical after failed update");
     }
 
     /// Smoke test: the async probe path doesn't panic whether or not Node

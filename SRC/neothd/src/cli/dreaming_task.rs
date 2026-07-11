@@ -242,7 +242,15 @@ fn self_improve_auto_pass_blocking(home: &Path) {
     let autonomy = crate::config::FreedomConfig::load_from_default_path()
         .map(|c| c.autonomy)
         .unwrap_or_default();
-    let cfg = si::SelfImproveConfig::load(home).effective(autonomy);
+    // B19: fail-closed — corrupt config stops this tick rather than defaulting
+    // to auto-on and re-enabling a deliberately-disabled master switch.
+    let cfg = match si::SelfImproveConfig::load_strict(home) {
+        Ok(opt) => si::effective_from_option(opt, autonomy),
+        Err(e) => {
+            warn!(error = %e, "self-improve auto-pass: config is corrupt, skipping tick");
+            return;
+        }
+    };
     if !cfg.auto || !si::is_installed() {
         return; // not in auto mode, or engine absent → nothing to do
     }
@@ -294,7 +302,28 @@ fn self_improve_auto_pass_blocking(home: &Path) {
             spec: parsed_spec, // IMPR-01: carry parsed spec; drift_sha added inside stage_proposal
         },
     ) {
-        Ok(_) => info!(proposal = %id, "self-improve auto-pass staged a proposal for review"),
+        Ok(_) => {
+            info!(proposal = %id, "self-improve auto-pass staged a proposal for review");
+            // B19: record the auto-staged proposal in the ledger too, so
+            // `neoth self-improve log` reflects nightly/dreaming proposals and
+            // not only CLI-triggered `run` invocations (closes the auto-pass
+            // audit-trail blind spot). Best-effort (the dreaming tick is a
+            // no-return background task); a failed append is warned, not fatal —
+            // the proposal is still visible in `neoth self-improve` (proposals.json).
+            if let Err(e) = si::append_ledger_locked(
+                home,
+                si::ImproveRecord {
+                    skill: persona.to_string(),
+                    accepted: false,
+                    score_before: quality.score_before,
+                    score_after: quality.score_after,
+                    summary: format!("nightly SkillOpt proposal for {persona}"),
+                    at_unix: now,
+                },
+            ) {
+                warn!(error = %format!("{e:#}"), "self-improve auto-pass: ledger append failed (proposal still staged)");
+            }
+        }
         Err(e) => warn!(error = %e, "self-improve auto-pass: stage_proposal failed"),
     }
 }

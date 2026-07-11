@@ -73,6 +73,9 @@ pub enum SelfImproveAction {
 
 pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
+    // B19: recover any partial accept/rollback from a previous crash before
+    // dispatching any subcommand — startup recovery gate.
+    si::recover_pending_journal(&home)?;
     // Full autonomy implies self-improve auto-on (unless the operator chose
     // otherwise) — resolve the live level so `status` + `run` reflect it.
     let autonomy = FreedomConfig::load_from_default_path()
@@ -81,7 +84,10 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
     match args.action {
         SelfImproveAction::Status => status(&home, autonomy, output),
         SelfImproveAction::Enable { auto } => {
-            let mut cfg = si::SelfImproveConfig::load(&home);
+            // B19: fail-closed — corrupt config is an error, not a silent reset.
+            let mut cfg = si::SelfImproveConfig::load_strict(&home)
+                .context("self_improve.yaml is corrupt")?
+                .unwrap_or_default();
             cfg.enabled = true;
             cfg.auto = auto;
             cfg.asked = true;
@@ -98,10 +104,13 @@ pub fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<(
             Ok(())
         }
         SelfImproveAction::Disable => {
-            let mut cfg = si::SelfImproveConfig::load(&home);
+            // B19: fail-closed — corrupt config is an error, not a silent reset.
+            let mut cfg = si::SelfImproveConfig::load_strict(&home)
+                .context("self_improve.yaml is corrupt")?
+                .unwrap_or_default();
             cfg.enabled = false;
             cfg.auto = false;
-            // Mark the operator's choice as explicit. Without this, effective()
+            // Mark the operator's choice as explicit. Without this, effective_from_option()
             // re-enables self-improve under Full autonomy (`Full && !asked`),
             // silently overriding this Disable. Mirrors the Enable branch.
             cfg.asked = true;
@@ -148,9 +157,15 @@ fn status(
     autonomy: crate::permissions::AutonomyLevel,
     output: OutputFormat,
 ) -> Result<()> {
-    let stored = si::SelfImproveConfig::load(home);
-    let (stored_enabled, stored_auto) = (stored.enabled, stored.auto);
-    let cfg = stored.effective(autonomy);
+    // B19: fail-closed — corrupt config surfaces as an error instead of
+    // silently resetting to default and masking data corruption.
+    let stored_opt = si::SelfImproveConfig::load_strict(home)
+        .context("self_improve.yaml is corrupt")?;
+    let (stored_enabled, stored_auto) = stored_opt
+        .as_ref()
+        .map(|s| (s.enabled, s.auto))
+        .unwrap_or((false, false));
+    let cfg = si::effective_from_option(stored_opt, autonomy);
     // Full-auto turned it on implicitly (operator never set it explicitly).
     let implied = cfg.enabled && !stored_enabled;
     let installed = si::is_installed();
@@ -221,7 +236,11 @@ fn run_pass(
     dry_run: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    let cfg = si::SelfImproveConfig::load(home).effective(autonomy);
+    // B19: fail-closed config load — corrupt yaml blocks the run.
+    let cfg = si::effective_from_option(
+        si::SelfImproveConfig::load_strict(home).context("self_improve.yaml is corrupt")?,
+        autonomy,
+    );
     if !cfg.enabled && !dry_run {
         println!(
             "self-improvement is disabled — enable it first: `neoth self-improve enable` (or set full-auto mode)"
