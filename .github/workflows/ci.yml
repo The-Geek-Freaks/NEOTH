@@ -44,6 +44,21 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0          # cleaner cache hits in CI
   RUST_BACKTRACE: 1
+  # CI-only release-profile overrides to stop the `cargo test --workspace
+  # --release` step OOM-killing the 16 GB GitHub runner while LINKING the
+  # release test binary. The committed [profile.release] uses lto="thin" +
+  # codegen-units=1 (max optimization, max link memory) — fine for the small
+  # shipped binaries built by release.yml, but the *test* binary bundles all
+  # ~10k unit tests + the test harness and exceeds 16 GB at link with those
+  # settings (root cause of the CI matrix being red since 2026-07-02; every
+  # test leg died SIGTERM/143 during the silent link phase before any test
+  # ran). These env vars override the profile for THIS workflow only — the
+  # shipped release artifact (release.yml) is unaffected and keeps full LTO.
+  # lto=false removes the whole-program link-memory spike; codegen-units=16
+  # parallelises codegen with a lower peak; debug=0 shrinks the binary.
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
 
 jobs:
   check:
