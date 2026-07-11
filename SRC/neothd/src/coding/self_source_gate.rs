@@ -421,6 +421,23 @@ pub async fn run_gate_stack(
     audit.target_paths = real_paths.clone();
     audit.layer4_worktree = LayerOutcome::Pass;
 
+    // ── Layer 3b: autonomy permission re-check on git-truth paths ─────────────
+    // The Layer-3 check above ran on the vendored-parser `target_paths`. Layer-4b
+    // already re-ran the ALLOWLIST on git's authoritative `real_paths`, but the
+    // autonomy-TIER permission gate was not — so a diff crafted to hide a
+    // permission-elevating path from the `---/+++` parser (while git still sees
+    // it) could clear Layer 3 with the wrong path set. Re-run it on `real_paths`.
+    match layer3_permission(cfg.autonomy, &real_paths, operator_acked || dry_run) {
+        Ok(()) => {
+            audit.layer3_permission = LayerOutcome::Pass;
+        }
+        Err(reason) => {
+            audit.layer3_permission = LayerOutcome::Fail(reason.clone());
+            info!(reason, "self_edit gate: layer3 permission refused (git-truth re-check)");
+            refuse!(audit, GateError::Permission(reason));
+        }
+    }
+
     // ── Layer 5: green-test gate (cargo check) ────────────────────────────────
     if self_edit_cfg.require_green_tests {
         // cargo check runs in the WORKSPACE dir inside the worktree so the whole
@@ -527,14 +544,17 @@ pub async fn run_gate_stack(
         );
     } else {
         info!(
-            paths = ?target_paths,
+            paths = ?real_paths,
             diff_hash,
             "self_edit gate: all 5 gates passed (dry-run — NOT applied to live tree)"
         );
     }
 
+    // Return git's authoritative path set, not the vendored-parser `target_paths`
+    // — callers (and the JSON/table output) must see the same files the WAL audit
+    // recorded (`audit.target_paths = real_paths`), never the pre-verification set.
     Ok(SelfEditOutcome {
-        target_paths,
+        target_paths: real_paths,
         diff_hash,
         dry_run,
     })
