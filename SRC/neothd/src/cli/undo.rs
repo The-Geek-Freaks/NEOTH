@@ -554,4 +554,41 @@ mod tests {
         // Empty history → LOWKEY.
         assert_eq!(prior_preset_before(&[], 123), ProfilePreset::Lowkey);
     }
+
+    #[test]
+    fn scan_lists_reversible_events_in_a_v2_compressed_segment() {
+        // GOLD-ARCH-03 regression: reversible frames inside a v2
+        // (zstd-compressed) segment must be listed by scan_wal_dir_for_undo.
+        // Before the for_each_frame migration the scan walked the raw zstd
+        // blob and silently found ZERO entries, so `neoth undo` could not
+        // list any mutation recorded in a compacted segment.
+        use crate::wal::HeaderBuilder;
+        use crate::wal::compress::compress_frames;
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+
+        let dir = tempfile::tempdir().unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({ "preset": "formal" })).unwrap();
+        let h = HeaderBuilder::new(events::EVENT_TYPE_PROFILE_PRESET_APPLIED, &payload).build();
+        let frame = encode_frame(&h, &payload);
+
+        // Finalize as a v2 compressed segment: 61-byte header + zstd(frame).
+        let blob = compress_frames(&frame).unwrap();
+        let hdr = SegmentHeaderV2::new(0, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        let mut seg_bytes = hdr.to_le_bytes().to_vec();
+        seg_bytes.extend_from_slice(&blob);
+        std::fs::write(dir.path().join("000001.wal"), &seg_bytes).unwrap();
+
+        let entries = scan_wal_dir_for_undo(&dir.path().to_path_buf(), 10).unwrap();
+        assert_eq!(
+            entries.len(),
+            1,
+            "reversible frame inside the zstd blob must be listed"
+        );
+        assert_eq!(
+            entries[0].event_type,
+            events::EVENT_TYPE_PROFILE_PRESET_APPLIED
+        );
+        assert_eq!(entries[0].name, "PROFILE_PRESET_APPLIED");
+    }
 }

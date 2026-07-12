@@ -268,4 +268,35 @@ mod tests {
         };
         run_updater(args).expect("check no-op");
     }
+
+    #[test]
+    fn load_results_from_a_v2_compressed_wal_segment() {
+        // GOLD-ARCH-03 regression: UPDATER_TASK_RESULT frames inside a v2
+        // (zstd-compressed) segment must be read by load_results_from_wal,
+        // not silently skipped as they were before the for_each_frame
+        // migration.
+        use crate::wal::HeaderBuilder;
+        use crate::wal::compress::compress_frames;
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let sample = sample_result();
+        let body = serde_json::to_vec(&sample).unwrap();
+        let h = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_RESULT, &body).build();
+        let frame = encode_frame(&h, &body);
+
+        // Finalize as a v2 compressed segment: 61-byte header + zstd(frame).
+        let blob = compress_frames(&frame).unwrap();
+        let hdr = SegmentHeaderV2::new(0, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        let mut seg_bytes = hdr.to_le_bytes().to_vec();
+        seg_bytes.extend_from_slice(&blob);
+        std::fs::write(&seg, &seg_bytes).unwrap();
+
+        let results = load_results_from_wal(&seg).unwrap();
+        assert_eq!(results.len(), 1, "result inside the zstd blob must be read");
+        assert_eq!(results[0].task_kind, sample.task_kind);
+        assert_eq!(results[0].components.len(), 2);
+    }
 }
