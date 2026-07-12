@@ -700,6 +700,13 @@ Fire one job by id immediately, out of band of the scheduler. Makes a real provi
 - `<ID>` — The job `id` from jobs.yaml
 - `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
 
+### `neoth cron status`
+
+Show a per-CronRole count summary (total, enabled, disabled breakdown). Calls classify_role on every job. JV-PRO-05
+
+- `--by-role` — Group counts by CronRole (enabled + disabled per role)
+- `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+
 ## `neoth ctx`
 
 Ctx-mode parity — persistent indexed knowledge with hybrid FTS5 search

@@ -950,12 +950,16 @@ mod tests {
             } else if *id == "github_pr_review"
                 || *id == "iac_security_audit"
                 || *id == "memory_synthesis"
+                || *id == "webq_best_practices"
                 || id.starts_with("officecli_")
             {
                 // Documented non-pm DISABLED specialists:
                 //   github_pr_review (GITPR-03) — touches the network.
                 //   iac_security_audit (HCP-01) — niche IaC pentest checklist.
                 //   memory_synthesis (NN-MEM-02) — opt-in alongside synthesis_cron.enabled.
+                //   webq_best_practices (GOLD-ADAPT-WEBQ-02) — broad "best practices"
+                //     domain; opt-in only so generic web-review phrasing doesn't
+                //     false-activate it (plan verdict line 550).
                 //   officecli_* (GOLD-ADAPT-DOC-04) — binary-gated; operator enables
                 //     after installing officecli from d.officecli.ai.
                 // All ship off; operator enables with `neoth skill --enable <id>`.

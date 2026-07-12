@@ -128,8 +128,7 @@ pub enum CronAction {
         file: Option<PathBuf>,
     },
 
-    /// Show a per-CronRole count summary (total, enabled, disabled breakdown).
-    /// Calls classify_role on every job. JV-PRO-05.
+    /// Show a per-CronRole count summary (total, enabled, disabled breakdown). Calls classify_role on every job. JV-PRO-05.
     Status {
         /// Group counts by CronRole (enabled + disabled per role).
         #[arg(long)]
