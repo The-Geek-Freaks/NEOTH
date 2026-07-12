@@ -3016,6 +3016,9 @@ pub(crate) async fn spawn_dreaming(
         // SPEC-12 daemon-side audit: the daemon owns the WAL writer, so each
         // non-empty nightly pass emits a `0xF4 DREAM_COMPOSED` frame.
         Some(writer.clone()),
+        // GOLD-ADAPT-KB-03 — nightly distill scan, gated by skills.auto_distill
+        // (dreaming.enabled already gates whether this spawn runs at all).
+        config.skills.auto_distill,
     ))
 }
 

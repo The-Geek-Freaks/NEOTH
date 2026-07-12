@@ -66,6 +66,7 @@ pub fn spawn(
     window: Option<Duration>,
     max_events: Option<usize>,
     writer: Option<WalWriterHandle>,
+    auto_distill: bool,
 ) -> JoinHandle<Result<()>> {
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
     let window = window.unwrap_or(DEFAULT_WINDOW);
@@ -79,6 +80,7 @@ pub fn spawn(
             window,
             max_events,
             writer,
+            auto_distill,
         )
         .await
     })
@@ -92,6 +94,7 @@ async fn run(
     window: Duration,
     max_events: usize,
     writer: Option<WalWriterHandle>,
+    auto_distill: bool,
 ) -> Result<()> {
     info!(
         interval_secs = interval.as_secs(),
@@ -147,6 +150,46 @@ async fn run(
         // `accept`. Daemon-cron only — `neoth dream now` calls run_one_pass
         // directly and never triggers this. Best-effort: any miss logs + skips.
         self_improve_auto_pass(&home).await;
+        // GOLD-ADAPT-KB-03 — Slice D: nightly distill scan (skills.auto_distill).
+        // Reads trajectory JSONL under `~/trajectories/` and logs repeated
+        // tool-call sequences via tracing. Daemon-cron only. Best-effort.
+        if auto_distill {
+            distill_auto_pass(&home).await;
+        }
+    }
+}
+
+/// GOLD-ADAPT-KB-03 — nightly background distill scan. Runs the same n-gram
+/// scan as `neoth distill` but emits via `tracing::info` (no stdout) so it is
+/// safe in the daemon loop. Best-effort: returns silently on any miss.
+async fn distill_auto_pass(home: &std::path::Path) {
+    let traj_dir = home.join("trajectories");
+    let records = crate::cli::distill::read_trajectories(&traj_dir);
+    if records.is_empty() {
+        return;
+    }
+    let patterns = crate::cli::distill::find_repeated_sequences(&records, 3, 2);
+    if patterns.is_empty() {
+        return;
+    }
+    tracing::info!(
+        pattern_count = patterns.len(),
+        top_sequence = %patterns[0].sequence.join(" -> "),
+        top_occurrences = patterns[0].occurrences,
+        "distill: repeated tool-call sequences found -- consider `neoth distill`",
+    );
+}
+
+#[cfg(test)]
+mod distill_auto_pass_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn distill_auto_pass_is_noop_on_missing_trajectories_dir() {
+        // No trajectories dir under the temp home → must return without panic.
+        let dir = TempDir::new().unwrap();
+        distill_auto_pass(dir.path()).await;
     }
 }
 
@@ -878,6 +921,7 @@ mod tests {
             None,
             None,
             None,
+            true, // GOLD-ADAPT-KB-03: auto_distill
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
         task.abort();
