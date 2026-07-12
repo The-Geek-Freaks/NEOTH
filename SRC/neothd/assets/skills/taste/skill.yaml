@@ -2,6 +2,15 @@ id: taste
 description: Aesthetic direction and design-variant selection — reads the design context to choose between brutalist, minimalist, soft, or redesign modes and explains the principles behind that choice.
 version: "1.0.0"
 trigger_keywords:
+  - "make it brutalist"
+  - "minimalist design"
+  - "soft ui"
+  - "redesign this"
+  - "brand kit"
+  - "image to code"
+  - "give it a look"
+  - "ästhetik"
+  - "redesign"
   - "choose an aesthetic direction for this ui"
   - "brutalist versus minimalist design decision"
   - "what design language fits this product"

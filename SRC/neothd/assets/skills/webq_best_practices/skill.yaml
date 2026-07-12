@@ -11,7 +11,7 @@ trigger_keywords:
   - "mixed content issues"
   - "unsafe inline script"
 tags: ["web", "best-practices", "security", "compatibility"]
-enabled: true
+enabled: false
 system_prompt: |
   You are a web-standards hygiene specialist. Identify deviations from modern
   browser standards, flag deprecated/removed APIs with exact replacements, and

@@ -1495,4 +1495,63 @@ mod tests {
             "gated-out skill must not win over an ungated one"
         );
     }
+
+    // ── skills-honesty: webq disabled-state + design/taste short-trigger invariants ──
+
+    #[test]
+    fn webq_best_practices_ships_disabled() {
+        let manifest: SkillManifest = serde_yaml::from_str(include_str!(
+            "../../assets/skills/webq_best_practices/skill.yaml"
+        ))
+        .expect("bundled webq_best_practices yaml parses");
+        assert!(
+            !manifest.enabled,
+            "webq_best_practices must ship disabled (broad domain; opt-in only per plan line 550)"
+        );
+    }
+
+    #[test]
+    fn design_eng_short_triggers_activate() {
+        let manifest: SkillManifest = serde_yaml::from_str(include_str!(
+            "../../assets/skills/design_eng/skill.yaml"
+        ))
+        .expect("bundled design_eng yaml parses");
+        let s = Skill {
+            manifest,
+            path: PathBuf::from("/bundled/design_eng/skill.yaml"),
+            content_hash: String::new(),
+        };
+        let skills = [s];
+        for prompt in ["animation timing is off", "GUI polish needed", "polish this UI"] {
+            assert!(
+                route(prompt, &skills).is_some(),
+                "prompt `{prompt}` must activate design_eng via short trigger",
+            );
+        }
+    }
+
+    #[test]
+    fn taste_short_triggers_activate() {
+        let manifest: SkillManifest = serde_yaml::from_str(include_str!(
+            "../../assets/skills/taste/skill.yaml"
+        ))
+        .expect("bundled taste yaml parses");
+        let s = Skill {
+            manifest,
+            path: PathBuf::from("/bundled/taste/skill.yaml"),
+            content_hash: String::new(),
+        };
+        let skills = [s];
+        for prompt in [
+            "make it brutalist",
+            "minimalist design please",
+            "soft ui style",
+            "redesign this component",
+        ] {
+            assert!(
+                route(prompt, &skills).is_some(),
+                "prompt `{prompt}` must activate taste via short trigger",
+            );
+        }
+    }
 }

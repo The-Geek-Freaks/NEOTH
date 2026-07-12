@@ -2,6 +2,14 @@ id: design_eng
 description: UI design-engineering judgment for motion, timing, micro-interactions, and restraint — invoked when deciding how (or whether) to animate interface elements.
 version: "1.0.0"
 trigger_keywords:
+  - "polish this UI"
+  - "make it feel right"
+  - "animation timing"
+  - "micro-interaction"
+  - "component design"
+  - "ease this"
+  - "GUI polish"
+  - "slint animation"
   - "should this element animate"
   - "choose the right easing curve"
   - "micro-interaction feels wrong"
