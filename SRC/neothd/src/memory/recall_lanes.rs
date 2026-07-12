@@ -133,6 +133,39 @@ pub fn fuse_lanes(lanes: &[LaneResult], limit: usize) -> Vec<EpisodeHit> {
     scored.into_iter().map(|(hit, _)| hit).collect()
 }
 
+/// GOLD-ADAPT-GRAPH-03 — community-based re-ranking pass (Stage-3).
+///
+/// Given a map of `event_id → community_id` loaded by the caller from
+/// `idx_memory_communities`, floats hits that share the plurality community to
+/// the front via a stable sort. Hits with no community entry keep their RRF
+/// position. Returns the input unchanged when no community has ≥ 2
+/// representatives among the hits (prevents noise from singletons).
+///
+/// Pure: no DB, no async. The caller loads the community map before calling.
+pub fn boost_by_community(
+    mut hits: Vec<EpisodeHit>,
+    community_map: &HashMap<i64, i64>,
+) -> Vec<EpisodeHit> {
+    let mut counts: HashMap<i64, usize> = HashMap::new();
+    for h in &hits {
+        if let Some(&cid) = community_map.get(&h.event_id) {
+            *counts.entry(cid).or_insert(0) += 1;
+        }
+    }
+    // Only boost when the plurality community has ≥ 2 members among the hits.
+    let Some(plurality_cid) = counts
+        .iter()
+        .filter(|(_, n)| **n >= 2)
+        .max_by_key(|(_, n)| **n)
+        .map(|(cid, _)| *cid)
+    else {
+        return hits;
+    };
+    // Stable sort: plurality-community hits first; RRF order within each group.
+    hits.sort_by_key(|h| u8::from(community_map.get(&h.event_id) != Some(&plurality_cid)));
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +300,50 @@ mod tests {
     #[test]
     fn no_lanes_yields_empty() {
         assert!(fuse_lanes(&[], 10).is_empty());
+    }
+
+    // ── GOLD-ADAPT-GRAPH-03: community boost ─────────────────────────────────
+
+    fn hit_with_id(text_hash: &str, event_id: i64) -> EpisodeHit {
+        EpisodeHit {
+            event_id,
+            event_type: 0,
+            ts_ns: 0,
+            text: text_hash.to_string(),
+            text_hash: text_hash.to_string(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "hot".to_string(),
+            importance: Some(0.5),
+            access_count: 0,
+            trust: 1,
+        }
+    }
+
+    #[test]
+    fn community_boost_floats_plurality_community() {
+        // A(comm=10), B(no comm), C(comm=10), D(comm=20) — community 10 is plurality.
+        let community_map: HashMap<i64, i64> =
+            HashMap::from([(1i64, 10i64), (3i64, 10i64), (4i64, 20i64)]);
+        let hits = vec![
+            hit_with_id("A", 1),
+            hit_with_id("B", 2),
+            hit_with_id("C", 3),
+            hit_with_id("D", 4),
+        ];
+        let result = boost_by_community(hits, &community_map);
+        assert_eq!(result[0].text_hash, "A", "community-10 hit A should be first");
+        assert_eq!(result[1].text_hash, "C", "community-10 hit C should be second");
+    }
+
+    #[test]
+    fn community_boost_noop_when_no_plurality() {
+        // Each community has only 1 member — order must be unchanged.
+        let community_map: HashMap<i64, i64> = HashMap::from([(1i64, 10i64), (2i64, 20i64)]);
+        let hits = vec![hit_with_id("A", 1), hit_with_id("B", 2), hit_with_id("C", 99)];
+        let result = boost_by_community(hits, &community_map);
+        let order: Vec<&str> = result.iter().map(|h| h.text_hash.as_str()).collect();
+        assert_eq!(order, vec!["A", "B", "C"], "order unchanged when no plurality");
     }
 }

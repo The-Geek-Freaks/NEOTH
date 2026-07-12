@@ -56,7 +56,7 @@ use rusqlite::Connection;
 ///      Operator-attested promotion to idx_groundtruth is the only bridge
 ///      (written by `neoth obsidian promote`, audited in
 ///      `~/.neoth/promotion-audit.jsonl`).
-pub const SCHEMA_VERSION: i64 = 25;
+pub const SCHEMA_VERSION: i64 = 26;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -905,6 +905,16 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_memory_links_lo ON idx_memory_links (lo_id);
         CREATE INDEX IF NOT EXISTS idx_memory_links_hi ON idx_memory_links (hi_id);
         CREATE INDEX IF NOT EXISTS idx_memory_links_weight ON idx_memory_links (weight DESC);
+
+        -- GOLD-ADAPT-GRAPH-03: idx_memory_communities — Louvain community
+        -- assignments refreshed by decay_task after each link decay pass.
+        -- PK on node_id: each episode belongs to at most one community.
+        CREATE TABLE IF NOT EXISTS idx_memory_communities (
+            node_id      INTEGER NOT NULL PRIMARY KEY,
+            community_id INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_communities_community
+            ON idx_memory_communities (community_id);
 
         -- ── Schema v9: idx_profile_outbox (Pick #12, Session 14) ────────────
         --

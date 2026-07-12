@@ -629,6 +629,31 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             }
             let fused = crate::memory::recall_lanes::fuse_lanes(&lanes, limit);
 
+            // GOLD-ADAPT-GRAPH-03 — Stage-3 community boost: float hits that
+            // share the plurality Louvain community (refreshed by decay_task into
+            // idx_memory_communities) to the front. Best-effort: a load failure
+            // or empty table leaves the RRF order unchanged.
+            let fused = {
+                let mut community_map: std::collections::HashMap<i64, i64> =
+                    std::collections::HashMap::new();
+                if let Ok(mut stmt) =
+                    conn.prepare("SELECT node_id, community_id FROM idx_memory_communities")
+                {
+                    if let Ok(mapped) =
+                        stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+                    {
+                        for (node_id, community_id) in mapped.flatten() {
+                            community_map.insert(node_id, community_id);
+                        }
+                    }
+                }
+                if community_map.is_empty() {
+                    fused
+                } else {
+                    crate::memory::recall_lanes::boost_by_community(fused, &community_map)
+                }
+            };
+
             let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + fused.len());
             rows.extend(gt_rows);
             rows.extend(fused);

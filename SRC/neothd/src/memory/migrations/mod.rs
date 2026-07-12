@@ -207,7 +207,36 @@ pub const MIGRATIONS: &[Migration] = &[
                       only bridge (audited in ~/.neoth/promotion-audit.jsonl).",
         run: migration_v24_to_v25,
     },
+    Migration {
+        from: 25,
+        to: 26,
+        description: "GOLD-ADAPT-GRAPH-03: add idx_memory_communities — Louvain \
+                      community assignments for recall community-boost pass \
+                      (decay_task refreshes after each link decay sweep).",
+        run: migration_v25_to_v26,
+    },
 ];
+
+/// v25 → v26: GOLD-ADAPT-GRAPH-03 — create `idx_memory_communities`.
+///
+/// Stores Louvain community assignments computed by
+/// `assoc_graph::detect_communities` after each `decay_task` link-decay sweep.
+/// PK on `node_id` ensures each episode belongs to at most one community at a
+/// time; `community_id` is the current Louvain partition label.
+/// `CREATE TABLE IF NOT EXISTS` keeps the migration idempotent.
+fn migration_v25_to_v26(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_memory_communities (
+            node_id      INTEGER NOT NULL PRIMARY KEY,
+            community_id INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_communities_community
+            ON idx_memory_communities (community_id);
+        "#,
+    )
+    .context("migration_v25_to_v26: create idx_memory_communities")
+}
 
 /// v24 → v25: L6-PRELOAD-RESTRICTED-INDEX-01 — create `idx_restricted`.
 ///

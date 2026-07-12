@@ -209,6 +209,39 @@ pub async fn run_once(
                 tracing::debug!(error = %e, "assoc_graph: link decay failed (non-fatal)")
             }
         }
+        // GOLD-ADAPT-GRAPH-03: re-run Louvain after each link decay pass and
+        // persist community assignments to idx_memory_communities (consumed by
+        // the recall Stage-3 community-boost pass). Non-fatal.
+        match crate::memory::assoc_graph::detect_communities(&conn) {
+            Ok(communities) => {
+                let persist_result: rusqlite::Result<()> = (|| {
+                    conn.execute("DELETE FROM idx_memory_communities", [])?;
+                    let mut stmt = conn.prepare(
+                        "INSERT OR REPLACE INTO idx_memory_communities \
+                         (node_id, community_id) VALUES (?1, ?2)",
+                    )?;
+                    for (community_id, members) in communities.iter().enumerate() {
+                        for &node_id in members {
+                            stmt.execute(rusqlite::params![node_id, community_id as i64])?;
+                        }
+                    }
+                    Ok(())
+                })();
+                match persist_result {
+                    Ok(()) => tracing::debug!(
+                        communities = communities.len(),
+                        "assoc_graph: Louvain community assignments refreshed"
+                    ),
+                    Err(e) => tracing::debug!(
+                        error = %e,
+                        "assoc_graph: community persist failed (non-fatal)"
+                    ),
+                }
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "assoc_graph: detect_communities failed (non-fatal)")
+            }
+        }
         Ok(pass_report)
     })
     .await??;
