@@ -118,11 +118,28 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
                     (String::new(), "transcription failed", String::from("none"))
                 }
             },
-            // No runtime: test-only fallback. Production (spawn_blocking) always
-            // has a handle.
-            Err(_) => {
+            // No runtime: test-only fallback (plain #[test] without a tokio
+            // executor), guarded by cfg!(test) so it is statically
+            // unreachable in production.
+            Err(_) if cfg!(test) => {
                 let (t, s) = transcribe_if_cached(&samples);
                 (t, s, String::from("legacy_no_runtime"))
+            }
+            Err(_) => {
+                // B20 hard invariant: dispatch_transcription is the ONLY
+                // production STT entry — a runtime-less production caller is
+                // a wiring bug. Fail loud (empty text + explicit status)
+                // instead of silently bypassing MediaSttConfig via the
+                // legacy candle path.
+                tracing::error!(
+                    "audio: no tokio runtime — STT requires the daemon/CLI runtime \
+                     (B20: dispatch_transcription is the only production STT entry)"
+                );
+                (
+                    String::new(),
+                    "transcription failed: no runtime",
+                    String::from("none"),
+                )
             }
         }
     };
@@ -174,13 +191,15 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
 /// avoid nested-runtime panic.
 /// `pub(crate)` so `media::dictation` can reuse the same STT path without
 /// duplicating the faster-whisper → candle priority logic.
-// B20: production callers now go through `dispatch_transcription`.
+// B20: production callers go through `dispatch_transcription` UNCONDITIONALLY.
 // This wrapper remains as the no-runtime fallback seam used by:
 //   - `audio::extract_blocking` when `Handle::try_current()` is None (plain #[test])
 //   - `dictation::transcribe_utterance` when no tokio runtime is present
-// It is NOT a production transcription path — it bypasses MediaSttConfig.
-// allow(dead_code) retained because the compiler cannot see usage through the
-// conditional Handle::try_current() branches without cfg(test) markers.
+// Both call sites gate the fallback arm with `cfg!(test)`, so this path is
+// statically unreachable in a production build — a runtime-less production
+// caller fails loud instead of bypassing MediaSttConfig.
+// allow(dead_code) retained because the call sits behind an
+// always-false-in-release `cfg!(test)` branch.
 #[allow(dead_code)]
 pub(crate) fn transcribe_pcm_samples(samples: &[f32]) -> (String, &'static str) {
     transcribe_if_cached(samples)

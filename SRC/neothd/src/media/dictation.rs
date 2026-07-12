@@ -234,10 +234,22 @@ pub fn transcribe_utterance(
                 Err(e) => return Err(DictationError::Transcription(e)),
             }
         }
-        Err(_) => {
+        Err(_) if cfg!(test) => {
             // No tokio runtime (plain #[test] without #[tokio::test]). Use the
-            // sync seam so gate/VAD unit tests don't panic. NOT a production path.
+            // sync seam so gate/VAD unit tests don't panic. Guarded by
+            // cfg!(test) so this arm is statically unreachable in production.
             crate::media::audio::transcribe_pcm_samples(&samples)
+        }
+        Err(_) => {
+            // B20 hard invariant: dispatch_transcription is the ONLY
+            // production STT entry. A production caller without a runtime is
+            // a wiring bug — fail loud instead of silently bypassing
+            // MediaSttConfig via the legacy candle path.
+            return Err(DictationError::Transcription(
+                "no tokio runtime — dictation requires the daemon/CLI runtime \
+                 (B20: dispatch_transcription is the only production STT entry)"
+                    .to_string(),
+            ));
         }
     };
     if text.is_empty() {
