@@ -127,6 +127,17 @@ pub enum CronAction {
         #[arg(long)]
         file: Option<PathBuf>,
     },
+
+    /// Show a per-CronRole count summary (total, enabled, disabled breakdown).
+    /// Calls classify_role on every job. JV-PRO-05.
+    Status {
+        /// Group counts by CronRole (enabled + disabled per role).
+        #[arg(long)]
+        by_role: bool,
+        /// Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
 }
 
 /// Resolve the jobs.yaml path: explicit `--file` else `~/.neoth/jobs.yaml`.
@@ -172,6 +183,7 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
         } => cron_edit(id, name, cron, prompt, tz, channel, recipient, timeout, enabled, file),
         CronAction::Remove { id, file } => cron_remove(id, file),
         CronAction::List { file } => cron_list(file, output),
+        CronAction::Status { by_role, file } => cron_status(by_role, file, output),
     }
 }
 
@@ -489,6 +501,76 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
     Ok(())
 }
 
+/// `neoth cron status` — per-CronRole count summary. JV-PRO-05.
+fn cron_status(by_role: bool, file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
+    use std::collections::BTreeMap;
+    let path = jobs_path(file);
+    let jf = load_or_create(&path)?;
+
+    let total = jf.jobs.len();
+    let enabled = jf.jobs.iter().filter(|j| j.enabled).count();
+    let disabled = total - enabled;
+
+    if !by_role || total == 0 {
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "total": total,
+                        "enabled": enabled,
+                        "disabled": disabled,
+                    }))?
+                );
+            }
+            OutputFormat::Table => {
+                println!("cron status: {total} job(s) — {enabled} enabled, {disabled} disabled");
+            }
+        }
+        return Ok(());
+    }
+
+    // Group by CronRole; BTreeMap keeps roles sorted for stable output.
+    let mut by_role_map: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for j in &jf.jobs {
+        let role = classify_role(j).to_string();
+        let entry = by_role_map.entry(role).or_insert((0, 0));
+        if j.enabled {
+            entry.0 += 1;
+        } else {
+            entry.1 += 1;
+        }
+    }
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let roles: Vec<_> = by_role_map
+                .iter()
+                .map(|(r, (en, dis))| serde_json::json!({ "role": r, "enabled": en, "disabled": dis }))
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "total": total,
+                    "enabled": enabled,
+                    "disabled": disabled,
+                    "by_role": roles,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!("# cron status — {total} job(s) ({enabled} enabled, {disabled} disabled)");
+            println!();
+            println!("{:<16} {:>8} {:>9}", "ROLE", "ENABLED", "DISABLED");
+            println!("{}", "-".repeat(36));
+            for (role, (en, dis)) in &by_role_map {
+                println!("{role:<16} {en:>8} {dis:>9}");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,5 +741,40 @@ jobs:
         let jf = load_or_create(&path).expect("reload");
         assert_eq!(jf.jobs[0].name, "New Name");
         assert_eq!(jf.jobs[0].timeout_seconds, 120);
+    }
+
+    // ── JV-PRO-05 cron status ────────────────────────────────────────────────
+
+    #[test]
+    fn status_counts_flat_and_by_role() {
+        let yaml = "\
+version: 1
+jobs:
+  - id: morning-brief
+    name: Morning Briefing
+    enabled: true
+    schedule:
+      cron: \"0 7 * * *\"
+    prompt: \"Daily morning briefing report\"
+  - id: disk-check
+    name: Disk Monitor
+    enabled: true
+    schedule:
+      cron: \"*/15 * * * *\"
+    prompt: \"Check disk usage percentage\"
+  - id: disabled-task
+    name: Disabled
+    enabled: false
+    schedule:
+      cron: \"0 6 * * *\"
+    prompt: \"do something else here\"
+";
+        let (_dir, path) = temp_jobs_yaml(yaml);
+        // Flat totals (no --by-role): must succeed over all 3 jobs.
+        cron_status(false, Some(path.clone()), OutputFormat::Json)
+            .expect("status flat must succeed");
+        // Grouped by role: classify_role is applied to every job.
+        cron_status(true, Some(path.clone()), OutputFormat::Table)
+            .expect("status by-role must succeed");
     }
 }

@@ -3029,6 +3029,17 @@ pub(crate) async fn spawn_cron_scheduler(
     shared_provider: &Option<Arc<dyn Provider>>,
     writer: &WalWriterHandle,
 ) -> anyhow::Result<Option<JoinHandle<()>>> {
+    use crate::permissions::AutonomyLevel;
+    // GOLD-ADAPT-HERMES-01 — gate scheduled automation at autonomy ≥ Standard.
+    // Strict (and fail-closed Custom) disables the cron scheduler entirely so
+    // the loudest privacy posture never runs unattended provider calls.
+    if !config.autonomy.meets_gate(AutonomyLevel::Standard) {
+        info!(
+            autonomy = config.autonomy.as_str(),
+            "cron scheduler skipped: autonomy below Standard disables scheduled automation"
+        );
+        return Ok(None);
+    }
     match (shared_provider.as_ref(), config.jobs_file_path()) {
         (Some(provider), Some(jobs_path)) if jobs_path.exists() => {
             match crate::cron::JobsFile::load_from_path(&jobs_path).await {
@@ -5543,6 +5554,25 @@ mod tests {
         assert!(
             spawn_contradiction_resolve_cron(&cfg).is_none(),
             "contradiction_resolve disabled by default → None"
+        );
+    }
+
+    #[test]
+    fn spawn_cron_scheduler_strict_autonomy_gate_blocks() {
+        use crate::permissions::AutonomyLevel;
+        // GOLD-ADAPT-HERMES-01 — pure-function gate check: meets_gate is
+        // called before any WAL/provider access, so this needs no reactor.
+        assert!(
+            !AutonomyLevel::Strict.meets_gate(AutonomyLevel::Standard),
+            "Strict must fail the Standard gate — spawn_cron_scheduler skips at Strict"
+        );
+        assert!(
+            AutonomyLevel::Standard.meets_gate(AutonomyLevel::Standard),
+            "Standard must pass its own gate"
+        );
+        assert!(
+            AutonomyLevel::Full.meets_gate(AutonomyLevel::Standard),
+            "Full must pass the Standard gate"
         );
     }
 

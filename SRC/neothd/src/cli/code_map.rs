@@ -322,7 +322,7 @@ fn run_persist(
     // already share a structural edge) never fired. RepoFile carries no source,
     // so re-read each file + extract symbols here (persist is an explicit command,
     // not hot-path). Best-effort: an unreadable file is skipped.
-    let edges_inserted = {
+    let (edges_inserted, cycles) = {
         use crate::code_map::graph::{CallGraph, FileInput};
         use crate::code_map::walker::Language;
         let root_dir = std::path::Path::new(&map.root);
@@ -347,8 +347,10 @@ fn run_persist(
             inputs.push(fi);
         }
         let graph = CallGraph::build(&inputs);
-        crate::code_map::persist::persist_edges(&mut conn, &map.root, graph.edges())
-            .context("persist call-graph edges")?
+        let cycles = graph.find_cycles(50);
+        let n = crate::code_map::persist::persist_edges(&mut conn, &map.root, graph.edges())
+            .context("persist call-graph edges")?;
+        (n, cycles)
     };
 
     match output {
@@ -360,6 +362,8 @@ fn run_persist(
                 "files_skipped_unchanged": stats.files_skipped_unchanged,
                 "symbols_inserted": stats.symbols_inserted,
                 "edges_inserted": edges_inserted,
+                "cycle_count": cycles.len(),
+                "cycles": cycles,
                 "prior_files_replaced": stats.prior_files_replaced,
                 "scan_report": {
                     "total_files": map.report.total_files,
@@ -379,6 +383,7 @@ fn run_persist(
             println!("  files skipped (no-op):  {}", stats.files_skipped_unchanged);
             println!("  symbols inserted:       {}", stats.symbols_inserted);
             println!("  edges inserted:         {edges_inserted}");
+            println!("  cycles detected:        {}", cycles.len());
             println!("  prior files replaced:   {}", stats.prior_files_replaced);
             println!();
             println!(
@@ -768,6 +773,26 @@ mod tests {
             // searched via the bare CLI helper.
             run_search("alpha".into(), OutputFormat::Json)
                 .expect("search after persist must succeed");
+        });
+    }
+
+    #[test]
+    fn persist_wires_cycle_detection() {
+        // GOLD-ADAPT-GRAPH-02 wiring: run_persist now destructures
+        // (edges_inserted, cycles) from find_cycles(50). If that wiring
+        // breaks, this fails to compile before it can run.
+        with_temp_home(|| {
+            let repo = tempdir().unwrap();
+            std::fs::write(repo.path().join("a.rs"), "pub fn foo() {}\n").unwrap();
+            run_persist(
+                Some(repo.path().to_path_buf()),
+                None,
+                None,
+                false,
+                false,
+                OutputFormat::Json,
+            )
+            .expect("persist with cycle detection must succeed");
         });
     }
 
