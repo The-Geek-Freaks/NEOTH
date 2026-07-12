@@ -257,6 +257,7 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         match review_plan(&llm, &plan_text).await {
             Ok(ReviewOutcome::Approved { log }) => {
                 println!("plan review: APPROVED after {} round(s)", log.len());
+                write_plan_review_log(&log, session_id);
             }
             Ok(ReviewOutcome::Deadlock { log, unresolved }) => {
                 eprintln!(
@@ -267,6 +268,7 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
                     eprintln!("  • {u}");
                 }
                 eprintln!("   (tasks stay queued — review them before dispatching)");
+                write_plan_review_log(&log, session_id);
             }
             Err(e) => {
                 eprintln!("⚠  plan review unavailable (reviewer LLM error) — proceeding: {e}");
@@ -290,6 +292,31 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     // leaving the status alone. Operators ALSO see this via
     // `neoth kanban show <session>`.
     Ok(())
+}
+
+/// GOLD-ADAPT-GRILL-03 — persist the plan-review log produced by `review_plan`
+/// for a completed session. Best-effort: write/serialise errors are reported to
+/// stderr and never fail the command.
+fn write_plan_review_log(log: &crate::coding::plan_writer::PlanReviewLog, session_id: KanbanSessionId) {
+    let log_path = FreedomConfig::default_neoth_home()
+        .join(format!("plan_review_log_{}.json", session_id.raw()));
+    write_plan_review_log_to(log, &log_path);
+}
+
+fn write_plan_review_log_to(
+    log: &crate::coding::plan_writer::PlanReviewLog,
+    log_path: &std::path::Path,
+) {
+    match log.to_json() {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(log_path, json.as_bytes()) {
+                eprintln!("⚠  plan review log write failed ({}): {e}", log_path.display());
+            }
+        }
+        Err(e) => {
+            eprintln!("⚠  plan review log serialise failed: {e}");
+        }
+    }
 }
 
 /// Pick #6 Phase 3 (2026-05-20): build a HemisphereWorkerSet from
@@ -1223,6 +1250,26 @@ mod tests {
         assert!(text.contains("## Problem"));
         assert!(text.contains("Add board rendering"));
         assert!(text.contains("## Decomposed tasks"));
+    }
+
+    #[test]
+    fn write_plan_review_log_to_creates_json_file_and_round_trips() {
+        use crate::coding::plan_writer::{PlanReviewLog, PlanReviewRound};
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("plan_review_log_99.json");
+        let mut log = PlanReviewLog::new();
+        log.append(PlanReviewRound {
+            round: 1,
+            critique: "needs more tests".into(),
+            response: "added tests".into(),
+            verdict: "APPROVED".into(),
+        });
+        write_plan_review_log_to(&log, &log_path);
+        assert!(log_path.exists(), "plan review log file must be created");
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let recovered = PlanReviewLog::from_json(&content).unwrap();
+        assert_eq!(recovered.rounds().len(), 1);
+        assert_eq!(recovered.rounds()[0].verdict, "APPROVED");
     }
 
     #[test]
