@@ -4311,6 +4311,10 @@ async fn name_session_best_effort(
         "operator_id": config.operator_id,
         "provider": provider.name(),
         "call_type": "session_naming",
+        // B22 parity: the naming call sends Request.model = None, so the wire
+        // model is freedom's provider_model (or the provider's builtin default
+        // when unset — logged as null). No dispatch/skill/CLI tiers run here.
+        "model": config.provider_model,
         "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
         "prompt_bytes": req.prompt.len(),
         "ts_unix": now_unix(),

@@ -392,10 +392,27 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
             );
         }
     };
+    // B22 parity (n8n bare-metal surface): no dispatch/skill/CLI/tweaks tiers
+    // exist here, so the effective model folds request > freedom
+    // (provider_model) > provider default. Resolve BEFORE building the
+    // request AND the WAL frame so the logged model always equals the wire
+    // model — even when the workflow omits `model` and the provider's
+    // configured default takes over.
+    let effective_model: Option<String> = req
+        .model
+        .clone()
+        .or_else(|| state.config.provider_model.clone());
+    let model_source = if req.model.is_some() {
+        "request"
+    } else if effective_model.is_some() {
+        "freedom"
+    } else {
+        "provider_default"
+    };
     let request = crate::providers::Request {
         prompt: req.prompt.clone(),
         system: req.system.clone(),
-        model: req.model.clone(),
+        model: effective_model.clone(),
         ..Default::default()
     };
     // Emit PROVIDER_REQUEST (0x20) BEFORE the call so a crash mid-
@@ -406,7 +423,8 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         "source": "n8n_api",
         "request_id": ctx.request_id,
         "provider_kind": provider_kind.map(|k| k.as_str()).unwrap_or("none"),
-        "model": req.model,
+        "model": effective_model,
+        "model_source": model_source,
         "prompt_bytes": req.prompt.len(),
         "system_bytes": req.system.as_deref().map(|s| s.len()).unwrap_or(0),
     }))
