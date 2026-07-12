@@ -5,6 +5,73 @@ All notable changes to NEOTH are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased — 1.0.0-gold] — since rc1 (387 commits, 2026-06-24 → 2026-07-12)
+
+The GOLD close-out: every code workstream on the `ROAD_TO_1_0_GOLD` tracker is
+complete — mechanical whole-file count **911 done / 3 open / 0 partials**, the 3
+open items being operator-only actions (headroom install, signed-release tag
+push) or explicit v1.1 scope (OMI multimodal). WS-I repo-adaptations closed
+**308/308** (was 219/298 at rc1). CI is fully green (11 jobs + Security +
+CodeQL); 10,400+ lib tests, 309 GUI tests, workspace + doctests in CI.
+
+### Security
+
+- **B01–B25 defect-audit waves** (two internal audit sweeps, verify-first): all
+  shared config stores are now **fail-closed and concurrency-safe** — channel
+  credentials, MCP registry, self-improve consent/proposals/ledger each go
+  through one cross-process OS-file-lock RMW primitive (`util/locked_file`);
+  only true `NotFound` yields an empty store, no load failure can reach a
+  write/delete anymore. Council rolling-24h HARD cap is a real atomic admission
+  invariant (corrupt state = capped, bytes quarantined). WAL quota race
+  fail-closed; webhook SSRF, HTTP body limits, mesh-identity handshake,
+  unicode boundaries, preload FS containment hardened.
+- **FEAT-05 self-reprogramming shipped safety-first**: 5-layer gate stack with
+  hard-deny for build-script/manifest edits, reentrancy lock, worktree RAII,
+  git-truth outcome paths with a Layer-3 permission re-check, mandatory gate-WAL
+  audit, GUI apply via subprocess + expect-hash (adversarial reviews closed
+  2 CRITICAL + 8 HIGH/MEDIUM before merge).
+- **External review closures (ChatGPT R1–R4, 9.89/10 final)**: release-order and
+  gold-tag blockers, keychain two-phase migration (creates `freedom.yaml` when
+  absent — no silent secret loss), wizard key-ping can never POST a key to a
+  non-public address, OS-keychain secrets-at-rest (Windows Credential Manager).
+
+### Added
+
+- **DES-13 mesh failover, complete**: foreign-persist writer + iroh parity,
+  `neoth cluster export-foreign`, foreign-event indexer, and consent-gated
+  `neoth cluster restore` with a full conflict matrix and off-WAL audit.
+- **FEAT-06 swarm dashboard core** (`neoth cluster swarm`, real node resource
+  snapshots) and **GUI Proposal-Review tab** for self-dev proposals.
+- **L6 vault preload lane**: manifest-based Obsidian preload (+ autorun at
+  serve, consented offline mirror, restricted index with promote), and nightly
+  dream-compose → vault sync.
+- **Unified STT dispatcher (B20)** — one production entry for ALL transcription;
+  local honors `media.stt.primary/model_size/language`, cloud requires explicit
+  provider + consent + audit sink, and results carry the effective provider.
+- **6-tier model resolution (B22)** — dispatch > skill > CLI > tweaks > freedom
+  > provider default; one decision drives the request, the WAL audit frame
+  (emitted post-resolution: WAL model == wire model), and accounting.
+- **Channel CLI registry parity (B21)** — all 15 channel kinds in
+  list/add/test/remove with aliases and honest `ConfiguredNotTestable` states.
+- **Theme/tweaks runtime sinks (B23)** — support matrix with 6 active fields
+  (fonts, sidebar, density, `color_theme` incl. the GUI boot path) and explicit
+  reserved diagnostics for the rest; Babel config truth (B24).
+- **GUI**: Cron-CRUD panel, kanban finish, channel-add form, live
+  channel-activity feed, plugin `ui_surface` detail pane, hardware load metrics.
+- Council N-Space anti-pattern scorer + locality priors; zero-friction preset
+  bundles; WAL `EVENT_TYPE_EXTENDED` escape hatch (u8 code space exhausted);
+  opt-in opthash microbench.
+
+### Fixed
+
+- **CI 8-day red resolved**: monolith test-binary link OOM
+  (`CARGO_PROFILE_DEV/TEST_DEBUG=0`), a broken doctest, a real WAL-quota
+  fail-open race, and a 60 s self-improve pipe-drain hang.
+- **Error-hunt waves 1–9**: UTF-8 boundary panics, Gemini 403 mis-mapping,
+  fleet reload `.enabled` gating, per-field coalescing settings writer (GUI
+  write-ordering race), blocking calls moved off the Slint event loop, wizard
+  panic + plugin-remove traversal, compactor edge cases.
+
 ## [1.0.0-gold-rc1] — 2026-06-24 — GOLD release candidate (headless core)
 
 First release candidate on the `ROAD_TO_1_0_GOLD` track. The **headless daemon
