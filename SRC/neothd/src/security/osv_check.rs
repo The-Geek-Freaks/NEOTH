@@ -34,12 +34,17 @@ const OSV_TIMEOUT: Duration = Duration::from_secs(6);
 ///
 /// Derived from `vulns[].severity[].score` (CVSS vector), `database_specific.severity`
 /// (GitHub advisory), or the raw `severity` string on the vuln object.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize,
+)]
 pub enum SeverityLevel {
     /// No severity information present in the advisory.
     None,
     Low,
     Medium,
+    /// GOLD-ADAPT-SNYK-01 — default for `SecurityPolicy::dep_vuln_threshold`:
+    /// blocks both High and Critical advisories on CLI installs.
+    #[default]
     High,
     Critical,
 }

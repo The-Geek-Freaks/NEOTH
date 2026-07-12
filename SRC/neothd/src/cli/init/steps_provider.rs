@@ -490,7 +490,14 @@ pub(crate) async fn offer_cli_installs(
         if !install_it {
             continue;
         }
-        if let Err(e) = crate::installers::install_kind(*kind).await {
+        // GOLD-ADAPT-SNYK-01: pass SeverityLevel::High as the block threshold
+        // until offer_cli_installs receives &SecurityPolicy from its caller chain.
+        if let Err(e) = crate::installers::install_kind(
+            *kind,
+            crate::security::osv_check::SeverityLevel::High,
+        )
+        .await
+        {
             println!("  ✗ install of {} failed: {e}", kind.display);
             continue;
         }

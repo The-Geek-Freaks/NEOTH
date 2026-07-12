@@ -162,9 +162,14 @@ pub async fn cli_version_async(binary: &str) -> Option<String> {
 /// Install `kind` using its declared [`InstallStrategy`]. Streams the
 /// installer's stderr to the wizard's tracing output so the operator
 /// sees download progress regardless of channel.
-pub async fn install_kind(kind: CliKind) -> Result<()> {
+pub async fn install_kind(
+    kind: CliKind,
+    dep_vuln_threshold: crate::security::osv_check::SeverityLevel,
+) -> Result<()> {
     match kind.install {
-        InstallStrategy::Npm { package } => install_via_npm(kind.display, package).await,
+        InstallStrategy::Npm { package } => {
+            install_via_npm(kind.display, package, dep_vuln_threshold).await
+        }
         InstallStrategy::ShellScript {
             unix_url,
             windows_ps_url,
@@ -177,16 +182,19 @@ pub async fn install_kind(kind: CliKind) -> Result<()> {
 // identifier as the `tracing::field::display` value-formatter function,
 // not as the local variable — see E0277 on the qwen-metal job for
 // run 26503528842.
-async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
+async fn install_via_npm(
+    cli_name: &str,
+    package: &str,
+    dep_vuln_threshold: crate::security::osv_check::SeverityLevel,
+) -> Result<()> {
     // GOLD-ADAPT-GOOSE-01 + GOLD-ADAPT-SNYK-01 — query OSV for advisories on
     // this package BEFORE installing it. MAL-* aborts unconditionally; CVE/GHSA
-    // at >= block_threshold also abort; a lookup error fails open (logged).
-    // neoth: replace SeverityLevel::High with SecurityPolicy.dep_vuln_threshold
-    // once config/mod.rs is updated (keep config/mod.rs out of the HOT lane).
+    // at >= dep_vuln_threshold also abort; a lookup error fails open (logged).
+    // The threshold now comes from SecurityPolicy.dep_vuln_threshold (default High).
     npm_supply_chain_gate(
         package,
         crate::security::osv_check::check_package(package, "npm", None).await,
-        crate::security::osv_check::SeverityLevel::High,
+        dep_vuln_threshold,
     )?;
     // GOLD-ADAPT-SNYK-03 — typosquatting heuristic. Warn-only (heuristic; no
     // hard block) so a legitimately-named-but-similar package is never bricked.
@@ -574,6 +582,24 @@ pub(crate) fn build_cmd(binary: &str, args: &[&str]) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snyk01_config_default_threshold_is_high() {
+        use crate::config::SecurityPolicy;
+        use crate::security::osv_check::SeverityLevel;
+        // Rust Default gives High.
+        assert_eq!(
+            SecurityPolicy::default().dep_vuln_threshold,
+            SeverityLevel::High
+        );
+        // serde deserialization from an empty object also gives High.
+        let p: SecurityPolicy = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.dep_vuln_threshold, SeverityLevel::High);
+        // Explicit override is honoured.
+        let p2: SecurityPolicy =
+            serde_json::from_str(r#"{"dep_vuln_threshold": "Critical"}"#).unwrap();
+        assert_eq!(p2.dep_vuln_threshold, SeverityLevel::Critical);
+    }
 
     #[test]
     fn all_three_clis_have_distinct_binaries() {

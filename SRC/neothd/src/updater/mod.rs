@@ -225,7 +225,9 @@ pub async fn apply_one(component: Component) -> Result<()> {
         display = kind.display,
         "updating via vendor shell-script"
     );
-    crate::installers::install_kind(kind).await
+    // GOLD-ADAPT-SNYK-01: pass SeverityLevel::High until apply_one receives
+    // &SecurityPolicy from its caller chain.
+    crate::installers::install_kind(kind, crate::security::osv_check::SeverityLevel::High).await
 }
 
 /// Convenience: probe all + apply each component flagged `update_available`.

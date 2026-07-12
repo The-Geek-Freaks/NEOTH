@@ -359,6 +359,7 @@ mod tests {
             },
             confirm_high: false,
             smart_approve: false,
+            ..Default::default()
         };
         let v = evaluate_tool_risk(
             &risk(

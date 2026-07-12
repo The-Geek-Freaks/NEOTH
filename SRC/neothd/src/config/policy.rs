@@ -191,6 +191,18 @@ pub struct SkillsConfig {
     /// ```
     #[serde(default)]
     pub session_catalog: bool,
+
+    /// GOLD-ADAPT-KB-03 — when `true` (default) the nightly dreaming pass also
+    /// runs a distill scan over `~/.neoth/trajectories/` and logs repeated
+    /// tool-call sequences via tracing. Applies only when `dreaming.enabled`
+    /// is true (the scan is piggybacked on that task). Set `false` to opt out.
+    ///
+    /// ```yaml
+    /// skills:
+    ///   auto_distill: false
+    /// ```
+    #[serde(default = "default_skills_auto_distill")]
+    pub auto_distill: bool,
 }
 
 /// GOLD-ADAPT-SPEAKR-01 — config mirror of the 5 summarize prompt layers.
@@ -246,6 +258,10 @@ fn default_skills_always_embed_route() -> bool {
     true
 }
 
+fn default_skills_auto_distill() -> bool {
+    true
+}
+
 impl Default for SkillsConfig {
     fn default() -> Self {
         Self {
@@ -259,6 +275,7 @@ impl Default for SkillsConfig {
             meeting_summary: MeetingSummaryConfig::default(),
             visibility_overrides: std::collections::HashMap::new(),
             session_catalog: false,
+            auto_distill: default_skills_auto_distill(),
         }
     }
 }
@@ -323,6 +340,13 @@ pub struct SecurityPolicy {
     /// auto-approval is audited (`RISK_GATE_ALLOWED_BY_READONLY_CACHE`).
     #[serde(default)]
     pub smart_approve: bool,
+    /// GOLD-ADAPT-SNYK-01 — minimum OSV advisory severity that blocks a CLI
+    /// install (npm / cargo / pip). Advisories at-or-above this level abort the
+    /// install; below it the call proceeds with a `warn!`. Default `High` —
+    /// blocks both High and Critical. Set `Critical` for a stricter policy, or
+    /// `None` for warn-only (never blocks).
+    #[serde(default)]
+    pub dep_vuln_threshold: crate::security::osv_check::SeverityLevel,
 }
 
 /// Action for a Critical dangerous-command finding.
