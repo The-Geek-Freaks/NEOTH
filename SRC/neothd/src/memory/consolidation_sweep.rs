@@ -325,7 +325,20 @@ pub fn run_sweep(
                     "meta",
                     now_unix_secs,
                 ) {
-                    Ok(_) => report.merged_to_groundtruth += 1,
+                    Ok(fact_id) => {
+                        report.merged_to_groundtruth += 1;
+                        // GOLD-ADAPT-NN-MEM-03: thread the evidence backlink so the
+                        // groundtruth row records which consolidated episode it came
+                        // from. Non-fatal — a failure here must not abort the sweep.
+                        if let Err(e) =
+                            groundtruth::record_evidence(&tx, fact_id, canonical.event_id)
+                        {
+                            debug!(
+                                error = %e,
+                                "consolidation_sweep: record_evidence skipped (non-fatal)"
+                            );
+                        }
+                    }
                     Err(e) => {
                         // Non-fatal — log and continue. A duplicate statement
                         // is handled by groundtruth::insert corroboration path.

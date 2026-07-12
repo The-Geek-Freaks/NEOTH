@@ -552,6 +552,17 @@ fn list(
                     "  [{:>4}] {:<11} {:<22} {:<24}  {}",
                     g.id, g.fact_state, g.source, g.scope, g.statement,
                 );
+                // GOLD-ADAPT-NN-MEM-03: show evidence provenance when present.
+                let ev_ids: Vec<i64> = serde_json::from_str(&g.evidence).unwrap_or_default();
+                if !ev_ids.is_empty() {
+                    println!(
+                        "         maturity={} conf={:.2} confirmed={} evidence={:?}",
+                        g.maturity,
+                        g.confidence,
+                        g.confirmed_count,
+                        &ev_ids[..ev_ids.len().min(5)],
+                    );
+                }
             }
         }
     }
