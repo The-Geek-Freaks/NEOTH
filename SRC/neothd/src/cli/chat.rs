@@ -1025,15 +1025,19 @@ async fn enforce_preflight(
     // WAL frame so operators can audit what was projected vs what
     // actually billed (PROVIDER_RESPONSE event reports actual usage
     // post-call).
-    // B22: known limitation — the cost gate below estimates on the 3-tier model
-    // (cli > tweaks > freedom).  Dispatch and skill model resolution happens INSIDE
-    // enforce_preflight, after this gate runs, so the dispatch/skill model cannot be
-    // known here without resolving the dispatch decision first (which requires the
-    // full agent + skill pipeline that runs later in this function).  A full fix
-    // would require resolving the dispatch decision before cost estimation, which is
-    // a larger refactor.  The practical risk: if a skill/dispatch selects a model
-    // with a significantly higher per-token price the gate may approve on a lower
-    // estimate.  Operators who care about tight cost gates should set
+    // B22 — cost preflight uses the best-known model at this gate site: cli >
+    // tweaks > freedom (3-tier).  Dispatch/skill model resolution happens
+    // later inside this function (agent_dispatch check, preflight_resolved_model)
+    // and in build_prompt_bundle (skill_model in the caller) — neither is in
+    // scope here without a deep restructure of the preflight flow.
+    // Practical risk: if a skill/dispatch selects a pricier model the gate
+    // may approve on a lower estimate.  The authoritative model and
+    // model_source are recorded in the PROVIDER_REQUEST WAL frame emitted by
+    // run_chat_with AFTER the 6-tier resolution (post this function).
+    // No silent divergence: COST_ESTIMATE_SHOWN tags `"model_source":
+    // "pre_dispatch_estimate"` so WAL consumers can identify pre-dispatch
+    // estimates vs the authoritative PROVIDER_REQUEST record.
+    // Operators who care about tight cost gates should set
     // `freedom.yaml::tokens.max_per_request` conservatively.
     let predicted_cost = {
         let meter = crate::providers::meter::Meter::with_default_window();
@@ -1052,6 +1056,11 @@ async fn enforce_preflight(
     let est_payload = serde_json::to_vec(&serde_json::json!({
         "provider": provider.name(),
         "model": model_for_estimate(args, config, tweaks_model_for_cost.as_deref()),
+        // B22: model here is the pre-dispatch best-effort (cli > tweaks > freedom).
+        // Dispatch/skill resolution is not yet available at this gate site.
+        // The authoritative model is in the PROVIDER_REQUEST WAL frame emitted
+        // after the 6-tier resolution in run_chat_with (post enforce_preflight).
+        "model_source": "pre_dispatch_estimate",
         "input_tokens": predicted_cost.input_tokens,
         "output_tokens_est": predicted_cost.output_tokens_est,
         "total_eur": predicted_cost.total_eur,
@@ -2184,7 +2193,10 @@ async fn dispatch_provider(
                 }
             };
             println!("{response_text}");
-            (response_text, None, None, model_for_estimate(args, config, tweaks_model_default.as_deref()))
+            // B22: use the 6-tier effective_model (already resolved by the caller)
+            // rather than the stale 3-tier model_for_estimate so usage accounting
+            // reflects the model the council request was actually built with.
+            (response_text, None, None, effective_model.clone().unwrap_or_else(|| "unknown".to_string()))
         } else if use_loop {
             info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
             // SC-11 — scope the MCP gate to the matched skill's
@@ -2428,11 +2440,13 @@ async fn dispatch_provider(
             // REVFIX-EXCERPTS-01 — capture structured call records for digest.
             mcp_tool_records = outcome.tool_call_records;
             println!("{}", outcome.final_text);
+            // B22: use the 6-tier effective_model (pre-resolved by the caller)
+            // so usage accounting reflects the model the dispatch request used.
             (
                 outcome.final_text,
                 None,
                 None,
-                model_for_estimate(args, config, tweaks_model_default.as_deref()),
+                effective_model.clone().unwrap_or_else(|| "unknown".to_string()),
             )
         } else {
             // QM-10 Phase 2: consult the circuit breaker for this
@@ -3784,9 +3798,11 @@ pub async fn run_chat_with(
     }
 
     // ── RAW_TEXT (the actual prompt, for recall) ──────────────────────────
-    // Stored before the hashed PROVIDER_REQUEST so `neoth recall "..."` can
-    // find what the operator typed. WAL is mode-0600 / DACL-restricted, so
-    // raw prompts at rest match the existing trust boundary.
+    // Stored before dispatch so `neoth recall "..."` can find what the
+    // operator typed.  PROVIDER_REQUEST WAL frame follows later, after the
+    // full 6-tier dispatch-model resolution in run_chat_with (post
+    // enforce_preflight).  WAL is mode-0600 / DACL-restricted, so raw
+    // prompts at rest match the existing trust boundary.
     // ODY-09: incognito turns skip RAW_TEXT entirely — no prompt content in WAL.
     // An INCOGNITO_TURN (0xF7) audit anchor is written instead.
     let raw_event_id = if args.incognito {
@@ -3853,18 +3869,15 @@ pub async fn run_chat_with(
         }
     }
 
-    // ── PROVIDER_REQUEST (hashed metadata) ────────────────────────────────
+    // ── Prompt-bundle hash + token-budget gate ────────────────────────────
     //
-    // ARCH-07 / Round-3 v0.4 — `prompt_bundle_hash` field added.
-    // Computed via `skills::versioning::compute_prompt_bundle_hash`
-    // over the minimal block set currently visible at this site
-    // (Block::A = operator-explicit --system if set, Block::E =
-    // operator's current message). As the prompt assembler grows to
-    // explicitly emit Block::B (active skill prompts), Block::C
-    // (profile context), Block::D (recall episodes), this set
-    // extends — the hash naturally evolves with the bundle shape.
-    // Replay-determinism contract (ARCH-02 test_prompt_bundle_replay_
-    // determinism): same bundle → same hash, deterministically.
+    // ARCH-07 / Round-3 v0.4 — `prompt_bundle_hash` computed here over the
+    // minimal block set visible at this site (Block::A = operator --system
+    // if set, Block::E = user message).  Hash is threaded through to the
+    // PROVIDER_REQUEST WAL frame emitted AFTER the 6-tier dispatch-model
+    // resolution (post enforce_preflight), and into BUDGET_EXCEEDED if
+    // token-cap degradation fires.
+    // Replay-determinism: same bundle → same hash, deterministically.
     let mut bundle_entries: Vec<crate::skills::versioning::BundleBlockEntry<'_>> = Vec::new();
     if let Some(sys) = args.system.as_deref().filter(|s| !s.is_empty()) {
         bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
@@ -3977,39 +3990,6 @@ pub async fn run_chat_with(
         }
         estimate
     };
-
-    // B22 — known limitation: PROVIDER_REQUEST WAL records the pre-dispatch model tier
-    // (cli > tweaks > freedom > provider_default). The dispatch/skill model resolution
-    // (agent_model from enforce_preflight, skill_model from build_prompt_bundle) happens
-    // AFTER this emission point and cannot be known here without restructuring the
-    // enforce_preflight cost-gate flow. The corrected model is recorded downstream in
-    // the PROVIDER_RESPONSE WAL (via DispatchOutput.model_used) and in usage_log.
-    // ODY-09: incognito turns skip PROVIDER_REQUEST — no prompt hash/metadata in WAL.
-    if !args.incognito {
-        let req_payload = serde_json::to_vec(&serde_json::json!({
-            "operator_id": config.operator_id,
-            "provider": provider.name(),
-            "target": crate::profile::runner::extract_target_label(provider.name()),
-            "model": args.model.as_deref()
-                .or(tweaks.model_default.as_deref())
-                .or(config.provider_model.as_deref())
-                .map(str::to_string),
-            "model_source": if args.model.is_some() { "cli" }
-                else if tweaks.model_default.is_some() { "tweaks" }
-                else if config.provider_model.is_some() { "freedom" }
-                else { "provider_default" },
-            "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
-            "prompt_bytes": prompt.len(),
-            "prompt_bundle_hash": prompt_bundle_hash,
-            "prompt_token_estimate": prompt_token_estimate,
-            "ts_unix": now_unix(),
-        }))?;
-        let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
-        writer
-            .append(req_header, req_payload)
-            .await
-            .context("write PROVIDER_REQUEST WAL frame")?;
-    }
 
     // ── Operator context + skills load — K-Perf-4 parallel resource load ──
     // Both reads hit the filesystem and are mutually independent: operator_md
@@ -4143,6 +4123,65 @@ pub async fn run_chat_with(
         else if config.provider_model.is_some() { "freedom" }
         else { "provider_default" };
     let effective_model = agent_model.or(skill_model);
+
+    // B22 fix — PROVIDER_REQUEST WAL now emitted here, after the full
+    // 6-tier model resolution (dispatch > skill > cli > tweaks > freedom >
+    // provider_default), so `model` and `model_source` exactly match the
+    // Request.model that dispatch_provider will send.  Frame ordering:
+    //   RAW_TEXT → [BUDGET_EXCEEDED when the token cap fires]
+    //   → COST_ESTIMATE_SHOWN → PERMISSION_GRANTED
+    //   → PROVIDER_REQUEST  (here, post-resolution, pre-network-call)
+    //   → TURN_JOURNAL_OPENED → COUNCIL_SKIP → PROVIDER_RESPONSE
+    // ODY-09: incognito turns skip PROVIDER_REQUEST.
+    // SEMANTIC (B22, intentional): a turn blocked in enforce_preflight
+    // (permission denied / quota / slash-handled / hook-blocked) emits NO
+    // PROVIDER_REQUEST — the frame records only requests that actually go to
+    // the wire. Blocked turns are still audited via COST_ESTIMATE_SHOWN +
+    // PERMISSION_DENIED. Pre-B22 a frame was written even for blocked turns.
+    if !args.incognito {
+        // Mirror the fold dispatch_provider performs via resolve_effective_model
+        // so the logged model is guaranteed to equal req.model on the wire.
+        let req_model: Option<String> = effective_model
+            .as_deref()
+            .or(args.model.as_deref())
+            .or(tweaks_model_default.as_deref())
+            .or(config.provider_model.as_deref())
+            .map(str::to_string);
+        // Cross-link to the 3-tier preflight estimate (COST_ESTIMATE_SHOWN is
+        // emitted before dispatch/skill resolution exists). When the two tiers
+        // diverge the WAL carries BOTH values in this one frame, and we warn so
+        // the operator can see the estimate ran on a different model.
+        let cost_estimate_model =
+            model_for_estimate(&args, &config, tweaks_model_default.as_deref());
+        if req_model.as_deref().is_some_and(|m| m != cost_estimate_model) {
+            tracing::warn!(
+                estimate_model = %cost_estimate_model,
+                effective_model = req_model.as_deref().unwrap_or("provider_default"),
+                model_source,
+                "B22: preflight cost estimate ran on a different model than the \
+                 dispatched request (dispatch/skill override resolved after the \
+                 cost gate)"
+            );
+        }
+        let req_payload = serde_json::to_vec(&serde_json::json!({
+            "operator_id": config.operator_id,
+            "provider": provider.name(),
+            "target": crate::profile::runner::extract_target_label(provider.name()),
+            "model": req_model,
+            "model_source": model_source,
+            "cost_estimate_model": cost_estimate_model,
+            "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
+            "prompt_bytes": prompt.len(),
+            "prompt_bundle_hash": prompt_bundle_hash,
+            "prompt_token_estimate": prompt_token_estimate,
+            "ts_unix": now_unix(),
+        }))?;
+        let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
+        writer
+            .append(req_header, req_payload)
+            .await
+            .context("write PROVIDER_REQUEST WAL frame")?;
+    }
 
     let DispatchOutput {
         response_text,
@@ -4548,14 +4587,20 @@ async fn record_quota_exceeded(
     );
 }
 
-/// Resolve the model string the cost predictor and diagnostics should use.
+/// Resolve the best-known model string for cost estimation at call sites where
+/// the full 6-tier dispatch/skill resolution is not yet available.
 ///
 /// Priority: CLI `--model` > `tweaks.model_default` > `freedom.yaml::provider_model`
-/// > "unknown" (so the lookup table returns None and the estimate defaults to
-/// zero rather than panicking on a missing entry).
+/// > `"unknown"` (causes the pricing lookup to return `None` so the estimate
+/// defaults to zero rather than panicking on an unrecognised model name).
 ///
-/// B22: `tweaks_model` is the `Tweaks.model_default` from the chat boundary load;
-/// pass `None` at any call site where tweaks are not in scope yet.
+/// This is an intentional 3-tier (cli > tweaks > freedom) best-effort used
+/// inside `enforce_preflight` where dispatch/skill models are not yet resolved.
+/// The authoritative 6-tier model (`dispatch > skill > cli > tweaks > freedom >
+/// provider_default`) is computed in `run_chat_with` after `enforce_preflight`
+/// returns and is recorded in the PROVIDER_REQUEST WAL frame.
+///
+/// Pass `None` for `tweaks_model` at call sites where tweaks are not in scope.
 fn model_for_estimate(
     args: &ChatArgs,
     config: &crate::config::FreedomConfig,
@@ -7714,8 +7759,9 @@ mod tests {
             .await
             .expect("chat run_with succeeds");
 
-        // The WAL must contain: SegmentHeader, MODE_CHECKPOINT (PWF-02),
-        // RAW_TEXT, PROVIDER_REQUEST, then PROVIDER_RESPONSE.
+        // B22 fix — WAL order: SegmentHeader, MODE_CHECKPOINT (PWF-02), RAW_TEXT,
+        // COST_ESTIMATE_SHOWN, PERMISSION_GRANTED (both inside enforce_preflight),
+        // PROVIDER_REQUEST (post 6-tier model resolution), then dispatch frames.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
 
@@ -7732,18 +7778,9 @@ mod tests {
         assert_eq!(dec0.header.event_type, EVENT_TYPE_RAW_TEXT);
         assert_eq!(dec0.payload, b"hi");
 
+        // C-14: COST_ESTIMATE_SHOWN now lands between RAW_TEXT and the
+        // permission gate (emitted inside enforce_preflight before PROVIDER_REQUEST).
         let rest = &frames[dec0.header.total_len as usize..];
-        let dec1 = decode_frame(rest).expect("decode request frame");
-        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
-        let req_payload: serde_json::Value = serde_json::from_slice(dec1.payload).unwrap();
-        assert_eq!(req_payload["provider"], "mock");
-        assert_eq!(req_payload["operator_id"], "alice");
-
-        // C-14 (2026-05-15): COST_ESTIMATE_SHOWN now lands between
-        // PROVIDER_REQUEST and the permission gate. Preview is emitted
-        // BEFORE the gate so an operator who declines still sees the
-        // projected cost in the audit trail.
-        let rest = &rest[dec1.header.total_len as usize..];
         let cost = decode_frame(rest).expect("decode cost estimate frame");
         assert_eq!(
             cost.header.event_type,
@@ -7752,9 +7789,12 @@ mod tests {
         let cost_payload: serde_json::Value = serde_json::from_slice(cost.payload).unwrap();
         assert!(cost_payload["total_eur"].is_number());
         assert!(cost_payload["input_tokens"].is_number());
+        // B22: cost estimate tags its model as pre-dispatch to be honest about
+        // the 3-tier vs 6-tier resolution limitation.
+        assert_eq!(cost_payload["model_source"], "pre_dispatch_estimate");
 
-        // Phase 28b: a PERMISSION_GRANTED audit frame sits between cost preview
-        // and response (gate audit at standard level for the paid-provider call).
+        // Phase 28b: PERMISSION_GRANTED sits between cost preview and
+        // PROVIDER_REQUEST (gate audit at standard level for the paid-provider call).
         let rest = &rest[cost.header.total_len as usize..];
         let perm = decode_frame(rest).expect("decode permission frame");
         assert_eq!(
@@ -7762,19 +7802,29 @@ mod tests {
             crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED,
         );
 
+        // B22 fix — PROVIDER_REQUEST now follows the permission gate, carrying the
+        // authoritative 6-tier model and model_source (post dispatch-resolution).
         let rest = &rest[perm.header.total_len as usize..];
+        let dec1 = decode_frame(rest).expect("decode PROVIDER_REQUEST frame");
+        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
+        let req_payload: serde_json::Value = serde_json::from_slice(dec1.payload).unwrap();
+        assert_eq!(req_payload["provider"], "mock");
+        assert_eq!(req_payload["operator_id"], "alice");
+        // model_source reflects the freedom tier (config.provider_model set, no
+        // skill/agent/cli override in this test).
+        assert_eq!(req_payload["model_source"], "freedom");
+
         // F4/D21: the turn-journal OPENED (0x05) anchor is emitted at the start of
-        // provider dispatch — between the gate audit and the council-skip frame.
+        // provider dispatch — between PROVIDER_REQUEST and the council-skip frame.
+        let rest = &rest[dec1.header.total_len as usize..];
         let opened = decode_frame(rest).expect("decode TURN_JOURNAL_OPENED frame");
         assert_eq!(
             opened.header.event_type,
             crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED,
         );
         let rest = &rest[opened.header.total_len as usize..];
-        // B-1 (Session 13): COUNCIL_SKIP frame sits between
-        // PERMISSION_GRANTED and PROVIDER_RESPONSE whenever the council
-        // smart-trigger evaluates to Skip — true for this test (short
-        // prompt below complexity threshold + default policy).
+        // B-1 (Session 13): COUNCIL_SKIP frame sits between PROVIDER_REQUEST and
+        // PROVIDER_RESPONSE whenever the council smart-trigger evaluates to Skip.
         let council_skip = decode_frame(rest).expect("decode COUNCIL_SKIP frame");
         assert_eq!(
             council_skip.header.event_type,
@@ -8155,7 +8205,9 @@ mod tests {
             .await
             .expect("streaming run");
 
-        // WAL layout: SegmentHeader, MODE_CHECKPOINT (PWF-02), RAW_TEXT, REQUEST, CHUNK, CHUNK, RESPONSE.
+        // B22 fix — WAL layout: SegmentHeader, MODE_CHECKPOINT (PWF-02), RAW_TEXT,
+        // COST_ESTIMATE_SHOWN, PERMISSION_GRANTED (enforce_preflight),
+        // PROVIDER_REQUEST (post 6-tier resolution), then dispatch frames + CHUNKs.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
 
@@ -8172,25 +8224,29 @@ mod tests {
         assert_eq!(dec0.header.event_type, EVENT_TYPE_RAW_TEXT);
         let frames = &frames[dec0.header.total_len as usize..];
 
-        let dec1 = decode_frame(frames).expect("REQUEST");
-        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
-        let rest = &frames[dec1.header.total_len as usize..];
-
-        // C-14: COST_ESTIMATE_SHOWN lands before the permission gate.
-        let cost = decode_frame(rest).expect("COST_ESTIMATE_SHOWN");
+        // C-14: COST_ESTIMATE_SHOWN lands before the permission gate
+        // (emitted inside enforce_preflight before PROVIDER_REQUEST).
+        let cost = decode_frame(frames).expect("COST_ESTIMATE_SHOWN");
         assert_eq!(
             cost.header.event_type,
             crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
         );
-        let rest = &rest[cost.header.total_len as usize..];
+        let rest = &frames[cost.header.total_len as usize..];
 
-        // Phase 28b: PERMISSION_GRANTED audit frame between cost preview and chunks.
+        // Phase 28b: PERMISSION_GRANTED audit frame between cost preview and
+        // PROVIDER_REQUEST (emitted inside enforce_preflight).
         let perm = decode_frame(rest).expect("PERMISSION_GRANTED");
         assert_eq!(
             perm.header.event_type,
             crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED,
         );
         let rest = &rest[perm.header.total_len as usize..];
+
+        // B22 fix — PROVIDER_REQUEST now follows the permission gate, carrying
+        // the authoritative 6-tier model and model_source.
+        let dec1 = decode_frame(rest).expect("PROVIDER_REQUEST");
+        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
+        let rest = &rest[dec1.header.total_len as usize..];
 
         // F4/D21: turn-journal OPENED (0x05) anchor at provider-dispatch start.
         let opened = decode_frame(rest).expect("TURN_JOURNAL_OPENED (streaming)");
@@ -8328,8 +8384,10 @@ mod tests {
         let result = run_chat_with(args, config, &FailingProvider).await;
         assert!(result.is_err());
 
-        // The MODE_CHECKPOINT + RAW_TEXT + PROVIDER_REQUEST frames must still be
-        // on disk — writes happen before provider call.
+        // B22 fix — PROVIDER_REQUEST is now emitted AFTER enforce_preflight
+        // (which writes COST_ESTIMATE_SHOWN + PERMISSION_GRANTED), but still
+        // before the network call inside dispatch_provider.  The sequence on
+        // disk for a failing provider must include all four frames.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
 
@@ -8344,10 +8402,197 @@ mod tests {
         use crate::wal::events::EVENT_TYPE_RAW_TEXT;
         let dec0 = decode_frame(frames).expect("RAW_TEXT");
         assert_eq!(dec0.header.event_type, EVENT_TYPE_RAW_TEXT);
-        let rest = &frames[dec0.header.total_len as usize..];
 
-        let dec1 = decode_frame(rest).expect("decode request frame even on failure");
-        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
+        // Scan forward past COST_ESTIMATE_SHOWN + PERMISSION_GRANTED (both written
+        // inside enforce_preflight) to reach PROVIDER_REQUEST.
+        let mut cursor = &frames[dec0.header.total_len as usize..];
+        let mut found_req = false;
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode frame on error path");
+            if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST {
+                found_req = true;
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        assert!(found_req, "PROVIDER_REQUEST frame must be present even on provider failure");
+    }
+
+    /// B22 fix — PROVIDER_REQUEST WAL `model` and `model_source` must exactly
+    /// match the `Request.model` that `dispatch_provider` sends to the wire.
+    /// With no skill/agent/cli override active, the freedom tier
+    /// (`config.provider_model`) drives both.
+    #[tokio::test]
+    async fn provider_request_wal_model_matches_dispatch_model() {
+        use std::sync::{Arc, Mutex};
+
+        struct CapturingProvider {
+            reply: String,
+            received_model: Arc<Mutex<Option<Option<String>>>>,
+        }
+        #[async_trait]
+        impl Provider for CapturingProvider {
+            fn name(&self) -> &'static str {
+                "mock"
+            }
+            async fn complete(&self, req: Request) -> Result<Completion> {
+                *self.received_model.lock().unwrap() = Some(req.model.clone());
+                let model_echo = req.model.clone().unwrap_or_else(|| "mock-capture-1".to_string());
+                Ok(Completion {
+                    text: self.reply.clone(),
+                    model: model_echo,
+                    latency: Duration::from_millis(1),
+                    input_tokens: Some(4),
+                    output_tokens: Some(2),
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                })
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+
+        let config = FreedomConfig {
+            operator_id: Some("b22-check".into()),
+            language_primary: Some("en".into()),
+            language_code: Some("en".into()),
+            role: None,
+            role_custom: None,
+            provider_kind: Some(ProviderKind::ClaudeCli),
+            provider_binary: Some("claude".into()),
+            provider_key: None,
+            provider_endpoint: None,
+            provider_region: None,
+            provider_api_version: None,
+            council: Default::default(),
+            // freedom tier: no skill/agent/cli override → this should appear in WAL
+            provider_model: Some("claude-sonnet-4-6".into()),
+            telegram_token: None,
+            telegram_user_id: None,
+            whatsapp_webhook_port: None,
+            autonomy: crate::permissions::AutonomyLevel::Standard,
+            observability_listen: None,
+            inference: crate::config::inference::InferenceTopology::default(),
+            review_gate_enabled: false,
+            obsidian_vault: None,
+            obsidian_subdir: None,
+            obsidian_auto_sync_secs: None,
+            hysteria: None,
+            cloud_archive_dest: None,
+            cloud_archive_subdir: None,
+            cloud_archive_auto_sync_secs: None,
+            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+            rollback: crate::config::RollbackConfig::default(),
+            claude_cli: crate::config::ClaudeCliConfig::default(),
+            profile: crate::config::ProfileConfig::default(),
+            refusal_recovery: crate::config::RefusalRecoveryConfig::default(),
+            code_map: crate::config::CodeMapConfig::default(),
+            auto_update: crate::config::AutoUpdateConfig::default(),
+            coding: crate::config::CodingConfig::default(),
+            plugins: crate::config::PluginsConfig::default(),
+            doctor: crate::config::DoctorConfig::default(),
+            updater: crate::config::UpdaterConfig::default(),
+            hook_chain: Default::default(),
+            dreaming: crate::config::DreamingConfig::default(),
+            proactive: crate::config::ProactiveConfig::default(),
+            telemetry: crate::telemetry::TelemetryConfig::default(),
+            n8n_api: crate::config::N8nApiConfig::default(),
+            ..Default::default()
+        };
+
+        let received_model: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
+        let provider = CapturingProvider {
+            reply: "captured".into(),
+            received_model: Arc::clone(&received_model),
+        };
+
+        let args = ChatArgs {
+            attach: Vec::new(),
+            message: Some("b22 test prompt".into()),
+            model: None, // no CLI override — freedom tier must win
+            system: None,
+            edit: false,
+            config: None,
+            wal_segment: Some(seg.clone()),
+            stream: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
+        };
+
+        run_chat_with(args, config, &provider)
+            .await
+            .expect("b22 chat run succeeds");
+
+        // (a) What model did dispatch_provider actually send?
+        let dispatch_model: Option<String> = received_model
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("provider must have been called");
+
+        // (b) Find PROVIDER_REQUEST frame in WAL.
+        let bytes = read(&seg).await.unwrap();
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut req_payload_opt: Option<serde_json::Value> = None;
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode frame");
+            if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST {
+                req_payload_opt =
+                    Some(serde_json::from_slice(frame.payload).expect("parse PROVIDER_REQUEST"));
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        let req_payload = req_payload_opt.expect("PROVIDER_REQUEST frame must be present");
+
+        // (c) model in WAL must equal model sent to the provider.
+        let wal_model: Option<String> = req_payload["model"]
+            .as_str()
+            .map(str::to_string);
+        assert_eq!(
+            wal_model, dispatch_model,
+            "PROVIDER_REQUEST WAL `model` must match Request.model sent to dispatch"
+        );
+
+        // (d) model_source must be "freedom" (only freedom.yaml sets the model here).
+        assert_eq!(
+            req_payload["model_source"], "freedom",
+            "model_source must be 'freedom' when only config.provider_model is set"
+        );
+
+        // (e) PROVIDER_REQUEST must appear AFTER PERMISSION_GRANTED in the WAL
+        //     (enforces the post-6-tier-resolution ordering invariant).
+        let mut cursor2 = &bytes[SEGMENT_HEADER_LEN..];
+        let mut perm_idx: Option<usize> = None;
+        let mut req_idx: Option<usize> = None;
+        let mut idx = 0usize;
+        while !cursor2.is_empty() {
+            let frame = decode_frame(cursor2).expect("decode frame for ordering check");
+            match frame.header.event_type {
+                t if t == crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED => {
+                    perm_idx = Some(idx);
+                }
+                t if t == EVENT_TYPE_PROVIDER_REQUEST => {
+                    req_idx = Some(idx);
+                }
+                _ => {}
+            }
+            cursor2 = &cursor2[frame.header.total_len as usize..];
+            idx += 1;
+        }
+        let perm_pos = perm_idx.expect("PERMISSION_GRANTED must be present");
+        let req_pos = req_idx.expect("PROVIDER_REQUEST must be present");
+        assert!(
+            req_pos > perm_pos,
+            "PROVIDER_REQUEST (idx {req_pos}) must follow PERMISSION_GRANTED (idx {perm_pos})"
+        );
     }
 
     // ── E-2 Phase 2 (Session 13) recursive sub-council ────────────────

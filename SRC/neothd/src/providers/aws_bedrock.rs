@@ -448,10 +448,10 @@ impl RequestBuilderExt for reqwest::RequestBuilder {
 }
 
 /// Public helper for the WAL header sanitiser. Strips every header
-/// the SigV4 stack could leak credential material through. Called
-/// by `cli::chat::run_chat_with` before emitting PROVIDER_REQUEST
-/// (0x21) WAL frames — guardrail #5 from the Session-14 security
-/// review.
+/// the SigV4 stack could leak credential material through. Used on
+/// the `cli::chat` request path around the PROVIDER_REQUEST (0x20)
+/// WAL frame (B22: emitted post-model-resolution, pre-network-call)
+/// — guardrail #5 from the Session-14 security review.
 ///
 /// Headers stripped:
 ///   - `authorization` (SigV4 signature carries credential scope)
