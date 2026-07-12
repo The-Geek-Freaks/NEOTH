@@ -2394,6 +2394,8 @@ async fn dispatch_provider(
                 // GOLD-ADAPT-AWE-CODE-01 — interactive CLI path: no inbound
                 // sender identity available, so no lease upgrade possible.
                 None,
+                // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
+                &config.tools.harness,
             )
             .await
             {
@@ -7034,6 +7036,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // inbound sender identity). `Some(sender_id)` on the channel path
     // (HMAC/platform-verified sender_id from the inbound message).
     subject: Option<String>,
+    // GOLD-ADAPT-HARNESS-01/04/06 — operator-tunable MCP dispatch-loop knobs
+    // (`freedom.yaml::tools.harness`), threaded straight into the loop.
+    harness_cfg: &crate::config::tools::McpHarnessConfig,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -7141,6 +7146,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
         judge_provider,
         // GOLD-ADOPT-17 — thread the elicitation handler into the loop.
         elicitation_handler,
+        // GOLD-ADAPT-HARNESS — thread operator harness knobs into the loop.
+        harness_cfg,
     )
     .await
 }

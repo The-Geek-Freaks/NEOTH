@@ -151,6 +151,9 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         // GOLD-ADOPT-17 — elicitation disabled in the bare wrapper; the chat
         // path passes the appropriate handler after checking TTY + config.
         &crate::cli::elicitation::ElicitationHandler::Disabled,
+        // GOLD-ADAPT-HARNESS — all-default harness knobs for the bare wrapper
+        // (retry on, default token threshold, skeletonize on at 200 lines).
+        &crate::config::tools::McpHarnessConfig::default(),
     )
     .await
 }
@@ -202,6 +205,10 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // TTY path (`neoth chat`); `Disabled` on channel / serve-pipeline paths and
     // in tests. Must be last so existing call-sites need only a one-line append.
     elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
+    // GOLD-ADAPT-HARNESS-01/04/06 — operator-tunable dispatch-loop knobs from
+    // `freedom.yaml::tools.harness`. Last param so existing call-sites need only
+    // a one-line append.
+    harness_cfg: &crate::config::tools::McpHarnessConfig,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -272,13 +279,16 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         if !harness_token_nudge_fired {
             let estimated_tokens =
                 crate::tokens::budget::count_tokens(&prompt);
+            let harness_token_threshold = harness_cfg
+                .max_input_tokens_per_turn
+                .unwrap_or(crate::mcp::harness::INPUT_TOKEN_GUARD_THRESHOLD);
             if let Some(nudge) =
-                crate::mcp::harness::input_token_guard(estimated_tokens, crate::mcp::harness::INPUT_TOKEN_GUARD_THRESHOLD)
+                crate::mcp::harness::input_token_guard(estimated_tokens, harness_token_threshold)
             {
                 warn!(
                     iteration = iterations,
                     estimated_tokens,
-                    threshold = crate::mcp::harness::INPUT_TOKEN_GUARD_THRESHOLD,
+                    threshold = harness_token_threshold,
                     "HARNESS-04: context large — injecting stop/compact nudge"
                 );
                 prompt = format!("{prompt}\n\n[system note: {nudge}]");
@@ -292,7 +302,8 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
             // returned no proper fenced call but the reply looks like it
             // described one as free text (XML tag or bare JSON), re-prompt
             // once with a corrective nudge. Bound to ONE retry per turn.
-            if crate::mcp::harness::detect_leaked_tool_call(&current_text)
+            if harness_cfg.leaked_call_retry_enabled
+                && crate::mcp::harness::detect_leaked_tool_call(&current_text)
                 && iterations < max_iterations
             {
                 warn!(
@@ -610,11 +621,16 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                     // → `tool_result_blocks` → the next prompt is skeletonized.
                     // The Cow::Borrowed fast-path means zero allocation when the
                     // result is small or does not look like source code.
-                    let prompt_copy =
+                    let prompt_copy = if harness_cfg.skeletonize_file_reads {
                         crate::mcp::harness::maybe_skeletonize(
                             &rendered,
-                            crate::mcp::harness::SKELETONIZE_THRESHOLD_LINES,
-                        );
+                            harness_cfg
+                                .skeletonize_threshold_lines
+                                .unwrap_or(crate::mcp::harness::SKELETONIZE_THRESHOLD_LINES),
+                        )
+                    } else {
+                        std::borrow::Cow::Borrowed(rendered.as_str())
+                    };
                     // GOLD-ADOPT-17 — mid-turn elicitation intercept. When a tool
                     // result embeds an `elicitation_request` key, prompt the
                     // operator for structured input and inject their answers as
@@ -1402,6 +1418,7 @@ mod tests {
             None, // HERMES-04: judge disabled in tests
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -1531,6 +1548,7 @@ mod tests {
             None, // HERMES-04: judge disabled in tests
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -1589,6 +1607,7 @@ mod tests {
             None, // HERMES-04: judge disabled in tests
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -1707,6 +1726,7 @@ mod tests {
             None, // HERMES-04: judge disabled in tests
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -1773,6 +1793,7 @@ mod tests {
             None, // HERMES-04: judge disabled in tests
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -1812,6 +1833,7 @@ mod tests {
             None, // HERMES-04: judge disabled in tests
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -1907,6 +1929,7 @@ mod tests {
             None, // HERMES-04: judge disabled in tests
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -2153,6 +2176,7 @@ mod tests {
             None,
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -2199,6 +2223,7 @@ mod tests {
             None,
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -2239,6 +2264,7 @@ mod tests {
             None,
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -2304,6 +2330,7 @@ mod tests {
             Some(&judge),
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -2345,6 +2372,7 @@ mod tests {
             None, // judge disabled — BudgetExhausted from cap, not from judge
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -2412,6 +2440,7 @@ mod tests {
             None,
             None,
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();
@@ -2485,6 +2514,7 @@ mod tests {
             None,
             None,
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
         )
         .await
         .unwrap();

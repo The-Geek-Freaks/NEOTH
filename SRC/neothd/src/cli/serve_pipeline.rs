@@ -2381,6 +2381,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     // by the channel adapter before this closure runs (L620
                     // ChannelSend gate also uses it as the lease subject).
                     Some(inbound.sender_id.clone()),
+                    // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
+                    &config_for_handler.tools.harness,
                 )
                 .await
                 {

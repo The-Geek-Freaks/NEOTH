@@ -374,6 +374,8 @@ pub async fn run_loop(
             elicitation,
             // GOLD-ADAPT-AWE-CODE-01 — no inbound subject at loop level.
             None,
+            // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
+            &freedom.tools.harness,
         )
         .await?;
 

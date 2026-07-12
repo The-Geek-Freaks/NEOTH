@@ -9,6 +9,44 @@ use std::path::PathBuf;
 #[serde(default)]
 pub struct ToolsConfig {
     pub os: OsToolsConfig,
+    /// GOLD-ADAPT-HARNESS — operator knobs for the MCP tool-dispatch loop
+    /// (`freedom.yaml::tools.harness`). All fields default to the previously
+    /// hardcoded behaviour, so existing configs are unaffected.
+    #[serde(default)]
+    pub harness: McpHarnessConfig,
+}
+
+/// GOLD-ADAPT-HARNESS-01/04/06 — operator-tunable MCP dispatch-loop knobs.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct McpHarnessConfig {
+    /// HARNESS-01 — gate the leaked-tool-call corrective retry. `false` lets a
+    /// leaked call fall through without a re-prompt nudge. Default `true`
+    /// (preserves the pre-config unconditional behaviour).
+    pub leaked_call_retry_enabled: bool,
+    /// HARNESS-04 — override the input-token-budget nudge threshold. `None`
+    /// defers to `INPUT_TOKEN_GUARD_THRESHOLD` (170 000). Tune for smaller or
+    /// larger context-window models.
+    pub max_input_tokens_per_turn: Option<u32>,
+    /// HARNESS-06 — enable source-file skeletonization of MCP tool results.
+    /// Default `true` (preserves the existing always-on behaviour). `false`
+    /// passes raw tool output through unsummarized.
+    pub skeletonize_file_reads: bool,
+    /// HARNESS-06 — line-count threshold for skeletonization (effective only
+    /// when `skeletonize_file_reads` is true). `None` defers to
+    /// `SKELETONIZE_THRESHOLD_LINES` (200).
+    pub skeletonize_threshold_lines: Option<usize>,
+}
+
+impl Default for McpHarnessConfig {
+    fn default() -> Self {
+        Self {
+            leaked_call_retry_enabled: true,
+            max_input_tokens_per_turn: None,
+            skeletonize_file_reads: true,
+            skeletonize_threshold_lines: None,
+        }
+    }
 }
 
 /// PC-01 OS file-access config. `allowed_paths` is the operator's allowlist
