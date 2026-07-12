@@ -74,6 +74,18 @@ jobs:
   check:
     name: ${{ matrix.os }} / ${{ matrix.toolchain }}
     runs-on: ${{ matrix.os }}
+    # Ubuntu legs: cap cargo parallelism at 2. With a WARM cargo cache the
+    # dep tree is prebuilt, so clippy/build jump straight to the largest
+    # crate frontends (neothd + neothd-gui + relay + plugin-sdk) in parallel;
+    # at the default -j4 their combined rustc peak exceeds the 16 GB runner
+    # and the OOM killer takes the runner AGENT itself — the job dies with
+    # "The runner has received a shutdown signal" / SIGTERM 143 ~2-4 min in,
+    # no step error. Cold-cache runs survive because dep compilation staggers
+    # the big frontends (which is why runs directly after a cache eviction
+    # passed while every warm rerun died — 4x on 2026-07-11/12). macOS
+    # survives on 3 cores; Windows/MSVC has a lower frontend peak.
+    env:
+      CARGO_BUILD_JOBS: ${{ startsWith(matrix.os, 'ubuntu') && 2 || 4 }}
     strategy:
       fail-fast: false
       matrix:
