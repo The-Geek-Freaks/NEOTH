@@ -17,8 +17,10 @@
 //!   formats, no operator benefit.
 //!
 //! - **Verdict: dictation-surface-only.** No new STT engine. The dictation mode
-//!   reuses the existing `transcribe_if_cached` path (faster-whisper → candle
-//!   priority order) which auto-downloads models on first use via
+//!   routes through `dispatch_transcription` (the B20 unified STT entry point)
+//!   which honors `MediaSttConfig.primary / model_size / language` and enforces
+//!   cloud gating. The local candle `WhisperEngine` (faster-whisper → candle
+//!   priority) auto-downloads model artifacts on first use via
 //!   `WhisperEngine::ensure_artifacts` (hf_hub; GOLD-ADAPT-HANDY-04 chose it
 //!   over `model_manager` — see the consumer-status section below).
 //!
@@ -141,8 +143,12 @@ pub enum DictationError {
 ///
 /// # STT backend
 ///
-/// Delegates to `media::audio::transcribe_pcm_samples` (the same
-/// `transcribe_if_cached` path used by the audio ingest extractor).
+/// Routes through `media::stt_provider::dispatch_transcription` — the B20
+/// unified STT entry point that enforces provider selection (honoring
+/// `config.stt.primary / model_size / language`), cloud gating, audit, and
+/// fallback in one place. Falls back to the sync
+/// `media::audio::transcribe_pcm_samples` seam only when no tokio runtime is
+/// available (plain `#[test]` contexts without `#[tokio::test]`).
 pub fn transcribe_utterance(
     pcm: &[f32],
     sample_rate_hz: u32,
@@ -196,55 +202,43 @@ pub fn transcribe_utterance(
         std::borrow::Cow::Owned(resampled)
     };
 
-    // Fix FAIL-1/2: local-only path is fully sync — no async runtime, no
-    // WhisperLocalProvider::new(), no Handle::current() panic in plain #[test]s.
-    // Cloud dispatch only fires when a cloud provider is wired AND
-    // cloud_stt_enabled=true; even then a missing tokio runtime falls back to
-    // local with a warning (no panic).
-    let needs_cloud = !config.stt.primary.is_local()
-        || config.stt.fallback.map(|f| !f.is_local()).unwrap_or(false);
-
-    let (text, status) = if needs_cloud && config.cloud_stt_enabled {
-        let wav_bytes = crate::media::stt_provider::pcm_bytes_to_wav(
-            &samples
-                .iter()
-                .flat_map(|s| s.to_le_bytes())
-                .collect::<Vec<u8>>(),
-        );
-        let stt_result = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(
+    // B20: dispatch_transcription is the single production entry for ALL
+    // transcription. Cloud gating (cloud_stt_enabled, audit) is enforced inside
+    // the dispatcher; the outer needs_cloud guard is removed. The nested-runtime
+    // issue (WhisperLocalProvider::new() creating a mini rt inside handle.block_on)
+    // is resolved by make_stt_provider_for_dispatch in stt_provider.rs which
+    // wraps the construction in spawn_blocking.
+    //
+    // No-runtime fallback: plain #[test] contexts (no tokio runtime) fall through
+    // to transcribe_pcm_samples so VAD/gate tests keep working without a runtime.
+    // Production (daemon or CLI) always has a runtime handle.
+    let wav_bytes = crate::media::stt_provider::pcm_bytes_to_wav(
+        &samples
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect::<Vec<u8>>(),
+    );
+    let (text, status) = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            let stt_result = handle.block_on(
                 crate::media::stt_provider::dispatch_transcription(
                     &config.stt,
                     config,
                     &wav_bytes,
                     None, // no WAL writer for dictation
                 ),
-            ),
-            Err(_) => {
-                // No tokio runtime (e.g. plain #[test]) and cloud was requested —
-                // warn and fall back to local so the process does not panic.
-                tracing::warn!(
-                    "dictation: cloud STT configured but no tokio runtime — \
-                     falling back to local transcription"
-                );
-                let (t, s) = crate::media::audio::transcribe_pcm_samples(&samples);
-                return if t.is_empty() {
-                    Err(DictationError::Transcription(s.to_string()))
-                } else {
-                    info!(status = s, chars = t.len(), "dictation: transcribed");
-                    Ok(t)
-                };
+            );
+            match stt_result {
+                Ok(r) if !r.text.is_empty() => (r.text, "transcribed"),
+                Ok(_) => (String::new(), "empty transcript"),
+                Err(e) => return Err(DictationError::Transcription(e)),
             }
-        };
-        match stt_result {
-            Ok(r) if !r.text.is_empty() => (r.text, "transcribed"),
-            Ok(_) => (String::new(), "empty transcript"),
-            Err(e) => return Err(DictationError::Transcription(e)),
         }
-    } else {
-        // Local-only (default): use the sync transcribe_if_cached seam.
-        // No async, no real engine construction, no Handle::current() required.
-        crate::media::audio::transcribe_pcm_samples(&samples)
+        Err(_) => {
+            // No tokio runtime (plain #[test] without #[tokio::test]). Use the
+            // sync seam so gate/VAD unit tests don't panic. NOT a production path.
+            crate::media::audio::transcribe_pcm_samples(&samples)
+        }
     };
     if text.is_empty() {
         Err(DictationError::Transcription(status.to_string()))
@@ -340,5 +334,108 @@ mod tests {
             !matches!(result, Err(DictationError::AllSilence)),
             "VAD gate must be bypassed when vad_enabled = false"
         );
+    }
+
+    // ── B20 unified-dispatcher tests ──────────────────────────────────────────
+    //
+    // `transcribe_utterance` internally calls `Handle::try_current()` and then
+    // `handle.block_on(...)`. `block_on` panics if called from a tokio *executor*
+    // thread (i.e. inside `#[tokio::test]` body). We exercise the dispatch path
+    // by calling `transcribe_utterance` from within `spawn_blocking` — blocking
+    // pool threads have the runtime handle but are NOT executor threads, so
+    // `block_on` is safe there.
+
+    /// B20 caller-level invariant: transcribe_utterance with a tokio runtime
+    /// available must route through dispatch_transcription, not the legacy
+    /// transcribe_if_cached path. We verify by configuring FasterWhisperLocal
+    /// as primary: if the dispatch path is taken, the error says "faster-whisper
+    /// not found"; if the legacy path is taken, the error says "model not cached"
+    /// or similar.
+    ///
+    /// Skipped when faster-whisper IS installed.
+    #[test]
+    fn dispatch_path_reached_for_local_primary_with_runtime() {
+        use crate::media::stt_dispatch::{MediaSttConfig, SttProvider, WhisperModelSize};
+
+        if crate::media::stt_provider::faster_whisper_exe().is_some() {
+            return; // installed — skip the "not found" assertion
+        }
+
+        // Build a mini runtime; call transcribe_utterance from within
+        // spawn_blocking so Handle::try_current() returns Ok but we are NOT on
+        // an executor thread (safe for handle.block_on inside the function).
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("mini runtime for B20 dictation test");
+
+        let result: Result<String, DictationError> = rt.block_on(async {
+            tokio::task::spawn_blocking(|| {
+                let cfg = MediaConfig {
+                    dictation_enabled: true,
+                    vad_enabled: false,
+                    stt: MediaSttConfig {
+                        primary: SttProvider::FasterWhisperLocal,
+                        model_size: WhisperModelSize::Tiny,
+                        ..Default::default()
+                    },
+                    ..MediaConfig::default()
+                };
+                transcribe_utterance(&vec![0.1f32; 4_800], 16_000, &cfg)
+            })
+            .await
+            .expect("spawn_blocking join")
+        });
+
+        match result {
+            Err(DictationError::Transcription(msg)) => {
+                assert!(
+                    msg.contains("faster-whisper"),
+                    "expected FasterWhisperProvider error from dispatch path; got: {msg}"
+                );
+            }
+            other => panic!("expected Err(Transcription(faster-whisper …)); got: {other:?}"),
+        }
+    }
+
+    /// B20 regression: cloud primary is still blocked without cloud_stt_enabled
+    /// when routed through transcribe_utterance. The cloud gate lives inside
+    /// dispatch_transcription and fires regardless of the outer caller.
+    #[test]
+    fn cloud_primary_still_blocked_without_flag_via_dictation() {
+        use crate::media::stt_dispatch::{MediaSttConfig, SttProvider};
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("mini runtime for B20 cloud-gate dictation test");
+
+        let result: Result<String, DictationError> = rt.block_on(async {
+            tokio::task::spawn_blocking(|| {
+                let cfg = MediaConfig {
+                    dictation_enabled: true,
+                    vad_enabled: false,
+                    cloud_stt_enabled: false, // gate is OFF
+                    stt: MediaSttConfig {
+                        primary: SttProvider::OpenAiWhisperApi,
+                        ..Default::default()
+                    },
+                    ..MediaConfig::default()
+                };
+                transcribe_utterance(&vec![0.1f32; 4_800], 16_000, &cfg)
+            })
+            .await
+            .expect("spawn_blocking join")
+        });
+
+        match result {
+            Err(DictationError::Transcription(msg)) => {
+                assert!(
+                    msg.contains("cloud_stt_enabled"),
+                    "cloud gate must fire via dispatch; got: {msg}"
+                );
+            }
+            other => panic!("expected cloud-gate refusal; got: {other:?}"),
+        }
     }
 }

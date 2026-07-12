@@ -191,6 +191,13 @@ pub struct TranscriptionResult {
     /// confidence return `None`; tests assert non-degradation.
     #[serde(default)]
     pub confidence: Option<f32>,
+    /// B20 — `SttProviderKind::as_str()` of the provider that actually produced
+    /// this transcript. Stamped by `dispatch_transcription` (primary or fallback
+    /// arm) so audit/metadata surfaces describe the same effective provider that
+    /// handled the bytes. Empty when the result came from a direct low-level
+    /// provider call (tests / internal use).
+    #[serde(default)]
+    pub provider: String,
 }
 
 /// Reasonable default for the silence-hangover used by
@@ -761,6 +768,7 @@ mod tests {
             }],
             language: "de".into(),
             confidence: Some(0.93),
+            provider: "openai_whisper_api".into(),
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: TranscriptionResult = serde_json::from_str(&json).unwrap();

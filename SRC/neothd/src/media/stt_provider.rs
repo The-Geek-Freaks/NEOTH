@@ -60,6 +60,14 @@ pub trait SttProviderImpl: Send + Sync {
     fn supported_languages(&self) -> &'static [&'static str] {
         &[]
     }
+
+    /// The concrete model identifier this provider will run (e.g. the
+    /// faster-whisper model size). `None` when the backend has no
+    /// caller-selectable model. B20 — lets factory tests and status surfaces
+    /// verify the configured model actually reached the provider.
+    fn model_id(&self) -> Option<String> {
+        None
+    }
 }
 
 // ── OpenAI Whisper API (multipart upload) ───────────────────────────────────
@@ -135,6 +143,7 @@ pub fn parse_openai_whisper(
         segments,
         language,
         confidence: None, // the API does not return a confidence
+        provider: String::new(),
     })
 }
 
@@ -257,6 +266,7 @@ pub fn parse_azure_speech(body: &[u8], language: &str) -> Result<TranscriptionRe
         segments,
         language: language.to_string(),
         confidence: None,
+        provider: String::new(),
     })
 }
 
@@ -443,6 +453,10 @@ impl SttProviderImpl for FasterWhisperProvider {
         SttProviderKind::FasterWhisperLocal
     }
 
+    fn model_id(&self) -> Option<String> {
+        Some(self.model_size.clone())
+    }
+
     async fn transcribe(
         &self,
         audio: &[u8],
@@ -455,9 +469,18 @@ impl SttProviderImpl for FasterWhisperProvider {
 
         // Write audio to a temp WAV file. faster-whisper CLI requires a file
         // path; it cannot read from stdin.
+        //
+        // B20 review fix — the name must be unique under CONCURRENT dispatch:
+        // pid + process-wide sequence + nanos (same pattern as the legacy
+        // audio.rs path). subsec_nanos() alone collides on Windows (~15 ms
+        // clock resolution), silently cross-wiring two transcriptions.
+        static FW_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = FW_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp_dir = std::env::temp_dir();
         let tmp_path = tmp_dir.join(format!(
-            "neoth-fw-{}.wav",
+            "neoth-fw-{}-{}-{}.wav",
+            std::process::id(),
+            seq,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -525,6 +548,7 @@ impl SttProviderImpl for FasterWhisperProvider {
             segments,
             language: request.language.clone(),
             confidence: None,
+            provider: String::new(),
         })
     }
 }
@@ -694,6 +718,7 @@ impl SttProviderImpl for WhisperLocalProvider {
             segments: vec![],
             language: request.language.clone(),
             confidence: None,
+            provider: String::new(),
         })
     }
 }
@@ -729,8 +754,16 @@ pub fn make_stt_provider(
             Ok(Box::new(AzureSpeechClient::new(region, key)))
         }
         // JV-VOICE-02/03 — local, no API key, no cloud gate.
-        SttProviderKind::FasterWhisperLocal => Ok(Box::new(FasterWhisperProvider::new())),
+        // B20: honor media_cfg.stt.model_size so the operator-configured model
+        // size (tiny / base / small / …) is actually used instead of the
+        // hardcoded "tiny" default.
+        SttProviderKind::FasterWhisperLocal => Ok(Box::new(
+            FasterWhisperProvider::with_model(media_cfg.stt.model_size.as_str()),
+        )),
         // HANDY-05 — local candle engine, now wired.
+        // NOTE: do NOT call from within an async context — use
+        // `make_stt_provider_for_dispatch` (which wraps this in spawn_blocking)
+        // whenever the call site is inside an async executor.
         SttProviderKind::WhisperRsLocal => {
             Ok(Box::new(WhisperLocalProvider::new()?))
         }
@@ -960,6 +993,50 @@ fn is_retryable_stt_error(e: &str) -> bool {
     false
 }
 
+/// Async-safe provider factory for use inside `dispatch_transcription`.
+///
+/// `WhisperLocalProvider::new()` calls `providers::whisper::init_global_engine_sync`
+/// which creates its own mini `current_thread` runtime internally. Calling it from
+/// within an async executor context (i.e. inside `async fn` driven by a tokio
+/// runtime or `Handle::block_on`) would panic with "Cannot block_on from within an
+/// async context." This wrapper runs the problematic constructor inside
+/// `spawn_blocking` so it executes on a blocking thread with no outer executor.
+///
+/// All other kinds delegate straight to `make_stt_provider` (cloud P0 gate
+/// included).
+async fn make_stt_provider_for_dispatch(
+    kind: SttProviderKind,
+    api_key: Option<crate::secret::SecretString>,
+    azure_region: Option<String>,
+    media_cfg: &crate::config::MediaConfig,
+) -> Result<Box<dyn SttProviderImpl>, String> {
+    if kind == SttProviderKind::WhisperRsLocal {
+        // B20 review — truth-in-advertising: the candle backend runs ONE global
+        // engine pinned to DEFAULT_WHISPER_REPO; media.stt.model_size is NOT
+        // honored here (use faster_whisper_local for size selection). Warn when
+        // the operator configured a non-default size so the mismatch is visible
+        // instead of silent.
+        if media_cfg.stt.model_size != crate::media::stt_dispatch::WhisperModelSize::Base {
+            tracing::warn!(
+                configured = media_cfg.stt.model_size.as_str(),
+                engine_repo = crate::providers::whisper::DEFAULT_WHISPER_REPO,
+                "media.stt.model_size is not honored by whisper_rs_local — the \
+                 candle engine is pinned to its global repo; use \
+                 faster_whisper_local for model-size selection"
+            );
+        }
+        // Construct the local candle provider on a blocking thread to avoid
+        // nested-runtime panic (init_global_engine_sync creates its own mini rt).
+        tokio::task::spawn_blocking(WhisperLocalProvider::new)
+            .await
+            .map_err(|e| format!("whisper local: init join: {e}"))?
+            .map(|p| Box::new(p) as Box<dyn SttProviderImpl>)
+    } else {
+        // Cloud providers and FasterWhisper are trivially constructed.
+        make_stt_provider(kind, api_key, azure_region, media_cfg)
+    }
+}
+
 /// Unified STT dispatcher — the single entry point for ALL transcription in NEOTH.
 ///
 /// Routes BOTH `neoth dictate` (dictation.rs) and channel/attachment audio ingest
@@ -996,12 +1073,16 @@ pub async fn dispatch_transcription(
     } else {
         Some(stt_cfg.azure_region.clone())
     };
-    let primary = make_stt_provider(
+    // B20: use make_stt_provider_for_dispatch so WhisperRsLocal is constructed
+    // inside spawn_blocking (avoids nested-runtime panic from init_global_engine_sync
+    // when this async fn is driven by handle.block_on() in audio.rs/dictation.rs).
+    let primary = make_stt_provider_for_dispatch(
         stt_cfg.primary,
         stt_api_key_for(stt_cfg.primary),
         azure_region.clone(),
         media_cfg,
-    )?;
+    )
+    .await?;
 
     let primary_result = if primary.kind().is_local() {
         primary.transcribe(audio, &request).await
@@ -1017,7 +1098,12 @@ pub async fn dispatch_transcription(
     };
 
     match primary_result {
-        Ok(result) => return Ok(result),
+        Ok(mut result) => {
+            // B20 — stamp the provider that actually handled the bytes so
+            // audit/metadata surfaces describe the effective backend.
+            result.provider = primary.kind().as_str().to_string();
+            return Ok(result);
+        }
         Err(ref e) if is_retryable_stt_error(e) => {
             tracing::warn!(error = %e, "STT primary retryable failure — trying fallback");
         }
@@ -1043,14 +1129,16 @@ pub async fn dispatch_transcription(
         ));
     }
 
-    let fallback = make_stt_provider(
+    // Same spawn_blocking wrapper for the fallback path (WhisperRsLocal guard).
+    let fallback = make_stt_provider_for_dispatch(
         fb_kind,
         stt_api_key_for(fb_kind),
         azure_region,
         media_cfg,
-    )?;
+    )
+    .await?;
 
-    if fallback.kind().is_local() {
+    let fb_result = if fallback.kind().is_local() {
         fallback.transcribe(audio, &request).await
     } else {
         transcribe_and_audit(
@@ -1061,7 +1149,12 @@ pub async fn dispatch_transcription(
             media_cfg.required_audit_for_cloud_media,
         )
         .await
-    }
+    };
+    // B20 — stamp the effective (fallback) provider, mirroring the primary arm.
+    fb_result.map(|mut r| {
+        r.provider = fallback.kind().as_str().to_string();
+        r
+    })
 }
 
 #[cfg(test)]
@@ -1258,6 +1351,7 @@ mod tests {
                 segments: vec![],
                 language: "en".into(),
                 confidence: None,
+                provider: String::new(),
             })
         }
     }
@@ -1528,5 +1622,113 @@ mod tests {
         );
         assert!(err.contains("cloud_stt_enabled=false"));
         assert!(err.contains("openai_whisper_api"));
+    }
+
+    // ── B20: unified dispatcher tests ────────────────────────────────────────
+
+    /// B20 invariant: make_stt_provider for FasterWhisperLocal must use the
+    /// model size from MediaSttConfig, not the hardcoded "tiny" default.
+    ///
+    /// Verified DIRECTLY via `model_id()` (adversarial-review fix): a mutation
+    /// that swapped `with_model(...)` back to `new()` would fail the Some("small")
+    /// assertion, not just the kind check.
+    #[test]
+    fn make_stt_provider_faster_whisper_honors_model_size_from_config() {
+        use crate::media::stt_dispatch::{MediaSttConfig, WhisperModelSize};
+
+        let mut media_cfg = crate::config::MediaConfig::default();
+        media_cfg.stt = MediaSttConfig {
+            primary: SttProviderKind::FasterWhisperLocal,
+            model_size: WhisperModelSize::Small,
+            ..Default::default()
+        };
+        let provider = make_stt_provider(
+            SttProviderKind::FasterWhisperLocal,
+            None,
+            None,
+            &media_cfg,
+        )
+        .expect("FasterWhisperLocal construction must succeed regardless of model size");
+        assert_eq!(provider.kind(), SttProviderKind::FasterWhisperLocal);
+        assert_eq!(
+            provider.model_id().as_deref(),
+            Some("small"),
+            "configured model_size must reach the provider (factory wiring)"
+        );
+
+        // Also verify the default (Tiny) still works and is faithfully reported.
+        let mut media_cfg2 = crate::config::MediaConfig::default();
+        media_cfg2.stt.model_size = WhisperModelSize::Tiny;
+        let p2 = make_stt_provider(SttProviderKind::FasterWhisperLocal, None, None, &media_cfg2)
+            .expect("Tiny model size must construct");
+        assert_eq!(p2.kind(), SttProviderKind::FasterWhisperLocal);
+        assert_eq!(p2.model_id().as_deref(), Some("tiny"));
+    }
+
+    /// B20 single-entry invariant: dispatch_transcription with a local primary
+    /// (FasterWhisperLocal) must reach the local backend and return an error
+    /// from that backend — NOT from the cloud gate or the legacy
+    /// transcribe_if_cached path.
+    ///
+    /// Skips when faster-whisper is actually installed (the provider would
+    /// attempt a real transcription; "not found" assertion would be wrong).
+    #[tokio::test]
+    async fn dispatch_transcription_local_primary_reaches_local_backend() {
+        use crate::media::stt_dispatch::{MediaSttConfig, WhisperModelSize};
+
+        if faster_whisper_exe().is_some() {
+            // faster-whisper is installed — can't assert "not found". Skip.
+            return;
+        }
+
+        let stt_cfg = MediaSttConfig {
+            primary: SttProviderKind::FasterWhisperLocal,
+            model_size: WhisperModelSize::Tiny,
+            ..Default::default()
+        };
+        let media_cfg = crate::config::MediaConfig::default(); // cloud_stt_enabled = false
+        // Minimal WAV bytes (44-byte header, no samples).
+        let wav = pcm_bytes_to_wav(&[]);
+
+        let result = dispatch_transcription(&stt_cfg, &media_cfg, &wav, None).await;
+        let err = result.unwrap_err();
+
+        // Must come from FasterWhisperProvider ("faster-whisper not found"),
+        // not from the cloud gate ("cloud STT … LEAVES the device").
+        assert!(
+            err.contains("faster-whisper"),
+            "expected FasterWhisperProvider error; got: {err}"
+        );
+        assert!(
+            !err.contains("cloud_stt_enabled"),
+            "local provider must not be blocked by the cloud gate; got: {err}"
+        );
+    }
+
+    /// B20 regression: cloud is still blocked without cloud_stt_enabled=true,
+    /// even when dispatch_transcription is called directly. Complements the
+    /// existing cloud_kind_refused_when_flag_off factory test.
+    #[tokio::test]
+    async fn dispatch_transcription_cloud_primary_blocked_without_flag() {
+        use crate::media::stt_dispatch::MediaSttConfig;
+
+        let stt_cfg = MediaSttConfig {
+            primary: SttProviderKind::OpenAiWhisperApi,
+            ..Default::default()
+        };
+        let media_cfg = crate::config::MediaConfig::default(); // cloud off
+        let wav = pcm_bytes_to_wav(&[]);
+
+        let err = dispatch_transcription(&stt_cfg, &media_cfg, &wav, None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("cloud_stt_enabled"),
+            "cloud primary must be blocked by gate; got: {err}"
+        );
+        assert!(
+            err.contains("LEAVES the device"),
+            "error must warn about audio leaving the device; got: {err}"
+        );
     }
 }
