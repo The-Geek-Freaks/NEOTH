@@ -287,12 +287,26 @@ fn main() -> Result<()> {
     // DO NOT call `overlay.run()` — only `window.run()` drives the loop.
     let overlay = MiniOverlay::new()?;
 
-    // Theme — restore the persisted light/dark choice before the window paints
-    // (default dark). Persisted at `<neoth_home>/.gui-theme` as "dark"/"light".
+    // B23 fix — read tweaks.toml once so the theme block and the B23 tweaks
+    // block below share a single parse (no double I/O).
+    let neoth_dir = default_neoth_home();
+    let gui_tweaks = read_gui_tweaks(&neoth_dir);
+
+    // Theme — restore the persisted light/dark choice before the window paints.
+    // Precedence (mirrors daemon resolve_effective_gui_theme):
+    //   valid dotfile > tweaks color_theme > built-in dark.
+    // Persisted at `<neoth_home>/.gui-theme` as "dark"/"light".
     {
-        let is_dark = std::fs::read_to_string(default_neoth_home().join(".gui-theme"))
-            .map(|s| s.trim() != "light")
-            .unwrap_or(true);
+        let dotfile_raw = std::fs::read_to_string(neoth_dir.join(".gui-theme")).ok();
+        // Empty/whitespace-only dotfile = file-absent semantics (daemon caller
+        // contract, tweaks/mod.rs "Non-empty but unrecognised") — never a
+        // spurious invalid-value diagnostic.
+        let dotfile = dotfile_raw
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let tweaks_color = gui_tweaks.as_ref().and_then(|t| t.color_theme.as_deref());
+        let is_dark = resolve_boot_dark(dotfile, tweaks_color);
         window.global::<Theme>().set_dark(is_dark);
     }
     let weak_theme = window.as_weak();
@@ -325,11 +339,11 @@ fn main() -> Result<()> {
     });
 
     // B23 — THEME-TWEAKS-RUNTIME: apply tweaks contract before first paint.
-    // Reads ~/.neoth/tweaks.toml locally (no subprocess, no neothd dep in GUI).
-    // Precedence for each field: dotfile already applied above > tweaks > built-in.
+    // gui_tweaks was already read above; reuse to avoid double I/O.
+    // color_theme precedence is handled by resolve_boot_dark in the theme block above.
+    // Precedence for remaining fields: dotfile already applied above > tweaks > built-in.
     {
-        let neoth_dir = default_neoth_home();
-        if let Some(tc) = read_gui_tweaks(&neoth_dir) {
+        if let Some(ref tc) = gui_tweaks {
             // font-sans-override: non-empty string overrides the built-in font-sans token.
             if let Some(ref family) = tc.theme.font_family {
                 if !family.is_empty() {
@@ -9851,6 +9865,49 @@ struct GuiTweaksContract {
     pub theme: GuiThemeContract,
 }
 
+/// B23 fix — resolve the boot `is_dark` flag, mirroring the daemon's
+/// `resolve_effective_gui_theme` / `resolve_dark_from_tweaks` precedence exactly:
+///
+/// 1. Valid dotfile content ("light" / "dark") wins unconditionally.
+/// 2. Invalid non-empty dotfile → log diagnostic, fall through to tweaks.
+/// 3. Tweaks `color_theme`: "light" → false, "dark"|"auto" → true,
+///    invalid value → log diagnostic + builtin dark, None → builtin dark.
+///
+/// `dotfile` must be the **trimmed** content of `~/.neoth/.gui-theme`, or
+/// `None` when the file is absent, unreadable, or contains only whitespace
+/// after trimming (an empty string is additionally normalized to file-absent
+/// semantics inside this fn, defense-in-depth for future call sites).
+/// `tweaks_color` is `GuiTweaksContract::color_theme.as_deref()`.
+pub(crate) fn resolve_boot_dark(dotfile: Option<&str>, tweaks_color: Option<&str>) -> bool {
+    match dotfile {
+        Some("dark") => return true,
+        Some("light") => return false,
+        // Empty = file-absent semantics: fall through silently, no diagnostic.
+        Some("") => {}
+        Some(s) => {
+            // Non-empty but unrecognised — emit diagnostic, fall through to tweaks.
+            tracing::warn!(
+                "invalid .gui-theme value '{}'; falling through to tweaks color_theme",
+                s
+            );
+        }
+        None => {}
+    }
+    // Dotfile absent or invalid: resolve from tweaks.color_theme.
+    match tweaks_color {
+        Some("light") => false,
+        Some("dark") | Some("auto") => true,
+        Some(other) => {
+            tracing::warn!(
+                "color_theme '{}' is not a valid value (light|dark|auto); using built-in dark",
+                other
+            );
+            true
+        }
+        None => true, // built-in dark
+    }
+}
+
 /// Read `<neoth_home>/tweaks.toml` into the GUI contract type.
 /// Returns `None` silently when the file is absent or unparseable — the GUI
 /// must not block on a malformed tweaks.toml; it falls back to built-in defaults.
@@ -10641,6 +10698,122 @@ sidebar_collapsed = true
         let dir = TempDir::new().unwrap();
         let result = read_gui_tweaks(dir.path());
         assert!(result.is_none());
+    }
+
+    // ── resolve_boot_dark — mirrors daemon resolve_effective_gui_theme ────────
+    // Naming: <dotfile-state>_<tweaks-state> → expected bool (true = dark).
+    //
+    // PARITY CONTRACT (adversarial-review note): the GUI crate must not depend
+    // on neothd, so these tests cannot call the daemon resolver directly. The
+    // expected outputs below are copied from the daemon's own unit tests in
+    // SRC/neothd/src/tweaks/mod.rs (b23 test block, ~:758-823):
+    //   dotfile "dark"/"light" wins over any tweaks value;
+    //   invalid dotfile falls through to tweaks (with diagnostic);
+    //   tweaks "light" → light, "dark"/"auto" → dark, invalid/None → dark.
+    // ANY edit to either resolver MUST update both test blocks in the same
+    // commit — diff the daemon test names against the boot_dark_* names here.
+
+    use super::resolve_boot_dark;
+
+    #[test]
+    fn boot_dark_dotfile_dark_wins_over_tweaks_light() {
+        // Valid dotfile wins unconditionally — even when tweaks says light.
+        assert!(resolve_boot_dark(Some("dark"), Some("light")));
+    }
+
+    #[test]
+    fn boot_dark_dotfile_light_wins_over_tweaks_dark() {
+        // Valid dotfile wins unconditionally — even when tweaks says dark.
+        assert!(!resolve_boot_dark(Some("light"), Some("dark")));
+    }
+
+    #[test]
+    fn boot_dark_dotfile_light_wins_over_tweaks_auto() {
+        assert!(!resolve_boot_dark(Some("light"), Some("auto")));
+    }
+
+    #[test]
+    fn boot_dark_dotfile_light_wins_when_no_tweaks() {
+        assert!(!resolve_boot_dark(Some("light"), None));
+    }
+
+    #[test]
+    fn boot_dark_dotfile_dark_wins_when_no_tweaks() {
+        assert!(resolve_boot_dark(Some("dark"), None));
+    }
+
+    #[test]
+    fn boot_dark_invalid_dotfile_falls_to_tweaks_light() {
+        // Invalid dotfile falls through; tweaks says light → not dark.
+        assert!(!resolve_boot_dark(Some("blue"), Some("light")));
+    }
+
+    #[test]
+    fn boot_dark_invalid_dotfile_falls_to_tweaks_dark() {
+        assert!(resolve_boot_dark(Some("blue"), Some("dark")));
+    }
+
+    #[test]
+    fn boot_dark_invalid_dotfile_falls_to_tweaks_auto() {
+        // "auto" treated as dark (same as daemon's resolve_dark_from_tweaks).
+        assert!(resolve_boot_dark(Some("neon"), Some("auto")));
+    }
+
+    #[test]
+    fn boot_dark_invalid_dotfile_invalid_tweaks_builtin_dark() {
+        // Both invalid → builtin dark.
+        assert!(resolve_boot_dark(Some("bad"), Some("nord")));
+    }
+
+    #[test]
+    fn boot_dark_invalid_dotfile_no_tweaks_builtin_dark() {
+        // Invalid dotfile + no tweaks → builtin dark.
+        assert!(resolve_boot_dark(Some("bad"), None));
+    }
+
+    #[test]
+    fn boot_dark_no_dotfile_tweaks_light() {
+        assert!(!resolve_boot_dark(None, Some("light")));
+    }
+
+    #[test]
+    fn boot_dark_no_dotfile_tweaks_dark() {
+        assert!(resolve_boot_dark(None, Some("dark")));
+    }
+
+    #[test]
+    fn boot_dark_no_dotfile_tweaks_auto() {
+        // "auto" → dark, matches daemon behaviour.
+        assert!(resolve_boot_dark(None, Some("auto")));
+    }
+
+    #[test]
+    fn boot_dark_no_dotfile_invalid_tweaks_builtin_dark() {
+        // Invalid tweaks value → builtin dark.
+        assert!(resolve_boot_dark(None, Some("solarized")));
+    }
+
+    #[test]
+    fn boot_dark_no_dotfile_no_tweaks_builtin_dark() {
+        // Nothing set → builtin dark.
+        assert!(resolve_boot_dark(None, None));
+    }
+
+    // ── Adversarial-review fixes: empty-dotfile edge (file-absent semantics) ──
+    // Expected outputs mirror the daemon resolver contract (tweaks/mod.rs
+    // resolve_effective_gui_theme: "Non-empty but unrecognised" — empty is NOT
+    // an invalid value, it is file-absent; boot call site additionally filters
+    // empty strings to None).
+
+    #[test]
+    fn boot_dark_empty_dotfile_falls_to_tweaks_light() {
+        // Empty dotfile behaves like no dotfile — tweaks light wins, no warn.
+        assert!(!resolve_boot_dark(Some(""), Some("light")));
+    }
+
+    #[test]
+    fn boot_dark_empty_dotfile_no_tweaks_builtin_dark() {
+        assert!(resolve_boot_dark(Some(""), None));
     }
 }
 
