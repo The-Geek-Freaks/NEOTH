@@ -161,7 +161,9 @@ async fn run_sync(
         .unwrap_or_else(|| "NEOTH".to_string());
     let archive_root = default_archive_root();
 
-    let stats = sync_archive(&archive_root, &dest, std::path::Path::new(&subdir), dry_run)
+    // GOLD-ADAPT-IGNIS-04: cloud mirror has no daemon WAL writer in scope;
+    // conflict detection still gates the write, it just emits no audit frame.
+    let stats = sync_archive(&archive_root, &dest, std::path::Path::new(&subdir), dry_run, None)
         .await
         .context("cloud sync pass")?;
 
@@ -210,6 +212,7 @@ mod tests {
             cloud_dir.path(),
             std::path::Path::new("NEOTH-test"),
             false,
+            None,
         )
         .await
         .expect("sync");
@@ -240,6 +243,7 @@ mod tests {
             cloud_dir.path(),
             std::path::Path::new("NEOTH-test"),
             true,
+            None,
         )
         .await
         .expect("dry-run");

@@ -260,7 +260,7 @@ pub(crate) fn spawn_cron_for_key(
         ContradictionResolve => spawn_contradiction_resolve_cron(cfg),
         MonitorCron => spawn_monitor_cron(cfg, rc, wd, w),
         ConsolidationSweep => spawn_consolidation_sweep_cron(cfg, rc, w),
-        ObsidianSync => wrap_result_handle(spawn_obsidian_sync(cfg)),
+        ObsidianSync => wrap_result_handle(spawn_obsidian_sync(cfg, w.clone())),
         ObsidianVaultReader => wrap_result_handle(spawn_obsidian_vault_reader(cfg)),
         ObsidianWikiRebuild => wrap_result_handle(spawn_obsidian_wiki_rebuild(cfg, w)),
         SelfMap => wrap_result_handle(spawn_self_map(cfg, w)),
@@ -307,6 +307,7 @@ fn wrap_result_handle(
 /// `None` (no vault configured) ⇒ no task. WAL-free.
 pub(crate) fn spawn_obsidian_sync(
     config: &FreedomConfig,
+    writer: WalWriterHandle,
 ) -> Option<JoinHandle<anyhow::Result<()>>> {
     let vault_str = config.obsidian_vault.as_deref()?;
     let vault = std::path::PathBuf::from(vault_str);
@@ -314,8 +315,15 @@ pub(crate) fn spawn_obsidian_sync(
     let interval = config
         .obsidian_auto_sync_secs
         .map(std::time::Duration::from_secs);
+    // GOLD-ADAPT-IGNIS-04: thread the daemon WAL writer so a detected
+    // cloud-sync conflict emits an ObsidianSyncConflict audit frame + skips
+    // the write pass.
     Some(crate::cli::obsidian_sync_task::spawn(
-        None, vault, subdir, interval,
+        None,
+        vault,
+        subdir,
+        interval,
+        Some(writer),
     ))
 }
 
@@ -5536,10 +5544,8 @@ mod tests {
     #[test]
     fn all_wal_free_spawns_are_none_for_default_config() {
         let cfg = FreedomConfig::default();
-        assert!(
-            spawn_obsidian_sync(&cfg).is_none(),
-            "no obsidian_vault → None"
-        );
+        // GOLD-ADAPT-IGNIS-04: spawn_obsidian_sync now takes a WAL writer, so
+        // its no-vault→None case moved to its own tokio test below.
         assert!(
             spawn_cloud_archive(&cfg).is_none(),
             "no cloud_archive_dest → None"
@@ -5611,6 +5617,20 @@ mod tests {
         assert!(
             handle.is_none(),
             "no obsidian_vault → spawn_obsidian_wiki_rebuild must return None"
+        );
+    }
+
+    /// GOLD-ADAPT-IGNIS-04 — the vault gate fires before the WalWriterHandle is
+    /// used, so the None path is verifiable with a throwaway writer.
+    #[tokio::test]
+    async fn spawn_obsidian_sync_returns_none_when_no_vault() {
+        let cfg = FreedomConfig::default();
+        let wal_dir = tempfile::tempdir().unwrap();
+        let (writer, _join) =
+            crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
+        assert!(
+            spawn_obsidian_sync(&cfg, writer).is_none(),
+            "no obsidian_vault → spawn_obsidian_sync must return None"
         );
     }
 

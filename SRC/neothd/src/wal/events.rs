@@ -85,6 +85,11 @@ pub enum ExtendedSubtype {
     /// NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01 — the Obsidian vault preload
     /// completed (result frame; payload carries ok/err outcome).
     ObsidianPreloadResult = 0x07,
+    /// GOLD-ADAPT-IGNIS-04 — `sync_archive` detected cloud-sync conflict files
+    /// in the operator's Obsidian vault and skipped the write pass to avoid
+    /// stomping on in-progress cloud-sync merges.
+    /// Payload (JSON): `{ "conflict_count": N, "ts_unix": T }`.
+    ObsidianSyncConflict = 0x08,
 }
 
 impl ExtendedSubtype {
@@ -98,6 +103,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::SelfEditRefused => "self_edit_refused",
             ExtendedSubtype::ObsidianPreloadIntent => "obsidian_preload_intent",
             ExtendedSubtype::ObsidianPreloadResult => "obsidian_preload_result",
+            ExtendedSubtype::ObsidianSyncConflict => "obsidian_sync_conflict",
         }
     }
 
@@ -111,6 +117,7 @@ impl ExtendedSubtype {
             0x05 => Some(ExtendedSubtype::SelfEditRefused),
             0x06 => Some(ExtendedSubtype::ObsidianPreloadIntent),
             0x07 => Some(ExtendedSubtype::ObsidianPreloadResult),
+            0x08 => Some(ExtendedSubtype::ObsidianSyncConflict),
             _ => None,
         }
     }
@@ -3385,6 +3392,8 @@ mod tests {
             // NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01
             ExtendedSubtype::ObsidianPreloadIntent,
             ExtendedSubtype::ObsidianPreloadResult,
+            // GOLD-ADAPT-IGNIS-04
+            ExtendedSubtype::ObsidianSyncConflict,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

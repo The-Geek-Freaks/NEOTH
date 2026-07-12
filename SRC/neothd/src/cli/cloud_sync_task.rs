@@ -52,7 +52,7 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        match sync_archive(&archive_root, &dest, &subdir, false).await {
+        match sync_archive(&archive_root, &dest, &subdir, false, None).await {
             Ok(stats) => {
                 if stats.copied > 0 {
                     info!(

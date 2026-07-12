@@ -202,7 +202,10 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
             subdir,
             dry_run,
         } => {
-            let stats = sync_archive(&root, &vault, &subdir, dry_run).await?;
+            // GOLD-ADAPT-IGNIS-04: the interactive `neoth obsidian sync` has no
+            // daemon WAL writer in scope; conflict detection still gates the
+            // write (skip on conflict), it just emits no audit frame here.
+            let stats = sync_archive(&root, &vault, &subdir, dry_run, None).await?;
             render_sync(stats, args.output);
         }
         ObsidianAction::Days => {
@@ -668,6 +671,7 @@ pub async fn sync_archive(
     vault: &Path,
     subdir: &Path,
     dry_run: bool,
+    wal: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> Result<SyncStats> {
     validate_subdir(subdir).with_context(|| {
         format!(
@@ -676,13 +680,36 @@ pub async fn sync_archive(
         )
     })?;
 
-    // neoth(IGNIS-04): detect cloud-sync conflict files before writing.
-    // Warn (do not block) so the operator can resolve collisions at their
-    // own pace while NEOTH continues to sync.
+    // GOLD-ADAPT-IGNIS-04: detect cloud-sync conflict files before writing.
+    // On conflict, emit a WAL audit frame (when a writer is available) and
+    // SKIP the write pass to avoid stomping on in-progress cloud-sync merges.
+    // The operator resolves the conflicts; the next tick proceeds normally.
     {
         let conflict_report = detect_sync_conflicts(vault);
-        if let Some(msg) = conflict_report.describe() {
-            tracing::warn!(conflict_count = conflict_report.conflicts.len(), "{}", msg);
+        if !conflict_report.conflicts.is_empty() {
+            let conflict_count = conflict_report.conflicts.len();
+            if let Some(msg) = conflict_report.describe() {
+                tracing::warn!(conflict_count, "{}", msg);
+            }
+            if let Some(w) = wal {
+                let ts_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "conflict_count": conflict_count,
+                    "ts_unix": ts_unix,
+                })) {
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_EXTENDED,
+                        &payload,
+                    )
+                    .event_subtype(crate::wal::events::ExtendedSubtype::ObsidianSyncConflict as u8)
+                    .build();
+                    let _ = w.append(header, payload).await;
+                }
+            }
+            return Ok(SyncStats::default());
         }
     }
 
@@ -2546,7 +2573,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let archive = fake_archive(dir.path()).await;
         let vault = dir.path().join("vault");
-        let stats = sync_archive(&archive, &vault, &PathBuf::from("NEOTH-sessions"), false)
+        let stats = sync_archive(&archive, &vault, &PathBuf::from("NEOTH-sessions"), false, None)
             .await
             .unwrap();
         assert_eq!(stats.considered, 2);
@@ -2570,10 +2597,10 @@ mod tests {
         let archive = fake_archive(dir.path()).await;
         let vault = dir.path().join("vault");
         let subdir = PathBuf::from("NEOTH-sessions");
-        let _ = sync_archive(&archive, &vault, &subdir, false)
+        let _ = sync_archive(&archive, &vault, &subdir, false, None)
             .await
             .unwrap();
-        let stats = sync_archive(&archive, &vault, &subdir, false)
+        let stats = sync_archive(&archive, &vault, &subdir, false, None)
             .await
             .unwrap();
         assert_eq!(stats.considered, 2);
@@ -2587,7 +2614,7 @@ mod tests {
         let archive = fake_archive(dir.path()).await;
         let vault = dir.path().join("vault");
         let subdir = PathBuf::from("NEOTH-sessions");
-        sync_archive(&archive, &vault, &subdir, false)
+        sync_archive(&archive, &vault, &subdir, false, None)
             .await
             .unwrap();
 
@@ -2596,7 +2623,7 @@ mod tests {
         tokio::fs::write(&src, "---\nsession: abc\nday: 2026-05-14\n---\n\nrewritten")
             .await
             .unwrap();
-        let stats = sync_archive(&archive, &vault, &subdir, false)
+        let stats = sync_archive(&archive, &vault, &subdir, false, None)
             .await
             .unwrap();
         assert_eq!(stats.copied, 1, "only the mutated file should re-copy");
@@ -2609,7 +2636,7 @@ mod tests {
         let archive = fake_archive(dir.path()).await;
         let vault = dir.path().join("vault");
         let subdir = PathBuf::from("NEOTH-sessions");
-        let stats = sync_archive(&archive, &vault, &subdir, true).await.unwrap();
+        let stats = sync_archive(&archive, &vault, &subdir, true, None).await.unwrap();
         assert_eq!(stats.considered, 2);
         assert_eq!(stats.skipped_dry_run, 2);
         assert_eq!(stats.copied, 0);
@@ -2625,6 +2652,7 @@ mod tests {
             &vault,
             &PathBuf::from("x"),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2715,7 +2743,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let archive = fake_archive(dir.path()).await;
         let vault = dir.path().join("vault");
-        let err = sync_archive(&archive, &vault, &PathBuf::from("../escape"), false)
+        let err = sync_archive(&archive, &vault, &PathBuf::from("../escape"), false, None)
             .await
             .unwrap_err();
         assert!(

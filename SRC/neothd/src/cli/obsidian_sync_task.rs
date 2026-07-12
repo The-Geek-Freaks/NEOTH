@@ -33,11 +33,12 @@ pub fn spawn(
     vault: PathBuf,
     subdir: Option<String>,
     interval: Option<Duration>,
+    writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> JoinHandle<Result<()>> {
     let archive_root = archive_root.unwrap_or_else(default_archive_root);
     let subdir = PathBuf::from(subdir.unwrap_or_else(|| "NEOTH".to_string()));
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
-    tokio::spawn(async move { run(archive_root, vault, subdir, interval).await })
+    tokio::spawn(async move { run(archive_root, vault, subdir, interval, writer).await })
 }
 
 async fn run(
@@ -45,6 +46,7 @@ async fn run(
     vault: PathBuf,
     subdir: PathBuf,
     interval: Duration,
+    writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<()> {
     info!(
         vault = %vault.display(),
@@ -58,7 +60,7 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        match sync_archive(&archive_root, &vault, &subdir, false).await {
+        match sync_archive(&archive_root, &vault, &subdir, false, writer.as_ref()).await {
             Ok(stats) => {
                 if stats.copied > 0 {
                     info!(
@@ -91,6 +93,7 @@ mod tests {
             vault_dir.path().to_path_buf(),
             Some("NEOTH-test".into()),
             Some(Duration::from_millis(50)),
+            None,
         );
         // Let the task enter the loop.
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -115,6 +118,7 @@ mod tests {
             // Very tight interval so the second tick fires within the test
             // window — first tick is burned per `run`.
             Some(Duration::from_millis(30)),
+            None,
         );
 
         let copied = vault_dir
