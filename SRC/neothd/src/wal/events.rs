@@ -90,6 +90,12 @@ pub enum ExtendedSubtype {
     /// stomping on in-progress cloud-sync merges.
     /// Payload (JSON): `{ "conflict_count": N, "ts_unix": T }`.
     ObsidianSyncConflict = 0x08,
+    /// GOLD-ADAPT-SNYK-02 — an install command fired while one or more manifest
+    /// files (package.json, Cargo.toml, requirements.txt, …) were edited in the
+    /// same turn; the `ManifestInstallInspector` blocked the call and the
+    /// dispatch loop emitted this audit frame + ran `on_manifest_gate_resolved`.
+    /// Payload (JSON): `{ "manifests": [str], "server": str, "tool": str, "ts_unix": T }`.
+    ManifestInstallBlocked = 0x09,
 }
 
 impl ExtendedSubtype {
@@ -104,6 +110,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::ObsidianPreloadIntent => "obsidian_preload_intent",
             ExtendedSubtype::ObsidianPreloadResult => "obsidian_preload_result",
             ExtendedSubtype::ObsidianSyncConflict => "obsidian_sync_conflict",
+            ExtendedSubtype::ManifestInstallBlocked => "manifest_install_blocked",
         }
     }
 
@@ -118,6 +125,7 @@ impl ExtendedSubtype {
             0x06 => Some(ExtendedSubtype::ObsidianPreloadIntent),
             0x07 => Some(ExtendedSubtype::ObsidianPreloadResult),
             0x08 => Some(ExtendedSubtype::ObsidianSyncConflict),
+            0x09 => Some(ExtendedSubtype::ManifestInstallBlocked),
             _ => None,
         }
     }
@@ -3394,6 +3402,8 @@ mod tests {
             ExtendedSubtype::ObsidianPreloadResult,
             // GOLD-ADAPT-IGNIS-04
             ExtendedSubtype::ObsidianSyncConflict,
+            // GOLD-ADAPT-SNYK-02
+            ExtendedSubtype::ManifestInstallBlocked,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

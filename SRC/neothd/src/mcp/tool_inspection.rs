@@ -56,6 +56,13 @@ pub enum BlockKind {
         /// Matched value with first/last 4 chars visible, middle masked.
         redacted: String,
     },
+    /// GOLD-ADAPT-SNYK-02 — an install command fired while one or more manifest
+    /// files were edited in the same turn. The dispatch loop MUST call
+    /// `inspectors.on_manifest_gate_resolved()` after handling this block.
+    ManifestGate {
+        /// Manifest file paths that have pending (un-scanned) edits this turn.
+        pending_manifests: Vec<String>,
+    },
 }
 
 /// A pre-dispatch safety check. `Send` so the chain can be held across the
@@ -66,6 +73,10 @@ pub trait ToolInspector: Send {
     /// Judge ONE prospective call. Called exactly once per dispatch attempt
     /// (a stateful inspector, e.g. the repetition guard, records the attempt).
     fn inspect(&mut self, call: &ParsedToolCall, policy: &SecurityPolicy) -> InspectorVerdict;
+    /// GOLD-ADAPT-SNYK-02 — called by the dispatch loop after it resolves a
+    /// [`BlockKind::ManifestGate`] block (the OSV manifest scan ran). Default
+    /// no-op; [`ManifestInstallInspector`] overrides to clear its pending set.
+    fn on_manifest_gate_resolved(&mut self) {}
 }
 
 /// Stuck-loop guard as an inspector (GOLD-ADOPT-20).
@@ -176,6 +187,113 @@ impl ToolInspector for SecretEgressInspector {
     }
 }
 
+/// GOLD-ADAPT-SNYK-02 — blocks an install command that fires in the same turn
+/// as an edit to a dependency manifest file.
+///
+/// **Phase 1 (observe):** Write/Edit calls targeting a manifest filename are
+/// silently allowed and recorded in `pending`.
+/// **Phase 2 (block):** Any subsequent shell install command (`npm install`,
+/// `pip install`, `cargo add`, `yarn add`, …) is blocked with
+/// [`BlockKind::ManifestGate`] while `pending` is non-empty.
+/// **Phase 3 (reset):** The dispatch loop calls `on_manifest_gate_resolved`
+/// after emitting the WAL audit frame, clearing `pending` so later install
+/// attempts in the same turn are not re-blocked.
+pub struct ManifestInstallInspector {
+    pending: std::collections::HashSet<String>,
+}
+
+impl ManifestInstallInspector {
+    pub fn new() -> Self {
+        Self {
+            pending: std::collections::HashSet::new(),
+        }
+    }
+}
+
+impl Default for ManifestInstallInspector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Filename-only check for well-known dependency manifest files. Strips any
+/// directory prefix so `src/package.json` and `package.json` both match.
+fn is_manifest_path(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    matches!(
+        name,
+        "package.json"
+            | "package-lock.json"
+            | "yarn.lock"
+            | "Cargo.toml"
+            | "Cargo.lock"
+            | "requirements.txt"
+            | "pyproject.toml"
+            | "Pipfile"
+            | "Pipfile.lock"
+            | "go.mod"
+            | "go.sum"
+    )
+}
+
+/// Returns `true` when `arguments` looks like an external package-manager
+/// install. Checks `command` / `cmd` keys (case-insensitive). Heuristic —
+/// fails open on uncommon spellings.
+fn is_install_command(args: &serde_json::Value) -> bool {
+    let cmd = args
+        .get("command")
+        .or_else(|| args.get("cmd"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    cmd.contains("npm install")
+        || cmd.contains("npm i ")
+        || cmd.contains("pip install")
+        || cmd.contains("pip3 install")
+        || cmd.contains("cargo add")
+        || cmd.contains("cargo install")
+        || cmd.contains("yarn add")
+        || cmd.contains("yarn install")
+        || cmd.contains("pnpm add")
+        || cmd.contains("pnpm install")
+        || cmd.contains("bun add")
+        || cmd.contains("bun install")
+}
+
+impl ToolInspector for ManifestInstallInspector {
+    fn name(&self) -> &'static str {
+        "manifest_install"
+    }
+
+    fn inspect(&mut self, call: &ParsedToolCall, _policy: &SecurityPolicy) -> InspectorVerdict {
+        // Phase 1 — track Write/Edit calls on manifest-named paths.
+        if matches!(
+            call.tool.as_str(),
+            "write" | "edit" | "write_file" | "edit_file" | "create_file"
+        ) {
+            if let Some(path) = call.arguments.get("path").and_then(|v| v.as_str()) {
+                if is_manifest_path(path) {
+                    self.pending.insert(path.to_owned());
+                    return InspectorVerdict::Allow;
+                }
+            }
+        }
+        // Phase 2 — block install commands while any manifest is pending.
+        if !self.pending.is_empty() && is_install_command(&call.arguments) {
+            let pending_manifests: Vec<String> = self.pending.iter().cloned().collect();
+            return InspectorVerdict::Block {
+                inspector: "manifest_install",
+                kind: BlockKind::ManifestGate { pending_manifests },
+            };
+        }
+        InspectorVerdict::Allow
+    }
+
+    fn on_manifest_gate_resolved(&mut self) {
+        self.pending.clear();
+    }
+}
+
 /// Ordered chain of inspectors. The FIRST block wins (historical order:
 /// repetition guard, then risk policy — so a repeated call is never also
 /// risk-inspected, matching the pre-chain `continue`).
@@ -184,13 +302,15 @@ pub struct ToolInspectorChain {
 }
 
 impl ToolInspectorChain {
-    /// The shipped chain: repetition guard (defaults) + risk policy + secret-egress scan.
+    /// The shipped chain: repetition guard (defaults) + risk policy +
+    /// secret-egress scan + manifest-install gate (GOLD-ADAPT-SNYK-02).
     pub fn with_defaults() -> Self {
         Self {
             inspectors: vec![
                 Box::new(RepetitionInspector(ToolRepetitionGuard::with_defaults())),
                 Box::new(RiskPolicyInspector),
                 Box::new(SecretEgressInspector),
+                Box::new(ManifestInstallInspector::new()),
             ],
         }
     }
@@ -198,6 +318,15 @@ impl ToolInspectorChain {
     /// Build from an explicit inspector list (tests / future custom chains).
     pub fn new(inspectors: Vec<Box<dyn ToolInspector>>) -> Self {
         Self { inspectors }
+    }
+
+    /// GOLD-ADAPT-SNYK-02 — call after the dispatch loop resolves a
+    /// [`BlockKind::ManifestGate`] block. Fans out `on_manifest_gate_resolved`
+    /// to every inspector so [`ManifestInstallInspector`] clears its pending set.
+    pub fn on_manifest_gate_resolved(&mut self) {
+        for insp in self.inspectors.iter_mut() {
+            insp.on_manifest_gate_resolved();
+        }
     }
 
     /// Run inspectors in order; return the FIRST block, else `Allow`. Every
@@ -399,6 +528,90 @@ mod tests {
         assert!(
             matches!(insp.inspect(&c, &policy()), InspectorVerdict::Allow),
             "clean payload must not be blocked by secret_egress inspector"
+        );
+    }
+
+    // ── GOLD-ADAPT-SNYK-02: ManifestInstallInspector ─────────────────────────
+
+    #[test]
+    fn manifest_install_blocks_npm_install_after_package_json_edit() {
+        let mut insp = ManifestInstallInspector::new();
+        let p = &policy();
+        let edit = call(
+            "fs",
+            "write_file",
+            serde_json::json!({ "path": "package.json", "content": "{}" }),
+        );
+        assert!(matches!(insp.inspect(&edit, p), InspectorVerdict::Allow));
+        let install = call(
+            "sh",
+            "exec",
+            serde_json::json!({ "command": "npm install express" }),
+        );
+        match insp.inspect(&install, p) {
+            InspectorVerdict::Block {
+                inspector,
+                kind: BlockKind::ManifestGate { pending_manifests },
+            } => {
+                assert_eq!(inspector, "manifest_install");
+                assert!(
+                    pending_manifests.iter().any(|m| m.contains("package.json")),
+                    "pending list must include package.json"
+                );
+            }
+            _ => panic!("expected ManifestGate block for npm install after package.json edit"),
+        }
+    }
+
+    #[test]
+    fn manifest_install_clears_after_gate_resolved() {
+        let mut insp = ManifestInstallInspector::new();
+        let p = &policy();
+        let edit = call(
+            "fs",
+            "write_file",
+            serde_json::json!({ "path": "Cargo.toml", "content": "" }),
+        );
+        insp.inspect(&edit, p);
+        let install = call("sh", "exec", serde_json::json!({ "command": "cargo add serde" }));
+        assert!(matches!(
+            insp.inspect(&install, p),
+            InspectorVerdict::Block {
+                kind: BlockKind::ManifestGate { .. },
+                ..
+            }
+        ));
+        insp.on_manifest_gate_resolved();
+        assert!(
+            matches!(insp.inspect(&install, p), InspectorVerdict::Allow),
+            "install must be allowed after on_manifest_gate_resolved"
+        );
+    }
+
+    #[test]
+    fn manifest_install_allows_install_with_no_pending_manifest() {
+        let mut insp = ManifestInstallInspector::new();
+        let install = call("sh", "exec", serde_json::json!({ "command": "npm install lodash" }));
+        assert!(
+            matches!(insp.inspect(&install, &policy()), InspectorVerdict::Allow),
+            "install must pass when no manifest has been edited"
+        );
+    }
+
+    #[test]
+    fn manifest_install_allows_non_manifest_file_edits() {
+        let mut insp = ManifestInstallInspector::new();
+        let p = &policy();
+        let edit = call(
+            "fs",
+            "write_file",
+            serde_json::json!({ "path": "src/main.rs", "content": "" }),
+        );
+        insp.inspect(&edit, p);
+        let install = call("sh", "exec", serde_json::json!({ "command": "cargo add tokio" }));
+        assert!(
+            matches!(insp.inspect(&install, p), InspectorVerdict::Allow),
+            "editing a non-manifest file must not trigger ManifestGate"
         );
     }
 }

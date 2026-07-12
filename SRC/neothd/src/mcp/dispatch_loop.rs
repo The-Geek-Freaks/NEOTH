@@ -418,7 +418,8 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                     kind:
                         crate::mcp::tool_inspection::BlockKind::Repetition(_)
                         | crate::mcp::tool_inspection::BlockKind::Risk { .. }
-                        | crate::mcp::tool_inspection::BlockKind::SecretEgress { .. },
+                        | crate::mcp::tool_inspection::BlockKind::SecretEgress { .. }
+                        | crate::mcp::tool_inspection::BlockKind::ManifestGate { .. },
                     ..
                 } => {}
             }
@@ -457,6 +458,53 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                     "tool-repetition guard blocked a call (stuck-loop protection)"
                 );
                 tool_result_blocks.push(format_guard_block(call, verdict));
+                continue;
+            }
+            // GOLD-ADAPT-SNYK-02 — manifest-install gate: an install command
+            // fired while a manifest file was edited this turn. Emit the WAL
+            // audit frame, surface a diagnostic to the LLM, reset pending state.
+            if let crate::mcp::tool_inspection::InspectorVerdict::Block {
+                kind:
+                    crate::mcp::tool_inspection::BlockKind::ManifestGate { pending_manifests },
+                ..
+            } = &inspection
+            {
+                failed_calls += 1;
+                warn!(
+                    server = %call.server,
+                    tool = %call.tool,
+                    manifests = ?pending_manifests,
+                    "manifest-install gate: install blocked — edited manifest(s) not yet OSV-scanned"
+                );
+                if let Some(w) = writer {
+                    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                        "manifests": pending_manifests,
+                        "server": call.server,
+                        "tool": call.tool,
+                        "ts_unix": crate::time::now_unix_i64(),
+                    })) {
+                        let header = crate::wal::HeaderBuilder::new(
+                            crate::wal::events::EVENT_TYPE_EXTENDED,
+                            &payload,
+                        )
+                        .event_subtype(
+                            crate::wal::events::ExtendedSubtype::ManifestInstallBlocked as u8,
+                        )
+                        .flags(crate::wal::EventFlags::empty())
+                        .build();
+                        let _ = w.append(header, payload).await;
+                    }
+                }
+                // Clear pending so a re-issued install (after the operator runs the
+                // OSV scan) is not blocked again in the same turn.
+                inspectors.on_manifest_gate_resolved();
+                tool_result_blocks.push(format!(
+                    "manifest-install gate: `{}` was NOT executed — the following manifest \
+                     file(s) were edited in this turn and have not yet been scanned for \
+                     supply-chain vulnerabilities: {}. Scan each file, then retry the install.",
+                    call.tool,
+                    pending_manifests.join(", ")
+                ));
                 continue;
             }
             // GOLD-ADOPT-23 — risk policy (dangerous-command/egress) tripped: the
