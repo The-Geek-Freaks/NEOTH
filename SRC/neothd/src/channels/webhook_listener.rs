@@ -682,7 +682,11 @@ async fn append_audit(
 /// BEFORE the detached dispatch, deleted on successful completion, and any
 /// survivor is re-dispatched on the next daemon start ([`drain_inbound_spool`]).
 fn inbound_spool_dir() -> std::path::PathBuf {
-    crate::config::FreedomConfig::default_neoth_home().join("inbound_spool")
+    inbound_spool_dir_at(&crate::config::FreedomConfig::default_neoth_home())
+}
+
+fn inbound_spool_dir_at(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("inbound_spool")
 }
 
 /// Spool the verified webhook body BEFORE its detached dispatch. `key` is the
@@ -692,6 +696,15 @@ fn inbound_spool_dir() -> std::path::PathBuf {
 /// runs; durability is simply off for that one message).
 fn spool_inbound_body(key: &str, raw_body: &str, decoder: &str) -> Option<std::path::PathBuf> {
     let dir = inbound_spool_dir();
+    spool_inbound_body_at(&dir, key, raw_body, decoder)
+}
+
+fn spool_inbound_body_at(
+    dir: &std::path::Path,
+    key: &str,
+    raw_body: &str,
+    decoder: &str,
+) -> Option<std::path::PathBuf> {
     if let Err(e) = std::fs::create_dir_all(&dir) {
         warn!(error = %e, "inbound spool: mkdir failed (durability off for this message)");
         return None;
@@ -737,6 +750,10 @@ fn spool_inbound_body(key: &str, raw_body: &str, decoder: &str) -> Option<std::p
 /// duplicate). Best-effort throughout — a bad spool file is dropped, never fatal.
 pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
     let dir = inbound_spool_dir();
+    drain_inbound_spool_at(cfg, &dir).await;
+}
+
+async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Path) {
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -755,9 +772,11 @@ pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
             continue;
         };
         let parsed = serde_json::from_str::<serde_json::Value>(&body).ok();
-        let raw = parsed
-            .as_ref()
-            .and_then(|v| v.get("raw_body").and_then(|x| x.as_str()).map(str::to_string));
+        let raw = parsed.as_ref().and_then(|v| {
+            v.get("raw_body")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        });
         // Decoder tag picks the re-decode path; default "meta" (back-compat with
         // any pre-tag spool file).
         let decoder = parsed
@@ -790,7 +809,10 @@ pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
         }
     }
     if drained > 0 {
-        info!(count = drained, "inbound spool: re-dispatched survivors on startup");
+        info!(
+            count = drained,
+            "inbound spool: re-dispatched survivors on startup"
+        );
     }
 }
 
@@ -1844,16 +1866,11 @@ mod tests {
         // must be re-dispatched by the startup drain, then its spool file deleted;
         // a corrupt spool entry is dropped (never wedges the boot).
         let home = tempfile::tempdir().unwrap();
-        {
-            let _env = crate::test_env::lock();
-            // SAFETY: env access is serialized by the test_env lock above.
-            unsafe {
-                std::env::set_var("NEOTH_HOME", home.path());
-            }
-        } // drop _env before any await point
+        let spool_dir = inbound_spool_dir_at(home.path());
 
         let raw = r#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.DRAIN","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
-        let path = spool_inbound_body("wamid.DRAIN", raw, "meta").expect("spool write");
+        let path =
+            spool_inbound_body_at(&spool_dir, "wamid.DRAIN", raw, "meta").expect("spool write");
         assert!(path.exists(), "spool file must exist before drain");
 
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1878,7 +1895,7 @@ mod tests {
             dispatch_join: None,
         };
 
-        drain_inbound_spool(&cfg).await;
+        drain_inbound_spool_at(&cfg, &spool_dir).await;
         assert_eq!(
             count.load(std::sync::atomic::Ordering::SeqCst),
             1,
@@ -1887,20 +1904,15 @@ mod tests {
         assert!(!path.exists(), "drained spool file must be deleted");
 
         // A corrupt spool entry is dropped (not re-run, not a boot-wedge).
-        let bad = inbound_spool_dir().join("corrupt.json");
+        let bad = spool_dir.join("corrupt.json");
         std::fs::write(&bad, b"not json").unwrap();
-        drain_inbound_spool(&cfg).await;
+        drain_inbound_spool_at(&cfg, &spool_dir).await;
         assert!(!bad.exists(), "corrupt spool file must be dropped");
         assert_eq!(
             count.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "corrupt entry must NOT trigger a dispatch"
         );
-
-        // SAFETY: serialized by the test_env lock.
-        unsafe {
-            std::env::remove_var("NEOTH_HOME");
-        }
     }
 
     #[tokio::test]
