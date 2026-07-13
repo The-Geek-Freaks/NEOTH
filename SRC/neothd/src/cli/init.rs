@@ -104,7 +104,15 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         step4_role(&args, interactive, &mut state)?;
         save_checkpoint_best_effort(&neoth_dir, &state);
     }
-    step5_provider(&args, interactive, &mut state).await?;
+    let existing_security_policy = {
+        let path = neoth_dir.join("freedom.yaml");
+        if path.exists() {
+            crate::config::FreedomConfig::load_from_path(&path)?.security
+        } else {
+            crate::config::SecurityPolicy::default()
+        }
+    };
+    step5_provider(&args, interactive, &mut state, &existing_security_policy).await?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     if !state.is_express {
         step5b_inference_topology(&args, interactive, &mut state)?;

@@ -16,7 +16,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -182,64 +182,55 @@ pub async fn check_all() -> Vec<UpdateStatus> {
 /// only Antigravity) we re-run the matching upstream installer through
 /// the [`installers`] dispatcher. Honours the same cmd-wrapper
 /// indirection the `installers` module uses on Windows.
-pub async fn apply_one(component: Component) -> Result<()> {
-    if let Some(pkg) = component.npm_package() {
-        let pkg_at_latest = format!("{pkg}@latest");
-        info!(component = component.name(), pkg = %pkg_at_latest, "updating via npm");
-
-        let status = build_cmd("npm", &["install", "-g", &pkg_at_latest])
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .status()
-            .await
-            .with_context(|| format!("spawn npm install -g {pkg_at_latest}"))?;
-
-        if !status.success() {
-            anyhow::bail!(
-                "npm install -g {pkg_at_latest} exited with {:?}",
-                status.code()
-            );
-        }
-        return Ok(());
-    }
-
-    // Shell-script update path: replay the vendor installer. Cheaper than
-    // duplicating the URL constants here — `installers::install_kind`
-    // already knows where each CLI's bootstrap lives.
-    let kind = match component {
+fn installer_kind(component: Component) -> crate::installers::CliKind {
+    match component {
+        Component::ClaudeCli => crate::installers::CLAUDE,
         Component::AntigravityCli => crate::installers::ANTIGRAVITY,
-        // Any future shell-script CLI must add its matching arm; falling
-        // through with a different Component would silently no-op an
-        // update request.
-        Component::ClaudeCli | Component::Codex => {
-            anyhow::bail!(
-                "internal: {} has no npm_package and no shell-script fallback",
-                component.name()
-            );
-        }
-    };
+        Component::Codex => crate::installers::CODEX,
+    }
+}
+
+fn install_plan(
+    component: Component,
+    security_policy: &crate::config::SecurityPolicy,
+) -> (
+    crate::installers::CliKind,
+    crate::security::osv_check::SeverityLevel,
+) {
+    (
+        installer_kind(component),
+        security_policy.dep_vuln_threshold,
+    )
+}
+
+pub async fn apply_one(
+    component: Component,
+    security_policy: &crate::config::SecurityPolicy,
+) -> Result<()> {
+    // Route every update through the canonical installer. This keeps npm and
+    // vendor-script updates on the same supply-chain path and makes the
+    // operator's live dependency-severity policy mandatory at the type level.
+    let (kind, dep_vuln_threshold) = install_plan(component, security_policy);
     info!(
         component = component.name(),
         display = kind.display,
-        "updating via vendor shell-script"
+        "updating through policy-bound installer"
     );
-    // GOLD-ADAPT-SNYK-01: pass SeverityLevel::High until apply_one receives
-    // &SecurityPolicy from its caller chain.
-    crate::installers::install_kind(kind, crate::security::osv_check::SeverityLevel::High).await
+    crate::installers::install_kind(kind, dep_vuln_threshold).await
 }
 
 /// Convenience: probe all + apply each component flagged `update_available`.
 /// Returns the post-apply statuses so the CLI can render a result table.
-pub async fn check_and_apply_all() -> Vec<UpdateStatus> {
+pub async fn check_and_apply_all(
+    security_policy: &crate::config::SecurityPolicy,
+) -> Vec<UpdateStatus> {
     let mut report = check_all().await;
     for row in report.iter_mut() {
         if !row.update_available {
             row.applied = Some("noop".to_string());
             continue;
         }
-        match apply_one(row.component).await {
+        match apply_one(row.component, security_policy).await {
             Ok(()) => {
                 row.applied = Some("applied".to_string());
                 // Re-read installed version so the printed table reflects reality.
@@ -354,6 +345,23 @@ mod tests {
     #[test]
     fn updater_covers_every_installer() {
         coverage_check().unwrap();
+    }
+
+    #[test]
+    fn updater_install_plan_preserves_operator_severity_policy() {
+        let policy = crate::config::SecurityPolicy {
+            dep_vuln_threshold: crate::security::osv_check::SeverityLevel::Critical,
+            ..Default::default()
+        };
+        for component in Component::ALL {
+            let (kind, threshold) = install_plan(*component, &policy);
+            assert_eq!(kind.binary, component.binary());
+            assert_eq!(
+                threshold,
+                crate::security::osv_check::SeverityLevel::Critical,
+                "updater must not replace the operator policy with a hardcoded default"
+            );
+        }
     }
 
     #[tokio::test]

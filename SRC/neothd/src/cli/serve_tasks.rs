@@ -2204,6 +2204,7 @@ pub(crate) fn spawn_cli_autoupdate(
         config.autonomy,
         config.updater.enabled,
         config.updater.interval_secs,
+        config.security.clone(),
         writer,
     );
     if handle.is_some() {

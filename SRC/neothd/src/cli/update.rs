@@ -82,7 +82,16 @@ pub async fn run_update(args: UpdateArgs) -> Result<()> {
     }
     if args.apply {
         info!("neoth update --apply: probing + installing");
-        let report = check_and_apply_all().await;
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let config_path = home.join("freedom.yaml");
+        let config =
+            crate::config::FreedomConfig::load_from_path(&config_path).with_context(|| {
+                format!(
+                    "load operator security policy before applying updates from {}",
+                    config_path.display()
+                )
+            })?;
+        let report = check_and_apply_all(&config.security).await;
         render_report(&report, args.output);
         return Ok(());
     }

@@ -17,10 +17,17 @@ use super::{
     ping_provider_key, prompt_provider_key, which_binary,
 };
 
+fn cli_install_threshold(
+    security_policy: &crate::config::SecurityPolicy,
+) -> crate::security::osv_check::SeverityLevel {
+    security_policy.dep_vuln_threshold
+}
+
 pub(crate) async fn step5_provider(
     args: &InitArgs,
     interactive: bool,
     state: &mut WizardState,
+    security_policy: &crate::config::SecurityPolicy,
 ) -> Result<()> {
     debug!("wizard step 5: provider");
 
@@ -53,7 +60,13 @@ pub(crate) async fn step5_provider(
         }
 
         if claude_path.is_none() || codex_path.is_none() || antigravity_path.is_none() {
-            offer_cli_installs(&mut claude_path, &mut codex_path, &mut antigravity_path).await?;
+            offer_cli_installs(
+                &mut claude_path,
+                &mut codex_path,
+                &mut antigravity_path,
+                security_policy,
+            )
+            .await?;
         }
     }
 
@@ -372,13 +385,9 @@ pub(crate) async fn step5_provider(
                 state.provider_key = Some(crate::secret::SecretString::from(k.clone()));
             }
             use crate::providers::model_roles::ModelRole;
-            let bundled_default = crate::providers::default_model(
-                "copilot_api",
-                ModelRole::Flagship,
-                "gpt-4o",
-            );
-            state.provider_model =
-                Some(args.provider_model.clone().unwrap_or(bundled_default));
+            let bundled_default =
+                crate::providers::default_model("copilot_api", ModelRole::Flagship, "gpt-4o");
+            state.provider_model = Some(args.provider_model.clone().unwrap_or(bundled_default));
         }
         ProviderKind::RecursiveMas => {
             // GOLD-ADAPT-RMAS-03 — no endpoint / key / model repo. The
@@ -436,6 +445,7 @@ pub(crate) async fn offer_cli_installs(
     claude: &mut Option<String>,
     codex: &mut Option<String>,
     antigravity: &mut Option<String>,
+    security_policy: &crate::config::SecurityPolicy,
 ) -> Result<()> {
     use crate::installers::{
         ALL, ANTIGRAVITY as INST_ANTIGRAVITY, CLAUDE as INST_CLAUDE, CODEX as INST_CODEX, CliKind,
@@ -490,13 +500,8 @@ pub(crate) async fn offer_cli_installs(
         if !install_it {
             continue;
         }
-        // GOLD-ADAPT-SNYK-01: pass SeverityLevel::High as the block threshold
-        // until offer_cli_installs receives &SecurityPolicy from its caller chain.
-        if let Err(e) = crate::installers::install_kind(
-            *kind,
-            crate::security::osv_check::SeverityLevel::High,
-        )
-        .await
+        if let Err(e) =
+            crate::installers::install_kind(*kind, cli_install_threshold(security_policy)).await
         {
             println!("  ✗ install of {} failed: {e}", kind.display);
             continue;
@@ -556,6 +561,24 @@ pub(crate) async fn offer_cli_installs(
     _claude: &mut Option<String>,
     _codex: &mut Option<String>,
     _antigravity: &mut Option<String>,
+    _security_policy: &crate::config::SecurityPolicy,
 ) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cli_install_threshold;
+
+    #[test]
+    fn wizard_installs_honour_operator_severity_policy() {
+        let policy = crate::config::SecurityPolicy {
+            dep_vuln_threshold: crate::security::osv_check::SeverityLevel::Critical,
+            ..Default::default()
+        };
+        assert_eq!(
+            cli_install_threshold(&policy),
+            crate::security::osv_check::SeverityLevel::Critical
+        );
+    }
 }

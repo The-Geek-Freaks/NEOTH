@@ -49,6 +49,7 @@ pub fn spawn(
     autonomy: AutonomyLevel,
     updater_enabled: bool,
     interval_secs: u64,
+    security_policy: crate::config::SecurityPolicy,
     writer: WalWriterHandle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     if !updater_enabled {
@@ -77,14 +78,14 @@ pub fn spawn(
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            run_pass(&writer).await;
+            run_pass(&writer, &security_policy).await;
         }
     }))
 }
 
 /// One auto-apply pass: probe all CLIs, apply each flagged update, emit a
 /// `0x13 UPDATE_RAN` frame per component actually updated.
-async fn run_pass(writer: &WalWriterHandle) {
+async fn run_pass(writer: &WalWriterHandle, security_policy: &crate::config::SecurityPolicy) {
     let statuses = updater::check_all().await;
     for status in statuses {
         if !status.update_available {
@@ -92,7 +93,7 @@ async fn run_pass(writer: &WalWriterHandle) {
         }
         let component = status.component;
         let old_version = status.installed.clone();
-        match updater::apply_one(component).await {
+        match updater::apply_one(component, security_policy).await {
             Ok(()) => {
                 // Re-probe so the frame records the version actually live
                 // after the install (falls back to the probed `latest`).
@@ -312,22 +313,37 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (writer, _join) = crate::wal::writer::spawn(dir.path().join("a.wal")).unwrap();
         // Even at Full autonomy, a disabled updater spawns no task.
-        assert!(spawn(AutonomyLevel::Full, false, 3600, writer).is_none());
+        assert!(spawn(AutonomyLevel::Full, false, 3600, Default::default(), writer).is_none());
     }
 
     #[tokio::test]
     async fn spawn_none_at_standard_autonomy() {
         let dir = tempfile::tempdir().unwrap();
         let (writer, _join) = crate::wal::writer::spawn(dir.path().join("b.wal")).unwrap();
-        assert!(spawn(AutonomyLevel::Standard, true, 3600, writer).is_none());
+        assert!(
+            spawn(
+                AutonomyLevel::Standard,
+                true,
+                3600,
+                Default::default(),
+                writer
+            )
+            .is_none()
+        );
     }
 
     #[tokio::test]
     async fn spawn_some_at_elevated_with_updater_enabled() {
         let dir = tempfile::tempdir().unwrap();
         let (writer, _join) = crate::wal::writer::spawn(dir.path().join("c.wal")).unwrap();
-        let handle = spawn(AutonomyLevel::Elevated, true, 3600, writer)
-            .expect("expected a task at elevated autonomy with updater enabled");
+        let handle = spawn(
+            AutonomyLevel::Elevated,
+            true,
+            3600,
+            Default::default(),
+            writer,
+        )
+        .expect("expected a task at elevated autonomy with updater enabled");
         handle.abort();
     }
 

@@ -341,10 +341,11 @@ pub struct SecurityPolicy {
     #[serde(default)]
     pub smart_approve: bool,
     /// GOLD-ADAPT-SNYK-01 — minimum OSV advisory severity that blocks a CLI
-    /// install (npm / cargo / pip). Advisories at-or-above this level abort the
-    /// install; below it the call proceeds with a `warn!`. Default `High` —
-    /// blocks both High and Critical. Set `Critical` for a stricter policy, or
-    /// `None` for warn-only (never blocks).
+    /// install performed through NEOTH's npm installer. Advisories at-or-above
+    /// this level abort the install; below it the call proceeds with a `warn!`.
+    /// Default `High` — blocks both High and Critical. Set `Critical` for the
+    /// narrower policy that blocks only Critical findings, or `None` for
+    /// warn-only.
     #[serde(default)]
     pub dep_vuln_threshold: crate::security::osv_check::SeverityLevel,
 }
