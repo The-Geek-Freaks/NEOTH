@@ -1,14 +1,15 @@
-//! Scheduler task — ticks every 30 s, compares each job's next-run-time
-//! against `now`, dispatches the runner when due.
+//! Scheduler task — reloads `jobs.yaml`, compares each job's next-run-time
+//! against `now`, and dispatches the runner when due.
 //!
 //! Design:
-//! - Stateless tick. `Schedule::next_after(now)` is cheap (parsed cron is
-//!   amortised per call but each parse is < 5 µs). We don't pre-compute a
-//!   priority queue; for ≤100 jobs the linear scan is fine.
+//! - Each tick stages and validates a fresh file generation. Invalid rewrites
+//!   keep the last valid snapshot active and raise an operator-visible warning.
+//! - Runtime state is separate from the snapshot, so reload never resets
+//!   last-fired, completion, or running-job state.
 //! - One "last fired" timestamp kept in memory per job_id to prevent double
 //!   firing inside the same minute when the tick interval (30 s) is shorter
 //!   than the cron resolution (1 min).
-//! - Disabled jobs are skipped at scan time.
+//! - Disabled jobs are skipped. In-flight jobs finish across edit/pause/delete.
 //! - Per-job timeouts and WAL events are handled inside `runner::run_job`.
 //!
 //! Shutdown: the loop is cancel-safe — drop the spawn handle to exit cleanly.
@@ -16,6 +17,7 @@
 //! exercised by the integration smoke test.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -33,33 +35,157 @@ use crate::wal::writer::WalWriterHandle;
 /// boundary at most twice; the in-memory `last_fired` map deduplicates.
 pub const DEFAULT_TICK: Duration = Duration::from_secs(30);
 
+#[derive(Debug, PartialEq, Eq)]
+enum ReloadOutcome {
+    Applied {
+        previous_jobs: usize,
+        current_jobs: usize,
+        recovered: bool,
+    },
+    Unchanged {
+        recovered: bool,
+    },
+    Rejected {
+        error: String,
+        changed_error: bool,
+    },
+}
+
+/// State that must survive every validated jobs-file generation swap.
+struct SchedulerState {
+    jobs_file: JobsFile,
+    last_fired: HashMap<String, DateTime<Utc>>,
+    completed: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
+    running: Arc<Mutex<HashSet<String>>>,
+    last_reload_error: Option<String>,
+}
+
+impl SchedulerState {
+    fn new(jobs_file: JobsFile) -> Self {
+        Self {
+            jobs_file,
+            last_fired: HashMap::new(),
+            completed: Arc::new(Mutex::new(HashMap::new())),
+            running: Arc::new(Mutex::new(HashSet::new())),
+            last_reload_error: None,
+        }
+    }
+
+    /// Stage + validate first, then swap the complete in-memory generation.
+    /// A missing file is a valid empty generation.
+    async fn reload(&mut self, path: &Path) -> ReloadOutcome {
+        let loaded = match JobsFile::load_from_path(path).await {
+            Ok(jobs) => Ok(jobs),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                Ok(JobsFile::empty())
+            }
+            Err(error) => Err(format!("{error:#}")),
+        };
+        match loaded {
+            Ok(next) => {
+                let recovered = self.last_reload_error.take().is_some();
+                if next == self.jobs_file {
+                    ReloadOutcome::Unchanged { recovered }
+                } else {
+                    let previous_jobs = self.jobs_file.jobs.len();
+                    let current_jobs = next.jobs.len();
+                    self.jobs_file = next;
+                    ReloadOutcome::Applied {
+                        previous_jobs,
+                        current_jobs,
+                        recovered,
+                    }
+                }
+            }
+            Err(error) => {
+                let changed_error = self.last_reload_error.as_deref() != Some(error.as_str());
+                self.last_reload_error = Some(error.clone());
+                ReloadOutcome::Rejected {
+                    error,
+                    changed_error,
+                }
+            }
+        }
+    }
+}
+
+/// Clears the in-flight gate on success, error, cancellation, or panic.
+struct RunningJobGuard {
+    job_id: String,
+    running: Arc<Mutex<HashSet<String>>>,
+}
+
+impl Drop for RunningJobGuard {
+    fn drop(&mut self) {
+        self.running.lock().unwrap().remove(&self.job_id);
+    }
+}
+
 /// Run the scheduler loop until the future is dropped.
 pub async fn run_scheduler(
+    jobs_path: PathBuf,
     jobs_file: JobsFile,
     provider: Arc<dyn Provider>,
     writer: WalWriterHandle,
 ) -> Result<()> {
-    let mut last_fired: HashMap<String, DateTime<Utc>> = HashMap::new();
-    // JV-PRO-03 — actual completion times (`job_id` → `completed_at`), updated by
-    // each spawned `run_job` task on success. `ready_jobs` reads this so a job
-    // with `depends_on` only fires AFTER its dependencies have COMPLETED (not
-    // merely fired) within the freshness window — the wave/dependency gate.
-    let completed: Arc<Mutex<HashMap<String, DateTime<Utc>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mut state = SchedulerState::new(jobs_file);
     let mut ticker = interval(DEFAULT_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    info!(jobs = jobs_file.jobs.len(), "cron scheduler online");
+    info!(jobs = state.jobs_file.jobs.len(), path = %jobs_path.display(), "cron scheduler online");
     loop {
         ticker.tick().await;
+        match state.reload(&jobs_path).await {
+            ReloadOutcome::Applied {
+                previous_jobs,
+                current_jobs,
+                recovered,
+            } => info!(
+                path = %jobs_path.display(),
+                previous_jobs,
+                current_jobs,
+                recovered,
+                "cron jobs snapshot reloaded"
+            ),
+            ReloadOutcome::Unchanged { recovered: true } => info!(
+                path = %jobs_path.display(),
+                jobs = state.jobs_file.jobs.len(),
+                "cron jobs file valid again; continuing with current snapshot"
+            ),
+            ReloadOutcome::Rejected {
+                error,
+                changed_error: true,
+            } => warn!(
+                path = %jobs_path.display(),
+                error = %error,
+                jobs = state.jobs_file.jobs.len(),
+                "cron jobs reload rejected; keeping last valid snapshot"
+            ),
+            ReloadOutcome::Rejected {
+                error,
+                changed_error: false,
+            } => debug!(
+                path = %jobs_path.display(),
+                error = %error,
+                "cron jobs reload still invalid; keeping last valid snapshot"
+            ),
+            ReloadOutcome::Unchanged { recovered: false } => {}
+        }
         let now = crate::time::utc_now();
         // Snapshot completions (brief lock; never held across an await), then ask
         // the validated wave scheduler which jobs are dependency-ready this tick.
         // A job with no `depends_on` is always ready, so no-dependency behaviour
         // is byte-identical to before.
-        let completed_at: HashMap<String, DateTime<Utc>> = completed.lock().unwrap().clone();
+        let completed_at: HashMap<String, DateTime<Utc>> = state.completed.lock().unwrap().clone();
         let completed_set: HashSet<String> = completed_at.keys().cloned().collect();
+        // All decisions in this tick use one immutable validated generation.
+        let jobs = state.jobs_file.jobs.clone();
         let ready: HashSet<String> = crate::cron::schema::ready_jobs(
-            &jobs_file.jobs,
+            &jobs,
             &completed_set,
             now,
             &completed_at,
@@ -67,7 +193,7 @@ pub async fn run_scheduler(
         )
         .into_iter()
         .collect();
-        for job in &jobs_file.jobs {
+        for job in &jobs {
             if !job.enabled {
                 continue;
             }
@@ -76,14 +202,25 @@ pub async fn run_scheduler(
             if !ready.contains(&job.id) {
                 continue;
             }
-            if should_fire_now(job, now, last_fired.get(&job.id).copied()) {
-                last_fired.insert(job.id.clone(), now);
+            if should_fire_now(job, now, state.last_fired.get(&job.id).copied()) {
+                // Preserve the in-flight gate across reloads; a changed job id
+                // cannot dispatch twice while its old generation still runs.
+                if !state.running.lock().unwrap().insert(job.id.clone()) {
+                    debug!(job_id = %job.id, "cron job still running; skipping overlapping fire");
+                    continue;
+                }
+                state.last_fired.insert(job.id.clone(), now);
                 let writer_for_task = writer.clone();
                 let provider_for_task = provider.clone();
                 let job_for_task = job.clone();
-                let completed_for_task = completed.clone();
+                let completed_for_task = state.completed.clone();
+                let running_for_task = state.running.clone();
                 let job_id = job.id.clone();
                 tokio::spawn(async move {
+                    let _running_guard = RunningJobGuard {
+                        job_id: job_id.clone(),
+                        running: running_for_task,
+                    };
                     match run_job(&job_for_task, provider_for_task.as_ref(), &writer_for_task).await
                     {
                         Ok(_) => {
@@ -202,5 +339,142 @@ mod tests {
         // It's 12:15 — last 7am was hours ago, outside the 2 min window.
         let now = Utc.with_ymd_and_hms(2026, 5, 14, 12, 15, 0).unwrap();
         assert!(!should_fire_now(&job, now, None));
+    }
+
+    fn snapshot(jobs: Vec<Job>) -> JobsFile {
+        JobsFile { version: 1, jobs }
+    }
+
+    #[tokio::test]
+    async fn live_reload_applies_add_edit_pause_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let mut state = SchedulerState::new(JobsFile::empty());
+        let mut job = job_at("* * * * *");
+        job.id = "live".into();
+        job.name = "Initial".into();
+
+        snapshot(vec![job.clone()]).save_to_path(&path).unwrap();
+        assert_eq!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied {
+                previous_jobs: 0,
+                current_jobs: 1,
+                recovered: false,
+            }
+        );
+
+        job.name = "Edited".into();
+        job.prompt = "edited prompt".into();
+        snapshot(vec![job.clone()]).save_to_path(&path).unwrap();
+        assert!(matches!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied { .. }
+        ));
+        assert_eq!(state.jobs_file.jobs[0].prompt, "edited prompt");
+
+        job.enabled = false;
+        snapshot(vec![job]).save_to_path(&path).unwrap();
+        assert!(matches!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied { .. }
+        ));
+        assert!(!state.jobs_file.jobs[0].enabled);
+
+        JobsFile::empty().save_to_path(&path).unwrap();
+        assert_eq!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied {
+                previous_jobs: 1,
+                current_jobs: 0,
+                recovered: false,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_rewrite_keeps_snapshot_and_runtime_state_then_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let valid = snapshot(vec![job_at("* * * * *")]);
+        valid.save_to_path(&path).unwrap();
+        let mut state = SchedulerState::new(valid.clone());
+        let fired_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        state.last_fired.insert("j".into(), fired_at);
+        state.completed.lock().unwrap().insert("j".into(), fired_at);
+        state.running.lock().unwrap().insert("j".into());
+
+        std::fs::write(&path, "version: 1\njobs: [").unwrap();
+        assert!(matches!(
+            state.reload(&path).await,
+            ReloadOutcome::Rejected {
+                changed_error: true,
+                ..
+            }
+        ));
+        assert_eq!(state.jobs_file, valid);
+        assert_eq!(state.last_fired["j"], fired_at);
+        assert_eq!(state.completed.lock().unwrap()["j"], fired_at);
+        assert!(state.running.lock().unwrap().contains("j"));
+        assert!(matches!(
+            state.reload(&path).await,
+            ReloadOutcome::Rejected {
+                changed_error: false,
+                ..
+            }
+        ));
+
+        valid.save_to_path(&path).unwrap();
+        assert_eq!(
+            state.reload(&path).await,
+            ReloadOutcome::Unchanged { recovered: true }
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_does_not_double_fire_or_forget_running_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let mut job = job_at("* * * * *");
+        let initial = snapshot(vec![job.clone()]);
+        initial.save_to_path(&path).unwrap();
+        let mut state = SchedulerState::new(initial);
+        let fired_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        state.last_fired.insert("j".into(), fired_at);
+        state.running.lock().unwrap().insert("j".into());
+
+        job.prompt = "new generation, same logical job".into();
+        snapshot(vec![job]).save_to_path(&path).unwrap();
+        assert!(matches!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied { .. }
+        ));
+        let same_boundary = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 20).unwrap();
+        assert!(!should_fire_now(
+            &state.jobs_file.jobs[0],
+            same_boundary,
+            state.last_fired.get("j").copied(),
+        ));
+        assert!(!state.running.lock().unwrap().insert("j".into()));
+    }
+
+    #[tokio::test]
+    async fn missing_file_is_empty_generation_without_state_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let valid = snapshot(vec![job_at("* * * * *")]);
+        let mut state = SchedulerState::new(valid);
+        let fired_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        state.last_fired.insert("j".into(), fired_at);
+        assert_eq!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied {
+                previous_jobs: 1,
+                current_jobs: 0,
+                recovered: false,
+            }
+        );
+        assert!(state.jobs_file.jobs.is_empty());
+        assert_eq!(state.last_fired["j"], fired_at);
     }
 }

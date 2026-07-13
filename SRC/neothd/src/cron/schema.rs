@@ -1,5 +1,5 @@
-//! Job schema + YAML loader. Loaded once at scheduler startup; live-reload
-//! deferred (operator runs `neoth serve` restart for now).
+//! Job schema + validated YAML snapshots. The scheduler reloads the file on
+//! every tick and only swaps in a fully validated generation.
 //!
 //! CRON-A batch additions (HERMES-01 / JV-PRO-01 / JV-PRO-04 / JV-PRO-05 / JV-PRO-09):
 //! - `Job::validate()` — edit-guard (JV-PRO-01)
@@ -24,7 +24,7 @@ use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobsFile {
     /// Schema version. Currently always `1`. Bumped only when the YAML shape
     /// changes incompatibly; minor field additions stay at version 1.
@@ -33,7 +33,7 @@ pub struct JobsFile {
     pub jobs: Vec<Job>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Job {
     pub id: String,
     pub name: String,
@@ -52,7 +52,7 @@ pub struct Job {
     pub depends_on: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Schedule {
     /// 5-field cron expression in standard syntax: `min hour dom mon dow`.
     pub cron: String,
@@ -61,7 +61,7 @@ pub struct Schedule {
     pub tz: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
     /// Channel name as recognized by `channels::Channel::name()`: "telegram",
     /// "keet", … When omitted from the job, the result only lands in the WAL.
@@ -468,47 +468,56 @@ impl JobsFile {
 }
 
 impl JobsFile {
+    /// Empty, valid v1 snapshot used while watching for the first jobs file.
+    pub fn empty() -> Self {
+        Self {
+            version: 1,
+            jobs: Vec::new(),
+        }
+    }
+
+    /// Validate a complete snapshot, including invariants manual edits can
+    /// bypass and the cross-job dependency graph.
+    pub fn validate(&self) -> Result<()> {
+        if self.version != 1 {
+            anyhow::bail!("jobs.yaml version {} not supported (only v1)", self.version);
+        }
+        let mut ids = HashSet::with_capacity(self.jobs.len());
+        for job in &self.jobs {
+            job.validate()
+                .with_context(|| format!("invalid job '{}' ({})", job.name, job.id))?;
+            if !ids.insert(job.id.as_str()) {
+                anyhow::bail!("duplicate job id `{}`", job.id);
+            }
+        }
+        self.validate_waves()?;
+        Ok(())
+    }
+
     pub async fn load_from_path(path: &Path) -> Result<Self> {
         let body = tokio::fs::read_to_string(path)
             .await
             .with_context(|| format!("read jobs file {}", path.display()))?;
         let parsed: JobsFile = serde_yaml::from_str(&body)
             .with_context(|| format!("parse YAML at {}", path.display()))?;
-        if parsed.version != 1 {
-            anyhow::bail!(
-                "jobs.yaml version {} not supported (only v1)",
-                parsed.version
-            );
-        }
-        // Validate cron expressions + tz names up-front so misconfig fails
-        // loudly at startup rather than silently never firing.
-        for j in &parsed.jobs {
-            j.schedule
-                .validate()
-                .with_context(|| format!("invalid schedule on job '{}' ({})", j.name, j.id))?;
-        }
+        parsed.validate()?;
         Ok(parsed)
     }
 
     /// In-memory constructor for tests.
     pub fn from_yaml_str(s: &str) -> Result<Self> {
         let parsed: JobsFile = serde_yaml::from_str(s).context("parse jobs YAML")?;
-        for j in &parsed.jobs {
-            j.schedule.validate()?;
-        }
+        parsed.validate()?;
         Ok(parsed)
     }
 
-    /// Atomic YAML save. Writes to `<path>.tmp` then renames over `path`.
-    /// On Unix the final file is chmoded 0600. Mirrors the pattern used by
-    /// `council.rs` for freedom.yaml. HERMES-01
+    /// Atomic YAML save via the shared fsync + rename primitive. On Unix the
+    /// final file is chmoded 0600. HERMES-01
     pub fn save_to_path(&self, path: &Path) -> Result<()> {
+        self.validate()?;
         let yaml = serde_yaml::to_string(self).context("serialize jobs.yaml")?;
-        let tmp = path.with_extension("yaml.tmp");
-        std::fs::write(&tmp, &yaml)
-            .with_context(|| format!("write {}", tmp.display()))?;
-        std::fs::rename(&tmp, path)
-            .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+        crate::util::atomic_write::atomic_write(path, yaml.as_bytes())
+            .with_context(|| format!("atomic write {}", path.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -689,13 +698,10 @@ jobs:
     }
 
     #[test]
-    fn unsupported_version_rejected_in_load_from_path() {
-        // Use from_yaml_str directly to avoid filesystem; assert manual version check.
+    fn unsupported_version_rejected_by_snapshot_validation() {
         let yaml = "version: 99\njobs: []\n";
-        let parsed: JobsFile = serde_yaml::from_str(yaml).unwrap();
-        // The version check lives in load_from_path; emulate by checking
-        // the field is what we expect.
-        assert_eq!(parsed.version, 99);
+        let err = JobsFile::from_yaml_str(yaml).unwrap_err();
+        assert!(err.to_string().contains("version 99"), "{err}");
     }
 
     #[test]
@@ -768,6 +774,37 @@ jobs:
     fn validate_accepts_valid_job() {
         let j = daily_job("good-job", "Good Job", "0 8 * * *", "Summarise news.");
         j.validate().expect("valid job should not error");
+    }
+
+    #[test]
+    fn snapshot_rejects_duplicate_job_ids() {
+        let jobs = JobsFile {
+            version: 1,
+            jobs: vec![
+                daily_job("same", "First", "0 7 * * *", "first prompt"),
+                daily_job("same", "Second", "5 7 * * *", "second prompt"),
+            ],
+        };
+        let err = jobs.validate().unwrap_err();
+        assert!(err.to_string().contains("duplicate job id `same`"), "{err}");
+    }
+
+    #[test]
+    fn atomic_save_rejects_invalid_snapshot_without_replacing_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let valid = JobsFile {
+            version: 1,
+            jobs: vec![daily_job("valid", "Valid", "0 7 * * *", "valid prompt")],
+        };
+        valid.save_to_path(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let invalid = JobsFile {
+            version: 1,
+            jobs: vec![daily_job("invalid", "Invalid", "not cron", "prompt")],
+        };
+        assert!(invalid.save_to_path(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     // ── CRON-A: JV-PRO-04 preflight() ────────────────────────────────────────
