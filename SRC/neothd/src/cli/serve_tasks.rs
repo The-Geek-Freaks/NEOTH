@@ -3035,16 +3035,24 @@ pub(crate) async fn spawn_dreaming(
 /// watcher so the first `neoth cron add` becomes live without a daemon restart.
 /// Invalid YAML at startup still fails loudly; invalid later rewrites keep the
 /// last valid snapshot. Requires a provider; WAL-emitting via the writer clone.
+fn cron_scheduler_enabled(autonomy: crate::permissions::AutonomyLevel) -> bool {
+    matches!(
+        autonomy,
+        crate::permissions::AutonomyLevel::Standard
+            | crate::permissions::AutonomyLevel::Elevated
+            | crate::permissions::AutonomyLevel::Full
+    )
+}
+
 pub(crate) async fn spawn_cron_scheduler(
     config: &FreedomConfig,
     shared_provider: &Option<Arc<dyn Provider>>,
     writer: &WalWriterHandle,
 ) -> anyhow::Result<Option<JoinHandle<()>>> {
-    use crate::permissions::AutonomyLevel;
     // GOLD-ADAPT-HERMES-01 — gate scheduled automation at autonomy ≥ Standard.
     // Strict (and fail-closed Custom) disables the cron scheduler entirely so
     // the loudest privacy posture never runs unattended provider calls.
-    if !config.autonomy.meets_gate(AutonomyLevel::Standard) {
+    if !cron_scheduler_enabled(config.autonomy) {
         info!(
             autonomy = config.autonomy.as_str(),
             "cron scheduler skipped: autonomy below Standard disables scheduled automation"
@@ -5571,22 +5579,26 @@ mod tests {
     }
 
     #[test]
-    fn spawn_cron_scheduler_strict_autonomy_gate_blocks() {
+    fn spawn_cron_scheduler_blocks_strict_and_fail_closed_custom() {
         use crate::permissions::AutonomyLevel;
-        // GOLD-ADAPT-HERMES-01 — pure-function gate check: meets_gate is
-        // called before any WAL/provider access, so this needs no reactor.
         assert!(
-            !AutonomyLevel::Strict.meets_gate(AutonomyLevel::Standard),
-            "Strict must fail the Standard gate — spawn_cron_scheduler skips at Strict"
+            !cron_scheduler_enabled(AutonomyLevel::Strict),
+            "Strict must disable unattended cron execution"
         );
         assert!(
-            AutonomyLevel::Standard.meets_gate(AutonomyLevel::Standard),
-            "Standard must pass its own gate"
+            !cron_scheduler_enabled(AutonomyLevel::Custom),
+            "Custom must fail closed even though its generic rank matches Standard"
         );
-        assert!(
-            AutonomyLevel::Full.meets_gate(AutonomyLevel::Standard),
-            "Full must pass the Standard gate"
-        );
+        for allowed in [
+            AutonomyLevel::Standard,
+            AutonomyLevel::Elevated,
+            AutonomyLevel::Full,
+        ] {
+            assert!(
+                cron_scheduler_enabled(allowed),
+                "{allowed:?} must enable cron"
+            );
+        }
     }
 
     #[test]
