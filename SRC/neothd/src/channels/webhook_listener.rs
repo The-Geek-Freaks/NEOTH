@@ -705,7 +705,7 @@ fn spool_inbound_body_at(
     raw_body: &str,
     decoder: &str,
 ) -> Option<std::path::PathBuf> {
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+    if let Err(e) = std::fs::create_dir_all(dir) {
         warn!(error = %e, "inbound spool: mkdir failed (durability off for this message)");
         return None;
     }
@@ -754,7 +754,7 @@ pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
 }
 
 async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Path) {
-    let entries = match std::fs::read_dir(&dir) {
+    let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => {
