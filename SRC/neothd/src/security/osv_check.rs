@@ -22,6 +22,10 @@ use serde::Serialize;
 
 /// OSV query endpoint.
 const OSV_QUERY_URL: &str = "https://api.osv.dev/v1/query";
+/// OSV batch endpoint. The batch response is intentionally used only to
+/// identify clean packages; positive non-malware rows are re-queried through
+/// `OSV_QUERY_URL` because batch rows may omit advisory severity details.
+const OSV_QUERY_BATCH_URL: &str = "https://api.osv.dev/v1/querybatch";
 /// OSV malware advisories are namespaced `MAL-…`.
 const MALWARE_ID_PREFIX: &str = "MAL-";
 /// Network timeout — fail open past this so a slow/unreachable OSV never hangs
@@ -303,6 +307,27 @@ struct OsvQuery<'a> {
     version: Option<&'a str>,
 }
 
+#[derive(Serialize)]
+struct OsvBatchRequest<'a> {
+    queries: Vec<OsvQuery<'a>>,
+}
+
+fn has_next_page_token(body: &serde_json::Value) -> bool {
+    match body.get("next_page_token") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::String(token)) => !token.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// Borrowed package coordinates for one OSV query.
+#[derive(Debug, Clone, Copy)]
+pub struct PackageQuery<'a> {
+    pub name: &'a str,
+    pub ecosystem: &'a str,
+    pub version: Option<&'a str>,
+}
+
 /// Classify an OSV `/v1/query` response body.
 ///
 /// Priority:
@@ -312,9 +337,20 @@ struct OsvQuery<'a> {
 ///
 /// Pure — no I/O, unit-tested directly.
 fn classify_osv_body(body: &serde_json::Value) -> OsvVerdict {
-    let vulns = match body.get("vulns").and_then(|v| v.as_array()) {
-        Some(arr) if !arr.is_empty() => arr,
-        _ => return OsvVerdict::Clean,
+    if has_next_page_token(body) {
+        return OsvVerdict::Unknown {
+            reason: "OSV response requires pagination".to_string(),
+        };
+    }
+    let vulns = match body.get("vulns") {
+        None => return OsvVerdict::Clean,
+        Some(serde_json::Value::Array(arr)) if arr.is_empty() => return OsvVerdict::Clean,
+        Some(serde_json::Value::Array(arr)) => arr,
+        Some(_) => {
+            return OsvVerdict::Unknown {
+                reason: "OSV response `vulns` field is not an array".to_string(),
+            };
+        }
     };
 
     // First pass: collect MAL-* ids (malware — unconditional block).
@@ -326,7 +362,9 @@ fn classify_osv_body(body: &serde_json::Value) -> OsvVerdict {
         .collect();
 
     if !mal_ids.is_empty() {
-        return OsvVerdict::Malicious { advisories: mal_ids };
+        return OsvVerdict::Malicious {
+            advisories: mal_ids,
+        };
     }
 
     // Second pass: collect CVE/GHSA advisories with severity (GOLD-ADAPT-SNYK-01).
@@ -361,6 +399,19 @@ pub async fn check_package(name: &str, ecosystem: &str, version: Option<&str>) -
     check_package_at(OSV_QUERY_URL, name, ecosystem, version).await
 }
 
+/// Query OSV for a complete manifest without one HTTP round-trip per clean
+/// dependency. Batch rows that contain no vulnerabilities are conclusive.
+/// Malware IDs are also conclusive from the batch row. Other positive rows are
+/// queried once more via `/v1/query` so severity policy never runs on the
+/// intentionally minimal batch representation.
+///
+/// The returned vector always has the same order and length as `queries`.
+/// Any malformed/failed batch chunk becomes `Unknown` for that whole chunk;
+/// strict callers therefore remain fail-closed.
+pub async fn check_packages_batch(queries: &[PackageQuery<'_>]) -> Vec<OsvVerdict> {
+    check_packages_batch_at(OSV_QUERY_BATCH_URL, OSV_QUERY_URL, queries).await
+}
+
 /// [`check_package`] against an explicit endpoint — the `wiremock` test seam.
 async fn check_package_at(
     url: &str,
@@ -376,6 +427,16 @@ async fn check_package_at(
             };
         }
     };
+    check_package_with_client(&client, url, name, ecosystem, version).await
+}
+
+async fn check_package_with_client(
+    client: &reqwest::Client,
+    url: &str,
+    name: &str,
+    ecosystem: &str,
+    version: Option<&str>,
+) -> OsvVerdict {
     let query = OsvQuery {
         package: OsvPackage { name, ecosystem },
         version,
@@ -399,6 +460,142 @@ async fn check_package_at(
             reason: format!("OSV response parse: {e}"),
         },
     }
+}
+
+async fn check_packages_batch_at(
+    batch_url: &str,
+    query_url: &str,
+    queries: &[PackageQuery<'_>],
+) -> Vec<OsvVerdict> {
+    if queries.is_empty() {
+        return Vec::new();
+    }
+    let client = match reqwest::Client::builder().timeout(OSV_TIMEOUT).build() {
+        Ok(client) => client,
+        Err(e) => {
+            let reason = format!("build http client: {e}");
+            return queries
+                .iter()
+                .map(|_| OsvVerdict::Unknown {
+                    reason: reason.clone(),
+                })
+                .collect();
+        }
+    };
+
+    // OSV documents a finite batch size; keeping chunks comfortably below it
+    // also bounds request bodies for very large generated lockfiles.
+    const BATCH_SIZE: usize = 500;
+    let mut verdicts = Vec::with_capacity(queries.len());
+    for chunk in queries.chunks(BATCH_SIZE) {
+        let request = OsvBatchRequest {
+            queries: chunk
+                .iter()
+                .map(|query| OsvQuery {
+                    package: OsvPackage {
+                        name: query.name,
+                        ecosystem: query.ecosystem,
+                    },
+                    version: query.version,
+                })
+                .collect(),
+        };
+        let response = match client.post(batch_url).json(&request).send().await {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => {
+                let reason = format!("OSV batch returned HTTP {}", response.status());
+                verdicts.extend(chunk.iter().map(|_| OsvVerdict::Unknown {
+                    reason: reason.clone(),
+                }));
+                continue;
+            }
+            Err(e) => {
+                let reason = format!("OSV batch request failed: {e}");
+                verdicts.extend(chunk.iter().map(|_| OsvVerdict::Unknown {
+                    reason: reason.clone(),
+                }));
+                continue;
+            }
+        };
+        let body = match response.json::<serde_json::Value>().await {
+            Ok(body) => body,
+            Err(e) => {
+                let reason = format!("OSV batch response parse: {e}");
+                verdicts.extend(chunk.iter().map(|_| OsvVerdict::Unknown {
+                    reason: reason.clone(),
+                }));
+                continue;
+            }
+        };
+        if has_next_page_token(&body) {
+            let reason = "OSV batch response requires pagination".to_string();
+            verdicts.extend(chunk.iter().map(|_| OsvVerdict::Unknown {
+                reason: reason.clone(),
+            }));
+            continue;
+        }
+        let Some(results) = body.get("results").and_then(serde_json::Value::as_array) else {
+            let reason = "OSV batch response omitted `results`".to_string();
+            verdicts.extend(chunk.iter().map(|_| OsvVerdict::Unknown {
+                reason: reason.clone(),
+            }));
+            continue;
+        };
+        if results.len() != chunk.len() {
+            let reason = format!(
+                "OSV batch response count mismatch: expected {}, received {}",
+                chunk.len(),
+                results.len()
+            );
+            verdicts.extend(chunk.iter().map(|_| OsvVerdict::Unknown {
+                reason: reason.clone(),
+            }));
+            continue;
+        }
+
+        for (query, row) in chunk.iter().zip(results) {
+            if has_next_page_token(row) {
+                verdicts.push(OsvVerdict::Unknown {
+                    reason: "OSV batch row requires pagination".to_string(),
+                });
+                continue;
+            }
+            let vulnerabilities = match row.get("vulns") {
+                None => {
+                    verdicts.push(OsvVerdict::Clean);
+                    continue;
+                }
+                Some(serde_json::Value::Array(vulns)) if vulns.is_empty() => {
+                    verdicts.push(OsvVerdict::Clean);
+                    continue;
+                }
+                Some(serde_json::Value::Array(vulns)) => vulns,
+                Some(_) => {
+                    verdicts.push(OsvVerdict::Unknown {
+                        reason: "OSV batch row `vulns` field is not an array".to_string(),
+                    });
+                    continue;
+                }
+            };
+            debug_assert!(!vulnerabilities.is_empty());
+            let batch_verdict = classify_osv_body(row);
+            if batch_verdict.is_malicious() {
+                verdicts.push(batch_verdict);
+                continue;
+            }
+            verdicts.push(
+                check_package_with_client(
+                    &client,
+                    query_url,
+                    query.name,
+                    query.ecosystem,
+                    query.version,
+                )
+                .await,
+            );
+        }
+    }
+    verdicts
 }
 
 #[cfg(test)]
@@ -447,6 +644,24 @@ mod tests {
         assert_eq!(classify_osv_body(&json!({"vulns": []})), OsvVerdict::Clean);
         // OSV returns `{}` (no `vulns` key) when nothing matches.
         assert_eq!(classify_osv_body(&json!({})), OsvVerdict::Clean);
+    }
+
+    #[test]
+    fn classify_pagination_as_unknown_instead_of_partial_clean() {
+        assert!(matches!(
+            classify_osv_body(&json!({
+                "vulns": [],
+                "next_page_token": "more-results"
+            })),
+            OsvVerdict::Unknown { .. }
+        ));
+        assert!(matches!(
+            classify_osv_body(&json!({
+                "vulns": [],
+                "next_page_token": 1
+            })),
+            OsvVerdict::Unknown { .. }
+        ));
     }
 
     // ── classify_osv_severity (SNYK-01, pure) ────────────────────────────────
@@ -520,7 +735,10 @@ mod tests {
     #[test]
     fn severity_none_on_empty_body() {
         assert_eq!(classify_osv_severity(&json!({})), SeverityLevel::None);
-        assert_eq!(classify_osv_severity(&json!({"vulns": []})), SeverityLevel::None);
+        assert_eq!(
+            classify_osv_severity(&json!({"vulns": []})),
+            SeverityLevel::None
+        );
     }
 
     /// CVSS numeric score 9.5 → `Critical`.
@@ -609,6 +827,130 @@ mod tests {
         let v =
             check_package_at(&format!("{}/v1/query", server.uri()), "jquery", "npm", None).await;
         assert_eq!(v, OsvVerdict::Clean);
+    }
+
+    #[tokio::test]
+    async fn batch_keeps_order_and_resolves_minimal_positive_rows() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/querybatch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [
+                    {},
+                    {"vulns": [{"id": "CVE-2026-1", "modified": "2026-01-01T00:00:00Z"}]},
+                    {"vulns": [{"id": "MAL-2026-2", "modified": "2026-01-01T00:00:00Z"}]}
+                ]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/query"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "vulns": [{
+                    "id": "CVE-2026-1",
+                    "database_specific": {"severity": "HIGH"}
+                }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let queries = [
+            PackageQuery {
+                name: "clean",
+                ecosystem: "npm",
+                version: Some("1.0.0"),
+            },
+            PackageQuery {
+                name: "vulnerable",
+                ecosystem: "npm",
+                version: Some("2.0.0"),
+            },
+            PackageQuery {
+                name: "malware",
+                ecosystem: "npm",
+                version: None,
+            },
+        ];
+        let verdicts = check_packages_batch_at(
+            &format!("{}/v1/querybatch", server.uri()),
+            &format!("{}/v1/query", server.uri()),
+            &queries,
+        )
+        .await;
+        assert_eq!(verdicts.len(), queries.len());
+        assert_eq!(verdicts[0], OsvVerdict::Clean);
+        assert!(matches!(
+            verdicts[1],
+            OsvVerdict::Vulnerable {
+                max_severity: SeverityLevel::High,
+                ..
+            }
+        ));
+        assert!(verdicts[2].is_malicious());
+    }
+
+    #[tokio::test]
+    async fn batch_pagination_is_unknown_instead_of_partial_clean() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/querybatch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [{"vulns": [], "next_page_token": "more"}]
+            })))
+            .mount(&server)
+            .await;
+        let verdicts = check_packages_batch_at(
+            &format!("{}/v1/querybatch", server.uri()),
+            &format!("{}/v1/query", server.uri()),
+            &[PackageQuery {
+                name: "paged",
+                ecosystem: "npm",
+                version: Some("1.0.0"),
+            }],
+        )
+        .await;
+        assert!(matches!(verdicts.as_slice(), [OsvVerdict::Unknown { .. }]));
+    }
+
+    #[tokio::test]
+    async fn malformed_batch_shape_is_unknown_for_every_query() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/querybatch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"results": [{}]})))
+            .mount(&server)
+            .await;
+        let queries = [
+            PackageQuery {
+                name: "one",
+                ecosystem: "npm",
+                version: None,
+            },
+            PackageQuery {
+                name: "two",
+                ecosystem: "npm",
+                version: None,
+            },
+        ];
+        let verdicts = check_packages_batch_at(
+            &format!("{}/v1/querybatch", server.uri()),
+            &format!("{}/v1/query", server.uri()),
+            &queries,
+        )
+        .await;
+        assert_eq!(verdicts.len(), queries.len());
+        assert!(
+            verdicts
+                .iter()
+                .all(|verdict| matches!(verdict, OsvVerdict::Unknown { .. }))
+        );
     }
 
     #[tokio::test]

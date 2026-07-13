@@ -93,8 +93,11 @@ pub enum ExtendedSubtype {
     /// GOLD-ADAPT-SNYK-02 — an install command fired while one or more manifest
     /// files (package.json, Cargo.toml, requirements.txt, …) were edited in the
     /// same turn; the `ManifestInstallInspector` blocked the call and the
-    /// dispatch loop emitted this audit frame + ran `on_manifest_gate_resolved`.
-    /// Payload (JSON): `{ "manifests": [str], "server": str, "tool": str, "ts_unix": T }`.
+    /// dispatch loop scanned the exact file bytes. Pending state never clears:
+    /// a retry is allowed only while every current SHA-256 matches its clean
+    /// scan approval.
+    /// Payload includes `manifests`, `scan_proven`, `scan_results`,
+    /// `severity_policy`, `server`, `tool`, and `ts_unix`.
     ManifestInstallBlocked = 0x09,
 }
 
