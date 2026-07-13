@@ -5,7 +5,7 @@ All notable changes to NEOTH are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased — 1.0.0-gold] — since rc1 (387 commits, 2026-06-24 → 2026-07-12)
+## [Unreleased — 1.0.0-gold] — since rc1 (2026-06-24 → present)
 
 The GOLD close-out: every code workstream on the `ROAD_TO_1_0_GOLD` tracker is
 complete — mechanical whole-file count **911 done / 3 open / 0 partials**, the 3

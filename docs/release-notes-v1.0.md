@@ -1,18 +1,16 @@
 # NEOTH 1.0 Release Notes
 
-> **Release stage: `1.0.0-beta.4`.** The v1.0 surface is substantially
-> shipped and usable for real personal use, but this is a BETA, not the final
-> 1.0 — see **Known v1.0 gaps** below for the honest list of what is not yet
-> complete. Pre-release version on purpose; nothing here claims more than it
-> delivers.
+> **Release target: stable `1.0.0`.** The source tree carries the final version,
+> but tagged artifacts are not published yet. Its documented limitations remain
+> explicit below; nothing here claims more than the source tree delivers.
 
 NEOTH 1.0 is the first public release intended for real personal use: one
 operator, one private memory, many approved surfaces, local-first defaults, and
 operator-readable proof.
 
-## Known v1.0 gaps (beta)
+## Known v1.0 limitations
 
-These are the deltas between this beta and a final 1.0 — tracked, not hidden:
+These are documented 1.0.0 limitations — tracked, not hidden:
 
 - **GUI settings depth (GU-01):** all 10 post-onboarding settings tabs are now real
   panels (GU-01 closed in the Session-37 GUI batch — see the GUI honest-status note

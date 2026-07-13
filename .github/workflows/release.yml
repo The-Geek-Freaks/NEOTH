@@ -30,11 +30,55 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # A release tag is the package version contract. Keep this job dependency-free
+  # so a bad tag fails before any matrix runner starts compiling.
+  verify-release-version:
+    name: Verify release version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Match tag to package manifests
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import tomllib
+
+          ref_name = os.environ["GITHUB_REF_NAME"]
+          if not ref_name.startswith("v"):
+              raise SystemExit(f"release ref must start with 'v': {ref_name}")
+
+          tag_version = ref_name[1:]
+          manifests = {
+              "neothd": pathlib.Path("SRC/neothd/Cargo.toml"),
+              "neothd-gui": pathlib.Path("SRC/neothd-gui/Cargo.toml"),
+          }
+          versions = {
+              package: tomllib.loads(path.read_text(encoding="utf-8"))["package"]["version"]
+              for package, path in manifests.items()
+          }
+          mismatches = [
+              f"{package}={version}"
+              for package, version in versions.items()
+              if version != tag_version
+          ]
+          if mismatches:
+              print(
+                  f"::error::Tag {ref_name} requires {tag_version}; mismatched manifests: "
+                  + ", ".join(mismatches)
+              )
+              raise SystemExit(1)
+
+          print(f"Release contract OK: {ref_name} == neothd == neothd-gui == {tag_version}")
+
   # ---------------------------------------------------------------------------
   # Build matrix
   # ---------------------------------------------------------------------------
   build:
     name: Build ${{ matrix.target }}
+    needs: verify-release-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

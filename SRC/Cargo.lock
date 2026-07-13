@@ -7204,7 +7204,7 @@ dependencies = [
 
 [[package]]
 name = "neothd"
-version = "1.0.0-beta.4"
+version = "1.0.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm 0.10.3",
@@ -7327,7 +7327,7 @@ dependencies = [
 
 [[package]]
 name = "neothd-gui"
-version = "1.0.0-beta.4"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "rfd",

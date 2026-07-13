@@ -5,9 +5,9 @@ Follow it in order. Do not edit YAML unless you choose the operator path.
 
 ## The 3-command path
 
-> ⚠️ NEOTH is at `1.0.0-beta.4` and is **not yet published to crates.io** — use
-> the bootstrap installer below (or the source build); `cargo install neoth`
-> lands with the 1.0 release.
+> The source tree is versioned for **NEOTH 1.0.0**. Tagged release artifacts and
+> the crates.io package are not published yet, so use the bootstrap installer
+> below (or the source build).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
