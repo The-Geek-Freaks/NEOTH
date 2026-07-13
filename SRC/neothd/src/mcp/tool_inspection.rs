@@ -80,7 +80,7 @@ pub struct UnverifiedInstallIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallGateRequest {
-    Scan(InstallIntent),
+    Scan(Box<InstallIntent>),
     Unverified(UnverifiedInstallIntent),
 }
 
@@ -1445,7 +1445,7 @@ impl ToolInspector for ManifestInstallInspector {
                 InspectorVerdict::Block {
                     inspector: "manifest_install",
                     kind: BlockKind::ManifestGate {
-                        request: InstallGateRequest::Scan(intent),
+                        request: InstallGateRequest::Scan(Box::new(intent)),
                     },
                 }
             }
@@ -1778,7 +1778,7 @@ mod tests {
                     BlockKind::ManifestGate {
                         request: InstallGateRequest::Scan(intent),
                     },
-            } => intent,
+            } => *intent,
             _ => panic!("expected exact install scan request"),
         }
     }

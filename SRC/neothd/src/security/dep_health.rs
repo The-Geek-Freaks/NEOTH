@@ -936,11 +936,10 @@ fn parse_manifest_strict(path: &Path) -> Result<Vec<ManifestPackage>, String> {
 /// Validate that a resolver input is parseable and contains no non-registry
 /// dependency source. Version ranges are permitted here because the exact
 /// transitive versions are proven separately from an immutable lockfile.
-pub fn validate_resolution_source_manifest(path: &Path) -> Result<(), ()> {
-    let body = std::fs::read_to_string(path).map_err(|_| ())?;
-    parse_manifest_body_strict(path, &body)
-        .map(|_| ())
-        .map_err(|_| ())
+pub fn validate_resolution_source_manifest(path: &Path) -> Result<(), String> {
+    let body =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    parse_manifest_body_strict(path, &body).map(|_| ())
 }
 
 fn parse_manifest_body_strict(path: &Path, body: &str) -> Result<Vec<ManifestPackage>, String> {
@@ -952,8 +951,8 @@ fn parse_manifest_body_strict(path: &Path, body: &str) -> Result<Vec<ManifestPac
 
     match name {
         "package.json" | "package-lock.json" | "npm-shrinkwrap.json" | "Pipfile.lock" => {
-            let doc: serde_json::Value = serde_json::from_str(&body)
-                .map_err(|e| format!("parse {}: {e}", path.display()))?;
+            let doc: serde_json::Value =
+                serde_json::from_str(body).map_err(|e| format!("parse {}: {e}", path.display()))?;
             if name == "package.json" {
                 if doc.get("workspaces").is_some() {
                     return Err("unsupported_dependency_source".to_string());
@@ -1049,7 +1048,7 @@ fn parse_manifest_body_strict(path: &Path, body: &str) -> Result<Vec<ManifestPac
         }
         "Cargo.toml" | "Cargo.lock" | "pyproject.toml" | "Pipfile" | "poetry.lock" | "uv.lock" => {
             let doc: toml::Value =
-                toml::from_str(&body).map_err(|e| format!("parse {}: {e}", path.display()))?;
+                toml::from_str(body).map_err(|e| format!("parse {}: {e}", path.display()))?;
             if matches!(name, "Cargo.lock" | "poetry.lock" | "uv.lock") {
                 let entries = doc
                     .get("package")
@@ -1397,8 +1396,8 @@ fn parse_manifest_body_strict(path: &Path, body: &str) -> Result<Vec<ManifestPac
             }
         }
         "pnpm-lock.yaml" => {
-            let doc: serde_yaml::Value = serde_yaml::from_str(&body)
-                .map_err(|e| format!("parse {}: {e}", path.display()))?;
+            let doc: serde_yaml::Value =
+                serde_yaml::from_str(body).map_err(|e| format!("parse {}: {e}", path.display()))?;
             let root = doc
                 .as_mapping()
                 .ok_or_else(|| format!("{} root is not a YAML mapping", path.display()))?;
