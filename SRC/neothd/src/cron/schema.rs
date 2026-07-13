@@ -672,9 +672,10 @@ jobs:
     prompt: hi
 "#;
         let err = JobsFile::from_yaml_str(yaml).unwrap_err();
+        let message = format!("{err:#}");
         assert!(
-            err.to_string().contains("parse cron expression")
-                || err.to_string().contains("invalid")
+            message.contains("parse cron expression `not a cron expression`"),
+            "unexpected validation error chain: {message}"
         );
     }
 
@@ -691,9 +692,10 @@ jobs:
     prompt: hi
 "#;
         let err = JobsFile::from_yaml_str(yaml).unwrap_err();
+        let message = format!("{err:#}");
         assert!(
-            err.to_string().to_lowercase().contains("invalid tz")
-                || err.to_string().contains("Fake")
+            message.contains("invalid tz `Fake/Timezone`"),
+            "unexpected validation error chain: {message}"
         );
     }
 
