@@ -644,59 +644,53 @@ fn registry_request(
     })
 }
 
+fn is_ambient_resolution_override(manager: PackageManager, key: &str) -> bool {
+    let key = key.to_ascii_uppercase();
+    match manager {
+        PackageManager::Npm | PackageManager::Yarn | PackageManager::Pnpm | PackageManager::Bun => {
+            key == "NPM_CONFIG_REGISTRY"
+                || key == "NPM_CONFIG_USERCONFIG"
+                || key == "NPM_CONFIG_PREFIX"
+                || key == "NPM_CONFIG_GLOBAL"
+                || key == "NPM_CONFIG_WORKSPACE"
+                || key == "NPM_CONFIG_WORKSPACES"
+                || key == "YARN_NPM_REGISTRY_SERVER"
+                || key == "YARN_RC_FILENAME"
+                || key == "COREPACK_NPM_REGISTRY"
+        }
+        PackageManager::Cargo => {
+            key == "CARGO_REGISTRY_DEFAULT"
+                || key.starts_with("CARGO_REGISTRIES_") && key.ends_with("_INDEX")
+        }
+        PackageManager::Pip | PackageManager::Uv | PackageManager::Poetry => {
+            matches!(
+                key.as_str(),
+                "PIP_CONFIG_FILE"
+                    | "PIP_INDEX_URL"
+                    | "PIP_EXTRA_INDEX_URL"
+                    | "PIP_FIND_LINKS"
+                    | "UV_CONFIG_FILE"
+                    | "UV_DEFAULT_INDEX"
+                    | "UV_INDEX_URL"
+                    | "UV_EXTRA_INDEX_URL"
+                    | "UV_FIND_LINKS"
+                    | "POETRY_REPOSITORIES"
+            )
+        }
+        PackageManager::Go => matches!(
+            key.as_str(),
+            "GOPROXY" | "GONOPROXY" | "GOPRIVATE" | "GONOSUMDB" | "GOSUMDB" | "GOENV" | "GOWORK"
+        ),
+    }
+}
+
 fn ambient_resolution_context_is_clean(
     manager: PackageManager,
     target_dir: &str,
 ) -> Result<(), &'static str> {
     let base = std::path::Path::new(target_dir);
-    let env_override = std::env::vars_os().any(|(key, _)| {
-        let key = key.to_string_lossy().to_ascii_uppercase();
-        match manager {
-            PackageManager::Npm
-            | PackageManager::Yarn
-            | PackageManager::Pnpm
-            | PackageManager::Bun => {
-                key == "NPM_CONFIG_REGISTRY"
-                    || key == "NPM_CONFIG_USERCONFIG"
-                    || key == "NPM_CONFIG_PREFIX"
-                    || key == "NPM_CONFIG_GLOBAL"
-                    || key == "NPM_CONFIG_WORKSPACE"
-                    || key == "NPM_CONFIG_WORKSPACES"
-                    || key == "YARN_NPM_REGISTRY_SERVER"
-                    || key == "YARN_RC_FILENAME"
-                    || key == "COREPACK_NPM_REGISTRY"
-            }
-            PackageManager::Cargo => {
-                key == "CARGO_REGISTRY_DEFAULT"
-                    || key.starts_with("CARGO_REGISTRIES_") && key.ends_with("_INDEX")
-            }
-            PackageManager::Pip | PackageManager::Uv | PackageManager::Poetry => {
-                matches!(
-                    key.as_str(),
-                    "PIP_CONFIG_FILE"
-                        | "PIP_INDEX_URL"
-                        | "PIP_EXTRA_INDEX_URL"
-                        | "PIP_FIND_LINKS"
-                        | "UV_CONFIG_FILE"
-                        | "UV_DEFAULT_INDEX"
-                        | "UV_INDEX_URL"
-                        | "UV_EXTRA_INDEX_URL"
-                        | "UV_FIND_LINKS"
-                        | "POETRY_REPOSITORIES"
-                )
-            }
-            PackageManager::Go => matches!(
-                key.as_str(),
-                "GOPROXY"
-                    | "GONOPROXY"
-                    | "GOPRIVATE"
-                    | "GONOSUMDB"
-                    | "GOSUMDB"
-                    | "GOENV"
-                    | "GOWORK"
-            ),
-        }
-    });
+    let env_override = std::env::vars_os()
+        .any(|(key, _)| is_ambient_resolution_override(manager, &key.to_string_lossy()));
     if env_override {
         return Err("ambient_registry_override");
     }
@@ -1866,6 +1860,113 @@ checksum = "fixture"
         .unwrap();
     }
 
+    /// Package-manager policy intentionally observes the real process
+    /// environment. CI runners commonly inject registry variables (notably
+    /// `NPM_CONFIG_REGISTRY` on Windows), so tests for a different rejection
+    /// reason must run in an isolated home with those ambient overrides removed.
+    /// The crate-wide lock keeps this process-global mutation race-free.
+    struct IsolatedPackageManagerEnv {
+        saved: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+        _home: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl IsolatedPackageManagerEnv {
+        fn new() -> Self {
+            let lock = crate::test_env::lock();
+            let home = tempfile::tempdir().expect("isolated package-manager home");
+            let managers = [
+                PackageManager::Npm,
+                PackageManager::Yarn,
+                PackageManager::Pnpm,
+                PackageManager::Bun,
+                PackageManager::Cargo,
+                PackageManager::Pip,
+                PackageManager::Uv,
+                PackageManager::Poetry,
+                PackageManager::Go,
+            ];
+            let mut keys = std::env::vars_os()
+                .filter_map(|(key, _)| {
+                    let text = key.to_string_lossy();
+                    managers
+                        .iter()
+                        .any(|manager| is_ambient_resolution_override(*manager, &text))
+                        .then_some(key)
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            keys.extend(
+                [
+                    "HOME",
+                    "USERPROFILE",
+                    "CARGO_HOME",
+                    "NPM_CONFIG_REGISTRY",
+                    "NPM_CONFIG_USERCONFIG",
+                    "NPM_CONFIG_PREFIX",
+                    "NPM_CONFIG_GLOBAL",
+                    "NPM_CONFIG_WORKSPACE",
+                    "NPM_CONFIG_WORKSPACES",
+                    "YARN_NPM_REGISTRY_SERVER",
+                    "YARN_RC_FILENAME",
+                    "COREPACK_NPM_REGISTRY",
+                    "CARGO_REGISTRY_DEFAULT",
+                    "PIP_CONFIG_FILE",
+                    "PIP_INDEX_URL",
+                    "PIP_EXTRA_INDEX_URL",
+                    "PIP_FIND_LINKS",
+                    "UV_CONFIG_FILE",
+                    "UV_DEFAULT_INDEX",
+                    "UV_INDEX_URL",
+                    "UV_EXTRA_INDEX_URL",
+                    "UV_FIND_LINKS",
+                    "POETRY_REPOSITORIES",
+                    "GOPROXY",
+                    "GONOPROXY",
+                    "GOPRIVATE",
+                    "GONOSUMDB",
+                    "GOSUMDB",
+                    "GOENV",
+                    "GOWORK",
+                ]
+                .into_iter()
+                .map(std::ffi::OsString::from),
+            );
+
+            let mut saved = Vec::with_capacity(keys.len());
+            for key in keys {
+                saved.push((key.clone(), std::env::var_os(&key)));
+                // SAFETY: every test that reads or mutates these variables uses
+                // the crate-wide test_env lock, held by this guard until Drop.
+                unsafe { std::env::remove_var(&key) };
+            }
+            for key in ["HOME", "USERPROFILE", "CARGO_HOME"] {
+                // SAFETY: serialized by the same crate-wide lock above.
+                unsafe { std::env::set_var(key, home.path()) };
+            }
+
+            Self {
+                saved,
+                _home: home,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for IsolatedPackageManagerEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..).rev() {
+                // SAFETY: the crate-wide lock remains held until after this
+                // Drop implementation restores the original environment.
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn exact_coordinate_parsers_are_ecosystem_specific() {
         let npm = registry_request(PackageManager::Npm, "left-pad@1.3.0").unwrap();
@@ -1883,6 +1984,7 @@ checksum = "fixture"
 
     #[test]
     fn direct_mutations_and_fetch_runners_fail_closed_without_transitive_resolution() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         let app = dir.path().join("app");
         std::fs::create_dir(&app).unwrap();
@@ -1924,6 +2026,7 @@ checksum = "fixture"
 
     #[test]
     fn ranged_sources_with_exact_locks_get_one_shot_permits() {
+        let _env = IsolatedPackageManagerEnv::new();
         let npm = tempfile::tempdir().unwrap();
         write_npm_locked_project(npm.path());
         let npm_ci = call(
@@ -1965,6 +2068,7 @@ checksum = "fixture"
 
     #[test]
     fn ranges_without_the_expected_lock_and_unpinned_fetchers_fail_closed() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("package.json"),
@@ -2013,6 +2117,7 @@ checksum = "fixture"
 
     #[test]
     fn windows_launcher_suffixes_and_paths_never_bypass_the_gate() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         write_npm_locked_project(dir.path());
         for command in [
@@ -2035,6 +2140,7 @@ checksum = "fixture"
 
     #[test]
     fn shell_expansions_and_global_install_contexts_fail_closed() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         for command in [
             "npm ci --flag=$EVIL",
@@ -2100,6 +2206,7 @@ checksum = "fixture"
 
     #[test]
     fn ambient_configs_and_parent_workspaces_fail_closed() {
+        let _env = IsolatedPackageManagerEnv::new();
         let npm_root = tempfile::tempdir().unwrap();
         let npm_child = npm_root.path().join("packages").join("child");
         std::fs::create_dir_all(&npm_child).unwrap();
@@ -2160,6 +2267,28 @@ checksum = "fixture"
     }
 
     #[test]
+    fn ambient_registry_environment_override_still_fails_closed() {
+        let _env = IsolatedPackageManagerEnv::new();
+        let dir = tempfile::tempdir().unwrap();
+        write_npm_locked_project(dir.path());
+        // SAFETY: IsolatedPackageManagerEnv holds the crate-wide environment
+        // lock and restores the runner's original value when it is dropped.
+        unsafe {
+            std::env::set_var("NPM_CONFIG_REGISTRY", "https://example.invalid/");
+        }
+        let npm_ci = call(
+            "local-shell",
+            "exec",
+            serde_json::json!({"command": "npm ci", "cwd": dir.path()}),
+        );
+        let mut insp = ManifestInstallInspector::new();
+        assert_eq!(
+            unverified_code(&mut insp, &npm_ci),
+            "ambient_registry_override"
+        );
+    }
+
+    #[test]
     fn missing_cwd_combined_remote_and_non_registry_forms_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
         for arguments in [
@@ -2196,6 +2325,7 @@ checksum = "fixture"
 
     #[test]
     fn approval_is_one_shot_and_bound_to_the_full_exact_intent() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         write_cargo_locked_project(dir.path());
         let install = call(
@@ -2267,6 +2397,7 @@ checksum = "fixture"
 
     #[test]
     fn final_dispatch_rehash_rejects_post_inspection_manifest_swap() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         let manifest = dir.path().join("package.json");
         write_npm_locked_project(dir.path());
@@ -2295,6 +2426,7 @@ checksum = "fixture"
 
     #[test]
     fn newly_created_lockfile_invalidates_the_approved_manifest_set() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         write_npm_locked_project(dir.path());
         let install = call(
@@ -2324,6 +2456,7 @@ checksum = "fixture"
 
     #[test]
     fn final_dispatch_rejects_a_lockfile_created_after_inspection() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         write_npm_locked_project(dir.path());
         let install = call(
@@ -2351,6 +2484,7 @@ checksum = "fixture"
 
     #[test]
     fn final_dispatch_rehash_rejects_post_inspection_lock_swap() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         write_npm_locked_project(dir.path());
         let install = call(
@@ -2377,6 +2511,7 @@ checksum = "fixture"
 
     #[test]
     fn bare_yarn_frozen_lockfile_is_a_manifest_install() {
+        let _env = IsolatedPackageManagerEnv::new();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("package.json"), "{\"dependencies\":{}}\n").unwrap();
         std::fs::write(dir.path().join("yarn.lock"), "# empty lock\n").unwrap();
