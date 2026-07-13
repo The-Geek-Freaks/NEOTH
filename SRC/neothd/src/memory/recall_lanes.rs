@@ -156,7 +156,7 @@ pub fn boost_by_community(
     let Some(plurality_cid) = counts
         .iter()
         .filter(|(_, n)| **n >= 2)
-        .max_by_key(|(_, n)| **n)
+        .min_by_key(|(cid, n)| (std::cmp::Reverse(**n), **cid))
         .map(|(cid, _)| *cid)
     else {
         return hits;
@@ -333,17 +333,55 @@ mod tests {
             hit_with_id("D", 4),
         ];
         let result = boost_by_community(hits, &community_map);
-        assert_eq!(result[0].text_hash, "A", "community-10 hit A should be first");
-        assert_eq!(result[1].text_hash, "C", "community-10 hit C should be second");
+        assert_eq!(
+            result[0].text_hash, "A",
+            "community-10 hit A should be first"
+        );
+        assert_eq!(
+            result[1].text_hash, "C",
+            "community-10 hit C should be second"
+        );
     }
 
     #[test]
     fn community_boost_noop_when_no_plurality() {
         // Each community has only 1 member — order must be unchanged.
         let community_map: HashMap<i64, i64> = HashMap::from([(1i64, 10i64), (2i64, 20i64)]);
-        let hits = vec![hit_with_id("A", 1), hit_with_id("B", 2), hit_with_id("C", 99)];
+        let hits = vec![
+            hit_with_id("A", 1),
+            hit_with_id("B", 2),
+            hit_with_id("C", 99),
+        ];
         let result = boost_by_community(hits, &community_map);
         let order: Vec<&str> = result.iter().map(|h| h.text_hash.as_str()).collect();
-        assert_eq!(order, vec!["A", "B", "C"], "order unchanged when no plurality");
+        assert_eq!(
+            order,
+            vec!["A", "B", "C"],
+            "order unchanged when no plurality"
+        );
+    }
+
+    #[test]
+    fn community_boost_tie_breaks_on_smallest_community_id() {
+        let community_map: HashMap<i64, i64> = HashMap::from([(1, 20), (2, 10), (3, 20), (4, 10)]);
+        let hits = vec![
+            hit_with_id("community-20-a", 1),
+            hit_with_id("community-10-a", 2),
+            hit_with_id("community-20-b", 3),
+            hit_with_id("community-10-b", 4),
+        ];
+
+        let result = boost_by_community(hits, &community_map);
+        let order: Vec<&str> = result.iter().map(|h| h.text_hash.as_str()).collect();
+        assert_eq!(
+            order,
+            vec![
+                "community-10-a",
+                "community-10-b",
+                "community-20-a",
+                "community-20-b",
+            ],
+            "equal-size pluralities must deterministically prefer the smallest community id"
+        );
     }
 }

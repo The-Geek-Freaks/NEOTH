@@ -131,6 +131,29 @@ fn pass_did_work(r: &consolidate::PassReport) -> bool {
         > 0
 }
 
+/// Replace the full Louvain assignment snapshot atomically. Readers either see
+/// the previous complete partition or the new complete partition; an insert
+/// failure can never expose the DELETE plus a partial replacement.
+fn persist_communities(
+    conn: &mut rusqlite::Connection,
+    communities: &[Vec<i64>],
+) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM idx_memory_communities", [])?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO idx_memory_communities \
+             (node_id, community_id) VALUES (?1, ?2)",
+        )?;
+        for (community_id, members) in communities.iter().enumerate() {
+            for &node_id in members {
+                stmt.execute(rusqlite::params![node_id, community_id as i64])?;
+            }
+        }
+    }
+    tx.commit()
+}
+
 /// One-shot decay pass — useful for `neoth memory --decay` style CLIs +
 /// for unit tests.
 pub async fn run_once(
@@ -203,7 +226,10 @@ pub async fn run_once(
         let assoc_now_unix = crate::time::now_unix_i64();
         match crate::memory::assoc_graph::decay_links(&conn, 0.05, assoc_now_unix) {
             Ok(pruned) => {
-                tracing::debug!(links_pruned = pruned, "assoc_graph: Ebbinghaus link decay pass")
+                tracing::debug!(
+                    links_pruned = pruned,
+                    "assoc_graph: Ebbinghaus link decay pass"
+                )
             }
             Err(e) => {
                 tracing::debug!(error = %e, "assoc_graph: link decay failed (non-fatal)")
@@ -214,19 +240,7 @@ pub async fn run_once(
         // the recall Stage-3 community-boost pass). Non-fatal.
         match crate::memory::assoc_graph::detect_communities(&conn) {
             Ok(communities) => {
-                let persist_result: rusqlite::Result<()> = (|| {
-                    conn.execute("DELETE FROM idx_memory_communities", [])?;
-                    let mut stmt = conn.prepare(
-                        "INSERT OR REPLACE INTO idx_memory_communities \
-                         (node_id, community_id) VALUES (?1, ?2)",
-                    )?;
-                    for (community_id, members) in communities.iter().enumerate() {
-                        for &node_id in members {
-                            stmt.execute(rusqlite::params![node_id, community_id as i64])?;
-                        }
-                    }
-                    Ok(())
-                })();
+                let persist_result = persist_communities(&mut conn, &communities);
                 match persist_result {
                     Ok(()) => tracing::debug!(
                         communities = communities.len(),
@@ -310,17 +324,20 @@ async fn summarize_consolidated_days(
             None => continue,
         };
 
-        let summary =
-            match crate::memory::warm_summarize::summarize_day_batch(provider, &all_events, &layers)
-                .await
-            {
-                Ok(s) if !s.is_empty() => s,
-                Ok(_) => continue,
-                Err(e) => {
-                    tracing::debug!(error = %e, day = %day, "warm summarize failed (non-fatal)");
-                    continue;
-                }
-            };
+        let summary = match crate::memory::warm_summarize::summarize_day_batch(
+            provider,
+            &all_events,
+            &layers,
+        )
+        .await
+        {
+            Ok(s) if !s.is_empty() => s,
+            Ok(_) => continue,
+            Err(e) => {
+                tracing::debug!(error = %e, day = %day, "warm summarize failed (non-fatal)");
+                continue;
+            }
+        };
 
         let db = db_path.to_path_buf();
         let day_c = day.clone();
@@ -355,6 +372,42 @@ async fn summarize_consolidated_days(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn community_snapshot_rolls_back_delete_and_partial_inserts() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("v.db");
+        let mut conn = store::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO idx_memory_communities (node_id, community_id) VALUES (9, 99)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_node_two \
+             BEFORE INSERT ON idx_memory_communities \
+             WHEN NEW.node_id = 2 \
+             BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+        )
+        .unwrap();
+
+        let err = persist_communities(&mut conn, &[vec![1, 2]])
+            .expect_err("trigger must fail the replacement");
+        assert!(err.to_string().contains("injected failure"));
+
+        let rows: Vec<(i64, i64)> = conn
+            .prepare("SELECT node_id, community_id FROM idx_memory_communities ORDER BY node_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![(9, 99)],
+            "failed replacement must leave the prior complete snapshot visible"
+        );
+    }
 
     #[tokio::test]
     async fn run_once_returns_a_pass_report_against_empty_db() {
