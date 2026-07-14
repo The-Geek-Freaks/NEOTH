@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NEOTH
+GenericName=Local AI Assistant
+Comment=Run NEOTH with its graphical interface
+Exec=/usr/bin/neothd-gui
+TryExec=/usr/bin/neothd-gui
+Icon=neoth
+Terminal=false
+Categories=Utility;Development;
+StartupNotify=true

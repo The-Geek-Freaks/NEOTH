@@ -1,0 +1,13 @@
+/usr/bin/neoth
+/usr/bin/neothd
+/usr/bin/neothd-gui
+/usr/bin/neoth-migrate
+/usr/bin/neoth-relay
+/usr/bin/neoth-keet-bridge
+/usr/share/applications/neoth.desktop
+/usr/share/icons/hicolor/scalable/apps/neoth.svg
+/usr/share/doc/neoth/README.md
+/usr/share/doc/neoth/LICENSE-MIT
+/usr/share/doc/neoth/LICENSE-APACHE
+/usr/share/doc/neoth/examples/freedom.yaml.example
+/usr/share/doc/neoth/examples/import-manifest.example.yaml

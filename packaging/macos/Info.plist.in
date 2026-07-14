@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>NEOTH</string>
+  <key>CFBundleExecutable</key>
+  <string>neothd-gui</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.github.the-geek-freaks.neoth</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>NEOTH</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@NUMERIC_VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@NUMERIC_VERSION@</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NEOTHReleaseVersion</key>
+  <string>@RELEASE_VERSION@</string>
+</dict>
+</plist>

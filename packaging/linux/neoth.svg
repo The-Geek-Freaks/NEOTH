@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH</title>
+  <desc id="desc">A violet N made from connected nodes</desc>
+  <rect width="128" height="128" rx="28" fill="#171329"/>
+  <path d="M32 94V34l64 60V34" fill="none" stroke="#9f7aea" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="34" r="8" fill="#f4efff"/>
+  <circle cx="96" cy="94" r="8" fill="#f4efff"/>
+</svg>
