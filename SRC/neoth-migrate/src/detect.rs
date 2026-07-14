@@ -59,6 +59,15 @@ const CANDIDATES: &[(&str, &str, ImportKind, Option<&str>, bool)] = &[
         Some("openhuman"),
         true,
     ),
+    // OpenHuman also reads user-global skills from ~/.agents/skills. It is a
+    // sibling of ~/.openhuman, so it needs its own complete review source.
+    (
+        ".agents",
+        "openhuman-agents-home",
+        ImportKind::AssistantHome,
+        Some("openhuman"),
+        true,
+    ),
     (
         ".veronica",
         "veronica-home",
@@ -101,6 +110,7 @@ pub fn detect_sources(home: &Path) -> Detection {
     }
     let manifest = ImportManifest {
         sources: sources.clone(),
+        acknowledge_unsupported: false,
     };
     // Reuse the dry-run scanners so the report carries real row-count
     // estimates instead of a bare file listing. `home` doubles as the
@@ -232,5 +242,24 @@ mod tests {
         std::fs::write(dir.path().join(".openclaw"), "not a dir").unwrap();
         let d = detect_sources(dir.path());
         assert!(d.manifest.sources.is_empty());
+    }
+
+    #[test]
+    fn detects_openhuman_global_agents_skill_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join(".agents/skills/mail");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: mail\ndescription: Mail helper\n---\nReview mail safely.",
+        )
+        .unwrap();
+        let detection = detect_sources(dir.path());
+        assert_eq!(detection.manifest.sources.len(), 1);
+        assert_eq!(detection.manifest.sources[0].name, "openhuman-agents-home");
+        assert_eq!(
+            detection.manifest.sources[0].hint.as_deref(),
+            Some("openhuman")
+        );
     }
 }

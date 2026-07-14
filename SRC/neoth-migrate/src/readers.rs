@@ -48,6 +48,11 @@ pub struct ImportSource {
 #[serde(default)]
 pub struct ImportManifest {
     pub sources: Vec<ImportSource>,
+    /// Explicit operator acknowledgement for artifacts which can be
+    /// inventoried but cannot be safely transformed. They remain recorded as
+    /// unsupported and are never activated or silently treated as imported.
+    #[serde(default)]
+    pub acknowledge_unsupported: bool,
 }
 
 /// Load + parse an operator import manifest. A missing/unreadable file
@@ -800,6 +805,29 @@ fn noise_dir(path: &Path) -> bool {
     NOISE_DIRS.contains(&name.as_str())
 }
 
+/// Foreign runtime definitions are migration artifacts, not memory claims.
+/// GOLD-R3-08 stages these paths in a plan-bound review quarantine instead of
+/// injecting prompts/config into recall or activating them implicitly.
+fn review_only_runtime_path(path: &Path) -> bool {
+    if lower_file_name(path) == "config.toml" {
+        return true;
+    }
+    let mut in_agents = false;
+    let mut in_skills = false;
+    let mut in_vectors = false;
+    for component in path.components() {
+        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        in_agents |= value == "agents";
+        in_skills |= value == "skills";
+        in_vectors |= value.ends_with(".lance")
+            || matches!(
+                value.as_str(),
+                "lancedb" | "vectors" | "vector" | "embeddings" | "faiss"
+            );
+    }
+    in_agents || in_skills || in_vectors
+}
+
 fn comparable_path(path: &Path) -> PathBuf {
     if let Ok(canonical) = path.canonicalize() {
         return canonical;
@@ -975,6 +1003,9 @@ fn assistant_home_inventory(
             continue;
         }
         let path = entry.into_path();
+        if review_only_runtime_path(&path) {
+            continue;
+        }
         let ext = lower_extension(&path);
         let kind = match ext.as_str() {
             "md" | "markdown" => Some(HomeArtifactKind::Markdown),
@@ -1389,6 +1420,14 @@ fn emit_sqlite_claims_with_policy(
 
     for table in &tables {
         if table == "profile_facts" && tag == "import:openhuman" {
+            continue;
+        }
+        if safe_only
+            && matches!(
+                table.to_ascii_lowercase().as_str(),
+                "cron_jobs" | "cron_runs" | "jobs" | "automations" | "agents" | "skills"
+            )
+        {
             continue;
         }
         if safe_only && sensitive_identifier(table) {

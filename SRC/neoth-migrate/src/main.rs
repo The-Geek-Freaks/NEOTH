@@ -25,14 +25,13 @@
 //!     --json emits sources + row-count estimates for the GUI card.
 //!
 //! neoth-migrate dry-run --manifest <PATH> [--root <PATH>]
-//!     Scan-only. No WAL writes. Reads the operator's import manifest
-//!     and prints a JSON report of every declared source: path, kind,
-//!     row-count estimate, sample entries (first 3 rows / files).
+//!     Source-read-only. Persists an immutable SHA-256 plan checkpoint and
+//!     prints every memory/runtime/credential/vector disposition.
 //!
 //! neoth-migrate apply --manifest <PATH> --confirm [--root <PATH>]
-//!     The real import: every source is preflighted, self-target aliases are
-//!     refused, then all claims are INSERT OR IGNOREd in one transaction and
-//!     audited to the durable JSONL sidecar. `--confirm` is the consent gate.
+//!     The real import: every source is bound to the reviewed plan, memory is
+//!     INSERT OR IGNOREd in one transaction, and foreign runtime artifacts are
+//!     staged for review without activation. `--confirm` is the consent gate.
 //!
 //! neoth-migrate status [--root <PATH>] [--json]
 //!     Show the latest durable migration lifecycle (never started, in
@@ -58,6 +57,7 @@ use tracing_subscriber::EnvFilter;
 mod detect;
 mod import_config;
 mod import_crons;
+mod migration_plan;
 mod readers;
 mod wal_emit;
 
@@ -247,42 +247,66 @@ fn run_detect(args: DetectArgs) -> Result<()> {
 fn run_dry_run(args: DryRunArgs) -> Result<()> {
     let home = args.root.clone().unwrap_or_else(default_home);
     let manifest = readers::load_manifest(&args.manifest)?;
-    readers::validate_sources_not_target(
-        &manifest.sources,
-        &home,
-        &home.join(".neoth").join("views.db"),
-    )?;
+    let db_path = home.join(".neoth").join("views.db");
+    readers::validate_sources_not_target(&manifest.sources, &home, &db_path)?;
     tracing::info!(
         home = %home.display(),
         sources = manifest.sources.len(),
         "neoth-migrate dry-run"
     );
-    let report = readers::scan_all(&manifest.sources, &home);
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    let scans = readers::scan_all(&manifest.sources, &home);
+    let plan = migration_plan::build_plan(&manifest, &home, &db_path)?;
+    let plan_path = migration_plan::checkpoint_plan(&home, &plan)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "plan": plan,
+            "plan_path": plan_path,
+            "scans": scans,
+        }))?
+    );
     Ok(())
 }
 
 fn run_status(args: StatusArgs) -> Result<()> {
     let home = args.root.unwrap_or_else(default_home);
-    let status = wal_emit::load_status(&home)?;
+    let audit = wal_emit::load_status(&home)?;
+    let plan = migration_plan::load_plan_status(&home)?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&status)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "audit": audit,
+                "plan": plan,
+            }))?
+        );
     } else {
-        println!("migration: {}", status.state);
-        println!("audit: {}", status.audit_path);
-        if let Some(operation_id) = &status.operation_id {
-            println!("operation: {operation_id}");
-        }
-        if status.sources_total > 0 {
+        println!("migration: {}", audit.state);
+        println!("audit: {}", audit.audit_path);
+        println!("plan: {}", plan.state);
+        if let Some(plan_sha256) = &plan.plan_sha256 {
+            println!("plan sha256: {plan_sha256}");
             println!(
-                "sources: {}/{} complete; claims seen: {}; inserted: {}",
-                status.batches_completed, status.sources_total, status.claims_seen, status.inserted
+                "artifacts: {}/{} committed; unsupported: {} (acknowledged={})",
+                plan.artifacts_committed,
+                plan.artifacts_total,
+                plan.blocked_unsupported,
+                plan.acknowledge_unsupported
             );
         }
-        if let Some(error) = &status.error {
+        if let Some(operation_id) = &audit.operation_id {
+            println!("operation: {operation_id}");
+        }
+        if audit.sources_total > 0 {
+            println!(
+                "sources: {}/{} complete; claims seen: {}; inserted: {}",
+                audit.batches_completed, audit.sources_total, audit.claims_seen, audit.inserted
+            );
+        }
+        if let Some(error) = &audit.error {
             println!("error: {error}");
         }
-        if let Some(rolled_back) = status.rolled_back {
+        if let Some(rolled_back) = audit.rolled_back {
             println!("rolled back: {rolled_back}");
         }
     }
@@ -290,139 +314,186 @@ fn run_status(args: StatusArgs) -> Result<()> {
 }
 
 fn run_apply(args: ApplyArgs) -> Result<()> {
-    // Manifest validation first — a bad manifest is the first thing the
-    // operator should hear about, not missing --confirm or missing db.
     let manifest = readers::load_manifest(&args.manifest)?;
     let home = args.root.clone().unwrap_or_else(default_home);
     let db_path = args
         .db
         .clone()
         .unwrap_or_else(|| home.join(".neoth").join("views.db"));
+    let plan = migration_plan::build_plan(&manifest, &home, &db_path)?;
 
-    // ── Dry-run branch ────────────────────────────────────────────────────────
-    //
-    // --dry-run takes precedence over --confirm; no db is opened, no rows
-    // are written. The JSON report is identical to `neoth-migrate dry-run`.
     if args.dry_run {
         readers::validate_sources_not_target(&manifest.sources, &home, &db_path)?;
-        tracing::info!(
-            sources = manifest.sources.len(),
-            "neoth-migrate apply --dry-run (preview only)"
+        let scans = readers::scan_all_for_target(&manifest.sources, &home, &db_path);
+        let plan_path = migration_plan::checkpoint_plan(&home, &plan)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "plan": plan,
+                "plan_path": plan_path,
+                "scans": scans,
+            }))?
         );
-        let report = readers::scan_all_for_target(&manifest.sources, &home, &db_path);
-        println!("{}", serde_json::to_string_pretty(&report)?);
         eprintln!(
-            "dry-run: {} source(s) scanned. Re-run without --dry-run and with \
-             --confirm to apply.",
-            manifest.sources.len()
+            "dry-run: {} source(s) scanned and bound to SHA-256 plan {}. Re-run without --dry-run and with --confirm to apply.",
+            manifest.sources.len(),
+            plan.plan_sha256
         );
         return Ok(());
     }
 
-    // ── Guard: --confirm required for a real insert ────────────────────────
     if !args.confirm {
         anyhow::bail!(
-            "Memory import requires --confirm. Use --dry-run first to preview, \
+            "Migration apply requires --confirm. Use --dry-run first to create a reviewed plan, \
              then re-run with --confirm to apply."
         );
     }
 
-    // OpenHuman's source implementation refuses self-migration. NEOTH extends
-    // that invariant to path aliases, symlinks/hard-links and target-workspace
-    // descendants before opening a transaction or audit file.
-    readers::validate_sources_for_apply(&manifest.sources, &home, &db_path)?;
-
-    // ── Open views.db ────────────────────────────────────────────────────────
-    let conn = rusqlite::Connection::open(&db_path)
-        .with_context(|| format!("open views.db at {}", db_path.display()))?;
-
-    // Sanity-check: confirm idx_groundtruth has the columns we INSERT into.
-    // A schema mismatch (neothd added a NOT NULL column without a default)
-    // would otherwise produce a cryptic SQLite error mid-import.
-    check_groundtruth_schema(&conn)
-        .with_context(|| format!("schema check on {}", db_path.display()))?;
-
-    // ── OperatorWalEmitter — lifecycle-phase JSONL sidecar ────────────────────
-    //
-    // neoth-migrate is a standalone binary; it cannot hold the daemon's
-    // WalWriterHandle (single-writer invariant). All audit writes go to
-    // ~/.neoth/neoth-migrate-audit.jsonl via OperatorWalEmitter.
-    // The audit intent is durable before expensive source reads. Unlike the
-    // old best-effort writer, an unavailable audit path aborts the mutation.
-    let emitter = wal_emit::OperatorWalEmitter::open(&home)?;
-    emitter.emit_migration_started(manifest.sources.len(), &db_path)?;
-
-    // Preflight every source completely before BEGIN. One unreadable/corrupt
-    // declared artifact aborts the entire run; no more silent partial commits.
-    let mut prepared = Vec::with_capacity(manifest.sources.len());
-    for source in &manifest.sources {
-        match readers::emit_claims_for_target(source, &home, &db_path)
-            .with_context(|| format!("preflight source '{}'", source.name))
-        {
-            Ok(claims) => prepared.push((source.name.clone(), claims)),
-            Err(error) => {
-                if let Err(audit_error) = emitter.emit_migration_failed("preflight", &error, true) {
-                    return Err(error.context(format!(
-                        "also failed to persist MIGRATION_FAILED audit: {audit_error:#}"
-                    )));
-                }
-                return Err(error);
-            }
-        }
+    let plan_path = migration_plan::require_checkpoint(&home, &plan)?;
+    let blocked = migration_plan::blocked_artifacts(&plan);
+    anyhow::ensure!(
+        blocked.is_empty() || plan.acknowledge_unsupported,
+        "{} unsupported artifact(s) block apply. Review the dry-run and set `acknowledge_unsupported: true` to record an explicit skip",
+        blocked.len()
+    );
+    readers::validate_sources_not_target(&manifest.sources, &home, &db_path)?;
+    let transactional_names = migration_plan::transactional_source_names(&plan);
+    let transactional_sources: Vec<readers::ImportSource> = manifest
+        .sources
+        .iter()
+        .filter(|source| transactional_names.contains(source.name.as_str()))
+        .cloned()
+        .collect();
+    if !transactional_sources.is_empty() {
+        readers::validate_sources_for_apply(&transactional_sources, &home, &db_path)?;
     }
 
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .context("system clock is before Unix epoch")?
-        .as_nanos()
-        .min(i64::MAX as u128) as i64;
+    let emitter = wal_emit::OperatorWalEmitter::open(&home)?;
+    emitter.emit_migration_started(manifest.sources.len(), &db_path)?;
     type BatchEvent = (String, usize, usize);
-    type ApplyOutcome = (usize, Vec<BatchEvent>, Vec<serde_json::Value>);
-    let mut began = false;
-    let apply_result = (|| -> Result<ApplyOutcome> {
-        conn.execute_batch("BEGIN IMMEDIATE")?;
-        began = true;
-        let mut total_inserted = 0usize;
-        let mut batch_events = Vec::with_capacity(prepared.len());
-        let mut per_source = Vec::with_capacity(prepared.len());
+    let already_committed = audit_stage(
+        &emitter,
+        "resume-state",
+        true,
+        migration_plan::memory_already_committed(&home, &plan, &db_path),
+    )?;
+    let mut total_inserted = 0usize;
+    let mut batch_events: Vec<BatchEvent> = Vec::new();
+    let mut per_source = Vec::new();
+    let mut memory_wrote = false;
 
-        for (source_name, claims) in &prepared {
-            let mut source_inserted = 0usize;
-            for (statement, source_tag, scope) in claims {
-                // Imported facts remain candidates until corroborated. The
-                // unique (statement, scope) index makes re-runs idempotent.
-                let inserted = conn
-                    .execute(
-                        "INSERT OR IGNORE INTO idx_groundtruth \
-                         (statement, source, scope, asserted_at, revoked_at, \
-                          fact_state, source_weight, confidence, evidence, \
-                          maturity, confirmed_count) \
-                         VALUES (?1, ?2, ?3, ?4, NULL, \
-                                 'candidate', json_object(?2, 1), 0.5, '[]', \
-                                 'emerging', 0)",
-                        rusqlite::params![statement, source_tag, scope, now_ns],
-                    )
-                    .with_context(|| format!("insert source '{source_name}'"))?;
-                source_inserted += inserted;
+    if already_committed {
+        per_source.push(serde_json::json!({
+            "status": "memory_phase_resumed",
+            "inserted_this_run": 0,
+        }));
+    } else if transactional_sources.is_empty() {
+        audit_stage(
+            &emitter,
+            "resume-state",
+            true,
+            migration_plan::mark_memory_committed(&home, &plan, &db_path),
+        )?;
+    } else {
+        let conn = audit_stage(
+            &emitter,
+            "target-open",
+            true,
+            rusqlite::Connection::open(&db_path)
+                .with_context(|| format!("open views.db at {}", db_path.display())),
+        )?;
+        audit_stage(
+            &emitter,
+            "target-schema",
+            true,
+            check_groundtruth_schema(&conn)
+                .with_context(|| format!("schema check on {}", db_path.display())),
+        )?;
+
+        let mut prepared = Vec::with_capacity(transactional_sources.len());
+        for source in &transactional_sources {
+            match readers::emit_claims_for_target(source, &home, &db_path)
+                .with_context(|| format!("preflight source '{}'", source.name))
+            {
+                Ok(claims) => prepared.push((source.name.clone(), claims)),
+                Err(error) => {
+                    if let Err(audit_error) =
+                        emitter.emit_migration_failed("preflight", &error, true)
+                    {
+                        return Err(error.context(format!(
+                            "also failed to persist MIGRATION_FAILED audit: {audit_error:#}"
+                        )));
+                    }
+                    return Err(error);
+                }
             }
-            total_inserted += source_inserted;
-            batch_events.push((source_name.clone(), claims.len(), source_inserted));
-            per_source.push(serde_json::json!({
-                "name": source_name,
-                "claims_seen": claims.len(),
-                "inserted": source_inserted,
-                "skipped_duplicates": claims.len().saturating_sub(source_inserted),
-            }));
         }
 
-        conn.execute_batch("COMMIT")?;
-        began = false;
-        Ok((total_inserted, batch_events, per_source))
-    })();
+        // Close the plan/preflight TOCTOU window before BEGIN IMMEDIATE.
+        let revalidated = audit_stage(
+            &emitter,
+            "plan-revalidation",
+            true,
+            migration_plan::build_plan(&manifest, &home, &db_path),
+        )?;
+        audit_stage(
+            &emitter,
+            "plan-revalidation",
+            true,
+            migration_plan::require_checkpoint(&home, &revalidated).map(|_| ()),
+        )?;
+        audit_stage(
+            &emitter,
+            "plan-revalidation",
+            true,
+            if revalidated == plan {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "migration sources changed during preflight"
+                ))
+            },
+        )?;
 
-    let (total_inserted, batch_events, per_source) = match apply_result {
-        Ok(result) => result,
-        Err(error) => {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .context("system clock is before Unix epoch")?
+            .as_nanos()
+            .min(i64::MAX as u128) as i64;
+        let mut began = false;
+        let transaction = (|| -> Result<()> {
+            conn.execute_batch("BEGIN IMMEDIATE")?;
+            began = true;
+            for (source_name, claims) in &prepared {
+                let mut source_inserted = 0usize;
+                for (statement, source_tag, scope) in claims {
+                    source_inserted += conn
+                        .execute(
+                            "INSERT OR IGNORE INTO idx_groundtruth \
+                             (statement, source, scope, asserted_at, revoked_at, \
+                              fact_state, source_weight, confidence, evidence, \
+                              maturity, confirmed_count) \
+                             VALUES (?1, ?2, ?3, ?4, NULL, \
+                                     'candidate', json_object(?2, 1), 0.5, '[]', \
+                                     'emerging', 0)",
+                            rusqlite::params![statement, source_tag, scope, now_ns],
+                        )
+                        .with_context(|| format!("insert source '{source_name}'"))?;
+                }
+                total_inserted += source_inserted;
+                batch_events.push((source_name.clone(), claims.len(), source_inserted));
+                per_source.push(serde_json::json!({
+                    "name": source_name,
+                    "claims_seen": claims.len(),
+                    "inserted": source_inserted,
+                    "skipped_duplicates": claims.len().saturating_sub(source_inserted),
+                }));
+            }
+            conn.execute_batch("COMMIT")?;
+            began = false;
+            Ok(())
+        })();
+        if let Err(error) = transaction {
             let rolled_back = !began || conn.execute_batch("ROLLBACK").is_ok();
             if let Err(audit_error) =
                 emitter.emit_migration_failed("transaction", &error, rolled_back)
@@ -433,19 +504,39 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
             }
             return Err(error);
         }
-    };
+        memory_wrote = true;
+        audit_stage(
+            &emitter,
+            "memory-resume-marker",
+            false,
+            migration_plan::mark_memory_committed(&home, &plan, &db_path),
+        )?;
+    }
 
-    // The inserts are now durable — emit the deferred per-source MIGRATION_BATCH
-    // events. If COMMIT failed above, the `?` returned before this point so no
-    // batch event was emitted: the WAL never claims an uncommitted insert.
+    let stage = match migration_plan::stage_review_artifacts(&home, &plan) {
+        Ok(stage) => stage,
+        Err(error) => {
+            if let Err(audit_error) =
+                emitter.emit_migration_failed("review-staging", &error, !memory_wrote)
+            {
+                return Err(error.context(format!(
+                    "also failed to persist MIGRATION_FAILED audit: {audit_error:#}"
+                )));
+            }
+            return Err(error);
+        }
+    };
+    audit_stage(
+        &emitter,
+        "completion-marker",
+        false,
+        migration_plan::mark_complete(&home, &plan),
+    )?;
+
     let audit_result = (|| -> Result<()> {
         for (name, claims_seen, inserted) in &batch_events {
             emitter.emit_migration_batch(name, *claims_seen, *inserted)?;
         }
-
-        // Emit MIGRATION_COMPLETE after COMMIT. Includes legacy event/event_type
-        // fields (GROUNDTRUTH_IMPORTED / 0x99) for backward-compat with tooling
-        // that previously parsed the single-line summary.
         emitter.emit_migration_complete(total_inserted)
     })();
     if let Err(audit_error) = audit_result {
@@ -467,14 +558,36 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "sources": manifest.sources.len(),
+            "plan_sha256": plan.plan_sha256,
+            "plan_path": plan_path,
             "inserted": total_inserted,
-            "skipped_sources": 0,
+            "memory_resumed": already_committed,
+            "review": stage,
             "atomic": true,
             "detail": per_source,
         }))?
     );
 
     Ok(())
+}
+
+fn audit_stage<T>(
+    emitter: &wal_emit::OperatorWalEmitter,
+    stage: &str,
+    rolled_back: bool,
+    result: Result<T>,
+) -> Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            if let Err(audit_error) = emitter.emit_migration_failed(stage, &error, rolled_back) {
+                return Err(error.context(format!(
+                    "also failed to persist MIGRATION_FAILED audit: {audit_error:#}"
+                )));
+            }
+            Err(error)
+        }
+    }
 }
 
 /// Assert that `idx_groundtruth` has every column we INSERT into.
@@ -632,6 +745,12 @@ mod tests {
     fn write_manifest(dir: &std::path::Path, content: &str) -> std::path::PathBuf {
         let p = dir.join("manifest.yaml");
         std::fs::write(&p, content).unwrap();
+        // Direct run_apply tests model the real CLI contract: dry-run creates
+        // the immutable reviewed plan before apply is allowed to mutate.
+        let manifest = readers::load_manifest(&p).unwrap();
+        let plan = migration_plan::build_plan(&manifest, dir, &dir.join(".neoth").join("views.db"))
+            .unwrap();
+        migration_plan::checkpoint_plan(dir, &plan).unwrap();
         p
     }
 
@@ -960,5 +1079,157 @@ mod tests {
         assert_eq!(status.state, "failed");
         assert_eq!(status.rolled_back, Some(true));
         assert_eq!(status.batches_completed, 0);
+    }
+
+    #[test]
+    fn openhuman_apply_commits_memory_and_quarantines_runtime_artifacts() {
+        let dir = tempdir().unwrap();
+        let db_path = make_views_db(dir.path());
+        let home = dir.path().join(".openhuman");
+        std::fs::create_dir_all(home.join("workspace/agents")).unwrap();
+        std::fs::create_dir_all(home.join("workspace/.agents/skills/mail")).unwrap();
+        std::fs::write(
+            home.join("config.toml"),
+            "default_model = \"local\"\napi_key = \"NEVER_STAGE_THIS_VALUE\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("workspace/agents/research.toml"),
+            "id = \"research\"\nsystem_prompt = \"Research carefully\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("workspace/.agents/skills/mail/SKILL.md"),
+            "---\nname: mail\ndescription: Mail helper\n---\nUse mail safely.",
+        )
+        .unwrap();
+        let foreign_db = home.join("state.db");
+        let connection = rusqlite::Connection::open(&foreign_db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE memories (content TEXT);\n                 INSERT INTO memories VALUES ('OpenHuman durable memory survives migration.');\n                 CREATE TABLE cron_jobs (id TEXT, expression TEXT, command TEXT, schedule TEXT, job_type TEXT, prompt TEXT, name TEXT, session_target TEXT, model TEXT, enabled INTEGER, delivery TEXT, delete_after_run INTEGER);\n                 INSERT INTO cron_jobs VALUES ('job','0 * * * *','echo runtime-only','{\"kind\":\"cron\",\"expr\":\"0 * * * *\"}','shell',NULL,'hourly','isolated',NULL,1,'{\"mode\":\"none\"}',0);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let manifest = write_manifest(
+            dir.path(),
+            &format!(
+                "sources:\n  - name: openhuman-home\n    path: {}\n    kind: assistant_home\n    hint: openhuman\n",
+                home.display()
+            ),
+        );
+        run_apply(ApplyArgs {
+            manifest,
+            root: Some(dir.path().to_path_buf()),
+            confirm: true,
+            dry_run: false,
+            db: Some(db_path.clone()),
+        })
+        .unwrap();
+
+        let connection = rusqlite::Connection::open(&db_path).unwrap();
+        let statements: Vec<String> = connection
+            .prepare("SELECT statement FROM idx_groundtruth ORDER BY statement")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            statements,
+            vec!["OpenHuman durable memory survives migration."]
+        );
+        let plan_status = migration_plan::load_plan_status(dir.path()).unwrap();
+        assert_eq!(plan_status.state, "complete");
+        let review = std::fs::read_to_string(
+            std::path::Path::new(plan_status.review_path.as_deref().unwrap()).join("plan.json"),
+        )
+        .unwrap();
+        assert!(!review.contains("NEVER_STAGE_THIS_VALUE"));
+        let review_root = std::path::Path::new(plan_status.review_path.as_deref().unwrap());
+        assert!(review_root.join("config").is_dir());
+        assert!(review_root.join("cron").is_dir());
+        assert!(review_root.join("agents").is_dir());
+        assert!(review_root.join("skills").is_dir());
+        assert!(review_root.join("credential-references.json").is_file());
+    }
+
+    #[test]
+    fn apply_rejects_source_mutation_after_reviewed_plan() {
+        let dir = tempdir().unwrap();
+        let db_path = make_views_db(dir.path());
+        let source = dir.path().join("mutable.md");
+        std::fs::write(&source, "Reviewed migration statement.").unwrap();
+        let manifest = write_manifest(
+            dir.path(),
+            &format!(
+                "sources:\n  - name: notes\n    path: {}\n    kind: markdown_file\n",
+                source.display()
+            ),
+        );
+        std::fs::write(&source, "Changed after the reviewed dry-run.").unwrap();
+        let error = run_apply(ApplyArgs {
+            manifest,
+            root: Some(dir.path().to_path_buf()),
+            confirm: true,
+            dry_run: false,
+            db: Some(db_path.clone()),
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("no reviewed plan checkpoint"));
+        let connection = rusqlite::Connection::open(db_path).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn unsupported_apply_blocks_then_records_explicit_acknowledgement() {
+        let dir = tempdir().unwrap();
+        let vectors = dir.path().join("vectors");
+        std::fs::create_dir_all(&vectors).unwrap();
+        std::fs::write(vectors.join("index.faiss"), [7_u8; 64]).unwrap();
+
+        let blocked_manifest = write_manifest(
+            dir.path(),
+            &format!(
+                "sources:\n  - name: raw-vectors\n    path: {}\n    kind: faiss_flat\n",
+                vectors.display()
+            ),
+        );
+        let error = run_apply(ApplyArgs {
+            manifest: blocked_manifest,
+            root: Some(dir.path().to_path_buf()),
+            confirm: true,
+            dry_run: false,
+            db: None,
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("unsupported artifact"));
+
+        let acknowledged_manifest = write_manifest(
+            dir.path(),
+            &format!(
+                "acknowledge_unsupported: true\nsources:\n  - name: raw-vectors\n    path: {}\n    kind: faiss_flat\n",
+                vectors.display()
+            ),
+        );
+        run_apply(ApplyArgs {
+            manifest: acknowledged_manifest,
+            root: Some(dir.path().to_path_buf()),
+            confirm: true,
+            dry_run: false,
+            db: None,
+        })
+        .unwrap();
+        let status = migration_plan::load_plan_status(dir.path()).unwrap();
+        assert_eq!(status.state, "complete");
+        assert_eq!(status.blocked_unsupported, 1);
+        assert!(status.acknowledge_unsupported);
+        let unsupported =
+            std::path::Path::new(status.review_path.as_deref().unwrap()).join("unsupported");
+        assert!(unsupported.is_dir());
     }
 }

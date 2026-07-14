@@ -3,7 +3,7 @@
 # Declare the prior-AI memory stores you want to migrate into NEOTH.
 # Copy this file, edit the paths to match YOUR system, then run:
 #
-#   neoth-migrate dry-run --manifest <your-file>.yaml     # preview
+#   neoth-migrate dry-run --manifest <your-file>.yaml     # preview + SHA-256 plan checkpoint
 #   neoth-migrate apply   --manifest <your-file>.yaml --confirm
 #
 # A leading `~/` expands to your home directory; absolute paths pass
@@ -15,9 +15,9 @@
 #   json_dir       — a directory of .json / .ajson files
 #   json_file      — a single .json file
 #   sqlite         — a .db file (or a directory containing one)
-#   lance_arrow    — a LanceDB directory (SCAN-ONLY; apply rejects the manifest)
-#   git_tree       — a directory of git repos (SCAN-ONLY; apply rejects the manifest)
-#   faiss_flat     — flat-vector .bin files (SCAN-ONLY; apply rejects the manifest)
+#   lance_arrow    — LanceDB + text/metadata sidecars; queues NEOTH re-embedding
+#   git_tree       — git inventory (unsupported; apply blocks by default)
+#   faiss_flat     — flat vectors + text/metadata sidecars; queues re-embedding
 #
 # `hint` is optional and serves these mutually-exclusive purposes:
 #
@@ -44,11 +44,19 @@
 #   If you need both (e.g. Hermes DB in a non-global scope), split the source
 #   into two entries using a wrapper script that exports to a JSON file first.
 
+# Leave false for the first dry-run. If the generated plan contains an
+# artifact that NEOTH cannot safely transform (for example raw vectors with no
+# text/metadata, or git trees), apply is blocked. Change this to true only
+# after review to record an explicit plan-bound skip. Unsupported artifacts
+# remain visible and are never reported as imported.
+acknowledge_unsupported: false
+
 sources:
   # `neoth-migrate detect --output import.yaml` generates entries like this.
   # The reader walks the WHOLE assistant home recursively, including nested
-  # Markdown, JSON/JSONL and every real SQLite store. Credential/auth/browser
-  # stores, caches and the NEOTH target tree are excluded by policy.
+  # Markdown, JSON/JSONL and every real SQLite store. OpenHuman config,
+  # cron_jobs, custom agents, skills, credential references and vector stores
+  # are classified separately and staged for review; none are auto-activated.
   - name: openhuman_home
     path: ~/.openhuman
     kind: assistant_home
