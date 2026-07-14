@@ -247,7 +247,7 @@ pub async fn check_relay_forward_target(cfg: &HysteriaTransportConfig) -> Health
     if cfg.forward_to.trim().is_empty() {
         return HealthCheckOutcome::MissingForwardTo;
     }
-    let addr: SocketAddr = match cfg.forward_to.trim().parse() {
+    let addr = match cfg.forward_to.trim().parse::<SocketAddr>() {
         Ok(addr) if addr.ip().is_loopback() => addr,
         Ok(addr) => {
             return HealthCheckOutcome::InvalidForwardTarget(format!(
