@@ -102,10 +102,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Rust (${{ matrix.toolchain }})
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # master (toolchain selected below)
         with:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
@@ -145,7 +145,7 @@ jobs:
             libxkbcommon-dev
 
       - name: Cache Cargo registry + target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
@@ -223,7 +223,7 @@ jobs:
       # whole matrix.
       - name: Install cargo-audit
         if: matrix.os == 'ubuntu-24.04'
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: cargo-audit
 
@@ -247,7 +247,7 @@ jobs:
           matrix.os == 'ubuntu-24.04' &&
           matrix.toolchain == 'stable' &&
           github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: neoth-linux-x86_64-ci
           path: SRC/target/release/neoth
@@ -258,7 +258,7 @@ jobs:
           matrix.os == 'macos-14' &&
           matrix.toolchain == 'stable' &&
           github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: neoth-macos-arm64-ci
           path: SRC/target/release/neoth
@@ -269,7 +269,7 @@ jobs:
           matrix.os == 'windows-2022' &&
           matrix.toolchain == 'stable' &&
           github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: neoth-windows-x86_64-ci
           path: SRC/target/release/neoth.exe
@@ -290,15 +290,15 @@ jobs:
     name: example WASM plugins build against ABI v1
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Cache wasm32 build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -337,7 +337,7 @@ jobs:
 
       - name: Upload wasm artefact
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: example-wasm-plugins
           path: |
@@ -393,13 +393,13 @@ jobs:
           # because it needs a live relay/discovery network).
           - { os: ubuntu-24.04, feature: cluster-iroh }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -438,13 +438,13 @@ jobs:
     name: gold-smoke eval suite
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
@@ -467,7 +467,7 @@ jobs:
 
       - name: Upload eval report (report.json + report.md)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gold-smoke-report
           path: |
