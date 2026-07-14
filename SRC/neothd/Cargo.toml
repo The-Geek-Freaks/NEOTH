@@ -270,503 +270,4 @@ url                = "2"
 clap        = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
 chrono      = { version = "0.4", features = ["serde"] }
-# Wizard UX deps -- optional, gated behind `wizard` feature
-dialoguer   = { version = "0.11", optional = true }
-indicatif   = { version = "0.17", optional = true }
-console     = { version = "0.15", optional = true }
-# EM-01b -- live Gmail/IMAP fetch. Gated behind `imap_fetch` so default
-# builds stay slim + dep-free. rustls-only (NEOTH bans native-tls/openssl):
-# async-imap brings its own BYO-TLS stream, tokio-rustls supplies it,
-# mailparse is pure-Rust RFC822 parsing.
-async-imap   = { version = "0.10", default-features = false, features = ["runtime-tokio"], optional = true }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
-webpki-roots = { version = "1", optional = true }
-mailparse    = { version = "0.16", optional = true }
-futures      = { version = "0.3", optional = true }
-
-# Day-2 (WAL writer) -- SPEC_wire_header_v2_slim.md + SPEC_wal_lifecycle.md + SPEC_multinode_clock.md
-bitflags    = "2.6"
-num_enum    = "0.7"
-
-# Secret handling (Security audit P0) -- Debug/Display redacted, zero-on-drop
-zeroize     = { version = "1", features = ["zeroize_derive"] }
-
-# Phase 11a (Ingress sanitizer) -- NFKC normalize, control-char strip,
-# prompt-injection-marker quarantine. Pure-Rust unicode-normalization crate.
-# Reference: memory/neoth-research-synthesis.md Phase 11a, Jarvis ingress-sanitizer.mjs v3.
-unicode-normalization = "0.1"
-
-# Phase 28c R-24 GT-6 (Bulk-text extractor) -- sentence boundary splitter
-# for atomic-claim extraction from operator-pasted markdown. Pure-Rust,
-# zero deps, segments by Unicode word boundaries. The `blingfire` crate
-# would give better quality but pulls a C++ build dep, so we ship with
-# the pure-Rust variant only for now (`memory/neoth_gt_onboarding_pins.md`).
-unicode-segmentation = "1.12"
-
-# Phase 29 R-15 H-3 (Hook dispatcher) -- regex matcher for the hook stage
-# filter. Pure-Rust, no PCRE â€” supports the subset most operators need
-# (groups, alternation, anchors).
-regex = "1.10"
-
-# Phase 33c BS-2 (Backup CLI) -- pure-Rust tar + gzip. `tar` writes/reads
-# archive members directly; `flate2` pipes the bytes through gzip. No
-# system tar binary needed. Backup is a tarball of ~/.neoth/views.db,
-# ~/.neoth/archive/, and freedom.yaml.
-tar    = "0.4"
-flate2 = "1.0"
-
-# Workstream F (CT-10/E-20/V1x-06) â€” WAL v1.2 zstd-3 compression on
-# sealed segments. Level-3 chosen per HANDOFF Â§Workstream-F: good ratio
-# at low latency, suitable for JSON-heavy WAL payloads. `zstd` 0.13 wraps
-# the vendored libzstd; no system-zstd linkage, stays AIO-compatible.
-zstd = "0.13"
-
-# V03-09 Phase 2b (Session 19) -- archive extractors for the self-
-# update download path. release.yml publishes Windows releases as
-# `.zip` (zip crate), Linux + macOS as `.tar.xz` (lzma-rs + tar).
-# Both pure-Rust â€” no system liblzma linkage, no shell-out â€” so the
-# self-contained-binary rule (memory/neoth-hard-rule-self-contained)
-# stays honoured.
-zip     = { version = "1", default-features = false, features = ["deflate"] }
-lzma-rs = "0.3"
-
-# R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for
-# the cluster module's PeerLoadRegistry â†’ live peer discovery. Was
-# Phase-3 dep-blocked while `hyperswarm-rs` lived in a half-broken
-# state on crates.io; `peeroxide` 1.3.x is the maintained pure-Rust
-# replacement that exposes the same topic-based discovery + hole-
-# punching primitives.
-peeroxide = { version = "1.3", optional = true }
-
-# iroh 1.0 â€” QUIC transport with dial-by-NodeId, NAT-traversal + relay fallback.
-# Optional, pulled only by the `cluster-iroh` feature (default-off â€” keeps the
-# base build lean since iroh brings the full QUIC + relay stack).
-iroh = { version = "1", optional = true }
-
-# R-7 heartbeat wire format (Session 19) â€” per Chorus
-# 019E4A48975F25C0BD9F8B96BC085C94 both reviewers picked CBOR.
-# `ciborium` is the maintained successor of `serde_cbor`; no_std-
-# friendly + no extra C deps. Used only by cluster::heartbeat.
-ciborium = "0.2"
-
-# Promoted from dev-dependencies (Session 19) â€” the self-update apply
-# path stages the extracted binary in a same-volume tempdir before
-# atomic_replace_binary renames it onto the running daemon path.
-# Runtime, not test-only.
-tempfile = "3"
-
-# Cluster auto-discovery Phase 2 (R-2 SPEC):
-# mDNS service announcer + listener. Pure-Rust, no system zeroconf
-# daemon required. Cross-platform (Windows / macOS / Linux).
-mdns-sd = "0.11"
-
-# Pick #36 (Session 14, Agent #4 design-consensus): lock-free atomic
-# pointer swaps for hot-reloadable config. `FreedomConfig` lives
-# behind `Arc<ArcSwap<FreedomConfig>>`; every `.load()` is lock-free
-# under reader contention. Reload writers call `.store(Arc::new(new))`
-# atomically â€” no `RwLock` contention even when many channel-handler
-# tasks read the config concurrently.
-arc-swap = "1"
-
-# D-103 (Session 21, 2026-05-23) â€” filesystem watcher for skills
-# hot-reload. The skills registry lives behind `ArcSwap<Vec<Skill>>`
-# (same pattern as FreedomConfig above); `notify` fires on
-# `~/.neoth/skills/<id>/skill.yaml` create/modify/remove and the
-# registry watcher task atomically swaps the new vec in. Active
-# invocations hold their cloned `Arc` to completion, the next
-# invocation picks up the new body (vite/cargo-watch semantics).
-# Default features picks the right per-OS backend at runtime
-# (inotify on Linux, FSEvents on macOS, ReadDirectoryChanges on
-# Windows) so cross-target builds Just Work.
-notify = "8"
-
-# Phase 33b SP-2 (HMAC compaction) -- pure-Rust HMAC-SHA256 over the WAL
-# tail since the last compaction marker. Tamper detection without
-# external key infrastructure. RustCrypto family, no openssl.
-# C-3 Phase 2 (Session 14) â€” also used by `providers::aws_sigv4` for the
-# hand-rolled SigV4 signing chain (hmac_sha256 derivation chain +
-# sha256(canonical_request)). No `ring` C-dep, no aws-sdk-* heavy dep.
-hmac   = "0.12"
-sha2   = "0.10"
-# C-02b (Session 28) â€” Bitwarden encrypted export key stretching.
-# Bitwarden's encrypted export wraps the same shape as the unencrypted
-# export under PBKDF2-SHA256 â†’ HKDF-Expand-SHA256 â†’ AES-256-CBC +
-# HMAC-SHA256. The HKDF-Expand step (with `info = b"enc"` / `b"mac"`)
-# derives the two 32-byte keys (enc_key, mac_key) from the PBKDF2
-# master key. Pure-Rust RustCrypto crate â€” no C deps, no openssl.
-hkdf   = "0.12"
-# C-04b Phase 2 chunk 2b (Session 28) â€” NSS `key4.db` master-key
-# extraction. The PBKDF2 input is not the raw primary password but
-# `SHA-1(global_salt || password)`; this is NSS's KDF preamble and
-# is required for interop with every existing Firefox install. Used
-# solely inside `credentials::firefox_key4db::derive_intermediate_key`
-# â€” never for password hashing or anything new.
-sha1   = "0.10"
-# C-3 Phase 2 (Session 14) â€” hex encoding of SHA256/HMAC outputs for the
-# SigV4 canonical request + Authorization header. Single-purpose crate,
-# already transitive in the dep graph; explicit pin keeps the BEDROCK
-# adapter independent of upstream churn.
-hex    = "0.4"
-
-# MV-01b prereq #2 (Session 28c) â€” verify-only minisign signature check
-# for the daemon self-update path. Pure-Rust (ed25519 + blake2b), no C
-# deps, no openssl, no `ring` â€” chosen over the `sigstore`/cosign crate
-# which pulls native-tls/schannel + untrusted(ring) + prost, violating
-# the rustls-only/no-ring posture (empirical probe 2026-05-29). Releases
-# are minisign-signed in CI; the public key is pinned at compile time
-# (`NEOTH_RELEASE_MINISIGN_PUBKEY` env, via `option_env!`).
-minisign-verify = "0.2"
-
-# KF-03 proof-bundle SIGNING (the operator's per-proof key â€” a SEPARATE
-# trust root from the project release key that minisign-verify checks).
-# ed25519-dalek is already resolved transitively (via minisign-verify's
-# dep graph, pinned 2.2.0 in Cargo.lock) so promoting it to a direct dep
-# is near-zero build cost + adds NO new crate. Pure-Rust, no C/openssl/ring.
-# Signing is fully headless-testable (sign->verify round-trip) â€” chosen over
-# shelling out to the `minisign` binary (DAU-hostile: install + keygen +
-# password; not CI-testable) per the Session-34 3-lens DAU-safety gremium.
-ed25519-dalek = "2"
-
-# MAR-02 â€” in-process minisign release SIGNING (the DAU-friendly keygen + sign,
-# no external `minisign` binary). minisign's modern signature format prehashes
-# the payload with BLAKE2b-512 before the ed25519 sign; `minisign-verify`
-# requires that prehashed variant (allow_legacy=false in our verify path), so we
-# need BLAKE2b here too. RustCrypto, pure-Rust, MSVC-clean, no C â€” already in the
-# tree transitively via `minisign-verify`, so this is near-zero build cost.
-blake2 = "0.10"
-
-# A3-01 `neoth transfer` â€” X25519 ECDH for the recipient-encrypted memory
-# bundle (ephemeral-static DH â†’ HKDF-SHA256 â†’ AES-256-GCM). RustCrypto
-# family, same vintage as ed25519-dalek; pure-Rust, MSVC-clean, no C deps.
-# `static_secrets` exposes `StaticSecret` (off by default in 2.x) which we use
-# for both the ephemeral and the recipient key.
-x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
-
-# TD-02 CalDAV â€” WebDAV `multistatus` XML parsing (REPORT calendar-query for
-# VTODO). Pure-Rust, no C deps. Pinned >=0.41 for RUSTSEC-2026-0194/-0195
-# (quadratic attr-check + NsReader memory DoS, both fixed in 0.41); the
-# transitive <0.41 copies (feed-rs, wayland-scanner) are ignored in
-# .cargo/audit.toml + deny.toml until those upstreams bump.
-quick-xml = "0.41"
-
-# GOLD-ADOPT-26 â€” RSS / Atom / JSON-Feed parsing for the feed poller cron.
-# Pure-Rust (no C deps), handles RSS 0.9x/1.0/2.0 + Atom 0.3/1.0 + JSON Feed 1.x.
-feed-rs = "2"
-
-# GOLD-ADOPT-04 â€” CSS-selector HTML extraction (servo html5ever + selectors).
-# Pure-Rust, no C deps. The only CSS-capable DOM parser in the tree.
-scraper = { version = "0.27", default-features = false }
-
-# N-3 Workstream D (Session 23) â€” base64url-NOPAD encoding for the
-# localhost API bearer token. 32 random bytes â†’ 43-char URL-safe
-# token stored at ~/.neoth/n8n_api_token.
-base64 = "0.22"
-
-# C-04b Phase 1 (Session 27) â€” Firefox `logins.json` decrypt.
-# Firefox stores credentials in PBES2 envelopes (PBKDF2-SHA256 +
-# AES-256-CBC). The Session 26 handoff incorrectly suggested
-# AES-256-GCM; Firefox / NSS has used CBC for `key4.db` since
-# the format-4 switch (NSS 3.40+). All RustCrypto family â€” no
-# openssl, no `ring`. `subtle` for constant-time HMAC compare
-# during PBKDF2 verification.
-aes    = "0.8"
-# A3-01 transfer bundles use AES-256-GCM cross-platform; Windows Chrome
-# credential decrypt reuses the same crate below the cfg(windows) code path.
-aes-gcm = "0.10"
-# GOLD-ADAPT-CRYPTO-04 â€” WAL/config AEAD-at-rest. AES-256-GCM-SIV is
-# nonce-MISUSE-resistant (RustCrypto, same umbrella as aes-gcm): a nonce
-# collision on a resume/crash degrades to IND-CPA, not GCM key recovery â€” the
-# right choice for an at-rest log that resumes across restarts.
-aes-gcm-siv = "0.11"
-cbc    = { version = "0.1", features = ["block-padding"] }
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
-subtle = "2"
-
-# C-04b Phase 2 chunk 1 (Session 27) â€” ASN.1 BER decode for the
-# Firefox SECITEM envelope wrapping each encrypted logins.json
-# field. Pure-Rust, single-shape parse â€” we only destructure
-# SEQUENCE { OCTET STRING, SEQUENCE { OID, OCTET STRING },
-# OCTET STRING }. Algorithm dispatched at runtime by OID so
-# both AES-256-CBC (modern) and 3DES-EDE-CBC (legacy) envelopes
-# round-trip through the same parser.
-simple_asn1 = "0.6"
-
-# K-Repo-Map Phase 1 (Session 14 Pick #13) â€” fast filesystem walker that
-# honours .gitignore / .ignore / .neothignore semantics, parallel by
-# default, used in NEOTH's first-pass code-map scan. Pure Rust, no
-# C-dependencies â€” Tree-sitter grammars land in K-Repo-Map Phase 2
-# when the symbol-extraction pipeline arrives. `ignore` is the engine
-# ripgrep uses, battle-tested at scale.
-ignore = "0.4"
-# OS-backed CSPRNG for HMAC key generation. Fail-closed: if the OS RNG is
-# unavailable (kernel without /dev/urandom, locked-down container, ...),
-# `load_or_init_key` errors instead of falling back to weak entropy.
-# Phase 33b SP-2 post-review fix per Codex audit item #3.
-getrandom = "0.2"
-
-# Phase 11b (Cron scheduler) -- cron-expression parser (5-field standard syntax).
-# `cron` crate is pure Rust, no system cron daemon needed. NEOTH runs the
-# scheduler inside its own tokio runtime per the self-contained hard rule.
-cron       = "0.12"
-chrono-tz  = "0.10"
-
-# Day-5 (LLM provider trait) -- async fn in trait + dyn dispatch.
-# Rust 2024 stabilises AFIT but `dyn Trait` with async fns still needs the
-# attribute macro (return-type-notation alternative is uglier).
-async-trait = "0.1"
-# GR-04 stream-wrap (Session 24 agent-3 design): pin-project for the
-# StreamGuard Drop impl that settles the circuit-breaker permit on
-# stream completion (success / failure / premature consumer drop).
-pin-project = "1"
-
-# Day-5b (REST provider adapters) -- OpenAI, Gemini, OpenAI-compat.
-# `rustls-tls` only (no openssl dep, no platform certs ambiguity).
-# `json` feature gives serde-backed request/response helpers.
-# `stream` feature enables byte-stream responses for SSE parsing in Phase 5C.
-reqwest      = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking", "socks", "multipart"] }
-futures-util = "0.3"
-
-# A7 inbound webhook listener -- minimal HTTP/1.1 server on 127.0.0.1
-# routing GET/POST /webhook calls through `channels::webhook_router`
-# into the existing verify primitives + WhatsApp payload decoder.
-# `http1` only (no TLS, no HTTP/2) since the operator's reverse proxy
-# terminates TLS upstream. `server` feature gives Serve trait; the
-# rest of hyper is unused. hyper-util provides the tokio runtime
-# adapter we need to spawn connections.
-hyper       = { version = "1.5", features = ["http1", "server"] }
-hyper-util  = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
-
-# CDX-06 Slack Socket-Mode WS client -- outbound WSS dialer + per-frame
-# read/write/ACK loop. rustls-only to keep the openssl-free posture
-# (no platform-cert ambiguity); connect feature handles the TLS handshake
-# + URL parse against the wss:// URL Slack hands back from
-# apps.connections.open. Used exclusively by channels/slack.rs.
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-
-# Day-7 (Telegram channel) -- official tokio-based bot framework.
-# `webhooks` feature deferred; long-polling is the default for v0.1 and
-# does not require operator to expose a public HTTPS endpoint.
-teloxide     = { version = "0.17", default-features = false, features = ["ctrlc_handler", "rustls"] }
-
-# Day-11 (SQLite recall views) -- bundled feature means rusqlite ships its own
-# libsqlite3, no system dep. NEOTH stays self-contained per the hard rule.
-# FTS5 deferred to Day-11b; the bundled build does include it when we want it.
-#
-# GOLD-FEAT-10: pinned to 0.37 (libsqlite3-sys 0.30) so the `matrix-channel`
-# feature's matrix-sdk-sqlite store (rusqlite ^0.37) shares ONE `links="sqlite3"`
-# native lib with us â€” two rusqlite majors cannot coexist (cargo forbids two
-# crates linking the same native lib). Bumping here is the single source of the
-# sqlite version across the whole workspace.
-rusqlite     = { version = "0.37", features = ["bundled"] }
-
-# V10-08 (Workstream E) â€” HNSW embedding index. Pure-Rust approximate nearest-
-# neighbour index. Replaces the O(N) cosine scan in memory/embeddings.rs for
-# corpora beyond ~50k vectors. Persisted as a bincode snapshot alongside the
-# WAL dir at <neoth_home>/embeddings.hnsw. bincode 1.x chosen for the stable
-# 1.x API; hnsw_rs 0.3 is the pure-Rust HNSW engine (self-contained rule OK).
-hnsw_rs = "0.3"
-bincode  = "1"
-
-# Day-14a (Local Qwen inference -- skeleton) -- model + tokenizer download
-# from Hugging Face. candle (the actual inference runtime) is added in D14b
-# so this phase doesn't bring in the heavy GPU build deps.
-hf-hub       = { version = "0.5", default-features = false, features = ["tokio", "rustls-tls"] }
-tokenizers   = { version = "0.20", default-features = false, features = ["onig"] }
-
-# Day-14b (Local Qwen forward pass) -- candle CPU build. CUDA / Metal are
-# opt-in features the operator can flip; defaults stay CPU-only so the
-# fresh-install path stays self-contained.
-candle-core         = { version = "0.8", default-features = false }
-candle-nn           = { version = "0.8", default-features = false }
-candle-transformers = { version = "0.8", default-features = false }
-
-# R-9 Multimodal Phase 2: pure-Rust PDF text extraction. pdf-extract is
-# more limited than pdfium (no form fields, no OCR) but ships without a
-# system-level binary, so operators get working text extraction without a
-# separate install. Form editing and OCR are not exposed capabilities.
-pdf-extract         = "0.9"
-# R-9 audio: pure-Rust audio decode (wav, mp3, flac, ogg). Doesn't bring in
-# any system codec libraries â€” decoders are Rust-native.
-symphonia           = { version = "0.5", default-features = false, features = ["wav", "mp3", "flac", "isomp4", "aac", "pcm"] }
-# GOLD-ADAPT-HANDY-01: band-limited FFT resampler. Replaces the linear
-# interpolation in audio.rs. No system deps â€” pure Rust FFT (rustfft inside).
-rubato              = "0.16"
-# GOLD-ADAPT-SPEAKR-02c: real-input FFT for the speaker-embedding front-end
-# (log-mel spectrogram). Already in the tree transitively via rubato; promoted
-# to a direct dep. Pure Rust, no system deps.
-realfft             = "3"
-# GOLD-ADAPT-HANDY-03: STT post-processing â€” fuzzy custom-word correction.
-# strsim: Levenshtein + other string metrics; natural: Soundex phonetics.
-# Both are pure Rust with no system deps.
-strsim              = "0.11"
-natural             = "0.5"
-# R-9 vision: pure-Rust image decode (PNG, JPEG, WebP, GIF). No system deps.
-image               = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
-# GOLD-ADAPT-ODY-24 â€” terminal QR code rendering for companion LAN pairing.
-# `default-features = false` avoids pulling the heavy `image` dep twice.
-# Unicode Dense1x2 block art renderer works without any image feature.
-qrcode              = { version = "0.14", default-features = false }
-# Hardware probe â€” cross-platform CPU + RAM + (later) GPU info. Pure
-# Rust, supports Windows + Linux + macOS without system deps. Used by
-# the onboarding wizard so operators see what their hardware can do.
-sysinfo             = { version = "0.32", default-features = false, features = ["system", "disk"] }
-# D14b Phase 2b: top-p sampling needs WeightedIndex + a seedable RNG.
-# Pin to 0.9 so we share candle-core's transitive `rand` and don't pull a
-# duplicate version into the dep graph.
-rand                = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
-# TERMIX-01/02 (feature `ssh-tunnel`, default OFF). `ring` backend (NOT aws-lc-rs)
-# so it builds on Windows MSVC with no cmake/nasm. `russh::keys` (merged-in, no
-# separate russh-keys crate) supplies the ssh-key PublicKey/PrivateKey types.
-russh               = { version = "0.61", default-features = false, features = ["ring", "flate2", "rsa"], optional = true }
-# D14b Phase 2c streaming: wrap a tokio mpsc::Receiver as a Stream.
-tokio-stream        = { version = "0.1", default-features = false }
-# Phase 5C streaming -- async-stream macro builds Stream impls from async {}
-# blocks with yield. The hand-rolled Stream impl alternative is ~40 LOC of
-# poll boilerplate per adapter; the macro is the idiomatic choice.
-async-stream = "0.3"
-
-# Plugin SDK -- local workspace path plus the exact registry version. Cargo
-# removes `path` when packaging `neoth`, so the SDK must already be visible in
-# the crates.io index before the public package can be packaged or published.
-# `_host` feature flips on the host-only PermissionToken::mint() ctor.
-neoth-plugin-sdk = { path = "../neoth-plugin-sdk", version = "0.1.0-alpha.0", features = ["_host"] }
-
-# V10-04 GA blocker â€” wasmtime runtime for WASM plugin host. Optional
-# (feature `wasm-plugin-host`). Pinned to 26.x; the 2026 API is stable
-# enough for the Engine + Store + Linker surface we need. Compile-cost:
-# ~30s + ~80 MiB of transitive deps so a default `cargo build` skips it.
-wasmtime = { version = "36", default-features = false, features = ["cranelift", "runtime"], optional = true }
-
-# PC-01 (clipboard slice, feature `os-clipboard`) â€” cross-platform OS clipboard.
-# `default-features = false` drops the `image-data` feature (we only ever move
-# UTF-8 text), avoiding the `image` crate + its transitive tree. We DO opt back
-# into `wl-clipboard-rs` so a modern Wayland-only Linux desktop (GNOME/Wayland
-# without XWayland â€” the default on many current distros) has a working backend;
-# the always-compiled `x11rb` backend (pure-Rust X11 over a socket â€” no libxcb
-# dev headers at build time) covers X11 sessions. Both backends are Linux-cfg'd,
-# so the Windows/macOS build is unaffected. A missing display still surfaces as
-# an `Err` from `Clipboard::new()` at RUNTIME â†’ mapped to `ClipboardUnavailable`
-# (never a panic, never a build failure).
-arboard = { version = "3", default-features = false, features = ["wl-clipboard-rs"], optional = true }
-
-# GOLD-FEAT-10 â€” Matrix E2EE client (feature `matrix-channel`, off by default).
-# `e2e-encryption` (vodozemac) + `sqlite` (the persistent crypto/state store â€”
-# REQUIRED for E2EE key continuity across daemon restarts; an in-memory store
-# would regenerate the device identity each restart and break decryption). No
-# `bundled-sqlite` here: NEOTH's own rusqlite 0.37 `bundled` already bundles the
-# now-shared libsqlite3-sys 0.35, so the single native lib is bundled exactly
-# once. TLS is matrix-sdk's internal default â€” 0.18 exposes no rustls/native-tls
-# feature toggle to set.
-matrix-sdk = { version = "0.18", features = ["e2e-encryption", "sqlite"], optional = true }
-
-# Unix-only: mlock for SecretString pages, umask at daemon startup.
-# Inline libc shim in main.rs covered umask; the libc crate is required for
-# mlock/munlock symbol resolution at link time. Day-2+ depends on the same
-# crate for any future syscall.
-[target.'cfg(unix)'.dependencies]
-libc        = "0.2"
-
-# Windows DACL restriction is implemented via icacls.exe subprocess in
-# src/wal/win_acl.rs. icacls ships with every Windows install since XP and
-# avoids 100+ LOC of unsafe Win32 wiring. See OPEN_DECISIONS.md D-008 +
-# Platform Engineer review. If a `windows` crate dep becomes worthwhile later
-# (e.g. for atomic SECURITY_ATTRIBUTES on file create), revisit.
-
-# Windows-only: VirtualLock for SecretString page-pinning, mirrors the
-# Linux libc::mlock path. Without this, secrets sit swappable to
-# pagefile.sys / hiberfil.sys on Windows â€” a real privacy gap because
-# Windows is Alex's primary dev platform (per CLAUDE.md). Minimal
-# feature footprint (Win32_System_Memory only) keeps the dep size
-# under control. K-Sec-2 / 2026-05-17.
-[target.'cfg(windows)'.dependencies]
-# Win32_System_Memory: K-Sec-2 VirtualLock for SecretString (2026-05-17).
-# Win32_Security_Cryptography: K-Sec-4 DPAPI wrap for HMAC key (2026-05-22).
-# Win32_Security_Authorization: E-11 SetEntriesInAclW + SetNamedSecurityInfoW + BuildExplicitAccessWithNameW (2026-05-24).
-# Win32_Storage_FileSystem: E-12 FlushFileBuffers WAL durability (2026-05-24).
-# Win32_System_JobObjects: NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 residual-2 â€” Job Object process-tree containment for the shell verifier sandbox (2026-07-10).
-windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_Security_Credentials", "Win32_System_JobObjects"] }
-# Win32_Security_Credentials: D003-KEYCHAIN-01 CredWriteW/CredReadW/CredDeleteW (2026-07-10).
-
-# C-03b Linux (Session 28) â€” Secret Service (DBus) client for Chrome's
-# AES-128-CBC password envelope. Chrome on Linux stores the symmetric
-# key inside the operator's login keyring (GNOME Keyring or KWallet)
-# under a known schema attribute; AES-CBC decrypt uses PBKDF2-SHA1
-# iter=1 with the hardcoded "saltysalt" salt. The `secret-service`
-# crate is pure-Rust (transitively depends on `zbus`, also pure-Rust
-# UNIX sockets â€” no libdbus C-dep needed). The tokio feature gives us
-# async compatibility with the rest of the daemon.
-[target.'cfg(target_os = "linux")'.dependencies]
-secret-service = { version = "4", features = ["rt-tokio-crypto-rust"] }
-
-# C-03b macOS (Session 28) â€” Keychain Services binding for Chrome's
-# AES-128-CBC password envelope. macOS Chrome stores the per-installation
-# AES key password in the operator's Login Keychain under
-# service="Chrome Safe Storage" (or Chromium/Brave variants) with
-# account="Chrome". `security-framework` is Apple's de-facto Rust
-# binding, RustCrypto-adjacent maintenance. AES-CBC decrypt uses
-# PBKDF2-SHA1 iter=1003 (NOT 1 like Linux â€” pinned hardcoded by
-# Chrome on macOS for legacy compatibility) with the same
-# `saltysalt` salt.
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
-
-# B-6 Item 3f (Session 21) â€” PTY stealth for interactive subprocess.
-# `portable-pty` is the cross-platform PTY crate WezTerm uses (Wez Furlong).
-# It abstracts Windows ConPTY (Win10+) + Linux pty + macOS pty behind one
-# trait. NEOTH uses it for the subprocess backend of `claude` when tmux is
-# absent and we still need a real PTY so the CLI doesn't enter CI-detection
-# mode + render non-interactive output. Optional feature so the default
-# release artefact does not ship the dep unless the operator opts into the
-# PTY-subprocess backend.
-[dependencies.portable-pty]
-version = "0.8"
-optional = true
-
-[dev-dependencies]
-tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
-# tempfile moved to regular [dependencies] above for the V03-09
-# Phase 2b apply path. Dev-deps inherit the regular dep so existing
-# `use tempfile::*` test imports keep working.
-# CDX-04: HTTP mock server for round-trip tests against tools/web_*,
-# tools/arxiv, tools/github. Hits a live 127.0.0.1 port so the
-# reqwest-backed code paths actually run rather than just the
-# parser. Matches the same allowlist category as webhook_listener's
-# self-tests (inbound-only â€” no_outbound_network gate excludes it).
-wiremock     = "0.6"
-# Operator-real CLI tests â€” spawn the built `neothd` binary + assert
-# on stdout/stderr/exit codes, not just the runner-fn. Proves Clap
-# parsing + binary entry + stdio wiring beyond what library tests
-# can reach. Added 2026-05-26 after Alex flagged the gap between
-# "CLI runner called from test" and "real binary invoked".
-assert_cmd   = "2"
-predicates   = "3"
-# Audit 2026-05-19 (Session 15) â€” `check_credential_age` doctor diagnostic
-# tests need to age a fresh tempfile by 200/400 days. `std::fs` exposes no
-# mtime setter on stable Rust; `filetime` is the canonical pure-Rust shim
-# and already lives in the dep graph transitively, so this pin is zero-cost.
-filetime     = "0.2"
-# Round-3 v0.4 GR-11 (Session 28) â€” property/fuzz testing for the
-# webhook signature canonicalization + timestamp-window logic in
-# `channels::webhook_verify`. Pure-Rust, no proc-macro chain
-# explosion; lives at dev-dep so it doesn't ship with the binary.
-proptest     = "1"
-
-# Day-2 followups will add:
-# memmap2 (mmap reader), hmac + sha2 (compaction HMAC), dateparser
-# Day-5 (Claude CLI adapter):
-# reqwest, eventsource-stream, tiktoken-rs
-# Day-7 (Telegram): teloxide
-# Day-8 (WhatsApp): hyper
-# Day-9 (Slack): slack-morphism
-# Day-11 (sqlite views): rusqlite or sqlx
-# Day-14 (embedding): candle-core, candle-transformers, hf-hub, tokenizers
-# Day-17 (Tailslayer): tailslayer (feature-gated)
-# Day-23 (WASM plugin host): wasmtime
-# Day-23 (Phase-3 migration -- separate `neoth-migrate` bin, feature = "migrate"):
-#   pulldown-cmark (Markdown stores), lance (LanceDB Arrow), rusqlite (FTS5+cq),
-#   git2 (github-backup). Pure-Rust toolchain -- NO Python dependency.
-#   See PLAN/RUNBOOK_phase3_cutover.md Day 63.
-# DO NOT add these before their day arrives.
-
-# Profiles + workspace declaration live at ../Cargo.toml (since O-3 split).
+# Wizard UX deps -- optional, ãù¶‰ËkºwµçuÕÑ¥°€ô€ˆÀ¸Ìˆ((ŒÜ¥¹‰½Õ¹İ•‰¡½½¬±¥ÍÑ•¹•È€´´µ¥¹¥µ…°!QQ@¼Ä¸ÄÍ•ÉÙ•È½¸€ÄÈÜ¸À¸À¸Ä(ŒÉ½ÕÑ¥¹œP½A=MP€½İ•‰¡½½¬…±±ÌÑ¡É½Õ ¡…¹¹•±Ìèéİ•‰¡½½­}É½ÕÑ•É€(Œ¥¹Ñ¼Ñ¡”•á¥ÍÑ¥¹œÙ•É¥™äÁÉ¥µ¥Ñ¥Ù•Ì€¬]¡…ÑÍÁÀÁ…å±½…‘•½‘•È¸(Œ¡ÑÑÀÅ€½¹±ä€¡¹¼Q1L°¹¼!QQ@¼È¤Í¥¹”Ñ¡”½Á•É…Ñ½ÈÌÉ•Ù•ÉÍ”ÁÉ½áä(ŒÑ•Éµ¥¹…Ñ•ÌQ1LÕÁÍÑÉ•…´¸Í•ÉÙ•É€™•…ÑÕÉ”¥Ù•ÌM•ÉÙ”ÑÉ…¥ĞìÑ¡”(ŒÉ•ÍĞ½˜¡åÁ•È¥ÌÕ¹ÕÍ•¸¡åÁ•ÈµÕÑ¥°ÁÉ½Ù¥‘•ÌÑ¡”Ñ½­¥¼ÉÕ¹Ñ¥µ”(Œ…‘…ÁÑ•Èİ”¹••Ñ¼ÍÁ…İ¸½¹¹•Ñ¥½¹Ì¸)¡åÁ•È€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÄ¸Ôˆ°™•…ÑÕÉ•Ì€ôl‰¡ÑÑÀÄˆ°€‰Í•ÉÙ•È‰tô)¡åÁ•ÈµÕÑ¥°€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸Äˆ°™•…ÑÕÉ•Ì€ôl‰Ñ½­¥¼‰tô)¡ÑÑÀµ‰½‘äµÕÑ¥°€ô€ˆÀ¸Äˆ((Œ`´ÀØM±…¬M½­•Ğµ5½‘”]L±¥•¹Ğ€´´½ÕÑ‰½Õ¹]ML‘¥…±•È€¬Á•Èµ™É…µ”(ŒÉ•…½İÉ¥Ñ”½,±½½À¸ÉÕÍÑ±Ìµ½¹±äÑ¼­••ÀÑ¡”½Á•¹ÍÍ°µ™É•”Á½ÍÑÕÉ”(Œ€¡¹¼Á±…Ñ™½É´µ•ÉĞ…µ‰¥Õ¥Ñä¤ì½¹¹•Ğ™•…ÑÕÉ”¡…¹‘±•ÌÑ¡”Q1L¡…¹‘Í¡…­”(Œ€¬UI0Á…ÉÍ”……¥¹ÍĞÑ¡”İÍÌè¼¼UI0M±…¬¡…¹‘Ì‰…¬™É½´(Œ…ÁÁÌ¹½¹¹•Ñ¥½¹Ì¹½Á•¸¸UÍ••á±ÕÍ¥Ù•±ä‰ä¡…¹¹•±Ì½Í±…¬¹ÉÌ¸)Ñ½­¥¼µÑÕ¹ÍÑ•¹¥Ñ”€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ÈĞˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰½¹¹•Ğˆ°€‰ÉÕÍÑ±ÌµÑ±Ìµİ•‰Á­¤µÉ½½ÑÌ‰tô((Œ…ä´Ü€¡Q•±•É…´¡…¹¹•°¤€´´½™™¥¥…°Ñ½­¥¼µ‰…Í•‰½Ğ™É…µ•İ½É¬¸(Œİ•‰¡½½­Í€™•…ÑÕÉ”‘•™•ÉÉ•ì±½¹œµÁ½±±¥¹œ¥ÌÑ¡”‘•™…Õ±Ğ™½ÈØÀ¸Ä…¹(Œ‘½•Ì¹½ĞÉ•ÅÕ¥É”½Á•É…Ñ½ÈÑ¼•áÁ½Í”„ÁÕ‰±¥Œ!QQAL•¹‘Á½¥¹Ğ¸)Ñ•±½á¥‘”€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ÄÜˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰ÑÉ±}¡…¹‘±•Èˆ°€‰ÉÕÍÑ±Ì‰tô((Œ…ä´ÄÄ€¡ME1¥Ñ”É•…±°Ù¥•İÌ¤€´´‰Õ¹‘±•™•…ÑÕÉ”µ•…¹ÌÉÕÍÅ±¥Ñ”Í¡¥ÁÌ¥ÑÌ½İ¸(Œ±¥‰ÍÅ±¥Ñ”Ì°¹¼ÍåÍÑ•´‘•À¸9=Q ÍÑ…åÌÍ•±˜µ½¹Ñ…¥¹•Á•ÈÑ¡”¡…ÉÉÕ±”¸(ŒQLÔ‘•™•ÉÉ•Ñ¼…ä´ÄÅˆìÑ¡”‰Õ¹‘±•‰Õ¥±‘½•Ì¥¹±Õ‘”¥Ğİ¡•¸İ”İ…¹Ğ¥Ğ¸(Œ(Œ=1µP´ÄÀèÁ¥¹¹•Ñ¼€À¸ÌÜ€¡±¥‰ÍÅ±¥Ñ”ÌµÍåÌ€À¸ÌÀ¤Í¼Ñ¡”µ…ÑÉ¥àµ¡…¹¹•±€(Œ™•…ÑÕÉ”Ìµ…ÑÉ¥àµÍ‘¬µÍÅ±¥Ñ”ÍÑ½É”€¡ÉÕÍÅ±¥Ñ”xÀ¸ÌÜ¤Í¡…É•Ì=9±¥¹­Ìô‰ÍÅ±¥Ñ”Ì‰€(Œ¹…Ñ¥Ù”±¥ˆİ¥Ñ ÕÌƒŠPÑİ¼ÉÕÍÅ±¥Ñ”µ…©½ÉÌ…¹¹½Ğ½•á¥ÍĞ€¡…É¼™½É‰¥‘ÌÑİ¼(ŒÉ…Ñ•Ì±¥¹­¥¹œÑ¡”Í…µ”¹…Ñ¥Ù”±¥ˆ¤¸	ÕµÁ¥¹œ¡•É”¥ÌÑ¡”Í¥¹±”Í½ÕÉ”½˜Ñ¡”(ŒÍÅ±¥Ñ”Ù•ÉÍ¥½¸…É½ÍÌÑ¡”İ¡½±”İ½É­ÍÁ…”¸)ÉÕÍÅ±¥Ñ”€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ÌÜˆ°™•…ÑÕÉ•Ì€ôl‰‰Õ¹‘±•‰tô((ŒXÄÀ´Àà€¡]½É­ÍÑÉ•…´¤ƒŠP!9M\•µ‰•‘‘¥¹œ¥¹‘•à¸AÕÉ”µIÕÍĞ…ÁÁÉ½á¥µ…Ñ”¹•…É•ÍĞ´(Œ¹•¥¡‰½ÕÈ¥¹‘•à¸I•Á±…•ÌÑ¡”<¡8¤½Í¥¹”Í…¸¥¸µ•µ½Éä½•µ‰•‘‘¥¹Ì¹ÉÌ™½È(Œ½ÉÁ½É„‰•å½¹øÔÁ¬Ù•Ñ½ÉÌ¸A•ÉÍ¥ÍÑ•…Ì„‰¥¹½‘”Í¹…ÁÍ¡½Ğ…±½¹Í¥‘”Ñ¡”(Œ]0‘¥È…Ğ€ñ¹•½Ñ¡}¡½µ”ø½•µ‰•‘‘¥¹Ì¹¡¹ÍÜ¸‰¥¹½‘”€Ä¹à¡½Í•¸™½ÈÑ¡”ÍÑ…‰±”(Œ€Ä¹àA$ì¡¹Íİ}ÉÌ€À¸Ì¥ÌÑ¡”ÁÕÉ”µIÕÍĞ!9M\•¹¥¹”€¡Í•±˜µ½¹Ñ…¥¹•ÉÕ±”=,¤¸)¡¹Íİ}ÉÌ€ô€ˆÀ¸Ìˆ)‰¥¹½‘”€€ô€ˆÄˆ((Œ…ä´ÄÑ„€¡1½…°Eİ•¸¥¹™•É•¹”€´´Í­•±•Ñ½¸¤€´´µ½‘•°€¬Ñ½­•¹¥é•È‘½İ¹±½…(Œ™É½´!Õ¥¹œ…”¸…¹‘±”€¡Ñ¡”…ÑÕ…°¥¹™•É•¹”ÉÕ¹Ñ¥µ”¤¥Ì…‘‘•¥¸ÄÑˆ(ŒÍ¼Ñ¡¥ÌÁ¡…Í”‘½•Í¸Ğ‰É¥¹œ¥¸Ñ¡”¡•…ÙäAT‰Õ¥±‘•ÁÌ¸)¡˜µ¡Õˆ€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸Ôˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰Ñ½­¥¼ˆ°€‰ÉÕÍÑ±ÌµÑ±Ì‰tô)Ñ½­•¹¥é•ÉÌ€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ÈÀˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰½¹¥œ‰tô((Œ…ä´ÄÑˆ€¡1½…°Eİ•¸™½Éİ…ÉÁ…ÍÌ¤€´´…¹‘±”AT‰Õ¥±¸U€¼5•Ñ…°…É”(Œ½ÁĞµ¥¸™•…ÑÕÉ•ÌÑ¡”½Á•É…Ñ½È…¸™±¥Àì‘•™…Õ±ÑÌÍÑ…äATµ½¹±äÍ¼Ñ¡”(Œ™É•Í µ¥¹ÍÑ…±°Á…Ñ ÍÑ…åÌÍ•±˜µ½¹Ñ…¥¹•¸)…¹‘±”µ½É”€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸àˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”ô)…¹‘±”µ¹¸€€€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸àˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”ô)…¹‘±”µÑÉ…¹Í™½Éµ•ÉÌ€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸àˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”ô((ŒH´ä5Õ±Ñ¥µ½‘…°A¡…Í”€ÈèÁÕÉ”µIÕÍĞAÑ•áĞ•áÑÉ…Ñ¥½¸¸Á‘˜µ•áÑÉ…Ğ¥Ì(Œµ½É”±¥µ¥Ñ•Ñ¡…¸Á‘™¥Õ´€¡¹¼™½É´™¥•±‘Ì°¹¼=H¤‰ÕĞÍ¡¥ÁÌİ¥Ñ¡½ÕĞ„(ŒÍåÍÑ•´µ±•Ù•°‰¥¹…Éä°Í¼½Á•É…Ñ½ÉÌ•Ğİ½É­¥¹œÑ•áĞ•áÑÉ…Ñ¥½¸İ¥Ñ¡½ÕĞ„(ŒÍ•Á…É…Ñ”¥¹ÍÑ…±°¸½É´•‘¥Ñ¥¹œ…¹=H…É”¹½Ğ•áÁ½Í•…Á…‰¥±¥Ñ¥•Ì¸)Á‘˜µ•áÑÉ…Ğ€€€€€€€€€ô€ˆÀ¸äˆ(ŒH´ä…Õ‘¥¼èÁÕÉ”µIÕÍĞ…Õ‘¥¼‘•½‘”€¡İ…Ø°µÀÌ°™±…Œ°½œ¤¸½•Í¸Ğ‰É¥¹œ¥¸(Œ…¹äÍåÍÑ•´½‘•Œ±¥‰É…É¥•ÌƒŠP‘•½‘•ÉÌ…É”IÕÍĞµ¹…Ñ¥Ù”¸)ÍåµÁ¡½¹¥„€€€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸Ôˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰İ…Øˆ°€‰µÀÌˆ°€‰™±…Œˆ°€‰¥Í½µÀĞˆ°€‰……Œˆ°€‰Á´‰tô(Œ=1µAPµ!9d´ÀÄè‰…¹µ±¥µ¥Ñ•PÉ•Í…µÁ±•È¸I•Á±…•ÌÑ¡”±¥¹•…È(Œ¥¹Ñ•ÉÁ½±…Ñ¥½¸¥¸…Õ‘¥¼¹ÉÌ¸9¼ÍåÍÑ•´‘•ÁÌƒŠPÁÕÉ”IÕÍĞP€¡ÉÕÍÑ™™Ğ¥¹Í¥‘”¤¸)ÉÕ‰…Ñ¼€€€€€€€€€€€€€€ô€ˆÀ¸ÄØˆ(Œ=1µAPµMA-H´ÀÉŒèÉ•…°µ¥¹ÁÕĞP™½ÈÑ¡”ÍÁ•…­•Èµ•µ‰•‘‘¥¹œ™É½¹Ğµ•¹(Œ€¡±½œµµ•°ÍÁ•ÑÉ½É…´¤¸±É•…‘ä¥¸Ñ¡”ÑÉ•”ÑÉ…¹Í¥Ñ¥Ù•±äÙ¥„ÉÕ‰…Ñ¼ìÁÉ½µ½Ñ•(ŒÑ¼„‘¥É•Ğ‘•À¸AÕÉ”IÕÍĞ°¹¼ÍåÍÑ•´‘•ÁÌ¸)É•…±™™Ğ€€€€€€€€€€€€€ô€ˆÌˆ(Œ=1µAPµ!9d´ÀÌèMQPÁ½ÍĞµÁÉ½•ÍÍ¥¹œƒŠP™ÕééäÕÍÑ½´µİ½É½ÉÉ•Ñ¥½¸¸(ŒÍÑÉÍ¥´è1•Ù•¹Í¡Ñ•¥¸€¬½Ñ¡•ÈÍÑÉ¥¹œµ•ÑÉ¥Ìì¹…ÑÕÉ…°èM½Õ¹‘•àÁ¡½¹•Ñ¥Ì¸(Œ	½Ñ …É”ÁÕÉ”IÕÍĞİ¥Ñ ¹¼ÍåÍÑ•´‘•ÁÌ¸)ÍÑÉÍ¥´€€€€€€€€€€€€€€ô€ˆÀ¸ÄÄˆ)¹…ÑÕÉ…°€€€€€€€€€€€€€ô€ˆÀ¸Ôˆ(ŒH´äÙ¥Í¥½¸èÁÕÉ”µIÕÍĞ¥µ…”‘•½‘”€¡A9°)A°]•‰@°%¤¸9¼ÍåÍÑ•´‘•ÁÌ¸)¥µ…”€€€€€€€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ÈÔˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰Á¹œˆ°€‰©Á•œˆ°€‰İ•‰Àˆ°€‰¥˜‰tô(Œ=1µAPµ=d´ÈĞƒŠPÑ•Éµ¥¹…°EH½‘”É•¹‘•É¥¹œ™½È½µÁ…¹¥½¸18Á…¥É¥¹œ¸(Œ‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í•€…Ù½¥‘ÌÁÕ±±¥¹œÑ¡”¡•…Ùä¥µ…•€‘•ÀÑİ¥”¸(ŒU¹¥½‘”•¹Í”ÅàÈ‰±½¬…ÉĞÉ•¹‘•É•Èİ½É­Ìİ¥Ñ¡½ÕĞ…¹ä¥µ…”™•…ÑÕÉ”¸)ÅÉ½‘”€€€€€€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ÄĞˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”ô(Œ!…É‘İ…É”ÁÉ½‰”ƒŠPÉ½ÍÌµÁ±…Ñ™½É´AT€¬I4€¬€¡±…Ñ•È¤AT¥¹™¼¸AÕÉ”(ŒIÕÍĞ°ÍÕÁÁ½ÉÑÌ]¥¹‘½İÌ€¬1¥¹Õà€¬µ…=Lİ¥Ñ¡½ÕĞÍåÍÑ•´‘•ÁÌ¸UÍ•‰ä(ŒÑ¡”½¹‰½…É‘¥¹œİ¥é…ÉÍ¼½Á•É…Ñ½ÉÌÍ•”İ¡…ĞÑ¡•¥È¡…É‘İ…É”…¸‘¼¸)ÍåÍ¥¹™¼€€€€€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ÌÈˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰ÍåÍÑ•´ˆ°€‰‘¥Í¬‰tô(ŒÄÑˆA¡…Í”€ÉˆèÑ½ÀµÀÍ…µÁ±¥¹œ¹••‘Ì]•¥¡Ñ•‘%¹‘•à€¬„Í••‘…‰±”I9¸(ŒA¥¸Ñ¼€À¸äÍ¼İ”Í¡…É”…¹‘±”µ½É”ÌÑÉ…¹Í¥Ñ¥Ù”É…¹‘€…¹‘½¸ĞÁÕ±°„(Œ‘ÕÁ±¥…Ñ”Ù•ÉÍ¥½¸¥¹Ñ¼Ñ¡”‘•ÀÉ…Á ¸)É…¹€€€€€€€€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸äˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰ÍÑˆ°€‰ÍÑ‘}É¹œˆ°€‰½Í}É¹œ‰tô(ŒQI5%`´ÀÄ¼ÀÈ€¡™•…ÑÕÉ”ÍÍ µÑÕ¹¹•±€°‘•™…Õ±Ğ=¤¸É¥¹€‰…­•¹€¡9=P…İÌµ±ŒµÉÌ¤(ŒÍ¼¥Ğ‰Õ¥±‘Ì½¸]¥¹‘½İÌ5MYİ¥Ñ ¹¼µ…­”½¹…Í´¸ÉÕÍÍ èé­•åÍ€€¡µ•É•µ¥¸°¹¼(ŒÍ•Á…É…Ñ”ÉÕÍÍ µ­•åÌÉ…Ñ”¤ÍÕÁÁ±¥•ÌÑ¡”ÍÍ µ­•äAÕ‰±¥-•ä½AÉ¥Ù…Ñ•-•äÑåÁ•Ì¸)ÉÕÍÍ €€€€€€€€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸ØÄˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰É¥¹œˆ°€‰™±…Ñ”Èˆ°€‰ÉÍ„‰t°½ÁÑ¥½¹…°€ôÑÉÕ”ô(ŒÄÑˆA¡…Í”€ÉŒÍÑÉ•…µ¥¹œèİÉ…À„Ñ½­¥¼µÁÍŒèéI••¥Ù•È…Ì„MÑÉ•…´¸)Ñ½­¥¼µÍÑÉ•…´€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸Äˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”ô(ŒA¡…Í”€ÕÍÑÉ•…µ¥¹œ€´´…Íå¹ŒµÍÑÉ•…´µ…É¼‰Õ¥±‘ÌMÑÉ•…´¥µÁ±Ì™É½´…Íå¹Œíô(Œ‰±½­Ìİ¥Ñ å¥•±¸Q¡”¡…¹µÉ½±±•MÑÉ•…´¥µÁ°…±Ñ•É¹…Ñ¥Ù”¥ÌøĞÀ1=½˜(ŒÁ½±°‰½¥±•ÉÁ±…Ñ”Á•È…‘…ÁÑ•ÈìÑ¡”µ…É¼¥ÌÑ¡”¥‘¥½µ…Ñ¥Œ¡½¥”¸)…Íå¹ŒµÍÑÉ•…´€ô€ˆÀ¸Ìˆ((ŒA±Õ¥¸M,€´´±½…°İ½É­ÍÁ…”Á…Ñ Á±ÕÌÑ¡”•á…ĞÉ•¥ÍÑÉäÙ•ÉÍ¥½¸¸…É¼(ŒÉ•µ½Ù•ÌÁ…Ñ¡€İ¡•¸Á…­…¥¹œ¹•½Ñ¡€°Í¼Ñ¡”M,µÕÍĞ…±É•…‘ä‰”Ù¥Í¥‰±”¥¸(ŒÑ¡”É…Ñ•Ì¹¥¼¥¹‘•à‰•™½É”Ñ¡”ÁÕ‰±¥ŒÁ…­…”…¸‰”Á…­…•½ÈÁÕ‰±¥Í¡•¸(Œ}¡½ÍÑ€™•…ÑÕÉ”™±¥ÁÌ½¸Ñ¡”¡½ÍĞµ½¹±äA•Éµ¥ÍÍ¥½¹Q½­•¸èéµ¥¹Ğ ¤Ñ½È¸)¹•½Ñ µÁ±Õ¥¸µÍ‘¬€ôìÁ…Ñ €ô€ˆ¸¸½¹•½Ñ µÁ±Õ¥¸µÍ‘¬ˆ°Ù•ÉÍ¥½¸€ô€ˆÀ¸Ä¸Àµ…±Á¡„¸Àˆ°™•…ÑÕÉ•Ì€ôl‰}¡½ÍĞ‰tô((ŒXÄÀ´ÀĞ‰±½­•ÈƒŠPİ…ÍµÑ¥µ”ÉÕ¹Ñ¥µ”™½È]M4Á±Õ¥¸¡½ÍĞ¸=ÁÑ¥½¹…°(Œ€¡™•…ÑÕÉ”İ…Í´µÁ±Õ¥¸µ¡½ÍÑ€¤¸A¥¹¹•Ñ¼€ÈØ¹àìÑ¡”€ÈÀÈØA$¥ÌÍÑ…‰±”(Œ•¹½Õ ™½ÈÑ¡”¹¥¹”€¬MÑ½É”€¬1¥¹­•ÈÍÕÉ™…”İ”¹••¸½µÁ¥±”µ½ÍĞè(ŒøÌÁÌ€¬øàÀ5¥½˜ÑÉ…¹Í¥Ñ¥Ù”‘•ÁÌÍ¼„‘•™…Õ±Ğ…É¼‰Õ¥±‘€Í­¥ÁÌ¥Ğ¸)İ…ÍµÑ¥µ”€ôìÙ•ÉÍ¥½¸€ô€ˆÌØˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰É…¹•±¥™Ğˆ°€‰ÉÕ¹Ñ¥µ”‰t°½ÁÑ¥½¹…°€ôÑÉÕ”ô((ŒA´ÀÄ€¡±¥Á‰½…ÉÍ±¥”°™•…ÑÕÉ”½Ìµ±¥Á‰½…É‘€¤ƒŠPÉ½ÍÌµÁ±…Ñ™½É´=L±¥Á‰½…É¸(Œ‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í•€‘É½ÁÌÑ¡”¥µ…”µ‘…Ñ…€™•…ÑÕÉ”€¡İ”½¹±ä•Ù•Èµ½Ù”(ŒUQ´àÑ•áĞ¤°…Ù½¥‘¥¹œÑ¡”¥µ…•€É…Ñ”€¬¥ÑÌÑÉ…¹Í¥Ñ¥Ù”ÑÉ•”¸]”<½ÁĞ‰…¬(Œ¥¹Ñ¼İ°µ±¥Á‰½…ÉµÉÍ€Í¼„µ½‘•É¸]…å±…¹µ½¹±ä1¥¹Õà‘•Í­Ñ½À€¡9=5½]…å±…¹(Œİ¥Ñ¡½ÕĞa]…å±…¹ƒŠPÑ¡”‘•™…Õ±Ğ½¸µ…¹äÕÉÉ•¹Ğ‘¥ÍÑÉ½Ì¤¡…Ì„İ½É­¥¹œ‰…­•¹ì(ŒÑ¡”…±İ…åÌµ½µÁ¥±•àÄÅÉ‰€‰…­•¹€¡ÁÕÉ”µIÕÍĞ`ÄÄ½Ù•È„Í½­•ĞƒŠP¹¼±¥‰áˆ(Œ‘•Ø¡•…‘•ÉÌ…Ğ‰Õ¥±Ñ¥µ”¤½Ù•ÉÌ`ÄÄÍ•ÍÍ¥½¹Ì¸	½Ñ ‰…­•¹‘Ì…É”1¥¹Õàµ™œ°(ŒÍ¼Ñ¡”]¥¹‘½İÌ½µ…=L‰Õ¥±¥ÌÕ¹…™™•Ñ•¸µ¥ÍÍ¥¹œ‘¥ÍÁ±…äÍÑ¥±°ÍÕÉ™…•Ì…Ì(Œ…¸ÉÉ€™É½´±¥Á‰½…Éèé¹•Ü ¥€…ĞIU9Q%5ƒŠHµ…ÁÁ•Ñ¼±¥Á‰½…É‘U¹…Ù…¥±…‰±•€(Œ€¡¹•Ù•È„Á…¹¥Œ°¹•Ù•È„‰Õ¥±™…¥±ÕÉ”¤¸)…É‰½…É€ôìÙ•ÉÍ¥½¸€ô€ˆÌˆ°‘•™…Õ±Ğµ™•…ÑÕÉ•Ì€ô™…±Í”°™•…ÑÕÉ•Ì€ôl‰İ°µ±¥Á‰½…ÉµÉÌ‰t°½ÁÑ¥½¹…°€ôÑÉÕ”ô((Œ=1µP´ÄÀƒŠP5…ÑÉ¥àÉ±¥•¹Ğ€¡™•…ÑÕÉ”µ…ÑÉ¥àµ¡…¹¹•±€°½™˜‰ä‘•™…Õ±Ğ¤¸(Œ”É”µ•¹ÉåÁÑ¥½¹€€¡Ù½‘½é•µ…Œ¤€¬ÍÅ±¥Ñ•€€¡Ñ¡”Á•ÉÍ¥ÍÑ•¹ĞÉåÁÑ¼½ÍÑ…Ñ”ÍÑ½É”ƒŠP(ŒIEU%I™½ÈÉ­•ä½¹Ñ¥¹Õ¥Ñä…É½ÍÌ‘…•µ½¸É•ÍÑ…ÉÑÌì…¸¥¸µµ•µ½ÉäÍÑ½É”(Œİ½Õ±É••¹•É…Ñ”Ñ¡”‘•Ù¥”¥‘•¹Ñ¥Ñä•… É•ÍÑ…ÉĞ…¹‰É•…¬‘•ÉåÁÑ¥½¸¤¸9¼(Œ‰Õ¹‘±•µÍÅ±¥Ñ•€¡•É”è9=Q Ì½İ¸ÉÕÍÅ±¥Ñ”€À¸ÌÜ‰Õ¹‘±•‘€…±É•…‘ä‰Õ¹‘±•ÌÑ¡”(Œ¹½ÜµÍ¡…É•±¥‰ÍÅ±¥Ñ”ÌµÍåÌ€À¸ÌÔ°Í¼Ñ¡”Í¥¹±”¹…Ñ¥Ù”±¥ˆ¥Ì‰Õ¹‘±••á…Ñ±ä(Œ½¹”¸Q1L¥Ìµ…ÑÉ¥àµÍ‘¬Ì¥¹Ñ•É¹…°‘•™…Õ±ĞƒŠP€À¸Äà•áÁ½Í•Ì¹¼ÉÕÍÑ±Ì½¹…Ñ¥Ù”µÑ±Ì(Œ™•…ÑÕÉ”Ñ½±”Ñ¼Í•Ğ¸)µ…ÑÉ¥àµÍ‘¬€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸Äàˆ°™•…ÑÕÉ•Ì€ôl‰”É”µ•¹ÉåÁÑ¥½¸ˆ°€‰ÍÅ±¥Ñ”‰t°½ÁÑ¥½¹…°€ôÑÉÕ”ô((ŒU¹¥àµ½¹±äèµ±½¬™½ÈM•É•ÑMÑÉ¥¹œÁ…•Ì°Õµ…Í¬…Ğ‘…•µ½¸ÍÑ…ÉÑÕÀ¸(Œ%¹±¥¹”±¥‰ŒÍ¡¥´¥¸µ…¥¸¹ÉÌ½Ù•É•Õµ…Í¬ìÑ¡”±¥‰ŒÉ…Ñ”¥ÌÉ•ÅÕ¥É•™½È(Œµ±½¬½µÕ¹±½¬Íåµ‰½°É•Í½±ÕÑ¥½¸…Ğ±¥¹¬Ñ¥µ”¸…ä´È¬‘•Á•¹‘Ì½¸Ñ¡”Í…µ”(ŒÉ…Ñ”™½È…¹ä™ÕÑÕÉ”ÍåÍ…±°¸)mÑ…É•Ğ¸™œ¡Õ¹¥à¤œ¹‘•Á•¹‘•¹¥•Ít)±¥‰Œ€€€€€€€€ô€ˆÀ¸Èˆ((Œ]¥¹‘½İÌ0É•ÍÑÉ¥Ñ¥½¸¥Ì¥µÁ±•µ•¹Ñ•Ù¥„¥…±Ì¹•á”ÍÕ‰ÁÉ½•ÍÌ¥¸(ŒÍÉŒ½İ…°½İ¥¹}…°¹ÉÌ¸¥…±ÌÍ¡¥ÁÌİ¥Ñ •Ù•Éä]¥¹‘½İÌ¥¹ÍÑ…±°Í¥¹”a@…¹(Œ…Ù½¥‘Ì€ÄÀÀ¬1=½˜Õ¹Í…™”]¥¸ÌÈİ¥É¥¹œ¸M•”=A9}%M%=9L¹µ´ÀÀà€¬(ŒA±…Ñ™½É´¹¥¹••ÈÉ•Ù¥•Ü¸%˜„İ¥¹‘½İÍ€É…Ñ”‘•À‰•½µ•Ìİ½ÉÑ¡İ¡¥±”±…Ñ•È(Œ€¡”¹œ¸™½È…Ñ½µ¥ŒMUI%Qe}QQI%	UQL½¸™¥±”É•…Ñ”¤°É•Ù¥Í¥Ğ¸((Œ]¥¹‘½İÌµ½¹±äèY¥ÉÑÕ…±1½¬™½ÈM•É•ÑMÑÉ¥¹œÁ…”µÁ¥¹¹¥¹œ°µ¥ÉÉ½ÉÌÑ¡”(Œ1¥¹Õà±¥‰Œèéµ±½¬Á…Ñ ¸]¥Ñ¡½ÕĞÑ¡¥Ì°Í•É•ÑÌÍ¥ĞÍİ…ÁÁ…‰±”Ñ¼(ŒÁ…•™¥±”¹ÍåÌ€¼¡¥‰•É™¥°¹ÍåÌ½¸]¥¹‘½İÌƒŠP„É•…°ÁÉ¥Ù…ä…À‰•…ÕÍ”(Œ]¥¹‘½İÌ¥Ì±•àÌÁÉ¥µ…Éä‘•ØÁ±…Ñ™½É´€¡Á•È1U¹µ¤¸5¥¹¥µ…°(Œ™•…ÑÕÉ”™½½ÑÁÉ¥¹Ğ€¡]¥¸ÌÉ}MåÍÑ•µ}5•µ½Éä½¹±ä¤­••ÁÌÑ¡”‘•ÀÍ¥é”(ŒÕ¹‘•È½¹ÑÉ½°¸,µM•Œ´È€¼€ÈÀÈØ´ÀÔ´ÄÜ¸)mÑ…É•Ğ¸™œ¡İ¥¹‘½İÌ¤œ¹‘•Á•¹‘•¹¥•Ít(Œ]¥¸ÌÉ}MåÍÑ•µ}5•µ½Éäè,µM•Œ´ÈY¥ÉÑÕ…±1½¬™½ÈM•É•ÑMÑÉ¥¹œ€ ÈÀÈØ´ÀÔ´ÄÜ¤¸(Œ]¥¸ÌÉ}M•ÕÉ¥Ñå}ÉåÁÑ½É…Á¡äè,µM•Œ´ĞAA$İÉ…À™½È!5­•ä€ ÈÀÈØ´ÀÔ´ÈÈ¤¸(Œ]¥¸ÌÉ}M•ÕÉ¥Ñå}ÕÑ¡½É¥é…Ñ¥½¸è´ÄÄM•Ñ¹ÑÉ¥•Í%¹±\€¬M•Ñ9…µ•‘M•ÕÉ¥Ñå%¹™½\€¬	Õ¥±‘áÁ±¥¥Ñ•ÍÍ]¥Ñ¡9…µ•\€ ÈÀÈØ´ÀÔ´ÈĞ¤¸(Œ]¥¸ÌÉ}MÑ½É…•}¥±•MåÍÑ•´è´ÄÈ±ÕÍ¡¥±•	Õ™™•ÉÌ]0‘ÕÉ…‰¥±¥Ñä€ ÈÀÈØ´ÀÔ´ÈĞ¤¸(Œ]¥¸ÌÉ}MåÍÑ•µ})½‰=‰©•ÑÌè9=Q µU%PµM1µ%5AI=YµMQd´ÀÄÉ•Í¥‘Õ…°´ÈƒŠP)½ˆ=‰©•ĞÁÉ½•ÍÌµÑÉ•”½¹Ñ…¥¹µ•¹Ğ™½ÈÑ¡”Í¡•±°Ù•É¥™¥•ÈÍ…¹‘‰½à€ ÈÀÈØ´ÀÜ´ÄÀ¤¸)İ¥¹‘½İÌµÍåÌ€ôìÙ•ÉÍ¥½¸€ô€ˆÀ¸Ôäˆ°™•…ÑÕÉ•Ì€ôl‰]¥¸ÌÉ}MåÍÑ•µ}5•µ½Éäˆ°€‰]¥¸ÌÉ}½Õ¹‘…Ñ¥½¸ˆ°€‰]¥¸ÌÉ}M•ÕÉ¥Ñå}ÉåÁÑ½É…Á¡äˆ°€‰]¥¸ÌÉ}M•ÕÉ¥Ñå}ÕÑ¡½É¥é…Ñ¥½¸ˆ°€‰]¥¸ÌÉ}MÑ½É…•}¥±•MåÍÑ•´ˆ°€‰]¥¸ÌÉ}M•ÕÉ¥Ñå}É•‘•¹Ñ¥…±Ìˆ°€‰]¥¸ÌÉ}MåÍÑ•µ})½‰=‰©•ÑÌˆ°€‰]¥¸ÌÉ}MåÍÑ•µ}Q¡É•…‘¥¹œ‰tô(Œ]¥¸ÌÉ}M•ÕÉ¥Ñå}É•‘•¹Ñ¥…±ÌèÀÀÌµ-e!%8´ÀÄÉ•‘]É¥Ñ•\½É•‘I•…‘\½É•‘•±•Ñ•\€ ÈÀÈØ´ÀÜ´ÄÀ¤¸((Œ´ÀÍˆ1¥¹Õà€¡M•ÍÍ¥½¸€Èà¤ƒŠPM•É•ĞM•ÉÙ¥”€¡	ÕÌ¤±¥•¹Ğ™½È¡É½µ”Ì(ŒL´ÄÈàµ	Á…ÍÍİ½É•¹Ù•±½Á”¸¡É½µ”½¸1¥¹ÕàÍÑ½É•ÌÑ¡”Íåµµ•ÑÉ¥Œ(Œ­•ä¥¹Í¥‘”Ñ¡”½Á•É…Ñ½ÈÌ±½¥¸­•åÉ¥¹œ€¡9=5-•åÉ¥¹œ½È-]…±±•Ğ¤(ŒÕ¹‘•È„­¹½İ¸Í¡•µ„…ÑÑÉ¥‰ÕÑ”ìLµ	‘•ÉåÁĞÕÍ•ÌA	-ÈµM!Ä(Œ¥Ñ•ÈôÄİ¥Ñ Ñ¡”¡…É‘½‘•€‰Í…±ÑåÍ…±ĞˆÍ…±Ğ¸Q¡”Í•É•ĞµÍ•ÉÙ¥•€(ŒÉ…Ñ”¥ÌÁÕÉ”µIÕÍĞ€¡ÑÉ…¹Í¥Ñ¥Ù•±ä‘•Á•¹‘Ì½¸é‰ÕÍ€°…±Í¼ÁÕÉ”µIÕÍĞ(ŒU9%`Í½­•ÑÌƒŠP¹¼±¥‰‘‰ÕÌµ‘•À¹••‘•¤¸Q¡”Ñ½­¥¼™•…ÑÕÉ”¥Ù•ÌÕÌ(Œ…Íå¹Œ½µÁ…Ñ¥‰¥±¥Ñäİ¥Ñ Ñ¡”É•ÍĞ½˜Ñ¡”‘…•µ½¸¸)mÑ…É•Ğ¸™œ¡Ñ…É•Ñ}½Ì€ô€‰±¥¹Õàˆ¤œ¹‘•Á•¹‘•¹¥•Ít)Í•É•ĞµÍ•ÉÙ¥”€ôìÙ•ÉÍ¥½¸€ô€ˆĞˆ°™•…ÑÕÉ•Ì€ôl‰ÉĞµÑ½­¥¼µÉåÁÑ¼µÉÕÍĞ‰tô((Œ´ÀÍˆµ…=L€¡M•ÍÍ¥½¸€Èà¤ƒŠP-•å¡…¥¸M•ÉÙ¥•Ì‰¥¹‘¥¹œ™½È¡É½µ”Ì(ŒL´ÄÈàµ	Á…ÍÍİ½É•¹Ù•±½Á”¸µ…=L¡É½µ”ÍÑ½É•ÌÑ¡”Á•Èµ¥¹ÍÑ…±±…Ñ¥½¸(ŒL­•äÁ…ÍÍİ½É¥¸Ñ¡”½Á•É…Ñ½ÈÌ1½¥¸-•å¡…¥¸Õ¹‘•È(ŒÍ•ÉÙ¥”ô‰¡É½µ”M…™”MÑ½É…”ˆ€¡½È¡É½µ¥Õ´½	É…Ù”Ù…É¥…¹ÑÌ¤İ¥Ñ (Œ…½Õ¹Ğô‰¡É½µ”ˆ¸Í•ÕÉ¥Ñäµ™É…µ•İ½É­€¥ÌÁÁ±”Ì‘”µ™…Ñ¼IÕÍĞ(Œ‰¥¹‘¥¹œ°IÕÍÑÉåÁÑ¼µ…‘©…•¹Ğµ…¥¹Ñ•¹…¹”¸Lµ	‘•ÉåÁĞÕÍ•Ì(ŒA	-ÈµM!Ä¥Ñ•ÈôÄÀÀÌ€¡9=P€Ä±¥­”1¥¹ÕàƒŠPÁ¥¹¹•¡…É‘½‘•‰ä(Œ¡É½µ”½¸µ…=L™½È±•…ä½µÁ…Ñ¥‰¥±¥Ñä¤İ¥Ñ Ñ¡”Í…µ”(ŒÍ…±ÑåÍ…±Ñ€Í…±Ğ¸)mÑ…É•Ğ¸™œ¡Ñ…É•Ñ}½Ì€ô€‰µ…½Ìˆ¤œ¹‘•Á•¹‘•¹¥•Ít)Í•ÕÉ¥Ñäµ™É…µ•İ½É¬€ô€ˆÌˆ((Œ´Ø%Ñ•´€Í˜€¡M•ÍÍ¥½¸€ÈÄ¤ƒŠPAQdÍÑ•…±Ñ ™½È¥¹Ñ•É…Ñ¥Ù”ÍÕ‰ÁÉ½•ÍÌ¸(ŒÁ½ÉÑ…‰±”µÁÑå€¥ÌÑ¡”É½ÍÌµÁ±…Ñ™½É´AQdÉ…Ñ”]•éQ•É´ÕÍ•Ì€¡]•èÕÉ±½¹œ¤¸(Œ%Ğ…‰ÍÑÉ…ÑÌ]¥¹‘½İÌ½¹AQd€¡]¥¸ÄÀ¬¤€¬1¥¹ÕàÁÑä€¬µ…=LÁÑä‰•¡¥¹½¹”(ŒÑÉ…¥Ğ¸9=Q ÕÍ•Ì¥Ğ™½ÈÑ¡”ÍÕ‰ÁÉ½•ÍÌ‰…­•¹½˜±…Õ‘•€İ¡•¸ÑµÕà¥Ì(Œ…‰Í•¹Ğ…¹İ”ÍÑ¥±°¹••„É•…°AQdÍ¼Ñ¡”1$‘½•Í¸Ğ•¹Ñ•È$µ‘•Ñ•Ñ¥½¸(Œµ½‘”€¬É•¹‘•È¹½¸µ¥¹Ñ•É…Ñ¥Ù”½ÕÑÁÕĞ¸=ÁÑ¥½¹…°™•…ÑÕÉ”Í¼Ñ¡”‘•™…Õ±Ğ(ŒÉ•±•…Í”…ÉÑ•™…Ğ‘½•Ì¹½ĞÍ¡¥ÀÑ¡”‘•ÀÕ¹±•ÍÌÑ¡”½Á•É…Ñ½È½ÁÑÌ¥¹Ñ¼Ñ¡”(ŒAQdµÍÕ‰ÁÉ½•ÍÌ‰…­•¹¸)m‘•Á•¹‘•¹¥•Ì¹Á½ÉÑ…‰±”µÁÑåt)Ù•ÉÍ¥½¸€ô€ˆÀ¸àˆ)½ÁÑ¥½¹…°€ôÑÉÕ”()m‘•Øµ‘•Á•¹‘•¹¥•Ít)Ñ½­¥¼€€€€€€€€ôìÙ•ÉÍ¥½¸€ô€ˆÄˆ°™•…ÑÕÉ•Ì€ôl‰Ñ•ÍĞµÕÑ¥°ˆ°€‰µ…É½Ìˆ°€‰ÉĞµµÕ±Ñ¤µÑ¡É•…ˆ°€‰™Ìˆ°€‰¥¼µÕÑ¥°ˆ°€‰Íå¹Œˆ°€‰Ñ¥µ”‰tô(ŒÑ•µÁ™¥±”µ½Ù•Ñ¼É•Õ±…Èm‘•Á•¹‘•¹¥•Ít…‰½Ù”™½ÈÑ¡”XÀÌ´Àä(ŒA¡…Í”€Éˆ…ÁÁ±äÁ…Ñ ¸•Øµ‘•ÁÌ¥¹¡•É¥ĞÑ¡”É•Õ±…È‘•ÀÍ¼•á¥ÍÑ¥¹œ(ŒÕÍ”Ñ•µÁ™¥±”èè©€Ñ•ÍĞ¥µÁ½ÉÑÌ­••Àİ½É­¥¹œ¸(Œ`´ÀĞè!QQ@µ½¬Í•ÉÙ•È™½ÈÉ½Õ¹µÑÉ¥ÀÑ•ÍÑÌ……¥¹ÍĞÑ½½±Ì½İ•‰|¨°(ŒÑ½½±Ì½…Éá¥Ø°Ñ½½±Ì½¥Ñ¡Õˆ¸!¥ÑÌ„±¥Ù”€ÄÈÜ¸À¸À¸ÄÁ½ÉĞÍ¼Ñ¡”(ŒÉ•Åİ•ÍĞµ‰…­•½‘”Á…Ñ¡Ì…ÑÕ…±±äÉÕ¸É…Ñ¡•ÈÑ¡…¸©ÕÍĞÑ¡”(ŒÁ…ÉÍ•È¸5…Ñ¡•ÌÑ¡”Í…µ”…±±½İ±¥ÍĞ…Ñ•½Éä…Ìİ•‰¡½½­}±¥ÍÑ•¹•ÈÌ(ŒÍ•±˜µÑ•ÍÑÌ€¡¥¹‰½Õ¹µ½¹±äƒŠP¹½}½ÕÑ‰½Õ¹‘}¹•Ñİ½É¬…Ñ”•á±Õ‘•Ì¥Ğ¤¸)İ¥É•µ½¬€€€€€ô€ˆÀ¸Øˆ(Œ=Á•É…Ñ½ÈµÉ•…°1$Ñ•ÍÑÌƒŠPÍÁ…İ¸Ñ¡”‰Õ¥±Ğ¹•½Ñ¡‘€‰¥¹…Éä€¬…ÍÍ•ÉĞ(Œ½¸ÍÑ‘½ÕĞ½ÍÑ‘•ÉÈ½•á¥Ğ½‘•Ì°¹½Ğ©ÕÍĞÑ¡”ÉÕ¹¹•Èµ™¸¸AÉ½Ù•Ì±…À(ŒÁ…ÉÍ¥¹œ€¬‰¥¹…Éä•¹ÑÉä€¬ÍÑ‘¥¼İ¥É¥¹œ‰•å½¹İ¡…Ğ±¥‰É…ÉäÑ•ÍÑÌ(Œ…¸É•… ¸‘‘•€ÈÀÈØ´ÀÔ´ÈØ…™Ñ•È±•à™±…•Ñ¡”…À‰•Ñİ••¸(Œ€‰1$ÉÕ¹¹•È…±±•™É½´Ñ•ÍĞˆ…¹€‰É•…°‰¥¹…Éä¥¹Ù½­•ˆ¸)…ÍÍ•ÉÑ}µ€€€ô€ˆÈˆ)ÁÉ•‘¥…Ñ•Ì€€€ô€ˆÌˆ(ŒÕ‘¥Ğ€ÈÀÈØ´ÀÔ´Ää€¡M•ÍÍ¥½¸€ÄÔ¤ƒŠP¡•­}É•‘•¹Ñ¥…±}…•€‘½Ñ½È‘¥…¹½ÍÑ¥Œ(ŒÑ•ÍÑÌ¹••Ñ¼…”„™É•Í Ñ•µÁ™¥±”‰ä€ÈÀÀ¼ĞÀÀ‘…åÌ¸ÍÑèé™Í€•áÁ½Í•Ì¹¼(ŒµÑ¥µ”Í•ÑÑ•È½¸ÍÑ…‰±”IÕÍĞì™¥±•Ñ¥µ•€¥ÌÑ¡”…¹½¹¥…°ÁÕÉ”µIÕÍĞÍ¡¥´(Œ…¹…±É•…‘ä±¥Ù•Ì¥¸Ñ¡”‘•ÀÉ…Á ÑÉ…¹Í¥Ñ¥Ù•±ä°Í¼Ñ¡¥ÌÁ¥¸¥Ìé•É¼µ½ÍĞ¸)™¥±•Ñ¥µ”€€€€€ô€ˆÀ¸Èˆ(ŒI½Õ¹´ÌØÀ¸ĞH´ÄÄ€¡M•ÍÍ¥½¸€Èà¤ƒŠPÁÉ½Á•ÉÑä½™ÕéèÑ•ÍÑ¥¹œ™½ÈÑ¡”(Œİ•‰¡½½¬Í¥¹…ÑÕÉ”…¹½¹¥…±¥é…Ñ¥½¸€¬Ñ¥µ•ÍÑ…µÀµİ¥¹‘½Ü±½¥Œ¥¸(Œ¡…¹¹•±Ìèéİ•‰¡½½­}Ù•É¥™å€¸AÕÉ”µIÕÍĞ°¹¼ÁÉ½Œµµ…É¼¡…¥¸(Œ•áÁ±½Í¥½¸ì±¥Ù•Ì…Ğ‘•Øµ‘•ÀÍ¼¥Ğ‘½•Í¸ĞÍ¡¥Àİ¥Ñ Ñ¡”‰¥¹…Éä¸)ÁÉ½ÁÑ•ÍĞ€€€€€ô€ˆÄˆ((Œ…ä´È™½±±½İÕÁÌİ¥±°…‘è(Œµ•µµ…ÀÈ€¡µµ…ÀÉ•…‘•È¤°¡µ…Œ€¬Í¡„È€¡½µÁ…Ñ¥½¸!5¤°‘…Ñ•Á…ÉÍ•È(Œ…ä´Ô€¡±…Õ‘”1$…‘…ÁÑ•È¤è(ŒÉ•Åİ•ÍĞ°•Ù•¹ÑÍ½ÕÉ”µÍÑÉ•…´°Ñ¥­Ñ½­•¸µÉÌ(Œ…ä´Ü€¡Q•±•É…´¤èÑ•±½á¥‘”(Œ…ä´à€¡]¡…ÑÍÁÀ¤è¡åÁ•È(Œ…ä´ä€¡M±…¬¤èÍ±…¬µµ½ÉÁ¡¥Í´(Œ…ä´ÄÄ€¡ÍÅ±¥Ñ”Ù¥•İÌ¤èÉÕÍÅ±¥Ñ”½ÈÍÅ±à(Œ…ä´ÄĞ€¡•µ‰•‘‘¥¹œ¤è…¹‘±”µ½É”°…¹‘±”µÑÉ…¹Í™½Éµ•ÉÌ°¡˜µ¡Õˆ°Ñ½­•¹¥é•ÉÌ(Œ…ä´ÄÜ€¡Q…¥±Í±…å•È¤èÑ…¥±Í±…å•È€¡™•…ÑÕÉ”µ…Ñ•¤(Œ…ä´ÈÌ€¡]M4Á±Õ¥¸¡½ÍĞ¤èİ…ÍµÑ¥µ”(Œ…ä´ÈÌ€¡A¡…Í”´Ìµ¥É…Ñ¥½¸€´´Í•Á…É…Ñ”¹•½Ñ µµ¥É…Ñ•€‰¥¸°™•…ÑÕÉ”€ô€‰µ¥É…Ñ”ˆ¤è(Œ€€ÁÕ±±‘½İ¸µµ…É¬€¡5…É­‘½İ¸ÍÑ½É•Ì¤°±…¹”€¡1…¹•ÉÉ½Ü¤°ÉÕÍÅ±¥Ñ”€¡QLÔ­Ä¤°(Œ€€¥ĞÈ€¡¥Ñ¡Õˆµ‰…­ÕÀ¤¸AÕÉ”µIÕÍĞÑ½½±¡…¥¸€´´9<AåÑ¡½¸‘•Á•¹‘•¹ä¸(Œ€€M•”A18½IU9	==-}Á¡…Í”Í}ÕÑ½Ù•È¹µ…ä€ØÌ¸(Œ<9=P…‘Ñ¡•Í”‰•™½É”Ñ¡•¥È‘…ä…ÉÉ¥Ù•Ì¸((ŒAÉ½™¥±•Ì€¬İ½É­ÍÁ…”‘•±…É…Ñ¥½¸±¥Ù”…Ğ€¸¸½…É¼¹Ñ½µ°€¡Í¥¹”<´ÌÍÁ±¥Ğ¤¸

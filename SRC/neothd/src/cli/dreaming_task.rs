@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::Connection;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -276,67 +276,65 @@ async fn sync_day_to_obsidian(home: &Path, report: &PassReport) -> Result<()> {
 /// it. Runs the (blocking, possibly slow) engine off the async runtime.
 async fn self_improve_auto_pass(home: &Path) {
     let home = home.to_path_buf();
-    if let Err(e) =
-        tokio::task::spawn_blocking(move || self_improve_auto_pass_blocking(&home)).await
-    {
-        warn!(error = %e, "self-improve auto-pass task join failed");
+    match tokio::task::spawn_blocking(move || self_improve_auto_pass_blocking(&home)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!(error = %format!("{e:#}"), "self-improve auto-pass failed closed"),
+        Err(e) => warn!(error = %e, "self-improve auto-pass task join failed"),
     }
 }
 
-fn self_improve_auto_pass_blocking(home: &Path) {
+fn self_improve_auto_pass_blocking(home: &Path) -> Result<()> {
     use crate::self_improve as si;
     let autonomy =
         match crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml")) {
             Ok(config) => config.autonomy,
             Err(error) => {
-                warn!(
-                    error = %error,
-                    "self-improve auto-pass: freedom.yaml invalid, skipping tick fail-closed"
-                );
-                return;
+                return Err(error)
+                    .context("self-improve auto-pass: freedom.yaml invalid; refusing the tick");
             }
         };
     // B19: fail-closed â€” corrupt config stops this tick rather than defaulting
     // to auto-on and re-enabling a deliberately-disabled master switch.
     let cfg = match si::SelfImproveConfig::load_strict(home) {
         Ok(opt) => si::effective_from_option(opt, autonomy),
-        Err(e) => {
-            warn!(error = %e, "self-improve auto-pass: config is corrupt, skipping tick");
-            return;
-        }
+        Err(e) => return Err(e).context("self-improve auto-pass: config is corrupt"),
     };
     if !cfg.auto || !si::is_installed() {
-        return; // not in auto mode, or engine absent â†’ nothing to do
+        return Ok(()); // not in auto mode, or engine absent â†’ nothing to do
     }
     let persona = "default";
     // Don't pile up: if a proposal for this persona is already awaiting review,
     // skip this tick (and skip spawning the engine entirely).
-    if si::load_proposals(home)
+    if si::load_proposals(home)?
         .iter()
         .any(|p| p.skill == persona && p.status == si::ProposalStatus::Pending)
     {
-        return;
+        return Ok(());
     }
     let skill_path = crate::skills::installer::default_skills_dir()
         .join(persona)
         .join("skill.md");
-    let before = std::fs::read_to_string(&skill_path).unwrap_or_default();
+    let before = match std::fs::read_to_string(&skill_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read baseline skill {}", skill_path.display()));
+        }
+    };
     // F13 â€” bounded run: a hung/runaway SkillOpt python process must not block
     // the dreaming tick (best-effort "any miss logs + skips" contract).
     let (after, quality, parsed_spec) = match si::run_skillopt_capped(persona, si::SKILLOPT_TIMEOUT)
     {
         Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
-        Err(e) => {
-            warn!(error = %e, "self-improve auto-pass: SkillOpt run failed/timed out");
-            return;
-        }
+        Err(e) => return Err(e).context("self-improve auto-pass: SkillOpt run failed/timed out"),
     };
     if after.trim().is_empty() || after == before {
-        return; // engine proposed nothing new â†’ don't stage a no-op
+        return Ok(()); // engine proposed nothing new â†’ don't stage a no-op
     }
     let now = crate::time::now_unix_i64();
     let id = format!("p{now}");
-    match si::stage_proposal(
+    let staged_id = si::stage_proposal(
         home,
         si::Proposal {
             id: id.clone(),
@@ -353,797 +351,4 @@ fn self_improve_auto_pass_blocking(home: &Path) {
             heldout_eval_summary: quality.heldout_eval_summary,
             why_this_improves: quality.why_this_improves,
             risk_notes: quality.risk_notes,
-            spec: parsed_spec, // IMPR-01: carry parsed spec; drift_sha added inside stage_proposal
-        },
-    ) {
-        Ok(_) => {
-            info!(proposal = %id, "self-improve auto-pass staged a proposal for review");
-            // B19: record the auto-staged proposal in the ledger too, so
-            // `neoth self-improve log` reflects nightly/dreaming proposals and
-            // not only CLI-triggered `run` invocations (closes the auto-pass
-            // audit-trail blind spot). Best-effort (the dreaming tick is a
-            // no-return background task); a failed append is warned, not fatal â€”
-            // the proposal is still visible in `neoth self-improve` (proposals.json).
-            if let Err(e) = si::append_ledger_locked(
-                home,
-                si::ImproveRecord {
-                    skill: persona.to_string(),
-                    accepted: false,
-                    score_before: quality.score_before,
-                    score_after: quality.score_after,
-                    summary: format!("nightly SkillOpt proposal for {persona}"),
-                    at_unix: now,
-                },
-            ) {
-                warn!(error = %format!("{e:#}"), "self-improve auto-pass: ledger append failed (proposal still staged)");
-            }
-        }
-        Err(e) => warn!(error = %e, "self-improve auto-pass: stage_proposal failed"),
-    }
-}
-
-/// One pass result â€” operator-visible counters + the file path the
-/// dreams landed in. Returned from [`run_one_pass`] so the operator
-/// `neoth dream now` CLI surface (future) can render the same shape.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PassReport {
-    /// Number of `idx_episode` rows considered in the window.
-    pub events_considered: usize,
-    /// Number of Dream records appended to today's JSONL.
-    pub dreams_written: usize,
-    /// JSONL file that received the appends (`~/.neoth/dreams/YYYY-MM-DD.jsonl`).
-    pub path: PathBuf,
-    /// Path that was taken: `embedding` (compose_dreams_with_embeddings)
-    /// or `deterministic` (single compose_dream).
-    pub path_taken: DreamingPath,
-}
-
-impl PassReport {
-    /// `YYYY-MM-DD` derived from the JSONL path stem (e.g.
-    /// `~/.neoth/dreams/2026-06-03.jsonl` â†’ `2026-06-03`). Empty when the
-    /// path has no stem. Used by the `0xF4 DREAM_COMPOSED` audit payload +
-    /// the operator render â€” single source so the daemon + CLI agree.
-    pub(crate) fn day_label(&self) -> String {
-        self.path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string()
-    }
-}
-
-/// Build the `0xF4 DREAM_COMPOSED` audit payload from a pass report.
-/// Shared by the daemon cron emit ([`run_one_pass`] when a writer is
-/// passed) and the one-shot `neoth dream now` CLI emit so the two paths
-/// never drift in payload shape (only the emit MECHANISM + provenance
-/// flag differ: daemon = `writer.append` + SYNTHETIC; CLI = one-shot
-/// writer, operator-triggered).
-pub(crate) fn dream_composed_payload(report: &PassReport, ts_unix: u64) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "day": report.day_label(),
-        "dreams": report.dreams_written,
-        "events_considered": report.events_considered,
-        "path_taken": format!("{:?}", report.path_taken),
-        "ts_unix": ts_unix,
-    }))
-    .unwrap_or_default()
-}
-
-/// Daemon-side `0xF4 DREAM_COMPOSED` emit. Best-effort + SYNTHETIC (this
-/// is a daemon-derived frame, matching the regression / recall-latency
-/// cron convention). A WAL append failure logs + never fails the pass.
-async fn emit_dream_composed_daemon(writer: &WalWriterHandle, report: &PassReport) {
-    let ts_unix = crate::time::now_unix_secs();
-    let payload = dream_composed_payload(report, ts_unix);
-    let header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_DREAM_COMPOSED, &payload)
-            .flags(crate::wal::EventFlags::SYNTHETIC)
-            .build();
-    if let Err(e) = writer.append(header, payload).await {
-        warn!(error = %e, "dreaming: DREAM_COMPOSED frame append failed (audit gap)");
-    }
-}
-
-/// Which composer ran. Surfaces in the operator log so a sudden
-/// flip from `embedding` â†’ `deterministic` (e.g. local_qwen weights
-/// went missing) is visible without grepping for "embed failed".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DreamingPath {
-    Embedding,
-    Deterministic,
-}
-
-/// Run one dreaming pass. Pure orchestrator â€” gathers events,
-/// dispatches to embedding or deterministic compose, appends to
-/// JSONL. Returns a [`PassReport`] for operator surface use.
-///
-/// `embed_provider = None` OR provider fails â†’ deterministic
-/// fallback (matches the L-07 `allow_cloud_fallback: false` safe-
-/// default pattern: never silently spend cloud tokens, never crash
-/// the dreaming pipeline either).
-pub async fn run_one_pass(
-    home: &Path,
-    embed_provider: Option<&dyn EmbedProvider>,
-    chat_provider: Option<&AuthorizedProvider>,
-    window: Duration,
-    max_events: usize,
-    writer: Option<&WalWriterHandle>,
-) -> Result<PassReport> {
-    let events = gather_window_events(home, window, max_events)?;
-    let day = today_utc_date();
-    let path = crate::daemon::dreaming::jsonl_file_for_day(home, &day);
-
-    if events.is_empty() {
-        return Ok(PassReport {
-            events_considered: 0,
-            dreams_written: 0,
-            path,
-            path_taken: DreamingPath::Deterministic,
-        });
-    }
-
-    let dreaming_config =
-        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?
-            .dreaming;
-    let merge_cross_themes = dreaming_config.merge_cross_themes;
-    let (dreams, path_taken) = if let Some(provider) = embed_provider {
-        match compose_dreams_with_embeddings(
-            &day,
-            &events,
-            provider,
-            chat_provider,
-            DREAMING_CLUSTER_THRESHOLD,
-            merge_cross_themes,
-        )
-        .await
-        {
-            Ok(d) => (d, DreamingPath::Embedding),
-            Err(e) => {
-                warn!(error = %e, "embedding compose failed; falling back to deterministic theme");
-                (
-                    vec![compose_dream(&day, "daily-deterministic", &events)],
-                    DreamingPath::Deterministic,
-                )
-            }
-        }
-    } else {
-        (
-            vec![compose_dream(&day, "daily-deterministic", &events)],
-            DreamingPath::Deterministic,
-        )
-    };
-
-    let mut written = 0;
-    for dream in &dreams {
-        match append_dream(home, dream) {
-            Ok(_) => written += 1,
-            Err(e) => {
-                warn!(error = %e, "append_dream failed; skipping this dream entry");
-            }
-        }
-    }
-    // KF-04 â€” idle-time skill forge: gated, best-effort. Synthesise a
-    // candidate skill from each composed dream + stage it for operator
-    // review (OB-03 queue). NEOTH never writes the skill; the operator
-    // adopts it via `neoth proactive accept`. A forge/queue miss never
-    // fails the pass â€” the dreams are already persisted above.
-    let forge_enabled = dreaming_config.forge_skills;
-    if forge_enabled {
-        forge_and_stage_dreams(home, &dreams);
-    }
-
-    let report = PassReport {
-        events_considered: events.len(),
-        dreams_written: written,
-        path,
-        path_taken,
-    };
-
-    // SPEC-12 daemon-side audit: when the daemon owns the WAL writer and
-    // this pass actually wrote dreams, emit a `0xF4 DREAM_COMPOSED` frame so
-    // the nightly cron is auditable just like `neoth dream now`. One-shot
-    // callers pass `writer = None` and audit via their own path.
-    if report.dreams_written > 0 {
-        if let Some(w) = writer {
-            emit_dream_composed_daemon(w, &report).await;
-        }
-    }
-
-    Ok(report)
-}
-
-/// KF-04 â€” forge a candidate skill from each dream + stage it as an
-/// OB-03 proposal for operator review. Best-effort: a queue-IO error or
-/// an un-forgeable dream is logged + skipped, never fails the dreaming
-/// pass. Dedup is handled by `stage_and_enqueue` (same dream â†’ same
-/// proposal id â†’ enqueued at most once).
-///
-/// Uses `ProactiveQueue::modify` (locked loadâ†’mutateâ†’save) so this site
-/// cannot race the delivery tick's reconcile and accidentally resurrect
-/// delivered items via a blind bare-load/save cycle â€” the same pattern
-/// required by the G02-QUEUE-01 sweep.
-fn forge_and_stage_dreams(home: &Path, dreams: &[crate::daemon::dreaming::Dream]) {
-    use crate::proactive::ProactiveQueue;
-    use crate::proactive::action_staging::stage_and_enqueue;
-    let queue_path = home.join("proactive_queue.json");
-
-    // Build proposals outside the lock (pure CPU, no I/O) so the lock
-    // window stays tight.
-    let proposals: Vec<_> = dreams
-        .iter()
-        .filter_map(crate::daemon::skill_forge::build_skill_proposal_from_dream)
-        .collect();
-
-    if proposals.is_empty() {
-        return;
-    }
-
-    let modify_result = ProactiveQueue::modify(&queue_path, |queue| {
-        let mut staged = 0usize;
-        for proposal in proposals {
-            match stage_and_enqueue(home, proposal, queue) {
-                Ok((_, true)) => staged += 1,
-                Ok((_, false)) => {} // already queued (dedup)
-                Err(e) => warn!(error = %e, "skill-forge: stage failed"),
-            }
-        }
-        // Persist only when at least one new proposal was staged.
-        let dirty = staged > 0;
-        (dirty, staged)
-    });
-
-    match modify_result {
-        Ok(staged) if staged > 0 => {
-            tracing::info!(staged, "skill-forge: staged candidate skill(s) for review");
-        }
-        Ok(_) => {} // nothing new staged (all dedup)
-        Err(e) => warn!(error = %e, "skill-forge: queue load/save failed"),
-    }
-}
-
-/// Load `idx_episode` rows whose `ts_ns` is within `window` of
-/// `now`. Truncates at `max_events` (oldest-first selection so the
-/// dream covers the start of the window â€” operators inspecting the
-/// dream get a coherent narrative, not a random subset). Missing
-/// `views.db` â†’ empty Vec (fresh-install daemon hasn't indexed
-/// anything yet).
-fn gather_window_events(home: &Path, window: Duration, max_events: usize) -> Result<Vec<EventRef>> {
-    let db_path = home.join("views.db");
-    if !db_path.exists() {
-        return Ok(Vec::new());
-    }
-    let conn = Connection::open(&db_path)?;
-    let now_ns: i64 = (crate::time::now_unix_ns_u128()) as i64;
-    let window_ns = window.as_nanos() as i64;
-    let cutoff_ns = now_ns - window_ns;
-    let mut stmt = conn.prepare(
-        "SELECT event_id, ts_ns, text FROM idx_episode \
-         WHERE ts_ns >= ?1 ORDER BY ts_ns ASC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![cutoff_ns, max_events as i64], |row| {
-        let id: i64 = row.get(0)?;
-        let ts_ns: i64 = row.get(1)?;
-        let text: String = row.get(2)?;
-        Ok((id, ts_ns, text))
-    })?;
-    let mut out = Vec::new();
-    for r in rows {
-        let (id, ts_ns, text) = r?;
-        out.push(EventRef {
-            id,
-            ts_unix: ts_ns / 1_000_000_000,
-            preview: text,
-        });
-    }
-    Ok(out)
-}
-
-/// Return today's UTC date (`YYYY-MM-DD`). Same Howard-Hinnant
-/// civil-from-days conversion used elsewhere in the codebase.
-fn today_utc_date() -> String {
-    let ts_unix = crate::time::now_unix_i64();
-    let days = ts_unix.div_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::providers::Provider;
-    use tempfile::tempdir;
-
-    fn seed_views_db(home: &Path, rows: &[(i64, i64, &str)]) {
-        let db = Connection::open(home.join("views.db")).unwrap();
-        db.execute_batch(
-            "CREATE TABLE IF NOT EXISTS idx_episode ( \
-                event_id INTEGER PRIMARY KEY, \
-                ts_ns INTEGER NOT NULL, \
-                text TEXT NOT NULL, \
-                text_hash BLOB, \
-                importance REAL DEFAULT 1.0)",
-        )
-        .unwrap();
-        let mut stmt = db
-            .prepare("INSERT INTO idx_episode (event_id, ts_ns, text) VALUES (?1, ?2, ?3)")
-            .unwrap();
-        for (id, ts_ns, text) in rows {
-            stmt.execute(rusqlite::params![id, ts_ns, text]).unwrap();
-        }
-    }
-
-    fn now_ns() -> i64 {
-        crate::time::now_unix_ns_i64()
-    }
-
-    struct AlwaysWeatherEmbed;
-
-    #[async_trait::async_trait]
-    impl EmbedProvider for AlwaysWeatherEmbed {
-        fn name(&self) -> &'static str {
-            "always_weather"
-        }
-        fn default_dim(&self) -> usize {
-            4
-        }
-        async fn embed(
-            &self,
-            _req: crate::providers::embed::EmbedRequest,
-        ) -> Result<crate::providers::embed::EmbedResponse> {
-            // All texts land in slot 0 â†’ cosine = 1.0 between any
-            // pair â†’ single cluster.
-            let mut v = vec![0.0f32; 4];
-            v[0] = 1.0;
-            Ok(crate::providers::embed::EmbedResponse {
-                vector: v,
-                model: "always_weather".into(),
-                latency: Duration::from_micros(1),
-            })
-        }
-    }
-
-    struct FailingEmbed;
-
-    #[async_trait::async_trait]
-    impl EmbedProvider for FailingEmbed {
-        fn name(&self) -> &'static str {
-            "failing"
-        }
-        fn default_dim(&self) -> usize {
-            4
-        }
-        async fn embed(
-            &self,
-            _req: crate::providers::embed::EmbedRequest,
-        ) -> Result<crate::providers::embed::EmbedResponse> {
-            anyhow::bail!("provider down")
-        }
-    }
-
-    #[tokio::test]
-    async fn one_pass_returns_empty_report_for_missing_views_db() {
-        let dir = tempdir().unwrap();
-        let report = run_one_pass(
-            dir.path(),
-            None,
-            None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.events_considered, 0);
-        assert_eq!(report.dreams_written, 0);
-        assert_eq!(report.path_taken, DreamingPath::Deterministic);
-    }
-
-    #[tokio::test]
-    async fn one_pass_writes_deterministic_dream_when_no_provider() {
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        seed_views_db(
-            dir.path(),
-            &[
-                (1, n - 3600 * 1_000_000_000, "first event"),
-                (2, n - 1800 * 1_000_000_000, "second event"),
-            ],
-        );
-        let report = run_one_pass(
-            dir.path(),
-            None,
-            None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.events_considered, 2);
-        assert_eq!(report.dreams_written, 1);
-        assert_eq!(report.path_taken, DreamingPath::Deterministic);
-        assert!(report.path.exists());
-    }
-
-    #[tokio::test]
-    async fn one_pass_uses_embedding_path_when_provider_available() {
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        seed_views_db(
-            dir.path(),
-            &[
-                (1, n - 3600 * 1_000_000_000, "first event"),
-                (2, n - 1800 * 1_000_000_000, "second event"),
-                (3, n - 900 * 1_000_000_000, "third event"),
-            ],
-        );
-        let provider = AlwaysWeatherEmbed;
-        let report = run_one_pass(
-            dir.path(),
-            Some(&provider),
-            None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.events_considered, 3);
-        // AlwaysWeather collapses everything to one cluster â†’ 1 dream.
-        assert_eq!(report.dreams_written, 1);
-        assert_eq!(report.path_taken, DreamingPath::Embedding);
-    }
-
-    #[tokio::test]
-    async fn one_pass_falls_back_to_deterministic_when_embed_fails() {
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        seed_views_db(dir.path(), &[(1, n - 3600 * 1_000_000_000, "first event")]);
-        let provider = FailingEmbed;
-        let report = run_one_pass(
-            dir.path(),
-            Some(&provider),
-            None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.events_considered, 1);
-        assert_eq!(report.dreams_written, 1);
-        assert_eq!(
-            report.path_taken,
-            DreamingPath::Deterministic,
-            "provider error must trigger deterministic fallback, never crash"
-        );
-    }
-
-    #[tokio::test]
-    async fn one_pass_respects_max_events_truncation() {
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        let rows: Vec<_> = (1i64..=10)
-            .map(|i| (i, n - i * 1_000_000_000, "event"))
-            .collect();
-        let rows_ref: Vec<_> = rows.iter().map(|(a, b, c)| (*a, *b, *c)).collect();
-        seed_views_db(dir.path(), &rows_ref);
-        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, 3, None)
-            .await
-            .unwrap();
-        assert_eq!(report.events_considered, 3, "truncate at max_events=3");
-    }
-
-    #[tokio::test]
-    async fn one_pass_ignores_events_outside_window() {
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        // One event inside the 1-hour test window, one outside.
-        seed_views_db(
-            dir.path(),
-            &[
-                (1, n - 60 * 1_000_000_000, "inside"), // 60s ago
-                (2, n - 3600 * 1_000_000_000 * 24, "outside"),
-            ], // 24h ago
-        );
-        let report = run_one_pass(
-            dir.path(),
-            None,
-            None,
-            Duration::from_secs(1800),
-            DEFAULT_MAX_EVENTS,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            report.events_considered, 1,
-            "window excludes the 24h-ago row"
-        );
-    }
-
-    #[test]
-    fn resolve_obsidian_target_gates_on_vault_and_defaults_subdir() {
-        // No vault â†’ None (operator has not opted in).
-        assert!(resolve_obsidian_target(None, None).is_none());
-        assert!(resolve_obsidian_target(Some("   ".into()), None).is_none());
-        // Vault set, no subdir â†’ default subdir.
-        assert_eq!(
-            resolve_obsidian_target(Some("/vault".into()), None),
-            Some(("/vault".into(), "NEOTH-sessions".into()))
-        );
-        // Vault + blank subdir â†’ default; explicit subdir honoured.
-        assert_eq!(
-            resolve_obsidian_target(Some("/vault".into()), Some("  ".into())),
-            Some(("/vault".into(), "NEOTH-sessions".into()))
-        );
-        assert_eq!(
-            resolve_obsidian_target(Some("/vault".into()), Some("Dreams-Custom".into())),
-            Some(("/vault".into(), "Dreams-Custom".into()))
-        );
-    }
-
-    #[test]
-    fn resolve_obsidian_target_rejects_traversal_subdirs() {
-        // Traversal inputs must be rejected fail-closed (no write outside vault).
-        for bad in &["../../escape", "..", "/abs/path"] {
-            assert!(
-                resolve_obsidian_target(Some("/vault".into()), Some((*bad).into())).is_none(),
-                "expected None for bad subdir {bad:?}"
-            );
-        }
-        // Clean single-component names are still accepted.
-        assert!(
-            resolve_obsidian_target(Some("/vault".into()), Some("NEOTH-sessions".into())).is_some()
-        );
-        assert!(
-            resolve_obsidian_target(Some("/vault".into()), Some("Dreams-Custom".into())).is_some()
-        );
-    }
-
-    #[tokio::test]
-    async fn today_utc_date_renders_yyyy_mm_dd() {
-        let s = today_utc_date();
-        assert_eq!(s.len(), 10);
-        assert_eq!(s.chars().nth(4), Some('-'));
-        assert_eq!(s.chars().nth(7), Some('-'));
-        // First 4 chars parse as year.
-        let _: u32 = s[..4].parse().unwrap();
-    }
-
-    #[tokio::test]
-    async fn task_aborts_cleanly() {
-        let dir = tempdir().unwrap();
-        let task = spawn(
-            dir.path().to_path_buf(),
-            None,
-            None,
-            Some(Duration::from_millis(50)),
-            None,
-            None,
-            None,
-            true, // GOLD-ADAPT-KB-03: auto_distill
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        task.abort();
-        let _ = task.await;
-    }
-
-    #[test]
-    fn constants_pinned() {
-        assert_eq!(DEFAULT_INTERVAL.as_secs(), 86_400);
-        assert_eq!(DEFAULT_WINDOW.as_secs(), 86_400);
-        assert_eq!(DEFAULT_MAX_EVENTS, 500);
-    }
-
-    // â”€â”€ SPEC-12 daemon-side 0xF4 DREAM_COMPOSED emit + chat-label wiring â”€â”€â”€â”€â”€â”€
-
-    /// Count `0xF4 DREAM_COMPOSED` frames in a sealed WAL segment.
-    fn count_dream_composed_frames(seg: &Path) -> usize {
-        let Ok(bytes) = std::fs::read(seg) else {
-            return 0;
-        };
-        let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
-            return 0;
-        };
-        let mut cursor = hdr.header_len();
-        let mut count = 0usize;
-        while cursor < bytes.len() {
-            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
-                Ok(d) => d,
-                Err(_) => break,
-            };
-            if dec.header.event_type == crate::wal::events::EVENT_TYPE_DREAM_COMPOSED {
-                count += 1;
-            }
-            let total = dec.header.total_len as usize;
-            if total == 0 {
-                break;
-            }
-            cursor = cursor.saturating_add(total);
-        }
-        count
-    }
-
-    /// Chat provider returning a fixed reply â€” exercises the run_one_pass
-    /// chat-label wiring end-to-end.
-    struct FixedLabelChat;
-    #[async_trait::async_trait]
-    impl Provider for FixedLabelChat {
-        fn name(&self) -> &'static str {
-            "fixed_label_chat"
-        }
-        async fn complete(
-            &self,
-            _req: crate::providers::Request,
-        ) -> Result<crate::providers::Completion> {
-            Ok(crate::providers::Completion {
-                text: "weekend trip planning".into(),
-                identity: Default::default(),
-                model: "fixed_label_chat".into(),
-                latency: Duration::from_micros(1),
-                input_tokens: None,
-                output_tokens: None,
-                cache_creation_tokens: None,
-                cache_read_tokens: None,
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn run_one_pass_emits_dream_composed_when_writer_present() {
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        seed_views_db(
-            dir.path(),
-            &[(1, n - 1800 * 1_000_000_000, "an event in the window")],
-        );
-        let seg_dir = tempdir().unwrap();
-        let seg = seg_dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
-
-        let report = run_one_pass(
-            dir.path(),
-            None,
-            None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            Some(&writer),
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.dreams_written, 1);
-
-        drop(writer);
-        join.await.ok();
-        assert_eq!(
-            count_dream_composed_frames(&seg),
-            1,
-            "a writer-backed pass that wrote dreams must emit exactly one 0xF4",
-        );
-    }
-
-    #[tokio::test]
-    async fn run_one_pass_no_frame_when_writer_none() {
-        // The CLI one-shot path passes writer = None (it audits separately).
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        seed_views_db(dir.path(), &[(1, n - 1800 * 1_000_000_000, "event")]);
-        let seg_dir = tempdir().unwrap();
-        let seg = seg_dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
-
-        let report = run_one_pass(
-            dir.path(),
-            None,
-            None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.dreams_written, 1);
-
-        drop(writer);
-        join.await.ok();
-        assert_eq!(
-            count_dream_composed_frames(&seg),
-            0,
-            "writer = None must not emit a frame on this segment",
-        );
-    }
-
-    #[tokio::test]
-    async fn run_one_pass_no_frame_when_no_dreams() {
-        // Empty window (no views.db) â†’ 0 dreams â†’ no audit frame even with a writer.
-        let dir = tempdir().unwrap();
-        let seg_dir = tempdir().unwrap();
-        let seg = seg_dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
-
-        let report = run_one_pass(
-            dir.path(),
-            None,
-            None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            Some(&writer),
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.dreams_written, 0);
-
-        drop(writer);
-        join.await.ok();
-        assert_eq!(count_dream_composed_frames(&seg), 0);
-    }
-
-    #[tokio::test]
-    async fn run_one_pass_threads_chat_label_into_dreams() {
-        // embed groups everything into one cluster; the chat provider labels it.
-        let dir = tempdir().unwrap();
-        let n = now_ns();
-        seed_views_db(
-            dir.path(),
-            &[
-                (1, n - 1800 * 1_000_000_000, "first"),
-                (2, n - 900 * 1_000_000_000, "second"),
-            ],
-        );
-        let embed = AlwaysWeatherEmbed;
-        let chat = AuthorizedProvider::from_box(
-            Box::new(FixedLabelChat),
-            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
-                crate::permissions::AutonomyLevel::Full,
-            ),
-            Some("fixed_label_chat".to_string()),
-            "dreaming.task.test",
-        );
-        let report = run_one_pass(
-            dir.path(),
-            Some(&embed),
-            Some(&chat),
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(report.path_taken, DreamingPath::Embedding);
-
-        let day = report.day_label();
-        let dreams = crate::daemon::dreaming::load_dreams_for_day(dir.path(), &day);
-        assert_eq!(dreams.len(), 1);
-        assert_eq!(
-            dreams[0].theme_label, "weekend trip planning",
-            "the LLM label must replace the deterministic cluster-N-seed-id",
-        );
-    }
-
-    #[test]
-    fn dream_composed_payload_has_stable_shape() {
-        let report = PassReport {
-            events_considered: 5,
-            dreams_written: 2,
-            path: PathBuf::from("/home/op/.neoth/dreams/2026-06-03.jsonl"),
-            path_taken: DreamingPath::Embedding,
-        };
-        let bytes = dream_composed_payload(&report, 1_700_000_000);
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(v["day"], "2026-06-03");
-        assert_eq!(v["dreams"], 2);
-        assert_eq!(v["events_considered"], 5);
-        assert_eq!(v["path_taken"], "Embedding");
-        assert_eq!(v["ts_unix"], 1_700_000_000_u64);
-    }
-}
+            spec: parsed_spec, // IMPR-01: carry parßÏ}¶‰ËkºwµçI•ì((€€€€m…Íå¹}ÑÉ…¥Ğèé…Íå¹}ÑÉ…¥Ñt(€€€¥µÁ°µ‰•‘AÉ½Ù¥‘•È™½È±İ…åÍ]•…Ñ¡•Éµ‰•ì(€€€€€€€™¸¹…µ” ™Í•±˜¤€´ø€˜ÍÑ…Ñ¥ŒÍÑÈì(€€€€€€€€€€€€‰…±İ…åÍ}İ•…Ñ¡•Èˆ(€€€€€€€ô(€€€€€€€™¸‘•™…Õ±Ñ}‘¥´ ™Í•±˜¤€´øÕÍ¥é”ì(€€€€€€€€€€€€Ğ(€€€€€€€ô(€€€€€€€…Íå¹Œ™¸•µ‰• (€€€€€€€€€€€€™Í•±˜°(€€€€€€€€€€€}É•ÄèÉ…Ñ”èéÁÉ½Ù¥‘•ÉÌèé•µ‰•èéµ‰•‘I•ÅÕ•ÍĞ°(€€€€€€€€¤€´øI•ÍÕ±ĞñÉ…Ñ”èéÁÉ½Ù¥‘•ÉÌèé•µ‰•èéµ‰•‘I•ÍÁ½¹Í”øì(€€€€€€€€€€€€¼¼±°Ñ•áÑÌ±…¹¥¸Í±½Ğ€ÀƒŠH½Í¥¹”€ô€Ä¸À‰•Ñİ••¸…¹ä(€€€€€€€€€€€€¼¼Á…¥ÈƒŠHÍ¥¹±”±ÕÍÑ•È¸(€€€€€€€€€€€±•ĞµÕĞØ€ôÙ•Œ…lÀ¸Á˜ÌÈì€Ñtì(€€€€€€€€€€€ÙlÁt€ô€Ä¸Àì(€€€€€€€€€€€=¬¡É…Ñ”èéÁÉ½Ù¥‘•ÉÌèé•µ‰•èéµ‰•‘I•ÍÁ½¹Í”ì(€€€€€€€€€€€€€€€Ù•Ñ½ÈèØ°(€€€€€€€€€€€€€€€µ½‘•°è€‰…±İ…åÍ}İ•…Ñ¡•Èˆ¹¥¹Ñ¼ ¤°(€€€€€€€€€€€€€€€±…Ñ•¹äèÕÉ…Ñ¥½¸èé™É½µ}µ¥É½Ì Ä¤°(€€€€€€€€€€€ô¤(€€€€€€€ô(€€€ô((€€€ÍÑÉÕĞ…¥±¥¹µ‰•ì((€€€€m…Íå¹}ÑÉ…¥Ğèé…Íå¹}ÑÉ…¥Ñt(€€€¥µÁ°µ‰•‘AÉ½Ù¥‘•È™½È…¥±¥¹µ‰•ì(€€€€€€€™¸¹…µ” ™Í•±˜¤€´ø€˜ÍÑ…Ñ¥ŒÍÑÈì(€€€€€€€€€€€€‰™…¥±¥¹œˆ(€€€€€€€ô(€€€€€€€™¸‘•™…Õ±Ñ}‘¥´ ™Í•±˜¤€´øÕÍ¥é”ì(€€€€€€€€€€€€Ğ(€€€€€€€ô(€€€€€€€…Íå¹Œ™¸•µ‰• (€€€€€€€€€€€€™Í•±˜°(€€€€€€€€€€€}É•ÄèÉ…Ñ”èéÁÉ½Ù¥‘•ÉÌèé•µ‰•èéµ‰•‘I•ÅÕ•ÍĞ°(€€€€€€€€¤€´øI•ÍÕ±ĞñÉ…Ñ”èéÁÉ½Ù¥‘•ÉÌèé•µ‰•èéµ‰•‘I•ÍÁ½¹Í”øì(€€€€€€€€€€€…¹å¡½Üèé‰…¥°„ ‰ÁÉ½Ù¥‘•È‘½İ¸ˆ¤(€€€€€€€ô(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸½¹•}Á…ÍÍ}É•ÑÕÉ¹Í}•µÁÑå}É•Á½ÉÑ}™½É}µ¥ÍÍ¥¹}Ù¥•İÍ}‘ˆ ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹•Ù•¹ÑÍ}½¹Í¥‘•É•°€À¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹‘É•…µÍ}İÉ¥ÑÑ•¸°€À¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹Á…Ñ¡}Ñ…­•¸°É•…µ¥¹A…Ñ èé•Ñ•Éµ¥¹¥ÍÑ¥Œ¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸½¹•}Á…ÍÍ}İÉ¥Ñ•Í}‘•Ñ•Éµ¥¹¥ÍÑ¥}‘É•…µ}İ¡•¹}¹½}ÁÉ½Ù¥‘•È ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€€™l(€€€€€€€€€€€€€€€€ Ä°¸€´€ÌØÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰™¥ÉÍĞ•Ù•¹Ğˆ¤°(€€€€€€€€€€€€€€€€ È°¸€´€ÄàÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰Í•½¹•Ù•¹Ğˆ¤°(€€€€€€€€€€€t°(€€€€€€€€¤ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹•Ù•¹ÑÍ}½¹Í¥‘•É•°€È¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹‘É•…µÍ}İÉ¥ÑÑ•¸°€Ä¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹Á…Ñ¡}Ñ…­•¸°É•…µ¥¹A…Ñ èé•Ñ•Éµ¥¹¥ÍÑ¥Œ¤ì(€€€€€€€…ÍÍ•ÉĞ„¡É•Á½ÉĞ¹Á…Ñ ¹•á¥ÍÑÌ ¤¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸½¹•}Á…ÍÍ}ÕÍ•Í}•µ‰•‘‘¥¹}Á…Ñ¡}İ¡•¹}ÁÉ½Ù¥‘•É}…Ù…¥±…‰±” ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€€™l(€€€€€€€€€€€€€€€€ Ä°¸€´€ÌØÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰™¥ÉÍĞ•Ù•¹Ğˆ¤°(€€€€€€€€€€€€€€€€ È°¸€´€ÄàÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰Í•½¹•Ù•¹Ğˆ¤°(€€€€€€€€€€€€€€€€ Ì°¸€´€äÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰Ñ¡¥É•Ù•¹Ğˆ¤°(€€€€€€€€€€€t°(€€€€€€€€¤ì(€€€€€€€±•ĞÁÉ½Ù¥‘•È€ô±İ…åÍ]•…Ñ¡•Éµ‰•ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€M½µ” ™ÁÉ½Ù¥‘•È¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹•Ù•¹ÑÍ}½¹Í¥‘•É•°€Ì¤ì(€€€€€€€€¼¼±İ…åÍ]•…Ñ¡•È½±±…ÁÍ•Ì•Ù•ÉåÑ¡¥¹œÑ¼½¹”±ÕÍÑ•ÈƒŠH€Ä‘É•…´¸(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹‘É•…µÍ}İÉ¥ÑÑ•¸°€Ä¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹Á…Ñ¡}Ñ…­•¸°É•…µ¥¹A…Ñ èéµ‰•‘‘¥¹œ¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸½¹•}Á…ÍÍ}™…±±Í}‰…­}Ñ½}‘•Ñ•Éµ¥¹¥ÍÑ¥}İ¡•¹}•µ‰•‘}™…¥±Ì ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ¡‘¥È¹Á…Ñ  ¤°€™l Ä°¸€´€ÌØÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰™¥ÉÍĞ•Ù•¹Ğˆ¥t¤ì(€€€€€€€±•ĞÁÉ½Ù¥‘•È€ô…¥±¥¹µ‰•ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€M½µ” ™ÁÉ½Ù¥‘•È¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹•Ù•¹ÑÍ}½¹Í¥‘•É•°€Ä¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹‘É•…µÍ}İÉ¥ÑÑ•¸°€Ä¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€É•Á½ÉĞ¹Á…Ñ¡}Ñ…­•¸°(€€€€€€€€€€€É•…µ¥¹A…Ñ èé•Ñ•Éµ¥¹¥ÍÑ¥Œ°(€€€€€€€€€€€€‰ÁÉ½Ù¥‘•È•ÉÉ½ÈµÕÍĞÑÉ¥•È‘•Ñ•Éµ¥¹¥ÍÑ¥Œ™…±±‰…¬°¹•Ù•ÈÉ…Í ˆ(€€€€€€€€¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸½¹•}Á…ÍÍ}É•ÍÁ•ÑÍ}µ…á}•Ù•¹ÑÍ}ÑÉÕ¹…Ñ¥½¸ ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€±•ĞÉ½İÌèY•Œñ|ø€ô€ Å¤ØĞ¸¸ôÄÀ¤(€€€€€€€€€€€€¹µ…À¡ñ¥ğ€¡¤°¸€´¤€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰•Ù•¹Ğˆ¤¤(€€€€€€€€€€€€¹½±±•Ğ ¤ì(€€€€€€€±•ĞÉ½İÍ}É•˜èY•Œñ|ø€ôÉ½İÌ¹¥Ñ•È ¤¹µ…À¡ğ¡„°ˆ°Œ¥ğ€ ©„°€©ˆ°€©Œ¤¤¹½±±•Ğ ¤ì(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ¡‘¥È¹Á…Ñ  ¤°€™É½İÍ}É•˜¤ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ¡‘¥È¹Á…Ñ  ¤°9½¹”°9½¹”°U1Q}]%9=\°€Ì°9½¹”¤(€€€€€€€€€€€€¹…İ…¥Ğ(€€€€€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹•Ù•¹ÑÍ}½¹Í¥‘•É•°€Ì°€‰ÑÉÕ¹…Ñ”…Ğµ…á}•Ù•¹ÑÌôÌˆ¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸½¹•}Á…ÍÍ}¥¹½É•Í}•Ù•¹ÑÍ}½ÕÑÍ¥‘•}İ¥¹‘½Ü ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€€¼¼=¹”•Ù•¹Ğ¥¹Í¥‘”Ñ¡”€Äµ¡½ÕÈÑ•ÍĞİ¥¹‘½Ü°½¹”½ÕÑÍ¥‘”¸(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€€™l(€€€€€€€€€€€€€€€€ Ä°¸€´€ØÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰¥¹Í¥‘”ˆ¤°€¼¼€ØÁÌ…¼(€€€€€€€€€€€€€€€€ È°¸€´€ÌØÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ€¨€ÈĞ°€‰½ÕÑÍ¥‘”ˆ¤°(€€€€€€€€€€€t°€¼¼€ÈÑ …¼(€€€€€€€€¤ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€ÕÉ…Ñ¥½¸èé™É½µ}Í•Ì ÄàÀÀ¤°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€É•Á½ÉĞ¹•Ù•¹ÑÍ}½¹Í¥‘•É•°€Ä°(€€€€€€€€€€€€‰İ¥¹‘½Ü•á±Õ‘•ÌÑ¡”€ÈÑ µ…¼É½Üˆ(€€€€€€€€¤ì(€€€ô((€€€€mÑ•ÍÑt(€€€™¸É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ñ}…Ñ•Í}½¹}Ù…Õ±Ñ}…¹‘}‘•™…Õ±ÑÍ}ÍÕ‰‘¥È ¤ì(€€€€€€€€¼¼9¼Ù…Õ±ĞƒŠH9½¹”€¡½Á•É…Ñ½È¡…Ì¹½Ğ½ÁÑ•¥¸¤¸(€€€€€€€…ÍÍ•ÉĞ„¡É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡9½¹”°9½¹”¤¹¥Í}¹½¹” ¤¤ì(€€€€€€€…ÍÍ•ÉĞ„¡É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡M½µ” ˆ€€€ˆ¹¥¹Ñ¼ ¤¤°9½¹”¤¹¥Í}¹½¹” ¤¤ì(€€€€€€€€¼¼Y…Õ±ĞÍ•Ğ°¹¼ÍÕ‰‘¥ÈƒŠH‘•™…Õ±ĞÍÕ‰‘¥È¸(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡M½µ” ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤¤°9½¹”¤°(€€€€€€€€€€€M½µ”  ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤°€‰9=Q µÍ•ÍÍ¥½¹Ìˆ¹¥¹Ñ¼ ¤¤¤(€€€€€€€€¤ì(€€€€€€€€¼¼Y…Õ±Ğ€¬‰±…¹¬ÍÕ‰‘¥ÈƒŠH‘•™…Õ±Ğì•áÁ±¥¥ĞÍÕ‰‘¥È¡½¹½ÕÉ•¸(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡M½µ” ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤¤°M½µ” ˆ€€ˆ¹¥¹Ñ¼ ¤¤¤°(€€€€€€€€€€€M½µ”  ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤°€‰9=Q µÍ•ÍÍ¥½¹Ìˆ¹¥¹Ñ¼ ¤¤¤(€€€€€€€€¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡M½µ” ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤¤°M½µ” ‰É•…µÌµÕÍÑ½´ˆ¹¥¹Ñ¼ ¤¤¤°(€€€€€€€€€€€M½µ”  ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤°€‰É•…µÌµÕÍÑ½´ˆ¹¥¹Ñ¼ ¤¤¤(€€€€€€€€¤ì(€€€ô((€€€€mÑ•ÍÑt(€€€™¸É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ñ}É•©•ÑÍ}ÑÉ…Ù•ÉÍ…±}ÍÕ‰‘¥ÉÌ ¤ì(€€€€€€€€¼¼QÉ…Ù•ÉÍ…°¥¹ÁÕÑÌµÕÍĞ‰”É•©•Ñ•™…¥°µ±½Í•€¡¹¼İÉ¥Ñ”½ÕÑÍ¥‘”Ù…Õ±Ğ¤¸(€€€€€€€™½È‰…¥¸€™lˆ¸¸¼¸¸½•Í…Á”ˆ°€ˆ¸¸ˆ°€ˆ½…‰Ì½Á…Ñ ‰tì(€€€€€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€€€€€É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡M½µ” ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤¤°M½µ”  ©‰…¤¹¥¹Ñ¼ ¤¤¤¹¥Í}¹½¹” ¤°(€€€€€€€€€€€€€€€€‰•áÁ•Ñ•9½¹”™½È‰…ÍÕ‰‘¥Èí‰…èıôˆ(€€€€€€€€€€€€¤ì(€€€€€€€ô(€€€€€€€€¼¼±•…¸Í¥¹±”µ½µÁ½¹•¹Ğ¹…µ•Ì…É”ÍÑ¥±°…•ÁÑ•¸(€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡M½µ” ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤¤°M½µ” ‰9=Q µÍ•ÍÍ¥½¹Ìˆ¹¥¹Ñ¼ ¤¤¤¹¥Í}Í½µ” ¤(€€€€€€€€¤ì(€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€É•Í½±Ù•}½‰Í¥‘¥…¹}Ñ…É•Ğ¡M½µ” ˆ½Ù…Õ±Ğˆ¹¥¹Ñ¼ ¤¤°M½µ” ‰É•…µÌµÕÍÑ½´ˆ¹¥¹Ñ¼ ¤¤¤¹¥Í}Í½µ” ¤(€€€€€€€€¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸Ñ½‘…å}ÕÑ}‘…Ñ•}É•¹‘•ÉÍ}åååå}µµ}‘ ¤ì(€€€€€€€±•ĞÌ€ôÑ½‘…å}ÕÑ}‘…Ñ” ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ì¹±•¸ ¤°€ÄÀ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ì¹¡…ÉÌ ¤¹¹Ñ  Ğ¤°M½µ” œ´œ¤¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ì¹¡…ÉÌ ¤¹¹Ñ  Ü¤°M½µ” œ´œ¤¤ì(€€€€€€€€¼¼¥ÉÍĞ€Ğ¡…ÉÌÁ…ÉÍ”…Ìå•…È¸(€€€€€€€±•Ğ|èÔÌÈ€ôÍl¸¸Ñt¹Á…ÉÍ” ¤¹Õ¹İÉ…À ¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸Ñ…Í­}…‰½ÉÑÍ}±•…¹±ä ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•ĞÑ…Í¬€ôÍÁ…İ¸ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤¹Ñ½}Á…Ñ¡}‰Õ˜ ¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€M½µ”¡ÕÉ…Ñ¥½¸èé™É½µ}µ¥±±¥Ì ÔÀ¤¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€ÑÉÕ”°€¼¼=1µAPµ-´ÀÌè…ÕÑ½}‘¥ÍÑ¥±°(€€€€€€€€¤ì(€€€€€€€Ñ½­¥¼èéÑ¥µ”èéÍ±••À¡ÕÉ…Ñ¥½¸èé™É½µ}µ¥±±¥Ì ÈÀ¤¤¹…İ…¥Ğì(€€€€€€€Ñ…Í¬¹…‰½ÉĞ ¤ì(€€€€€€€±•Ğ|€ôÑ…Í¬¹…İ…¥Ğì(€€€ô((€€€€mÑ•ÍÑt(€€€™¸½¹ÍÑ…¹ÑÍ}Á¥¹¹• ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡U1Q}%9QIY0¹…Í}Í•Ì ¤°€àÙ|ĞÀÀ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡U1Q}]%9=\¹…Í}Í•Ì ¤°€àÙ|ĞÀÀ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡U1Q}5a}Y9QL°€ÔÀÀ¤ì(€€€ô((€€€€¼¼ƒŠRŠR MA´ÄÈ‘…•µ½¸µÍ¥‘”€ÁáĞI5}=5A=M•µ¥Ğ€¬¡…Ğµ±…‰•°İ¥É¥¹œƒŠRŠRŠRŠRŠRŠR ((€€€€¼¼¼½Õ¹Ğ€ÁáĞI5}=5A=M€™É…µ•Ì¥¸„Í•…±•]0Í•µ•¹Ğ¸(€€€™¸½Õ¹Ñ}‘É•…µ}½µÁ½Í•‘}™É…µ•Ì¡Í•œè€™A…Ñ ¤€´øÕÍ¥é”ì(€€€€€€€±•Ğ=¬¡‰åÑ•Ì¤€ôÍÑèé™ÌèéÉ•…¡Í•œ¤•±Í”ì(€€€€€€€€€€€É•ÑÕÉ¸€Àì(€€€€€€€ôì(€€€€€€€±•Ğ=¬¡¡‘È¤€ôÉ…Ñ”èéİ…°èéÍ•µ•¹Ñ}¡•…‘•ÈèéÁ…ÉÍ•}Í•µ•¹Ñ}¡•…‘•È ™‰åÑ•Ì¤•±Í”ì(€€€€€€€€€€€É•ÑÕÉ¸€Àì(€€€€€€€ôì(€€€€€€€±•ĞµÕĞÕÉÍ½È€ô¡‘È¹¡•…‘•É}±•¸ ¤ì(€€€€€€€±•ĞµÕĞ½Õ¹Ğ€ô€ÁÕÍ¥é”ì(€€€€€€€İ¡¥±”ÕÉÍ½È€ğ‰åÑ•Ì¹±•¸ ¤ì(€€€€€€€€€€€±•Ğ‘•Œ€ôµ…Ñ É…Ñ”èéİ…°èé™É…µ”èé‘•½‘•}™É…µ” ™‰åÑ•ÍmÕÉÍ½È¸¹t¤ì(€€€€€€€€€€€€€€€=¬¡¤€ôø°(€€€€€€€€€€€€€€€ÉÈ¡|¤€ôø‰É•…¬°(€€€€€€€€€€€ôì(€€€€€€€€€€€¥˜‘•Œ¹¡•…‘•È¹•Ù•¹Ñ}ÑåÁ”€ôôÉ…Ñ”èéİ…°èé•Ù•¹ÑÌèéY9Q}QeA}I5}=5A=Mì(€€€€€€€€€€€€€€€½Õ¹Ğ€¬ô€Äì(€€€€€€€€€€€ô(€€€€€€€€€€€±•ĞÑ½Ñ…°€ô‘•Œ¹¡•…‘•È¹Ñ½Ñ…±}±•¸…ÌÕÍ¥é”ì(€€€€€€€€€€€¥˜Ñ½Ñ…°€ôô€Àì(€€€€€€€€€€€€€€€‰É•…¬ì(€€€€€€€€€€€ô(€€€€€€€€€€€ÕÉÍ½È€ôÕÉÍ½È¹Í…ÑÕÉ…Ñ¥¹}…‘¡Ñ½Ñ…°¤ì(€€€€€€€ô(€€€€€€€½Õ¹Ğ(€€€ô((€€€€¼¼¼¡…ĞÁÉ½Ù¥‘•ÈÉ•ÑÕÉ¹¥¹œ„™¥á•É•Á±äƒŠP•á•É¥Í•ÌÑ¡”ÉÕ¹}½¹•}Á…ÍÌ(€€€€¼¼¼¡…Ğµ±…‰•°İ¥É¥¹œ•¹µÑ¼µ•¹¸(€€€ÍÑÉÕĞ¥á•‘1…‰•±¡…Ğì(€€€€m…Íå¹}ÑÉ…¥Ğèé…Íå¹}ÑÉ…¥Ñt(€€€¥µÁ°AÉ½Ù¥‘•È™½È¥á•‘1…‰•±¡…Ğì(€€€€€€€™¸¹…µ” ™Í•±˜¤€´ø€˜ÍÑ…Ñ¥ŒÍÑÈì(€€€€€€€€€€€€‰™¥á•‘}±…‰•±}¡…Ğˆ(€€€€€€€ô(€€€€€€€…Íå¹Œ™¸½µÁ±•Ñ” (€€€€€€€€€€€€™Í•±˜°(€€€€€€€€€€€}É•ÄèÉ…Ñ”èéÁÉ½Ù¥‘•ÉÌèéI•ÅÕ•ÍĞ°(€€€€€€€€¤€´øI•ÍÕ±ĞñÉ…Ñ”èéÁÉ½Ù¥‘•ÉÌèé½µÁ±•Ñ¥½¸øì(€€€€€€€€€€€=¬¡É…Ñ”èéÁÉ½Ù¥‘•ÉÌèé½µÁ±•Ñ¥½¸ì(€€€€€€€€€€€€€€€Ñ•áĞè€‰İ••­•¹ÑÉ¥ÀÁ±…¹¹¥¹œˆ¹¥¹Ñ¼ ¤°(€€€€€€€€€€€€€€€¥‘•¹Ñ¥Ñäè•™…Õ±Ğèé‘•™…Õ±Ğ ¤°(€€€€€€€€€€€€€€€µ½‘•°è€‰™¥á•‘}±…‰•±}¡…Ğˆ¹¥¹Ñ¼ ¤°(€€€€€€€€€€€€€€€±…Ñ•¹äèÕÉ…Ñ¥½¸èé™É½µ}µ¥É½Ì Ä¤°(€€€€€€€€€€€€€€€¥¹ÁÕÑ}Ñ½­•¹Ìè9½¹”°(€€€€€€€€€€€€€€€½ÕÑÁÕÑ}Ñ½­•¹Ìè9½¹”°(€€€€€€€€€€€€€€€…¡•}É•…Ñ¥½¹}Ñ½­•¹Ìè9½¹”°(€€€€€€€€€€€€€€€…¡•}É•…‘}Ñ½­•¹Ìè9½¹”°(€€€€€€€€€€€ô¤(€€€€€€€ô(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸ÉÕ¹}½¹•}Á…ÍÍ}•µ¥ÑÍ}‘É•…µ}½µÁ½Í•‘}İ¡•¹}İÉ¥Ñ•É}ÁÉ•Í•¹Ğ ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€€™l Ä°¸€´€ÄàÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰…¸•Ù•¹Ğ¥¸Ñ¡”İ¥¹‘½Üˆ¥t°(€€€€€€€€¤ì(€€€€€€€±•ĞÍ•}‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•ĞÍ•œ€ôÍ•}‘¥È¹Á…Ñ  ¤¹©½¥¸ ˆÀÀÀÀÀÄ¹İ…°ˆ¤ì(€€€€€€€±•Ğ€¡İÉ¥Ñ•È°©½¥¸¤€ôÉ…Ñ”èéİ…°èéİÉ¥Ñ•ÈèéÍÁ…İ¸¡Í•œ¹±½¹” ¤¤¹Õ¹İÉ…À ¤ì((€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€M½µ” ™İÉ¥Ñ•È¤°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹‘É•…µÍ}İÉ¥ÑÑ•¸°€Ä¤ì((€€€€€€€‘É½À¡İÉ¥Ñ•È¤ì(€€€€€€€©½¥¸¹…İ…¥Ğ¹½¬ ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€½Õ¹Ñ}‘É•…µ}½µÁ½Í•‘}™É…µ•Ì ™Í•œ¤°(€€€€€€€€€€€€Ä°(€€€€€€€€€€€€‰„İÉ¥Ñ•Èµ‰…­•Á…ÍÌÑ¡…ĞİÉ½Ñ”‘É•…µÌµÕÍĞ•µ¥Ğ•á…Ñ±ä½¹”€ÁáĞˆ°(€€€€€€€€¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸ÉÕ¹}½¹•}Á…ÍÍ}¹½}™É…µ•}İ¡•¹}İÉ¥Ñ•É}¹½¹” ¤ì(€€€€€€€€¼¼Q¡”1$½¹”µÍ¡½ĞÁ…Ñ Á…ÍÍ•ÌİÉ¥Ñ•È€ô9½¹”€¡¥Ğ…Õ‘¥ÑÌÍ•Á…É…Ñ•±ä¤¸(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ¡‘¥È¹Á…Ñ  ¤°€™l Ä°¸€´€ÄàÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰•Ù•¹Ğˆ¥t¤ì(€€€€€€€±•ĞÍ•}‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•ĞÍ•œ€ôÍ•}‘¥È¹Á…Ñ  ¤¹©½¥¸ ˆÀÀÀÀÀÄ¹İ…°ˆ¤ì(€€€€€€€±•Ğ€¡İÉ¥Ñ•È°©½¥¸¤€ôÉ…Ñ”èéİ…°èéİÉ¥Ñ•ÈèéÍÁ…İ¸¡Í•œ¹±½¹” ¤¤¹Õ¹İÉ…À ¤ì((€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹‘É•…µÍ}İÉ¥ÑÑ•¸°€Ä¤ì((€€€€€€€‘É½À¡İÉ¥Ñ•È¤ì(€€€€€€€©½¥¸¹…İ…¥Ğ¹½¬ ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€½Õ¹Ñ}‘É•…µ}½µÁ½Í•‘}™É…µ•Ì ™Í•œ¤°(€€€€€€€€€€€€À°(€€€€€€€€€€€€‰İÉ¥Ñ•È€ô9½¹”µÕÍĞ¹½Ğ•µ¥Ğ„™É…µ”½¸Ñ¡¥ÌÍ•µ•¹Ğˆ°(€€€€€€€€¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸ÉÕ¹}½¹•}Á…ÍÍ}¹½}™É…µ•}İ¡•¹}¹½}‘É•…µÌ ¤ì(€€€€€€€€¼¼µÁÑäİ¥¹‘½Ü€¡¹¼Ù¥•İÌ¹‘ˆ¤ƒŠH€À‘É•…µÌƒŠH¹¼…Õ‘¥Ğ™É…µ”•Ù•¸İ¥Ñ „İÉ¥Ñ•È¸(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•ĞÍ•}‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•ĞÍ•œ€ôÍ•}‘¥È¹Á…Ñ  ¤¹©½¥¸ ˆÀÀÀÀÀÄ¹İ…°ˆ¤ì(€€€€€€€±•Ğ€¡İÉ¥Ñ•È°©½¥¸¤€ôÉ…Ñ”èéİ…°èéİÉ¥Ñ•ÈèéÍÁ…İ¸¡Í•œ¹±½¹” ¤¤¹Õ¹İÉ…À ¤ì((€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€9½¹”°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€M½µ” ™İÉ¥Ñ•È¤°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹‘É•…µÍ}İÉ¥ÑÑ•¸°€À¤ì((€€€€€€€‘É½À¡İÉ¥Ñ•È¤ì(€€€€€€€©½¥¸¹…İ…¥Ğ¹½¬ ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡½Õ¹Ñ}‘É•…µ}½µÁ½Í•‘}™É…µ•Ì ™Í•œ¤°€À¤ì(€€€ô((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸ÉÕ¹}½¹•}Á…ÍÍ}Ñ¡É•…‘Í}¡…Ñ}±…‰•±}¥¹Ñ½}‘É•…µÌ ¤ì(€€€€€€€€¼¼•µ‰•É½ÕÁÌ•Ù•ÉåÑ¡¥¹œ¥¹Ñ¼½¹”±ÕÍÑ•ÈìÑ¡”¡…ĞÁÉ½Ù¥‘•È±…‰•±Ì¥Ğ¸(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¸€ô¹½İ}¹Ì ¤ì(€€€€€€€Í••‘}Ù¥•İÍ}‘ˆ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€€™l(€€€€€€€€€€€€€€€€ Ä°¸€´€ÄàÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰™¥ÉÍĞˆ¤°(€€€€€€€€€€€€€€€€ È°¸€´€äÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÀ°€‰Í•½¹ˆ¤°(€€€€€€€€€€€t°(€€€€€€€€¤ì(€€€€€€€±•Ğ•µ‰•€ô±İ…åÍ]•…Ñ¡•Éµ‰•ì(€€€€€€€±•Ğ¡…Ğ€ôÕÑ¡½É¥é•‘AÉ½Ù¥‘•Èèé™É½µ}‰½à (€€€€€€€€€€€	½àèé¹•Ü¡¥á•‘1…‰•±¡…Ğ¤°(€€€€€€€€€€€É…Ñ”èéÁÉ½Ù¥‘•ÉÌèé½ÍÑ}…ÕÑ¡½É¥é…Ñ¥½¸èéAÉ½Ù¥‘•É…±±ÕÑ¡½É¥é•ÈèéÑ•ÍÑ}½¹±ä (€€€€€€€€€€€€€€€É…Ñ”èéÁ•Éµ¥ÍÍ¥½¹ÌèéÕÑ½¹½µå1•Ù•°èéÕ±°°(€€€€€€€€€€€€¤°(€€€€€€€€€€€M½µ” ‰™¥á•‘}±…‰•±}¡…Ğˆ¹Ñ½}ÍÑÉ¥¹œ ¤¤°(€€€€€€€€€€€€‰‘É•…µ¥¹œ¹Ñ…Í¬¹Ñ•ÍĞˆ°(€€€€€€€€¤ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}½¹•}Á…ÍÌ (€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€M½µ” ™•µ‰•¤°(€€€€€€€€€€€M½µ” ™¡…Ğ¤°(€€€€€€€€€€€U1Q}]%9=\°(€€€€€€€€€€€U1Q}5a}Y9QL°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€€€€€€¹…İ…¥Ğ(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡É•Á½ÉĞ¹Á…Ñ¡}Ñ…­•¸°É•…µ¥¹A…Ñ èéµ‰•‘‘¥¹œ¤ì((€€€€€€€±•Ğ‘…ä€ôÉ•Á½ÉĞ¹‘…å}±…‰•° ¤ì(€€€€€€€±•Ğ‘É•…µÌ€ôÉ…Ñ”èé‘…•µ½¸èé‘É•…µ¥¹œèé±½…‘}‘É•…µÍ}™½É}‘…ä¡‘¥È¹Á…Ñ  ¤°€™‘…ä¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡‘É•…µÌ¹±•¸ ¤°€Ä¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€‘É•…µÍlÁt¹Ñ¡•µ•}±…‰•°°€‰İ••­•¹ÑÉ¥ÀÁ±…¹¹¥¹œˆ°(€€€€€€€€€€€€‰Ñ¡”114±…‰•°µÕÍĞÉ•Á±…”Ñ¡”‘•Ñ•Éµ¥¹¥ÍÑ¥Œ±ÕÍÑ•Èµ8µÍ••µ¥ˆ°(€€€€€€€€¤ì(€€€ô((€€€€mÑ•ÍÑt(€€€™¸‘É•…µ}½µÁ½Í•‘}Á…å±½…‘}¡…Í}ÍÑ…‰±•}Í¡…Á” ¤ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôA…ÍÍI•Á½ÉĞì(€€€€€€€€€€€•Ù•¹ÑÍ}½¹Í¥‘•É•è€Ô°(€€€€€€€€€€€‘É•…µÍ}İÉ¥ÑÑ•¸è€È°(€€€€€€€€€€€Á…Ñ èA…Ñ¡	Õ˜èé™É½´ ˆ½¡½µ”½½À¼¹¹•½Ñ ½‘É•…µÌ¼ÈÀÈØ´ÀØ´ÀÌ¹©Í½¹°ˆ¤°(€€€€€€€€€€€Á…Ñ¡}Ñ…­•¸èÉ•…µ¥¹A…Ñ èéµ‰•‘‘¥¹œ°(€€€€€€€ôì(€€€€€€€±•Ğ‰åÑ•Ì€ô‘É•…µ}½µÁ½Í•‘}Á…å±½… ™É•Á½ÉĞ°€Å|ÜÀÁ|ÀÀÁ|ÀÀÀ¤ì(€€€€€€€±•ĞØèÍ•É‘•}©Í½¸èéY…±Õ”€ôÍ•É‘•}©Í½¸èé™É½µ}Í±¥” ™‰åÑ•Ì¤¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ùl‰‘…ä‰t°€ˆÈÀÈØ´ÀØ´ÀÌˆ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ùl‰‘É•…µÌ‰t°€È¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ùl‰•Ù•¹ÑÍ}½¹Í¥‘•É•‰t°€Ô¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ùl‰Á…Ñ¡}Ñ…­•¸‰t°€‰µ‰•‘‘¥¹œˆ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ùl‰ÑÍ}Õ¹¥à‰t°€Å|ÜÀÁ|ÀÀÁ|ÀÀÁ}ÔØĞ¤ì(€€€ô)ô

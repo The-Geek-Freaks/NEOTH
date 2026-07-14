@@ -132,7 +132,7 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
             println!(
                 "✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo)."
             );
-            offer_upstream_pr_if_bundled(&home, &id);
+            offer_upstream_pr_if_bundled(&home, &id)?;
             Ok(())
         }
         SelfImproveAction::Rollback { id } => {
@@ -163,7 +163,7 @@ fn status(
     // Full-auto turned it on implicitly (operator never set it explicitly).
     let implied = cfg.enabled && !stored_enabled;
     let installed = si::is_installed();
-    let last = si::last_record(home);
+    let last = si::last_record(home)?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         println!(
             "{}",
@@ -342,7 +342,7 @@ fn run_pass(
 }
 
 fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
-    let props = si::load_proposals(home);
+    let props = si::load_proposals(home)?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         println!("{}", serde_json::to_string_pretty(&props)?);
         return Ok(());
@@ -436,9 +436,9 @@ fn quality_lines(
 /// After adopting a proposal, if its skill is one NEOTH SHIPS (bundled), offer
 /// to contribute the improvement upstream. NEOTH asks — the operator decides by
 /// running `pr`. Best-effort: a lookup miss just prints nothing.
-fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) {
-    let Some(p) = si::load_proposals(home).into_iter().find(|p| p.id == id) else {
-        return;
+fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) -> Result<()> {
+    let Some(p) = si::load_proposals(home)?.into_iter().find(|p| p.id == id) else {
+        return Ok(());
     };
     if crate::skills::bundled::is_bundled(&p.skill) {
         println!(
@@ -446,6 +446,7 @@ fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) {
             p.skill
         );
     }
+    Ok(())
 }
 
 /// IMPR-03: verification-gated execute scaffold for a pending proposal.
@@ -647,7 +648,7 @@ fn pr(home: &std::path::Path, id: &str, submit: bool, output: OutputFormat) -> R
 }
 
 fn log(home: &std::path::Path, output: OutputFormat) -> Result<()> {
-    let ledger = si::load_ledger(home);
+    let ledger = si::load_ledger(home)?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         println!("{}", serde_json::to_string_pretty(&ledger)?);
         return Ok(());

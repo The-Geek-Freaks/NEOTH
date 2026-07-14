@@ -168,16 +168,32 @@ pub(crate) fn check_wal_audit_health(home: &Path) -> CheckOutcome {
 
 /// Self-improvement (SkillOpt) — switch state + engine availability + last run.
 pub(crate) fn check_self_improve(home: &Path) -> CheckOutcome {
-    let cfg = crate::self_improve::SelfImproveConfig::load(home);
+    let cfg = match crate::self_improve::SelfImproveConfig::load(home) {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            return CheckOutcome {
+                name: "self-improvement",
+                status: CheckStatus::Fail,
+                detail: format!("self_improve.yaml is unreadable or corrupt: {error:#}"),
+            };
+        }
+    };
     let installed = crate::self_improve::is_installed();
     let (status, detail) = if cfg.enabled && installed {
         let detail = match crate::self_improve::last_record(home) {
-            Some(r) => format!(
+            Ok(Some(r)) => format!(
                 "enabled; last: {} ({})",
                 r.skill,
                 if r.accepted { "improved" } else { "no change" }
             ),
-            None => "enabled; SkillOpt ready; no runs yet".to_string(),
+            Ok(None) => "enabled; SkillOpt ready; no runs yet".to_string(),
+            Err(error) => {
+                return CheckOutcome {
+                    name: "self-improvement",
+                    status: CheckStatus::Fail,
+                    detail: format!("self-improvement ledger is unreadable or corrupt: {error:#}"),
+                };
+            }
         };
         (CheckStatus::Pass, detail)
     } else if cfg.enabled && !installed {

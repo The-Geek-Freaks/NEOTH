@@ -26,8 +26,9 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// [`atomic_write`] for private operator data. On Unix the temporary file is
 /// created with mode `0600` *before* any bytes are written, so the atomic
-/// rename never exposes a wider-permission target even briefly. Windows has
-/// no POSIX mode bit; the file inherits the ACL of its parent directory.
+/// rename never exposes a wider-permission target even briefly. On Windows the
+/// temporary file receives and verifies a protected current-user-only DACL
+/// before any bytes are written; parent-directory ACLs are never inherited.
 pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     atomic_write_impl(path, bytes, true)
 }
@@ -50,7 +51,7 @@ fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Resul
             // with a symlink to another operator file.
             options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let _ = private;
         let mut f = options.open(&tmp)?;
         #[cfg(unix)]
@@ -60,6 +61,14 @@ fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Resul
             // reuse. Narrow an existing file before writing secrets; relying
             // on OpenOptionsExt::mode alone would leave its old mode intact.
             f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(windows)]
+        if private {
+            if let Err(error) = crate::wal::win_native::set_private_current_user_dacl(&tmp) {
+                drop(f);
+                let _ = std::fs::remove_file(&tmp);
+                return Err(error);
+            }
         }
         f.write_all(bytes)?;
         f.flush()?;
@@ -71,6 +80,10 @@ fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Resul
         // Best-effort: don't leave the orphan temp behind on a rename failure.
         let _ = std::fs::remove_file(&tmp);
     })?;
+    #[cfg(windows)]
+    if private {
+        crate::wal::win_native::verify_private_dacl(path)?;
+    }
     // GR-088 — fsync the PARENT directory so the new directory entry created by
     // the rename is durable. The file's DATA was fsynced above, but on POSIX the
     // rename only updates the parent inode's metadata, which survives a power
@@ -175,5 +188,17 @@ mod tests {
             std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_write_sets_and_verifies_current_user_only_dacl() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("private.json");
+
+        atomic_write_private(&target, b"secret").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"secret");
+        crate::wal::win_native::verify_private_dacl(&target).unwrap();
     }
 }
