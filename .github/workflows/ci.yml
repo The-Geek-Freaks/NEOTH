@@ -423,7 +423,7 @@ jobs:
         run: cargo check -p neoth --features ${{ matrix.feature }}
 
   # ──────────────────────────────────────────────────────────────────
-  # HARNESS-05 — committed gold-smoke eval suite. Builds neothd and runs
+  # HARNESS-05 — committed gold-smoke eval suite. Builds both public binaries and runs
   # `neoth eval` over the deterministic, no-LLM, config-free smoke suite
   # (version/help/capabilities/fact-check + harness self-check). The suite
   # exits non-zero on any case failure → this job gates the build. The
@@ -455,9 +455,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gold-smoke-cargo-
 
-      - name: Build neoth (release)
+      - name: Build neoth + neothd compatibility launcher (release)
         working-directory: SRC
-        run: cargo build -p neoth --bin neoth --release
+        run: cargo build -p neoth --bins --release
 
       - name: Run gold-smoke eval suite
         working-directory: SRC
