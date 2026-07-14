@@ -1770,7 +1770,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // learned automatically on connect).
                 let seeded = &config.cluster.peers;
                 let mut n_seeded = 0;
-                for p in &seeded {
+                for p in seeded {
                     if t.add_peer_id(p) {
                         n_seeded += 1;
                     }
